@@ -288,9 +288,7 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
             ),
             oa.Narrow(
                 to=("CashPayment",),
-                operand=oa.Comparison(
-                    op="greaterThan", attr="CashPayment.detail", value="10.00"
-                ),
+                operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value="10.00"),
             ),
         )
     )
@@ -345,9 +343,7 @@ def _heterogeneous_payment_predicate() -> oa.PredicateNode:
             ),
             oa.Narrow(
                 to=("CashPayment",),
-                operand=oa.Comparison(
-                    op="greaterThan", attr="CashPayment.detail", value="10.00"
-                ),
+                operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value="10.00"),
             ),
         )
     )
@@ -948,9 +944,7 @@ def test_tph_abstract_read_transforms_rows_through_the_tag_map() -> None:
     # The raw tag column is POPPED (it is framework-owned and never reaches the
     # caller) and its value mapped to the declaring concrete's name.
     compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
-    assert compiled.transform_row(
-        {"id": 1, "amount": Decimal("100.00"), "kind": "card"}
-    ) == {
+    assert compiled.transform_row({"id": 1, "amount": Decimal("100.00"), "kind": "card"}) == {
         "id": 1,
         "amount": Decimal("100.00"),
         "familyVariant": "CardPayment",

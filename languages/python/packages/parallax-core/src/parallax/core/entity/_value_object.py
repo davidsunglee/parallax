@@ -343,6 +343,29 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
     return _document(value)
 
 
+def _managed_document(value: ValueObject) -> dict[str, object]:
+    declared = shape_of(type(value))
+    shape = shape_of_declaration(declared.shape)
+    bits = plan_of(type(value)).bits
+    document: dict[str, object] = {}
+    for py_name, canonical in declared.py_to_name.items():
+        if py_name not in declared.many_py and not is_present(value, bits[py_name]):
+            continue
+        raw = getattr(value, py_name)
+        member = shape.member(canonical)
+        if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
+            document[canonical] = [
+                _managed_document(element) for element in cast("tuple[ValueObject, ...]", raw)
+            ]
+        elif raw is None:
+            document[canonical] = None
+        elif isinstance(member, Occurrence):
+            document[canonical] = _managed_document(cast("ValueObject", raw))
+        else:
+            document[canonical] = raw
+    return document
+
+
 def _document(value: ValueObject) -> dict[str, object]:
     shape = shape_of_declaration(shape_of(type(value)).shape)
     return encode_document(shape, _presences(value, shape))

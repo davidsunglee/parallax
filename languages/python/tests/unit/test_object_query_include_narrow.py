@@ -29,7 +29,6 @@ from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
 from parallax.core import (
     LATEST,
     MANY_TO_ONE,
-    TIMESTAMP,
     TX_TIME,
     AbstractRoot,
     Attr,
@@ -42,6 +41,7 @@ from parallax.core import (
     attr,
     rel,
 )
+from parallax.core.base import TIMESTAMP
 from parallax.core.entity import RelationshipPath
 from parallax.core.entity._entity import build_object_query
 from parallax.core.entity._model import model_of

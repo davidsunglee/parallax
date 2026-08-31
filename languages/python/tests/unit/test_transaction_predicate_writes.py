@@ -68,6 +68,7 @@ from parallax.core.base import INFINITY, DocumentValue, InstantError, PresentDoc
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._model import model_of
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
@@ -86,7 +87,6 @@ from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 
 # The buffering seam below every write ingress, driven directly by the case that
 # pins its own refusals.
-from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
 from parallax.snapshot.handle._write_inputs import (
     is_no_op_assignment,
     normalize_assignment_values,
@@ -664,9 +664,9 @@ def test_materializing_terminate_where_over_an_audit_only_target() -> None:
         "update balance set out_z = ? where bal_id = ? and out_z = ?"
     )
     assert writes[0].sql == close_sql
-    assert writes[0].binds == ("2024-06-01T00:00:00+00:00", 1, "infinity")
+    assert writes[0].binds == (FIXED, 1, "infinity")
     assert writes[1].sql == close_sql
-    assert writes[1].binds == ("2024-06-01T00:00:00+00:00", 2, "infinity")
+    assert writes[1].binds == (FIXED, 2, "infinity")
 
 
 def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurrency() -> None:
@@ -688,14 +688,14 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
     )
     assert writes[0].sql == gated_sql
     assert writes[0].binds == (
-        "2024-06-01T00:00:00+00:00",
+        FIXED,
         1,
         "infinity",
         dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     )
     assert writes[1].sql == gated_sql
     assert writes[1].binds == (
-        "2024-06-01T00:00:00+00:00",
+        FIXED,
         2,
         "infinity",
         dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
@@ -735,7 +735,7 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
-    assert chain_binds == (1, "A", 175.00, "2024-06-01T00:00:00+00:00", "infinity")
+    assert chain_binds == (1, "A", 175.00, FIXED, "infinity")
 
 
 def test_materializing_update_where_audit_only_carries_the_unassigned_value_object_forward() -> (
@@ -785,7 +785,7 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
     assert chain_binds == (
         1,
         "Baltic Traders",
-        "2024-06-01T00:00:00+00:00",
+        FIXED,
         "infinity",
         JsonDocument({"city": "Bergen"}),
     )
@@ -869,7 +869,7 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
     )
     assert chain_binds == (
         1,
-        "2024-06-01T00:00:00+00:00",
+        FIXED,
         "infinity",
         JsonDocument(
             {
@@ -1693,7 +1693,7 @@ def test_an_unrenderable_bound_is_refused_before_any_buffering(
     assert port.calls == [BeginCall(), RollbackCall()]
 
 
-def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> None:
+def test_a_non_utc_bound_reaches_the_buffer_as_its_managed_utc_instant() -> None:
     # The instruction that reaches the buffering seam carries the shared window
     # gate's own canonical literals, so a
     # bound authored at a NON-UTC offset lands in the rectangle split as the
@@ -1714,8 +1714,10 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> No
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
     assert len(writes) == 4  # close + head + middle + tail
     middle_binds = writes[2].binds
-    assert "2024-07-01T00:00:00+00:00" in middle_binds  # the authored `valid_from`, in UTC
-    assert "2024-09-01T00:00:00+00:00" in middle_binds  # the authored `until`, in UTC
+    assert (
+        _NON_UTC_VALID_FROM.astimezone(dt.UTC) in middle_binds
+    )  # the authored `valid_from`, in UTC
+    assert _NON_UTC_UNTIL.astimezone(dt.UTC) in middle_binds  # the authored `until`, in UTC
 
 
 def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
@@ -1776,7 +1778,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
                 "entity": "WherePosition",
                 "predicate": {"eq": {"attr": "WherePosition.id", "value": 1}},
             },
-            {"value": Decimal("300.00")},
+            {"value": "300.00"},
             valid_from=dt.datetime.fromisoformat("2024-07-01T00:00:00+00:00"),
             until=dt.datetime.fromisoformat("2024-09-01T00:00:00+00:00"),
         )
@@ -1997,7 +1999,7 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
 # `_materialize_predicate_write`'s resolving read — real SQL on the caller's
 # connection, which `port.calls` then shows — so deleting that call fails here and
 # nowhere else.
-def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instruction() -> None:
+def test_preparation_refuses_an_inheritance_family_predicate_instruction() -> None:
     instruction = instructions.deserialize(
         {
             "mutation": "delete",
@@ -2008,24 +2010,8 @@ def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instructio
         }
     )
     assert isinstance(instruction, PredicateWrite)
-    port = ScriptedPort(Transact())
-
-    def fn(tx: Transaction) -> None:
-        with pytest.raises(
-            inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
-        ):
-            buffer_predicate_instruction(
-                tx._uow,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
-                tx._model,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
-                tx._conn,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
-                instruction,
-                tx._attempt,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
-            )
-        assert port.calls == [BeginCall()]
-        raise _Abandon
-
-    with pytest.raises(_Abandon):
-        Database.connect(port, RATE, clock=FixedClock(FIXED)).transact(fn)
+    with pytest.raises(inheritance.InheritanceError, match="subtype-write-set-based-unsupported"):
+        instructions.prepare_wire_write(instruction, model_of(RATE))
 
 
 def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
@@ -2178,7 +2164,7 @@ def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         tx.update_where(
-            mm.Account.where(mm.Account.balance < 200.00),
+            mm.Account.where(mm.Account.balance < Decimal("200.00")),
             mm.Account.owner.set("Ada"),
         )
         tx.update(node.edit(balance=Decimal("125.00")))
@@ -2201,7 +2187,7 @@ def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.update_where(
-            mm.Account.where(mm.Account.balance < 50.00),
+            mm.Account.where(mm.Account.balance < Decimal("50.00")),
             mm.Account.owner.set("Ada"),
         )
         tx.update(node.edit(balance=Decimal("125.00")))

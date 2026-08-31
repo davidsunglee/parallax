@@ -28,7 +28,7 @@ from parallax.core import inheritance, relationship, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._compile import (
     AttributeReadContract,
@@ -80,14 +80,6 @@ def test_unbound_attribute_is_refused() -> None:
             POSTGRES,
             target(ORDERS, "Order"),
         )
-
-
-def test_entity_query_target_must_belong_to_the_model() -> None:
-    query = oq.EntityQuery(target=EntityIdentity(None, "Missing"), predicate=oa.All())
-    # Authored Entity Queries are not accepted by the private lowering boundary;
-    # snapshot preflight and deep-fetch planning must produce the validated token.
-    with pytest.raises(AttributeError, match="entity"):
-        compile_entity_query(query, ORDERS, POSTGRES)
 
 
 def test_entity_query_carries_one_limit_without_a_wrapper_tree() -> None:
@@ -198,7 +190,6 @@ def test_compile_read_accepts_exactly_the_supported_call_shape() -> None:
         ("dialect", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
         ("result_form", inspect.Parameter.KEYWORD_ONLY, True),
         ("lock", inspect.Parameter.KEYWORD_ONLY, True),
-        ("include_value_objects", inspect.Parameter.KEYWORD_ONLY, True),
     ]
 
 

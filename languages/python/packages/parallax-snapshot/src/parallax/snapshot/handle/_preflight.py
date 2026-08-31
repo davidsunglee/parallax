@@ -55,11 +55,8 @@ from typing import Literal
 
 from parallax.core.metamodel import Metamodel, entity_by_name
 from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.object_query import (
-    ObjectQueryNode,
-    ValidatedObjectQuery,
-    validate_object_query,
-)
+from parallax.core.object_query import ObjectQueryNode, validate_object_query
+from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.predicate import ModelRejectedError
 from parallax.snapshot.handle._errors import QueryTargetError
 from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features

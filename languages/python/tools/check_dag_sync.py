@@ -585,7 +585,7 @@ def _row_scopes(scope_cell: str, owner_cell: str) -> list[str]:
     group states "those six scopes, sharing one grant row" there and enumerates
     them in the "Source owner/path" cell instead, so a scope cell naming none
     falls back to the owner cell. Within a cell, a backticked token starting
-    with a dot (``._write_types``) abbreviates a sibling of the preceding full
+    with a dot (``._write_lowering``) abbreviates a sibling of the preceding full
     name and is expanded against it.
     """
     for cell in (scope_cell, owner_cell):

@@ -638,7 +638,7 @@ def reduce_declared_members(
         elif member.multiplicity is Multiplicity.MANY:
             if raw is None:
                 values: Sequence[object] = ()
-            elif isinstance(raw, list):
+            elif isinstance(raw, list) or (preserve_presence and isinstance(raw, tuple)):
                 values = cast("Sequence[object]", raw)
             else:
                 raise LeafEncodingError(

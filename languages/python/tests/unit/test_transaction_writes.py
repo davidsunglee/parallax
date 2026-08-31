@@ -366,9 +366,9 @@ def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> Non
         "values (?, ?, ?, ?, ?, ?, ?)"
     )
     assert binds[2:6] == (
-        "2024-01-01T00:00:00+00:00",
+        dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "infinity",
-        "2024-06-01T00:00:00+00:00",
+        FIXED,
         "infinity",
     )
 
@@ -389,9 +389,9 @@ def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
     assert len(write_ops) == 1
     binds = write_ops[0].binds
     assert binds[2:6] == (
-        "2024-03-01T00:00:00+00:00",
-        "2024-09-01T00:00:00+00:00",
-        "2024-06-01T00:00:00+00:00",
+        dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
+        FIXED,
         "infinity",
     )
 
@@ -1121,7 +1121,7 @@ def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
 
     db.transact(fn, concurrency=cast("Any", concurrency))
     close, chained = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert close.binds[:3] == ("2024-06-01T00:00:00+00:00", 1, "infinity")
+    assert close.binds[:3] == (FIXED, 1, "infinity")
     assert Decimal("150.00") in chained.binds
     assert port.calls[-1] == CommitCall()
 

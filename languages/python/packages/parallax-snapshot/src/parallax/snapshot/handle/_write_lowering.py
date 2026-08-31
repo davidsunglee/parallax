@@ -9,7 +9,7 @@ Every step in a :class:`~parallax.core.unit_work.WritePlan` already carries its
 target, row topology, concurrency decision, and expected effect settled — the
 Write Planner (:mod:`~parallax.snapshot.handle._planning`) decided all of that
 before this function ever runs — so lowering answers only the physical
-question :func:`~parallax.core.sql_gen._write.compile_write` renders:
+question :func:`~parallax.core.sql_gen._write.compile_write_step` renders:
 which Columns participate, in which order, quoted for which dialect. Nothing
 here reads an instruction, an observation, a mode, or an instant.
 
@@ -24,7 +24,7 @@ from collections.abc import Iterator
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._write import compile_write
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import WritePlan
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 
@@ -47,4 +47,4 @@ def stream_lowered(
     shortfall aborts BEFORE the rows it would have chained execute.
     """
     for step in plan.steps:
-        yield (step, compile_write(step, meta, dialect))
+        yield (step, compile_write_step(step, meta, dialect))

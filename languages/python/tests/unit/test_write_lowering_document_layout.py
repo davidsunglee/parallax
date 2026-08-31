@@ -28,7 +28,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._write import compile_write
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import KeyedWrite, PredecessorRow, WriteInstruction
 from parallax.core.unit_work.planned import (
     NEW_LINEAGE,
@@ -100,8 +100,8 @@ def test_an_entity_with_no_document_member_still_binds_the_empty_object() -> Non
 
 
 def test_a_document_leaf_binds_the_codecs_spelling_not_the_inputs_carrier() -> None:
-    # `joinedOn` is a `date`. The write input carries the portable wire spelling and
-    # the document stores the codec's, which for a date are the same characters —
+    # `joinedOn` is a managed `date`; the document stores the codec's portable
+    # spelling, which for a date contains the same calendar characters —
     # what matters is that the value went THROUGH the encoding table rather than to a
     # serializer, which is what a `decimal` or `bytes` leaf would expose.
     (statement,) = _lower(
@@ -371,7 +371,7 @@ def _successor(
             ),
         ),
     )
-    return _document(compile_write(step, DOCUMENT, POSTGRES))
+    return _document(compile_write_step(step, DOCUMENT, POSTGRES))
 
 
 def test_a_successor_patches_the_retained_document_so_an_unknown_key_survives() -> None:

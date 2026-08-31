@@ -78,7 +78,9 @@ def _where(
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
     model = _ACCEPTED[entity.identity.name]
     query = oq.validate_object_query(entity, _query(entity, temporal, predicate), model)
-    root = deep_fetch.plan(query, model).root
+    root = deep_fetch.plan(
+        query, model, projection=deep_fetch.ReadProjectionRequest("all", True)
+    ).root
     statement = compile_read(root, model, POSTGRES).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
@@ -101,9 +103,9 @@ def test_result_narrowing_survives_temporal_selection_lowering() -> None:
         _query(BALANCE, {"transaction-time": oq.AsOf("latest")}, narrow_to=("Balance",)),
         model,
     )
-    plan = deep_fetch.plan(query, model)
+    plan = deep_fetch.plan(query, model, projection=deep_fetch.ReadProjectionRequest("all", True))
     assert plan.root.narrow_to == (BALANCE.identity,)
-    assert plan.root.predicate == oa.Comparison(
+    assert plan.root.validated_predicate.authored == oa.Comparison(
         op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
     )
 
@@ -116,9 +118,7 @@ def test_past_instant_is_half_open_containment() -> None:
 
 def test_temporal_upper_bound_is_exclusive() -> None:
     # AsOfAxis intervals are uniformly half-open: start inclusive, end exclusive.
-    where, _ = _where(
-        LEDGER, {"transaction-time": oq.AsOf("2024-06-01T00:00:00.000000Z")}
-    )
+    where, _ = _where(LEDGER, {"transaction-time": oq.AsOf("2024-06-01T00:00:00.000000Z")})
     assert where == "t0.in_z <= ? and t0.out_z > ?"
 
 
@@ -228,10 +228,14 @@ def test_result_directives_survive_injection() -> None:
         limit=2,
     )
     model = _ACCEPTED["Balance"]
-    root = deep_fetch.plan(oq.validate_object_query(BALANCE, query, model), model).root
+    root = deep_fetch.plan(
+        oq.validate_object_query(BALANCE, query, model),
+        model,
+        projection=deep_fetch.ReadProjectionRequest("all", True),
+    ).root
     assert root.limit == 2
-    assert root.order_by == (oq.OrderKey(attr="Balance.id"),)
-    assert root.predicate == oa.Comparison(
+    assert root.order_by[0].member.identity.name == "id"
+    assert root.validated_predicate.authored == oa.Comparison(
         op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
     )
 

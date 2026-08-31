@@ -56,7 +56,7 @@ from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDime
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import LATEST
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._write import compile_write
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     INFINITY,
@@ -253,7 +253,9 @@ def _lower(
 # --------------------------------------------------------------------------- #
 def test_audit_only_insert_opens_a_current_milestone() -> None:
     # m-txtime-write-001.
-    insert = KeyedWrite("insert", "Balance", ({"id": 1, "acctNum": "A", "value": 100.00},))
+    insert = KeyedWrite(
+        "insert", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},)
+    )
     statements = _lower(insert, BALANCE, "2024-01-01T00:00:00+00:00")
     assert statements == [
         (
@@ -268,7 +270,9 @@ def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
     # the instruction's OWN authored FULL row. The row names every member the
     # predecessor could have carried forward, so merging is an identity and the
     # chain is exactly the authored row.
-    update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
+    update = KeyedWrite(
+        "update", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("150.00")},)
+    )
     observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements == [
@@ -302,7 +306,9 @@ def test_audit_only_terminate_closes_only() -> None:
 
 def test_audit_only_update_carries_every_new_attribute() -> None:
     # m-txtime-write-004: the chained row carries ALL corrected attributes.
-    update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "B", "value": 250.00},))
+    update = KeyedWrite(
+        "update", "Balance", ({"id": 1, "acctNum": "B", "value": Decimal("250.00")},)
+    )
     observation = _observed(tx_start="2024-01-01T00:00:00+00:00")
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements[1] == (
@@ -317,9 +323,10 @@ def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> No
     # engine, which always supplies
     # a full row) merges onto the observed payload, so the chained row still
     # carries `acctNum` even though the instruction's own row never named it.
-    sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
+    sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("150.00")},))
     observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
+        tx_start="2024-01-01T00:00:00+00:00",
+        payload={"id": 1, "acctNum": "A", "value": Decimal("100.00")},
     )
     statements = _lower(
         sparse_update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation
@@ -344,9 +351,10 @@ def test_audit_only_update_merges_the_sparse_row_at_the_finalization_seam() -> N
     # the rendered statement: the chained row carries the merged payload, never
     # the caller's sparse row alone, and its origin names the predecessor it
     # changed.
-    sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": 150.00},))
+    sparse_update = KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("150.00")},))
     observation = _observed(
-        tx_start="2024-01-01T00:00:00+00:00", payload={"id": 1, "acctNum": "A", "value": 100.00}
+        tx_start="2024-01-01T00:00:00+00:00",
+        payload={"id": 1, "acctNum": "A", "value": Decimal("100.00")},
     )
     close, opened = _finalize(
         sparse_update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation
@@ -356,7 +364,7 @@ def test_audit_only_update_merges_the_sparse_row_at_the_finalization_seam() -> N
     assert _member_values(opened) == {
         "id": 1,
         "acctNum": "A",
-        "value": 150.00,
+        "value": Decimal("150.00"),
         "txStart": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         "txEnd": "infinity",
     }
@@ -369,10 +377,12 @@ def test_audit_only_update_carries_a_full_authored_row_over_every_observed_membe
     # merge onto the predecessor is a strict identity even though the
     # predecessor carries every member: the authored row overrides each one it
     # names, and no exercised compile-lane emission can change.
-    full_update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 150.00},))
+    full_update = KeyedWrite(
+        "update", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("150.00")},)
+    )
     observation = _observed(
         tx_start="2024-01-01T00:00:00+00:00",
-        payload={"id": 1, "acctNum": "STALE", "value": 999.00},
+        payload={"id": 1, "acctNum": "STALE", "value": Decimal("999.00")},
     )
     _close, opened = _finalize(
         full_update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation
@@ -383,7 +393,9 @@ def test_audit_only_update_carries_a_full_authored_row_over_every_observed_membe
 
 
 def test_audit_only_insert_begins_a_lineage_and_closes_nothing() -> None:
-    insert = KeyedWrite("insert", "Balance", ({"id": 1, "acctNum": "A", "value": 100.00},))
+    insert = KeyedWrite(
+        "insert", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},)
+    )
     (opened,) = _finalize(insert, BALANCE, "2024-01-01T00:00:00+00:00")
     assert isinstance(opened, PlannedInsert)
     assert opened.entries[0].origin == NewLineage()
@@ -419,7 +431,9 @@ def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
 def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -> None:
     # m-txtime-write-005: a locking-mode close never binds `in_z`, even when one
     # was observed.
-    update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 175.00},))
+    update = KeyedWrite(
+        "update", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
+    )
     observation = _observed(tx_start="2024-06-01T00:00:00+00:00")
     step, close = _lower_steps(
         update, BALANCE, "2024-09-01T00:00:00+00:00", observation=observation, concurrency="locking"
@@ -461,7 +475,9 @@ def test_audit_only_insert_is_never_gated() -> None:
     # An INSERT never consults an observation — no close, nothing to gate. A
     # Planned Insert carries neither a gate nor an Affected Rows Policy at all,
     # so the absence is structural rather than a null expectation.
-    insert = KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 100.00},))
+    insert = KeyedWrite(
+        "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},)
+    )
     steps = _lower_steps(insert, BALANCE, "2024-06-01T00:00:00+00:00", concurrency="optimistic")
     assert len(steps) == 1
     assert isinstance(steps[0][0], PlannedInsert)
@@ -470,7 +486,7 @@ def test_audit_only_insert_is_never_gated() -> None:
 # --------------------------------------------------------------------------- #
 # Full bitemporal (m-bitemp-write): the rectangle split and its degenerates.   #
 # --------------------------------------------------------------------------- #
-_R1_PAYLOAD = {"id": 1, "acctNum": "A", "value": 100.00}
+_R1_PAYLOAD = {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
 
 
 def test_bitemporal_update_until_splits_head_middle_tail() -> None:
@@ -478,7 +494,7 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
     update_until = KeyedWrite(
         "updateUntil",
         "Position",
-        ({"id": 1, "value": 200.00},),
+        ({"id": 1, "value": Decimal("200.00")},),
         valid_from="2024-03-01T00:00:00+00:00",
         until="2024-09-01T00:00:00+00:00",
     )
@@ -567,7 +583,7 @@ def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
     insert_until = KeyedWrite(
         "insertUntil",
         "Position",
-        ({"id": 1, "acctNum": "A", "value": 100.00},),
+        ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
         valid_from="2024-03-01T00:00:00+00:00",
         until="2024-09-01T00:00:00+00:00",
     )
@@ -594,7 +610,7 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
     update = KeyedWrite(
         "update",
         "Position",
-        ({"id": 1, "value": 200.00},),
+        ({"id": 1, "value": Decimal("200.00")},),
         valid_from="2024-06-01T00:00:00+00:00",
     )
     observation = _observed(
@@ -676,7 +692,7 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
     insert = KeyedWrite(
         "insert",
         "Position",
-        ({"id": 1, "acctNum": "A", "value": 100.00},),
+        ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
         valid_from="2024-01-01T00:00:00+00:00",
     )
     statements = _lower(insert, POSITION, "2024-01-01T00:00:00+00:00")
@@ -722,7 +738,10 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
         payload=_R1_PAYLOAD,
     )
     update = KeyedWrite(
-        "update", "Position", ({"id": 1, "value": 200.00},), valid_from="2024-04-01T00:00:00+00:00"
+        "update",
+        "Position",
+        ({"id": 1, "value": Decimal("200.00")},),
+        valid_from="2024-04-01T00:00:00+00:00",
     )
     close, head, tail = _lower(
         update,
@@ -883,7 +902,7 @@ def test_bitemporal_close_addresses_both_axis_ends_then_gates_on_in_z_last() -> 
     # bound per axis in canonical order (`thru_z` then `out_z`); the observed
     # `in_z` gate binds LAST.
     step = _probe("optimistic")
-    statement = compile_write(step, formed(POSITION), POSTGRES)
+    statement = compile_write_step(step, formed(POSITION), POSTGRES)
     assert statement.sql == (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
     )
@@ -922,7 +941,7 @@ def test_bitemporal_close_keeps_its_whole_address_under_locking() -> None:
     # m-bitemp-write-001/006/007's own locking-mode closes: the address is
     # unchanged — only the `in_z` gate disappears (ADR 0046).
     step = _probe("locking")
-    statement = compile_write(step, formed(POSITION), POSTGRES)
+    statement = compile_write_step(step, formed(POSITION), POSTGRES)
     assert statement.sql == (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
     )
@@ -945,7 +964,7 @@ def test_a_probe_addressing_a_bounded_rectangle_binds_its_finite_valid_end() -> 
         Finite(instant=dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         INFINITY,
     )
-    statement = compile_write(step, formed(POSITION), POSTGRES)
+    statement = compile_write_step(step, formed(POSITION), POSTGRES)
     assert statement.binds == (
         _instant("2024-10-01T00:00:00+00:00"),
         1,
@@ -968,7 +987,7 @@ def test_temporal_close_requires_an_effective_table() -> None:
     model = formed(malformed)
     step = _probe("locking", entity="Balance", meta=malformed, observed_valid_end=None)
     with pytest.raises(SqlGenError, match="write target has no effective table"):
-        compile_write(step, model, POSTGRES)
+        compile_write_step(step, model, POSTGRES)
 
 
 # --------------------------------------------------------------------------- #
@@ -989,7 +1008,9 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
         "in_z",
         "out_z",
     )
-    insert = KeyedWrite("insert", "SpotQuote", ({"id": 1, "price": 50.00, "symbol": "ACME"},))
+    insert = KeyedWrite(
+        "insert", "SpotQuote", ({"id": 1, "price": Decimal("50.00"), "symbol": "ACME"},)
+    )
     assert _lower(insert, QUOTE, "2024-01-01T00:00:00+00:00") == [
         (
             "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
@@ -1006,7 +1027,7 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
 # unchanged.
 _SPOT_QUOTE_COLUMNS: Mapping[str, object] = {
     "id": 1,
-    "price": 50.00,
+    "price": Decimal("50.00"),
     "symbol": "ACME",
     "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     "out_z": OPEN_BOUND,
@@ -1064,13 +1085,13 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     assert isinstance(observation, TemporalObservation)
     assert dict(observation.predecessor.members) == {
         "id": 1,
-        "price": 50.00,
+        "price": Decimal("50.00"),
         "symbol": "ACME",
         "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "txEnd": OPEN_BOUND,
     }
 
-    update = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": 60.00},))
+    update = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": Decimal("60.00")},))
     _close, chain = _lower(update, QUOTE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert chain == (
         "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
@@ -1128,7 +1149,7 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
-        payload={"id": 1, "price": 100.00, "coupon": 5.00},
+        payload={"id": 1, "price": Decimal("100.00"), "coupon": Decimal("5.00")},
     )
     close = _lower(
         terminate,
@@ -1199,7 +1220,7 @@ def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
-        payload={"id": 1, "price": 100.00, "coupon": 5.00},
+        payload={"id": 1, "price": Decimal("100.00"), "coupon": Decimal("5.00")},
     )
     statements = _lower(terminate, INSTRUMENT, "2024-07-01T00:00:00+00:00", observation=observation)
     assert statements[0] == (
@@ -1218,7 +1239,7 @@ def test_tpcs_bitemporal_terminate_has_no_tag_guard() -> None:
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
-        payload={"id": 1, "amount": 2.50, "grade": "A"},
+        payload={"id": 1, "amount": Decimal("2.50"), "grade": "A"},
     )
     statements = _lower(terminate, RATE, "2024-07-01T00:00:00+00:00", observation=observation)
     assert statements[0] == (
@@ -1240,7 +1261,7 @@ def test_tph_bitemporal_terminate_until_chains_head_and_tail() -> None:
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
-        payload={"id": 2, "price": 100.00, "ticker": "ACME"},
+        payload={"id": 2, "price": Decimal("100.00"), "ticker": "ACME"},
     )
     statements = _lower(
         terminate_until, INSTRUMENT, "2024-02-15T00:00:00+00:00", observation=observation
@@ -1265,7 +1286,7 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
         tx_start="2024-01-01T00:00:00+00:00",
         valid_start="2024-01-01T00:00:00+00:00",
         valid_end="infinity",
-        payload={"id": 2, "amount": 6.75, "spread": 1.25},
+        payload={"id": 2, "amount": Decimal("6.75"), "spread": Decimal("1.25")},
     )
     statements = _lower(terminate_until, RATE, "2024-02-15T00:00:00+00:00", observation=observation)
     assert len(statements) == 3
@@ -1368,7 +1389,7 @@ def test_multi_row_temporal_write_is_refused() -> None:
     batched = KeyedWrite(
         "update",
         "Balance",
-        ({"id": 1, "value": 100.00}, {"id": 2, "value": 200.00}),
+        ({"id": 1, "value": Decimal("100.00")}, {"id": 2, "value": Decimal("200.00")}),
     )
     with pytest.raises(ValueError, match="temporal target carries 2 rows"):
         _lower(batched, BALANCE, "2024-02-15T00:00:00+00:00")
@@ -1416,7 +1437,7 @@ def test_bitemporal_successor_origins_follow_the_split(
         if mutation.startswith("terminate")
         else {
             "id": 1,
-            "value": 200.00,
+            "value": Decimal("200.00"),
         }
     )
     steps = _finalize(
@@ -1449,7 +1470,7 @@ def test_bitemporal_insert_successor_begins_a_lineage() -> None:
         KeyedWrite(
             "insertUntil",
             "Position",
-            ({"id": 1, "acctNum": "A", "value": 100.00},),
+            ({"id": 1, "acctNum": "A", "value": Decimal("100.00")},),
             valid_from="2024-03-01T00:00:00+00:00",
             until="2024-09-01T00:00:00+00:00",
         ),

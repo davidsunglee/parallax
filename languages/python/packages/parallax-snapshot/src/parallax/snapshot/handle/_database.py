@@ -20,8 +20,7 @@ classification branch (``_optimistic_conflict_retriable``) is composed here too.
 This is the TOP of the package's internal graph: it imports
 :mod:`parallax.snapshot.handle._read`, :mod:`~parallax.snapshot.handle._transaction`,
 :mod:`~parallax.snapshot.handle._preflight` for the shared read gate,
-:mod:`~parallax.snapshot.handle._write_lowering`,
-:mod:`~parallax.snapshot.handle._write_types`, and
+:mod:`~parallax.snapshot.handle._write_lowering` and
 :mod:`~parallax.snapshot.handle._planning` for the one Write Planner it builds
 once per connected Metamodel, and nothing in the package imports it except
 ``handle/__init__.py``, which re-exports its five public names
@@ -82,9 +81,10 @@ from parallax.core.execution_lifecycle._activity import (
     refuse_reentry,
 )
 from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import ObjectQueryNode, ValidatedObjectQuery
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
-from parallax.core.temporal_read import scans_an_axis
+from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.temporal_read import scans_validated_axis
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -556,7 +556,7 @@ class Database:
         with open_read_root(
             self._lifecycle, target=node.target, interface=publication.interface
         ) as read:
-            if scans_an_axis(node):
+            if scans_validated_axis(validated.temporal):
                 return publication.from_history(
                     find_history(
                         validated,

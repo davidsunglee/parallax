@@ -11,7 +11,7 @@ The chain is closed link by link. Every planning the drive performed ran on a
 planner the factory built. Every Write Plan that was streamed through
 ``stream_lowered`` is by identity a plan one of those plannings returned, and the
 plans streamed are the plans planned, in order, so a factory plan the lane
-discarded is named too. Every step rendered by ``compile_write`` — the one function
+discarded is named too. Every step rendered by ``compile_write_step`` — the one function
 that turns a settled step into a statement — is by identity a step of one of
 those streamed plans. An unrelated implementation of the planner interface
 inherits nothing, so it performs no planning this module records and appears in
@@ -70,7 +70,7 @@ from parallax.conformance import case_format, engine
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.sql_gen._write import compile_write
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     NO_AUDIT,
     AuditStrategy,
@@ -183,7 +183,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
     finalizing = WritePlanner.finalize
     streaming = handle.stream_lowered
-    rendering = compile_write
+    rendering = compile_write_step
 
     def construct(
         model: Metamodel,
@@ -216,7 +216,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "finalize", finalize)
-    for replacement, original in ((lower, handle.stream_lowered), (render, compile_write)):
+    for replacement, original in ((lower, handle.stream_lowered), (render, compile_write_step)):
         holders = _bindings_of(original)
         assert holders, f"nothing imported holds {original}, so watching it grades nothing"
         for module, bound in holders:

@@ -94,9 +94,18 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
 )
-from parallax.core.object_query import ObjectQueryNode, ValidatedObjectQuery
+from parallax.core.object_query._validated import (
+    ValidatedObjectQuery,
+    ValidatedTemporalSelection,
+)
 from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow, compile_read
-from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin, scans_an_axis
+from parallax.core.temporal_read import (
+    Edge,
+    Pin,
+    milestone_edge,
+    scans_validated_axis,
+    validated_query_pin,
+)
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot._read_result import (
     FindResult,
@@ -437,9 +446,8 @@ def find(
     declined root, and one page of a streamed read do.
     """
     meta = model.meta
-    authored = query.authored
     root_entity = query.root
-    plan_ = deep_fetch.plan(query, meta)
+    plan_ = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
     builder = GraphBuilder(ViewSchema(_slot_table(plan_)))
     observations = ReadObservations()
 
@@ -480,17 +488,17 @@ def find(
         _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
-    pin = query_pin(authored, declaring_metadata(meta, root_entity.identity))
+    pin = validated_query_pin(query.temporal)
     return FindResult(
         graph=builder.seal(root_refs, pin),
         includes=_include_tree(plan_.levels),
-        sources=_retained(meta, authored, observations, ledger=ledger, pin=pin),
+        sources=_retained(meta, query.temporal, observations, ledger=ledger, pin=pin),
     )
 
 
 def _retained(
     meta: Metamodel,
-    query: ObjectQueryNode,
+    temporal: tuple[ValidatedTemporalSelection, ...],
     observations: ReadObservations,
     *,
     ledger: ObservationLedger | None,
@@ -507,7 +515,7 @@ def _retained(
     result of the same query is not, which is a difference the delivery is not
     allowed to make.
     """
-    if scans_an_axis(query):
+    if scans_validated_axis(temporal):
         return MappingProxyType({})
     return retain_evidence(meta, observations, ledger=ledger, pin=pin)
 
@@ -631,9 +639,8 @@ def find_rows(
     level to drop.
     """
     meta = model.meta
-    authored = query.authored
     root_entity = query.root
-    plan_ = deep_fetch.plan(query, meta)
+    plan_ = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("none", False))
     compiled = compile_read(
         plan_.root,
         meta,
@@ -650,7 +657,7 @@ def find_rows(
         model,
         compiled,
         rows,
-        pin=query_pin(authored, declaring_metadata(meta, root_entity.identity)),
+        pin=validated_query_pin(query.temporal),
     )
     for item in stage.rows:
         if item.family_variant is not None:
@@ -711,7 +718,7 @@ def find_history(
     """
     meta = model.meta
     metadata = query.root
-    plan_ = deep_fetch.plan(query, meta)
+    plan_ = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
     if plan_.levels:
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")

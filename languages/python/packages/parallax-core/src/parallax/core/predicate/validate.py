@@ -76,8 +76,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import assert_never, cast
 
-from parallax.core import inheritance
-from parallax.core.base import NeutralType, String
+from parallax.core import inheritance, relationship
+from parallax.core.base import ManagedValue, NeutralType, String
 from parallax.core.metamodel import (
     AttributeMetadata,
     DefiningRelationshipDeclaration,
@@ -86,6 +86,7 @@ from parallax.core.metamodel import (
     Metamodel,
     NestedValueObjectMetadata,
     RelationshipDeclaration,
+    RelationshipIdentity,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
@@ -119,7 +120,7 @@ from parallax.core.predicate._nodes import (
 )
 from parallax.core.predicate._validated import (
     ResolvedPredicateMember,
-    ValidatedOperand,
+    ValidatedOperands,
     ValidatedPredicate,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire
@@ -199,10 +200,7 @@ def _collect_entities(op: PredicateNode, names: set[str]) -> None:
 
 
 class ModelRejectedError(ValueError):
-    """A schema-valid predicate or Object Query violates a model-aware rule and
-    MUST be refused pre-SQL (`m-case-format` `rejected` cases). ``rule`` is the
-    exact `then.rejectedRule` classification the closed vocabulary names.
-    """
+    """A schema-valid predicate or Object Query violates a model-aware rule."""
 
     def __init__(self, rule: str, message: str) -> None:
         super().__init__(message)
@@ -211,16 +209,7 @@ class ModelRejectedError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class PositionScope:
-    """The threaded polymorphic-position state (`m-predicate` four-step rule).
-
-    ``effective`` is the active position's effective concrete-subtype set, whose
-    members are CANONICAL Entity spellings, so two
-    Entities sharing a local name across namespaces stay distinct members of every
-    subset test taken over it. ``relationship_target`` is the canonical name of the
-    relationship target, set only while validating inside a navigation filter's
-    `op` (`m-navigate`): a `narrow` encountered there does not clamp like a
-    same-position narrow by selecting the relationship-target rejection rule.
-    """
+    """The threaded polymorphic-position state."""
 
     effective: frozenset[str]
     relationship_target: str | None = None
@@ -233,21 +222,7 @@ def validate_predicate(
     *,
     position: PositionScope | None = None,
 ) -> ValidatedPredicate:
-    """Validate ``op`` against ``model``, raising :class:`ModelRejectedError`.
-
-    ``root`` is the queried root position, already resolved to accepted Metadata
-    by the caller — the ``target`` an Object Query names. It seeds the initial
-    active position for the narrow checks and the positional attribute checks,
-    which measure every attribute reference — an unrelated standalone Entity's as
-    much as a subtype's — against that position; the value-object structural
-    checks below resolve their own entity from each node's own `Class.member`
-    reference and do not otherwise depend on ``root``.
-
-    ``position`` overrides that seed with a position the caller has already
-    resolved, which is how an Object Query threads its own result narrowing into
-    the predicate it carries: whole-result narrowing is a query clause rather
-    than an enclosing node, so nothing inside the predicate could derive it.
-    """
+    """Validate and resolve ``op`` against ``model`` before planning or lowering."""
     scope = (
         position if position is not None else PositionScope(effective=effective_set(model, root))
     )
@@ -317,11 +292,6 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
             _require_nullable_null_check(op.path, leaf.nullable)
             return ValidatedPredicate(op, member=leaf)
         case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
-            # The path is value-object-TERMINATED (ends at the object itself, not a
-            # leaf). The optional `where` is element-relative (no `Class` prefix) —
-            # a different addressing scheme the narrow/attribute position tracking
-            # above does not apply to — so it is validated against the TERMINAL
-            # value-object descriptor `path` resolves to, not walked by `_walk`.
             container = _check_nested_vo_terminated(path, model)
             children = () if where is None else (_elaborate_element_predicate(where, container),)
             return ValidatedPredicate(op, children=children, container=container)
@@ -333,20 +303,65 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
             return ValidatedPredicate(op, children=(_walk(operand, model, scope),))
         case Narrow(to=to, operand=operand):
             new_scope = validate_narrow(to, scope, model)
-            return ValidatedPredicate(op, children=(_walk(operand, model, new_scope),))
+            return ValidatedPredicate(
+                op,
+                children=(_walk(operand, model, new_scope),),
+                position=_position_identities(model, new_scope),
+            )
         case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
             target = relationship_target(rel, model, wrong_kind_rule="navigate-value-object-target")
+            direction = _resolved_relationship(rel, model)
+            resolved = relationship.view(model).relationship(direction)
+            if resolved is None:  # pragma: no cover - accepted models compile every direction
+                raise ValueError(f"{rel!r} names no resolved relationship direction")
+            source_view = inheritance.view(model).entity(resolved.join.source.entity)
+            target_view = inheritance.view(model).entity(resolved.join.target.entity)
+            source = (
+                None
+                if source_view is None
+                else source_view.applicable_attribute(resolved.join.source.name)
+            )
+            member = (
+                None
+                if target_view is None
+                else target_view.applicable_attribute(resolved.join.target.name)
+            )
+            if source is None or member is None:  # pragma: no cover - formation validates joins
+                raise ValueError(f"{rel!r} has unresolved relationship join members")
             hop_scope = PositionScope(
                 effective=effective_set(model, target),
                 relationship_target=target.identity.canonical,
             )
             children = () if inner is None else (_walk(inner, model, hop_scope),)
-            return ValidatedPredicate(op, children=children, relationship_target=target)
+            return ValidatedPredicate(
+                op,
+                children=children,
+                relationship_target=target,
+                relationship=direction,
+                relationship_source=source,
+                relationship_member=member,
+            )
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
 
 
-def _decode_operand(subject: str, value: object, neutral_type: NeutralType) -> ValidatedOperand:
+def _position_identities(model: Metamodel, position: PositionScope) -> tuple[EntityIdentity, ...]:
+    return tuple(
+        entity.identity
+        for entity in model.entities
+        if entity.identity.canonical in position.effective
+    )
+
+
+def _resolved_relationship(rel: str, model: Metamodel) -> RelationshipIdentity:
+    class_name, dot, member_name = rel.rpartition(".")
+    declaring = entity_by_name(model, class_name) if dot else None
+    if declaring is None:
+        raise ValueError(f"{rel!r} names no resolved relationship direction")
+    return RelationshipIdentity(declaring.identity, member_name)
+
+
+def _decode_operand(subject: str, value: object, neutral_type: NeutralType) -> ManagedValue:
     try:
         managed = decode_wire(neutral_type, cast("WireValue", value))
     except WireDecodingError as error:
@@ -354,7 +369,7 @@ def _decode_operand(subject: str, value: object, neutral_type: NeutralType) -> V
             f"neutral-literal-{error.reason}",
             f"{subject!r}: {error}",
         ) from error
-    return ValidatedOperand(managed, neutral_type)
+    return managed
 
 
 def _validated_leaf(
@@ -364,8 +379,9 @@ def _validated_leaf(
 ) -> ValidatedPredicate:
     return ValidatedPredicate(
         authored,
-        operands=tuple(
-            _decode_operand(_subject_of(authored), value, member.type) for value in values
+        operands=ValidatedOperands(
+            tuple(_decode_operand(_subject_of(authored), value, member.type) for value in values),
+            member.type,
         ),
         member=member,
     )
@@ -375,8 +391,10 @@ def _subject_of(op: PredicateNode) -> str:
     return getattr(op, "attr", getattr(op, "path", type(op).__name__))
 
 
-def _check_managed_bound_ordering(subject: str, operands: tuple[ValidatedOperand, ...]) -> None:
-    lower, upper = (operand.value for operand in operands)
+def _check_managed_bound_ordering(subject: str, operands: ValidatedOperands | None) -> None:
+    if operands is None:
+        raise AssertionError("a validated range carries its managed bounds")
+    lower, upper = operands.values
     try:
         inverted = cast("object", lower) > cast("object", upper)  # type: ignore[operator]
     except TypeError:  # pragma: no cover - one declared type yields comparable managed members

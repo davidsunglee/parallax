@@ -1,11 +1,11 @@
 """Shared write-planning foundation: entity resolution and the buffer item
 shapes (m-unit-work).
 
-:class:`Targets` is one planning call's resolution of the write IR's own
-entity spellings and family membership, computed once per flush and threaded
-through every stage that needs it — :mod:`~parallax.core.unit_work.
-write_planner`'s coalescing, batching, ordering, and finalization stages, and
-this module's own :func:`object_key`. The buffered-write shapes those stages
+:class:`Targets` is one planning call's accepted-model resolution context,
+computed once per flush and threaded through every stage that needs family-effective
+members, declaring roots, and primary keys. Prepared writes already retain exact target
+metadata; the spelling index remains only for :func:`object_key`'s raw authored-input
+utility. The buffered-write shapes those stages
 consume are :mod:`~parallax.core.unit_work.materialized`'s, which is also where
 the evidence they carry lives.
 
@@ -34,7 +34,12 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.temporal_read import Edge, milestone_edge_from_members
-from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
+from parallax.core.unit_work.instructions import (
+    KeyedWrite,
+    PreparedKeyedWrite,
+    PreparedWrite,
+    WriteInstruction,
+)
 from parallax.core.unit_work.observe import TemporalObservation, WriteObservation
 
 __all__ = [
@@ -139,14 +144,11 @@ type _Members = Mapping[str, AttributeIdentity | ValueObjectIdentity]
 
 @dataclass(frozen=True, slots=True)
 class Targets:
-    """One planning call's resolution of the write IR's own entity spellings.
+    """One flush's accepted-model context for prepared-write planning.
 
-    A write instruction names its entity by the spelling its canonical document
-    carries (`write-instruction.schema.json`), which is a wire spelling rather
-    than an Entity Identity. Resolving it needs the model, and every stage below
-    then needs the same Entity's family-effective members, declaring root, and
-    family-effective primary key, so one resolution is made per flush and
-    threaded down rather than repeated per instruction or per stage.
+    Prepared writes retain exact target Metadata. The context centralizes the target's
+    family-effective members, declaring root, and primary key; ``by_spelling`` supports
+    only the raw authored-input form accepted by :func:`object_key`.
     """
 
     model: Metamodel
@@ -246,11 +248,12 @@ def targets(model: Metamodel) -> Targets:
     return Targets(model=model, by_spelling=by_spelling, families=inheritance.view(model))
 
 
-def object_key(instruction: WriteInstruction, model: Metamodel) -> ObjectKey | None:
+def object_key(instruction: WriteInstruction | PreparedWrite, model: Metamodel) -> ObjectKey | None:
     """The identity of the single object a keyed write targets, or ``None``.
 
-    ``None`` when the instruction is not a single-row keyed write, when its
-    entity spelling names no Entity of ``model``, when the row does not carry
+    Prepared input consumes its retained target Metadata; the raw authored-input utility
+    resolves an entity spelling against ``model``. ``None`` results when the instruction
+    is not a single-row keyed write, that raw spelling is unresolved, or the row lacks
     every primary-key attribute (a pk-generated insert whose key is entirely
     DB-computed), or when a carried primary-key VALUE is itself a DB-computed
     marker (`m-pk-gen`'s `{computed: ...}` / `{increment: ...}` — a
@@ -260,7 +263,9 @@ def object_key(instruction: WriteInstruction, model: Metamodel) -> ObjectKey | N
     return resolve_object_key(instruction, targets(model))
 
 
-def resolve_object_key(instruction: WriteInstruction, resolved: Targets) -> ObjectKey | None:
+def resolve_object_key(
+    instruction: WriteInstruction | PreparedWrite, resolved: Targets
+) -> ObjectKey | None:
     """:func:`object_key` over an already-resolved flush context.
 
     Primary-key resolution is FAMILY-EFFECTIVE: an inheritance participant's key
@@ -269,13 +274,16 @@ def resolve_object_key(instruction: WriteInstruction, resolved: Targets) -> Obje
     every corpus family's own keyed writes — and the applicable member chain the
     Inheritance Facet precomputes is what carries the inherited key.
 
-    The key names the RESOLVED Entity Identity rather than the instruction's own
-    wire spelling: a write instruction is a serialized document, so its bare and
-    canonical spellings of one Entity must reach one key.
+    The key always names the resolved Entity Identity. Prepared input carries that target
+    directly; raw authored input resolves either accepted spelling to the same identity.
     """
-    if not isinstance(instruction, KeyedWrite) or len(instruction.rows) != 1:
+    if not isinstance(instruction, (KeyedWrite, PreparedKeyedWrite)) or len(instruction.rows) != 1:
         return None
-    entity = resolved.entity(instruction.entity)
+    entity = (
+        instruction.target
+        if isinstance(instruction, PreparedKeyedWrite)
+        else resolved.entity(instruction.entity)
+    )
     if entity is None:
         return None
     # An accepted Entity always carries a primary key, so the family-effective

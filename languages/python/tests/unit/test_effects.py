@@ -21,9 +21,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from _corpus_model_support import model as corpus_model
+from _corpus_model_support import target as entity_of
 
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.predicate import All
+from parallax.core.metamodel import AttributeIdentity
+from parallax.core.predicate import All, validate_predicate
 from parallax.core.unit_work import (
     ANY_COUNT,
     INFINITY,
@@ -49,7 +51,6 @@ from parallax.core.unit_work import (
     PlannedInsert,
     PlannedRow,
     PlannedUpdate,
-    PredicateTarget,
     Shortfall,
     StaleWriteError,
     TemporalConcurrency,
@@ -59,9 +60,16 @@ from parallax.core.unit_work import (
     WriteEffectError,
     enforce_affected_rows,
 )
-from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
+from parallax.core.unit_work.planned import (
+    PlannedWrite as PlannedStep,
+)
+from parallax.core.unit_work.planned import (
+    ValidatedMutationSelection,
+)
 
-_ACCOUNT = EntityIdentity(None, "Account")
+_ACCOUNT_MODEL = corpus_model("account")
+_ACCOUNT_META = entity_of(_ACCOUNT_MODEL, "Account")
+_ACCOUNT = _ACCOUNT_META.identity
 _ID = AttributeIdentity(_ACCOUNT, "id")
 _OWNER = AttributeIdentity(_ACCOUNT, "owner")
 _VERSION = AttributeIdentity(_ACCOUNT, "version")
@@ -196,7 +204,9 @@ def test_an_insert_carries_no_policy_and_is_accepted(actual: int) -> None:
 def test_any_count_accepts_every_nonnegative_result(actual: int) -> None:
     step = PlannedUpdate(
         entity=_ACCOUNT,
-        target=PredicateTarget(predicate=All()),
+        target=ValidatedMutationSelection(
+            _ACCOUNT_META, validate_predicate(_ACCOUNT_META, All(), _ACCOUNT_MODEL)
+        ),
         assignments=_RENAME,
         concurrency=UNVERSIONED,
         affected_rows=ANY_COUNT,

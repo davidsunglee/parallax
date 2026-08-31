@@ -37,7 +37,6 @@ from _support.db_port import (
     BeginCall,
     CommitCall,
     Read,
-    RollbackCall,
     ScriptedPort,
     Transact,
     Write,
@@ -88,9 +87,7 @@ from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLif
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.unit_work import (
     FixedClock,
-    KeyedWrite,
     OptimisticLockConflictError,
-    WritePlanningError,
 )
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction, TransactionRollbackError
@@ -700,36 +697,6 @@ def test_neither_of_two_nested_joins_outranks_the_read_they_enclose() -> None:
     caused = rolled_back.failure.failure
     assert isinstance(caused, CausedFailure)
     assert caused.cause_activity_id == read_finished.activity_id
-
-
-def test_a_flush_that_dies_in_planning_is_a_batch_that_started_and_ran_nothing() -> None:
-    # A Write Batch starts BEFORE planning precisely so a planning refusal is
-    # attributable to the batch rather than to the callback around it.
-    recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Transact())
-
-    def body(tx: Transaction) -> None:
-        tx._uow.buffer(  # pyright: ignore[reportPrivateUsage] - the only ingress that reaches an unplannable buffer
-            KeyedWrite("insert", "Gadget", ({"id": 1, "name": "G"},))
-        )
-
-    with pytest.raises(WritePlanningError, match="Gadget"):
-        _db(port, recorder).transact(body)
-
-    root = _only(recorder)
-    assert _transitions(root.events) == [
-        "TransactionInvocationStarted",
-        "TransactionAttemptStarted",
-        "WriteBatchStarted",
-        "WriteBatchFinished",
-        "TransactionAttemptFinished",
-        "TransactionInvocationFinished",
-    ]
-    batch = root.events[3]
-    assert isinstance(batch, WriteBatchFinished)
-    assert isinstance(batch.outcome, WriteBatchFailed)
-    assert isinstance(batch.outcome.failure, DirectFailure)
-    assert port.calls == [BeginCall(), RollbackCall()]
 
 
 def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> None:

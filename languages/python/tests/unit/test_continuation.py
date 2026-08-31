@@ -106,9 +106,7 @@ def _planned(
     selections = dict(temporal or {})
     for axis in entity.declared_as_of_axes:
         dimension: TemporalDimension = (
-            "valid-time"
-            if axis.dimension is AxisKind.VALID_TIME
-            else "transaction-time"
+            "valid-time" if axis.dimension is AxisKind.VALID_TIME else "transaction-time"
         )
         selections.setdefault(dimension, AsOf("latest"))
     query = object_query(
@@ -150,7 +148,7 @@ def test_an_undeclared_ordering_pages_by_the_primary_key_ascending() -> None:
     # the primary key, ascending, which is total, immutable, and non-nullable, so
     # every page seeks and no write moves a root across a page boundary.
     node = _planned(ORDERS, "Order").first(limit=50)
-    assert node.order_by == (OrderKey(attr=_ORDER_ID, direction="asc"),)
+    assert node.authored.order_by == (OrderKey(attr=_ORDER_ID, direction="asc"),)
     assert node.limit == 50
 
 
@@ -161,8 +159,8 @@ def test_the_first_page_carries_the_callers_query_unchanged_but_ordered_and_capp
     predicate = _active(ORDERS, "Order")
     plan = _planned(ORDERS, "Order", predicate=predicate)
     node = plan.first(limit=2)
-    assert node.target == entity_of(ORDERS, "Order").identity
-    assert node.predicate == predicate
+    assert node.root.identity == entity_of(ORDERS, "Order").identity
+    assert node.predicate.authored == predicate
     assert node.includes == ()
 
 
@@ -190,7 +188,7 @@ def test_an_authored_ordering_is_carried_verbatim_with_the_key_appended() -> Non
     # round-trips distinctly from an authored `asc` — and the key is appended
     # after them, ascending, because nothing else makes the order total.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU, nulls="first"),))
-    assert plan.first(limit=2).order_by == (
+    assert plan.first(limit=2).authored.order_by == (
         OrderKey(attr=_ORDER_SKU, nulls="first"),
         OrderKey(attr=_ORDER_ID, direction="asc"),
     )
@@ -205,7 +203,7 @@ def test_an_authored_key_naming_the_primary_key_is_not_appended_a_second_time() 
         OrderKey(attr=_ORDER_ID, direction="desc"),
     )
     plan = _planned(ORDERS, "Order", order_by=order)
-    assert plan.first(limit=2).order_by == order
+    assert plan.first(limit=2).authored.order_by == order
 
 
 def test_an_authored_key_naming_the_primary_key_keeps_the_authors_direction() -> None:
@@ -214,8 +212,8 @@ def test_an_authored_key_naming_the_primary_key_keeps_the_authors_direction() ->
     # follows it.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_ID, direction="desc"),))
     node = plan.after({_key(entity_of(ORDERS, "Order")): 5}, limit=3)
-    assert node.order_by == (OrderKey(attr=_ORDER_ID, direction="desc"),)
-    assert node.predicate == Comparison(op="lessThan", attr=_ORDER_ID, value=5)
+    assert node.authored.order_by == (OrderKey(attr=_ORDER_ID, direction="desc"),)
+    assert node.predicate.authored == Comparison(op="lessThan", attr=_ORDER_ID, value=5)
 
 
 def test_a_subtype_position_pages_by_its_family_roots_key() -> None:
@@ -229,7 +227,7 @@ def test_a_subtype_position_pages_by_its_family_roots_key() -> None:
     ]
     query = validate_object_query(dog, object_query(dog.identity, All()), ANIMAL)
     node = continuation.plan(query, ANIMAL).first(limit=5)
-    assert node.order_by == (OrderKey(attr=_ANIMAL_ID, direction="asc"),)
+    assert node.authored.order_by == (OrderKey(attr=_ANIMAL_ID, direction="asc"),)
 
 
 def test_a_narrowed_reads_sort_key_is_measured_at_the_narrowed_position() -> None:
@@ -245,11 +243,13 @@ def test_a_narrowed_reads_sort_key_is_measured_at_the_narrowed_position() -> Non
     )
     plan = continuation.plan(validate_object_query(animal, query, ANIMAL), ANIMAL)
     node = plan.first(limit=1)
-    assert node.order_by == (
+    assert node.authored.order_by == (
         OrderKey(attr=_DOG_BARK, direction="desc"),
         OrderKey(attr=_ANIMAL_ID, direction="asc"),
     )
-    assert node.narrow_to == ("parallax.compatibility.Dog",)
+    assert tuple(entity.identity.canonical for entity in node.narrow_to or ()) == (
+        "parallax.compatibility.Dog",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -571,10 +571,10 @@ def test_the_seek_matrix(case: _SeekCase) -> None:
     # a cross-language golden: two targets that composed different trees would
     # lower different SQL for the same page.
     plan = _planned(ORDERS, "Order", order_by=case.order_by)
-    assert plan.first(limit=2).order_by == case.order
+    assert plan.first(limit=2).authored.order_by == case.order
     node = plan.after(_coordinate_map(ORDERS, case.coordinates), limit=3)
-    assert node.predicate == case.seek
-    assert node.order_by == case.order
+    assert node.predicate.authored == case.seek
+    assert node.authored.order_by == case.order
     assert node.limit == 3
 
 
@@ -588,7 +588,7 @@ def test_null_placement_over_a_non_nullable_key_changes_no_seek() -> None:
             ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME, nulls=placement),)
         )
         .after(coordinates, limit=2)
-        .predicate
+        .predicate.authored
         for placement in ("first", "last")
     }
     assert seeks["first"] == seeks["last"]
@@ -602,12 +602,12 @@ def test_a_nullable_leading_term_carries_no_hoisted_range() -> None:
     # top-level conjunct rather than two.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
     node = plan.after(_coordinate_map(ORDERS, ((_ORDER_SKU, "A-100"), (_ORDER_ID, 1))), limit=2)
-    assert isinstance(node.predicate, Group)
+    assert isinstance(node.predicate.authored, Group)
     hoisted = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME),)).after(
         _coordinate_map(ORDERS, ((_ORDER_NAME, "Ada"), (_ORDER_ID, 1))), limit=2
     )
-    assert isinstance(hoisted.predicate, And)
-    assert hoisted.predicate.operands[0] == Comparison(
+    assert isinstance(hoisted.predicate.authored, And)
+    assert hoisted.predicate.authored.operands[0] == Comparison(
         op="greaterThanEquals", attr=_ORDER_NAME, value="Ada"
     )
 
@@ -628,11 +628,11 @@ def test_a_nullable_terms_own_two_way_branch_stays_inside_the_ties_above_it() ->
         limit=2,
     )
     compiled = compile_read(
-        node.predicate,
+        node.predicate.authored,
         ORDERS,
         POSTGRES,
         entity_of(ORDERS, "Order"),
-        order_by=node.order_by,
+        order_by=node.authored.order_by,
         limit=node.limit,
     )
     assert compiled.statement.sql.endswith(
@@ -655,11 +655,11 @@ def test_a_document_resident_sort_key_seeks_through_the_extraction_seam() -> Non
         _coordinate_map(DOCUMENT_LAYOUT, ((_TRAVELER_SCORE, 7), (_TRAVELER_ID, 1))), limit=2
     )
     compiled = compile_read(
-        node.predicate,
+        node.predicate.authored,
         DOCUMENT_LAYOUT,
         POSTGRES,
         entity_of(DOCUMENT_LAYOUT, "Traveler"),
-        order_by=node.order_by,
+        order_by=node.authored.order_by,
         limit=node.limit,
     )
     assert compiled.statement.sql.endswith(
@@ -682,7 +682,7 @@ def test_the_seek_is_a_top_level_conjunct_and_the_callers_terms_bind_first() -> 
     predicate = _active(ORDERS, "Order")
     plan = _planned(ORDERS, "Order", predicate=predicate)
     node = plan.after({_key(entity_of(ORDERS, "Order")): 4}, limit=3)
-    assert node.predicate == And(
+    assert node.predicate.authored == And(
         operands=(predicate, Comparison(op="greaterThan", attr=_ORDER_ID, value=4))
     )
 
@@ -694,9 +694,9 @@ def test_a_multi_term_seek_conjoins_both_of_its_parts_beside_the_caller() -> Non
     predicate = _active(ORDERS, "Order")
     plan = _planned(ORDERS, "Order", predicate=predicate, order_by=(OrderKey(attr=_ORDER_NAME),))
     node = plan.after(_coordinate_map(ORDERS, ((_ORDER_NAME, "Ada"), (_ORDER_ID, 1))), limit=3)
-    assert isinstance(node.predicate, And)
-    assert len(node.predicate.operands) == 3
-    assert node.predicate.operands[0] == predicate
+    assert isinstance(node.predicate.authored, And)
+    assert len(node.predicate.authored.operands) == 3
+    assert node.predicate.authored.operands[0] == predicate
 
 
 def test_a_callers_disjunction_is_grouped_before_the_seek_is_conjoined_to_it() -> None:
@@ -707,7 +707,7 @@ def test_a_callers_disjunction_is_grouped_before_the_seek_is_conjoined_to_it() -
     right = Comparison(op="eq", attr="parallax.compatibility.Order.qty", value=1)
     plan = _planned(ORDERS, "Order", predicate=Or(operands=(left, right)))
     node = plan.after({_key(entity_of(ORDERS, "Order")): 1}, limit=3)
-    assert node.predicate == And(
+    assert node.predicate.authored == And(
         operands=(
             Group(operand=Or(operands=(left, right))),
             Comparison(op="greaterThan", attr=_ORDER_ID, value=1),
@@ -721,7 +721,7 @@ def test_a_later_page_of_an_unfiltered_query_carries_the_seek_alone() -> None:
     # left operand — which would lower to a dangling `and`.
     plan = _planned(ORDERS, "Order")
     node = plan.after({_key(entity_of(ORDERS, "Order")): 2}, limit=3)
-    assert node.predicate == Comparison(op="greaterThan", attr=_ORDER_ID, value=2)
+    assert node.predicate.authored == Comparison(op="greaterThan", attr=_ORDER_ID, value=2)
 
 
 def test_advancing_from_a_root_that_carries_no_key_is_refused_by_name() -> None:
@@ -770,7 +770,7 @@ def test_a_milestone_set_read_orders_by_the_key_then_its_one_axis_start(
     # so the key alone is not total there. What separates two milestones of one
     # key is the milestone each stands at, which is the axis's own start.
     plan = _planned(BALANCE, "Balance", temporal={"transaction-time": selection})
-    assert plan.first(limit=2).order_by == (
+    assert plan.first(limit=2).authored.order_by == (
         OrderKey(attr=_BALANCE_ID, direction="asc"),
         OrderKey(attr=_BALANCE_TX_START, direction="asc"),
     )
@@ -788,7 +788,7 @@ def test_a_bitemporal_scan_appends_both_axis_starts_valid_time_first(
     # ONE axis still appends both: a milestone is a rectangle, and two rectangles
     # of one key may differ on the axis the read pinned.
     plan = _planned(POSITION, "Position", temporal={"transaction-time": selection})
-    assert plan.first(limit=2).order_by == (
+    assert plan.first(limit=2).authored.order_by == (
         OrderKey(attr=_POSITION_ID, direction="asc"),
         OrderKey(attr=_POSITION_VALID_START, direction="asc"),
         OrderKey(attr=_POSITION_TX_START, direction="asc"),
@@ -799,7 +799,7 @@ def test_a_single_instant_temporal_read_appends_no_edge() -> None:
     # A pin is not a scan: one milestone per key reaches the result, so the key
     # is total by itself and the order is what every non-temporal read's is.
     plan = _planned(POSITION, "Position", temporal={"transaction-time": AsOf("latest")})
-    assert plan.first(limit=2).order_by == (OrderKey(attr=_POSITION_ID, direction="asc"),)
+    assert plan.first(limit=2).authored.order_by == (OrderKey(attr=_POSITION_ID, direction="asc"),)
 
 
 def test_an_authored_sort_key_naming_an_axis_start_is_not_appended_twice() -> None:
@@ -812,7 +812,7 @@ def test_an_authored_sort_key_naming_an_axis_start_is_not_appended_twice() -> No
         temporal={"transaction-time": History()},
         order_by=(OrderKey(attr=_POSITION_TX_START, direction="desc"),),
     )
-    assert plan.first(limit=2).order_by == (
+    assert plan.first(limit=2).authored.order_by == (
         OrderKey(attr=_POSITION_TX_START, direction="desc"),
         OrderKey(attr=_POSITION_ID, direction="asc"),
         OrderKey(attr=_POSITION_VALID_START, direction="asc"),
@@ -833,7 +833,7 @@ def test_a_milestone_page_seeks_past_the_edge_as_a_canonical_instant_literal() -
         },
         limit=2,
     )
-    assert node.predicate == And(
+    assert node.predicate.authored == And(
         operands=(
             Comparison(op="greaterThanEquals", attr=_POSITION_ID, value=1),
             Group(
@@ -921,7 +921,7 @@ def test_a_milestone_delivery_pages_through_every_boundary_offset_without_skip_o
     # above are graded by, over instants rather than scalars.
     rows = _milestones()
     plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
-    ranked = _ranked(POSITION, plan.first(limit=1).order_by)
+    ranked = _ranked(POSITION, plan.first(limit=1).authored.order_by)
     expected = sorted(rows, key=ranked)
     delivered: list[_Row] = []
     cursor: _Row | None = None
@@ -929,9 +929,9 @@ def test_a_milestone_delivery_pages_through_every_boundary_offset_without_skip_o
         node = (
             plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
         )
-        page = sorted((row for row in rows if _matches(POSITION, node.predicate, row)), key=ranked)[
-            :batch_size
-        ]
+        page = sorted(
+            (row for row in rows if _matches(POSITION, node.predicate.authored, row)), key=ranked
+        )[:batch_size]
         delivered.extend(page)
         if len(page) < batch_size:
             break
@@ -1066,7 +1066,7 @@ def test_paging_reproduces_the_whole_result_in_the_order_the_first_page_declares
     # delivers it twice.
     rows = _dataset()
     plan = _planned(ORDERS, "Order", order_by=order_by)
-    ranked = _ranked(ORDERS, plan.first(limit=1).order_by)
+    ranked = _ranked(ORDERS, plan.first(limit=1).authored.order_by)
     expected = sorted(rows, key=ranked)
     delivered: list[_Row] = []
     cursor: _Row | None = None
@@ -1074,9 +1074,9 @@ def test_paging_reproduces_the_whole_result_in_the_order_the_first_page_declares
         node = (
             plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
         )
-        page = sorted((row for row in rows if _matches(ORDERS, node.predicate, row)), key=ranked)[
-            :batch_size
-        ]
+        page = sorted(
+            (row for row in rows if _matches(ORDERS, node.predicate.authored, row)), key=ranked
+        )[:batch_size]
         delivered.extend(page)
         if len(page) < batch_size:
             break
@@ -1111,7 +1111,7 @@ def _delivered_under_writes(
     """
     rows = [dict(row) for row in _dataset()]
     plan = _planned(ORDERS, "Order", order_by=order_by)
-    ranked = _ranked(ORDERS, plan.first(limit=1).order_by)
+    ranked = _ranked(ORDERS, plan.first(limit=1).authored.order_by)
     identity = _identity(ORDERS, _ORDER_ID)
     delivered: list[object] = []
     cursor: _Row | None = None
@@ -1119,9 +1119,9 @@ def _delivered_under_writes(
         node = (
             plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
         )
-        page = sorted((row for row in rows if _matches(ORDERS, node.predicate, row)), key=ranked)[
-            :batch_size
-        ]
+        page = sorted(
+            (row for row in rows if _matches(ORDERS, node.predicate.authored, row)), key=ranked
+        )[:batch_size]
         delivered.extend(row[identity] for row in page)
         if len(page) < batch_size:
             return delivered
@@ -1281,4 +1281,4 @@ def test_the_page_node_is_a_fresh_value_rather_than_a_mutated_query() -> None:
     assert query.order_by == ()
     assert query.limit is None
     assert first is not later
-    assert first.predicate == All()
+    assert first.predicate.authored == All()

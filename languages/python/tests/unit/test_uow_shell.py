@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 from collections.abc import Callable, Mapping
+from decimal import Decimal
 from types import TracebackType
 
 import pytest
@@ -46,10 +47,14 @@ from parallax.core.unit_work import (
     WriteBatchOpening,
     WriteBatchTrigger,
     WritePlan,
-    WritePlanningError,
     active_unit_of_work,
     buffered_write,
     run_unit_of_work,
+)
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    prepare_typed_write,
 )
 from parallax.snapshot.handle import build_write_planner
 
@@ -98,8 +103,19 @@ def _run[T](
     )
 
 
-def _account_insert(account_id: int) -> KeyedWrite:
-    return KeyedWrite("insert", "Account", ({"id": account_id, "owner": "N", "balance": 5.00},))
+def _prepared_keyed(write: KeyedWrite, model: Metamodel) -> PreparedKeyedWrite:
+    prepared = prepare_typed_write(write, model)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    return prepared
+
+
+def _account_insert(account_id: int) -> PreparedKeyedWrite:
+    return _prepared_keyed(
+        KeyedWrite(
+            "insert", "Account", ({"id": account_id, "owner": "N", "balance": Decimal("5.00")},)
+        ),
+        _ACCOUNT,
+    )
 
 
 def _member_value(attributes: Mapping[AttributeIdentity, object], name: str) -> object:
@@ -233,13 +249,20 @@ def test_clock_supplies_the_flush_transaction_time_instant() -> None:
     recorder = _Recorder()
 
     def body(tx: UnitOfWork) -> None:
-        tx.buffer(KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 100.00},)))
+        tx.buffer(
+            _prepared_keyed(
+                KeyedWrite(
+                    "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},)
+                ),
+                _BALANCE,
+            )
+        )
 
     _run(body, clock=FixedClock(_FIXED), executor=recorder, meta=_BALANCE)
     (step,) = recorder.plans[0].steps
     assert isinstance(step, PlannedInsert)
     (entry,) = step.entries
-    assert _member_value(entry.row.attributes, "txStart") == "2024-06-01T00:00:00+00:00"
+    assert _member_value(entry.row.attributes, "txStart") == _FIXED
 
 
 def test_system_clock_reads_an_aware_utc_instant() -> None:
@@ -265,7 +288,10 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
         assert resolved is not None
         tx.buffer(
             ObservedKeyedWrite(
-                instruction=KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},)),
+                instruction=_prepared_keyed(
+                    KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("0.00")},)),
+                    _ACCOUNT,
+                ),
                 observation=resolved.evidence,
             )
         )
@@ -286,7 +312,14 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
     # reached planning wearing evidence would corrupt each in turn.
     with pytest.raises(ValueError, match="an insert carries no Write Observation"):
         ObservedKeyedWrite(
-            instruction=KeyedWrite("insert", "Account", ({"id": 1, "version": 1},)),
+            instruction=_prepared_keyed(
+                KeyedWrite(
+                    "insert",
+                    "Account",
+                    ({"id": 1, "owner": "N", "balance": Decimal("5.00"), "version": 1},),
+                ),
+                _ACCOUNT,
+            ),
             observation=VersionObservation(observed_version=1),
         )
 
@@ -300,8 +333,13 @@ def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> Non
     # would carry `id 2` to the same new version and expect two affected rows.
     with pytest.raises(ValueError, match="evidence about one row"):
         buffered_write(
-            KeyedWrite(
-                "update", "Account", ({"id": 1, "balance": 0.00}, {"id": 2, "balance": 0.00})
+            _prepared_keyed(
+                KeyedWrite(
+                    "update",
+                    "Account",
+                    ({"id": 1, "balance": Decimal("0.00")}, {"id": 2, "balance": Decimal("0.00")}),
+                ),
+                _ACCOUNT,
             ),
             VersionObservation(observed_version=7),
         )
@@ -317,7 +355,9 @@ def test_a_carrier_refuses_a_claim_naming_other_evidence() -> None:
     other = RetainedObservation(state, VersionObservation(observed_version=7), None)
     with pytest.raises(ValueError, match="the retained form of the observation"):
         ObservedKeyedWrite(
-            instruction=KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},)),
+            instruction=_prepared_keyed(
+                KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("0.00")},)), _ACCOUNT
+            ),
             observation=VersionObservation(observed_version=7),
             claim=other,
         )
@@ -333,8 +373,13 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     state = VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7)
     retained = RetainedObservation(state, VersionObservation(observed_version=7), None)
     carriers = [
-        buffered_write(KeyedWrite("update", "Account", ({"id": 1, "balance": balance},)), retained)
-        for balance in (125.00, 150.00)
+        buffered_write(
+            _prepared_keyed(
+                KeyedWrite("update", "Account", ({"id": 1, "balance": balance},)), _ACCOUNT
+            ),
+            retained,
+        )
+        for balance in (Decimal("125.00"), Decimal("150.00"))
     ]
     finalized = build_write_planner(_ACCOUNT).finalize(
         PlanningRequest(
@@ -346,7 +391,7 @@ def test_two_writes_of_one_claim_merge_and_answer_it_once() -> None:
     )
     (step,) = finalized.plan.steps
     assert isinstance(step, PlannedUpdate)
-    assert _member_value(step.assignments.attributes, "balance") == 150.00
+    assert _member_value(step.assignments.attributes, "balance") == Decimal("150.00")
     assert finalized.claims == (retained,)
 
 
@@ -358,8 +403,10 @@ def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:
     predicate = PredicateWrite(
         "delete", PredicateSelection("Account", predicate_algebra.Comparison("eq", "Account.id", 1))
     )
+    prepared = prepare_typed_write(predicate, _ACCOUNT)
+    assert isinstance(prepared, PreparedPredicateWrite)
     with pytest.raises(TypeError, match="only a keyed write settles against evidence of its own"):
-        buffered_write(predicate, VersionObservation(observed_version=1))
+        buffered_write(prepared, VersionObservation(observed_version=1))
 
 
 def test_a_fully_empty_transaction_never_touches_the_clock() -> None:
@@ -381,9 +428,23 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
     recorder = _Recorder()
 
     def body(tx: UnitOfWork) -> None:
-        tx.buffer(KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 1.00},)))
+        tx.buffer(
+            _prepared_keyed(
+                KeyedWrite(
+                    "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("1.00")},)
+                ),
+                _BALANCE,
+            )
+        )
         tx.read(lambda: "row")  # forces the first flush
-        tx.buffer(KeyedWrite("insert", "Balance", ({"id": 10, "acctNum": "E", "value": 2.00},)))
+        tx.buffer(
+            _prepared_keyed(
+                KeyedWrite(
+                    "insert", "Balance", ({"id": 10, "acctNum": "E", "value": Decimal("2.00")},)
+                ),
+                _BALANCE,
+            )
+        )
 
     _run(body, clock=clock, executor=recorder, meta=_BALANCE)
     # The forced flush and the commit flush carry the SAME holder, so consuming
@@ -397,7 +458,7 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
         assert isinstance(step, PlannedInsert)
         (entry,) = step.entries
         tx_starts.append(_member_value(entry.row.attributes, "txStart"))
-    assert tx_starts == ["2024-06-01T00:00:00+00:00"] * 2
+    assert tx_starts == [_FIXED] * 2
     assert clock.calls == 1
 
 
@@ -522,23 +583,6 @@ def test_each_batch_is_a_scope_around_its_own_planning_and_execution() -> None:
         "executed:pre_commit",
         "left:pre_commit",
     ]
-
-
-def test_a_flush_that_fails_in_planning_fails_inside_its_own_batch() -> None:
-    # The whole reason the scope is not folded into the executor: the executor
-    # receives a settled plan, so a flush that dies while planning would
-    # otherwise be invisible to an observer of the transaction — and here it is
-    # a batch that opened and failed rather than work outside every batch.
-    order: list[str] = []
-    recorder = _Recorder()
-
-    def body(tx: UnitOfWork) -> None:
-        tx.buffer(KeyedWrite("insert", "Gadget", ({"id": 1, "name": "G"},)))
-
-    with pytest.raises(WritePlanningError, match="Gadget"):
-        _run(body, executor=recorder, opening=_opener(order))
-    assert order == ["opened:pre_commit", "failed:pre_commit"]
-    assert recorder.plans == []
 
 
 def test_a_unit_of_work_without_a_batch_opening_still_flushes() -> None:

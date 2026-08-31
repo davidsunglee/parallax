@@ -289,12 +289,13 @@ def _planned(
     instruction = instructions.deserialize(
         {"mutation": "insert", "entity": entity_name, "rows": [members], "validFrom": valid_from}
     )
+    prepared = instructions.prepare_wire_write(instruction, POSITION)
     return build_write_planner(POSITION).plan(
         PlanningRequest(
             subject_identity=SubjectIdentity("unattributed"),
             transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
             concurrency="locking",
-            buffered_writes=[buffered_write(instruction, None)],
+            buffered_writes=[buffered_write(prepared, None)],
         )
     )
 
@@ -387,6 +388,7 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
         {"mutation": "insert", "entity": "Account", "rows": [{"id": 1, "owner": "Ada"}]}
     )
     account = models.load_models()["account"]
+    prepared = instructions.prepare_wire_write(instruction, account)
     plan = build_write_planner(account).plan(
         PlanningRequest(
             subject_identity=SubjectIdentity("unattributed"),
@@ -394,7 +396,7 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
                 FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
             ),
             concurrency="locking",
-            buffered_writes=[buffered_write(instruction, None)],
+            buffered_writes=[buffered_write(prepared, None)],
         )
     )
     shadow.track_opened(account, plan)

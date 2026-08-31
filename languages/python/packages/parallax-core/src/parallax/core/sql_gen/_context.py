@@ -5,13 +5,13 @@ every other private module may import it. That is what forces :class:`SqlGenErro
 to live here — it is the one name the whole package raises, so any other home
 would make some module import sideways.
 
-:class:`Ctx` is the whole of that state, and it is deliberately small: the
+:class:`StatementBuilder` is the whole of that state, and it is deliberately small: the
 metamodel, its Inheritance Facet and Storage Layout Facet, and the dialect a
 statement renders against, its ordered bind list, and its alias counter. It
 holds **no resolution policy** —
 no active entity, no alias, no
 aliased-versus-unaliased rendering decision, no attribute search. Those are the
-`_predicate` resolution scope's, which is also what makes a `Ctx` a plain mutable
+`_predicate` resolution scope's, which is also what makes a `StatementBuilder` a plain mutable
 accumulator: with nothing per-scope left on it, exactly ONE exists per statement
 (a plain read, a table-per-hierarchy read, each table-per-concrete-subtype `union
 all` branch), nested scopes just keep pointing at it, and the frozen-dataclass
@@ -26,21 +26,20 @@ Neither exposes `bind` or `binds`, which is how "a plan never binds" is a type
 rule rather than a convention (see the comment above them). They are signatures
 only: every decision they describe is implemented one layer up.
 
-Named without a leading underscore because the MODULE carries the privacy: this
-package's supported seam is the six names `__init__` re-exports, and nothing
-here reaches it. Importers alias to the module-private spelling
-(`import Ctx as _Ctx`), the codebase's established cross-module idiom.
+The module carries the privacy; callers use the descriptive builder name directly.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, cast
 
 from parallax.core.base import ManagedValue, NeutralType
+from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.inheritance import InheritanceFacet
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 from parallax.core.wire import WireValue, decode_canonical_wire, encode_wire
 
@@ -54,6 +53,12 @@ class _TypedBindSpan:
     neutral_type: NeutralType
     form: _BindForm
 
+    def indexes(self) -> range:
+        return range(self.start, self.stop)
+
+    def shifted(self, offset: int) -> _TypedBindSpan:
+        return _TypedBindSpan(self.start + offset, self.stop + offset, self.neutral_type, self.form)
+
 
 @dataclass(frozen=True, slots=True)
 class _RepeatedTypedBindSpan:
@@ -63,6 +68,26 @@ class _RepeatedTypedBindSpan:
     repetitions: int
     neutral_type: NeutralType
     form: _BindForm
+
+    def indexes(self) -> Iterator[int]:
+        return (
+            self.start + repetition * self.stride + offset
+            for repetition in range(self.repetitions)
+            for offset in range(self.width)
+        )
+
+    def shifted(self, offset: int) -> _RepeatedTypedBindSpan:
+        return _RepeatedTypedBindSpan(
+            self.start + offset,
+            self.width,
+            self.stride,
+            self.repetitions,
+            self.neutral_type,
+            self.form,
+        )
+
+
+type _BindSpan = _TypedBindSpan | _RepeatedTypedBindSpan
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,33 +102,44 @@ class LoweredStatement:
 
     sql: str
     binds: tuple[object, ...] = ()
-    typed_bind_spans: tuple[_TypedBindSpan | _RepeatedTypedBindSpan, ...] = field(
-        default=(), repr=False
-    )
-    wire_bind_overrides: tuple[_WireBindOverride, ...] = field(default=(), repr=False)
+    _typed_bind_spans: tuple[_BindSpan, ...] = field(default=(), repr=False)
+    _wire_bind_overrides: tuple[_WireBindOverride, ...] = field(default=(), repr=False)
+    _compiler_proven: bool = field(default=False, repr=False, compare=False)
 
     def wire_binds(self) -> tuple[WireValue, ...]:
-        projected = list(cast("tuple[WireValue, ...]", self.binds))
-        for span in self.typed_bind_spans:
-            indexes = (
-                range(span.start, span.stop)
-                if isinstance(span, _TypedBindSpan)
-                else (
-                    span.start + repetition * span.stride + offset
-                    for repetition in range(span.repetitions)
-                    for offset in range(span.width)
-                )
-            )
-            for index in indexes:
+        unprojected = object()
+        projected: list[WireValue | object] = [unprojected] * len(self.binds)
+        for span in self._typed_bind_spans:
+            for index in span.indexes():
                 value = self.binds[index]
                 if span.form == "MANAGED":
                     projected[index] = encode_wire(span.neutral_type, cast("ManagedValue", value))
                 else:
                     managed = decode_canonical_wire(span.neutral_type, cast("WireValue", value))
                     projected[index] = encode_wire(span.neutral_type, managed)
-        for override in self.wire_bind_overrides:
+        for override in self._wire_bind_overrides:
             projected[override.index] = override.value
-        return tuple(projected)
+        for index, value in enumerate(projected):
+            if value is unprojected:
+                projected[index] = _wire_bind(self.binds[index])
+        return cast("tuple[WireValue, ...]", tuple(projected))
+
+
+def _wire_bind(value: object) -> WireValue:
+    if isinstance(value, JsonDocument):
+        return _wire_bind(value.value)
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    if isinstance(value, list):
+        return [_wire_bind(item) for item in cast("list[object]", value)]
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[object, object]", value)
+        if not all(isinstance(name, str) for name in mapping):
+            raise SqlGenError("an unannotated document bind has a non-string member name")
+        return {cast("str", name): _wire_bind(item) for name, item in mapping.items()}
+    raise SqlGenError(
+        f"bind carrier {type(value).__name__} has no declared neutral type or Wire override"
+    )
 
 
 class SqlGenError(ValueError):
@@ -192,34 +228,22 @@ class PlanScope(ColumnScope, Protocol):
 
     def column_of(self, attr_ref: str) -> str: ...
 
+    def column_for(self, attribute: AttributeMetadata) -> str: ...
+
     def next_alias(self) -> str: ...
 
     def child(self, entity: EntityMetadata, alias: str) -> PlanScope: ...
 
 
 class StatementBuilder:
-    """One statement's shared lowering state: ordered binds and the alias counter.
-
-    Constructing a ``Ctx`` declares a new statement scope — a plain read, a
-    table-per-hierarchy read, or each table-per-concrete-subtype `union all`
-    branch (which is exactly why each such branch restarts its own aliases at
-    `t0` and keeps its binds separable). Nothing copies a ``Ctx``: every nested
-    resolution scope holds this same object, so a correlated subquery's aliases
-    and binds continue the enclosing statement's single sequence by identity
-    rather than by an argument someone has to remember to thread.
-
-    ``facet`` is the model's Inheritance Facet and ``storage`` its Storage
-    Layout Facet, the two facets `m-sql` reads: each is retrieved once per
-    compiled statement and travels with the model it was compiled from, so no
-    lowering step re-derives a family answer or a physical table shape.
-    """
+    """One statement's aliases and role-classified bind sequence."""
 
     __slots__ = (
+        "_binds",
+        "_classified",
         "_next_alias_index",
-        "_repeated_typed_spans",
-        "_typed_binds",
+        "_typed_spans",
         "_wire_overrides",
-        "binds",
         "dialect",
         "facet",
         "meta",
@@ -238,134 +262,134 @@ class StatementBuilder:
         self.facet = facet
         self.storage = storage
         self.dialect = dialect
-        self.binds: list[object] = []
-        self._typed_binds: dict[int, tuple[NeutralType, _BindForm]] = {}
-        self._repeated_typed_spans: list[_RepeatedTypedBindSpan] = []
+        self._binds: list[object] = []
+        self._typed_spans: list[_BindSpan] = []
         self._wire_overrides: dict[int, WireValue] = {}
+        self._classified = 0
         self.requires_variant_partition = False
-        # The next alias INDEX after this statement's own `t0`, which is never
-        # allocated here — it is the base scope's default alias (m-sql rule 1).
         self._next_alias_index = 1
 
     def next_alias(self) -> str:
-        """The next alias in this statement's single continuing sequence."""
         index = self._next_alias_index
         self._next_alias_index = index + 1
         return f"t{index}"
 
-    def bind(self, value: object) -> None:
-        self.binds.append(value)
+    def bind_structural(self, value: object) -> None:
+        self._append(value)
 
-    def bind_typed(
-        self, value: object, neutral_type: NeutralType, form: _BindForm = "MANAGED"
+    def bind_structural_all(self, values: Sequence[object]) -> None:
+        for value in values:
+            self.bind_structural(value)
+
+    def bind_document(self, value: JsonDocument) -> None:
+        self._append(value)
+
+    def bind_managed(self, value: object, neutral_type: NeutralType) -> None:
+        self._bind_typed(value, neutral_type, "MANAGED")
+
+    def bind_comparison_text(self, value: object, neutral_type: NeutralType) -> None:
+        self._bind_typed(value, neutral_type, "COMPARISON_TEXT")
+
+    def bind_framework(self, value: object, *, wire_value: WireValue | None = None) -> None:
+        index = len(self._binds)
+        self._append(value)
+        if wire_value is not None:
+            self._wire_overrides[index] = wire_value
+
+    def bind_framework_all(self, values: Sequence[object]) -> None:
+        for value in values:
+            self.bind_framework(value)
+
+    def bind_typed_rows(
+        self,
+        rows: Sequence[Sequence[object]],
+        pattern: Sequence[NeutralType | None],
     ) -> None:
-        index = len(self.binds)
-        self.binds.append(value)
-        self._typed_binds[index] = (neutral_type, form)
-
-    def bind_override(self, value: object, wire_value: WireValue) -> None:
-        index = len(self.binds)
-        self.binds.append(value)
-        self._wire_overrides[index] = wire_value
-
-    def repeat_typed_pattern(self, *, start: int, width: int, repetitions: int) -> None:
-        """Compact a repeated fixed-width bind pattern into per-run descriptors."""
-        if repetitions < 2:
+        """Append row values using one fixed width-sized managed-type pattern."""
+        if not rows:
             return
-        stop = start + width
-        first_row = {
-            index: metadata
-            for index, metadata in self._typed_binds.items()
-            if start <= index < stop
-        }
-        for repetition in range(1, repetitions):
-            row_start = start + repetition * width
-            pattern = {
-                index - row_start: metadata
-                for index, metadata in self._typed_binds.items()
-                if row_start <= index < row_start + width
-            }
-            expected = {index - start: metadata for index, metadata in first_row.items()}
-            if pattern != expected:
-                return
-        runs: list[tuple[int, int, NeutralType, _BindForm]] = []
-        for index, (neutral_type, form) in sorted(first_row.items()):
-            if (
-                runs
-                and runs[-1][1] == index
-                and runs[-1][2] == neutral_type
-                and runs[-1][3] == form
-            ):
-                run_start, _run_stop, run_type, run_form = runs[-1]
-                runs[-1] = (run_start, index + 1, run_type, run_form)
-            else:
-                runs.append((index, index + 1, neutral_type, form))
-        for run_start, run_stop, neutral_type, form in runs:
-            run_width = run_stop - run_start
-            self._repeated_typed_spans.append(
-                _RepeatedTypedBindSpan(
-                    run_start,
-                    run_width,
-                    width,
-                    repetitions,
-                    neutral_type,
-                    form,
-                )
-            )
-            for repetition in range(repetitions):
-                for offset in range(run_width):
-                    self._typed_binds.pop(run_start + repetition * width + offset, None)
-
-    def extend(self, statement: LoweredStatement) -> None:
-        """Append a compiled fragment without discarding its bind provenance."""
-        offset = len(self.binds)
-        self.binds.extend(statement.binds)
-        for span in statement.typed_bind_spans:
-            if isinstance(span, _RepeatedTypedBindSpan):
-                self._repeated_typed_spans.append(
+        width = len(pattern)
+        if any(len(row) != width for row in rows):
+            raise SqlGenError("a repeated bind pattern has inconsistent row widths")
+        if len(rows) == 1:
+            for value, neutral_type in zip(rows[0], pattern, strict=True):
+                self._bind_row_value(value, neutral_type)
+            return
+        start = len(self._binds)
+        for row in rows:
+            for value in row:
+                self._append(value)
+        run_start: int | None = None
+        run_type: NeutralType | None = None
+        for offset, neutral_type in enumerate((*pattern, None)):
+            if neutral_type == run_type:
+                continue
+            if run_type is not None and run_start is not None:
+                self._typed_spans.append(
                     _RepeatedTypedBindSpan(
-                        offset + span.start,
-                        span.width,
-                        span.stride,
-                        span.repetitions,
-                        span.neutral_type,
-                        span.form,
+                        start + run_start,
+                        offset - run_start,
+                        width,
+                        len(rows),
+                        run_type,
+                        "MANAGED",
                     )
                 )
-                continue
-            indexes = range(span.start, span.stop)
-            for index in indexes:
-                self._typed_binds[offset + index] = (span.neutral_type, span.form)
-        for override in statement.wire_bind_overrides:
+            run_start = offset if neutral_type is not None else None
+            run_type = neutral_type
+
+    def append_fragment(self, statement: LoweredStatement) -> None:
+        """Append a compiler-proven fragment without discarding bind provenance."""
+        if not statement._compiler_proven:
+            raise SqlGenError("only a finished compiler fragment may be appended")
+        offset = len(self._binds)
+        self._binds.extend(statement.binds)
+        self._classified += len(statement.binds)
+        self._typed_spans.extend(span.shifted(offset) for span in statement._typed_bind_spans)
+        for override in statement._wire_bind_overrides:
             self._wire_overrides[offset + override.index] = override.value
 
-    def statement(self, sql: str) -> LoweredStatement:
-        return LoweredStatement(
-            sql,
-            tuple(self.binds),
-            tuple(
-                sorted(
-                    (*self._typed_spans(), *self._repeated_typed_spans),
-                    key=lambda span: span.start,
-                )
-            ),
-            tuple(
-                _WireBindOverride(index, value)
-                for index, value in sorted(self._wire_overrides.items())
-            ),
+    def finish(self, sql: str) -> LoweredStatement:
+        """Validate bind metadata and seal a compiler-proven statement."""
+        if self._classified != len(self._binds):
+            raise SqlGenError("every compiler bind must be supplied through one role-specific API")
+        occupied: set[int] = set()
+        spans = tuple(sorted(self._typed_spans, key=lambda span: span.start))
+        for span in spans:
+            for index in span.indexes():
+                if not 0 <= index < len(self._binds) or index in occupied:
+                    raise SqlGenError("typed bind metadata is out of range or overlaps")
+                occupied.add(index)
+        overrides = tuple(
+            _WireBindOverride(index, value) for index, value in sorted(self._wire_overrides.items())
         )
+        if any(not 0 <= override.index < len(self._binds) for override in overrides):
+            raise SqlGenError("Wire bind override metadata is out of range")
+        return LoweredStatement(sql, tuple(self._binds), spans, overrides, True)
 
-    def _typed_spans(self) -> tuple[_TypedBindSpan, ...]:
-        spans: list[_TypedBindSpan] = []
-        for index, (neutral_type, form) in sorted(self._typed_binds.items()):
-            if (
-                spans
-                and spans[-1].stop == index
-                and spans[-1].neutral_type == neutral_type
-                and spans[-1].form == form
-            ):
-                previous = spans[-1]
-                spans[-1] = _TypedBindSpan(previous.start, index + 1, neutral_type, form)
-            else:
-                spans.append(_TypedBindSpan(index, index + 1, neutral_type, form))
-        return tuple(spans)
+    def _append(self, value: object) -> None:
+        self._binds.append(value)
+        self._classified += 1
+
+    def _bind_row_value(self, value: object, neutral_type: NeutralType | None) -> None:
+        if neutral_type is not None and value is not None:
+            self.bind_managed(value, neutral_type)
+        elif isinstance(value, JsonDocument):
+            self.bind_document(value)
+        else:
+            self.bind_structural(value)
+
+    def _bind_typed(self, value: object, neutral_type: NeutralType, form: _BindForm) -> None:
+        index = len(self._binds)
+        self._append(value)
+        if (
+            self._typed_spans
+            and isinstance(self._typed_spans[-1], _TypedBindSpan)
+            and self._typed_spans[-1].stop == index
+            and self._typed_spans[-1].neutral_type == neutral_type
+            and self._typed_spans[-1].form == form
+        ):
+            previous = self._typed_spans[-1]
+            self._typed_spans[-1] = _TypedBindSpan(previous.start, index + 1, neutral_type, form)
+        else:
+            self._typed_spans.append(_TypedBindSpan(index, index + 1, neutral_type, form))

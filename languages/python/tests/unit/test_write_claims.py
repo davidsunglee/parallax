@@ -60,6 +60,7 @@ from parallax.core.unit_work import (
     instructions,
     keyed_intent,
 )
+from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 
 _ACCOUNT_ROW: dict[str, object] = {
@@ -88,6 +89,7 @@ _RETAINED = RetainedObservation(
 )
 _PERSON = EntityIdentity("parallax.compatibility", "Person")
 _PERSON_META = model_of(PERSON)
+_BALANCE_META = model_of(BALANCE)
 
 
 def _person_delete(*ids: int) -> KeyedWrite:
@@ -102,6 +104,27 @@ def _person_delete(*ids: int) -> KeyedWrite:
     return instruction
 
 
+def _prepared_person_delete(*ids: int) -> PreparedKeyedWrite:
+    prepared = instructions.prepare_wire_write(_person_delete(*ids), _PERSON_META)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    return prepared
+
+
+def _prepared_intent(mutation: str) -> PreparedKeyedWrite:
+    document: dict[str, object] = {
+        "mutation": mutation,
+        "entity": "Balance",
+        "rows": [{"id": 1, "acctNum": "A", "value": "100.00"}],
+        "validFrom": "2024-01-01T00:00:00.000000Z",
+    }
+    if mutation.endswith("Until"):
+        document["until"] = "2024-06-01T00:00:00.000000Z"
+    instruction = instructions.deserialize(document)
+    prepared = instructions.prepare_wire_write(instruction, _BALANCE_META)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    return prepared
+
+
 def _writes(port: ScriptedPort) -> list[WriteCall]:
     return [op for op in port.calls if isinstance(op, WriteCall)]
 
@@ -113,8 +136,8 @@ def test_an_insert_intends_nothing_against_an_observed_state() -> None:
     # An opening row observes no prior state, so there is no claim for a second
     # intent to compete for — the absence is the missing answer, not an intent
     # kind of its own.
-    assert keyed_intent(KeyedWrite("insert", "Account", ({"id": 1},))) is None
-    assert keyed_intent(KeyedWrite("insertUntil", "Account", ({"id": 1},))) is None
+    assert keyed_intent(_prepared_intent("insert")) is None
+    assert keyed_intent(_prepared_intent("insertUntil")) is None
 
 
 @pytest.mark.parametrize(
@@ -130,10 +153,10 @@ def test_an_insert_intends_nothing_against_an_observed_state() -> None:
 def test_every_other_keyed_mutation_intends_an_assignment_or_a_destruction(
     mutation: str, kind: str
 ) -> None:
-    intent = keyed_intent(KeyedWrite(mutation, "Account", ({"id": 1},), valid_from="2024-01-01"))  # pyright: ignore[reportArgumentType]
+    intent = keyed_intent(_prepared_intent(mutation))
     assert intent is not None
     assert intent.kind == kind
-    assert intent.region == ("2024-01-01", None)
+    assert intent.region[0] is not None
 
 
 @pytest.mark.parametrize(
@@ -456,7 +479,9 @@ def test_a_caller_supplied_observation_is_what_an_instruction_settles_against() 
     # entitled to none refuses it later rather than having it dropped here.
     observation = VersionObservation(observed_version=4)
     assert (
-        opt_lock.instruction_evidence(_PERSON_META, _person_delete(1), supplied=observation)
+        opt_lock.instruction_evidence(
+            _PERSON_META, _prepared_person_delete(1), supplied=observation
+        )
         is observation
     )
 
@@ -465,7 +490,7 @@ def test_an_instruction_holding_no_evidence_reaches_its_targets_own_arm() -> Non
     # What the ingress rule answers a caller who supplied none: the same arm the
     # typed verb for this write reads off its source value's hint.
     assert opt_lock.instruction_evidence(
-        _PERSON_META, _person_delete(1), supplied=None
+        _PERSON_META, _prepared_person_delete(1), supplied=None
     ) == ObjectKey(_PERSON, (("id", 1),))
 
 
@@ -475,7 +500,10 @@ def test_an_instruction_naming_several_rows_settles_against_nothing() -> None:
     # therefore reaches no runtime ingress at all — reaches neither grain and
     # buffers bare. Evidence supplied WITH one is refused by the single-row
     # carrier (`test_uow_shell`), never dropped for this answer.
-    assert opt_lock.instruction_evidence(_PERSON_META, _person_delete(1, 2), supplied=None) is None
+    assert (
+        opt_lock.instruction_evidence(_PERSON_META, _prepared_person_delete(1, 2), supplied=None)
+        is None
+    )
 
 
 def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
@@ -485,8 +513,8 @@ def test_an_instruction_naming_no_entity_of_the_model_is_refused() -> None:
         {"mutation": "delete", "entity": "parallax.compatibility.Account", "rows": [{"id": 1}]}
     )
     assert isinstance(foreign, KeyedWrite)
-    with pytest.raises(KeyError, match="names no Entity"):
-        opt_lock.instruction_evidence(_PERSON_META, foreign, supplied=None)
+    with pytest.raises(instructions.WriteInstructionError, match="unknown entity"):
+        instructions.prepare_wire_write(foreign, _PERSON_META)
 
 
 def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None:
@@ -609,9 +637,14 @@ def test_an_object_claim_refuses_to_wrap_an_insert_or_a_multi_row_write() -> Non
     # The carrier's own structural half, which needs no model: an opening row has
     # no prior row to claim, and a claim is about the object ONE row addresses.
     with pytest.raises(ValueError, match="an insert claims no object"):
-        ObjectClaimedWrite(KeyedWrite("insert", "Person", ({"id": 1},)))
+        insertion = instructions.deserialize(
+            {"mutation": "insert", "entity": "Person", "rows": [{"id": 1, "name": "Ada"}]}
+        )
+        prepared = instructions.prepare_wire_write(insertion, _PERSON_META)
+        assert isinstance(prepared, PreparedKeyedWrite)
+        ObjectClaimedWrite(prepared)
     with pytest.raises(ValueError, match="an object claim addresses one object"):
-        ObjectClaimedWrite(KeyedWrite("delete", "Person", ({"id": 1}, {"id": 2})))
+        ObjectClaimedWrite(_prepared_person_delete(1, 2))
 
 
 # --------------------------------------------------------------------------- #

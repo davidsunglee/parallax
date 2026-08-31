@@ -20,7 +20,7 @@ column itself, and no full-size list-to-tuple copy happens at the end.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final, cast
@@ -39,6 +39,8 @@ __all__ = [
 # The bound one sealed chunk holds. Private and internal: no consumer observes
 # chunk boundaries, only the logical column they compose.
 _CHUNK_SIZE: Final[int] = 1024
+_EMPTY_PROXY: Mapping[object, object] = MappingProxyType({})
+_IMMUTABLE_MAPPING: type[object] = type(_EMPTY_PROXY)
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,15 +142,19 @@ def whole[T](column: ChunkedColumn[T]) -> ColumnSlice[T]:
 
 
 def freeze_retained_value(value: object) -> object:
-    """Recursively snapshot JSON-shaped containers retained across step access."""
+    """Own mutable containers once and retain already-frozen trees by identity."""
+    if isinstance(value, _IMMUTABLE_MAPPING):
+        return value
     if isinstance(value, Mapping):
         mapping = cast("Mapping[object, object]", value)
-        return MappingProxyType(
-            {key: freeze_retained_value(nested) for key, nested in mapping.items()}
-        )
-    if isinstance(value, (list, tuple)):
-        sequence = cast("Sequence[object]", value)
-        return tuple(freeze_retained_value(nested) for nested in sequence)
+        frozen = {key: freeze_retained_value(nested) for key, nested in mapping.items()}
+        return cast("Mapping[object, object]", MappingProxyType(frozen))
+    if isinstance(value, tuple):
+        items = cast("tuple[object, ...]", value)
+        frozen = tuple(freeze_retained_value(nested) for nested in items)
+        return items if all(a is b for a, b in zip(frozen, items, strict=True)) else frozen
+    if isinstance(value, list):
+        return tuple(freeze_retained_value(nested) for nested in cast("list[object]", value))
     return value
 
 

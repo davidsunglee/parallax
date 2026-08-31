@@ -1887,6 +1887,7 @@ forbidden_modules = [
 name = "parallax.core.sql_gen private modules are layered"
 type = "layers"
 layers = [
+    "parallax.core.sql_gen._write",
     "parallax.core.sql_gen._compile",
     "parallax.core.sql_gen._predicate",
     "parallax.core.sql_gen._navigation",
@@ -1898,6 +1899,7 @@ layers = [
 name = "parallax.core.sql_gen private modules must not import the package root"
 type = "forbidden"
 source_modules = [
+    "parallax.core.sql_gen._write",
     "parallax.core.sql_gen._compile",
     "parallax.core.sql_gen._predicate",
     "parallax.core.sql_gen._navigation",

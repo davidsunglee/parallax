@@ -41,13 +41,14 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
 )
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, entity_by_name
-from parallax.core.object_query import ObjectQueryNode, ValidatedObjectQuery
+from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.temporal_read import (
     Pin,
     TemporalReadError,
     milestone_edge_of,
-    query_pin,
-    scans_an_axis,
+    scans_validated_axis,
+    validated_query_pin,
 )
 from parallax.snapshot._read_result import FindResult
 from parallax.snapshot.handle._preflight import preflight
@@ -212,11 +213,11 @@ class SnapshotStream[T]:
         entity = self._entity()
         declaring = declaring_metadata(self._model.meta, entity.identity)
         self._plan = continuation.plan(validated, self._model.meta)
-        if scans_an_axis(self._node):
+        if scans_validated_axis(validated.temporal):
             self._milestones = declaring
             self._pin = Pin()
         else:
-            self._pin = query_pin(self._node, declaring)
+            self._pin = validated_query_pin(validated.temporal)
         self._activity = self._open_stream(
             self._node.target, self._publication.interface, self._batch_size
         ).__enter__()

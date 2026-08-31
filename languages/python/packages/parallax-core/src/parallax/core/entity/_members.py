@@ -47,6 +47,7 @@ from parallax.core.metamodel import (
     SortDirection,
     TablePerHierarchy,
     ValueObjectMetadata,
+    ValueObjectShapeDeclaration,
 )
 from parallax.core.object_query import IncludeSegment
 
@@ -515,11 +516,12 @@ class ElementAttr[T]:
     it addresses rather than an Entity.
     """
 
-    __slots__ = ("_canonical", "_index")
+    __slots__ = ("_canonical", "_index", "_shape")
 
-    def __init__(self, canonical: str, index: int) -> None:
+    def __init__(self, canonical: str, index: int, shape: ValueObjectShapeDeclaration) -> None:
         self._canonical = canonical
         self._index = index
+        self._shape = shape
 
     @overload
     def __get__[V](self, obj: None, owner: type[V], /) -> ElementAttributeExpr[V, T]: ...
@@ -529,7 +531,7 @@ class ElementAttr[T]:
         self, obj: object | None, _owner: type | None = None
     ) -> ElementAttributeExpr[Any, T] | T:
         if obj is None:
-            return ElementAttributeExpr((self._canonical,))
+            return ElementAttributeExpr((self._canonical,), self._shape)
         # A non-data descriptor, so Pydantic's own instance storage shadows
         # this branch on an ordinary value and it answers for a published one.
         try:

@@ -28,7 +28,6 @@ from parallax.core.object_query._nodes import (
     VALID_TIME,
     AsOf,
     AsOfRange,
-    EntityQuery,
     History,
     IncludePath,
     IncludeSegment,
@@ -40,7 +39,6 @@ from parallax.core.object_query._nodes import (
     TemporalDimensionConstant,
     TemporalSelection,
 )
-from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.object_query.serde import ObjectQueryError, deserialize, serialize
 from parallax.core.object_query.validate import query_entities, validate_object_query
 
@@ -50,7 +48,6 @@ __all__ = [
     "VALID_TIME",
     "AsOf",
     "AsOfRange",
-    "EntityQuery",
     "History",
     "IncludePath",
     "IncludeSegment",
@@ -62,7 +59,6 @@ __all__ = [
     "TemporalDimension",
     "TemporalDimensionConstant",
     "TemporalSelection",
-    "ValidatedObjectQuery",
     "canonical_includes",
     "deserialize",
     "object_query",

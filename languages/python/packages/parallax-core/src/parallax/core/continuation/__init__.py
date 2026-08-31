@@ -26,7 +26,7 @@ the node :meth:`ContinuationPlan.first` returns.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal, cast
 
 from parallax.core.base import ManagedValue
@@ -39,12 +39,13 @@ from parallax.core.metamodel import (
     PrimaryKey,
     entity_by_name,
 )
-from parallax.core.object_query import (
-    ObjectQueryNode,
-    OrderKey,
+from parallax.core.object_query import OrderKey
+from parallax.core.object_query._validated import (
     ValidatedObjectQuery,
+    ValidatedOrderTerm,
+    derive_page,
+    resolved_order_term,
 )
-from parallax.core.object_query._validated import ValidatedOrderTerm
 from parallax.core.predicate import (
     Group,
     NoneOp,
@@ -59,13 +60,14 @@ from parallax.core.predicate._validated import (
 from parallax.core.predicate._validated import (
     conjunction as _validated_conjunction,
 )
+from parallax.core.predicate._validated import empty_predicate as _empty_predicate
 from parallax.core.predicate._validated import (
     managed_comparison as _managed_comparison,
 )
 from parallax.core.predicate._validated import (
     null_check as _null_check,
 )
-from parallax.core.temporal_read import scans_an_axis
+from parallax.core.temporal_read import scans_validated_axis
 
 __all__ = ["ContinuationError", "ContinuationPlan", "plan"]
 
@@ -92,6 +94,7 @@ class _Term:
     nulls: Literal["first", "last"]
     nullable: bool
     member: AttributeMetadata
+    resolved: ValidatedOrderTerm
 
     @property
     def attr(self) -> str:
@@ -117,10 +120,11 @@ class ContinuationPlan:
 
     def first(self, *, limit: int) -> ValidatedObjectQuery:
         """The first page: the caller's query, ordered and capped at ``limit``."""
-        return replace(
+        return derive_page(
             self._query,
-            authored=replace(self._query.authored, order_by=self._order, limit=limit),
-            order_terms=tuple(ValidatedOrderTerm(term.key, term.member) for term in self._terms),
+            seek=None,
+            order_by=tuple(term.resolved for term in self._terms),
+            limit=limit,
         )
 
     def after(
@@ -138,18 +142,13 @@ class ContinuationPlan:
         leading ordering column. The caller's terms bind first, so bind order
         stays caller-first exactly as an injected as-of term leaves it.
         """
-        seek = self._seek(last_root)
-        predicate = _validated_conjunction(self._query.validated_predicate, *seek)
-        return replace(
+        seek_terms = self._seek(last_root)
+        seek = seek_terms[0] if len(seek_terms) == 1 else _validated_conjunction(*seek_terms)
+        return derive_page(
             self._query,
-            authored=replace(
-                self._query.authored,
-                predicate=predicate.authored,
-                order_by=self._order,
-                limit=limit,
-            ),
-            validated_predicate=predicate,
-            order_terms=tuple(ValidatedOrderTerm(term.key, term.member) for term in self._terms),
+            seek=seek,
+            order_by=tuple(term.resolved for term in self._terms),
+            limit=limit,
         )
 
     def continues_from(self, root: Mapping[AttributeIdentity, object]) -> bool:
@@ -227,16 +226,17 @@ def plan(query: ValidatedObjectQuery, model: Metamodel) -> ContinuationPlan:
     lowers and seeks exactly as an authored Sort Key does.
     """
     entity = query.root
-    authored = query.authored
     root = _family_root(entity, model)
-    terms = [_term(sort_key, model) for sort_key in authored.order_by]
-    for identity in (_family_key(root), *_milestone_edge(root, authored)):
+    terms = [_term_from_resolved(term) for term in query.order_by]
+    for identity in (_family_key(root), *_milestone_edge(root, query)):
         if all(term.identity != identity for term in terms):
             terms.append(_term(OrderKey(attr=_reference(identity), direction="asc"), model))
     return ContinuationPlan(query, tuple(terms))
 
 
-def _milestone_edge(root: EntityMetadata, query: ObjectQueryNode) -> tuple[AttributeIdentity, ...]:
+def _milestone_edge(
+    root: EntityMetadata, query: ValidatedObjectQuery
+) -> tuple[AttributeIdentity, ...]:
     """The Attributes a milestone-set read's roots stand at, in canonical axis rank.
 
     Empty for a read that scans no axis, whose roots are one per primary key and
@@ -246,7 +246,7 @@ def _milestone_edge(root: EntityMetadata, query: ObjectQueryNode) -> tuple[Attri
     half-open interval and so distinguishes it from every other milestone of the
     same key.
     """
-    if not scans_an_axis(query):
+    if not scans_validated_axis(query.temporal):
         return ()
     axes = sorted(root.declared_as_of_axes, key=lambda axis: axis.dimension.value)
     return tuple(axis.start_attribute for axis in axes)
@@ -321,7 +321,7 @@ def _strictly_after(term: _Term, coordinate: ManagedValue | None) -> ValidatedPr
     if coordinate is None:
         if term.nulls == "first":
             return _null_check(op="isNotNull", attr=term.attr, member=term.member)
-        return ValidatedPredicate(NoneOp())
+        return _empty_predicate()
     strict = _managed_comparison(
         op="greaterThan" if term.direction == "asc" else "lessThan",
         attr=term.attr,
@@ -346,13 +346,34 @@ def _group(predicate: ValidatedPredicate) -> ValidatedPredicate:
 
 def _term(key: OrderKey, model: Metamodel) -> _Term:
     attribute = _attribute(key.attr, model)
+    direction = key.direction or "asc"
+    nulls = key.nulls or "last"
     return _Term(
         key=key,
         identity=attribute.identity,
-        direction=key.direction or "asc",
-        nulls=key.nulls or "last",
+        direction=direction,
+        nulls=nulls,
         nullable=attribute.nullable,
         member=attribute,
+        resolved=resolved_order_term(attribute, direction=direction, nulls=nulls),
+    )
+
+
+def _term_from_resolved(term: ValidatedOrderTerm) -> _Term:
+    member = term.member
+    key = OrderKey(
+        attr=f"{member.identity.entity.canonical}.{member.identity.name}",
+        direction=term.direction,
+        nulls=term.nulls,
+    )
+    return _Term(
+        key=key,
+        identity=member.identity,
+        direction=term.direction,
+        nulls=term.nulls,
+        nullable=member.nullable,
+        member=member,
+        resolved=term,
     )
 
 

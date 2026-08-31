@@ -49,7 +49,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from parallax.core import inheritance, relationship
-from parallax.core.base import INFINITY_LITERAL
+from parallax.core.base import INFINITY_LITERAL, ManagedValue
 from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
@@ -76,12 +76,14 @@ from parallax.core.predicate._validated import (
 from parallax.core.predicate._validated import (
     conjunction as _validated_conjunction,
 )
+from parallax.core.predicate._validated import derive_predicate as _derive_predicate
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import conjunction_terms, validated_hop_as_of_terms
 
 __all__ = ["canonicalize", "canonicalize_validated", "hop_as_of_terms", "resolve_relationship"]
 
 _EMPTY_PINS: Mapping[TemporalDimension, str] = MappingProxyType({})
+_EMPTY_MANAGED_PINS: Mapping[TemporalDimension, ManagedValue] = MappingProxyType({})
 
 
 def canonicalize(
@@ -123,7 +125,7 @@ def canonicalize_validated(
     op: ValidatedPredicate,
     model: Metamodel,
     entity: EntityMetadata,
-    root_pins: Mapping[TemporalDimension, str] = _EMPTY_PINS,
+    root_pins: Mapping[TemporalDimension, ManagedValue] = _EMPTY_MANAGED_PINS,
 ) -> ValidatedPredicate:
     """Propagate hop terms while preserving every already-elaborated occurrence."""
     if not _contains_navigation(op.authored):
@@ -135,15 +137,14 @@ def _walk_validated(
     product: ValidatedPredicate,
     model: Metamodel,
     entity: EntityMetadata,
-    root_pins: Mapping[TemporalDimension, str],
+    root_pins: Mapping[TemporalDimension, ManagedValue],
 ) -> ValidatedPredicate:
     op = product.authored
     match op:
         case Navigate(rel=rel) | Exists(rel=rel) | NotExists(rel=rel):
             target = product.relationship_target
             if target is None:  # pragma: no cover - elaboration resolves every hop
-                direction = resolve_relationship(rel, entity.identity, model)
-                target = _entity(model, direction.join.target.entity)
+                raise ValueError(f"{rel!r}: validated navigation carries no target")
             inner = (
                 None
                 if not product.children
@@ -168,11 +169,7 @@ def _walk_validated(
                 rebuilt = Exists(rel=rel, op=None if combined is None else combined.authored)
             else:
                 rebuilt = NotExists(rel=rel, op=None if combined is None else combined.authored)
-            return ValidatedPredicate(
-                rebuilt,
-                children=() if combined is None else (combined,),
-                relationship_target=target,
-            )
+            return _derive_predicate(product, rebuilt, () if combined is None else (combined,))
         case And() | Or():
             children = tuple(
                 _walk_validated(child, model, entity, root_pins) for child in product.children
@@ -182,7 +179,7 @@ def _walk_validated(
                 if isinstance(op, And)
                 else Or(operands=tuple(child.authored for child in children))
             )
-            return ValidatedPredicate(rebuilt, children=children)
+            return _derive_predicate(product, rebuilt, children)
         case Not() | Group() | Narrow():
             child = _walk_validated(product.only_child(), model, entity, root_pins)
             if isinstance(op, Not):
@@ -191,7 +188,7 @@ def _walk_validated(
                 rebuilt = Group(operand=child.authored)
             else:
                 rebuilt = Narrow(to=op.to, operand=child.authored)
-            return ValidatedPredicate(rebuilt, children=(child,))
+            return _derive_predicate(product, rebuilt, (child,))
         case _:
             return product
 

@@ -1,37 +1,13 @@
-"""``parallax.core.temporal_read`` enforcement scope (m-temporal-read).
+"""Temporal read products and predicate injection (m-temporal-read).
 
-The as-of read model: temporal entities whose rows are **milestones** over
-``[from, to)`` intervals, with the as-of predicate **auto-injected** on read.
-This scope owns the *interval model, the explicit-selection injection rule, and the
-milestone (edge-pin) behaviour* (``m-object-query`` / ``m-temporal-read``);
-``m-sql`` owns the concrete SQL fragments and bind order. Because the normative
-module DAG forbids ``m-sql`` from importing ``m-temporal-read``, the temporal →
-predicate lowering is expressed **here**, as a rewrite of an Object Query's
-Temporal Selection clause into ordinary ``m-predicate`` predicate nodes, which
-``m-sql`` then lowers with no temporal knowledge. The ``m-deep-fetch`` planning
-boundary passes the query's predicate and Temporal Selections to
-:func:`inject_as_of`, then places the result in the flat ``EntityQuery``
-consumed by ``compile_read``.
+Authored Temporal Selections are validated into closed, model-bound variants before
+planning. The production path consumes those variants: it appends managed temporal
+predicate terms, derives pins without reparsing authored strings, and reports whether
+a validated selection scans an axis. Raw-node helpers remain only as the authored
+serialization utility surface; SQL consumes neither authored selections nor temporal
+concepts.
 
-Every entry point here takes accepted Entity Metadata, and each resolves an
-axis through the same declared lookup, so the wire dimension spelling a Temporal
-Selection is keyed by meets the model's own Temporal Dimension in exactly one
-place.
-
-This scope also owns the Temporal Facet: the immutable per-formation view that
-answers each Entity's effective temporal shape from its family root's declared
-As-Of Axes. It contributes that Model Compiler and no Rule Set, because every
-axis defect belongs to ``m-metamodel`` or ``m-inheritance``. Consumers reach the
-facet through :func:`view`, so generic facet retrieval stays an internal
-formation seam.
-
-``m-temporal-read`` depends on ``m-object-query``, ``m-predicate``,
-``m-metamodel``, ``m-model-formation``, and ``m-inheritance``; it never imports
-``m-dialect`` or ``m-sql``. The Temporal Selection VALUE belongs to the query it
-is a clause of, so this scope consumes it rather than defining it. The open upper bound is
-carried as the ``m-core`` canonical ``infinity`` literal — a plain bind — so the
-dialect's physical infinity representation stays owned by the adapter, exactly as
-every other literal (``m-sql``: the current-row bind is the ``infinity`` literal).
+This module also owns the immutable Temporal Facet compiled for each accepted model.
 """
 
 from __future__ import annotations
@@ -39,11 +15,11 @@ from __future__ import annotations
 import datetime as _dt
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, assert_never
 
 from parallax.core.base import INFINITY_LITERAL, ManagedValue, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
-from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.object_query import (
     LATEST,
@@ -55,6 +31,13 @@ from parallax.core.object_query import (
     TemporalSelection,
 )
 from parallax.core.object_query import TemporalDimension as WireDimension
+from parallax.core.object_query._validated import (
+    ValidatedAsOfSelection,
+    ValidatedHistorySelection,
+    ValidatedLatestSelection,
+    ValidatedRangeSelection,
+    ValidatedTemporalSelection,
+)
 from parallax.core.predicate import All, And, Comparison, Group, Or, PredicateNode
 from parallax.core.predicate._validated import (
     ValidatedPredicate,
@@ -84,7 +67,6 @@ from parallax.core.temporal_read._facet import (
     TransactionTimeOnly,
     view,
 )
-from parallax.core.wire import decode_wire
 
 __all__ = [
     "FACET_KEY",
@@ -104,7 +86,6 @@ __all__ = [
     "compile_facet",
     "conjunction_terms",
     "inject_as_of",
-    "inject_validated_as_of",
     "milestone_edge",
     "milestone_edge_from_members",
     "milestone_edge_of",
@@ -372,63 +353,99 @@ def inject_as_of(
     return terms[0] if len(terms) == 1 else And(operands=terms)
 
 
-def inject_validated_as_of(
+def inject_resolved_as_of(
     predicate: ValidatedPredicate,
-    selections: Mapping[WireDimension, TemporalSelection],
+    selections: tuple[ValidatedTemporalSelection, ...],
     entity: EntityMetadata,
 ) -> ValidatedPredicate:
-    """Append generated temporal terms without revisiting an authored occurrence."""
-    modes: dict[AcceptedDimension, _AxisMode] = {}
-    for dimension, selection in selections.items():
-        axis = _declared_axis(dimension, entity)
-        modes[axis.dimension] = _mode_of(selection)
+    """Append temporal terms from managed, resolved selections."""
     terms: list[ValidatedPredicate] = []
-    for axis in sorted(entity.declared_as_of_axes, key=lambda item: item.dimension.value):
-        mode = modes.get(axis.dimension)
-        if mode is None:
-            raise TemporalReadError(
-                f"{entity.identity.name}: internal temporal lowering received no selection "
-                f"for declared dimension {axis.dimension.value!r}"
-            )
-        terms.extend(_validated_terms(mode, axis, entity))
+    for selection in selections:
+        start = entity.attribute(selection.axis.start_attribute.name)
+        end = entity.attribute(selection.axis.end_attribute.name)
+        if start is None or end is None:
+            raise TemporalReadError(f"{entity.identity.name}: temporal axis member is undeclared")
+        start_ref = f"{entity.identity.canonical}.{start.identity.name}"
+        end_ref = f"{entity.identity.canonical}.{end.identity.name}"
+        match selection:
+            case ValidatedHistorySelection():
+                continue
+            case ValidatedLatestSelection():
+                terms.append(
+                    _framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)
+                )
+            case ValidatedAsOfSelection(coordinate=coordinate):
+                terms.extend(
+                    (
+                        _managed_comparison(
+                            op="lessThanEquals",
+                            attr=start_ref,
+                            member=start,
+                            value=coordinate,
+                        ),
+                        _managed_comparison(
+                            op="greaterThan", attr=end_ref, member=end, value=coordinate
+                        ),
+                    )
+                )
+            case ValidatedRangeSelection(start=window_start, end=window_end):
+                terms.extend(
+                    (
+                        _managed_comparison(
+                            op="lessThan", attr=start_ref, member=start, value=window_end
+                        ),
+                        _managed_comparison(
+                            op="greaterThan", attr=end_ref, member=end, value=window_start
+                        ),
+                    )
+                )
+            case _:
+                assert_never(selection)
     return predicate if not terms else _validated_conjunction(predicate, *terms)
 
 
-def _validated_terms(
-    mode: _AxisMode, axis: AcceptedAsOfAxis, entity: EntityMetadata
-) -> list[ValidatedPredicate]:
-    start = entity.attribute(axis.start_attribute.name)
-    end = entity.attribute(axis.end_attribute.name)
-    if start is None or end is None:  # pragma: no cover - accepted axes name local attributes
-        raise TemporalReadError(f"{entity.identity.name}: temporal axis member is undeclared")
-    start_ref = f"{entity.identity.canonical}.{start.identity.name}"
-    end_ref = f"{entity.identity.canonical}.{end.identity.name}"
-    if isinstance(mode, _Scan):
-        return []
-    if isinstance(mode, _Latest):
-        return [_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)]
-    if isinstance(mode, _Containment):
-        instant = _decode_temporal_coordinate(mode.instant, start)
-        return [
-            _managed_comparison(op="lessThanEquals", attr=start_ref, member=start, value=instant),
-            _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=instant),
-        ]
-    window_start = _decode_temporal_coordinate(mode.from_, end)
-    window_end = _decode_temporal_coordinate(mode.to, start)
-    return [
-        _managed_comparison(op="lessThan", attr=start_ref, member=start, value=window_end),
-        _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=window_start),
-    ]
+def resolved_pinned_instants(
+    selections: tuple[ValidatedTemporalSelection, ...],
+) -> dict[AcceptedDimension, ManagedValue]:
+    return {
+        selection.axis.dimension: selection.coordinate
+        for selection in selections
+        if isinstance(selection, ValidatedAsOfSelection)
+    }
 
 
-def _decode_temporal_coordinate(value: str, member: AttributeMetadata) -> ManagedValue:
-    return decode_wire(member.type, value)
+def validated_query_pin(selections: tuple[ValidatedTemporalSelection, ...]) -> Pin:
+    """Return the pin already decoded by Object Query validation."""
+    tx_time: _dt.datetime | Latest | None = None
+    valid_time: _dt.datetime | Latest | None = None
+    for selection in selections:
+        value: _dt.datetime | Latest
+        if isinstance(selection, ValidatedLatestSelection):
+            value = LATEST
+        elif isinstance(selection, ValidatedAsOfSelection):
+            if not isinstance(selection.coordinate, _dt.datetime):
+                raise TemporalReadError("a temporal coordinate is not a managed datetime")
+            value = selection.coordinate
+        else:
+            continue
+        if selection.axis.dimension is AcceptedDimension.TRANSACTION_TIME:
+            tx_time = value
+        else:
+            valid_time = value
+    return Pin(tx_time=tx_time, valid_time=valid_time)
+
+
+def scans_validated_axis(selections: tuple[ValidatedTemporalSelection, ...]) -> bool:
+    return any(
+        isinstance(selection, ValidatedHistorySelection | ValidatedRangeSelection)
+        for selection in selections
+    )
 
 
 def validated_hop_as_of_terms(
     target: EntityMetadata,
     model: Metamodel,
-    root_pins: Mapping[AcceptedDimension, str],
+    root_pins: Mapping[AcceptedDimension, ManagedValue],
 ) -> tuple[ValidatedPredicate, ...]:
     """Build managed per-hop terms; an absent pin means the framework Latest sentinel."""
     # Import locally to keep the existing temporal facet's module layering unchanged.
@@ -443,8 +460,41 @@ def validated_hop_as_of_terms(
     terms: list[ValidatedPredicate] = []
     for axis in sorted(declarer.declared_as_of_axes, key=lambda item: item.dimension.value):
         instant = root_pins.get(axis.dimension)
-        mode: _AxisMode = _Latest() if instant is None else _Containment(instant)
-        terms.extend(_validated_terms(mode, axis, declarer))
+        if instant is None:
+            end = declarer.attribute(axis.end_attribute.name)
+            if end is None:
+                raise TemporalReadError(
+                    f"{declarer.identity.name}: temporal axis member is undeclared"
+                )
+            terms.append(
+                _framework_comparison(
+                    op="eq",
+                    attr=f"{declarer.identity.canonical}.{end.identity.name}",
+                    member=end,
+                    value=INFINITY_LITERAL,
+                )
+            )
+            continue
+        start = declarer.attribute(axis.start_attribute.name)
+        end = declarer.attribute(axis.end_attribute.name)
+        if start is None or end is None:
+            raise TemporalReadError(f"{declarer.identity.name}: temporal axis member is undeclared")
+        terms.extend(
+            (
+                _managed_comparison(
+                    op="lessThanEquals",
+                    attr=f"{declarer.identity.canonical}.{start.identity.name}",
+                    member=start,
+                    value=instant,
+                ),
+                _managed_comparison(
+                    op="greaterThan",
+                    attr=f"{declarer.identity.canonical}.{end.identity.name}",
+                    member=end,
+                    value=instant,
+                ),
+            )
+        )
     return tuple(terms)
 
 

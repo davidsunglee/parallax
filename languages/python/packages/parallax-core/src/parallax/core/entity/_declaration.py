@@ -1090,7 +1090,7 @@ def _build_value_object(
         relationships=(),
     )
     for py_name, canonical in py_to_name.items():
-        setattr(cls, py_name, ElementAttr(canonical, plan.indexes[py_name]))
+        setattr(cls, py_name, ElementAttr(canonical, plan.indexes[py_name], shape_of(cls).shape))
     return cls
 
 
