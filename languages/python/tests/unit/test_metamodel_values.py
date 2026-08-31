@@ -292,6 +292,8 @@ def test_a_decimal_type_requires_serializable_bounds() -> None:
         (2**63, base.INT64, False),
         ("1", base.INT64, False),
         (1.5, base.FLOAT32, True),
+        (1048576.2, base.FLOAT32, False),
+        (1048576.25, base.FLOAT32, True),
         (3.5e38, base.FLOAT32, False),
         (float("inf"), base.FLOAT32, False),
         (1e300, base.FLOAT64, True),
@@ -379,242 +381,28 @@ def test_a_timestamp_member_names_an_instant_a_utc_datetime_holds(unusable: dt.d
     assert base.matches_neutral_type(unusable, base.TIMESTAMP) is False
 
 
-# A runtime write validator asks membership of a value that may still carry its
-# portable literal spelling, so it decodes first and then checks membership. That
-# composite must be exact for every space whose literal is a spelling (no value the
-# space cannot represent is admitted) and total (a value outside the space classifies
-# as a non-member, never raises).
-#
-# A float literal is the one space where exactness is deliberately NOT the rule: a
-# JSON number names the float of the declared width nearest it, `16777217` and
-# `16777217.0` are one number, and only an out-of-range magnitude names none. The
-# narrowing is the stated cost — see `decode_neutral_literal`, and
-# `coerce_neutral_input` below for the narrower developer-input rule.
-_ARABIC_INDIC_DIGITS = str.maketrans(
-    "0123456789", "".join(chr(0x0660 + digit) for digit in range(10))
-)
-
-
-def _unicode_digits(text: str) -> str:
-    """``text`` with its ASCII digits respelled as ARABIC-INDIC DIGIT ZERO..NINE.
-
-    A Unicode decimal digit is exactly what Python's ``\\d`` additionally matches
-    and the portable literal grammar does not, so a spelling built this way names
-    no value however readily a host parser or a lazily written regex takes it.
-    """
-    return text.translate(_ARABIC_INDIC_DIGITS)
-
-
-def _runtime_member(value: object, declared: base.NeutralType) -> bool:
-    return base.matches_neutral_type(base.decode_neutral_literal(value, declared), declared)
-
-
 @pytest.mark.parametrize(
     ("value", "declared", "expected"),
     [
-        (3, base.FLOAT64, True),
-        (2**53, base.FLOAT64, True),
-        (2**53 + 1, base.FLOAT64, True),
-        (float(2**53 + 1), base.FLOAT64, True),
-        (10**1000, base.FLOAT64, False),
-        (-(10**1000), base.FLOAT64, False),
-        (3, base.FLOAT32, True),
-        (2**24, base.FLOAT32, True),
-        (2**24 + 1, base.FLOAT32, True),
-        (float(2**24 + 1), base.FLOAT32, True),
-        (1e30, base.FLOAT32, True),
-        (1048576.25, base.FLOAT32, True),
-        (2**64, base.FLOAT32, True),
-        (10**40, base.FLOAT32, False),
-        (10**1000, base.FLOAT32, False),
-        (True, base.FLOAT32, False),
-        ("1.5", base.FLOAT32, False),
-        ("123e4567-e89b-12d3-a456-426614174000", base.UUID, True),
-        ("not-a-uuid", base.UUID, False),
-        ("deadbeef", base.BYTES, True),
-        ("DEADBEEF", base.BYTES, True),
-        ("dEaDbEeF", base.BYTES, True),
-        ("", base.BYTES, True),
-        ("not-hex", base.BYTES, False),
-        ("dead beef", base.BYTES, False),
-        ("deadbee", base.BYTES, False),
-        ("2026-01-01", base.DATE, True),
-        ("2026-01-01T00:00:00Z", base.TIMESTAMP, True),
-        ("2026-01-01T00:00:00+00:00", base.TIMESTAMP, True),
-        ("2026-01-01T00:00:00.123456+00:00", base.TIMESTAMP, True),
-        ("2026-01-01T00:00:00.1234560+00:00", base.TIMESTAMP, True),
-        ("2026-01-01T00:00:00.1234567+00:00", base.TIMESTAMP, False),
-        ("2026-01-01T00:00:00.12345678+00:00", base.TIMESTAMP, False),
-        ("2026-01-01T00:00:00,1234567+00:00", base.TIMESTAMP, False),
-        # The portable grammar is bounded ABOVE by the spellings the neutral
-        # specification states, not by what `fromisoformat` happens to take: it
-        # also reads a comma fraction, any character where the `T` belongs, a
-        # basic-format run, a week date, and an offset carrying seconds and a
-        # fraction. None of those is a document spelling of an instant.
-        ("2026-01-01.00:00:00.1234560+00:00", base.TIMESTAMP, False),
-        ("2026-01-01 00:00:00+00:00", base.TIMESTAMP, False),
-        ("20260101T000000Z", base.TIMESTAMP, False),
-        ("2026-W01-1T00:00:00Z", base.TIMESTAMP, False),
-        ("2026-01-01T00:00:00.123456+01:02:03.1234560", base.TIMESTAMP, False),
-        ("2026-01-01T00:00:00", base.TIMESTAMP, False),
-        ("20260101", base.DATE, False),
-        ("2026-W01-1", base.DATE, False),
-        ("2026-1-1", base.DATE, False),
-        ("2026-02-30", base.DATE, False),
-        ("25:00:00", base.TIME, False),
-        ("00:60:00", base.TIME, False),
-        ("2026-01-01T25:00:00Z", base.TIMESTAMP, False),
-        ("2026-01-01T00:00:00+25:00", base.TIMESTAMP, False),
-        ("2026-01-01T00:00:00-25:00", base.TIMESTAMP, False),
-        ("2026-01-01T00:00:00-05:00", base.TIMESTAMP, True),
-        ("00:00:00", base.TIME, True),
-        ("00:00", base.TIME, True),
-        ("00:00:00.123456", base.TIME, True),
-        ("00:00:00.1234560", base.TIME, True),
-        ("00:00:00.1234567", base.TIME, False),
-        ("00:00:00,1234567", base.TIME, False),
-        ("00:00:00+00:00", base.TIME, False),
-        ("T00:00:00", base.TIME, False),
-        ("000000", base.TIME, False),
-        ("123E4567-E89B-12D3-A456-426614174000", base.UUID, True),
-        ("123e4567e89b12d3a456426614174000", base.UUID, True),
-        ("{123e4567-e89b-12d3-a456-426614174000}", base.UUID, False),
-        ("urn:uuid:123e4567-e89b-12d3-a456-426614174000", base.UUID, False),
-        ("123e4567-e89b12d3-a456-426614174000", base.UUID, False),
-        ("1_2.34", base.Decimal(4, 2), False),
-        ("+12.34", base.Decimal(4, 2), False),
-        (" 12.34 ", base.Decimal(4, 2), False),
-        ("1.234e1", base.Decimal(4, 2), False),
-        ("012.34", base.Decimal(4, 2), False),
-        ("-12.34", base.Decimal(4, 2), True),
-        ("-0", base.Decimal(4, 2), False),
-        ("-0.0", base.Decimal(4, 2), False),
-        ("-0.00", base.Decimal(4, 2), False),
-        ("0.00", base.Decimal(4, 2), True),
-        ("-0.01", base.Decimal(4, 2), True),
-        ("1." + _unicode_digits("2"), base.Decimal(4, 2), False),
-        (_unicode_digits("12") + ".34", base.Decimal(4, 2), False),
-        (_unicode_digits("2026-01-01"), base.DATE, False),
-        (_unicode_digits("00:00:00"), base.TIME, False),
-        (
-            _unicode_digits("2026-01-01") + "T" + _unicode_digits("00:00:00") + "Z",
-            base.TIMESTAMP,
-            False,
-        ),
+        (decimal.Decimal("1.0000000596046448"), base.FLOAT32, 1.0 + 2.0**-23),
+        (decimal.Decimal("1.000000178813934326171875"), base.FLOAT32, 1.0 + 2.0**-22),
+        (decimal.Decimal("1048576.2"), base.FLOAT32, 1048576.25),
+        (decimal.Decimal("1e39"), base.FLOAT32, None),
+        (decimal.Decimal("1e309"), base.FLOAT64, None),
+        (decimal.Decimal("1e-1000000000"), base.FLOAT64, 0.0),
     ],
 )
-def test_runtime_neutral_membership_is_exact_lossless_and_total(
-    value: object, declared: base.NeutralType, expected: bool
+def test_nearest_float_projection_is_exact_at_the_declared_width(
+    value: int | float | decimal.Decimal,
+    declared: base.Float32 | base.Float64,
+    expected: float | None,
 ) -> None:
-    assert _runtime_member(value, declared) is expected
+    assert base.nearest_float_at_width(value, declared) == expected
 
 
-def test_a_hexadecimal_literal_carries_no_separator() -> None:
-    # `bytes.fromhex` additionally skips ASCII whitespace, which the portable literal
-    # is not: two hexadecimal digits per octet, no prefix and no separator. A spelling
-    # carrying one names no octet sequence, so it decodes to itself and membership
-    # refuses it rather than silently reading it as the octets around the separator.
-    assert base.decode_neutral_literal("0a 1b", base.BYTES) == "0a 1b"
-    assert base.decode_neutral_literal("0a1b", base.BYTES) == b"\x0a\x1b"
-    # Digit case carries no information in the DECODE, and the encoding stores the
-    # lowercase spelling — the direction `m-document-codec-001` writes `0A1B` and
-    # reads back as `0a1b`.
-    assert base.decode_neutral_literal("0A1B", base.BYTES) == b"\x0a\x1b"
-
-
-def test_an_exact_decimal_string_is_a_decimal_literal_too() -> None:
-    # The one literal a JSON number cannot carry: no JSON number declares a scale, so
-    # a structured document stores an exact decimal as a digit STRING, and this is the
-    # inverse it decodes through. Totality is unchanged — a spelling outside the
-    # grammar decodes to itself and fails membership rather than raising.
-    assert _runtime_member("1.50", base.Decimal(18, 2)) is True
-    assert base.decode_neutral_literal("1.50", base.Decimal(18, 2)) == decimal.Decimal("1.50")
-    assert base.decode_neutral_literal("not a decimal", base.Decimal(18, 2)) == "not a decimal"
-    assert _runtime_member("not a decimal", base.Decimal(18, 2)) is False
-    # `nan` and `infinity` are spellings `decimal.Decimal` takes and the portable
-    # grammar does not, so they decode to themselves and are refused.
-    assert base.decode_neutral_literal("nan", base.Decimal(18, 2)) == "nan"
-    assert _runtime_member("nan", base.Decimal(18, 2)) is False
-    assert _runtime_member("Infinity", base.Decimal(18, 2)) is False
-
-
-def test_a_number_literal_names_the_float_of_the_declared_width_nearest_it() -> None:
-    # The carrier a parser chose is not part of the number, so the two spellings of one
-    # JSON number decode alike, and the declared WIDTH is what decides the value.
-    assert base.decode_neutral_literal(2**24 + 1, base.FLOAT32) == 16777216.0
-    assert base.decode_neutral_literal(float(2**24 + 1), base.FLOAT32) == 16777216.0
-    assert base.decode_neutral_literal(2**24 + 1, base.FLOAT64) == float(2**24 + 1)
-    assert base.decode_neutral_literal(2**53 + 1, base.FLOAT64) == 9007199254740992.0
-    # Narrowing is lossy and admitted anyway: `16777217` is in space and names a
-    # DIFFERENT number than the one written. Refusing it would take an "exact or
-    # already canonical" rule rather than a plain exactness test, because a canonical
-    # binary32 spelling is itself routinely inexact — `1e30` is one, which
-    # `test_document_codec` pins from the encoding side.
-    assert base.decode_neutral_literal(1e30, base.FLOAT32) != 1e30
-    # Out of range still names nothing, at either width.
-    assert base.decode_neutral_literal(1e39, base.FLOAT32) == 1e39
-    assert _runtime_member(1e39, base.FLOAT32) is False
-
-
-def test_a_number_literal_is_rounded_once_from_the_digits_it_names() -> None:
-    # `1.0000000596046448` lies ABOVE the midpoint between binary32 `1.0` and its
-    # successor, so the binary32 nearest it IS the successor. Its nearest BINARY64 is
-    # exactly that midpoint, so a decode that narrows the carrier instead of the number
-    # ties to even and answers `1.0` — two roundings, each round-to-nearest-even, and a
-    # value the document never named. `AuthoredNumber` is how a wire parser hands the
-    # digits over; a plain `float` carrier is all a decode can round from, and rounds
-    # from it once.
-    authored = base.AuthoredNumber("1.0000000596046448")
-    assert base.decode_neutral_literal(authored, base.FLOAT32) == 1.0 + 2.0**-23
-    assert base.decode_neutral_literal(float(authored), base.FLOAT32) == 1.0
-    assert base.decode_neutral_literal(authored, base.FLOAT64) == float(authored)
-    # The rule is unchanged for every number whose digits do not straddle a midpoint,
-    # so the carrier and the digits agree everywhere else.
-    assert base.decode_neutral_literal(base.AuthoredNumber("1048576.2"), base.FLOAT32) == 1048576.25
-    assert base.decode_neutral_literal(base.AuthoredNumber("1e39"), base.FLOAT32) == 1e39
-
-
-def test_a_number_exactly_between_two_floats_names_the_one_with_the_even_mantissa() -> None:
-    # `1 + 3 * 2**-24` is exactly halfway between the binary32 successors of `1.0`,
-    # and the LOWER of the pair has the odd mantissa, so round-to-nearest-EVEN picks
-    # the upper. A rule that broke the tie by proximity alone, or toward the search's
-    # own starting point, would answer the lower one.
-    halfway = base.AuthoredNumber("1.000000178813934326171875")
-    assert base.decode_neutral_literal(halfway, base.FLOAT32) == 1.0 + 2.0**-22
-
-
-def test_the_float32_overflow_boundary_is_the_magnitude_that_rounds_to_an_infinity() -> None:
-    # `2**128 - 2**103` is half an ulp above the largest finite binary32, so it is the
-    # first magnitude that rounds to an infinity — a member of no float space. One
-    # below it still names the largest finite value, even though the binary64 a host
-    # parser would put THAT number in has already overflowed the width.
-    largest_finite = float(2**128 - 2**104)
-    assert (
-        base.decode_neutral_literal(base.AuthoredNumber(str(2**128 - 2**103 - 1)), base.FLOAT32)
-        == largest_finite
-    )
-    assert base.decode_neutral_literal(2**128 - 2**103 - 1, base.FLOAT32) == largest_finite
-    beyond = base.decode_neutral_literal(base.AuthoredNumber(str(2**128 - 2**103)), base.FLOAT32)
-    assert base.matches_neutral_type(beyond, base.FLOAT32) is False
-
-
-@pytest.mark.parametrize("declared", [base.FLOAT32, base.FLOAT64])
-def test_decoding_a_huge_integer_literal_does_not_raise(declared: base.NeutralType) -> None:
-    # A magnitude no float can carry must not overflow; it decodes to itself and
-    # fails membership, never crashing the validator that called it.
-    decoded = base.decode_neutral_literal(10**1000, declared)
-    assert decoded == 10**1000
-    assert base.matches_neutral_type(decoded, declared) is False
-
-
-# The DEVELOPER-facing write validators call `coerce_neutral_input` rather than
-# the full wire decode above: only the input policy's own narrow,
-# exact/lossless widenings apply (`python.md` "Neutral scalar type mapping"),
-# so a `float` for a `decimal` is NEVER coerced (membership then rejects it),
-# while an `int` for a `decimal`/`float` and a canonical UUID string still
-# widen -- and there is no ISO date/time/timestamp or hex-`bytes` decode at
-# all, since those are wire spellings the case-format ingestion seam decodes,
-# never a form the input policy itself admits.
+# Developer-input coercion accepts the documented widenings without sharing
+# Wire's serialized-literal grammar. Floats are projected at their declared
+# width, while decimal floats and serialized date/time/bytes forms stay invalid.
 def _coerced_member(value: object, declared: base.NeutralType) -> bool:
     return base.matches_neutral_type(base.coerce_neutral_input(value, declared), declared)
 
@@ -627,6 +415,7 @@ def _coerced_member(value: object, declared: base.NeutralType) -> bool:
         (3, base.FLOAT64, True),
         (2**53 + 1, base.FLOAT64, False),
         (3, base.FLOAT32, True),
+        (1048576.2, base.FLOAT32, True),
         (10**40, base.FLOAT32, False),
         ("123e4567-e89b-12d3-a456-426614174000", base.UUID, True),
         ("not-a-uuid", base.UUID, False),

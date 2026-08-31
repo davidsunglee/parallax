@@ -10,7 +10,8 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
-from parallax.core.base import FLOAT32, FLOAT64, AuthoredNumber, decode_neutral_literal
+from parallax.core.base import FLOAT32, FLOAT64
+from parallax.core.wire import decode_wire
 
 
 def _case(
@@ -240,13 +241,12 @@ def test_an_empty_plain_scalar_is_null() -> None:
 
 
 def test_a_number_carries_the_digits_it_was_authored_with() -> None:
-    # Which float a number names depends on the DECLARED width, which no parser sees,
-    # so the literal travels with the carrier for `decode_neutral_literal`, which does.
+    # Which float a number names depends on the declared width. The observable
+    # proof is direct-from-token decoding, never the private provenance carrier.
     loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.0000000596046448\n"))
     authored = loaded["ratio"]
-    assert isinstance(authored, AuthoredNumber)
-    assert authored.literal == "1.0000000596046448"
     assert authored == float("1.0000000596046448")
+    assert decode_wire(FLOAT32, authored) == 1.0 + 2.0**-23
 
 
 def test_a_float32_rounds_from_the_authored_digits_not_from_the_carrier() -> None:
@@ -255,7 +255,7 @@ def test_a_float32_rounds_from_the_authored_digits_not_from_the_carrier() -> Non
     # IS that midpoint, so a consumer that narrows the carrier ties to even and answers
     # `1.0` — two roundings, both round-to-nearest-even, and a different value.
     loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.0000000596046448\n"))
-    authored = cast("AuthoredNumber", loaded["ratio"])
-    assert decode_neutral_literal(authored, FLOAT32) == 1.0 + 2.0**-23
-    assert decode_neutral_literal(float(authored), FLOAT32) == 1.0
-    assert decode_neutral_literal(authored, FLOAT64) == float("1.0000000596046448")
+    authored = loaded["ratio"]
+    assert decode_wire(FLOAT32, authored) == 1.0 + 2.0**-23
+    assert decode_wire(FLOAT32, float(cast("float", authored))) == 1.0
+    assert decode_wire(FLOAT64, authored) == float("1.0000000596046448")

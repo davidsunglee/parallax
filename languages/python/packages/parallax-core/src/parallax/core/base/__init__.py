@@ -1,12 +1,10 @@
 """``parallax.core.base`` enforcement scope (m-core).
 
 The normative primitives the whole spine rests on: the structured
-:data:`~parallax.core.base.NeutralType` algebra, its value-space conformance
-check, the inverse of its portable literal encoding (the serde seam's own wire
-decode), the narrower developer input-policy widening the runtime write
-validators apply instead, the interchange neutral-type name vocabulary, global
-UTC / microsecond normalization for ``timestamp`` instants, the native-infinity
-temporal upper bound, and the ``json`` value-object document column type.
+:data:`~parallax.core.base.NeutralType` algebra, managed value membership,
+developer-input coercion, provenance-neutral float projection, the interchange
+neutral-type name vocabulary, UTC normalization, temporal infinity, and the
+``json`` value-object document column type.
 ``m-core`` depends on nothing.
 """
 
@@ -34,7 +32,6 @@ from parallax.core.base._neutral import (
     TIME,
     TIMESTAMP,
     UUID,
-    AuthoredNumber,
     Boolean,
     Bytes,
     Date,
@@ -44,14 +41,15 @@ from parallax.core.base._neutral import (
     Int32,
     Int64,
     Json,
+    ManagedValue,
     NeutralType,
     String,
     Time,
     Timestamp,
     Uuid,
     coerce_neutral_input,
-    decode_neutral_literal,
     matches_neutral_type,
+    nearest_float_at_width,
     utc_instant,
 )
 
@@ -74,7 +72,6 @@ __all__ = [
     "TIME",
     "TIMESTAMP",
     "UUID",
-    "AuthoredNumber",
     "Boolean",
     "Bytes",
     "Date",
@@ -88,6 +85,7 @@ __all__ = [
     "Int32",
     "Int64",
     "Json",
+    "ManagedValue",
     "NeutralType",
     "PresentDocument",
     "SqlNull",
@@ -98,12 +96,12 @@ __all__ = [
     "Uuid",
     "admits_stored_scalar",
     "coerce_neutral_input",
-    "decode_neutral_literal",
     "detach_json_container",
     "infer_neutral_type",
     "is_document_value",
     "is_neutral_type",
     "matches_neutral_type",
+    "nearest_float_at_width",
     "normalize_instant",
     "unwrap_document_read",
 ]

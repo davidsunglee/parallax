@@ -31,11 +31,9 @@ from parallax.core.base import (
     TIME,
     TIMESTAMP,
     UUID,
-    AuthoredNumber,
     Decimal,
     NeutralType,
     PresentDocument,
-    decode_neutral_literal,
 )
 from parallax.core.document_codec import (
     MISSING,
@@ -74,6 +72,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
+from parallax.core.wire import WireDecodingError, decode_wire, loads
 
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
 _TOKEN = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
@@ -113,9 +112,7 @@ def test_every_neutral_type_has_exactly_one_document_spelling(
 def test_decoding_an_encoding_yields_an_equal_value(
     neutral_type: NeutralType, value: object, document: object
 ) -> None:
-    # The inverse leg is m-core's own portable-literal decode, not a second table
-    # here: stating it twice is exactly the drift the module exists to prevent.
-    assert decode_neutral_literal(document, neutral_type) == value
+    assert decode_path(_one_leaf(neutral_type), {"leaf": document}, ("leaf",)) == Present(value)
 
 
 def test_a_value_outside_its_declared_space_has_no_spelling() -> None:
@@ -166,15 +163,14 @@ def test_a_float_encoding_decodes_back_at_the_width_that_chose_it() -> None:
     # DECLARED WIDTH, so the width has to be on both legs: 1048576.2 is a `float32`
     # encoding of 1048576.25 and a binary64 number in its own right, and reading it
     # back at binary64 would answer a value no `float32` holds.
-    assert decode_neutral_literal(encode_leaf(FLOAT32, 1048576.25), FLOAT32) == 1048576.25
-    assert decode_neutral_literal(1048576.2, FLOAT64) == 1048576.2
+    assert decode_wire(FLOAT32, encode_leaf(FLOAT32, 1048576.25)) == 1048576.25
+    assert decode_wire(FLOAT64, 1048576.2) == 1048576.2
     for binary32_value in (1048576.25, 1.5, -2.5, 0.0, 3.4028234663852886e38):
-        assert (
-            decode_neutral_literal(encode_leaf(FLOAT32, binary32_value), FLOAT32) == binary32_value
-        )
+        assert decode_wire(FLOAT32, encode_leaf(FLOAT32, binary32_value)) == binary32_value
     # A magnitude binary32 cannot hold names no member and is left for membership to
     # refuse rather than overflowed to infinity here.
-    assert decode_neutral_literal(3.5e38, FLOAT32) == 3.5e38
+    with pytest.raises(WireDecodingError):
+        decode_wire(FLOAT32, 3.5e38)
 
 
 def test_a_canonical_float32_number_need_not_be_exactly_a_binary32_value() -> None:
@@ -182,7 +178,7 @@ def test_a_canonical_float32_number_need_not_be_exactly_a_binary32_value() -> No
     # nearest-value decoding gives up"): the shortest number that decodes back to a
     # binary32 value is routinely not that value, so a rule refusing every inexact
     # number would refuse spellings this table itself produces.
-    binary32_value = decode_neutral_literal(1e30, FLOAT32)
+    binary32_value = decode_wire(FLOAT32, 1e30)
     assert binary32_value == 1.0000000150474662e30
     assert encode_leaf(FLOAT32, binary32_value) == 1e30
 
@@ -198,22 +194,20 @@ def test_a_stored_float_that_is_not_the_shortest_number_is_invalid_stored_data()
     # The refusal a float's canonicality needs the AUTHORED DIGITS to make: two
     # JSON numbers name one binary float, so a parse that discards the digits
     # leaves `0.1` and `0.10000000000000001` indistinguishable and the second
-    # readable as the first. A parser preserving them (`AuthoredNumber`, what the
-    # Postgres port's document loader constructs) keeps the second refusable.
+    # readable as the first. Strict Wire loading preserves the authored number
+    # until the document codec resolves the declared leaf type.
     shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT64, nullable=True),))
-    assert decode_path(shape, {"ratio": AuthoredNumber("0.1")}, ("ratio",)) == Present(0.1)
+    assert decode_path(shape, {"ratio": loads("0.1")}, ("ratio",)) == Present(0.1)
     # The number, not its rendering: `20` and `20.0` are one JSON number.
-    assert decode_path(shape, {"ratio": AuthoredNumber("20.0")}, ("ratio",)) == Present(20.0)
+    assert decode_path(shape, {"ratio": loads("20.0")}, ("ratio",)) == Present(20.0)
     with pytest.raises(ValueError, match="invalid stored data"):
-        decode_path(shape, {"ratio": AuthoredNumber("0.10000000000000001")}, ("ratio",))
+        decode_path(shape, {"ratio": loads("0.10000000000000001")}, ("ratio",))
     # At `float32` the canonical number is the shortest one that decodes back AT
     # THAT WIDTH, so the exact binary32 value is itself a second spelling of it.
     narrow = DocumentShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
-    assert decode_path(narrow, {"ratio": AuthoredNumber("1048576.2")}, ("ratio",)) == Present(
-        1048576.25
-    )
+    assert decode_path(narrow, {"ratio": loads("1048576.2")}, ("ratio",)) == Present(1048576.25)
     with pytest.raises(ValueError, match="invalid stored data"):
-        decode_path(narrow, {"ratio": AuthoredNumber("1048576.25")}, ("ratio",))
+        decode_path(narrow, {"ratio": loads("1048576.25")}, ("ratio",))
 
 
 def test_a_float_carrier_with_no_authored_digits_is_the_number_it_names() -> None:
