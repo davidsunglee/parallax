@@ -34,6 +34,7 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.wire import encode_wire
+from parallax.core.wire._json import authored_token
 
 __all__ = ["normalize_case_query", "prepare_case_write"]
 
@@ -205,7 +206,7 @@ def _wire_bound(value: str | dt.datetime | None) -> str | None:
 
 def _case_decimal(value: int | float, neutral_type: DecimalType) -> object:
     try:
-        number = decimal.Decimal(str(value))
+        number = decimal.Decimal(authored_token(value) or str(value))
     except decimal.InvalidOperation:
         return value
     sign, digits, exponent = number.as_tuple()

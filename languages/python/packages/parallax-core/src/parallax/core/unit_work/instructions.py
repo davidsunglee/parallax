@@ -52,6 +52,7 @@ from parallax.core.metamodel import (
     Multiplicity,
     NestedValueObjectMetadata,
     ValueObjectMetadata,
+    VoDocumentViolation,
     entity_by_name,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -60,7 +61,7 @@ from parallax.core.predicate import PredicateNode
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.unit_work.columns import freeze_retained_value
 from parallax.core.unit_work.planned import ValidatedMutationSelection
-from parallax.core.unit_work.write_validate import validate_write
+from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 
 __all__ = [
@@ -659,6 +660,10 @@ def _preflight_write_shape(
     if isinstance(instruction, KeyedWrite):
         members = _declared_members(model, entity)
         for row in instruction.rows:
+            try:
+                inheritance.validate_subtype_write(model, entity, row)
+            except inheritance.InheritanceError as error:
+                raise WriteRejectedError(error.rule, str(error)) from error
             unknown = sorted(name for name in row if name not in members)
             if unknown:
                 raise WriteInstructionError(
@@ -695,8 +700,12 @@ def _prepare_write(
     assigned_members: Set[str] | None,
 ) -> PreparedWrite:
     entity = _preflight_write_shape(instruction, model)
+    row_vo_violations: tuple[Mapping[str, VoDocumentViolation | None], ...] = ()
+    row_attribute_validity: tuple[Mapping[str, bool], ...] = ()
+    assignment_vo_violations: list[VoDocumentViolation | None] = []
+    assignment_value_validity: list[bool] = []
     if isinstance(instruction, KeyedWrite):
-        transformed_rows = tuple(
+        transformed_results = tuple(
             _transform_row(
                 model,
                 entity,
@@ -706,6 +715,9 @@ def _prepare_write(
             )
             for row in instruction.rows
         )
+        transformed_rows = tuple(result[0] for result in transformed_results)
+        row_vo_violations = tuple(result[1] for result in transformed_results)
+        row_attribute_validity = tuple(result[2] for result in transformed_results)
         if assigned_members is not None:
             if len(transformed_rows) != 1:
                 raise WriteInstructionError(
@@ -714,7 +726,12 @@ def _prepare_write(
             for name in assigned_members:
                 try:
                     inheritance.validate_write_assignment(
-                        model, entity, name, transformed_rows[0][name]
+                        model,
+                        entity,
+                        name,
+                        transformed_rows[0][name],
+                        known_vo_violation=row_vo_violations[0].get(name, False),
+                        known_value_valid=row_attribute_validity[0].get(name),
                     )
                 except inheritance.WriteAssignmentError as error:
                     raise WriteInstructionError(str(error)) from error
@@ -731,20 +748,26 @@ def _prepare_write(
         for assignment in instruction.assignments:
             _owner, _separator, name = assignment.attr.rpartition(".")
             member = members.get(name)
+            if member is None:
+                managed_value = assignment.value
+                violation = None
+                valid = False
+            else:
+                managed_value, violation, valid = _transform_member(
+                    member,
+                    assignment.value,
+                    converter=converter,
+                    fill_missing_many=False,
+                    path=assignment.attr,
+                )
             managed_assignments.append(
                 WriteAssignment(
                     assignment.attr,
-                    assignment.value
-                    if member is None
-                    else _transform_member(
-                        member,
-                        assignment.value,
-                        converter=converter,
-                        fill_missing_many=False,
-                        path=assignment.attr,
-                    ),
+                    managed_value,
                 )
             )
+            assignment_vo_violations.append(violation)
+            assignment_value_validity.append(valid if member is not None else False)
         prepared_input = PredicateWrite(
             mutation=instruction.mutation,
             target=instruction.target,
@@ -752,7 +775,16 @@ def _prepare_write(
             valid_from=instruction.valid_from,
             until=instruction.until,
         )
-    return _prepare_managed_write(prepared_input, model, entity=entity, bound_decoder=bound_decoder)
+    return _prepare_managed_write(
+        prepared_input,
+        model,
+        entity=entity,
+        bound_decoder=bound_decoder,
+        row_vo_violations=row_vo_violations,
+        row_attribute_validity=row_attribute_validity,
+        assignment_vo_violations=tuple(assignment_vo_violations),
+        assignment_value_validity=tuple(assignment_value_validity),
+    )
 
 
 def _prepare_managed_write(
@@ -761,6 +793,10 @@ def _prepare_managed_write(
     *,
     entity: EntityMetadata,
     bound_decoder: _BoundDecoder,
+    row_vo_violations: tuple[Mapping[str, VoDocumentViolation | None], ...],
+    row_attribute_validity: tuple[Mapping[str, bool], ...],
+    assignment_vo_violations: tuple[VoDocumentViolation | None, ...],
+    assignment_value_validity: tuple[bool, ...],
 ) -> PreparedWrite:
     """Validate an instruction against the metamodel: its selecting predicate,
     then its member names.
@@ -852,7 +888,12 @@ def _prepare_managed_write(
         inheritance.reject_predicate_write(entity)
         members = _declared_members(model, entity)
         seen: set[str] = set()
-        for assignment in instruction.assignments:
+        for assignment, violation, valid in zip(
+            instruction.assignments,
+            assignment_vo_violations,
+            assignment_value_validity,
+            strict=True,
+        ):
             # The owner segment is RESOLVED rather than compared as text, so a
             # canonical spelling names the target it denotes while an ambiguous
             # bare one — which resolves nowhere — stays refused.
@@ -871,17 +912,30 @@ def _prepare_managed_write(
             seen.add(member)
             try:
                 inheritance.validate_write_assignment(
-                    model, entity, member, _validation_value(assignment.value)
+                    model,
+                    entity,
+                    member,
+                    assignment.value,
+                    known_vo_violation=violation,
+                    known_value_valid=valid,
                 )
             except inheritance.WriteAssignmentError as exc:
                 raise WriteInstructionError(str(exc)) from exc
     if isinstance(instruction, KeyedWrite):
-        for row in instruction.rows:
+        for row, violations, attribute_validity in zip(
+            instruction.rows,
+            row_vo_violations,
+            row_attribute_validity,
+            strict=True,
+        ):
             validate_write(
                 entity,
-                cast("Mapping[str, object]", _validation_value(row)),
+                row,
                 model,
                 mutation=instruction.mutation,
+                known_vo_violations=violations,
+                known_attribute_validity=attribute_validity,
+                subtype_validated=True,
             )
     managed_valid_from = bound_decoder(instruction.valid_from, "validFrom")
     managed_until = bound_decoder(instruction.until, "until")
@@ -922,7 +976,7 @@ def prepare_wire_write(
     )
 
 
-type _LeafConverter = Callable[[NeutralType, object, str], object]
+type _LeafConverter = Callable[[NeutralType, object, str], tuple[object, bool]]
 type _BoundDecoder = Callable[[object | None, str], dt.datetime | None]
 
 
@@ -941,7 +995,7 @@ def _decode_typed_bound(value: object | None, path: str) -> dt.datetime | None:
 def _decode_wire_bound(value: object | None, path: str) -> dt.datetime | None:
     if value is None:
         return None
-    decoded = _decode_wire_leaf(TIMESTAMP, value, path)
+    decoded, _valid = _decode_wire_leaf(TIMESTAMP, value, path)
     assert isinstance(decoded, dt.datetime)
     return decoded
 
@@ -969,27 +1023,46 @@ def _transform_row(
     *,
     converter: _LeafConverter,
     fill_missing_many: bool,
-) -> Mapping[str, object]:
+) -> tuple[
+    Mapping[str, object],
+    Mapping[str, VoDocumentViolation | None],
+    Mapping[str, bool],
+]:
     members = _declared_member_map(model, entity)
-    transformed = {
-        name: value
-        if (member := members.get(name)) is None
-        else _transform_member(
+    transformed: dict[str, object] = {}
+    violations: dict[str, VoDocumentViolation | None] = {}
+    attribute_validity: dict[str, bool] = {}
+    for name, value in row.items():
+        member = members.get(name)
+        if member is None:
+            transformed[name] = value
+            continue
+        managed, violation, valid = _transform_member(
             member,
             value,
             converter=converter,
             fill_missing_many=fill_missing_many,
             path=f"{entity.identity.canonical}.{name}",
         )
-        for name, value in row.items()
-    }
+        transformed[name] = managed
+        if isinstance(member, AttributeMetadata):
+            attribute_validity[name] = valid
+        else:
+            violations[name] = violation
     if fill_missing_many:
         for member in members.values():
             if not isinstance(member, AttributeMetadata):
                 name = member.identity.path[-1]
                 if member.multiplicity is Multiplicity.MANY and name not in transformed:
                     transformed[name] = ()
-    return MappingProxyType(transformed)
+    for member in members.values():
+        if not isinstance(member, AttributeMetadata):
+            violations.setdefault(member.identity.path[-1], None)
+    return (
+        MappingProxyType(transformed),
+        MappingProxyType(violations),
+        MappingProxyType(attribute_validity),
+    )
 
 
 def _transform_member(
@@ -999,22 +1072,24 @@ def _transform_member(
     converter: _LeafConverter,
     fill_missing_many: bool,
     path: str,
-) -> object:
+) -> tuple[object, VoDocumentViolation | None, bool]:
     if value is None:
-        return None
+        return None, None, True
     if isinstance(member, AttributeMetadata):
         if isinstance(value, Mapping):
             marker = cast("Mapping[object, object]", value)
             if frozenset(marker) in (frozenset({"computed"}), frozenset({"increment"})):
-                return MappingProxyType(dict(marker))
-        return converter(member.type, cast("object", value), path)
-    return _transform_occurrence(
+                return MappingProxyType(dict(marker)), None, True
+        managed, valid = converter(member.type, cast("object", value), path)
+        return managed, None, valid
+    managed, violation = _transform_occurrence(
         member,
         value,
         converter=converter,
         fill_missing_many=True,
         path=path,
     )
+    return managed, violation, True
 
 
 def _transform_occurrence(
@@ -1024,20 +1099,24 @@ def _transform_occurrence(
     converter: _LeafConverter,
     fill_missing_many: bool,
     path: str,
-) -> object:
+) -> tuple[object, VoDocumentViolation | None]:
     if occurrence.multiplicity is Multiplicity.MANY:
         if not isinstance(value, Sequence) or isinstance(value, str | bytes):
-            return value
-        return tuple(
-            _transform_document(
+            return value, VoDocumentViolation("", "not-a-list", value)
+        transformed: list[object] = []
+        first_violation: VoDocumentViolation | None = None
+        for index, item in enumerate(cast("Sequence[object]", value)):
+            managed, violation = _transform_document(
                 occurrence,
                 item,
                 converter=converter,
                 fill_missing_many=fill_missing_many,
                 path=f"{path}[{index}]",
             )
-            for index, item in enumerate(cast("Sequence[object]", value))
-        )
+            transformed.append(managed)
+            if first_violation is None and violation is not None:
+                first_violation = _prefixed_vo_violation(f"[{index}]", violation)
+        return tuple(transformed), first_violation
     return _transform_document(
         occurrence,
         value,
@@ -1054,61 +1133,97 @@ def _transform_document(
     converter: _LeafConverter,
     fill_missing_many: bool,
     path: str,
-) -> object:
+) -> tuple[object, VoDocumentViolation | None]:
     if not isinstance(value, Mapping):
-        return value
+        return value, VoDocumentViolation("", "not-a-document", value)
     attributes = {member.identity.name: member for member in container.attributes}
     occurrences = {member.identity.path[-1]: member for member in container.value_objects}
     transformed: dict[str, object] = {}
+    child_violations: dict[str, VoDocumentViolation | None] = {}
     for name, nested in cast("Mapping[str, object]", value).items():
         child_path = f"{path}.{name}"
         if (attribute := attributes.get(name)) is not None:
-            transformed[name] = (
-                None if nested is None else converter(attribute.type, nested, child_path)
-            )
+            if nested is None:
+                transformed[name] = None
+            else:
+                managed, valid = converter(attribute.type, nested, child_path)
+                transformed[name] = managed
+                child_violations[name] = (
+                    None
+                    if valid
+                    else VoDocumentViolation(name, "type-mismatch", managed, attribute.type)
+                )
         elif (occurrence := occurrences.get(name)) is not None:
-            transformed[name] = (
-                None
-                if nested is None
-                else _transform_occurrence(
+            if nested is None:
+                transformed[name] = None
+                child_violations[name] = None
+            else:
+                managed, violation = _transform_occurrence(
                     occurrence,
                     nested,
                     converter=converter,
                     fill_missing_many=fill_missing_many,
                     path=child_path,
                 )
-            )
+                transformed[name] = managed
+                child_violations[name] = violation
         else:
             transformed[name] = nested
+
+    violation: VoDocumentViolation | None = None
+    for name, attribute in attributes.items():
+        leaf = transformed.get(name)
+        if name not in transformed or leaf is None:
+            if not attribute.nullable:
+                violation = VoDocumentViolation(name, "attribute-missing")
+                break
+        elif (leaf_violation := child_violations.get(name)) is not None:
+            violation = leaf_violation
+            break
+    if violation is None:
+        for name, occurrence in occurrences.items():
+            nested = transformed.get(name)
+            if name not in transformed or nested is None:
+                zero_state = (
+                    name not in transformed and occurrence.multiplicity is Multiplicity.MANY
+                )
+                if not occurrence.nullable and not zero_state:
+                    violation = VoDocumentViolation(name, "value-object-missing")
+                    break
+                continue
+            child_violation = child_violations.get(name)
+            if child_violation is not None:
+                violation = _prefixed_vo_violation(name, child_violation)
+                break
     if fill_missing_many:
         for name, occurrence in occurrences.items():
             if occurrence.multiplicity is Multiplicity.MANY and name not in transformed:
                 transformed[name] = ()
-    return MappingProxyType(transformed)
+    return MappingProxyType(transformed), violation
 
 
-def _coerce_typed_leaf(neutral_type: NeutralType, value: object, path: str) -> object:
+def _prefixed_vo_violation(prefix: str, violation: VoDocumentViolation) -> VoDocumentViolation:
+    if not violation.path:
+        path = prefix
+    elif violation.path.startswith("["):
+        path = f"{prefix}{violation.path}"
+    else:
+        path = f"{prefix}.{violation.path}"
+    return VoDocumentViolation(path, violation.reason, violation.value, violation.declared_type)
+
+
+def _coerce_typed_leaf(neutral_type: NeutralType, value: object, path: str) -> tuple[object, bool]:
     managed = (
         value
         if matches_neutral_type(value, neutral_type)
         else coerce_neutral_input(value, neutral_type)
     )
-    return freeze_retained_value(managed)
+    return freeze_retained_value(managed), matches_neutral_type(managed, neutral_type)
 
 
-def _validation_value(value: object) -> object:
-    if isinstance(value, Mapping):
-        document = cast("Mapping[str, object]", value)
-        return {name: _validation_value(nested) for name, nested in document.items()}
-    if isinstance(value, tuple):
-        items = cast("tuple[object, ...]", value)
-        return [_validation_value(nested) for nested in items]
-    return value
-
-
-def _decode_wire_leaf(neutral_type: NeutralType, value: object, path: str) -> object:
+def _decode_wire_leaf(neutral_type: NeutralType, value: object, path: str) -> tuple[object, bool]:
     try:
-        return freeze_retained_value(decode_wire(neutral_type, cast("WireValue", value)))
+        return freeze_retained_value(decode_wire(neutral_type, cast("WireValue", value))), True
     except WireDecodingError as error:
         raise InstructionRejectedError(
             f"neutral-literal-{error.reason}",

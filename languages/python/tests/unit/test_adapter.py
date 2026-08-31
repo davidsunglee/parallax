@@ -76,6 +76,22 @@ rows:
     assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
 
 
+def test_case_write_adapter_preserves_decimal_digits_beyond_binary_float_precision() -> None:
+    instruction = instructions.deserialize(
+        case_format.safe_load_yaml(
+            """
+mutation: insert
+entity: parallax.compatibility.Account
+rows:
+  - { id: 7, owner: Newton, balance: 1234567890123456.78, version: 1 }
+"""
+        )
+    )
+    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+    assert isinstance(prepared, PreparedKeyedWrite)
+    assert prepared.rows[0]["balance"] == decimal.Decimal("1234567890123456.78")
+
+
 def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() -> None:
     model = models.load_models()["account"]
     for value in ("5.00", decimal.Decimal("5.00")):
@@ -824,6 +840,9 @@ def test_boundary_case_names_the_api_conformance_lane() -> None:
 _REJECTED_QUERY_CASE = (
     case_format.default_cases_dir() / "m-inheritance-040-rejected-narrow-outside-position.yaml"
 )
+_REJECTED_DECIMAL_BETWEEN_CASE = (
+    case_format.default_cases_dir() / "m-predicate-039-rejected-between-bounds-inverted.yaml"
+)
 _REJECTED_MODEL_CASE = (
     case_format.default_cases_dir() / "m-inheritance-020-rejected-unknown-parent.yaml"
 )
@@ -871,6 +890,18 @@ def test_run_case_rejected_query_reports_the_classified_rule() -> None:
     assert envelope["emissions"] == []
     assert envelope["observations"] == {
         "rejectedRule": "narrow-outside-position",
+        "roundTrips": 0,
+    }
+
+
+def test_run_case_rejected_query_normalizes_case_decimal_bounds_before_validation() -> None:
+    envelope = adapter.run_case(
+        _REJECTED_DECIMAL_BETWEEN_CASE,
+        _PROFILE.on_stand_in(_NeverCalledPort()),
+    )
+    assert envelope["status"] == "ok"
+    assert envelope["observations"] == {
+        "rejectedRule": "between-bounds-inverted",
         "roundTrips": 0,
     }
 

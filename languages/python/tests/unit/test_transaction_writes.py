@@ -74,7 +74,6 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     WriteRejectedError,
     instructions,
-    validate_write,
 )
 from parallax.snapshot import InvalidData
 from parallax.snapshot.handle import (
@@ -464,7 +463,10 @@ def test_engine_and_transaction_buffer_share_the_prepared_write_producer() -> No
     from parallax.snapshot.handle import _write_inputs as write_inputs_module
 
     assert engine_module.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage]
-    assert write_inputs_module.validate_write is validate_write  # pyright: ignore[reportPrivateImportUsage] - asserts both lanes reference the one private write validator
+    assert (
+        write_inputs_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage]
+        is instructions.prepare_typed_write
+    )
 
 
 def test_buffer_rejects_a_required_attribute_missing_at_any_depth() -> None:

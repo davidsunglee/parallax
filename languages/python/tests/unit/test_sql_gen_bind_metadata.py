@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
 from decimal import Decimal
 
+import pytest
 from _corpus_model_support import model as corpus_model
 
 from _support.lowering_probes import lower_instruction
@@ -11,11 +13,14 @@ from parallax.core.base import DATE, STRING
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen._context import (
+    LoweredStatement,
+    SqlGenError,
     StatementBuilder,
     _RepeatedTypedBindSpan,  # pyright: ignore[reportPrivateUsage]
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.core.unit_work import KeyedWrite
+from parallax.core.wire import loads
 
 WALLET = corpus_model("wallet")
 
@@ -68,6 +73,12 @@ def test_statement_metadata_preserves_ranges_gaps_forms_offsets_and_overrides() 
     assert isinstance(lowered.binds[4], dt.date)
 
 
+def test_comparison_text_projection_retains_the_owned_text_without_codec_work() -> None:
+    builder = _builder()
+    builder.bind_comparison_text("12.340", DecimalType(8, 2))
+    assert builder.finish("select ?").wire_binds() == ("12.340",)
+
+
 def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None:
     statement = lower_instruction(
         KeyedWrite(
@@ -112,7 +123,7 @@ def test_repeated_typed_rows_leave_nullable_none_positions_unannotated() -> None
     builder = _builder()
     builder.bind_typed_rows(
         (("a", None, "c"), ("d", None, "f"), ("g", "h", "i"), ("j", "k", "l")),
-        (STRING, STRING, STRING),
+        ((STRING, "MANAGED"), (STRING, "MANAGED"), (STRING, "MANAGED")),
     )
 
     statement = builder.finish("values (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)")
@@ -139,3 +150,71 @@ def test_append_fragment_coalesces_touching_ordinary_spans_with_equal_type_and_f
     assert statement.finish("select ?, ?").typed_bind_spans == (
         _TypedBindSpan(0, 2, STRING, "MANAGED"),
     )
+
+
+def test_repeated_typed_rows_retain_form_and_reject_mismatched_carriers() -> None:
+    builder = _builder()
+    builder.bind_typed_rows(
+        (("a", "b"), ("c", "d")),
+        ((STRING, "MANAGED"), (STRING, "COMPARISON_TEXT")),
+    )
+    statement = builder.finish("values (?, ?), (?, ?)")
+    assert [
+        (span.start, span.width, span.stride, span.repetitions, span.form)
+        for span in statement.typed_bind_spans
+        if isinstance(span, _RepeatedTypedBindSpan)
+    ] == [
+        (0, 1, 2, 2, "MANAGED"),
+        (1, 1, 2, 2, "COMPARISON_TEXT"),
+    ]
+
+    with pytest.raises(SqlGenError, match="does not match MANAGED slot"):
+        _builder().bind_typed_rows(
+            (("not-a-date",), ("still-not-a-date",)),
+            ((DATE, "MANAGED"),),
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        math.inf,
+        pytest.param(10**5000, id="oversized-int"),
+        "\ud800",
+        loads("1e9999"),
+        [math.inf],
+        {"nested": "\ud800"},
+    ],
+)
+def test_untyped_bind_projection_rejects_invalid_wire_scalars(value: object) -> None:
+    builder = _builder()
+    builder.bind_structural(value)
+    with pytest.raises(SqlGenError, match="not an ordinary Wire value"):
+        builder.finish("select ?").wire_binds()
+
+
+@pytest.mark.parametrize(
+    "span",
+    [
+        _TypedBindSpan(-1, 1, STRING, "MANAGED"),
+        _TypedBindSpan(0, 0, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(0, 0, 1, 1, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(0, 1, 0, 1, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(0, 2, 1, 1, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(0, 1, 1, 0, STRING, "MANAGED"),
+    ],
+)
+def test_finish_rejects_invalid_typed_descriptor_dimensions(
+    span: _TypedBindSpan | _RepeatedTypedBindSpan,
+) -> None:
+    fragment = LoweredStatement(
+        "",
+        ("a", "b"),
+        (span,),
+        (),
+        True,
+    )
+    builder = _builder()
+    builder.append_fragment(fragment)
+    with pytest.raises(SqlGenError, match="invalid dimensions or stride"):
+        builder.finish("select ?, ?")

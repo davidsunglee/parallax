@@ -23,6 +23,7 @@ an internal formation seam.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Literal
 
 from parallax.core.inheritance._compile import (
     MODEL_COMPILER,
@@ -80,6 +81,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     PrimaryKey,
     ValueObjectMetadata,
+    VoDocumentViolation,
     WriteAssignmentError,
     judge_assignment,
 )
@@ -318,7 +320,13 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
 
 
 def validate_write_assignment(
-    model: AcceptedMetamodel, entity: EntityMetadata, name: str, value: object
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    name: str,
+    value: object,
+    *,
+    known_vo_violation: VoDocumentViolation | Literal[False] | None = False,
+    known_value_valid: bool | None = None,
 ) -> None:
     """The ONE predicate-write assignment check every caller applies to one
     `{attr, value}` pair, resolved family-effectively and then judged.
@@ -347,18 +355,36 @@ def validate_write_assignment(
     owner = entity.identity.canonical
     for attribute in position.applicable_attributes:
         if attribute.identity.name == name:
-            _judged(owner, attribute, value)
+            _judged(owner, attribute, value, known_value_valid=known_value_valid)
             return
     for value_object in position.applicable_value_objects:
         if value_object.identity.path[-1] == name:
-            _judged(owner, value_object, value)
+            _judged(
+                owner,
+                value_object,
+                value,
+                known_vo_violation=known_vo_violation,
+                known_value_valid=known_value_valid,
+            )
             return
 
 
-def _judged(owner: str, member: AttributeMetadata | ValueObjectMetadata, value: object) -> None:
+def _judged(
+    owner: str,
+    member: AttributeMetadata | ValueObjectMetadata,
+    value: object,
+    *,
+    known_vo_violation: VoDocumentViolation | Literal[False] | None = False,
+    known_value_valid: bool | None = None,
+) -> None:
     """Judge ``member`` against ``value``, re-raising owner-qualified."""
     try:
-        judge_assignment(member, value)
+        judge_assignment(
+            member,
+            value,
+            known_vo_violation=known_vo_violation,
+            known_value_valid=known_value_valid,
+        )
     except WriteAssignmentError as error:
         raise WriteAssignmentError(error.rule, f"{owner}.{error}") from error
 
