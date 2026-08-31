@@ -28,7 +28,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
-from parallax.core.base import normalize_instant
+from parallax.core.base import TIMESTAMP, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata
 from parallax.core.metamodel import TemporalDimension as AxisKind
 from parallax.core.object_query._canonical import object_query, subtype_spelling
@@ -47,6 +47,7 @@ from parallax.core.object_query._nodes import (
     TemporalSelection,
 )
 from parallax.core.predicate import QueryDefinitionError, canonical_subtype_selection
+from parallax.core.wire import encode_wire
 
 if TYPE_CHECKING:
     # Annotation-only, and deliberately so: the Entity frontend's descriptors are
@@ -473,7 +474,7 @@ def _instant(value: _Pin) -> str:
     """A canonical coordinate: ``latest`` or a UTC-normalized finite instant."""
     if isinstance(value, Latest):
         return "latest"
-    return normalize_instant(value).isoformat()
+    return cast("str", encode_wire(TIMESTAMP, normalize_instant(value)))
 
 
 def _window(value: object, axis: _DimensionName) -> tuple[str, str]:
@@ -520,4 +521,7 @@ def _window(value: object, axis: _DimensionName) -> tuple[str, str]:
                 f"{first.isoformat()} does not precede {last.isoformat()}"
             ),
         )
-    return first.isoformat(), last.isoformat()
+    return (
+        cast("str", encode_wire(TIMESTAMP, first)),
+        cast("str", encode_wire(TIMESTAMP, last)),
+    )

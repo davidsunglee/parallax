@@ -4,7 +4,7 @@
 `balance < ?`, never the resolving read's `t0.balance < ?` — for the readless
 `update`/`delete` templates in `parallax.snapshot.handle`.
 
-Its single production caller (`_step_lowering`'s Predicate Target arm) is
+Its production caller (`sql_gen._write`'s Predicate Target arm) is
 exercised indirectly
 by `test_where_verbs.py`, `test_batch_write.py`, and
 `test_transaction_predicate_writes.py`, but nothing pins this function BY NAME.
@@ -16,17 +16,15 @@ and nowhere else.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from _corpus_model_support import model, target
 
-from _support.sql import compile_read
+from _support.sql import compile_read, compile_write_predicate
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen import (
-    CompiledPredicate,
-    SqlGenError,
-    compile_write_predicate,
-)
+from parallax.core.sql_gen._compile import CompiledPredicate
 
 ORDERS = model("orders")
 ACCOUNT = model("account")
@@ -39,7 +37,7 @@ PAYMENT = model("payment")
 # --------------------------------------------------------------------------- #
 def test_comparison_renders_the_column_unaliased() -> None:
     predicate = compile_write_predicate(
-        oa.Comparison(op="lessThan", attr="Account.balance", value=100),
+        oa.Comparison(op="lessThan", attr="Account.balance", value="100.00"),
         ACCOUNT,
         POSTGRES,
         target(ACCOUNT, "Account"),
@@ -53,7 +51,7 @@ def test_the_rendered_fragment_is_a_predicate_not_a_statement() -> None:
     # A bare fragment: no `select`, no `from`, no owning table alias anywhere —
     # it is spliced into `update <table> set … where <fragment>` by the caller.
     predicate = compile_write_predicate(
-        oa.Comparison(op="lessThan", attr="Account.balance", value=100),
+        oa.Comparison(op="lessThan", attr="Account.balance", value="100.00"),
         ACCOUNT,
         POSTGRES,
         target(ACCOUNT, "Account"),
@@ -86,16 +84,14 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
     "op, expected_sql, expected_binds",
     [
         (
-            oa.Comparison(op="greaterThan", attr="Account.balance", value=5),
+            oa.Comparison(op="greaterThan", attr="Account.balance", value="5.00"),
             "balance > ?",
-            (5,),
+            (Decimal("5.00"),),
         ),
-        (oa.NullCheck(op="isNull", attr="Account.owner"), "owner is null", ()),
-        (oa.NullCheck(op="isNotNull", attr="Account.owner"), "not owner is null", ()),
         (
-            oa.Between(attr="Account.balance", lower=1, upper=9),
+            oa.Between(attr="Account.balance", lower="1.00", upper="9.00"),
             "balance between ? and ?",
-            (1, 9),
+            (Decimal("1.00"), Decimal("9.00")),
         ),
         (
             oa.Membership(op="in", attr="Account.id", values=(1, 2)),
@@ -164,7 +160,7 @@ def test_write_predicate_binds_follow_operand_order() -> None:
     predicate = compile_write_predicate(
         oa.And(
             operands=(
-                oa.Comparison(op="lessThan", attr="Account.balance", value=100),
+                oa.Comparison(op="lessThan", attr="Account.balance", value="100.00"),
                 oa.Comparison(op="eq", attr="Account.owner", value="ada"),
                 oa.Comparison(op="eq", attr="Account.version", value=3),
             )
@@ -175,7 +171,7 @@ def test_write_predicate_binds_follow_operand_order() -> None:
     )
     sql, binds = predicate.sql, predicate.binds
     assert sql == "balance < ? and owner = ? and version = ?"
-    assert binds == (100, "ada", 3)
+    assert binds == (Decimal("100.00"), "ada", 3)
 
 
 def test_navigation_correlates_an_aliased_subquery_against_the_unaliased_owner() -> None:
@@ -286,7 +282,7 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
 # Refusals — identical to the read lane's, since it is the same dispatcher.   #
 # --------------------------------------------------------------------------- #
 def test_unbound_attribute_is_refused() -> None:
-    with pytest.raises(SqlGenError, match="names no attribute"):
+    with pytest.raises(ValueError, match="names no declared attribute"):
         compile_write_predicate(
             oa.Comparison(op="eq", attr="Account.mystery", value=1),
             ACCOUNT,

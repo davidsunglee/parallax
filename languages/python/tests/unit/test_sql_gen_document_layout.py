@@ -23,13 +23,14 @@ from collections.abc import Callable
 import pytest
 from _document_layout_support import columns_model, document_model, entity
 
-from _support.sql import compile_read
+from _support.sql import compile_read, compile_write_predicate
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.sql_gen import CompiledRead, SqlGenError, compile_write_predicate
+from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._compile import CompiledRead
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()

@@ -45,6 +45,7 @@ from parallax.core.metamodel import (
     PrimaryKey,
     entity_by_name,
 )
+from parallax.core.metamodel import TemporalDimension as AxisKind
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import (
     AsOf,
@@ -55,6 +56,7 @@ from parallax.core.object_query import (
     TemporalDimension,
     TemporalSelection,
     object_query,
+    validate_object_query,
 )
 from parallax.core.predicate import (
     All,
@@ -101,13 +103,21 @@ def _planned(
     **clauses: object,
 ) -> continuation.ContinuationPlan:
     entity = entity_of(model, target)
+    selections = dict(temporal or {})
+    for axis in entity.declared_as_of_axes:
+        dimension: TemporalDimension = (
+            "valid-time"
+            if axis.dimension is AxisKind.VALID_TIME
+            else "transaction-time"
+        )
+        selections.setdefault(dimension, AsOf("latest"))
     query = object_query(
         entity.identity,
         predicate if predicate is not None else All(),
-        temporal=temporal,
+        temporal=selections,
         **clauses,  # pyright: ignore[reportArgumentType] - the caller names real clauses
     )
-    return continuation.plan(entity, query, model)
+    return continuation.plan(validate_object_query(entity, query, model), model)
 
 
 def _identity(model: Metamodel, reference: str) -> AttributeIdentity:
@@ -217,7 +227,8 @@ def test_a_subtype_position_pages_by_its_family_roots_key() -> None:
         for attribute in dog.declared_attributes
         if isinstance(attribute.primary_key, PrimaryKey)
     ]
-    node = continuation.plan(dog, object_query(dog.identity, All()), ANIMAL).first(limit=5)
+    query = validate_object_query(dog, object_query(dog.identity, All()), ANIMAL)
+    node = continuation.plan(query, ANIMAL).first(limit=5)
     assert node.order_by == (OrderKey(attr=_ANIMAL_ID, direction="asc"),)
 
 
@@ -232,7 +243,7 @@ def test_a_narrowed_reads_sort_key_is_measured_at_the_narrowed_position() -> Non
         narrow_to=("parallax.compatibility.Dog",),
         order_by=(OrderKey(attr=_DOG_BARK, direction="desc"),),
     )
-    plan = continuation.plan(animal, query, ANIMAL)
+    plan = continuation.plan(validate_object_query(animal, query, ANIMAL), ANIMAL)
     node = plan.first(limit=1)
     assert node.order_by == (
         OrderKey(attr=_DOG_BARK, direction="desc"),
@@ -727,7 +738,7 @@ def test_a_sort_key_naming_no_declared_attribute_is_refused_by_name() -> None:
     # every term needs the member's identity to read a coordinate under and its
     # nullability to decide the seek, so a reference that resolves to nothing has
     # no term to contribute and is refused where it is read.
-    with pytest.raises(continuation.ContinuationError, match="no such Attribute"):
+    with pytest.raises(ValueError, match="no declared ordering attribute"):
         _planned(ORDERS, "Order", order_by=(OrderKey(attr="parallax.compatibility.Order.missing"),))
 
 
@@ -836,7 +847,7 @@ def test_a_milestone_page_seeks_past_the_edge_as_a_canonical_instant_literal() -
                                     Comparison(
                                         op="greaterThan",
                                         attr=_POSITION_VALID_START,
-                                        value="2024-01-01T00:00:00+00:00",
+                                        value="2024-01-01T00:00:00.000000Z",
                                     ),
                                 )
                             )
@@ -848,12 +859,12 @@ def test_a_milestone_page_seeks_past_the_edge_as_a_canonical_instant_literal() -
                                     Comparison(
                                         op="eq",
                                         attr=_POSITION_VALID_START,
-                                        value="2024-01-01T00:00:00+00:00",
+                                        value="2024-01-01T00:00:00.000000Z",
                                     ),
                                     Comparison(
                                         op="greaterThan",
                                         attr=_POSITION_TX_START,
-                                        value="2024-04-01T00:00:00+00:00",
+                                        value="2024-04-01T00:00:00.000000Z",
                                     ),
                                 )
                             )
@@ -1264,7 +1275,7 @@ def test_the_page_node_is_a_fresh_value_rather_than_a_mutated_query() -> None:
     # values and the query it was planned from is untouched.
     entity = entity_of(ORDERS, "Order")
     query: ObjectQueryNode = object_query(entity.identity, All())
-    plan = continuation.plan(entity, query, ORDERS)
+    plan = continuation.plan(validate_object_query(entity, query, ORDERS), ORDERS)
     first = plan.first(limit=2)
     later = plan.after({_key(entity): 9}, limit=2)
     assert query.order_by == ()

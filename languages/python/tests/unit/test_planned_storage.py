@@ -44,6 +44,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
+from parallax.core.sql_gen._write import compile_write
 from parallax.core.unit_work import (
     ChangedFrom,
     ChunkedColumn,
@@ -60,6 +61,7 @@ from parallax.core.unit_work import (
     PredecessorShape,
     PredicateMutation,
     PredicateSelection,
+    PreparedPredicateWrite,
     PredicateWrite,
     TemporalColumns,
     TransactionInstant,
@@ -67,12 +69,13 @@ from parallax.core.unit_work import (
     WriteAssignment,
     WritePlanner,
     whole,
+    prepare_typed_write,
 )
 from parallax.core.unit_work.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
 )
 from parallax.core.unit_work.planner import Targets  # forbidden-plan-context regression only
-from parallax.snapshot.handle import Database, Transaction, build_write_planner, lower_step
+from parallax.snapshot.handle import Database, Transaction, build_write_planner
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]
@@ -283,12 +286,24 @@ def test_predecessor_columns_refuses_zero_length_member_columns() -> None:
 # Materialized Write Group: aligned key/observation columns and              #
 # indivisibility.                                                             #
 # --------------------------------------------------------------------------- #
-def _predicate(entity: str, mutation: PredicateMutation) -> PredicateWrite:
-    return PredicateWrite(
-        mutation,
-        PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+def _prepared(instruction: PredicateWrite, model: object) -> PreparedPredicateWrite:
+    prepared = prepare_typed_write(instruction, cast("Any", model))
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return prepared
+
+
+def _predicate(entity: str, mutation: PredicateMutation) -> PreparedPredicateWrite:
+    return _prepared(
+        PredicateWrite(
+            mutation,
+            PredicateSelection(
+                entity,
+                predicate_algebra.Comparison(
+                    "lessThan", f"{entity}.balance", "1000000.00"
+                ),
+            ),
         ),
+        _ACCOUNT,
     )
 
 
@@ -372,12 +387,20 @@ def _version_group(
     for key_value, version in rows:
         keys.append(key_value)
         versions.append(version)
-    predicate = PredicateWrite(
-        "update",
-        PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+    predicate = _prepared(
+        PredicateWrite(
+            "update",
+            PredicateSelection(
+                entity,
+                predicate_algebra.Comparison(
+                    "lessThan", f"{entity}.balance", "1000000.00"
+                ),
+            ),
+            assignments=(
+                WriteAssignment(f"{entity}.balance", Decimal(str(assigned))),
+            ),
         ),
-        assignments=(WriteAssignment(f"{entity}.balance", assigned),),
+        _ACCOUNT,
     )
     return MaterializedWriteGroup(
         mutation=predicate,
@@ -425,11 +448,17 @@ def _temporal_group(
     for key_value, _members in rows:
         keys.append(key_value)
     predecessors = _predecessor_columns([members for _key, members in rows])
-    predicate = PredicateWrite(
-        "terminate",
-        PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", 1_000_000.0)
+    predicate = _prepared(
+        PredicateWrite(
+            "terminate",
+            PredicateSelection(
+                entity,
+                predicate_algebra.Comparison(
+                    "lessThan", f"{entity}.value", "1000000.00"
+                ),
+            ),
         ),
+        _BALANCE,
     )
     return MaterializedWriteGroup(
         mutation=predicate,
@@ -697,12 +726,16 @@ def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected()
             },
         )
     ]
-    predicate = PredicateWrite(
-        "update",
-        PredicateSelection(
-            "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", 1_000_000.0)
+    predicate = _prepared(
+        PredicateWrite(
+            "update",
+            PredicateSelection(
+                "Balance",
+                predicate_algebra.Comparison("lessThan", "Balance.value", "1000000.00"),
+            ),
+            assignments=(WriteAssignment("Balance.value", Decimal("9.00")),),
         ),
-        assignments=(WriteAssignment("Balance.value", 9.0),),
+        _BALANCE,
     )
     keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
     keys.append(1)
@@ -761,11 +794,14 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
     keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
     keys.append(1)
     group = MaterializedWriteGroup(
-        mutation=PredicateWrite(
-            "update",
-            PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
-            assignments=(WriteAssignment("Branch.address", assigned_address),),
-            valid_from="2024-07-01T00:00:00+00:00",
+        mutation=_prepared(
+            PredicateWrite(
+                "update",
+                PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
+                assignments=(WriteAssignment("Branch.address", assigned_address),),
+                valid_from="2024-07-01T00:00:00.000000Z",
+            ),
+            _BRANCH,
         ),
         key_attributes=("id",),
         key_columns=(whole(keys.build()),),
@@ -813,7 +849,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
         cast("dict[str, object]", predecessor_phones[0])["number"] = "999"
 
     assert plan.steps[2] == changed
-    statement = lower_step(plan.steps[2], _BRANCH, POSTGRES)
+    statement = compile_write(plan.steps[2], _BRANCH, POSTGRES)
     assert statement.binds[-1] == JsonDocument(
         {
             "street": "30 New Road",
@@ -904,7 +940,7 @@ def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_p
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
-            WherePosition.where(WherePosition.value == 200.00),
+            WherePosition.where(WherePosition.value == Decimal("200.00")),
             WherePosition.value.set(Decimal("300.00")),
             valid_from=valid_from,
         )
@@ -951,7 +987,8 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
-            mm.Balance.where(mm.Balance.value < 1_000_000.00), mm.Balance.value.set(Decimal("5.00"))
+            mm.Balance.where(mm.Balance.value < Decimal("1000000.00")),
+            mm.Balance.value.set(Decimal("5.00")),
         )
 
     db_for(BALANCE_MODEL, port).transact(fn, concurrency="optimistic")
@@ -967,7 +1004,8 @@ def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing(
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
-            mm.Balance.where(mm.Balance.value < 1_000_000.00), mm.Balance.value.set(Decimal("5.00"))
+            mm.Balance.where(mm.Balance.value < Decimal("1000000.00")),
+            mm.Balance.value.set(Decimal("5.00")),
         )
 
     db_for(BALANCE_MODEL, port).transact(fn, concurrency="optimistic")

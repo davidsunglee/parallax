@@ -530,15 +530,12 @@
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
     "WriteInstructionError",
-    "WriteLoweringError",
     "build_write_planner",
     "connect",
     "entity_read_lock",
     "find",
     "find_history",
-    "lower_step",
     "plan_temporal_close",
-    "preflight",
     "stream_lowered",
     "validate_source_pin"
   ]

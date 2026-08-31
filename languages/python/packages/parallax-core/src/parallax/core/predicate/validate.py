@@ -74,12 +74,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import assert_never
+from typing import assert_never, cast
 
 from parallax.core import inheritance
-from parallax.core.base import Boolean, Float32, Float64, Int32, Int64, NeutralType, String
-from parallax.core.base import Decimal as DecimalType
+from parallax.core.base import NeutralType, String
 from parallax.core.metamodel import (
+    AttributeMetadata,
     DefiningRelationshipDeclaration,
     EntityIdentity,
     EntityMetadata,
@@ -115,15 +115,21 @@ from parallax.core.predicate._nodes import (
     NullCheck,
     Or,
     PredicateNode,
-    Scalar,
     StringMatch,
 )
+from parallax.core.predicate._validated import (
+    ResolvedPredicateMember,
+    ValidatedOperand,
+    ValidatedPredicate,
+)
+from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 
 __all__ = [
     "ModelRejectedError",
     "PositionScope",
     "check_attribute_reference",
     "effective_set",
+    "elaborate_predicate",
     "referenced_entities",
     "relationship_target",
     "resolve_subtype_selection",
@@ -226,7 +232,7 @@ def validate_predicate(
     model: Metamodel,
     *,
     position: PositionScope | None = None,
-) -> None:
+) -> ValidatedPredicate:
     """Validate ``op`` against ``model``, raising :class:`ModelRejectedError`.
 
     ``root`` is the queried root position, already resolved to accepted Metadata
@@ -245,7 +251,18 @@ def validate_predicate(
     scope = (
         position if position is not None else PositionScope(effective=effective_set(model, root))
     )
-    _walk(op, model, scope)
+    return _walk(op, model, scope)
+
+
+def elaborate_predicate(
+    root: EntityMetadata,
+    op: PredicateNode,
+    model: Metamodel,
+    *,
+    position: PositionScope | None = None,
+) -> ValidatedPredicate:
+    """Elaborate one authored predicate into its mandatory semantic product."""
+    return validate_predicate(root, op, model, position=position)
 
 
 def root_position(model: Metamodel, root: EntityMetadata) -> PositionScope:
@@ -253,28 +270,52 @@ def root_position(model: Metamodel, root: EntityMetadata) -> PositionScope:
     return PositionScope(effective=effective_set(model, root))
 
 
-def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> None:
+def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> ValidatedPredicate:
     match op:
         case All() | NoneOp():
-            return
-        case Comparison(attr=attr) | StringMatch(attr=attr) | Membership(attr=attr):
-            check_attribute_reference(attr, model, scope)
+            return ValidatedPredicate(op)
+        case Comparison(attr=attr, value=value):
+            member = _require_attribute(attr, model, scope)
+            return _validated_leaf(op, member, (value,))
+        case StringMatch(attr=attr, value=value):
+            member = _require_attribute(attr, model, scope)
+            if not isinstance(member.type, String):
+                raise ModelRejectedError(
+                    "string-predicate-non-string-member",
+                    f"{attr!r}: a string predicate requires a string member",
+                )
+            return _validated_leaf(op, member, (value,))
+        case Membership(attr=attr, values=values):
+            member = _require_attribute(attr, model, scope)
+            return _validated_leaf(op, member, values)
         case NullCheck(attr=attr):
-            check_attribute_reference(attr, model, scope)
+            member = resolve_attribute_reference(attr, model, scope)
             _check_attribute_null_check(attr, model)
+            return ValidatedPredicate(op, member=member)
         case Between(attr=attr, lower=lower, upper=upper):
-            check_attribute_reference(attr, model, scope)
-            _check_bound_ordering(attr, lower, upper)
-        case NestedComparison():
-            _check_nested_comparison(op, model)
-        case NestedRange():
-            _check_nested_range(op, model)
-        case NestedMembership():
-            _check_nested_membership(op, model)
-        case NestedStringMatch():
-            _check_nested_string(op, model)
+            member = _require_attribute(attr, model, scope)
+            product = _validated_leaf(op, member, (lower, upper))
+            _check_managed_bound_ordering(attr, product.operands)
+            return product
+        case NestedComparison(path=path, value=value):
+            leaf = _resolve_nested_leaf(path, model)
+            return _validated_leaf(op, leaf, (value,))
+        case NestedRange(path=path, lower=lower, upper=upper):
+            leaf = _resolve_nested_leaf(path, model)
+            product = _validated_leaf(op, leaf, (lower, upper))
+            _check_managed_bound_ordering(path, product.operands)
+            return product
+        case NestedMembership(path=path, values=values):
+            leaf = _resolve_nested_leaf(path, model)
+            return _validated_leaf(op, leaf, values)
+        case NestedStringMatch(path=path, value=value):
+            leaf = _resolve_nested_leaf(path, model)
+            _check_string_member(path, leaf)
+            return _validated_leaf(op, leaf, (value,))
         case NestedNullCheck():
-            _check_nested_null_check(op, model)
+            leaf = _resolve_nested_leaf(op.path, model)
+            _require_nullable_null_check(op.path, leaf.nullable)
+            return ValidatedPredicate(op, member=leaf)
         case NestedExists(path=path, where=where) | NestedNotExists(path=path, where=where):
             # The path is value-object-TERMINATED (ends at the object itself, not a
             # leaf). The optional `where` is element-relative (no `Class` prefix) —
@@ -282,57 +323,69 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> None:
             # above does not apply to — so it is validated against the TERMINAL
             # value-object descriptor `path` resolves to, not walked by `_walk`.
             container = _check_nested_vo_terminated(path, model)
-            if where is not None:
-                _check_element_predicate(where, container)
+            children = () if where is None else (_elaborate_element_predicate(where, container),)
+            return ValidatedPredicate(op, children=children, container=container)
         case And(operands=operands) | Or(operands=operands):
-            for operand in operands:
-                _walk(operand, model, scope)
+            return ValidatedPredicate(
+                op, children=tuple(_walk(operand, model, scope) for operand in operands)
+            )
         case Not(operand=operand) | Group(operand=operand):
-            _walk(operand, model, scope)
+            return ValidatedPredicate(op, children=(_walk(operand, model, scope),))
         case Narrow(to=to, operand=operand):
             new_scope = validate_narrow(to, scope, model)
-            _walk(operand, model, new_scope)
+            return ValidatedPredicate(op, children=(_walk(operand, model, new_scope),))
         case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
             target = relationship_target(rel, model, wrong_kind_rule="navigate-value-object-target")
             hop_scope = PositionScope(
                 effective=effective_set(model, target),
                 relationship_target=target.identity.canonical,
             )
-            if inner is not None:
-                _walk(inner, model, hop_scope)
+            children = () if inner is None else (_walk(inner, model, hop_scope),)
+            return ValidatedPredicate(op, children=children, relationship_target=target)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
 
 
-# --------------------------------------------------------------------------- #
-# Range bound ordering (m-predicate "Bound-ordering rule").                  #
-# --------------------------------------------------------------------------- #
-def _bounds_inverted(lower: Scalar, upper: Scalar) -> bool:
-    """Whether a range's ``lower`` bound is strictly greater than its ``upper``.
-
-    Bounds are compared by LITERAL KIND rather than by the subject's resolved
-    type: only two numbers or two strings are ordered against each other, and a
-    differing pair or a ``null`` bound is skipped rather than guessed. A ``bool``
-    is its own literal kind — never a number — even though Python's ``bool``
-    subclasses ``int``. Equal bounds name the single-value range and are never
-    inverted.
-    """
-    if isinstance(lower, bool) or isinstance(upper, bool):
-        return False
-    if isinstance(lower, (int, float)) and isinstance(upper, (int, float)):
-        return lower > upper
-    if isinstance(lower, str) and isinstance(upper, str):
-        return lower > upper
-    return False
+def _decode_operand(subject: str, value: object, neutral_type: NeutralType) -> ValidatedOperand:
+    try:
+        managed = decode_wire(neutral_type, cast("WireValue", value))
+    except WireDecodingError as error:
+        raise ModelRejectedError(
+            f"neutral-literal-{error.reason}",
+            f"{subject!r}: {error}",
+        ) from error
+    return ValidatedOperand(managed, neutral_type)
 
 
-def _check_bound_ordering(subject: str, lower: Scalar, upper: Scalar) -> None:
-    """Reject a range predicate over ``subject`` whose two bounds are inverted."""
-    if _bounds_inverted(lower, upper):
+def _validated_leaf(
+    authored: PredicateNode,
+    member: ResolvedPredicateMember,
+    values: Sequence[object],
+) -> ValidatedPredicate:
+    return ValidatedPredicate(
+        authored,
+        operands=tuple(
+            _decode_operand(_subject_of(authored), value, member.type) for value in values
+        ),
+        member=member,
+    )
+
+
+def _subject_of(op: PredicateNode) -> str:
+    return getattr(op, "attr", getattr(op, "path", type(op).__name__))
+
+
+def _check_managed_bound_ordering(subject: str, operands: tuple[ValidatedOperand, ...]) -> None:
+    lower, upper = (operand.value for operand in operands)
+    try:
+        inverted = cast("object", lower) > cast("object", upper)  # type: ignore[operator]
+    except TypeError:  # pragma: no cover - one declared type yields comparable managed members
+        inverted = False
+    if inverted:
         raise ModelRejectedError(
             "between-bounds-inverted",
-            f"{subject!r}: lower bound {lower!r} is greater than upper bound {upper!r}, "
-            "so the range is empty and no row can satisfy it (m-predicate bound ordering)",
+            f"{subject!r}: decoded lower bound {lower!r} is greater than decoded upper "
+            f"bound {upper!r}, so the range is empty",
         )
 
 
@@ -510,7 +563,9 @@ def validate_narrow(to: tuple[str, ...], scope: PositionScope, model: Metamodel)
     return PositionScope(effective=resolved)
 
 
-def check_attribute_reference(attr_ref: str, model: Metamodel, scope: PositionScope) -> None:
+def resolve_attribute_reference(
+    attr_ref: str, model: Metamodel, scope: PositionScope
+) -> AttributeMetadata | None:
     """Resolve one ``Class.attribute`` reference and check it against ``scope``.
 
     Exported so a query clause that addresses an attribute outside any predicate
@@ -529,6 +584,25 @@ def check_attribute_reference(attr_ref: str, model: Metamodel, scope: PositionSc
             )
         raise _unresolved_reference(model, attr_ref, class_name)
     _check_attribute_position(model, entity, scope)
+    position = inheritance.view(model).entity(entity.identity)
+    attribute = (
+        None if position is None else position.applicable_attribute(_attr_name)
+    ) or entity.attribute(_attr_name)
+    return attribute
+
+
+def check_attribute_reference(
+    attr_ref: str, model: Metamodel, scope: PositionScope
+) -> AttributeMetadata | None:
+    return resolve_attribute_reference(attr_ref, model, scope)
+
+
+def _require_attribute(attr_ref: str, model: Metamodel, scope: PositionScope) -> AttributeMetadata:
+    attribute = resolve_attribute_reference(attr_ref, model, scope)
+    if attribute is None:
+        class_name, _, _member = attr_ref.rpartition(".")
+        raise ValueError(f"{attr_ref!r} names no declared attribute on {class_name}")
+    return attribute
 
 
 def _check_attribute_null_check(attr_ref: str, model: Metamodel) -> None:
@@ -721,82 +795,11 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
     return container
 
 
-def _literal_matches_type(value: Scalar, neutral_type: NeutralType) -> bool:
-    """Whether a polymorphic predicate literal matches a leaf's declared neutral type.
-
-    `m-predicate`: "each type MUST match the leaf attribute's declared neutral
-    type; a resolver MUST reject a type-mismatched literal." The algebra's
-    literal vocabulary is `string` / `number` / `boolean` / `null`; every
-    m-core neutral type maps onto that portable set.
-    """
-    if value is None:
-        return True
-    if isinstance(value, bool):
-        return isinstance(neutral_type, Boolean)
-    if isinstance(neutral_type, Boolean):
-        return False
-    if isinstance(neutral_type, (Int32, Int64)):
-        return isinstance(value, int)
-    if isinstance(neutral_type, (Float32, Float64, DecimalType)):
-        return isinstance(value, (int, float))
-    if isinstance(neutral_type, String):
-        return isinstance(value, str)
-    # date / time / timestamp / uuid / bytes / json ride the portable literal as a
-    # string (the algebra's typed-literal vocabulary has no dedicated carrier for
-    # them); not exercised by the in-slice corpus, so treated permissively here.
-    return isinstance(value, str)
-
-
-def _check_typed_literal(path: str, value: Scalar, leaf: ValueObjectAttributeMetadata) -> None:
-    """Reject ``value`` if it does not match ``leaf``'s declared neutral type.
-
-    Shared by the flat nested rules and the scoped element-relative rules
-    inside a `nestedExists`/`nestedNotExists` `where` — the same
-    `nested-literal-type-mismatch` check, only the leaf's resolution differs.
-    """
-    if not _literal_matches_type(value, leaf.type):
-        raise ModelRejectedError(
-            "nested-literal-type-mismatch",
-            f"{path!r}: literal {value!r} does not match the leaf's declared "
-            f"type {leaf.type!r} (m-predicate typed literals)",
-        )
-
-
-def _check_nested_comparison(node: NestedComparison, model: Metamodel) -> None:
-    leaf = _resolve_nested_leaf(node.path, model)
-    _check_typed_literal(node.path, node.value, leaf)
-
-
-def _check_range_bounds(node: NestedRange, leaf: ValueObjectAttributeMetadata) -> None:
-    """A nested range's bound checks in the order `m-predicate` fixes: both typed
-    bounds, then the bound ordering — the path having already resolved ``leaf``.
-
-    Shared by both nested scopes, so the order is stated once. Ordering the bounds
-    LAST is what makes a mistyped bound report the type mismatch rather than an
-    accidental inversion between two literals of unrelated kinds.
-    """
-    _check_typed_literal(node.path, node.lower, leaf)
-    _check_typed_literal(node.path, node.upper, leaf)
-    _check_bound_ordering(node.path, node.lower, node.upper)
-
-
-def _check_nested_range(node: NestedRange, model: Metamodel) -> None:
-    _check_range_bounds(node, _resolve_nested_leaf(node.path, model))
-
-
-def _check_nested_membership(node: NestedMembership, model: Metamodel) -> None:
-    leaf = _resolve_nested_leaf(node.path, model)
-    for value in node.values:
-        _check_typed_literal(node.path, value, leaf)
-
-
 def _check_string_member(path: str, leaf: ValueObjectAttributeMetadata) -> None:
     """Reject a string predicate whose resolved leaf is not a ``String`` member.
 
-    Shared by both nested scopes, and deliberately NOT expressed through
-    :func:`_literal_matches_type`: that function reads a `Date` / `Time` /
-    `Timestamp` / `Uuid` / `Bytes` leaf permissively as a `str`, so the literal rule
-    would accept a string predicate against exactly the members this one rejects.
+    Shared by both nested scopes. This is distinct from literal decoding because
+    several non-string neutral types also use a string wire carrier.
     """
     if not isinstance(leaf.type, String):
         raise ModelRejectedError(
@@ -806,73 +809,39 @@ def _check_string_member(path: str, leaf: ValueObjectAttributeMetadata) -> None:
         )
 
 
-def _check_nested_string(node: NestedStringMatch, model: Metamodel) -> None:
-    """A nested string predicate's two checks, in the order `m-predicate` fixes:
-    the resolved member's own type, then the literal's."""
-    leaf = _resolve_nested_leaf(node.path, model)
-    _check_string_member(node.path, leaf)
-    _check_typed_literal(node.path, node.value, leaf)
-
-
-def _check_nested_null_check(node: NestedNullCheck, model: Metamodel) -> None:
-    leaf = _resolve_nested_leaf(node.path, model)
-    _require_nullable_null_check(node.path, leaf.nullable)
-
-
-# --------------------------------------------------------------------------- #
-# Scoped `where` inside nestedExists/nestedNotExists (m-value-object          #
-# same-element semantics; the serde's `elementPredicate` grammar admits only  #
-# the nested*-family + boolean combinators here, element-relative paths).     #
-# --------------------------------------------------------------------------- #
-def _check_element_comparison(node: NestedComparison, container: _VoContainer) -> None:
-    leaf = _resolve_element_leaf(container, node.path)
-    _check_typed_literal(node.path, node.value, leaf)
-
-
-def _check_element_range(node: NestedRange, container: _VoContainer) -> None:
-    _check_range_bounds(node, _resolve_element_leaf(container, node.path))
-
-
-def _check_element_membership(node: NestedMembership, container: _VoContainer) -> None:
-    leaf = _resolve_element_leaf(container, node.path)
-    for value in node.values:
-        _check_typed_literal(node.path, value, leaf)
-
-
-def _check_element_string(node: NestedStringMatch, container: _VoContainer) -> None:
-    leaf = _resolve_element_leaf(container, node.path)
-    _check_string_member(node.path, leaf)
-    _check_typed_literal(node.path, node.value, leaf)
-
-
-def _check_element_predicate(op: PredicateNode, container: _VoContainer) -> None:
-    """Validate a `nestedExists`/`nestedNotExists` `where` against ``container``
-    — the TERMINAL value-object descriptor its `path` resolves to.
-
-    ``op`` is assumed schema-valid (this module's own precondition): the
-    `elementPredicate` grammar (`predicate.schema.json`) admits only the
-    nested*-family and boolean combinators here, so this dispatch does not
-    need to re-derive that restriction — only resolve each element-relative
-    reference and typed literal against the same element (m-value-object).
-    """
+def _elaborate_element_predicate(op: PredicateNode, container: _VoContainer) -> ValidatedPredicate:
     match op:
-        case NestedComparison():
-            _check_element_comparison(op, container)
-        case NestedRange():
-            _check_element_range(op, container)
-        case NestedMembership():
-            _check_element_membership(op, container)
-        case NestedStringMatch():
-            _check_element_string(op, container)
+        case NestedComparison(path=path, value=value):
+            leaf = _resolve_element_leaf(container, path)
+            return _validated_leaf(op, leaf, (value,))
+        case NestedRange(path=path, lower=lower, upper=upper):
+            leaf = _resolve_element_leaf(container, path)
+            product = _validated_leaf(op, leaf, (lower, upper))
+            _check_managed_bound_ordering(path, product.operands)
+            return product
+        case NestedMembership(path=path, values=values):
+            leaf = _resolve_element_leaf(container, path)
+            return _validated_leaf(op, leaf, values)
+        case NestedStringMatch(path=path, value=value):
+            leaf = _resolve_element_leaf(container, path)
+            _check_string_member(path, leaf)
+            return _validated_leaf(op, leaf, (value,))
         case NestedNullCheck(path=path):
             leaf = _resolve_element_leaf(container, path)
             _require_nullable_null_check(path, leaf.nullable)
+            return ValidatedPredicate(op, member=leaf)
         case And(operands=operands) | Or(operands=operands):
-            for operand in operands:
-                _check_element_predicate(operand, container)
+            return ValidatedPredicate(
+                op,
+                children=tuple(
+                    _elaborate_element_predicate(operand, container) for operand in operands
+                ),
+            )
         case Not(operand=operand) | Group(operand=operand):
-            _check_element_predicate(operand, container)
-        case _:  # pragma: no cover - the elementPredicate schema admits nothing else here
+            return ValidatedPredicate(
+                op, children=(_elaborate_element_predicate(operand, container),)
+            )
+        case _:
             raise ValueError(
                 f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
                 "(m-predicate elementPredicate)"

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Sequence
+from decimal import Decimal
 
 import pytest
 from _corpus_identity_support import corpus_object_key
@@ -29,7 +30,6 @@ from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import CountingClock, inert_instant, instant_at
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
-from parallax.core import opt_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
@@ -99,7 +99,8 @@ _PAYMENT = corpus_model("payment")
 _PK_MAX = corpus_model("pk-max")
 _WALLET = corpus_model("wallet")
 
-_B1 = "2024-01-01T00:00:00+00:00"
+_B1 = "2024-01-01T00:00:00.000000Z"
+_B1_MANAGED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 # The planner threads its Transaction Instant through untouched to whichever
 # stage first needs it, so every non-temporal test below shares one uncaptured
@@ -189,9 +190,17 @@ def _version_group(
     predicate = PredicateWrite(
         mutation,
         PredicateSelection(
-            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", "1000000.00")
         ),
-        assignments=tuple(assignments),
+        assignments=tuple(
+            WriteAssignment(
+                assignment.attr,
+                Decimal(str(assignment.value))
+                if assignment.attr.endswith(".balance") and isinstance(assignment.value, float)
+                else assignment.value,
+            )
+            for assignment in assignments
+        ),
     )
     return MaterializedWriteGroup(
         mutation=predicate,
@@ -397,7 +406,7 @@ def test_audit_insert_then_update_coalesces_in_place() -> None:
     (row,) = _insert_rows(step)
     assert row["acctNum"] == "D"
     assert row["value"] == 150.00
-    assert row["txStart"] == _B1
+    assert row["txStart"] == _B1_MANAGED
 
 
 def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
@@ -411,7 +420,7 @@ def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
     (row,) = _insert_rows(step)
     assert row["acctNum"] == "D"
     assert row["value"] == 150.00
-    assert row["validStart"] == _B1
+    assert row["validStart"] == _B1_MANAGED
 
 
 def test_insert_then_delete_cancels_to_no_dml() -> None:
@@ -563,7 +572,7 @@ def test_an_instruction_naming_an_undeclared_entity_is_a_planning_error() -> Non
         KeyedWrite("insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)),
         KeyedWrite("insert", "Gadget", ({"id": 1, "name": "G"},)),
     ]
-    with pytest.raises(WritePlanningError, match="Gadget"):
+    with pytest.raises(ValueError, match="Gadget"):
         _plan(buffer, _ORDERS)
 
 
@@ -576,7 +585,7 @@ def test_an_undeclared_entitys_keyed_update_survives_elision_to_the_same_refusal
     # any undeclared insert of the same entity would let the insert's own
     # refusal fire first and leave elision's behavior unobserved.
     buffer: list[BufferItem] = [KeyedWrite("update", "Gadget", ({"id": 1},))]
-    with pytest.raises(WritePlanningError, match="Gadget"):
+    with pytest.raises(ValueError, match="Gadget"):
         _plan(buffer, _ORDERS)
 
 
@@ -619,8 +628,9 @@ def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction()
     ]
     predicate_step = plan.steps[1]
     assert isinstance(predicate_step, PlannedUpdate)
-    assert predicate_step.target == PredicateTarget(
-        predicate=predicate_algebra.Comparison("eq", "Order.id", 1)
+    assert isinstance(predicate_step.target, PredicateTarget)
+    assert predicate_step.target.predicate.authored == predicate_algebra.Comparison(
+        "eq", "Order.id", 1
     )
 
 
@@ -709,7 +719,7 @@ def test_a_plural_temporal_update_is_refused_rather_than_narrowed_by_no_op_elimi
     # the two milestone chains the author wrote, which is exactly the reduction
     # `m-unit-work` requires an implementation to refuse.
     update = KeyedWrite("update", "Balance", ({"id": 1}, {"id": 2, "value": 9.00}))
-    with pytest.raises(WritePlanningError, match="multi-row temporal"):
+    with pytest.raises(ValueError, match="temporal target carries 2 rows"):
         _plan([update], _BALANCE)
 
 
@@ -721,7 +731,7 @@ def test_a_plural_temporal_update_of_key_only_rows_is_refused_rather_than_elimin
     # mixed-row shape above cannot pin this: there, a surviving row keeps the
     # instruction alive on its way to the refusal.
     update = KeyedWrite("update", "Balance", ({"id": 1}, {"id": 2}))
-    with pytest.raises(WritePlanningError, match="multi-row temporal"):
+    with pytest.raises(ValueError, match="temporal target carries 2 rows"):
         _plan([update], _BALANCE)
 
 
@@ -920,7 +930,7 @@ def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
-            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", 200.00)
+            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", "200.00")
         ),
     )
     plan = _plan([predicate], _WALLET)
@@ -1050,14 +1060,15 @@ def test_batching_never_touches_a_predicate_write() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
-            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", 1.0)
+            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", "1.00")
         ),
     )
     plan = _plan([predicate], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
-    assert step.target == PredicateTarget(
-        predicate=predicate_algebra.Comparison("lessThan", "Wallet.balance", 1.0)
+    assert isinstance(step.target, PredicateTarget)
+    assert step.target.predicate.authored == predicate_algebra.Comparison(
+        "lessThan", "Wallet.balance", "1.00"
     )
 
 
@@ -1091,7 +1102,7 @@ def test_materialized_group_refuses_a_milestone_verb_on_a_non_temporal_target(
     # bounds — the same mismatch an addressed keyed write is refused for.
     assignments = [WriteAssignment("Account.balance", 5.00)] if mutation == "updateUntil" else []
     group = _version_group("Account", mutation, "id", [(1, 1)], assignments)
-    with pytest.raises(WritePlanningError, match="temporal milestone verb"):
+    with pytest.raises(ValueError, match="temporal milestone verb"):
         _plan([group], _ACCOUNT)
 
 
@@ -1103,7 +1114,7 @@ def test_materialized_group_rejects_an_authored_version_assignment() -> None:
     group = _version_group(
         "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.version", 9)]
     )
-    with pytest.raises(opt_lock.CallerAuthoredVersionError, match="framework-owned"):
+    with pytest.raises(ValueError, match="framework-owned"):
         _plan([group], _ACCOUNT)
 
 
@@ -1182,7 +1193,7 @@ def test_planning_captures_the_transaction_instant_only_for_surviving_temporal_w
     plan = _plan([temporal], _BALANCE, tx_instant=TransactionInstant(temporal_clock))
     (step,) = plan.steps
     assert isinstance(step, PlannedInsert)
-    assert _insert_rows(step)[0]["txStart"] == "2024-06-01T00:00:00+00:00"
+    assert _insert_rows(step)[0]["txStart"] == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert temporal_clock.calls == 1
 
 
@@ -1198,7 +1209,10 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
     # DELETE naturally flank the temporal UPDATE bucket — exactly the position
     # its close-and-successors run must occupy as one indivisible unit.
     position_update = KeyedWrite(
-        "update", "Position", ({"id": 5, "value": 42.0},), valid_from="2024-03-01T00:00:00+00:00"
+        "update",
+        "Position",
+        ({"id": 5, "value": 42.0},),
+        valid_from="2024-03-01T00:00:00.000000Z",
     )
     key_ = object_key(position_update, _POSITION)
     assert key_ is not None

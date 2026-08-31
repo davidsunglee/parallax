@@ -452,7 +452,7 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
     # member's Assignment addresses the DECLARING Entity — here the family root.
     # The typed ingress composes the Assignment list with the query before it
     # resolves anything, so this classifies as a composition failure; the
-    # canonical instruction the conformance engine hands `validate_instruction`
+    # canonical instruction the conformance engine hands to Wire preparation
     # carries no query to compose with, and still classifies the family first
     # (`test_write_instructions.py`).
     port = ScriptedPort(Transact())
@@ -1733,7 +1733,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     #     in either slot would show up as a differing bind.
     #
     # WHAT IT DOES NOT PIN: what the shared lowering itself tolerates.
-    # `validate_instruction` reads no bound, and
+    # prepared-write production reads no additional bound, and
     # `write-instruction.schema.json` types a Valid-Time instant as a
     # non-empty string with no pattern, so a caller that hand-authors a document
     # containing a malformed instant still deserializes and still reaches SQL
@@ -1809,7 +1809,7 @@ def _bounded_write(
 # states its write through `tx.wire.*_where`) and the materializing one         #
 # (`_is_materializing_write_step`, which classifies the step AND validates it   #
 # before `_run_materializing_pair` executes anything) — so a lane that stopped  #
-# judging its own target fails these cases. Driving `validate_instruction` from #
+# judging its own target fails these cases. Driving preparation from           #
 # the test instead would leave that regression unpinned: the refusal would then #
 # come from the test, not from the engine.                                      #
 #                                                                               #
@@ -1898,7 +1898,7 @@ def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
 # engine drives it — a canonical target NOTHING pre-validated, straight into
 # `tx.wire.*_where`. That ingress lowers to the same `PredicateWrite` the Typed
 # verbs build and validates it exactly as they do, so deleting its
-# `validate_instruction` call fails BOTH cases.
+# prepared-write call fails BOTH cases.
 #
 # The refusal is asserted at the verb CALL, inside the transaction body, which
 # is what makes each half discriminating. Unvalidated, the readless family
@@ -1951,7 +1951,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
 # order working. A bounded verb states a Valid-Time window, and a target
 # declaring no Valid-Time dimension takes none — judged at the shared window
 # gate, before the model is asked anything about the verb. Plain `terminate`
-# states no window at all, so nothing precedes `validate_instruction`'s own
+# states no window at all, so nothing precedes prepared-write production's own
 # target-profile quadrant, which is the rule this shape reaches.
 @pytest.mark.parametrize(
     ("mutation", "message"),

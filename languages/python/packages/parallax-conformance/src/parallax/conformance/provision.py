@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, cast
 
 from parallax.conformance import case_format
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import JSON, STRING, decode_neutral_literal
+from parallax.core.base import JSON, STRING
 from parallax.core.db_port import DbPort, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
@@ -53,6 +53,7 @@ from parallax.core.storage_layout import (
     RelationalDocument,
     TableLayout,
 )
+from parallax.core.wire import WireValue, decode_wire
 
 if TYPE_CHECKING:
     from parallax.postgres import PostgresAdapter
@@ -264,7 +265,7 @@ def _fixture_document(shape: DocumentShape, row: Mapping[str, object]) -> object
             values[member.name] = NULL
             continue
         values[member.name] = Present(
-            decode_neutral_literal(raw, member.type) if isinstance(member, Leaf) else raw
+            decode_wire(member.type, cast("WireValue", raw)) if isinstance(member, Leaf) else raw
         )
     return encode_document(shape, values)
 

@@ -43,9 +43,9 @@ from parallax.core.unit_work.claims import SettledEvidence
 from parallax.core.unit_work.columns import ColumnSlice, PredecessorColumns
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
-    KeyedWrite,
-    PredicateWrite,
-    WriteInstruction,
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PreparedWrite,
 )
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planner import ObjectKey
@@ -104,7 +104,7 @@ class MaterializedWriteGroup:
     observation columns dropped.
     """
 
-    mutation: PredicateWrite
+    mutation: PreparedPredicateWrite
     key_attributes: tuple[str, ...]
     key_columns: tuple[ColumnSlice[object], ...]
     observations: GroupObservations
@@ -198,7 +198,7 @@ class ObservedKeyedWrite:
     which is what makes a net-zero chain emit no DML however many verbs it took.
     """
 
-    instruction: KeyedWrite
+    instruction: PreparedKeyedWrite
     observation: WriteObservation
     claim: RetainedObservation | None = None
     restorations: frozenset[str] = frozenset()
@@ -253,7 +253,7 @@ class ObjectClaimedWrite:
     unversioned write as the bare instruction it is.
     """
 
-    instruction: KeyedWrite
+    instruction: PreparedKeyedWrite
     restorations: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
@@ -280,11 +280,11 @@ taken at."""
 
 
 def buffered_write(
-    instruction: WriteInstruction,
+    instruction: PreparedWrite,
     evidence: SettledEvidence | None,
     *,
     restorations: frozenset[str] = frozenset(),
-) -> WriteInstruction | ClaimedKeyedWrite:
+) -> PreparedWrite | ClaimedKeyedWrite:
     """``instruction`` as the buffer item it travels to planning as: wrapped in
     the carrier its evidence implies, bare when it settles against nothing.
 
@@ -314,7 +314,7 @@ def buffered_write(
     """
     if evidence is None:
         return instruction
-    if not isinstance(instruction, KeyedWrite):
+    if not isinstance(instruction, PreparedKeyedWrite):
         raise TypeError(
             "only a keyed write settles against evidence of its own; a predicate-selected write "
             "materializes to a Materialized Write Group with its own observation columns"
@@ -356,10 +356,10 @@ def buffered_write(
 # instruction it is, which is what coalescing hands on once it has combined by
 # object. All three settle directly into Planned Steps at finalization; a frozen
 # Write Plan never carries any of these types at all.
-BufferItem = WriteInstruction | ClaimedKeyedWrite | MaterializedWriteGroup
+BufferItem = PreparedWrite | ClaimedKeyedWrite | MaterializedWriteGroup
 
 
-def buffered_instruction(item: BufferItem) -> WriteInstruction:
+def buffered_instruction(item: BufferItem) -> PreparedWrite:
     """The write instruction ``item`` carries, unwrapped from any envelope.
 
     A Materialized Write Group answers the predicate write it materialized,

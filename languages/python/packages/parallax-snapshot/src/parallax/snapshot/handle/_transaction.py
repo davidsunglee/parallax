@@ -55,7 +55,7 @@ from parallax.core.execution_lifecycle._activity import (
     refuse_reentry,
 )
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import ObjectQueryNode, ValidatedObjectQuery
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
@@ -674,7 +674,7 @@ class Transaction:
             batch_size=batch_size,
         )
 
-    def _page(self, node: ObjectQueryNode, batch: StreamBatchActivity) -> FindResult:
+    def _page(self, node: ValidatedObjectQuery, batch: StreamBatchActivity) -> FindResult:
         """One page of a participating stream: a find inside the force-flush.
 
         The flush is per page rather than once at entry for two reasons that
@@ -692,7 +692,7 @@ class Transaction:
         """
         return self._uow.read(lambda: self._paged(node, batch))
 
-    def _paged(self, node: ObjectQueryNode, batch: StreamBatchActivity) -> FindResult:
+    def _paged(self, node: ValidatedObjectQuery, batch: StreamBatchActivity) -> FindResult:
         """One page's own activity: execute and seal, inside the page's batch."""
         with batch as calls:
             return find(
@@ -719,16 +719,21 @@ class Transaction:
         than a scope containing it (`m-execution-lifecycle`), and it spans
         through publication exactly as a standalone read's does.
         """
-        preflight(node, model=self._model.meta, form="graph")
-        return self._uow.read(lambda: self._published(node, publication))
+        validated = preflight(node, model=self._model.meta, form="graph")
+        return self._uow.read(lambda: self._published(node, validated, publication))
 
-    def _published(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
+    def _published(
+        self,
+        node: ObjectQueryNode,
+        validated: ValidatedObjectQuery,
+        publication: ResultPublication,
+    ) -> Snapshot[Any]:
         """One participating read's own activity: execute, convert, publish."""
         with self._attempt.read(node.target, publication.interface) as read:
             if scans_an_axis(node):
                 return publication.from_history(
                     find_history(
-                        node,
+                        validated,
                         self._model,
                         self._conn,
                         read=read,
@@ -736,7 +741,7 @@ class Transaction:
                 )
             return publication.from_find(
                 find(
-                    node,
+                    validated,
                     self._model,
                     self._conn,
                     preference=self._uow.settings.concurrency,
@@ -765,14 +770,16 @@ class Transaction:
         # The gate precedes `uow.read` deliberately, exactly as `find`'s does:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
-        preflight(query, model=self._model.meta, form="rows")
-        return self._uow.read(lambda: self._published_rows(query))
+        validated = preflight(query, model=self._model.meta, form="rows")
+        return self._uow.read(lambda: self._published_rows(query, validated))
 
-    def _published_rows(self, query: ObjectQueryNode) -> RowsResult:
+    def _published_rows(
+        self, query: ObjectQueryNode, validated: ValidatedObjectQuery
+    ) -> RowsResult:
         """One participating row-form read's own activity."""
         with self._attempt.read(query.target, "ROWS") as read:
             return find_rows(
-                query,
+                validated,
                 self._model,
                 self._conn,
                 preference=self._uow.settings.concurrency,
@@ -822,7 +829,7 @@ class Transaction:
         # / `m-bitemp-write` — the dimension-explicit `validFrom` / `until`
         # instruction fields, never smuggled onto `row`, ADR 0010/0013).
         instruction = keyed_instruction(mutation, entity, row, valid_from=valid_from, until=until)
-        validate_keyed_instruction(self._model.meta, instruction)
+        instruction = validate_keyed_instruction(self._model.meta, instruction)
         admit_and_buffer(self._uow, self._model.meta, instruction, claim, restorations=restorations)
 
     # --- set-based write verbs (python.md §5) ----------------------------- #

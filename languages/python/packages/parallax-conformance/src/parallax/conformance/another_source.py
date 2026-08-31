@@ -46,6 +46,7 @@ from parallax.core.entity import (
 from parallax.core.entity._model import cataloged_model
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import find as execute_read
+from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
     SnapshotGraph,
     merge_graph_input,
@@ -102,7 +103,8 @@ class AnotherSource:
                 "this source materializes flat graphs only, and the query includes "
                 "a relationship level"
             )
-        result = execute_read(node, self._model, self._port)
+        validated = preflight(node, model=self._model.meta, form="graph")
+        result = execute_read(validated, self._model, self._port)
         return cast("tuple[S, ...]", self._materialize(result.graph))
 
     def produced(self, value: object) -> bool:

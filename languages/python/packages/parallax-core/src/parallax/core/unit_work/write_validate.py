@@ -14,8 +14,7 @@ A PREDICATE-SELECTED write reaches it nowhere (``_predicate_writes``'s own
 buffering seam): it selects rows by predicate and
 carries assignments rather than a row, so there is no write row for a row
 validator to measure, and member-name honesty
-(:func:`~parallax.core.unit_work.instructions.validate_instruction`) is the whole
-of what its ingress runs.
+is part of the prepared-write producer its ingress runs.
 
 Placement (`core/spec/modules.md` §7 DAG): ``m-unit-work`` depends on
 ``m-predicate``, ``m-db-port``, and ``m-temporal-read`` only, and its

@@ -1,8 +1,9 @@
 """Ordinary read assembly (m-sql lowering): projection, directives, clause tail.
 
 The non-family, non-navigation, non-value-object lane of the read compiler: the
-supported six-name interface and its value semantics, the `LoweredStatement` value
-itself, ordinary scalar/row projection, result-shaping directive composition and
+public statement/error interface and private compiler-product value semantics,
+the `LoweredStatement` value itself, ordinary scalar/row projection,
+result-shaping directive composition and
 its refusals, the read-lock suffix, the
 deferred-node refusals, and the bind-ORDER invariants the whole compiler rests
 on (projection binds before predicate binds, limit bind last). Inheritance
@@ -28,17 +29,13 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.sql_gen import (
+from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen._compile import (
     AttributeReadContract,
     CompiledPredicate,
     CompiledRead,
-    LoweredStatement,
-    SqlGenError,
-    compile_write_predicate,
 )
-from parallax.core.sql_gen import (
-    compile_read as compile_entity_query,
-)
+from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 
 ORDERS = model("orders")
 CUSTOMER = model("customer")
@@ -76,7 +73,7 @@ def test_instance_form_projects_value_object_document_last() -> None:
 
 
 def test_unbound_attribute_is_refused() -> None:
-    with pytest.raises(SqlGenError, match="names no attribute"):
+    with pytest.raises(ValueError, match="names no declared attribute"):
         compile_read(
             oa.Comparison(op="eq", attr="Order.mystery", value=1),
             ORDERS,
@@ -87,7 +84,9 @@ def test_unbound_attribute_is_refused() -> None:
 
 def test_entity_query_target_must_belong_to_the_model() -> None:
     query = oq.EntityQuery(target=EntityIdentity(None, "Missing"), predicate=oa.All())
-    with pytest.raises(SqlGenError, match="names no Entity in the accepted model"):
+    # Authored Entity Queries are not accepted by the private lowering boundary;
+    # snapshot preflight and deep-fetch planning must produce the validated token.
+    with pytest.raises(AttributeError, match="entity"):
         compile_entity_query(query, ORDERS, POSTGRES)
 
 
@@ -161,36 +160,27 @@ def test_statement_is_frozen_value() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The supported interface itself. `parallax.core.sql_gen` exports               #
-# exactly eight names; everything else in the package is private implementation. #
+# The supported interface itself. `parallax.core.sql_gen` exports exactly two   #
+# names; every compiler operation and compiler product is private implementation. #
 # The result objects are ordinary frozen dataclasses, so equality, `repr`,      #
 # hashing, copying, and same-version pickling are all structural — no           #
 # `__reduce__`, no stored callable, nothing to keep in sync by hand.            #
 # --------------------------------------------------------------------------- #
-def test_the_package_exports_exactly_the_eight_supported_names() -> None:
+def test_the_package_exports_only_statement_and_error_values() -> None:
     # An EXACT set, not a superset: re-exporting a private helper is precisely the
     # regression this guards, and a superset assertion would not see it. Canonical
     # column order is `m-inheritance`'s export, so its absence here is the point.
     import parallax.core.sql_gen as sql_gen
 
-    assert set(sql_gen.__all__) == {
-        "AttributeReadContract",
-        "CompiledPredicate",
-        "CompiledRead",
-        "LoweredStatement",
-        "MaterializedReadRow",
-        "SqlGenError",
-        "compile_read",
-        "compile_write_predicate",
-    }
-    # Every advertised name actually resolves on the package, and is the same
-    # object the suites import directly.
-    assert sql_gen.CompiledPredicate is CompiledPredicate
-    assert sql_gen.CompiledRead is CompiledRead
+    assert set(sql_gen.__all__) == {"LoweredStatement", "SqlGenError"}
     assert sql_gen.SqlGenError is SqlGenError
     assert sql_gen.LoweredStatement is LoweredStatement
-    assert sql_gen.compile_read is compile_entity_query
-    assert sql_gen.compile_write_predicate is compile_write_predicate
+    assert not hasattr(sql_gen, "AttributeReadContract")
+    assert not hasattr(sql_gen, "CompiledPredicate")
+    assert not hasattr(sql_gen, "CompiledRead")
+    assert not hasattr(sql_gen, "MaterializedReadRow")
+    assert not hasattr(sql_gen, "compile_read")
+    assert not hasattr(sql_gen, "compile_write_predicate")
 
 
 def test_compile_read_accepts_exactly_the_supported_call_shape() -> None:

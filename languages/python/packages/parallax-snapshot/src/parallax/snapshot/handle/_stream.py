@@ -41,7 +41,7 @@ from parallax.core.execution_lifecycle._activity import (
     StreamBatchActivity,
 )
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata, entity_by_name
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import ObjectQueryNode, ValidatedObjectQuery
 from parallax.core.temporal_read import (
     Pin,
     TemporalReadError,
@@ -63,7 +63,7 @@ __all__ = [
     "check_batch_size",
 ]
 
-type PageRead = Callable[[ObjectQueryNode, StreamBatchActivity], FindResult]
+type PageRead = Callable[[ValidatedObjectQuery, StreamBatchActivity], FindResult]
 """How one page reaches the database: the executor entry its owner composed.
 
 A standalone stream's page is a plain find; a participating one's runs inside
@@ -208,10 +208,10 @@ class SnapshotStream[T]:
         observes nothing and reads nothing.
         """
         self._require(_ENTER_ONCE, _CREATED)
-        preflight(self._node, model=self._model.meta, form="graph")
+        validated = preflight(self._node, model=self._model.meta, form="graph")
         entity = self._entity()
         declaring = declaring_metadata(self._model.meta, entity.identity)
-        self._plan = continuation.plan(entity, self._node, self._model.meta)
+        self._plan = continuation.plan(validated, self._model.meta)
         if scans_an_axis(self._node):
             self._milestones = declaring
             self._pin = Pin()

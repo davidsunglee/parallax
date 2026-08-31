@@ -16,6 +16,7 @@ suites' claims are about one declaration seen from both sides.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Mapping
 from typing import Final, cast
 
@@ -27,6 +28,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._write import compile_write
 from parallax.core.unit_work import KeyedWrite, PredecessorRow, WriteInstruction
 from parallax.core.unit_work.planned import (
     NEW_LINEAGE,
@@ -36,7 +38,6 @@ from parallax.core.unit_work.planned import (
     PlannedInsert,
     PlannedRow,
 )
-from parallax.snapshot.handle import lower_step
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 from parallax.snapshot.handle._write_inputs import is_no_op_assignment
 
@@ -62,7 +63,7 @@ def test_an_insert_binds_one_document_at_the_structured_column() -> None:
                     "id": 1,
                     "displayName": "Ada",
                     "score": 7,
-                    "joinedOn": "2026-01-15",
+                    "joinedOn": dt.date(2026, 1, 15),
                     "address": {"city": "Oslo", "geo": {"country": "NO"}},
                     "tags": [{"label": "founder"}],
                 },
@@ -104,7 +105,7 @@ def test_a_document_leaf_binds_the_codecs_spelling_not_the_inputs_carrier() -> N
     # what matters is that the value went THROUGH the encoding table rather than to a
     # serializer, which is what a `decimal` or `bytes` leaf would expose.
     (statement,) = _lower(
-        KeyedWrite("insert", "Person", ({"id": 4, "joinedOn": "2026-01-15", "tags": []},))
+        KeyedWrite("insert", "Person", ({"id": 4, "joinedOn": dt.date(2026, 1, 15), "tags": []},))
     )
     assert _document(statement) == {"joinedOn": "2026-01-15", "tags": []}
 
@@ -370,7 +371,7 @@ def _successor(
             ),
         ),
     )
-    return _document(lower_step(step, DOCUMENT, POSTGRES))
+    return _document(compile_write(step, DOCUMENT, POSTGRES))
 
 
 def test_a_successor_patches_the_retained_document_so_an_unknown_key_survives() -> None:

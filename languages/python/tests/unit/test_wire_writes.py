@@ -49,6 +49,7 @@ from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
+from parallax.core.wire import WireDecodingError
 from parallax.snapshot import connect
 from parallax.snapshot.handle import (
     Database,
@@ -571,22 +572,22 @@ def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
 # Static validation precedes the strategy and its evidence, always.           #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    ("changes", "match"),
+    ("changes", "error", "match"),
     [
-        ({"id": 2}, "primary-key"),
-        ({"version": 9}, "framework-owned"),
-        ({"nope": 1}, "does not name a declared member"),
-        ({"passport": {}}, "does not name a declared member"),
-        ({"owner": 5}, "does not match the declared type"),
+        ({"id": 2}, instructions.WriteInstructionError, "primary-key"),
+        ({"version": 9}, instructions.WriteInstructionError, "framework-owned"),
+        ({"nope": 1}, instructions.WriteInstructionError, "does not name a declared member"),
+        ({"passport": {}}, instructions.WriteInstructionError, "does not name a declared member"),
+        ({"owner": 5}, WireDecodingError, "type-mismatch"),
     ],
 )
 def test_an_illegal_wire_assignment_is_refused_statically(
-    changes: dict[str, object], match: str
+    changes: dict[str, object], error: type[Exception], match: str
 ) -> None:
     port = ScriptedPort(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match=match):
+        with pytest.raises(error, match=match):
             tx.wire.update(_node(tx, _ACCOUNT_QUERY), changes)
 
     db_for(ACCOUNT, port).transact(fn)
@@ -707,26 +708,24 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
     # instruction every later encode overflows on — the stored document, the
     # Wire read of what was written, the bind — with the verb long returned.
     #
-    # Which refusal is whose rule, exactly as for every other bad value here: an
-    # assignment is the member judgement's, and an insert payload is the
-    # normative payload rule's.
+    # Serialized values are decoded at Wire ingress, so every shape preserves
+    # the typed-literal decoder's exact out-of-space classification.
     keyed = ScriptedPort(Transact(Read(rows=[dict(_SAMPLE_ROW)])))
     inserted = ScriptedPort(Transact())
     selected = ScriptedPort(Transact())
 
     def update(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="does not match the declared"):
+        with pytest.raises(WireDecodingError, match="out-of-space"):
             tx.wire.update(_node(tx, _SAMPLE_QUERY), {"taken": _UNSPELLABLE_INSTANT})
 
     def insert(tx: Transaction) -> None:
-        with pytest.raises(WriteRejectedError) as caught:
+        with pytest.raises(WireDecodingError, match="out-of-space"):
             tx.wire.insert(
                 "parallax.compatibility.Sample", {"id": 2, "taken": _UNSPELLABLE_INSTANT}
             )
-        assert caught.value.rule == "write-value-type-mismatch"
 
     def update_where(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="does not match the declared"):
+        with pytest.raises(WireDecodingError, match="out-of-space"):
             tx.wire.update_where(_SAMPLE_TARGET, {"taken": _UNSPELLABLE_INSTANT})
 
     for port, fn in ((keyed, update), (inserted, insert), (selected, update_where)):
@@ -985,7 +984,7 @@ def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
     port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
     pinned: dict[str, object] = {
         **_BALANCE_QUERY,
-        "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00+00:00"}},
+        "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"}},
     }
 
     def fn(tx: Transaction) -> None:

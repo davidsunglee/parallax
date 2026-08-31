@@ -363,7 +363,8 @@ class _Namespace(NamedTuple):
 
     The three counts are the bound restated as objects. ``fixed`` is everything
     sized by the plan and the handle rather than by the data — the schema, the
-    layouts, the query, the continuation, the delivery, and the connected model.
+    layouts, the authored and validated query products, the continuation, the
+    delivery, and the connected model.
     ``per_page_node`` is what the sealed page graph holds for each node it
     carries, so the page term is that count times the page's own root positions
     times one root plus its fanout. ``per_published_node`` is what one published
@@ -389,12 +390,12 @@ class _Namespace(NamedTuple):
         )
 
 
-_TYPED: Final = _Namespace("typed", _typed_stream, fixed=35, per_page_node=2, per_published_node=2)
+_TYPED: Final = _Namespace("typed", _typed_stream, fixed=43, per_page_node=2, per_published_node=2)
 """The Typed lane. Two objects per page node — the Source Hint a page retains for
 it and the Object Key that hint is filed under — and two per published node, the
 frozen Entity instance and the node state naming what it was read from."""
 
-_WIRE: Final = _Namespace("wire", _wire_stream, fixed=36, per_page_node=2, per_published_node=1)
+_WIRE: Final = _Namespace("wire", _wire_stream, fixed=44, per_page_node=2, per_published_node=1)
 """The Wire lane. The same page term, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
 value tree carries its own state in the tree rather than beside it. One MORE
@@ -617,7 +618,9 @@ _SOURCES: Final = frozenset(
     {
         "parallax.conformance.story_models",
         "parallax.core.continuation",
+        "parallax.core.object_query._validated",
         "parallax.core.object_query._nodes",
+        "parallax.core.predicate._validated",
         "parallax.core.predicate._nodes",
         "parallax.core.temporal_read",
         "parallax.core.unit_work.clock",

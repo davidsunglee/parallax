@@ -27,10 +27,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
 from typing import Literal, cast
 
-from parallax.core.base import normalize_instant
+from parallax.core.base import ManagedValue
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -40,18 +39,33 @@ from parallax.core.metamodel import (
     PrimaryKey,
     entity_by_name,
 )
-from parallax.core.object_query import ObjectQueryNode, OrderKey
+from parallax.core.object_query import (
+    ObjectQueryNode,
+    OrderKey,
+    ValidatedObjectQuery,
+)
+from parallax.core.object_query._validated import ValidatedOrderTerm
 from parallax.core.predicate import (
-    And,
-    Comparison,
     Group,
     NoneOp,
-    NullCheck,
     Or,
-    PredicateNode,
-    Scalar,
 )
-from parallax.core.temporal_read import conjunction_terms, scans_an_axis
+from parallax.core.predicate._validated import (
+    ValidatedPredicate,
+)
+from parallax.core.predicate._validated import (
+    compose as _compose,
+)
+from parallax.core.predicate._validated import (
+    conjunction as _validated_conjunction,
+)
+from parallax.core.predicate._validated import (
+    managed_comparison as _managed_comparison,
+)
+from parallax.core.predicate._validated import (
+    null_check as _null_check,
+)
+from parallax.core.temporal_read import scans_an_axis
 
 __all__ = ["ContinuationError", "ContinuationPlan", "plan"]
 
@@ -77,6 +91,7 @@ class _Term:
     direction: Literal["asc", "desc"]
     nulls: Literal["first", "last"]
     nullable: bool
+    member: AttributeMetadata
 
     @property
     def attr(self) -> str:
@@ -95,18 +110,22 @@ class ContinuationPlan:
 
     __slots__ = ("_order", "_query", "_terms")
 
-    def __init__(self, query: ObjectQueryNode, terms: tuple[_Term, ...]) -> None:
+    def __init__(self, query: ValidatedObjectQuery, terms: tuple[_Term, ...]) -> None:
         self._query = query
         self._terms = terms
         self._order = tuple(term.key for term in terms)
 
-    def first(self, *, limit: int) -> ObjectQueryNode:
+    def first(self, *, limit: int) -> ValidatedObjectQuery:
         """The first page: the caller's query, ordered and capped at ``limit``."""
-        return replace(self._query, order_by=self._order, limit=limit)
+        return replace(
+            self._query,
+            authored=replace(self._query.authored, order_by=self._order, limit=limit),
+            order_terms=tuple(ValidatedOrderTerm(term.key, term.member) for term in self._terms),
+        )
 
     def after(
         self, last_root: Mapping[AttributeIdentity, object], *, limit: int
-    ) -> ObjectQueryNode:
+    ) -> ValidatedObjectQuery:
         """The page following the root whose members are ``last_root``.
 
         The mapping is the whole root, keyed by Attribute Identity; which of its
@@ -119,12 +138,18 @@ class ContinuationPlan:
         leading ordering column. The caller's terms bind first, so bind order
         stays caller-first exactly as an injected as-of term leaves it.
         """
-        terms = (*conjunction_terms(self._query.predicate), *self._seek(last_root))
+        seek = self._seek(last_root)
+        predicate = _validated_conjunction(self._query.validated_predicate, *seek)
         return replace(
             self._query,
-            predicate=terms[0] if len(terms) == 1 else And(operands=terms),
-            order_by=self._order,
-            limit=limit,
+            authored=replace(
+                self._query.authored,
+                predicate=predicate.authored,
+                order_by=self._order,
+                limit=limit,
+            ),
+            validated_predicate=predicate,
+            order_terms=tuple(ValidatedOrderTerm(term.key, term.member) for term in self._terms),
         )
 
     def continues_from(self, root: Mapping[AttributeIdentity, object]) -> bool:
@@ -137,7 +162,9 @@ class ContinuationPlan:
         """
         return all(term.identity in root for term in self._terms)
 
-    def _seek(self, last_root: Mapping[AttributeIdentity, object]) -> tuple[PredicateNode, ...]:
+    def _seek(
+        self, last_root: Mapping[AttributeIdentity, object]
+    ) -> tuple[ValidatedPredicate, ...]:
         """The conjuncts admitting exactly the roots after ``last_root``.
 
         One term needs one strict comparison, which is already the top-level
@@ -157,7 +184,9 @@ class ContinuationPlan:
             return (remainder,)
         return (_hoist(lead, coordinates[0]), remainder)
 
-    def _coordinate(self, term: _Term, last_root: Mapping[AttributeIdentity, object]) -> Scalar:
+    def _coordinate(
+        self, term: _Term, last_root: Mapping[AttributeIdentity, object]
+    ) -> ManagedValue | None:
         """``term``'s own coordinate off the last delivered root, as a literal.
 
         A projection holds each member as its declared type's own carrier, while
@@ -178,12 +207,10 @@ class ContinuationPlan:
                 "root does not carry"
             )
         value = last_root[term.identity]
-        if isinstance(value, datetime):
-            return normalize_instant(value).isoformat()
-        return cast("Scalar", value)
+        return cast("ManagedValue | None", value)
 
 
-def plan(entity: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> ContinuationPlan:
+def plan(query: ValidatedObjectQuery, model: Metamodel) -> ContinuationPlan:
     """``query``'s page plan against ``model``, in its Continuation Order.
 
     The Continuation Order is the query's authored Sort Keys in the precedence it
@@ -199,9 +226,11 @@ def plan(entity: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> Co
     Transaction Time. Every one of those is an ordinary Attribute, so the edge
     lowers and seeks exactly as an authored Sort Key does.
     """
+    entity = query.root
+    authored = query.authored
     root = _family_root(entity, model)
-    terms = [_term(sort_key, model) for sort_key in query.order_by]
-    for identity in (_family_key(root), *_milestone_edge(root, query)):
+    terms = [_term(sort_key, model) for sort_key in authored.order_by]
+    for identity in (_family_key(root), *_milestone_edge(root, authored)):
         if all(term.identity != identity for term in terms):
             terms.append(_term(OrderKey(attr=_reference(identity), direction="asc"), model))
     return ContinuationPlan(query, tuple(terms))
@@ -223,7 +252,9 @@ def _milestone_edge(root: EntityMetadata, query: ObjectQueryNode) -> tuple[Attri
     return tuple(axis.start_attribute for axis in axes)
 
 
-def _remainder(terms: tuple[_Term, ...], coordinates: tuple[Scalar, ...]) -> PredicateNode:
+def _remainder(
+    terms: tuple[_Term, ...], coordinates: tuple[ManagedValue | None, ...]
+) -> ValidatedPredicate:
     """The lexicographic disjunction: one branch per tie depth.
 
     A depth whose term admits nothing after its own coordinate — a null under
@@ -243,37 +274,42 @@ def _remainder(terms: tuple[_Term, ...], coordinates: tuple[Scalar, ...]) -> Pre
     branch drops under no coordinate — so the remainder handed back as one node is
     never an ungrouped disjunction.
     """
-    branches: list[PredicateNode] = []
+    branches: list[ValidatedPredicate] = []
     for depth, term in enumerate(terms):
         after = _strictly_after(term, coordinates[depth])
-        if isinstance(after, NoneOp):
+        if isinstance(after.authored, NoneOp):
             continue
         ties = tuple(_ties_with(terms[at], coordinates[at]) for at in range(depth))
         if not ties:
             branches.append(after)
             continue
-        within = Group(operand=after) if isinstance(after, Or) else after
-        branches.append(Group(operand=And(operands=(*ties, within))))
+        within = _group(after) if isinstance(after.authored, Or) else after
+        conjunction = _validated_conjunction(*ties, within)
+        branches.append(_group(conjunction))
     if len(branches) == 1:
         return branches[0]
-    return Group(operand=Or(operands=tuple(branches)))
+    disjunction = Or(operands=tuple(branch.authored for branch in branches))
+    return _group(_compose(disjunction, *branches))
 
 
-def _hoist(term: _Term, coordinate: Scalar) -> PredicateNode:
+def _hoist(term: _Term, coordinate: ManagedValue | None) -> ValidatedPredicate:
     """``term`` non-strictly past ``coordinate`` — the redundant leading range.
 
     Emitted only for a NON-NULLABLE leading term. With nulls placed after a
     non-null coordinate, "after" is two disjoint ranges of the index and no
     single comparison covers both, so there is nothing to hoist.
     """
-    return Comparison(
+    if coordinate is None:  # pragma: no cover - hoisting is limited to a non-nullable lead
+        raise ContinuationError(f"{term.attr}: a non-nullable continuation coordinate is null")
+    return _managed_comparison(
         op="greaterThanEquals" if term.direction == "asc" else "lessThanEquals",
         attr=term.attr,
+        member=term.member,
         value=coordinate,
     )
 
 
-def _strictly_after(term: _Term, coordinate: Scalar) -> PredicateNode:
+def _strictly_after(term: _Term, coordinate: ManagedValue | None) -> ValidatedPredicate:
     """Everything ``term`` orders strictly after ``coordinate``.
 
     Measured in the term's OWN ordering: a descending term reverses the
@@ -284,22 +320,28 @@ def _strictly_after(term: _Term, coordinate: Scalar) -> PredicateNode:
     """
     if coordinate is None:
         if term.nulls == "first":
-            return NullCheck(op="isNotNull", attr=term.attr)
-        return NoneOp()
-    strict = Comparison(
+            return _null_check(op="isNotNull", attr=term.attr, member=term.member)
+        return ValidatedPredicate(NoneOp())
+    strict = _managed_comparison(
         op="greaterThan" if term.direction == "asc" else "lessThan",
         attr=term.attr,
+        member=term.member,
         value=coordinate,
     )
     if term.nullable and term.nulls == "last":
-        return Or(operands=(strict, NullCheck(op="isNull", attr=term.attr)))
+        is_null = _null_check(op="isNull", attr=term.attr, member=term.member)
+        return _compose(Or(operands=(strict.authored, is_null.authored)), strict, is_null)
     return strict
 
 
-def _ties_with(term: _Term, coordinate: Scalar) -> PredicateNode:
+def _ties_with(term: _Term, coordinate: ManagedValue | None) -> ValidatedPredicate:
     if coordinate is None:
-        return NullCheck(op="isNull", attr=term.attr)
-    return Comparison(op="eq", attr=term.attr, value=coordinate)
+        return _null_check(op="isNull", attr=term.attr, member=term.member)
+    return _managed_comparison(op="eq", attr=term.attr, member=term.member, value=coordinate)
+
+
+def _group(predicate: ValidatedPredicate) -> ValidatedPredicate:
+    return _compose(Group(operand=predicate.authored), predicate)
 
 
 def _term(key: OrderKey, model: Metamodel) -> _Term:
@@ -310,6 +352,7 @@ def _term(key: OrderKey, model: Metamodel) -> _Term:
         direction=key.direction or "asc",
         nulls=key.nulls or "last",
         nullable=attribute.nullable,
+        member=attribute,
     )
 
 

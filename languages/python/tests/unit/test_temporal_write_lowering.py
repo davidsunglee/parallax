@@ -27,7 +27,7 @@ import dataclasses
 import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Final
+from typing import Final, cast
 
 import pytest
 from _corpus_model_support import corpus_records, formed
@@ -55,7 +55,8 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import LATEST
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen._write import compile_write
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     INFINITY,
@@ -86,15 +87,14 @@ from parallax.core.unit_work import (
     WriteObservation,
     WritePlan,
     WritePlanningError,
+    instant_literal,
     run_unit_of_work,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
     Transaction,
-    WriteLoweringError,
     build_write_planner,
-    lower_step,
     plan_temporal_close,
 )
 from parallax.snapshot.handle._write_inputs import ReadObservations, retain_evidence
@@ -140,13 +140,32 @@ def _observed(
     where a close reads its address and its gate from.
     """
     members: dict[str, object] = dict(payload or {})
-    members["txStart"] = tx_start
-    members["txEnd"] = tx_end
+    members["txStart"] = _managed_instant(tx_start)
+    members["txEnd"] = _managed_instant(tx_end)
     if valid_start is not None:
-        members["validStart"] = valid_start
+        members["validStart"] = _managed_instant(valid_start)
     if valid_end is not None:
-        members["validEnd"] = valid_end
+        members["validEnd"] = _managed_instant(valid_end)
     return TemporalObservation(predecessor=PredecessorRow(members=members))
+
+
+def _managed_instant(value: str) -> object:
+    return OPEN_BOUND if value == "infinity" else _instant(value)
+
+
+def _instant(value: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(value)
+
+
+def _canonical_instruction(instruction: KeyedWrite) -> KeyedWrite:
+    def canonical(value: str | None) -> str | None:
+        return None if value is None else instant_literal(dt.datetime.fromisoformat(value))
+
+    return dataclasses.replace(
+        instruction,
+        valid_from=canonical(instruction.valid_from),
+        until=canonical(instruction.until),
+    )
 
 
 def _lower_full(
@@ -159,7 +178,7 @@ def _lower_full(
     concurrency: Concurrency = "locking",
 ) -> list[LoweredStatement]:
     return lower_instruction(
-        instruction,
+        _canonical_instruction(instruction),
         formed(meta),
         dialect,
         concurrency,
@@ -179,7 +198,7 @@ def _lower_steps(
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     """The same statements, paired with the settled step each came from."""
     return lower_instruction_steps(
-        instruction,
+        _canonical_instruction(instruction),
         formed(meta),
         dialect,
         concurrency,
@@ -197,7 +216,7 @@ def _finalize(
     concurrency: Concurrency = "locking",
 ) -> tuple[PlannedStep, ...]:
     steps = lower_instruction_steps(
-        instruction,
+        _canonical_instruction(instruction),
         formed(meta),
         POSTGRES,
         concurrency,
@@ -239,7 +258,7 @@ def test_audit_only_insert_opens_a_current_milestone() -> None:
     assert statements == [
         (
             "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-            (1, "A", 100.00, "2024-01-01T00:00:00+00:00", "infinity"),
+            (1, "A", 100.00, _instant("2024-01-01T00:00:00+00:00"), "infinity"),
         )
     ]
 
@@ -255,11 +274,11 @@ def test_audit_only_update_closes_then_chains_the_authored_full_row() -> None:
     assert statements == [
         (
             "update balance set out_z = ? where bal_id = ? and out_z = ?",
-            ("2024-06-01T00:00:00+00:00", 1, "infinity"),
+            (_instant("2024-06-01T00:00:00+00:00"), 1, "infinity"),
         ),
         (
             "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-            (1, "A", 150.00, "2024-06-01T00:00:00+00:00", "infinity"),
+            (1, "A", 150.00, _instant("2024-06-01T00:00:00+00:00"), "infinity"),
         ),
     ]
 
@@ -276,7 +295,7 @@ def test_audit_only_terminate_closes_only() -> None:
     assert statements == [
         (
             "update balance set out_z = ? where bal_id = ? and out_z = ?",
-            ("2024-08-01T00:00:00+00:00", 1, "infinity"),
+            (_instant("2024-08-01T00:00:00+00:00"), 1, "infinity"),
         )
     ]
 
@@ -288,7 +307,7 @@ def test_audit_only_update_carries_every_new_attribute() -> None:
     statements = _lower(update, BALANCE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert statements[1] == (
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-        (1, "B", 250.00, "2024-06-01T00:00:00+00:00", "infinity"),
+        (1, "B", 250.00, _instant("2024-06-01T00:00:00+00:00"), "infinity"),
     )
 
 
@@ -307,7 +326,7 @@ def test_audit_only_update_merges_a_sparse_row_onto_the_observed_payload() -> No
     )
     assert statements[1] == (
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)",
-        (1, "A", 150.00, "2024-06-01T00:00:00+00:00", "infinity"),
+        (1, "A", 150.00, _instant("2024-06-01T00:00:00+00:00"), "infinity"),
     )
 
 
@@ -338,7 +357,7 @@ def test_audit_only_update_merges_the_sparse_row_at_the_finalization_seam() -> N
         "id": 1,
         "acctNum": "A",
         "value": 150.00,
-        "txStart": "2024-06-01T00:00:00+00:00",
+        "txStart": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         "txEnd": "infinity",
     }
     assert isinstance(opened, PlannedInsert)
@@ -393,7 +412,7 @@ def test_a_close_without_an_observation_is_a_finalization_error() -> None:
 
 def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     terminate = KeyedWrite("terminate", "Account", ({"id": 1},))
-    with pytest.raises(WritePlanningError, match="declares no temporal dimension"):
+    with pytest.raises(ValueError, match="declares no temporal dimension"):
         _finalize(terminate, _MODELS["account"], "2024-08-01T00:00:00+00:00")
 
 
@@ -428,10 +447,10 @@ def test_audit_only_close_gates_on_observed_in_z_under_optimistic() -> None:
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
     assert lowered.binds == (
-        "2024-09-01T00:00:00+00:00",
+        _instant("2024-09-01T00:00:00+00:00"),
         1,
         "infinity",
-        "2024-06-01T00:00:00+00:00",
+        _instant("2024-06-01T00:00:00+00:00"),
     )
     assert isinstance(step, PlannedClose)
     # gated: a shortfall is the retriable optimistic conflict
@@ -475,7 +494,7 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
     assert statements == [
         (
             "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
-            ("2024-02-15T00:00:00+00:00", 1, "infinity", "infinity"),
+            (_instant("2024-02-15T00:00:00+00:00"), 1, "infinity", "infinity"),
         ),
         (
             "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
@@ -484,9 +503,9 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
                 1,
                 "A",
                 100.00,
-                "2024-01-01T00:00:00+00:00",
-                "2024-03-01T00:00:00+00:00",
-                "2024-02-15T00:00:00+00:00",
+                _instant("2024-01-01T00:00:00+00:00"),
+                _instant("2024-03-01T00:00:00+00:00"),
+                _instant("2024-02-15T00:00:00+00:00"),
                 "infinity",
             ),
         ),
@@ -497,9 +516,9 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
                 1,
                 "A",
                 200.00,
-                "2024-03-01T00:00:00+00:00",
-                "2024-09-01T00:00:00+00:00",
-                "2024-02-15T00:00:00+00:00",
+                _instant("2024-03-01T00:00:00+00:00"),
+                _instant("2024-09-01T00:00:00+00:00"),
+                _instant("2024-02-15T00:00:00+00:00"),
                 "infinity",
             ),
         ),
@@ -510,9 +529,9 @@ def test_bitemporal_update_until_splits_head_middle_tail() -> None:
                 1,
                 "A",
                 100.00,
-                "2024-09-01T00:00:00+00:00",
-                "infinity",
-                "2024-02-15T00:00:00+00:00",
+                _instant("2024-09-01T00:00:00+00:00"),
+                OPEN_BOUND,
+                _instant("2024-02-15T00:00:00+00:00"),
                 "infinity",
             ),
         ),
@@ -540,7 +559,7 @@ def test_bitemporal_terminate_until_chains_head_and_tail_no_middle() -> None:
     assert len(statements) == 3
     assert statements[1][1][2] == 100.00  # head carries the OLD value
     assert statements[2][1][2] == 100.00  # tail carries the OLD value too (no middle)
-    assert statements[2][1][3:5] == ("2024-09-01T00:00:00+00:00", "infinity")
+    assert statements[2][1][3:5] == (_instant("2024-09-01T00:00:00+00:00"), OPEN_BOUND)
 
 
 def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
@@ -561,9 +580,9 @@ def test_bitemporal_insert_until_opens_one_bounded_rectangle() -> None:
                 1,
                 "A",
                 100.00,
-                "2024-03-01T00:00:00+00:00",
-                "2024-09-01T00:00:00+00:00",
-                "2024-01-01T00:00:00+00:00",
+                _instant("2024-03-01T00:00:00+00:00"),
+                _instant("2024-09-01T00:00:00+00:00"),
+                _instant("2024-01-01T00:00:00+00:00"),
                 "infinity",
             ),
         )
@@ -588,7 +607,7 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
     assert statements == [
         (
             "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
-            ("2024-07-01T00:00:00+00:00", 1, "infinity", "infinity"),
+            (_instant("2024-07-01T00:00:00+00:00"), 1, "infinity", "infinity"),
         ),
         (
             "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
@@ -597,9 +616,9 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
                 1,
                 "A",
                 100.00,
-                "2024-01-01T00:00:00+00:00",
-                "2024-06-01T00:00:00+00:00",
-                "2024-07-01T00:00:00+00:00",
+                _instant("2024-01-01T00:00:00+00:00"),
+                _instant("2024-06-01T00:00:00+00:00"),
+                _instant("2024-07-01T00:00:00+00:00"),
                 "infinity",
             ),
         ),
@@ -610,9 +629,9 @@ def test_bitemporal_plain_update_splits_head_and_new_tail_only() -> None:
                 1,
                 "A",
                 200.00,
-                "2024-06-01T00:00:00+00:00",
-                "infinity",
-                "2024-07-01T00:00:00+00:00",
+                _instant("2024-06-01T00:00:00+00:00"),
+                OPEN_BOUND,
+                _instant("2024-07-01T00:00:00+00:00"),
                 "infinity",
             ),
         ),
@@ -634,7 +653,7 @@ def test_bitemporal_plain_terminate_chains_head_only() -> None:
     assert statements == [
         (
             "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?",
-            ("2024-07-01T00:00:00+00:00", 1, "infinity", "infinity"),
+            (_instant("2024-07-01T00:00:00+00:00"), 1, "infinity", "infinity"),
         ),
         (
             "insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) "
@@ -643,9 +662,9 @@ def test_bitemporal_plain_terminate_chains_head_only() -> None:
                 1,
                 "A",
                 100.00,
-                "2024-01-01T00:00:00+00:00",
-                "2024-06-01T00:00:00+00:00",
-                "2024-07-01T00:00:00+00:00",
+                _instant("2024-01-01T00:00:00+00:00"),
+                _instant("2024-06-01T00:00:00+00:00"),
+                _instant("2024-07-01T00:00:00+00:00"),
                 "infinity",
             ),
         ),
@@ -669,9 +688,9 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
                 1,
                 "A",
                 100.00,
-                "2024-01-01T00:00:00+00:00",
+                _instant("2024-01-01T00:00:00+00:00"),
                 "infinity",
-                "2024-01-01T00:00:00+00:00",
+                _instant("2024-01-01T00:00:00+00:00"),
                 "infinity",
             ),
         )
@@ -682,12 +701,12 @@ def test_bitemporal_plain_insert_opens_one_fully_current_rectangle() -> None:
     ("concurrency", "gate_sql", "gate_binds"),
     [
         ("locking", "", ()),
-        ("optimistic", " and in_z = ?", ("2023-11-01T00:00:00+00:00",)),
+        ("optimistic", " and in_z = ?", (_instant("2023-11-01T00:00:00+00:00"),)),
     ],
     ids=["locking", "optimistic"],
 )
 def test_bitemporal_close_addresses_a_finite_observed_valid_end(
-    concurrency: Concurrency, gate_sql: str, gate_binds: tuple[str, ...]
+    concurrency: Concurrency, gate_sql: str, gate_binds: tuple[object, ...]
 ) -> None:
     # The observed rectangle is bounded on BOTH Valid-Time sides, which is the
     # shape the Valid-Time component of the address exists for: `out_z = infinity`
@@ -714,18 +733,24 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
     )
     assert close == (
         f"update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?{gate_sql}",
-        ("2024-02-15T00:00:00+00:00", 1, "2024-07-01T00:00:00+00:00", "infinity", *gate_binds),
+        (
+            _instant("2024-02-15T00:00:00+00:00"),
+            1,
+            _instant("2024-07-01T00:00:00+00:00"),
+            "infinity",
+            *gate_binds,
+        ),
     )
     addressed_valid_end = close[1][2]
-    assert addressed_valid_end == observed.predecessor.member("validEnd")
-    assert addressed_valid_end != observed.predecessor.member("validStart")
+    assert addressed_valid_end == cast("dt.datetime", observed.predecessor.member("validEnd"))
+    assert addressed_valid_end != cast("dt.datetime", observed.predecessor.member("validStart"))
     # The successors reconstruct exactly the addressed rectangle's window,
     # `[validStart, validEnd)`, split at the correction's `validFrom`.
     assert head[1][3:5] == (
-        observed.predecessor.member("validStart"),
-        "2024-04-01T00:00:00+00:00",
+        cast("dt.datetime", observed.predecessor.member("validStart")),
+        _instant("2024-04-01T00:00:00+00:00"),
     )
-    assert tail[1][3:5] == ("2024-04-01T00:00:00+00:00", addressed_valid_end)
+    assert tail[1][3:5] == (_instant("2024-04-01T00:00:00+00:00"), addressed_valid_end)
 
 
 # The two rectangles one key holds current at one Transaction Time, as the
@@ -806,24 +831,24 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
             "update where_position set out_z = ? "
             f"where id = ? and thru_z = ? and out_z = ?{gate_sql}"
         ),
-        ("2024-06-01T00:00:00+00:00", 1, INFINITY_INSTANT, "infinity", *gate_binds),
+        (dt.datetime(2024, 6, 1, tzinfo=dt.UTC), 1, INFINITY_INSTANT, "infinity", *gate_binds),
     )
     assert head.binds == (
         1,
         "A",
         Decimal("100.00"),
         dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-        "2024-08-01T00:00:00+00:00",
-        "2024-06-01T00:00:00+00:00",
+        dt.datetime(2024, 8, 1, tzinfo=dt.UTC),
+        dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         "infinity",
     )
     assert tail.binds == (
         1,
         "A",
         Decimal("150.00"),
-        "2024-08-01T00:00:00+00:00",
+        dt.datetime(2024, 8, 1, tzinfo=dt.UTC),
         INFINITY_INSTANT,
-        "2024-06-01T00:00:00+00:00",
+        dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         "infinity",
     )
 
@@ -848,8 +873,8 @@ def _probe(
         formed(meta),
         concurrency,
         instant_at("2024-10-01T00:00:00+00:00"),
-        observed_tx_start,
-        observed_valid_end,
+        None if observed_tx_start is None else _managed_instant(observed_tx_start),
+        None if observed_valid_end is None else _managed_instant(observed_valid_end),
     )
 
 
@@ -858,16 +883,16 @@ def test_bitemporal_close_addresses_both_axis_ends_then_gates_on_in_z_last() -> 
     # bound per axis in canonical order (`thru_z` then `out_z`); the observed
     # `in_z` gate binds LAST.
     step = _probe("optimistic")
-    statement = lower_step(step, formed(POSITION), POSTGRES)
+    statement = compile_write(step, formed(POSITION), POSTGRES)
     assert statement.sql == (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
     )
     assert statement.binds == (
-        "2024-10-01T00:00:00+00:00",
+        _instant("2024-10-01T00:00:00+00:00"),
         1,
         "infinity",
         "infinity",
-        "2024-04-01T00:00:00+00:00",
+        _instant("2024-04-01T00:00:00+00:00"),
     )
     assert step.affected_rows.expected == 1
     assert isinstance(step.concurrency, TemporalGate)
@@ -897,11 +922,16 @@ def test_bitemporal_close_keeps_its_whole_address_under_locking() -> None:
     # m-bitemp-write-001/006/007's own locking-mode closes: the address is
     # unchanged — only the `in_z` gate disappears (ADR 0046).
     step = _probe("locking")
-    statement = lower_step(step, formed(POSITION), POSTGRES)
+    statement = compile_write(step, formed(POSITION), POSTGRES)
     assert statement.sql == (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
     )
-    assert statement.binds == ("2024-10-01T00:00:00+00:00", 1, "infinity", "infinity")
+    assert statement.binds == (
+        _instant("2024-10-01T00:00:00+00:00"),
+        1,
+        "infinity",
+        "infinity",
+    )
     assert step.concurrency == UNGATED
     assert step.target.end_values == (INFINITY, INFINITY)
 
@@ -911,12 +941,15 @@ def test_a_probe_addressing_a_bounded_rectangle_binds_its_finite_valid_end() -> 
     # Valid-Time end is the only thing separating two current rectangles that
     # share `in_z` and `out_z`.
     step = _probe("locking", observed_valid_end="2024-06-01T00:00:00+00:00")
-    assert step.target.end_values == (Finite(instant="2024-06-01T00:00:00+00:00"), INFINITY)
-    statement = lower_step(step, formed(POSITION), POSTGRES)
+    assert step.target.end_values == (
+        Finite(instant=dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
+        INFINITY,
+    )
+    statement = compile_write(step, formed(POSITION), POSTGRES)
     assert statement.binds == (
-        "2024-10-01T00:00:00+00:00",
+        _instant("2024-10-01T00:00:00+00:00"),
         1,
-        "2024-06-01T00:00:00+00:00",
+        _instant("2024-06-01T00:00:00+00:00"),
         "infinity",
     )
 
@@ -934,8 +967,8 @@ def test_temporal_close_requires_an_effective_table() -> None:
     malformed = Metamodel(entities=(balance,))
     model = formed(malformed)
     step = _probe("locking", entity="Balance", meta=malformed, observed_valid_end=None)
-    with pytest.raises(WriteLoweringError, match="write target has no effective table"):
-        lower_step(step, model, POSTGRES)
+    with pytest.raises(SqlGenError, match="write target has no effective table"):
+        compile_write(step, model, POSTGRES)
 
 
 # --------------------------------------------------------------------------- #
@@ -960,7 +993,7 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
     assert _lower(insert, QUOTE, "2024-01-01T00:00:00+00:00") == [
         (
             "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
-            (1, 50.00, "ACME", "2024-01-01T00:00:00+00:00", "infinity"),
+            (1, 50.00, "ACME", _instant("2024-01-01T00:00:00+00:00"), "infinity"),
         )
     ]
 
@@ -1041,7 +1074,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     _close, chain = _lower(update, QUOTE, "2024-06-01T00:00:00+00:00", observation=observation)
     assert chain == (
         "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
-        (1, 60.00, "ACME", "2024-06-01T00:00:00+00:00", "infinity"),
+        (1, 60.00, "ACME", _instant("2024-06-01T00:00:00+00:00"), "infinity"),
     )
 
 
@@ -1108,12 +1141,12 @@ def test_milestone_close_selects_operation_identities_not_the_physical_key() -> 
         "update instrument set out_z = ? "
         "where id = ? and kind = ? and thru_z = ? and out_z = ? and in_z = ?",
         (
-            "2024-07-01T00:00:00+00:00",
+            _instant("2024-07-01T00:00:00+00:00"),
             1,
             "bond",
             "infinity",
             "infinity",
-            "2024-01-01T00:00:00+00:00",
+            _instant("2024-01-01T00:00:00+00:00"),
         ),
     )
 
@@ -1134,7 +1167,7 @@ def test_tph_txtime_terminate_carries_the_tag_guard() -> None:
     assert statements == [
         (
             "update reading set out_z = ? where id = ? and kind = ? and out_z = ?",
-            ("2024-08-01T00:00:00+00:00", 1, "meter", "infinity"),
+            (_instant("2024-08-01T00:00:00+00:00"), 1, "meter", "infinity"),
         )
     ]
 
@@ -1152,7 +1185,7 @@ def test_tpcs_txtime_terminate_has_no_tag_guard() -> None:
     assert statements == [
         (
             "update spot_quote set out_z = ? where id = ? and out_z = ?",
-            ("2024-08-01T00:00:00+00:00", 1, "infinity"),
+            (_instant("2024-08-01T00:00:00+00:00"), 1, "infinity"),
         )
     ]
 
@@ -1171,7 +1204,7 @@ def test_tph_bitemporal_terminate_carries_the_tag_guard() -> None:
     statements = _lower(terminate, INSTRUMENT, "2024-07-01T00:00:00+00:00", observation=observation)
     assert statements[0] == (
         "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?",
-        ("2024-07-01T00:00:00+00:00", 1, "bond", "infinity", "infinity"),
+        (_instant("2024-07-01T00:00:00+00:00"), 1, "bond", "infinity", "infinity"),
     )
     assert statements[1][1][:3] == (1, "bond", 100.00)
 
@@ -1190,7 +1223,7 @@ def test_tpcs_bitemporal_terminate_has_no_tag_guard() -> None:
     statements = _lower(terminate, RATE, "2024-07-01T00:00:00+00:00", observation=observation)
     assert statements[0] == (
         "update deposit_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?",
-        ("2024-07-01T00:00:00+00:00", 1, "infinity", "infinity"),
+        (_instant("2024-07-01T00:00:00+00:00"), 1, "infinity", "infinity"),
     )
 
 
@@ -1215,7 +1248,7 @@ def test_tph_bitemporal_terminate_until_chains_head_and_tail() -> None:
     assert len(statements) == 3
     assert statements[0] == (
         "update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?",
-        ("2024-02-15T00:00:00+00:00", 2, "stock", "infinity", "infinity"),
+        (_instant("2024-02-15T00:00:00+00:00"), 2, "stock", "infinity", "infinity"),
     )
 
 
@@ -1238,7 +1271,7 @@ def test_tpcs_bitemporal_terminate_until_chains_head_and_tail() -> None:
     assert len(statements) == 3
     assert statements[0] == (
         "update loan_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?",
-        ("2024-02-15T00:00:00+00:00", 2, "infinity", "infinity"),
+        (_instant("2024-02-15T00:00:00+00:00"), 2, "infinity", "infinity"),
     )
 
 
@@ -1258,11 +1291,11 @@ def test_tph_txtime_optlock_composed_conflict_orders_tag_then_gate_last() -> Non
         "update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
     )
     assert lowered.binds == (
-        "2024-09-01T00:00:00+00:00",
+        dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         1,
         "meter",
         "infinity",
-        "2024-01-01T00:00:00+00:00",
+        dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     )
 
 
@@ -1337,7 +1370,7 @@ def test_multi_row_temporal_write_is_refused() -> None:
         "Balance",
         ({"id": 1, "value": 100.00}, {"id": 2, "value": 200.00}),
     )
-    with pytest.raises(WritePlanningError, match="multi-row temporal 'update' on 'Balance'"):
+    with pytest.raises(ValueError, match="temporal target carries 2 rows"):
         _lower(batched, BALANCE, "2024-02-15T00:00:00+00:00")
 
 
@@ -1447,7 +1480,7 @@ def test_bitemporal_close_target_is_mode_independent() -> None:
     gate = optimistic.concurrency
     assert isinstance(gate, TemporalGate)
     assert gate.start_attribute.name == "txStart"
-    assert gate.observed_start == "2024-01-01T00:00:00+00:00"
+    assert gate.observed_start == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 # --------------------------------------------------------------------------- #

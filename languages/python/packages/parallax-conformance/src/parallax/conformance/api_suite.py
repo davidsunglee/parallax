@@ -1196,7 +1196,7 @@ _VO_PORTABLE_LITERAL_UNREACHABLE_REASON: Final[str] = (
     "field, so a developer hands over a native `Decimal` the input policy never parses "
     "(`coerce_neutral_input` admits no string for a `Decimal`), and Pydantic refuses the "
     "string before construction. The portable literal grammar this case pins belongs to the "
-    "serde ingress (`decode_neutral_literal`), which `test_metamodel_values.py` exercises "
+    "serde ingress (`decode_wire`), which `test_metamodel_values.py` exercises "
     "directly; there is no idiomatic spelling that routes a wire literal through `tx.insert`"
 )
 
@@ -1314,7 +1314,7 @@ _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON: Final[str] = (
 )
 
 _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON: Final[str] = (
-    "the rule is live and enforced on the developer path — `validate_instruction` refuses a "
+    "the rule is live and enforced on the developer path — prepared-write production refuses a "
     "plural keyed instruction on a temporal target before `Transaction._buffer` buffers it, "
     "and `WritePlanner._settle_temporal` refuses it again as the last structural check before "
     "SQL — but the CASE's own authored shape has no idiomatic spelling: every typed keyed verb "

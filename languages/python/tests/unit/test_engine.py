@@ -37,7 +37,6 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
     STRING,
-    AuthoredNumber,
     InstantError,
     PresentDocument,
     TemporalBound,
@@ -5534,10 +5533,9 @@ def test_edited_copy_refuses_an_ill_typed_assignment() -> None:
 
 
 def test_edited_copy_carries_the_decoded_value_a_member_would_hold() -> None:
-    # A case authors wire literals (`10.50` parses as a float-shaped
-    # `AuthoredNumber`); the read's own member state holds native carriers, so
-    # the copy's does too rather than mixing the two vocabularies.
-    step = {"action": "mutate", "on": 0, "set": {"price": AuthoredNumber("12.75")}}
+    # A case authors canonical Wire literals; the read's own member state holds
+    # managed values, so the copy's does too rather than mixing vocabularies.
+    step = {"action": "mutate", "on": 0, "set": {"price": "12.75"}}
     copy = _edited_copy(step, 0, _order_view(id=1, price=decimal.Decimal("10.50")))
     assert copy.roots[0]["price"] == decimal.Decimal("12.75")
     assert isinstance(copy.roots[0]["price"], decimal.Decimal)

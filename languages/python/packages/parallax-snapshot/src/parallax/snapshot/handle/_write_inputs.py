@@ -75,7 +75,7 @@ from types import MappingProxyType
 from typing import Final, Literal, Protocol, cast
 
 from parallax.core import opt_lock
-from parallax.core.base import InstantError, normalize_instant
+from parallax.core.base import TIMESTAMP, InstantError, normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.document_codec import occurrence_shape, reduce_declared_members
 from parallax.core.entity import Entity as EntityBase
@@ -109,6 +109,7 @@ from parallax.core.unit_work import (
     ObservedStateKey,
     ParticipationToken,
     PredecessorRow,
+    PreparedKeyedWrite,
     RetainedObservation,
     SettledEvidence,
     SourceHint,
@@ -119,12 +120,12 @@ from parallax.core.unit_work import (
     buffered_write,
     claim_scope,
     claimed_object,
-    instant_literal,
     instructions,
     keyed_intent,
     observed_state_key,
     validate_write,
 )
+from parallax.core.wire import encode_wire
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._family import (
     axis_columns,
@@ -475,7 +476,7 @@ class BufferedInserts:
         return bool(self._objects)
 
 
-def validate_keyed_instruction(meta: Metamodel, instruction: KeyedWrite) -> None:
+def validate_keyed_instruction(meta: Metamodel, instruction: KeyedWrite) -> PreparedKeyedWrite:
     """The whole judgment a keyed write instruction is measured by, in the one
     order every ingress runs it in.
 
@@ -485,16 +486,16 @@ def validate_keyed_instruction(meta: Metamodel, instruction: KeyedWrite) -> None
     ``-set-based-unsupported``, `m-inheritance`) classify a framework-owned
     metadata key or a cross-branch field MORE SPECIFICALLY than the generic
     member-name honesty gate ever could. Then
-    :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
-    still catches any OTHERWISE-unknown member the row walk left unexamined
-    (it walks only DECLARED members, never flags a stray key itself).
+    :func:`~parallax.core.unit_work.instructions.prepare_typed_write`, which
+    catches any OTHERWISE-unknown member the row walk left unexamined and
+    returns the managed immutable product this function retains.
 
     Stated once rather than at each ingress because the ORDER is the rule: two
     ingresses that classified one defect differently would make the ingress,
     not the model, decide what a write violated.
 
     A spelling naming no single declared Entity is left entirely to
-    ``validate_instruction``, which owns that classification and refuses it one
+    preparation, which owns that classification and refuses it one
     step later: a row judgment presupposes the target whose members it is
     measured against, so an unresolvable target has no row question to answer,
     and answering it here would report a member complaint about an Entity the
@@ -504,7 +505,9 @@ def validate_keyed_instruction(meta: Metamodel, instruction: KeyedWrite) -> None
     if entity is not None:
         for row in instruction.rows:
             validate_write(entity, row, meta, mutation=instruction.mutation)
-    instructions.validate_instruction(instruction, meta)
+    prepared = instructions.prepare_typed_write(instruction, meta)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    return prepared
 
 
 def keyed_instruction(
@@ -545,7 +548,7 @@ def keyed_instruction(
 def admit_and_buffer(
     ledger: ClaimLedger,
     meta: Metamodel,
-    instruction: KeyedWrite,
+    instruction: PreparedKeyedWrite,
     evidence: SettledEvidence | None,
     *,
     restorations: frozenset[str] = frozenset(),
@@ -1315,7 +1318,13 @@ def _validate_valid_from(
                 f"{name}: a bitemporal {mutation!r} requires valid_from "
                 "(the mutation's own Valid-Time instant)"
             )
-        return instant_literal(_stated_instant(name, mutation, "valid_from", valid_from))
+        return cast(
+            "str",
+            encode_wire(
+                TIMESTAMP,
+                normalize_instant(_stated_instant(name, mutation, "valid_from", valid_from)),
+            ),
+        )
     if valid_from is not None:
         shape = "a Transaction-Time-Only" if _is_temporal(declaring_entity) else "a non-temporal"
         raise instructions.WriteInstructionError(
@@ -1369,7 +1378,7 @@ def _validate_until(
             f"{name}: {mutation!r} requires valid_from < until "
             f"(python.md §5) — got valid_from={valid_from!r}, until={until!r}"
         )
-    return until_normalized.isoformat()
+    return cast("str", encode_wire(TIMESTAMP, until_normalized))
 
 
 def normalize_assignment_values(
@@ -1496,7 +1505,7 @@ def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadat
     about this model rather than about the class. What a shared identity cannot
     settle — whether a foreign class's MEMBERS are this model's — is settled one
     layer down and unchanged: every keyed write still routes ``deserialize`` ->
-    ``validate_write`` -> ``validate_instruction`` against the connected model,
+    ``validate_write`` -> typed preparation against the connected model,
     where member-name honesty and the declared-type walk reject a foreign
     instance's row.
     """

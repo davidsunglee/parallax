@@ -2,7 +2,7 @@
 
 Every write family now finalizes into a settled step before lowering
 (:class:`~parallax.core.unit_work.WritePlanner`) and renders through
-:mod:`parallax.snapshot.handle._step_lowering` from that already-decided step.
+:func:`parallax.core.sql_gen._write.compile_write` from that already-decided step.
 :func:`collapse_group_key` is this module's one live seam: the same physical
 slot selection that fixes a statement's column list also fixes which buffered
 rows may share one, so it answers a row's filtered, table-ordered selection for

@@ -219,10 +219,10 @@ def _case_insensitive(body: Mapping[str, object], tag: str) -> bool | None:
 
 
 def _scalar(value: object, tag: str) -> Scalar:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if isinstance(value, (str, int, float, bool)):
         return value
     raise CanonicalDocumentError(
-        f"{tag}: value must be a scalar literal, got {type(value).__name__}"
+        f"{tag}: value must be a non-null scalar literal, got {type(value).__name__}"
     )
 
 

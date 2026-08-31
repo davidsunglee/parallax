@@ -18,12 +18,12 @@ forms use the same lowering seam. Planning refuses a materializing predicate wri
 that reaches it, a mixed-shape multi-row instruction, a milestone verb on a
 non-temporal entity, and an unsupported DB-computed marker with a loud
 ``WritePlanningError``; lowering separately refuses a target with no effective
-table with ``WriteLoweringError`` — each a forward-error posture, never a wrong
+table with ``SqlGenError`` — each a forward-error posture, never a wrong
 emission, mirroring the read compiler's own.
 
 The final section pins the two halves the non-temporal insert family crosses
 separately: the Write Planner settling an instruction into finalized steps, and
-``_step_lowering.lower_step`` rendering a step built by hand — proving that
+the private SQL compiler rendering a step built by hand — proving that
 lowering answers a purely physical question and never re-derives a semantic one.
 The composed emissions above are the byte-exact evidence; these are the seam
 itself.
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping
+from decimal import Decimal
 from types import MappingProxyType
 from typing import cast
 
@@ -66,7 +67,8 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Column as CoreColumn
 from parallax.core.metamodel import Table as CoreTable
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen._write import compile_write
 from parallax.core.unit_work import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -102,8 +104,7 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
-from parallax.snapshot.handle import WriteLoweringError, build_write_planner, stream_lowered
-from parallax.snapshot.handle._step_lowering import lower_step
+from parallax.snapshot.handle import build_write_planner, stream_lowered
 
 ACCOUNT = corpus_model("account")
 ORDERS = corpus_model("orders")
@@ -165,7 +166,7 @@ def _insert_columns(statement: LoweredStatement) -> tuple[str, ...]:
 def test_non_temporal_write_requires_an_effective_table() -> None:
     account = dataclasses.replace(records("account").entity("Account"), table=None)
     malformed = formed(_records.Metamodel(entities=(account,)))
-    with pytest.raises(WriteLoweringError, match="write target has no effective table"):
+    with pytest.raises(SqlGenError, match="write target has no effective table"):
         _lower(KeyedWrite("insert", "Account", ({"id": 1},)), malformed)
 
 
@@ -778,7 +779,7 @@ def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     # The temporal milestone verb set (terminate / *Until) stays refused on a
     # NON-temporal entity — permanently: `Account` has no Transaction-/Valid-Time
     # axis to close, so a milestone verb aimed at it is never sensible.
-    with pytest.raises(WritePlanningError, match="temporal milestone verb"):
+    with pytest.raises(ValueError, match="temporal milestone verb"):
         _lower(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 
@@ -941,7 +942,7 @@ def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=2, on_shortfall=MISSING_TARGET),
     )
-    statement = lower_step(step, WALLET, POSTGRES)
+    statement = compile_write(step, WALLET, POSTGRES)
     assert statement.sql == "delete from wallet where (id, owner) in ((?, ?), (?, ?))"
     assert statement.binds == (1, "Ada", 2, "Bo")
 
@@ -953,7 +954,7 @@ def test_readless_predicate_delete_lowers_to_one_statement() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
-            "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)
+            "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value="200.00")
         ),
     )
     statement = _lower(predicate, WALLET)[0]
@@ -968,10 +969,10 @@ def test_readless_predicate_update_follows_the_entity_layout_order() -> None:
     predicate = PredicateWrite(
         "update",
         PredicateSelection(
-            "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)
+            "Wallet", oa.Comparison(op="lessThan", attr="Wallet.balance", value="200.00")
         ),
         assignments=(
-            WriteAssignment(attr="Wallet.balance", value=150.00),
+            WriteAssignment(attr="Wallet.balance", value=Decimal("150.00")),
             WriteAssignment(attr="Wallet.owner", value="Updated"),
         ),
     )
@@ -1064,7 +1065,7 @@ def test_step_lowering_reads_an_immutable_write_input_into_a_plain_json_document
         entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
     )
 
-    statement = lower_step(step, CUSTOMER, POSTGRES)
+    statement = compile_write(step, CUSTOMER, POSTGRES)
 
     assert statement.binds[-1] == JsonDocument(
         {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
@@ -1151,7 +1152,7 @@ def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> Non
     # Every member spelling must resolve to a semantic identity before a step
     # exists, so an unknown one is refused where the resolution happens — never
     # silently dropped from the emitted column list.
-    with pytest.raises(WritePlanningError, match="not a member of the Entity's family"):
+    with pytest.raises(ValueError, match="undeclared member"):
         _finalize(KeyedWrite("insert", "Wallet", ({"id": 10, "nickname": "M"},)), WALLET)
 
 
@@ -1159,7 +1160,7 @@ def test_a_milestone_verb_on_a_non_temporal_entity_is_refused_at_finalization() 
     # A milestone verb opens, splits, or closes a milestone, and an Entity
     # declaring no as-of axis has none — refused where the target's family is
     # resolved, never rendered as an ordinary keyed write.
-    with pytest.raises(WritePlanningError, match="declares no temporal dimension"):
+    with pytest.raises(ValueError, match="declares no temporal dimension"):
         _finalize(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 
@@ -1227,12 +1228,13 @@ def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation(
     # A readless predicate write matching zero rows succeeds (`m-batch-write`),
     # which is what an unbounded expected effect says; it carries the typed
     # predicate and nothing else.
-    predicate = oa.Comparison(op="lessThan", attr="Wallet.balance", value=200.00)
+    predicate = oa.Comparison(op="lessThan", attr="Wallet.balance", value="200.00")
     steps = _finalize(PredicateWrite("delete", PredicateSelection("Wallet", predicate)), WALLET)
     assert steps is not None
     (step,) = steps
     assert isinstance(step, PlannedDelete)
-    assert step.target == PredicateTarget(predicate=predicate)
+    assert isinstance(step.target, PredicateTarget)
+    assert step.target.predicate.authored == predicate
     assert step.affected_rows == ANY_COUNT
 
 
@@ -1241,7 +1243,7 @@ def test_a_predicate_verb_with_no_readless_template_is_refused() -> None:
     # target materializes to keyed writes at buffer time, so no readless
     # statement shape exists for one — refused rather than settled into a step
     # no statement could render.
-    with pytest.raises(WritePlanningError, match="names a milestone"):
+    with pytest.raises(ValueError, match="temporal milestone verb"):
         _finalize(PredicateWrite("terminate", PredicateSelection("Wallet", oa.All())), WALLET)
 
 
@@ -1287,7 +1289,7 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
             ),
         ),
     )
-    statement = lower_step(step, ORDERS, POSTGRES)
+    statement = compile_write(step, ORDERS, POSTGRES)
     assert statement.sql == "insert into order_item(id, order_id, quantity) values (?, ?, ?)"
     assert statement.binds == (200, 100, 3)
 
@@ -1306,7 +1308,7 @@ def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> N
         entity=_identity(PAYMENT, "CardPayment"),
         entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
     )
-    statement = lower_step(step, PAYMENT, POSTGRES)
+    statement = compile_write(step, PAYMENT, POSTGRES)
     assert (
         statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
     )
@@ -1350,7 +1352,7 @@ def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_nam
         entity=_CRATE,
         entries=(InsertEntry(row=PlannedRow(attributes={_CRATE_ID: 7}), origin=NEW_LINEAGE),),
     )
-    statement = lower_step(step, _CRATE_MODEL, POSTGRES)
+    statement = compile_write(step, _CRATE_MODEL, POSTGRES)
     assert statement.sql == "insert into crate(id, labels) values (?, ?)"
     assert statement.binds == (7, JsonDocument([]))
 
@@ -1366,7 +1368,7 @@ def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
     )
-    statement = lower_step(step, _CRATE_MODEL, POSTGRES)
+    statement = compile_write(step, _CRATE_MODEL, POSTGRES)
     assert statement.sql == "update crate set note = ? where id = ?"
     assert statement.binds == ("fragile", 7)
 
@@ -1385,5 +1387,5 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
             InsertEntry(row=row, origin=NEW_LINEAGE),
         ),
     )
-    with pytest.raises(WriteLoweringError, match="one row at a time"):
-        lower_step(step, PK_MAX, POSTGRES)
+    with pytest.raises(SqlGenError, match="one row at a time"):
+        compile_write(step, PK_MAX, POSTGRES)

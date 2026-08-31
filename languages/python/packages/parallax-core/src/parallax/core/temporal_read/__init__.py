@@ -41,9 +41,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from parallax.core.base import INFINITY_LITERAL, normalize_instant
+from parallax.core.base import INFINITY_LITERAL, ManagedValue, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata
+from parallax.core.metamodel import AttributeIdentity, AttributeMetadata, EntityMetadata, Metamodel
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
 from parallax.core.object_query import (
     LATEST,
@@ -56,6 +56,18 @@ from parallax.core.object_query import (
 )
 from parallax.core.object_query import TemporalDimension as WireDimension
 from parallax.core.predicate import All, And, Comparison, Group, Or, PredicateNode
+from parallax.core.predicate._validated import (
+    ValidatedPredicate,
+)
+from parallax.core.predicate._validated import (
+    conjunction as _validated_conjunction,
+)
+from parallax.core.predicate._validated import (
+    framework_comparison as _framework_comparison,
+)
+from parallax.core.predicate._validated import (
+    managed_comparison as _managed_comparison,
+)
 from parallax.core.temporal_read._compile import (
     MODEL_COMPILER,
     TemporalReadModelCompiler,
@@ -72,6 +84,7 @@ from parallax.core.temporal_read._facet import (
     TransactionTimeOnly,
     view,
 )
+from parallax.core.wire import decode_wire
 
 __all__ = [
     "FACET_KEY",
@@ -91,12 +104,14 @@ __all__ = [
     "compile_facet",
     "conjunction_terms",
     "inject_as_of",
+    "inject_validated_as_of",
     "milestone_edge",
     "milestone_edge_from_members",
     "milestone_edge_of",
     "query_pin",
     "resolve_pinned_instants",
     "scans_an_axis",
+    "validated_hop_as_of_terms",
     "view",
 ]
 
@@ -355,6 +370,82 @@ def inject_as_of(
         return predicate
     terms = (*conjunction_terms(predicate), *axis_terms)
     return terms[0] if len(terms) == 1 else And(operands=terms)
+
+
+def inject_validated_as_of(
+    predicate: ValidatedPredicate,
+    selections: Mapping[WireDimension, TemporalSelection],
+    entity: EntityMetadata,
+) -> ValidatedPredicate:
+    """Append generated temporal terms without revisiting an authored occurrence."""
+    modes: dict[AcceptedDimension, _AxisMode] = {}
+    for dimension, selection in selections.items():
+        axis = _declared_axis(dimension, entity)
+        modes[axis.dimension] = _mode_of(selection)
+    terms: list[ValidatedPredicate] = []
+    for axis in sorted(entity.declared_as_of_axes, key=lambda item: item.dimension.value):
+        mode = modes.get(axis.dimension)
+        if mode is None:
+            raise TemporalReadError(
+                f"{entity.identity.name}: internal temporal lowering received no selection "
+                f"for declared dimension {axis.dimension.value!r}"
+            )
+        terms.extend(_validated_terms(mode, axis, entity))
+    return predicate if not terms else _validated_conjunction(predicate, *terms)
+
+
+def _validated_terms(
+    mode: _AxisMode, axis: AcceptedAsOfAxis, entity: EntityMetadata
+) -> list[ValidatedPredicate]:
+    start = entity.attribute(axis.start_attribute.name)
+    end = entity.attribute(axis.end_attribute.name)
+    if start is None or end is None:  # pragma: no cover - accepted axes name local attributes
+        raise TemporalReadError(f"{entity.identity.name}: temporal axis member is undeclared")
+    start_ref = f"{entity.identity.canonical}.{start.identity.name}"
+    end_ref = f"{entity.identity.canonical}.{end.identity.name}"
+    if isinstance(mode, _Scan):
+        return []
+    if isinstance(mode, _Latest):
+        return [_framework_comparison(op="eq", attr=end_ref, member=end, value=INFINITY_LITERAL)]
+    if isinstance(mode, _Containment):
+        instant = _decode_temporal_coordinate(mode.instant, start)
+        return [
+            _managed_comparison(op="lessThanEquals", attr=start_ref, member=start, value=instant),
+            _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=instant),
+        ]
+    window_start = _decode_temporal_coordinate(mode.from_, end)
+    window_end = _decode_temporal_coordinate(mode.to, start)
+    return [
+        _managed_comparison(op="lessThan", attr=start_ref, member=start, value=window_end),
+        _managed_comparison(op="greaterThan", attr=end_ref, member=end, value=window_start),
+    ]
+
+
+def _decode_temporal_coordinate(value: str, member: AttributeMetadata) -> ManagedValue:
+    return decode_wire(member.type, value)
+
+
+def validated_hop_as_of_terms(
+    target: EntityMetadata,
+    model: Metamodel,
+    root_pins: Mapping[AcceptedDimension, str],
+) -> tuple[ValidatedPredicate, ...]:
+    """Build managed per-hop terms; an absent pin means the framework Latest sentinel."""
+    # Import locally to keep the existing temporal facet's module layering unchanged.
+    from parallax.core import inheritance
+
+    declarer_view = inheritance.view(model).entity(target.identity)
+    if declarer_view is None:  # pragma: no cover - accepted metadata is total
+        raise TemporalReadError(f"{target.identity.canonical}: no inheritance view")
+    declarer = model.entity(declarer_view.root)
+    if declarer is None:  # pragma: no cover - accepted metadata is total
+        raise TemporalReadError(f"{declarer_view.root.canonical}: no declaring entity")
+    terms: list[ValidatedPredicate] = []
+    for axis in sorted(declarer.declared_as_of_axes, key=lambda item: item.dimension.value):
+        instant = root_pins.get(axis.dimension)
+        mode: _AxisMode = _Latest() if instant is None else _Containment(instant)
+        terms.extend(_validated_terms(mode, axis, declarer))
+    return tuple(terms)
 
 
 def _declared_axis(dimension: str, entity: EntityMetadata) -> AcceptedAsOfAxis:

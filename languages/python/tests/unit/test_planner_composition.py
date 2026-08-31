@@ -11,7 +11,7 @@ The chain is closed link by link. Every planning the drive performed ran on a
 planner the factory built. Every Write Plan that was streamed through
 ``stream_lowered`` is by identity a plan one of those plannings returned, and the
 plans streamed are the plans planned, in order, so a factory plan the lane
-discarded is named too. Every step rendered by ``lower_step`` — the one function
+discarded is named too. Every step rendered by ``compile_write`` — the one function
 that turns a settled step into a statement — is by identity a step of one of
 those streamed plans. An unrelated implementation of the planner interface
 inherits nothing, so it performs no planning this module records and appears in
@@ -70,6 +70,7 @@ from parallax.conformance import case_format, engine
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen._write import compile_write
 from parallax.core.unit_work import (
     NO_AUDIT,
     AuditStrategy,
@@ -140,9 +141,9 @@ class _Composition:
         return [step for plan in self.lowered for step in plan.steps]
 
 
-def _bindings_of(name: str) -> list[tuple[ModuleType, str]]:
-    """Every attribute of an imported ``parallax`` module holding the handle's
-    ``name``, as the module and the attribute to replace.
+def _bindings_of(original: object) -> list[tuple[ModuleType, str]]:
+    """Every attribute of an imported ``parallax`` module holding ``original``,
+    as the module and the attribute to replace.
 
     A module that imported the function keeps a binding of its own — under
     whatever name it imported it as — which replacing the name in the module that
@@ -150,7 +151,6 @@ def _bindings_of(name: str) -> list[tuple[ModuleType, str]]:
     makes the watch complete without anyone having had to list the callers or the
     names they chose.
     """
-    original = getattr(handle, name)
     return [
         (module, bound)
         for module in list(sys.modules.values())
@@ -183,7 +183,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
     seen = _Composition(lane=lane, built=[], planned=[], lowered=[], rendered=[])
     finalizing = WritePlanner.finalize
     streaming = handle.stream_lowered
-    rendering = handle.lower_step
+    rendering = compile_write
 
     def construct(
         model: Metamodel,
@@ -216,9 +216,9 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
 
     monkeypatch.setattr(_planning, "WritePlanner", construct)
     monkeypatch.setattr(WritePlanner, "finalize", finalize)
-    for replacement, name in ((lower, "stream_lowered"), (render, "lower_step")):
-        holders = _bindings_of(name)
-        assert holders, f"nothing imported holds {name}, so watching it grades nothing"
+    for replacement, original in ((lower, handle.stream_lowered), (render, compile_write)):
+        holders = _bindings_of(original)
+        assert holders, f"nothing imported holds {original}, so watching it grades nothing"
         for module, bound in holders:
             monkeypatch.setattr(module, bound, replacement)
     return seen

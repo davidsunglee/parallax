@@ -723,7 +723,7 @@ def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() 
     # The page statements the delivery actually ran: the key is constant across
     # the whole result, so an order ending in it would seek `pos_id > 1` and
     # deliver ONE root. What each continuing page binds is the previous root's
-    # own milestone, in the canonical instant spelling.
+    # own milestone, as the managed instant retained by continuation planning.
     port = _milestone_pages(size=1)
     with _positions(port).stream(_all_milestones(), batch_size=1) as stream:
         assert len(list(stream)) == 3
@@ -735,21 +735,10 @@ def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() 
             1,
             1,
             1,
-            "2024-01-01T00:00:00+00:00",
+            _JANUARY,
             1,
-            "2024-01-01T00:00:00+00:00",
-            "2024-01-01T00:00:00+00:00",
-            1,
-        ),
-        (
-            1,
-            1,
-            1,
-            1,
-            "2024-01-01T00:00:00+00:00",
-            1,
-            "2024-01-01T00:00:00+00:00",
-            "2024-04-01T00:00:00+00:00",
+            _JANUARY,
+            _JANUARY,
             1,
         ),
         (
@@ -757,10 +746,21 @@ def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() 
             1,
             1,
             1,
-            "2024-06-01T00:00:00+00:00",
+            _JANUARY,
             1,
-            "2024-06-01T00:00:00+00:00",
-            "2024-04-01T00:00:00+00:00",
+            _JANUARY,
+            _APRIL,
+            1,
+        ),
+        (
+            1,
+            1,
+            1,
+            1,
+            _JUNE,
+            1,
+            _JUNE,
+            _APRIL,
             1,
         ),
     ]

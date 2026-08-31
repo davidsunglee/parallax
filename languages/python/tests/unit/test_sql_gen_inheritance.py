@@ -24,6 +24,7 @@ from parallax.core import predicate as oa
 from parallax.core.base import PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity
+from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._inheritance import (
     BranchColumn,
@@ -179,12 +180,13 @@ def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
     # skipped that step, and refusing loudly is what keeps it from silently
     # lowering to an empty position.
     op = oa.Narrow(to=("Unicorn",), operand=oa.All())
-    with pytest.raises(SqlGenError, match="names an entity the model does not declare"):
+    with pytest.raises(ModelRejectedError) as excinfo:
         compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
+    assert excinfo.value.rule == "narrow-empty-effective-set"
 
 
 def test_entity_query_narrow_cannot_span_inheritance_families() -> None:
-    with pytest.raises(SqlGenError, match="spans more than one inheritance family"):
+    with pytest.raises(ModelRejectedError) as excinfo:
         compile_read(
             oa.All(),
             DOCUMENT,
@@ -192,6 +194,7 @@ def test_entity_query_narrow_cannot_span_inheritance_families() -> None:
             target(DOCUMENT, "Document"),
             narrow_to=_narrow(DOCUMENT, "Invoice", "Folder"),
         )
+    assert excinfo.value.rule == "narrow-outside-position"
 
 
 def test_tph_tag_predicate_whole_family_root_injects_none() -> None:
@@ -221,13 +224,13 @@ def test_tph_user_predicate_then_tag_binds_user_first() -> None:
     # The injected tag composes via `and` AFTER the user predicate — binds read
     # user-first, then tag (m-sql).
     compiled = compile_read(
-        oa.Comparison(op="greaterThan", attr="CardPayment.amount", value=60),
+        oa.Comparison(op="greaterThan", attr="CardPayment.amount", value="60.00"),
         PAYMENT,
         POSTGRES,
         target(PAYMENT, "CardPayment"),
     )
     assert compiled.statement.sql.endswith("where t0.amount > ? and t0.kind = ?")
-    assert compiled.statement.binds == (60, "card")
+    assert compiled.statement.binds == (Decimal("60.00"), "card")
 
 
 def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_tag() -> None:
@@ -285,7 +288,9 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
             ),
             oa.Narrow(
                 to=("CashPayment",),
-                operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
+                operand=oa.Comparison(
+                    op="greaterThan", attr="CashPayment.detail", value="10.00"
+                ),
             ),
         )
     )
@@ -314,7 +319,7 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
 
 def test_tph_top_level_narrow_partitions_before_variant_specific_document_cast() -> None:
     compiled = compile_read(
-        oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
+        oa.Comparison(op="greaterThan", attr="CashPayment.detail", value="10.00"),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
@@ -340,7 +345,9 @@ def _heterogeneous_payment_predicate() -> oa.PredicateNode:
             ),
             oa.Narrow(
                 to=("CashPayment",),
-                operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
+                operand=oa.Comparison(
+                    op="greaterThan", attr="CashPayment.detail", value="10.00"
+                ),
             ),
         )
     )
@@ -618,13 +625,14 @@ def test_tpcs_union_predicate_on_a_sibling_only_member_is_refused() -> None:
     # silent reference to a column that table has no slot for. Position validity
     # is enforced upstream (`m-inheritance-041`), so this is the compiler's own
     # backstop, and the message names the contributor and the branch table.
-    with pytest.raises(SqlGenError, match="has no Column in table 'receipt'"):
+    with pytest.raises(ModelRejectedError) as excinfo:
         compile_read(
-            oa.Comparison(op="greaterThan", attr="Invoice.amountDue", value=1),
+            oa.Comparison(op="greaterThan", attr="Invoice.amountDue", value="1.00"),
             DOCUMENT,
             POSTGRES,
             target(DOCUMENT, "FinancialDocument"),
         )
+    assert excinfo.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 def test_tph_temporal_slots_follow_every_domain_slot_across_ancestry() -> None:
@@ -928,7 +936,7 @@ def test_a_concrete_target_read_transforms_rows_by_identity() -> None:
     # No tag column and no variant literal is projected, so there is nothing to
     # materialize — but the row still comes back as a FRESH dict, so the caller
     # need not care which form it got.
-    row = {"id": 1, "amount": "100.00", "card_network": "Visa"}
+    row = {"id": 1, "amount": Decimal("100.00"), "card_network": "Visa"}
     for concrete_model, name in ((PAYMENT, "CardPayment"), (DOCUMENT, "Invoice")):
         compiled = compile_read(oa.All(), concrete_model, POSTGRES, target(concrete_model, name))
         transformed = compiled.transform_row(row)
@@ -940,9 +948,11 @@ def test_tph_abstract_read_transforms_rows_through_the_tag_map() -> None:
     # The raw tag column is POPPED (it is framework-owned and never reaches the
     # caller) and its value mapped to the declaring concrete's name.
     compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
-    assert compiled.transform_row({"id": 1, "amount": "100.00", "kind": "card"}) == {
+    assert compiled.transform_row(
+        {"id": 1, "amount": Decimal("100.00"), "kind": "card"}
+    ) == {
         "id": 1,
-        "amount": "100.00",
+        "amount": Decimal("100.00"),
         "familyVariant": "CardPayment",
     }
     assert compiled.transform_row({"id": 2, "kind": "cash"})["familyVariant"] == "CashPayment"
@@ -1210,10 +1220,11 @@ def test_family_attribute_resolution_spans_the_roots_projection_superset() -> No
         oa.Comparison(op="eq", attr="Root.id", value=1), meta, POSTGRES, target(meta, "Leaf")
     )
     assert compiled.statement.sql.endswith("where t0.id = ? and t0.kind = ?")
-    with pytest.raises(SqlGenError, match="names no attribute"):
+    with pytest.raises(ModelRejectedError) as excinfo:
         compile_read(
             oa.Comparison(op="eq", attr="Barren.y", value=1), meta, POSTGRES, target(meta, "Leaf")
         )
+    assert excinfo.value.rule == "subtype-attribute-outside-narrow-scope"
 
 
 # --------------------------------------------------------------------------- #

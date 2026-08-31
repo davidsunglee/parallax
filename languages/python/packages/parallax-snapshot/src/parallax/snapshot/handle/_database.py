@@ -82,7 +82,7 @@ from parallax.core.execution_lifecycle._activity import (
     refuse_reentry,
 )
 from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import ObjectQueryNode, ValidatedObjectQuery
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
@@ -522,7 +522,7 @@ class Database:
             self._lifecycle, target=target, interface=interface, batch_size=batch_size
         )
 
-    def _page(self, node: ObjectQueryNode, batch: StreamBatchActivity) -> FindResult:
+    def _page(self, node: ValidatedObjectQuery, batch: StreamBatchActivity) -> FindResult:
         """One page of a standalone stream: the ordinary find executor, inside
         the page's own Stream Batch.
 
@@ -552,14 +552,14 @@ class Database:
         no root and calls no Provider, while planning, lowering, every Database
         Call, conversion, and materialization are all inside the Read activity.
         """
-        preflight(node, model=self._connected.model.meta, form="graph")
+        validated = preflight(node, model=self._connected.model.meta, form="graph")
         with open_read_root(
             self._lifecycle, target=node.target, interface=publication.interface
         ) as read:
             if scans_an_axis(node):
                 return publication.from_history(
                     find_history(
-                        node,
+                        validated,
                         self._connected.model,
                         self._port,
                         read=read,
@@ -567,7 +567,7 @@ class Database:
                 )
             return publication.from_find(
                 find(
-                    node,
+                    validated,
                     self._connected.model,
                     self._port,
                     calls=read,
@@ -592,11 +592,11 @@ class Database:
         after the same gate the graph form crosses.
         """
         refuse_reentry(self._lifecycle)
-        preflight(query, model=self._connected.model.meta, form="rows")
+        validated = preflight(query, model=self._connected.model.meta, form="rows")
         root = open_read_root(self._lifecycle, target=query.target, interface="ROWS")
         with root as read:
             return find_rows(
-                query,
+                validated,
                 self._connected.model,
                 self._port,
                 read=read,

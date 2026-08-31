@@ -454,7 +454,7 @@ def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
 # validator the conformance engine's rejected lane calls for the corpus's     #
 # `when.write` cases (m-value-object-039..044 / m-inheritance-086..089) — one #
 # validator, two callers (design 37 "Patterns to follow"), pinned per rule at #
-# this seam. It runs BEFORE `validate_instruction` (see `_buffer`'s own       #
+# this seam. It runs BEFORE prepared-write production (see `_buffer`'s own   #
 # comment): its inheritance payload-shape rules classify a framework-owned    #
 # metadata key or a cross-branch field more specifically than the generic     #
 # member-name-honesty gate ever could.                                       #

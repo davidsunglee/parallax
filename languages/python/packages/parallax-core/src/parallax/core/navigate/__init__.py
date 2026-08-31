@@ -70,10 +70,16 @@ from parallax.core.predicate import (
     Or,
     PredicateNode,
 )
+from parallax.core.predicate._validated import (
+    ValidatedPredicate,
+)
+from parallax.core.predicate._validated import (
+    conjunction as _validated_conjunction,
+)
 from parallax.core.relationship import RelationshipMetadata
-from parallax.core.temporal_read import conjunction_terms
+from parallax.core.temporal_read import conjunction_terms, validated_hop_as_of_terms
 
-__all__ = ["canonicalize", "hop_as_of_terms", "resolve_relationship"]
+__all__ = ["canonicalize", "canonicalize_validated", "hop_as_of_terms", "resolve_relationship"]
 
 _EMPTY_PINS: Mapping[TemporalDimension, str] = MappingProxyType({})
 
@@ -111,6 +117,83 @@ def canonicalize(
     if not _contains_navigation(op):
         return op
     return _walk(op, model, entity, root_pins)
+
+
+def canonicalize_validated(
+    op: ValidatedPredicate,
+    model: Metamodel,
+    entity: EntityMetadata,
+    root_pins: Mapping[TemporalDimension, str] = _EMPTY_PINS,
+) -> ValidatedPredicate:
+    """Propagate hop terms while preserving every already-elaborated occurrence."""
+    if not _contains_navigation(op.authored):
+        return op
+    return _walk_validated(op, model, entity, root_pins)
+
+
+def _walk_validated(
+    product: ValidatedPredicate,
+    model: Metamodel,
+    entity: EntityMetadata,
+    root_pins: Mapping[TemporalDimension, str],
+) -> ValidatedPredicate:
+    op = product.authored
+    match op:
+        case Navigate(rel=rel) | Exists(rel=rel) | NotExists(rel=rel):
+            target = product.relationship_target
+            if target is None:  # pragma: no cover - elaboration resolves every hop
+                direction = resolve_relationship(rel, entity.identity, model)
+                target = _entity(model, direction.join.target.entity)
+            inner = (
+                None
+                if not product.children
+                else _walk_validated(product.only_child(), model, target, root_pins)
+            )
+            terms = validated_hop_as_of_terms(target, model, root_pins)
+            combined = (
+                None
+                if inner is None and not terms
+                else terms[0]
+                if inner is None and len(terms) == 1
+                else _validated_conjunction(*terms)
+                if inner is None
+                else inner
+                if not terms
+                else _validated_conjunction(inner, *terms)
+            )
+            rebuilt: PredicateNode
+            if isinstance(op, Navigate):
+                rebuilt = Navigate(rel=rel, op=None if combined is None else combined.authored)
+            elif isinstance(op, Exists):
+                rebuilt = Exists(rel=rel, op=None if combined is None else combined.authored)
+            else:
+                rebuilt = NotExists(rel=rel, op=None if combined is None else combined.authored)
+            return ValidatedPredicate(
+                rebuilt,
+                children=() if combined is None else (combined,),
+                relationship_target=target,
+            )
+        case And() | Or():
+            children = tuple(
+                _walk_validated(child, model, entity, root_pins) for child in product.children
+            )
+            rebuilt = (
+                And(operands=tuple(child.authored for child in children))
+                if isinstance(op, And)
+                else Or(operands=tuple(child.authored for child in children))
+            )
+            return ValidatedPredicate(rebuilt, children=children)
+        case Not() | Group() | Narrow():
+            child = _walk_validated(product.only_child(), model, entity, root_pins)
+            if isinstance(op, Not):
+                rebuilt = Not(operand=child.authored)
+            elif isinstance(op, Group):
+                rebuilt = Group(operand=child.authored)
+            else:
+                rebuilt = Narrow(to=op.to, operand=child.authored)
+            return ValidatedPredicate(rebuilt, children=(child,))
+        case _:
+            return product
 
 
 # --------------------------------------------------------------------------- #

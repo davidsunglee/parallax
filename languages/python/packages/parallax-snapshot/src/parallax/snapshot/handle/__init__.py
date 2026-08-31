@@ -88,10 +88,6 @@ it.
 - :mod:`~parallax.snapshot.handle._write_lowering` — :func:`stream_lowered`,
   which lowers an already-settled Write Plan's steps into the one seam DML
   becomes through.
-- :mod:`~parallax.snapshot.handle._step_lowering` — :func:`lower_step`, the
-  physical lowering of one settled step on its own, for the ``m-opt-lock``
-  conflict lane's standalone close probe.
-- :mod:`~parallax.snapshot.handle._write_types` — :class:`WriteLoweringError`.
 - :mod:`~parallax.snapshot.handle._write_inputs` —
   :class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin`, the
   finite-Transaction-Time-pin refusal the keyed verbs and the conformance
@@ -109,10 +105,8 @@ accessor, so there is no type a caller reads off their own result to re-export.
 The modules behind no exported name (``_materializer``, ``_family``,
 ``_keyed_sql``, ``_predicate_writes``) are reached only through the modules
 above; each documents its own place in the package's acyclic internal graph.
-``_preflight`` exports :func:`preflight` alone: an adapter's compile lane must
-refuse exactly what this implementation's executor refuses, so the one gate is
-reachable without an executor, and the module's own §7 scope is what proves it
-reaches no port.
+``_preflight`` owns the shared internal gate an adapter's compile lane also
+uses; its own §7 scope proves that gate reaches no port.
 """
 
 from __future__ import annotations
@@ -132,7 +126,6 @@ from parallax.snapshot.handle._errors import (
 )
 from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
-from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
     CheckedSnapshot,
     FindResult,
@@ -146,7 +139,6 @@ from parallax.snapshot.handle._read import (
     find,
     find_history,
 )
-from parallax.snapshot.handle._step_lowering import lower_step
 from parallax.snapshot.handle._stream import SnapshotStream, SnapshotStreamStateError
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import (
@@ -166,7 +158,6 @@ from parallax.snapshot.handle._write_inputs import (
     validate_source_pin,
 )
 from parallax.snapshot.handle._write_lowering import stream_lowered
-from parallax.snapshot.handle._write_types import WriteLoweringError
 from parallax.snapshot.materialize import (
     InvalidData,
     InvalidDataError,
@@ -213,15 +204,12 @@ __all__ = [
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
     "WriteInstructionError",
-    "WriteLoweringError",
     "build_write_planner",
     "connect",
     "entity_read_lock",
     "find",
     "find_history",
-    "lower_step",
     "plan_temporal_close",
-    "preflight",
     "stream_lowered",
     "validate_source_pin",
 ]

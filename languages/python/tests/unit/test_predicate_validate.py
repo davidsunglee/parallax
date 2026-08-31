@@ -320,7 +320,7 @@ def _between(lower: Scalar, upper: Scalar) -> Between:
 
 @pytest.mark.parametrize(
     ("lower", "upper"),
-    [(50.75, 20.00), (5, 1), ("2024-05-01", "2024-02-01"), ("b", "a")],
+    [("50.75", "20.00"), ("5.00", "1.00")],
 )
 def test_between_with_inverted_same_kind_bounds_rejects(lower: Scalar, upper: Scalar) -> None:
     exc = _rejects(_between(lower, upper), _ORDERS, "Order")
@@ -330,26 +330,24 @@ def test_between_with_inverted_same_kind_bounds_rejects(lower: Scalar, upper: Sc
 @pytest.mark.parametrize(
     ("lower", "upper"),
     [
-        (20.00, 50.75),
-        (5, 5),
-        ("a", "a"),
-        ("2024-02-01", "2024-05-01"),
-        (5, "1"),
-        ("5", 1),
-        (None, 1),
-        (5, None),
-        (True, False),
+        ("20.00", "50.75"),
+        ("5.00", "5.00"),
     ],
 )
 def test_between_bounds_the_rule_stands_aside_for_accept(lower: Scalar, upper: Scalar) -> None:
-    # Ordered and equal same-kind bounds are legal ranges; a mixed-kind pair, a null
-    # bound, and a boolean pair are all skipped rather than guessed — the comparison
-    # is by literal kind, so a bool is never read as the number 1 or 0.
+    # Ordering is evaluated only after both serialized values decode against the
+    # resolved Decimal value space.
     _validate("Order", _between(lower, upper), _ORDERS)
 
 
+@pytest.mark.parametrize("lower", [20.0, 5, "5", None, True, "2024-02-01"])
+def test_between_rejects_a_bound_outside_the_resolved_value_space(lower: Scalar) -> None:
+    exc = _rejects(_between(lower, "50.75"), _ORDERS, "Order")
+    assert exc.rule in {"neutral-literal-type-mismatch", "neutral-literal-noncanonical"}
+
+
 def test_between_bound_ordering_is_checked_wherever_the_node_sits() -> None:
-    op = And(operands=(All(), Not(operand=_between(50.75, 20.00))))
+    op = And(operands=(All(), Not(operand=_between("50.75", "20.00"))))
     exc = _rejects(op, _ORDERS, "Order")
     assert exc.rule == "between-bounds-inverted"
 
@@ -393,7 +391,7 @@ def test_nested_range_typed_bounds_are_checked_before_the_ordering_in_both_scope
     # first would report `between-bounds-inverted` and blame the ordering for what is
     # really the bounds' types, so this pins the order the two checks run in.
     for op in _nested_range_scopes(42, 7, path="Customer.address.city", element="type"):
-        assert _rejects(op, _CUSTOMER, "Customer").rule == "nested-literal-type-mismatch"
+        assert _rejects(op, _CUSTOMER, "Customer").rule == "neutral-literal-type-mismatch"
 
 
 def test_nested_range_ordered_typed_bounds_accept_in_both_scopes() -> None:
@@ -424,7 +422,7 @@ def test_nested_negated_membership_type_checks_its_values_in_both_scopes() -> No
         where=NestedMembership(op="nestedNotIn", path="type", values=(42,)),
     )
     for op in (flat, scoped):
-        assert _rejects(op, _CUSTOMER, "Customer").rule == "nested-literal-type-mismatch"
+        assert _rejects(op, _CUSTOMER, "Customer").rule == "neutral-literal-type-mismatch"
     _validate(
         "Customer",
         NestedMembership(op="nestedNotIn", path="Customer.address.city", values=("Oslo",)),
@@ -726,7 +724,7 @@ def test_nested_path_ending_on_nested_value_object_rejects() -> None:
 def test_nested_literal_type_mismatch_rejects() -> None:
     op = NestedComparison(op="nestedEq", path="Customer.address.city", value=42)
     exc = _rejects(op, _CUSTOMER, "Customer")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
 
 def test_nested_comparison_valid_string_literal_accepts() -> None:
@@ -734,10 +732,10 @@ def test_nested_comparison_valid_string_literal_accepts() -> None:
     _validate("Customer", op, _CUSTOMER)  # no raise
 
 
-def test_nested_comparison_null_literal_always_matches() -> None:
-    # The absence-collapse rule: a `null` literal matches any declared type.
+def test_nested_comparison_rejects_null_literal() -> None:
+    # Null tests are represented by dedicated null-check predicate nodes.
     op = NestedComparison(op="nestedEq", path="Customer.address.city", value=None)
-    _validate("Customer", op, _CUSTOMER)  # no raise
+    assert _rejects(op, _CUSTOMER, "Customer").rule == "neutral-literal-type-mismatch"
 
 
 def test_nested_membership_all_valid_literals_accepts() -> None:
@@ -849,41 +847,41 @@ def _nested(path: str, value: Scalar) -> NestedComparison:
 def test_literal_matches_type_boolean() -> None:
     _validate("Widget", _nested("Widget.spec.flag", True), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.flag", 1), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
 
 def test_literal_matches_type_int() -> None:
     _validate("Widget", _nested("Widget.spec.count", 3), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.count", "3"), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
     # A bool is never a numeric literal (m-core: `True` never equals `1`).
     exc = _rejects(_nested("Widget.spec.count", True), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
 
 def test_literal_matches_type_float_and_decimal() -> None:
     _validate("Widget", _nested("Widget.spec.ratio", 1.5), _MULTI_TYPE_MODEL)
-    _validate("Widget", _nested("Widget.spec.amount", 2), _MULTI_TYPE_MODEL)
+    _validate("Widget", _nested("Widget.spec.amount", "2.00"), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.ratio", "x"), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
 
 def test_literal_matches_type_string_and_portable_fallback() -> None:
     _validate("Widget", _nested("Widget.spec.label", "x"), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.label", 1), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
     # date / time / timestamp / uuid / bytes / json ride the portable literal as a
     # string (m-predicate's typed-literal vocabulary has no dedicated carrier).
     _validate("Widget", _nested("Widget.spec.whenMade", "2024-01-02"), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.whenMade", 1), _MULTI_TYPE_MODEL, "Widget")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
 
 def test_nested_membership_literal_type_mismatch_rejects() -> None:
     op = NestedMembership(op="nestedIn", path="Customer.address.city", values=("Oslo", 42))
     exc = _rejects(op, _CUSTOMER, "Customer")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
 
 def test_nested_null_check_rejects_a_non_nullable_leaf() -> None:
@@ -946,7 +944,7 @@ def test_nested_exists_scoped_where_literal_type_mismatch_rejects() -> None:
         where=NestedComparison(op="nestedEq", path="type", value=42),
     )
     exc = _rejects(op, _CUSTOMER, "Customer")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
 
 def test_nested_exists_scoped_where_membership_literal_type_mismatch_rejects() -> None:
@@ -955,7 +953,7 @@ def test_nested_exists_scoped_where_membership_literal_type_mismatch_rejects() -
         where=NestedMembership(op="nestedIn", path="number", values=("555-9999", 42)),
     )
     exc = _rejects(op, _CUSTOMER, "Customer")
-    assert exc.rule == "nested-literal-type-mismatch"
+    assert exc.rule == "neutral-literal-type-mismatch"
 
 
 def test_nested_exists_scoped_where_valid_compound_accepts() -> None:

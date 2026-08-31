@@ -93,11 +93,9 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    entity_by_name,
 )
-from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.object_query import ObjectQueryNode
-from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, compile_read
+from parallax.core.object_query import ObjectQueryNode, ValidatedObjectQuery
+from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin, scans_an_axis
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot._read_result import (
@@ -106,7 +104,7 @@ from parallax.snapshot._read_result import (
     PublishedRow,
     RowsResult,
 )
-from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
+from parallax.snapshot.handle._errors import SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.handle._write_inputs import (
     ObservationLedger,
@@ -367,7 +365,7 @@ class _Milestone:
 
 
 def find(
-    query: ObjectQueryNode,
+    query: ValidatedObjectQuery,
     model: CatalogedModel,
     port: DbPort,
     *,
@@ -394,7 +392,7 @@ def find(
     `familyVariant` materialization (`m-sql`) to its rows, and converts them.
     Every level is the same three steps — compile, execute, convert — with
     `familyVariant` materialization and each row's resolved concrete Entity coming
-    from that level's OWN `~parallax.core.sql_gen.CompiledRead`, never re-derived
+    from that level's OWN `~parallax.core.sql_gen._compile.CompiledRead`, never re-derived
     here from the query a second time.
 
     Keys are gathered and fanned back by MEMBER identity
@@ -439,8 +437,9 @@ def find(
     declined root, and one page of a streamed read do.
     """
     meta = model.meta
-    root_entity = _metadata(meta, query.target.canonical)
-    plan_ = deep_fetch.plan(root_entity, query, meta)
+    authored = query.authored
+    root_entity = query.root
+    plan_ = deep_fetch.plan(query, meta)
     builder = GraphBuilder(ViewSchema(_slot_table(plan_)))
     observations = ReadObservations()
 
@@ -481,11 +480,11 @@ def find(
         _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
-    pin = query_pin(query, declaring_metadata(meta, root_entity.identity))
+    pin = query_pin(authored, declaring_metadata(meta, root_entity.identity))
     return FindResult(
         graph=builder.seal(root_refs, pin),
         includes=_include_tree(plan_.levels),
-        sources=_retained(meta, query, observations, ledger=ledger, pin=pin),
+        sources=_retained(meta, authored, observations, ledger=ledger, pin=pin),
     )
 
 
@@ -604,7 +603,7 @@ def stage_rows(
 
 
 def find_rows(
-    query: ObjectQueryNode,
+    query: ValidatedObjectQuery,
     model: CatalogedModel,
     port: DbPort,
     *,
@@ -622,7 +621,7 @@ def find_rows(
     everything that decides behavior: the same canonical root query
     (`deep_fetch.plan` injects the as-of predicate and canonicalizes navigation
     for both lanes), the same
-    :func:`~parallax.core.sql_gen.compile_read` with the lane selected by
+    private :func:`~parallax.core.sql_gen._compile.compile_read` with the lane selected by
     ``result_form``, and the same Database Call bracket.
 
     A row-form read materializes no relationships, and the shared read gate
@@ -632,8 +631,9 @@ def find_rows(
     level to drop.
     """
     meta = model.meta
-    root_entity = _metadata(meta, query.target.canonical)
-    plan_ = deep_fetch.plan(root_entity, query, meta)
+    authored = query.authored
+    root_entity = query.root
+    plan_ = deep_fetch.plan(query, meta)
     compiled = compile_read(
         plan_.root,
         meta,
@@ -650,7 +650,7 @@ def find_rows(
         model,
         compiled,
         rows,
-        pin=query_pin(query, declaring_metadata(meta, root_entity.identity)),
+        pin=query_pin(authored, declaring_metadata(meta, root_entity.identity)),
     )
     for item in stage.rows:
         if item.family_variant is not None:
@@ -681,7 +681,7 @@ def _published_rows(stage: StagedRows, meta: Metamodel) -> tuple[PublishedRow, .
 
 
 def find_history(
-    query: ObjectQueryNode,
+    query: ValidatedObjectQuery,
     model: CatalogedModel,
     port: DbPort,
     *,
@@ -710,8 +710,8 @@ def find_history(
     a partition of its rows.
     """
     meta = model.meta
-    metadata = _metadata(meta, query.target.canonical)
-    plan_ = deep_fetch.plan(metadata, query, meta)
+    metadata = query.root
+    plan_ = deep_fetch.plan(query, meta)
     if plan_.levels:
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
@@ -970,7 +970,7 @@ def _execute_compiled(
 ) -> Iterator[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN transform.
 
-    Takes the whole `~parallax.core.sql_gen.CompiledRead` rather than a statement
+    Takes the whole `~parallax.core.sql_gen._compile.CompiledRead` rather than a statement
     plus a transform, so the two can only ever come from the same compile. That
     matters because `find` holds the root's and a child level's compiled reads in
     scope at the same time: crossing them is otherwise an ordinary-looking edit
@@ -1071,38 +1071,6 @@ def _distinct_keys(
     gathered = (builder.member_value(parent, member) for parent in parents)
     values = dict.fromkeys(value for value in gathered if value is not None and value is not ABSENT)
     return cast("list[predicate_algebra.Scalar]", list(values))
-
-
-def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
-    """``name``'s accepted Metadata within ``meta``, raising when it names no
-    single declared Entity.
-
-    A bare spelling two namespaces share names no single Entity and is the
-    normative `reference-ambiguous-entity-name` refusal, carried by
-    ``predicate``'s own :class:`~parallax.core.predicate.ModelRejectedError`
-    so one rule and one class answer it whether preflight or this executor
-    resolves the reference. Any other miss names no declared Entity at all and is
-    the same `query-target-not-in-model` refusal the read preflight answers with:
-    a developer's ``db.find`` reaches this executor with an identity-resolved
-    target, but :func:`find` / :func:`find_history` are exported and take a bare
-    target spelling, so this seam classifies its own miss rather than assuming
-    one.
-    """
-    metadata = entity_by_name(meta, name)
-    if metadata is not None:
-        return metadata
-    shared = ambiguous_entity_spellings(meta, name)
-    if shared:
-        raise predicate_algebra.ModelRejectedError(
-            "reference-ambiguous-entity-name",
-            f"{name!r}: the bare Entity spelling is shared by {list(shared)}, so it names no "
-            "single Entity in this model and the read resolves nowhere (m-predicate reference "
-            "resolution)",
-        )
-    raise QueryTargetError(
-        f"the connected model declares no Entity for the read target {name!r} "
-        "(query-target-not-in-model)"
-    )
 
 
 def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetadata:

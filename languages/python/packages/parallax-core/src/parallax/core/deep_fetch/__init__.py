@@ -83,12 +83,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final, Literal, NamedTuple
+from typing import Final, Literal, NamedTuple, cast
 
 from parallax.core import inheritance, navigate
+from parallax.core.base import ManagedValue
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     Cardinality,
     EntityIdentity,
     EntityMetadata,
@@ -100,15 +102,27 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.object_query import (
-    EntityQuery,
     IncludePath,
     IncludeSegment,
-    ObjectQueryNode,
     OrderKey,
+    ValidatedObjectQuery,
 )
-from parallax.core.predicate import And, Membership, PredicateNode, Scalar
+from parallax.core.predicate import PredicateNode
+from parallax.core.predicate._validated import (
+    ValidatedPredicate,
+)
+from parallax.core.predicate._validated import (
+    conjunction as _validated_conjunction,
+)
+from parallax.core.predicate._validated import (
+    managed_membership as _managed_membership,
+)
 from parallax.core.relationship import RelationshipMetadata
-from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
+from parallax.core.temporal_read import (
+    inject_validated_as_of,
+    resolve_pinned_instants,
+    validated_hop_as_of_terms,
+)
 
 __all__ = [
     "CorrelationMember",
@@ -118,6 +132,7 @@ __all__ = [
     "ObjectQueryPlan",
     "ParentRef",
     "RootRef",
+    "ValidatedEntityQuery",
     "plan",
 ]
 
@@ -162,6 +177,23 @@ class CorrelationMember:
     identity: AttributeIdentity
     column: str
     reference: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedEntityQuery:
+    """One resolved flat read accepted by the private SQL compiler."""
+
+    target: EntityIdentity
+    entity: EntityMetadata
+    validated_predicate: ValidatedPredicate
+    narrow_to: tuple[EntityIdentity, ...] | None = None
+    order_by: tuple[OrderKey, ...] = ()
+    limit: int | None = None
+
+    @property
+    def predicate(self) -> PredicateNode:
+        """The retained authored predicate, for diagnostics and plan inspection."""
+        return self.validated_predicate.authored
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,13 +250,15 @@ class FetchLevel:
     is_back_reference: bool = False
     back_reference_family: EntityIdentity | None = None
     child_target: EntityIdentity | None = None
+    child: EntityMetadata | None = None
     related: CorrelationMember | None = None
-    as_of_terms: tuple[PredicateNode, ...] = ()
+    as_of_terms: tuple[ValidatedPredicate, ...] = ()
     order_keys: tuple[OrderKey, ...] = ()
     narrow_to: tuple[EntityIdentity, ...] | None = None
     source_position: tuple[EntityIdentity, ...] | None = None
+    related_member: AttributeMetadata | None = None
 
-    def query_for(self, parent_keys: Sequence[Scalar]) -> EntityQuery:
+    def query_for(self, parent_keys: Sequence[object]) -> ValidatedEntityQuery:
         """Build this level's flat child query from gathered parent keys.
 
         The membership and propagated temporal terms form the predicate. Narrowing
@@ -237,12 +271,27 @@ class FetchLevel:
             raise DeepFetchError(
                 f"{self.attach_key!r} is a back-reference level and issues no child query"
             )
-        predicate: PredicateNode = Membership(op="in", attr=reference, values=tuple(parent_keys))
-        if self.as_of_terms:
-            predicate = And(operands=(predicate, *self.as_of_terms))
-        return EntityQuery(
-            target=self.child_target,
-            predicate=predicate,
+        member = self.related_member
+        if member is None:
+            raise DeepFetchError(f"{self.attach_key!r} carries no resolved child member")
+        values = cast("tuple[ManagedValue, ...]", tuple(parent_keys))
+        membership = _managed_membership(
+            attr=reference,
+            member=member,
+            values=values,
+        )
+        predicate = (
+            membership
+            if not self.as_of_terms
+            else _validated_conjunction(membership, *self.as_of_terms)
+        )
+        target = self.child
+        if target is None:  # pragma: no cover - queryable levels carry exact Metadata
+            raise DeepFetchError(f"{self.attach_key!r} carries no resolved child metadata")
+        return ValidatedEntityQuery(
+            target=target.identity,
+            entity=target,
+            validated_predicate=predicate,
             narrow_to=self.narrow_to,
             order_by=self.order_keys,
         )
@@ -258,11 +307,11 @@ class ObjectQueryPlan:
     left-to-right pass satisfies every level's data dependency.
     """
 
-    root: EntityQuery
+    root: ValidatedEntityQuery
     levels: tuple[FetchLevel, ...]
 
 
-def plan(entity: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> ObjectQueryPlan:
+def plan(query: ValidatedObjectQuery, model: Metamodel) -> ObjectQueryPlan:
     """Plan ``query``'s Includes against ``model`` and canonicalize its root.
 
     ``query`` is the read's canonical Object Query — clauses already flat, so
@@ -277,23 +326,30 @@ def plan(entity: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> Ob
     injection resolves through the Inheritance Facet's family root rather than
     ``entity``'s own (possibly empty) declaration.
     """
+    entity = query.root
+    authored = query.authored
     families = inheritance.view(model)
     temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
-    root_pins = resolve_pinned_instants(query.temporal, temporal_entity)
-    root_injected = inject_as_of(query.predicate, query.temporal, temporal_entity)
-    predicate = navigate.canonicalize(root_injected, model, entity, root_pins)
-    narrow_to = _resolve_identities(model, query.narrow_to) if query.narrow_to is not None else None
-    root = EntityQuery(
+    root_pins = resolve_pinned_instants(authored.temporal, temporal_entity)
+    root_injected = inject_validated_as_of(
+        query.validated_predicate, authored.temporal, temporal_entity
+    )
+    predicate = navigate.canonicalize_validated(root_injected, model, entity, root_pins)
+    narrow_to = (
+        _resolve_identities(model, authored.narrow_to) if authored.narrow_to is not None else None
+    )
+    root = ValidatedEntityQuery(
         target=entity.identity,
-        predicate=predicate,
+        entity=entity,
+        validated_predicate=predicate,
         narrow_to=narrow_to,
-        order_by=query.order_by,
-        limit=query.limit,
+        order_by=authored.order_by,
+        limit=authored.limit,
     )
 
     builder = _PlanBuilder(model=model, families=families, root_pins=root_pins)
     builder.seed_root(entity)
-    for path in query.includes:
+    for path in authored.includes:
         builder.add_path(path)
     return ObjectQueryPlan(root=root, levels=tuple(builder.levels))
 
@@ -435,6 +491,8 @@ class _PlanBuilder:
             )
         else:
             child_target, narrow_to = _child_target(self.model, direction, position, segment)
+            child = _entity(self.model, child_target)
+            related_member = _attribute_metadata(self.families, direction.join.target)
             level = FetchLevel(
                 attach_key=attach_key,
                 relationship=direction.identity,
@@ -442,15 +500,17 @@ class _PlanBuilder:
                 parent=parent_ref,
                 owner=owner,
                 child_target=child_target,
+                child=child,
                 related=CorrelationMember(
                     identity=direction.join.target,
                     column=_attribute_column(self.families, direction.join.target),
                     reference=f"{child_target.canonical}.{direction.join.target.name}",
                 ),
-                as_of_terms=navigate.hop_as_of_terms(related_entity, self.model, self.root_pins),
+                as_of_terms=validated_hop_as_of_terms(related_entity, self.model, self.root_pins),
                 order_keys=_order_keys(direction, child_target.canonical),
                 narrow_to=narrow_to,
                 source_position=source_position,
+                related_member=related_member,
             )
 
         index = len(self.levels)
@@ -519,6 +579,15 @@ def _attribute_column(facet: InheritanceFacet, attribute: AttributeIdentity) -> 
             f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute"
         )
     return declared.storage.name
+
+
+def _attribute_metadata(facet: InheritanceFacet, attribute: AttributeIdentity) -> AttributeMetadata:
+    declared = _entity_view(facet, attribute.entity).applicable_attribute(attribute.name)
+    if declared is None:  # pragma: no cover - accepted joins name applicable attributes
+        raise DeepFetchError(
+            f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute"
+        )
+    return declared
 
 
 def _narrowed_position(

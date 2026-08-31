@@ -65,12 +65,13 @@ from parallax.core.object_query import (
     AsOf,
     ObjectQueryNode,
     TemporalSelection,
+    ValidatedObjectQuery,
     object_query,
 )
 from parallax.core.object_query import TemporalDimension as TemporalDimensionName
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.predicate import PredicateNode, QueryDefinitionError
-from parallax.core.sql_gen import CompiledRead, compile_read
+from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
@@ -84,6 +85,7 @@ from parallax.core.unit_work import (
     PredecessorShape,
     PredicateMutation,
     PredicateWrite,
+    PreparedPredicateWrite,
     TemporalColumns,
     TemporalObservation,
     UnitOfWork,
@@ -163,9 +165,8 @@ def buffer_predicate(
     Steps 1, 2, and 4 are TYPED-ONLY — they judge inputs the canonical
     instruction has no way to carry (a query's clauses, an Assignment list
     composed against a query, a ``dt.datetime`` bound). Every rule that measures
-    the INSTRUCTION itself is stated in ``validate_instruction`` (step 5), which
-    the conformance engine calls too, so the two ingresses classify one
-    instruction identically.
+    the INSTRUCTION itself is stated by the prepared-write producers (step 5),
+    so the two ingresses classify one instruction identically.
 
     1. **Mutation compatibility** (`python.md` §5 "A query becomes a write
        target only in its mutation-compatible form") — one carrying nothing but
@@ -209,9 +210,8 @@ def buffer_predicate(
        ISO-8601 UTC timestamp, or the open-bound sentinel — so nothing
        downstream of this lane, the buffering seam and the planner and SQL
        generation alike, has to defend against anything else.
-    5. **Build + validate the canonical instruction** (the SAME
-       deserialize/`validate_instruction` round trip a keyed write buys in
-       ``Transaction._buffer``). ``validate_instruction`` measures the selecting
+    5. **Build + prepare the canonical instruction** (the typed peer of the
+       Wire ingress's ``prepare_wire_write`` path). ``prepare_typed_write`` measures the selecting
        predicate with the whole ``validate_predicate`` vocabulary, then rejects
        an inheritance-family target, then the assignments — so an inverted
        ``between`` window, an attribute outside the active position, or a
@@ -249,8 +249,9 @@ def buffer_predicate(
         doc["until"] = until_literal
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
-    instructions.validate_instruction(instruction, meta)
-    buffer_predicate_instruction(uow, model, conn, instruction, attempt)
+    prepared = instructions.prepare_typed_write(instruction, meta)
+    assert isinstance(prepared, PreparedPredicateWrite)
+    buffer_predicate_instruction(uow, model, conn, prepared, attempt)
 
 
 def _reject_uncomposable_assignments(
@@ -309,7 +310,7 @@ def buffer_predicate_instruction(
     uow: UnitOfWork,
     model: CatalogedModel,
     conn: DbPort,
-    instruction: PredicateWrite,
+    instruction: PreparedPredicateWrite,
     attempt: TransactionAttemptActivity,
 ) -> None:
     """The neutral seam UNDERLYING every ``_where`` verb and the
@@ -325,11 +326,11 @@ def buffer_predicate_instruction(
     ``Attr.set(...)`` assignments first; the engine builds it directly
     from the case's own canonical write-instruction document.
 
-    **Every caller passes ``instruction`` through
-    :func:`~parallax.core.unit_work.instructions.validate_instruction` against
-    ``meta`` first** — :func:`buffer_predicate` at its step 5 for the typed
-    ``_where`` verbs, and
-    :func:`~parallax.snapshot.handle._wire_writes.wire_predicate_write` for the
+    **Every caller passes its authored instruction through the corresponding
+    prepared-write producer against ``meta`` first** —
+    :func:`~parallax.core.unit_work.instructions.prepare_typed_write` for the
+    typed ``_where`` verbs, and
+    :func:`~parallax.core.unit_work.instructions.prepare_wire_write` for the
     Wire ones, the conformance engine included. EVERY
     model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_predicate`` vocabulary
@@ -386,7 +387,7 @@ def buffer_predicate_instruction(
 
 
 def _reject_readless_document_many(
-    meta: Metamodel, entity: EntityMetadata, instruction: PredicateWrite
+    meta: Metamodel, entity: EntityMetadata, instruction: PreparedPredicateWrite
 ) -> None:
     layout = entity_layout(meta, entity)
     if layout is None:  # pragma: no cover - accepted entities always have a layout view
@@ -394,14 +395,16 @@ def _reject_readless_document_many(
     by_name = {
         occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
     }
-    assigned = {assignment_member(assignment.attr) for assignment in instruction.assignments}
+    assigned = {
+        assignment_member(assignment.attr) for assignment in instruction.managed_assignments
+    }
     for name in assigned:
         occurrence = by_name.get(name)
         if occurrence is None:
             continue
         placement = layout.layout.placement(occurrence.identity)
         assignment = next(
-            item for item in instruction.assignments if assignment_member(item.attr) == name
+            item for item in instruction.managed_assignments if assignment_member(item.attr) == name
         )
         nested_many = assigned_many_path(occurrence, assignment.value)
         if isinstance(placement, DocumentPath) and (
@@ -419,7 +422,7 @@ def _materialize_predicate_write(
     uow: UnitOfWork,
     model: CatalogedModel,
     conn: DbPort,
-    instruction: PredicateWrite,
+    instruction: PreparedPredicateWrite,
     entity: EntityMetadata,
     declaring_entity: EntityMetadata,
     version_attr: AttributeMetadata | None,
@@ -462,7 +465,7 @@ def _materialize_predicate_write(
     lock: LockMode | None = entity_read_lock(meta, entity.identity, uow.settings.concurrency)
     assignments = {
         assignment_member(assignment.attr): assignment.value
-        for assignment in instruction.assignments
+        for assignment in instruction.managed_assignments
     }
     is_temporal = bool(declaring_entity.declared_as_of_axes)
     # Need-sensitive projection (`m-case-format` "Predicate-selected write
@@ -542,8 +545,15 @@ def _materialize_predicate_write(
             selection = _current_selection(
                 entity.identity, instruction.target.predicate, declaring_entity
             )
+            validated = ValidatedObjectQuery(
+                authored=selection,
+                root=entity,
+                validated_predicate=instruction.validated_predicate,
+                result_position=(entity.identity,),
+                order_terms=(),
+            )
             compiled = compile_read(
-                deep_fetch.plan(entity, selection, meta).root,
+                deep_fetch.plan(validated, meta).root,
                 meta,
                 conn.dialect,
                 result_form="row",

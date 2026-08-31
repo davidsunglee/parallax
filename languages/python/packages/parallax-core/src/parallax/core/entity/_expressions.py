@@ -71,6 +71,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from parallax.core.base import ManagedValue, coerce_neutral_input, matches_neutral_type
 from parallax.core.entity._errors import EDIT_CODE_BY_RULE, EditError, EditViolation
 from parallax.core.metamodel import (
     AttributeLocation,
@@ -78,8 +79,10 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityLocation,
     ModelLocation,
+    NestedValueObjectMetadata,
     ValueObjectAttributeIdentity,
     ValueObjectAttributeLocation,
+    ValueObjectAttributeMetadata,
     ValueObjectIdentity,
     ValueObjectLocation,
     ValueObjectMetadata,
@@ -117,6 +120,7 @@ from parallax.core.predicate import (
     StringOp,
     canonical_subtype_selection,
 )
+from parallax.core.wire import WireEncodingError, encode_wire
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -444,54 +448,88 @@ class AttributeExpr[E, T]:
     def _dotted(self) -> str:
         return ".".join((self._entity, self._head, *self._path))
 
-    def _cmp(self, kind: str, value: Scalar) -> Predicate[E]:
+    def _cmp(self, kind: str, value: object) -> Predicate[E]:
+        literal = self._literal(value)
         if self._path:
             return Predicate(
-                NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=value)
+                NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=literal)
             )
-        return Predicate(Comparison(op=_SCALAR_CMP[kind], attr=str(self.ref), value=value))
+        return Predicate(Comparison(op=_SCALAR_CMP[kind], attr=str(self.ref), value=literal))
 
     def __eq__(self, other: object) -> Predicate[E]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
-        return self._cmp("eq", _as_scalar(other))
+        return self._cmp("eq", other)
 
     def __ne__(self, other: object) -> Predicate[E]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
-        return self._cmp("ne", _as_scalar(other))
+        return self._cmp("ne", other)
 
-    def __gt__(self, other: Scalar) -> Predicate[E]:
+    def __gt__(self, other: object) -> Predicate[E]:
         return self._cmp("gt", other)
 
-    def __ge__(self, other: Scalar) -> Predicate[E]:
+    def __ge__(self, other: object) -> Predicate[E]:
         return self._cmp("ge", other)
 
-    def __lt__(self, other: Scalar) -> Predicate[E]:
+    def __lt__(self, other: object) -> Predicate[E]:
         return self._cmp("lt", other)
 
-    def __le__(self, other: Scalar) -> Predicate[E]:
+    def __le__(self, other: object) -> Predicate[E]:
         return self._cmp("le", other)
 
     def is_(self, value: bool) -> Predicate[E]:
         """The lint-clean boolean spelling; serializes to the identical ``eq`` node."""
         return self._cmp("eq", value)
 
-    def in_(self, values: list[Scalar]) -> Predicate[E]:
+    def in_(self, values: list[object]) -> Predicate[E]:
         return self._membership("nestedIn", "in", values)
 
-    def not_in(self, values: list[Scalar]) -> Predicate[E]:
+    def not_in(self, values: list[object]) -> Predicate[E]:
         return self._membership("nestedNotIn", "notIn", values)
 
     def _membership(
-        self, nested_op: NestedMembershipOp, scalar_op: MembershipOp, values: list[Scalar]
+        self, nested_op: NestedMembershipOp, scalar_op: MembershipOp, values: list[object]
     ) -> Predicate[E]:
+        literals = tuple(self._literal(value) for value in values)
+        if self._path:
+            return Predicate(NestedMembership(op=nested_op, path=self._dotted(), values=literals))
+        return Predicate(Membership(op=scalar_op, attr=str(self.ref), values=literals))
+
+    def between(self, lower: object, upper: object) -> Predicate[E]:
+        lower_literal = self._literal(lower)
+        upper_literal = self._literal(upper)
         if self._path:
             return Predicate(
-                NestedMembership(op=nested_op, path=self._dotted(), values=tuple(values))
+                NestedRange(path=self._dotted(), lower=lower_literal, upper=upper_literal)
             )
-        return Predicate(Membership(op=scalar_op, attr=str(self.ref), values=tuple(values)))
+        return Predicate(Between(attr=str(self.ref), lower=lower_literal, upper=upper_literal))
 
-    def between(self, lower: Scalar, upper: Scalar) -> Predicate[E]:
-        if self._path:
-            return Predicate(NestedRange(path=self._dotted(), lower=lower, upper=upper))
-        return Predicate(Between(attr=str(self.ref), lower=lower, upper=upper))
+    def _literal(self, value: object) -> Scalar:
+        member = self._resolved_scalar_member()
+        if member is None:
+            return _as_scalar(value)
+        managed = coerce_neutral_input(value, member.type)
+        if not matches_neutral_type(managed, member.type):
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: {value!r} is not admitted by {member.type!r}",
+            )
+        try:
+            return cast("Scalar", encode_wire(member.type, cast("ManagedValue", managed)))
+        except WireEncodingError as error:  # pragma: no cover - membership above proves encoding
+            raise QueryDefinitionError(
+                code="query-expression-invalid", message=f"{self._dotted()}: {error}"
+            ) from error
+
+    def _resolved_scalar_member(self) -> AttributeMetadata | ValueObjectAttributeMetadata | None:
+        if isinstance(self._member, AttributeMetadata):
+            return self._member if not self._path else None
+        if self._member is None or isinstance(self._member, AttributeMetadata) or not self._path:
+            return None
+        container: ValueObjectMetadata | NestedValueObjectMetadata = self._member
+        for segment in self._path[:-1]:
+            nested = container.value_object(snake_to_camel(segment))
+            if nested is None:
+                return None
+            container = nested
+        return container.attribute(snake_to_camel(self._path[-1]))
 
     def is_null(self) -> Predicate[E]:
         self._reject_non_nullable_null_check()
@@ -678,12 +716,12 @@ def _as_scalar(value: object) -> Scalar:
     code; whether a literal's TYPE matches the member's declared one stays the
     model-aware validator's question.
     """
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if isinstance(value, (str, int, float, bool)):
         return value
     raise QueryDefinitionError(
         code="query-expression-invalid",
         message=(
-            f"a comparison takes a scalar literal (null / string / number / boolean), "
+            f"a comparison takes a non-null scalar literal (string / number / boolean), "
             f"got {type(value).__name__}"
         ),
     )
