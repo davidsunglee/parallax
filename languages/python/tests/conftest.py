@@ -10,13 +10,15 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from _support.distributions import ALL_PACKAGES, Wheelhouse
 from _support.repo import PY_ROOT
-from parallax.conformance.profile import Profile, profile_for
+
+if TYPE_CHECKING:
+    from parallax.conformance.profile import Profile
 
 # Database-backed checks skipped because Docker/Postgres was unavailable — printed
 # in a final summary so a skip is never silent (spec §6); CI fails on any skip.
@@ -81,6 +83,8 @@ def profile() -> Profile:
     Resolving it opens nothing, so this fixture classifies no item: what needs a
     container is a run of this profile, not the declaration.
     """
+    from parallax.conformance.profile import profile_for
+
     return profile_for("pg-full")
 
 

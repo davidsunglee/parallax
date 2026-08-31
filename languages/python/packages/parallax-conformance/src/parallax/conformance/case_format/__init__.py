@@ -18,7 +18,7 @@ from typing import Any, Final, cast
 
 import yaml
 
-from parallax.core.base import AuthoredNumber
+from parallax.core.wire._json import authored_number
 
 __all__ = [
     "CASE_SHAPES",
@@ -92,18 +92,15 @@ def _construct_core_int(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> int:
 def _construct_core_float(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> float:
     """A resolved core-schema float: a decimal number, an infinity, or a NaN.
 
-    A finite number keeps the digits it was authored with
-    (:class:`~parallax.core.base.AuthoredNumber`): which float a number names
-    depends on the width the member declares, which no parser can see, so the
-    seam that does see it rounds once from the literal instead of twice through
-    this carrier.
+    A finite number keeps its authored digits through the production Wire
+    codec's private provenance seam until a declared type is known.
     """
     text = str(loader.construct_scalar(node))
     if text.lower().lstrip("-+").startswith(".inf"):
         return float("-inf") if text.startswith("-") else float("inf")
     if text.lower().startswith(".nan"):
         return float("nan")
-    return AuthoredNumber(text)
+    return cast("float", authored_number(text))
 
 
 _Yaml12CoreLoader.yaml_implicit_resolvers = {}

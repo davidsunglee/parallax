@@ -23,7 +23,12 @@ from parallax.core.base import (
     Timestamp,
     Uuid,
 )
-from parallax.core.wire import WireEncodingError, decode_wire, encode_wire
+from parallax.core.wire import (
+    WireDecodingError,
+    WireEncodingError,
+    decode_canonical_wire,
+    encode_wire,
+)
 
 __all__ = ["LeafEncodingError", "decode_leaf", "encode_leaf", "is_text_compared"]
 
@@ -92,6 +97,6 @@ def decode_leaf(neutral_type: NeutralType, value: object) -> object:
     canonicality obligation (`m-document-codec` "Portable leaf encodings").
     """
     try:
-        return decode_wire(neutral_type, value)
-    except WireEncodingError as exc:
+        return decode_canonical_wire(neutral_type, value)
+    except WireDecodingError as exc:
         raise LeafEncodingError(str(exc)) from exc

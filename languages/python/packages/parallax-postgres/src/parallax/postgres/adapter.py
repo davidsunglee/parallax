@@ -26,7 +26,6 @@ the adapter only extracts psycopg's driver-specific SQLSTATE and message.
 from __future__ import annotations
 
 import contextlib
-import json
 from collections.abc import Callable, Generator, Sequence
 
 import psycopg
@@ -35,7 +34,7 @@ from psycopg.sql import SQL, Literal
 from psycopg.types.datetime import TimestamptzLoader
 from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
-from parallax.core.base import INFINITY, AuthoredNumber
+from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError, classify_error
 from parallax.core.db_port import (
     BeginFailed,
@@ -52,6 +51,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.wire import loads
 
 __all__ = ["PostgresAdapter"]
 
@@ -67,13 +67,10 @@ def _load_json_preserving_null(data: str | bytes) -> object:
     """Decode a stored document, retaining what a plain parse would discard.
 
     A present JSON null keeps a distinct sentinel, so absence and a stored null stay
-    two states. A number keeps the digits it was stored with
-    (:class:`~parallax.core.base.AuthoredNumber`), because a float leaf's canonical
-    spelling is a property of those digits: parsing them into a binary float first
-    makes ``0.1`` and ``0.10000000000000001`` one value, and the read that must refuse
-    the second would have nothing left to refuse it by.
+    two states. Strict Wire loading retains number tokens privately until the
+    document codec resolves each leaf's declared type.
     """
-    value = json.loads(data, parse_float=AuthoredNumber)
+    value = loads(data)
     return _PRESENT_JSON_NULL if value is None else value
 
 

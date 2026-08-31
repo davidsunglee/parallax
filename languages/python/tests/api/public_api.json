@@ -190,6 +190,16 @@
     "snake_to_camel",
     "to_document"
   ],
+  "parallax.core.wire": [
+    "WireDecodingError",
+    "WireDecodingReason",
+    "WireEncodingError",
+    "WireValue",
+    "decode_canonical_wire",
+    "decode_wire",
+    "encode_wire",
+    "loads"
+  ],
   "parallax.descriptor": [
     "DescriptorError",
     "DescriptorExportError",
