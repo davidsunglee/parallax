@@ -92,6 +92,7 @@ from parallax.core.unit_work import (
     instructions,
     object_key,
 )
+from parallax.core.unit_work.columns import freeze_retained_value
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -288,7 +289,11 @@ def wire_keyed_write(
         valid_from=valid_from_literal,
         until=until_literal,
     )
-    prepared = instructions.prepare_wire_write(raw_instruction, lane.model.meta)
+    prepared = instructions.prepare_wire_write(
+        raw_instruction,
+        lane.model.meta,
+        assigned_members=frozenset(authored),
+    )
     assert isinstance(prepared, PreparedKeyedWrite)
     managed_assignments = {name: prepared.rows[0][name] for name in authored}
     row, restorations = _authored_row(
@@ -408,8 +413,10 @@ def _authored_row(
     restored: set[str] = set()
     for member, value in assignments.items():
         # Every assigned member resolved: `_judged_changes` refused the rest.
-        if value == _decoded_member(
-            members[member], observed.get(member), f"{record.identity.canonical}.{member}"
+        if value == freeze_retained_value(
+            _decoded_member(
+                members[member], observed.get(member), f"{record.identity.canonical}.{member}"
+            )
         ):
             restored.add(member)
             continue

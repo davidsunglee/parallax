@@ -737,7 +737,7 @@ def test_nested_comparison_valid_string_literal_accepts() -> None:
     [
         lambda: Comparison(op="eq", attr="Order.price", value=cast("Scalar", None)),
         lambda: Between(attr="Order.price", lower=cast("Scalar", None), upper="1.00"),
-        lambda: StringMatch(op="like", attr="Order.name", value=cast("Scalar", None)),
+        lambda: StringMatch(op="like", attr="Order.name", value=cast("str", None)),
         lambda: Membership(op="in", attr="Order.name", values=("A", cast("Scalar", None))),
         lambda: NestedComparison(
             op="nestedEq", path="Customer.address.city", value=cast("Scalar", None)
@@ -755,7 +755,7 @@ def test_nested_comparison_valid_string_literal_accepts() -> None:
         lambda: NestedStringMatch(
             op="nestedLike",
             path="Customer.address.city",
-            value=cast("Scalar", None),
+            value=cast("str", None),
         ),
     ],
 )

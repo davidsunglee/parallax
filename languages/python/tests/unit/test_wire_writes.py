@@ -49,7 +49,6 @@ from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
-from parallax.core.wire import WireDecodingError
 from parallax.snapshot import connect
 from parallax.snapshot.handle import (
     Database,
@@ -576,9 +575,9 @@ def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
     [
         ({"id": 2}, instructions.WriteInstructionError, "primary-key"),
         ({"version": 9}, instructions.WriteInstructionError, "framework-owned"),
-        ({"nope": 1}, instructions.WriteInstructionError, "does not name a declared member"),
-        ({"passport": {}}, instructions.WriteInstructionError, "does not name a declared member"),
-        ({"owner": 5}, WireDecodingError, "type-mismatch"),
+        ({"nope": 1}, instructions.WriteInstructionError, "undeclared member"),
+        ({"passport": {}}, instructions.WriteInstructionError, "undeclared member"),
+        ({"owner": 5}, instructions.InstructionRejectedError, "type-mismatch"),
     ],
 )
 def test_an_illegal_wire_assignment_is_refused_statically(
@@ -715,17 +714,17 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
     selected = ScriptedPort(Transact())
 
     def update(tx: Transaction) -> None:
-        with pytest.raises(WireDecodingError, match="out-of-space"):
+        with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
             tx.wire.update(_node(tx, _SAMPLE_QUERY), {"taken": _UNSPELLABLE_INSTANT})
 
     def insert(tx: Transaction) -> None:
-        with pytest.raises(WireDecodingError, match="out-of-space"):
+        with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
             tx.wire.insert(
                 "parallax.compatibility.Sample", {"id": 2, "taken": _UNSPELLABLE_INSTANT}
             )
 
     def update_where(tx: Transaction) -> None:
-        with pytest.raises(WireDecodingError, match="out-of-space"):
+        with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
             tx.wire.update_where(_SAMPLE_TARGET, {"taken": _UNSPELLABLE_INSTANT})
 
     for port, fn in ((keyed, update), (inserted, insert), (selected, update_where)):

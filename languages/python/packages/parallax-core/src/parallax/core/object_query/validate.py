@@ -37,8 +37,6 @@ Rule provenance beyond ``m-predicate``'s own list:
 
 from __future__ import annotations
 
-from typing import assert_never
-
 from parallax.core import inheritance
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -52,11 +50,9 @@ from parallax.core.metamodel import (
     TemporalDimension as AxisKind,
 )
 from parallax.core.object_query._nodes import (
-    AsOf,
     AsOfRange,
     History,
     IncludePath,
-    Latest,
     ObjectQueryNode,
     TemporalDimension,
 )
@@ -253,16 +249,12 @@ def _validate_temporal_selections(
                     decode_wire(start.type, selection.start),
                     decode_wire(start.type, selection.end),
                 )
-            elif isinstance(selection, Latest) or (
-                isinstance(selection, AsOf) and selection.coordinate == "latest"
-            ):
+            elif selection.coordinate == "latest":
                 product = ValidatedLatestSelection(axis)
-            elif isinstance(selection, AsOf):
+            else:
                 product = ValidatedAsOfSelection(
                     axis, decode_wire(start.type, selection.coordinate)
                 )
-            else:
-                assert_never(selection)
         except WireDecodingError as error:
             raise ModelRejectedError(
                 f"neutral-literal-{error.reason}",

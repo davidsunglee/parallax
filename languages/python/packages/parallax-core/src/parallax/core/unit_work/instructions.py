@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence, Set
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, cast
@@ -203,7 +203,10 @@ class KeyedWrite:
     def __post_init__(self) -> None:
         # Freeze each row into a read-only view so the buffered instruction stays
         # immutable (frozen/slots); equality is by row content either way.
-        frozen = tuple(MappingProxyType(dict(row)) for row in self.rows)
+        frozen = tuple(
+            row if isinstance(row, MappingProxyType) else MappingProxyType(dict(row))
+            for row in self.rows
+        )
         object.__setattr__(self, "rows", frozen)
 
 
@@ -297,8 +300,7 @@ def derive_keyed_write(
 ) -> PreparedKeyedWrite:
     """Derive a keyed prepared product while retaining owned values by identity."""
     sealed = tuple(
-        row if isinstance(row, type(MappingProxyType({}))) else MappingProxyType(dict(row))
-        for row in rows
+        row if isinstance(row, MappingProxyType) else MappingProxyType(dict(row)) for row in rows
     )
     return PreparedKeyedWrite(prepared.mutation, prepared.target, sealed, prepared.bounds)
 
@@ -669,6 +671,7 @@ def prepare_typed_write(instruction: WriteInstruction, model: AcceptedMetamodel)
         model,
         converter=_coerce_typed_leaf,
         bound_decoder=_decode_typed_bound,
+        assigned_members=None,
     )
 
 
@@ -678,22 +681,36 @@ def _prepare_write(
     *,
     converter: _LeafConverter,
     bound_decoder: _BoundDecoder,
+    assigned_members: Set[str] | None,
 ) -> PreparedWrite:
     entity = _preflight_write_shape(instruction, model)
     if isinstance(instruction, KeyedWrite):
+        transformed_rows = tuple(
+            _transform_row(
+                model,
+                entity,
+                row,
+                converter=converter,
+                fill_missing_many=instruction.mutation in INSERT_MUTATIONS,
+            )
+            for row in instruction.rows
+        )
+        if assigned_members is not None:
+            if len(transformed_rows) != 1:
+                raise WriteInstructionError(
+                    "a keyed assignment set applies only to one addressed write row"
+                )
+            for name in assigned_members:
+                try:
+                    inheritance.validate_write_assignment(
+                        model, entity, name, transformed_rows[0][name]
+                    )
+                except inheritance.WriteAssignmentError as error:
+                    raise WriteInstructionError(str(error)) from error
         prepared_input: WriteInstruction = KeyedWrite(
             mutation=instruction.mutation,
             entity=instruction.entity,
-            rows=tuple(
-                _transform_row(
-                    model,
-                    entity,
-                    row,
-                    converter=converter,
-                    fill_missing_many=instruction.mutation in INSERT_MUTATIONS,
-                )
-                for row in instruction.rows
-            ),
+            rows=transformed_rows,
             valid_from=instruction.valid_from,
             until=instruction.until,
         )
@@ -871,13 +888,19 @@ def _prepare_managed_write(
     )
 
 
-def prepare_wire_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> PreparedWrite:
+def prepare_wire_write(
+    instruction: WriteInstruction,
+    model: AcceptedMetamodel,
+    *,
+    assigned_members: Set[str] | None = None,
+) -> PreparedWrite:
     """Decode one serialized instruction and return the managed write product."""
     return _prepare_write(
         instruction,
         model,
         converter=_decode_wire_leaf,
         bound_decoder=_decode_wire_bound,
+        assigned_members=assigned_members,
     )
 
 
@@ -961,17 +984,16 @@ def _transform_member(
     if value is None:
         return None
     if isinstance(member, AttributeMetadata):
-        if isinstance(value, Mapping) and frozenset(value) in (
-            frozenset({"computed"}),
-            frozenset({"increment"}),
-        ):
-            return MappingProxyType(dict(value))
-        return converter(member.type, value, path)
+        if isinstance(value, Mapping):
+            marker = cast("Mapping[object, object]", value)
+            if frozenset(marker) in (frozenset({"computed"}), frozenset({"increment"})):
+                return MappingProxyType(dict(marker))
+        return converter(member.type, cast("object", value), path)
     return _transform_occurrence(
         member,
         value,
         converter=converter,
-        fill_missing_many=fill_missing_many,
+        fill_missing_many=True,
         path=path,
     )
 
