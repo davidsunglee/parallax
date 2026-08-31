@@ -259,6 +259,15 @@ def test_child_query_is_a_plain_in_membership() -> None:
     assert query.validated_predicate.authored.values == (1, 2, 3)
 
 
+def test_child_query_deduplicates_and_freezes_keys_in_encounter_order() -> None:
+    level = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),)).levels[0]
+    query = level.query_for([2, 1, 2, 3, 1])
+    authored = query.validated_predicate.authored
+    assert isinstance(authored, Membership)
+    assert authored.values == (2, 1, 3)
+    assert isinstance(authored.values, tuple)
+
+
 def test_child_query_carries_declared_relationship_order_by() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
     query = plan.levels[0].query_for([1])

@@ -1,7 +1,7 @@
 """The write-instruction IR (m-unit-work write-instruction vocabulary).
 
-Frozen ``slots`` dataclasses for the two canonical write-instruction shapes a unit
-of work buffers — the write-side analogue of the Object Query — plus the
+Frozen ``slots`` dataclasses for the two canonical authored write-instruction
+shapes — the write-side analogue of the Object Query — plus the
 serde that round-trips them through ``core/schemas/write-instruction.schema.json``
 (``serialize(deserialize(x)) == x``, JSON and YAML). There are exactly two shapes:
 
@@ -61,12 +61,7 @@ from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.unit_work.columns import freeze_retained_value
 from parallax.core.unit_work.planned import ValidatedMutationSelection
 from parallax.core.unit_work.write_validate import validate_write
-from parallax.core.wire import (
-    WireDecodingError,
-    WireValue,
-    decode_canonical_wire,
-    decode_wire,
-)
+from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 
 __all__ = [
     "BOUNDED_MUTATIONS",
@@ -185,7 +180,7 @@ class InstructionRejectedError(WriteInstructionError):
 
 @dataclass(frozen=True, slots=True)
 class KeyedWrite:
-    """A keyed write: a ``mutation`` on one ``entity`` carrying the flat
+    """An authored keyed write: a ``mutation`` on one ``entity`` carrying flat
     attribute-named neutral write input (``rows``).
 
     ``valid_from`` / ``until`` are the Valid-Time bounds; a
@@ -197,12 +192,17 @@ class KeyedWrite:
     mutation: KeyedMutation
     entity: str
     rows: tuple[Mapping[str, object], ...]
-    valid_from: str | None = None
-    until: str | None = None
+    valid_from: str | dt.datetime | None = None
+    until: str | dt.datetime | None = None
 
     def __post_init__(self) -> None:
-        # Freeze each row into a read-only view so the buffered instruction stays
-        # immutable (frozen/slots); equality is by row content either way.
+        row_names = {name for row in self.rows for name in row}
+        forbidden = sorted(row_names & _FORBIDDEN_ROW_KEYS)
+        if forbidden:
+            raise WriteInstructionError(
+                f"keyed write: row carries forbidden observation control key(s) {forbidden} "
+                "(the transaction observation is attached at flush, never on the instruction)"
+            )
         frozen = tuple(
             row if isinstance(row, MappingProxyType) else MappingProxyType(dict(row))
             for row in self.rows
@@ -226,8 +226,9 @@ class PredicateSelection:
     """The entity a predicate-selected write begins from plus its
     ``m-predicate`` selection (a canonical Predicate node).
 
-    This is the instruction-level carrier a buffered :class:`PredicateWrite`
-    authors, distinct from the finalized :class:`~parallax.core.unit_work.
+    This is the instruction-level carrier an authored :class:`PredicateWrite`
+    holds, distinct from the prepared product buffering retains and from the
+    finalized :class:`~parallax.core.unit_work.
     planned.WriteTarget` a Planned Write settles into.
     """
 
@@ -243,8 +244,8 @@ class PredicateWrite:
     mutation: PredicateMutation
     target: PredicateSelection
     assignments: tuple[WriteAssignment, ...] = ()
-    valid_from: str | None = None
-    until: str | None = None
+    valid_from: str | dt.datetime | None = None
+    until: str | dt.datetime | None = None
 
 
 WriteInstruction = KeyedWrite | PredicateWrite
@@ -549,13 +550,23 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
     return predicate_body
 
 
-def _emit_bounds(body: dict[str, object], valid_from: str | None, until: str | None) -> None:
+def _emit_bounds(
+    body: dict[str, object],
+    valid_from: str | dt.datetime | None,
+    until: str | dt.datetime | None,
+) -> None:
     # An omitted bound stays omitted (the canonical minimal form), so a non-temporal
     # or plain-temporal instruction round-trips without gaining a null bound.
     if valid_from is not None:
-        body["validFrom"] = valid_from
+        body["validFrom"] = _wire_bound(valid_from)
     if until is not None:
-        body["until"] = until
+        body["until"] = _wire_bound(until)
+
+
+def _wire_bound(value: str | dt.datetime) -> object:
+    if isinstance(value, dt.datetime):
+        return encode_wire(TIMESTAMP, cast("dt.datetime", coerce_neutral_input(value, TIMESTAMP)))
+    return value
 
 
 # --------------------------------------------------------------------------- #
@@ -859,12 +870,19 @@ def _prepare_managed_write(
                 )
             seen.add(member)
             try:
-                inheritance.validate_write_assignment(model, entity, member, assignment.value)
+                inheritance.validate_write_assignment(
+                    model, entity, member, _validation_value(assignment.value)
+                )
             except inheritance.WriteAssignmentError as exc:
                 raise WriteInstructionError(str(exc)) from exc
     if isinstance(instruction, KeyedWrite):
         for row in instruction.rows:
-            validate_write(entity, row, model, mutation=instruction.mutation)
+            validate_write(
+                entity,
+                cast("Mapping[str, object]", _validation_value(row)),
+                model,
+                mutation=instruction.mutation,
+            )
     managed_valid_from = bound_decoder(instruction.valid_from, "validFrom")
     managed_until = bound_decoder(instruction.until, "until")
     if isinstance(instruction, KeyedWrite):
@@ -905,21 +923,22 @@ def prepare_wire_write(
 
 
 type _LeafConverter = Callable[[NeutralType, object, str], object]
-type _BoundDecoder = Callable[[str | None, str], dt.datetime | None]
+type _BoundDecoder = Callable[[object | None, str], dt.datetime | None]
 
 
-def _decode_typed_bound(value: str | None, path: str) -> dt.datetime | None:
+def _decode_typed_bound(value: object | None, path: str) -> dt.datetime | None:
     if value is None:
         return None
-    try:
-        decoded = decode_canonical_wire(TIMESTAMP, value)
-        assert isinstance(decoded, dt.datetime)
-        return decoded
-    except WireDecodingError as error:
-        raise WriteInstructionError(f"{path}: invalid typed temporal bound: {error}") from error
+    managed = coerce_neutral_input(value, TIMESTAMP)
+    if not matches_neutral_type(managed, TIMESTAMP):
+        raise WriteInstructionError(
+            f"{path}: invalid typed temporal bound: expected an aware datetime, "
+            f"got {type(value).__name__}"
+        )
+    return cast("dt.datetime", managed)
 
 
-def _decode_wire_bound(value: str | None, path: str) -> dt.datetime | None:
+def _decode_wire_bound(value: object | None, path: str) -> dt.datetime | None:
     if value is None:
         return None
     decoded = _decode_wire_leaf(TIMESTAMP, value, path)
@@ -1069,14 +1088,27 @@ def _transform_document(
 
 
 def _coerce_typed_leaf(neutral_type: NeutralType, value: object, path: str) -> object:
-    if matches_neutral_type(value, neutral_type):
-        return value
-    return freeze_retained_value(coerce_neutral_input(value, neutral_type))
+    managed = (
+        value
+        if matches_neutral_type(value, neutral_type)
+        else coerce_neutral_input(value, neutral_type)
+    )
+    return freeze_retained_value(managed)
+
+
+def _validation_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        document = cast("Mapping[str, object]", value)
+        return {name: _validation_value(nested) for name, nested in document.items()}
+    if isinstance(value, tuple):
+        items = cast("tuple[object, ...]", value)
+        return [_validation_value(nested) for nested in items]
+    return value
 
 
 def _decode_wire_leaf(neutral_type: NeutralType, value: object, path: str) -> object:
     try:
-        return decode_wire(neutral_type, cast("WireValue", value))
+        return freeze_retained_value(decode_wire(neutral_type, cast("WireValue", value)))
     except WireDecodingError as error:
         raise InstructionRejectedError(
             f"neutral-literal-{error.reason}",

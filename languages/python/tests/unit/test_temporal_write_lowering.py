@@ -87,7 +87,6 @@ from parallax.core.unit_work import (
     WriteObservation,
     WritePlan,
     WritePlanningError,
-    instant_literal,
     run_unit_of_work,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
@@ -158,13 +157,15 @@ def _instant(value: str) -> dt.datetime:
 
 
 def _canonical_instruction(instruction: KeyedWrite) -> KeyedWrite:
-    def canonical(value: str | None) -> str | None:
-        return None if value is None else instant_literal(dt.datetime.fromisoformat(value))
+    def managed(value: str | dt.datetime | None) -> dt.datetime | None:
+        return (
+            None if value is None else value if isinstance(value, dt.datetime) else _instant(value)
+        )
 
     return dataclasses.replace(
         instruction,
-        valid_from=canonical(instruction.valid_from),
-        until=canonical(instruction.until),
+        valid_from=managed(instruction.valid_from),
+        until=managed(instruction.until),
     )
 
 

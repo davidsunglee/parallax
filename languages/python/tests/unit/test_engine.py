@@ -10,7 +10,6 @@ reading and the engine's failure modes are pinned too.
 from __future__ import annotations
 
 import contextlib
-import copy
 import dataclasses
 import datetime as dt
 import decimal
@@ -41,6 +40,9 @@ from parallax.core.base import (
     PresentDocument,
     TemporalBound,
 )
+from parallax.core.base import (
+    Decimal as DecimalType,
+)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Committed, DbPort, JsonDocument, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
@@ -62,7 +64,11 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.sql_gen import LoweredStatement
+from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen._context import (
+    _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
+    _WireBindOverride,  # pyright: ignore[reportPrivateUsage]
+)
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
@@ -78,6 +84,7 @@ from parallax.core.unit_work import (
     VersionedStateKey,
     VersionObservation,
     WriteEffectError,
+    WriteRejectedError,
 )
 from parallax.snapshot import DeferredFeatureError
 from parallax.snapshot.handle import WriteEvidenceError
@@ -435,6 +442,10 @@ def _ledger_row(row_id: int, value: str, *, in_z: str, acct_num: str = "B") -> R
     }
 
 
+def _instant(value: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(value)
+
+
 def _balance_row(row_id: int, value: str, *, in_z: str) -> Row:
     return {
         "bal_id": row_id,
@@ -535,17 +546,30 @@ def _synthetic_ledger_scenario(steps: list[dict[str, object]]) -> case_format.Ca
 
 
 def _lowered(sql: str, *binds: object) -> LoweredStatement:
-    return LoweredStatement(sql, tuple(binds))
+    overrides = tuple(
+        _WireBindOverride(
+            index,
+            cast(
+                "Any",
+                engine.wire_value(bind.value if isinstance(bind, JsonDocument) else bind),
+            ),
+        )
+        for index, bind in enumerate(binds)
+        if not isinstance(bind, dt.timedelta)
+    )
+    return LoweredStatement(sql, tuple(binds), _wire_bind_overrides=overrides)
 
 
 def test_a_plan_the_lifecycle_confirms_is_reported_unchanged() -> None:
-    """The two sides differ in CARRIER and still name one statement.
-
-    The plan holds the case-authored wire spelling and the delivery holds the
-    value a decode produced, which is why the reconciliation is wire-space with
-    the exact-Decimal fallback rather than bare equality.
-    """
-    plan = (_lowered("update account set balance = ?", 250.00, "infinity", "2024-01-01"),)
+    """Compiler-owned Wire projections reconcile different driver carriers."""
+    plan = (
+        _lowered(
+            "update account set balance = ?",
+            decimal.Decimal("250.00"),
+            "infinity",
+            "2024-01-01",
+        ),
+    )
     delivered = (
         _lowered(
             "update account set balance = ?",
@@ -555,6 +579,30 @@ def test_a_plan_the_lifecycle_confirms_is_reported_unchanged() -> None:
         ),
     )
     assert engine._delivered(plan, delivered, "a unit") == plan  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+
+
+def test_delivery_reconciliation_uses_lowered_statement_type_and_form_metadata() -> None:
+    decimal_type = DecimalType(8, 2)
+    planned = LoweredStatement(
+        "update account set balance = ?",
+        ("250.00",),
+        (_TypedBindSpan(0, 1, decimal_type, "COMPARISON_TEXT"),),
+    )
+    delivered = LoweredStatement(
+        "update account set balance = ?",
+        (decimal.Decimal("250.00"),),
+        (_TypedBindSpan(0, 1, decimal_type, "MANAGED"),),
+    )
+    assert engine._delivered((planned,), (delivered,), "a unit") == (planned,)  # pyright: ignore[reportPrivateUsage]
+    assert engine.Emission("/write", delivered).to_json()["binds"] == ["250.00"]
+
+    wrongly_declared = LoweredStatement(
+        delivered.sql,
+        ("251.00",),
+        (_TypedBindSpan(0, 1, STRING, "MANAGED"),),
+    )
+    with pytest.raises(engine.EngineError, match="canonical Wire"):
+        engine._delivered((planned,), (wrongly_declared,), "a unit")  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_plan_the_lifecycle_contradicts_is_refused() -> None:
@@ -651,18 +699,11 @@ def test_a_bind_reconciles_only_against_its_own_json_type() -> None:
             )
 
 
-def test_a_document_member_reconciles_by_carrier_the_way_a_bind_does() -> None:
-    """One rule, at every depth: a member's decimal carrier reconciles against
-    the number the case authored.
-
-    A byte buffer is the carrier that would read as an array under a structural
-    rule — :func:`wire_value` spells it as hex instead, so it reconciles as the
-    string it renders to and a buffer differing in content differs.
-    """
+def test_a_document_member_reconciles_through_the_statement_wire_projection() -> None:
     plan = (
         _lowered(
             "insert into voyage(payload, seal) values (?, ?)",
-            JsonDocument({"totals": [250.00, {"fee": 1.5}]}),
+            JsonDocument({"totals": [decimal.Decimal("250.00"), {"fee": decimal.Decimal("1.5")}]}),
             b"\x01\x02",
         ),
     )
@@ -682,17 +723,10 @@ def test_a_document_member_reconciles_by_carrier_the_way_a_bind_does() -> None:
         )
 
 
-def test_a_carrier_the_wire_renderer_leaves_alone_reconciles_by_its_own_equality() -> None:
-    """A value :func:`engine.wire_value` recognizes no spelling for names no JSON
-    type, so the only reconciliation left for it is equality with its own kind."""
-    for delivered, refused in ((dt.timedelta(hours=1), False), (dt.timedelta(hours=2), True)):
-        plan = (_lowered("insert into shift(span) values (?)", dt.timedelta(hours=1)),)
-        ran = (_lowered("insert into shift(span) values (?)", delivered),)
-        if refused:
-            with pytest.raises(engine.EngineError, match="is planned with binds"):
-                engine._delivered(plan, ran, "a unit")  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
-        else:
-            assert engine._delivered(plan, ran, "a unit") == plan  # pyright: ignore[reportPrivateUsage] - the engine's own reconciliation
+def test_an_unannotated_non_wire_carrier_cannot_be_reconciled() -> None:
+    statement = _lowered("insert into shift(span) values (?)", dt.timedelta(hours=1))
+    with pytest.raises(SqlGenError, match="has no declared neutral type"):
+        engine._delivered((statement,), (statement,), "a unit")  # pyright: ignore[reportPrivateUsage]
 
 
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
@@ -837,7 +871,11 @@ def test_run_scenario_case_settles_on_the_named_delivery_rather_than_the_latest_
     # SECOND delivery observed. An implementation holding one observation per key,
     # or resolving a write from the group's latest reading, emits a `version = 2`
     # gate here and commits.
-    document = copy.deepcopy(dict(_case("m-unit-work-030").document))
+    source = _case("m-unit-work-030")
+    document = cast(
+        "dict[str, Any]",
+        case_format.safe_load_yaml(source.path.read_text(encoding="utf-8")),
+    )
     cast("list[dict[str, Any]]", cast("dict[str, Any]", document["when"])["scenario"])[3]["on"] = 0
     port = _two_delivery_port()
 
@@ -878,9 +916,11 @@ def test_run_scenario_case_reports_each_streamed_steps_own_delivered_roots() -> 
 
 def _abstract_step_query(case_id: str) -> ObjectQueryNode:
     """The first scenario step's query of ``case_id`` — an abstract-position read."""
-    steps = cast("list[dict[str, Any]]", cast("dict[str, Any]", _case(case_id).document)["when"])
+    case = _case(case_id)
+    steps = cast("list[dict[str, Any]]", cast("dict[str, Any]", case.document)["when"])
     return engine._step_query(  # pyright: ignore[reportPrivateUsage] - the engine's own step reader
-        cast("list[dict[str, Any]]", cast("dict[str, Any]", steps)["scenario"])[0]
+        cast("list[dict[str, Any]]", cast("dict[str, Any]", steps)["scenario"])[0],
+        engine.load_case_metamodel(case),
     )
 
 
@@ -1113,9 +1153,9 @@ def test_run_scenario_case_discards_an_aborted_ungrouped_temporal_writes_case_st
     run = engine.run_scenario_case(case, port)
     assert port.rollbacks == 1 and port.commits == 1
     aborted_close, _aborted_successor, close, successor = run.emissions
-    assert aborted_close.binds[3] == "2024-02-01T00:00:00+00:00"
+    assert aborted_close.binds[3] == _instant("2024-02-01T00:00:00+00:00")
     assert close.case_pointer == "/scenario/1/write"
-    assert close.binds[3] == "2024-02-01T00:00:00+00:00"
+    assert close.binds[3] == _instant("2024-02-01T00:00:00+00:00")
     # The successor is chained off the ORIGINAL row too — `acct_num` is the
     # fixture's own B, never the aborted write's carried-forward value.
     assert successor.binds[1] == "B"
@@ -1142,7 +1182,7 @@ def test_scenario_compile_lane_closes_the_fixture_milestone_the_run_lane_closes(
     # The fixture milestone's OWN edge is what the close gates on, and the
     # successor carries the fixture's acct_num forward: facts only a seeded
     # tracker holds.
-    assert close.binds[3] == "2024-02-01T00:00:00+00:00"
+    assert close.binds[3] == _instant("2024-02-01T00:00:00+00:00")
     assert successor.binds[:3] == (2, "B", decimal.Decimal("300.00"))
 
 
@@ -1193,9 +1233,9 @@ def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state()
     )
     compiled, _round_trips = engine.compile_scenario_case(case, "postgres")
     _insert, aborted_close, _aborted_successor, close, successor = compiled
-    assert aborted_close.binds[3] == "2025-01-01T00:00:00+00:00"
+    assert aborted_close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
     assert close.case_pointer == "/scenario/2/write"
-    assert close.binds[3] == "2025-01-01T00:00:00+00:00"
+    assert close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
     assert successor.binds[2] == decimal.Decimal("400.00")
     # Each update step is its own transaction, so each owes a resolving read of
     # the milestone the insert left current — the value its keyed verb is
@@ -1235,10 +1275,10 @@ def test_scenario_compile_lane_stages_a_doomed_uow_groups_case_state() -> None:
     _insert, doomed_close, _doomed_successor, own_close, _own_successor, close, _successor = (
         compiled
     )
-    assert doomed_close.binds[3] == "2025-01-01T00:00:00+00:00"
-    assert own_close.binds[3] == "2026-01-01T00:00:00+00:00"
+    assert doomed_close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
+    assert own_close.binds[3] == _instant("2026-01-01T00:00:00+00:00")
     assert close.case_pointer == "/scenario/3/write"
-    assert close.binds[3] == "2025-01-01T00:00:00+00:00"
+    assert close.binds[3] == _instant("2025-01-01T00:00:00+00:00")
 
 
 def _two_group_interleave_steps() -> list[dict[str, object]]:
@@ -2800,7 +2840,9 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
 
 def test_a_read_step_names_its_own_object_query() -> None:
     with pytest.raises(engine.EngineError, match="needs `objectQuery`"):
-        engine._step_query({"roundTrips": 1})  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._step_query(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"roundTrips": 1}, models.load_models()["account"]
+        )
 
 
 def test_the_aborting_port_passes_reads_and_writes_through() -> None:
@@ -3197,13 +3239,10 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
     assert isinstance(binds[2], decimal.Decimal) and isinstance(binds[5], decimal.Decimal)
 
 
-def test_collapse_eligible_insert_entry_partitions_by_physical_slot_selection() -> None:
-    # Collapse ELIGIBILITY is a property of the target alone, so a Wallet insert
-    # entry never decomposes per row — but its rows still carry two different
-    # filtered slot selections (the second omits the nullable `balance`). The
-    # entry reaches the planner as individually buffered rows, which the SAME
-    # batch grouping every write path uses partitions into two statements
-    # (m-sql "Physical DML ordering") instead of one illegal mixed-shape insert.
+def test_insert_entry_refuses_a_row_missing_a_required_attribute() -> None:
+    # Compatibility case preparation delegates insert completeness to the core
+    # producer before planning, so an invalid short row never becomes a
+    # mixed-shape batch.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -3223,13 +3262,8 @@ def test_collapse_eligible_insert_entry_partitions_by_physical_slot_selection() 
             },
         },
     )
-    emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
-    assert round_trips == 2
-    assert [e.sql for e in emissions] == [
-        "insert into wallet(id, owner, balance) values (?, ?, ?)",
-        "insert into wallet(id, owner) values (?, ?)",
-    ]
-    assert [e.binds for e in emissions] == [(10, "Mira", 100.00), (11, "Omar")]
+    with pytest.raises(WriteRejectedError, match=r"Wallet\.balance: required attribute"):
+        engine.compile_write_sequence_case(case, "postgres")
 
 
 def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -> None:
@@ -3778,7 +3812,7 @@ def test_run_scenario_case_keeps_case_state_when_a_materializing_pair_aborts() -
     assert port.rollbacks == 1 and port.commits == 1
     close, _successor = run.emissions[-2:]
     assert close.case_pointer == "/scenario/2/write"
-    assert close.binds[3] == "2024-02-01T00:00:00+00:00"
+    assert close.binds[3] == _instant("2024-02-01T00:00:00+00:00")
 
 
 def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() -> None:
@@ -3801,7 +3835,7 @@ def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() ->
     )
     close = run.emissions[-2]
     assert close.case_pointer == "/scenario/3/write"
-    assert close.binds[3] == "2025-06-01T00:00:00+00:00"
+    assert close.binds[3] == _instant("2025-06-01T00:00:00+00:00")
 
 
 def test_is_materializing_write_step_returns_none_for_a_keyed_write_shape() -> None:
@@ -4389,18 +4423,18 @@ def test_an_edge_named_close_derives_its_address_from_the_named_milestone() -> N
         )
         heads.append(list(emissions[0].binds))
     assert heads[0] == [
-        "2024-10-01T00:00:00+00:00",
+        _instant("2024-10-01T00:00:00+00:00"),
         1,
-        "2024-06-01T00:00:00+00:00",
+        _instant("2024-06-01T00:00:00+00:00"),
         "infinity",
-        "2024-04-01T00:00:00+00:00",
+        _instant("2024-04-01T00:00:00+00:00"),
     ]
     assert heads[1] == [
-        "2024-10-01T00:00:00+00:00",
+        _instant("2024-10-01T00:00:00+00:00"),
         1,
         "infinity",
         "infinity",
-        "2024-04-01T00:00:00+00:00",
+        _instant("2024-04-01T00:00:00+00:00"),
     ]
 
 
@@ -4595,9 +4629,9 @@ def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
     )
     assert list(emissions[0].binds) == [
-        "2024-10-01T00:00:00+00:00",
+        _instant("2024-10-01T00:00:00+00:00"),
         1,
-        "2024-06-01T00:00:00+00:00",
+        _instant("2024-06-01T00:00:00+00:00"),
         "infinity",
     ]
 
@@ -4822,7 +4856,7 @@ def test_run_rejected_case_refuses_a_bare_row_naming_an_undeclared_member() -> N
         engine.run_rejected_case(_synthetic_bare_row(graded, "models/account.yaml"))
         == "write-required-attribute-missing"
     )
-    with pytest.raises(engine.EngineError, match=r"names \['bogus'\]"):
+    with pytest.raises(engine.EngineError, match=r"names undeclared member\(s\) \['bogus'\]"):
         engine.run_rejected_case(_synthetic_bare_row({**graded, "bogus": 1}, "models/account.yaml"))
 
 
@@ -4978,7 +5012,7 @@ def test_run_rejected_case_raises_when_write_unexpectedly_accepted() -> None:
     from pathlib import Path
 
     valid_write: dict[str, object] = {
-        "write": {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}
+        "write": {"id": 1, "owner": "Ada", "balance": "100.00", "version": 1}
     }
     document: dict[str, object] = {
         "model": "models/account.yaml",
@@ -5727,7 +5761,7 @@ def test_compile_read_case_wraps_a_sql_gen_error() -> None:
             },
         }
     )
-    with pytest.raises(engine.EngineError, match="names no attribute"):
+    with pytest.raises(engine.EngineError, match="names no declared attribute"):
         engine.compile_read_case(case, "postgres")
 
 
@@ -5937,7 +5971,7 @@ def test_compile_scenario_case_snapshot_lane_wraps_a_sql_gen_error() -> None:
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(engine.EngineError, match="names no attribute"):
+    with pytest.raises(engine.EngineError, match="names no declared attribute"):
         engine.compile_scenario_case(case, "postgres")
 
 
@@ -5966,7 +6000,7 @@ def test_run_scenario_case_snapshot_lane_wraps_an_error_from_the_find_executor()
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(engine.EngineError, match="names no attribute"):
+    with pytest.raises(engine.EngineError, match="names no declared attribute"):
         engine.run_scenario_case(case, QueueDbPort([]))
 
 
@@ -6081,7 +6115,7 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
                     "target": "Position",
                     "predicate": {"eq": {"attr": "Position.id", "value": 1}},
                     "temporal": {
-                        "transaction-time": {"asOf": "2024-02-01T00:00:00+00:00"},
+                        "transaction-time": {"asOf": "2024-02-01T00:00:00.000000Z"},
                         "valid-time": {"asOf": "latest"},
                     },
                 },
@@ -6129,113 +6163,6 @@ def test_run_scenario_case_reports_an_unraised_expect_error_loudly() -> None:
     port = FakeDbPort([{"id": 1, "name": "Ada"}])
     with pytest.raises(engine.EngineError, match="but the mutation was accepted"):
         engine.run_scenario_case(case, port)
-
-
-# --------------------------------------------------------------------------- #
-# Case-format ingestion decode (m-case-format / m-core): `decode_write_row`    #
-# and its Value Object / predicate-assignment helpers, exercised directly     #
-# over real corpus models -- customer.yaml's recursive nested composite (a    #
-# to-one `geo`, a to-many `phones`) and account.yaml's decimal `balance`.      #
-# --------------------------------------------------------------------------- #
-def _accepted_entity(
-    model_name: str, entity_name: str, namespace: str = "parallax.compatibility"
-) -> tuple[Any, Any]:
-    from parallax.conformance import models as _models
-    from parallax.core.metamodel import EntityIdentity
-
-    model = _models.load_models()[model_name]
-    entity = model.entity(EntityIdentity(namespace, entity_name))
-    assert entity is not None
-    return model, entity
-
-
-def test_decode_write_row_decodes_a_to_one_value_objects_own_leaves() -> None:
-    model, customer = _accepted_entity("customer", "Customer")
-    row: dict[str, object] = {
-        "id": 1,
-        "name": "Ada",
-        "address": {"street": "s", "city": "c", "geo": {"country": "US", "elevation": 5}},
-    }
-    decoded = engine.decode_write_row(customer, row, model)
-    address = cast("dict[str, object]", decoded["address"])
-    geo = cast("dict[str, object]", address["geo"])
-    assert geo["elevation"] == 5.0  # an int spells a float64 value (lossless)
-
-
-def test_decode_write_row_decodes_each_element_of_a_many_value_object() -> None:
-    model, customer = _accepted_entity("customer", "Customer")
-    row: dict[str, object] = {
-        "id": 1,
-        "name": "Ada",
-        "address": {
-            "street": "s",
-            "city": "c",
-            "phones": [{"type": "home", "number": "1"}, {"type": "work", "number": "2"}],
-        },
-    }
-    decoded = engine.decode_write_row(customer, row, model)
-    address = cast("dict[str, object]", decoded["address"])
-    phones = cast("list[object]", address["phones"])
-    assert len(phones) == 2
-
-
-def test_decode_write_row_leaves_a_malformed_many_value_object_unchanged() -> None:
-    # A string is technically a `Sequence`, but is never a legal `many`
-    # occurrence value -- `_decoded_vo_value` leaves it exactly as authored,
-    # the SAME structural shape `vo_document_violation` itself classifies as a
-    # rejection; decoding never masks that.
-    model, customer = _accepted_entity("customer", "Customer")
-    row: dict[str, object] = {
-        "id": 1,
-        "name": "Ada",
-        "address": {"street": "s", "city": "c", "phones": "not-a-list"},
-    }
-    decoded = engine.decode_write_row(customer, row, model)
-    address = cast("dict[str, object]", decoded["address"])
-    assert address["phones"] == "not-a-list"
-
-
-def test_decode_write_row_leaves_a_non_document_value_object_unchanged() -> None:
-    model, customer = _accepted_entity("customer", "Customer")
-    row = {"id": 1, "name": "Ada", "address": "not-a-document"}
-    decoded = engine.decode_write_row(customer, row, model)
-    assert decoded["address"] == "not-a-document"
-
-
-def test_decode_write_row_decodes_an_int_literal_to_an_exact_decimal() -> None:
-    model, account = _accepted_entity("account", "Account")
-    decoded = engine.decode_write_row(account, {"id": 1, "owner": "Ada", "balance": 100}, model)
-    assert decoded["balance"] == decimal.Decimal(100)
-
-
-def test_decoded_assignment_value_decodes_a_value_object_assignment() -> None:
-    # `_decoded_assignment_value`'s value-object branch -- a predicate-write
-    # assignment naming a whole Value Object member, mirrored against the
-    # SAME per-leaf decode `decode_write_row` applies to a keyed row.
-    model, customer = _accepted_entity("customer", "Customer")
-    value: dict[str, object] = {
-        "street": "s",
-        "city": "c",
-        "geo": {"country": "US", "elevation": 5},
-    }
-    decoded = engine._decoded_assignment_value(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        customer, "address", value, model
-    )
-    geo = cast("dict[str, object]", cast("dict[str, object]", decoded)["geo"])
-    assert geo["elevation"] == 5.0
-
-
-def test_decoded_assignment_value_leaves_an_undeclared_member_unchanged() -> None:
-    # A member matching neither a declared scalar attribute nor a value
-    # object -- a garbage predicate-write target -- passes through untouched;
-    # the member-name honesty check classifies THAT defect, not this decode.
-    model, customer = _accepted_entity("customer", "Customer")
-    assert (
-        engine._decoded_assignment_value(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            customer, "nonsense", 42, model
-        )
-        == 42
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -6427,7 +6354,7 @@ def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
                     "target": "parallax.compatibility.Ledger",
                     "predicate": {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}},
                     "temporal": {
-                        "transaction-time": {"asOf": "2024-03-01T00:00:00+00:00"},
+                        "transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"},
                     },
                 },
                 "roundTrips": 1,
@@ -7169,7 +7096,7 @@ def test_snapshot_lane_compile_and_run_reach_the_same_temporal_dml() -> None:
     ]
     # The close addresses the FIXTURE milestone's own edge and the successor
     # carries its acct_num forward: both are facts only a seeded tracker holds.
-    assert compiled[1].binds[3] == "2024-02-01T00:00:00+00:00"
+    assert compiled[1].binds[3] == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     assert compiled[2].binds[:3] == (2, "B", decimal.Decimal("300.00"))
 
 

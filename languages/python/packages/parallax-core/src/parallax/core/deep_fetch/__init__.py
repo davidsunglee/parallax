@@ -205,10 +205,11 @@ class FetchLevel:
     def query_for(self, parent_keys: Sequence[object]) -> ValidatedEntityQuery:
         """Build this level's flat child query from gathered parent keys.
 
-        The membership and propagated temporal terms form the predicate. Narrowing
-        and ordering stay query fields rather than being manufactured as wrappers
-        solely for SQL compilation. Raises for a back-reference level, which
-        issues no child query.
+        Encounter-order deduplication and tuple freezing happen here, where the
+        gathered sequence becomes a predicate product. The membership and
+        propagated temporal terms form the predicate. Narrowing and ordering stay
+        query fields rather than being manufactured as wrappers solely for SQL
+        compilation. Raises for a back-reference level, which issues no child query.
         """
         reference = None if self.related is None else self.related.reference
         if self.is_back_reference or self.child_target is None or reference is None:
@@ -218,7 +219,7 @@ class FetchLevel:
         member = self.related_member
         if member is None:
             raise DeepFetchError(f"{self.attach_key!r} carries no resolved child member")
-        values = cast("tuple[ManagedValue, ...]", tuple(parent_keys))
+        values = cast("tuple[ManagedValue, ...]", tuple(dict.fromkeys(parent_keys)))
         membership = _managed_membership(
             attr=reference,
             member=member,

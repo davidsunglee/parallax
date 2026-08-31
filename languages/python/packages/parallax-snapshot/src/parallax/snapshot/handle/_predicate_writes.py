@@ -46,7 +46,6 @@ from collections.abc import Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance
-from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import LockMode
 from parallax.core.entity import AttributeAssignment
@@ -76,12 +75,14 @@ from parallax.core.unit_work import (
     PredecessorRow,
     PredecessorShape,
     PredicateMutation,
+    PredicateSelection,
     PredicateWrite,
     TemporalColumns,
     TemporalObservation,
     UnitOfWork,
     VersionColumns,
     VersionObservation,
+    WriteAssignment,
     WriteObservation,
     WriteRejectedError,
     instructions,
@@ -174,22 +175,16 @@ def buffer_predicate(
        against the connected model, so a query whose own target that model does
        not declare is named as the target failure it is rather than as a
        composition failure of every Assignment addressing it.
-    4. **Valid-Time-bound validation and rendering** — the ``*Until`` forms
+    4. **Valid-Time-bound validation and normalization** — the ``*Until`` forms
        state their window as a PAIR, and half of one is refused before either
        bound is measured; a Bitemporal target then requires ``valid_from`` and a
        Transaction-Time-Only or non-temporal target takes none; and
        ``valid_from < until`` — an equal or reversed window rejects HERE, at
        build, before any buffering (:func:`validate_window`, the one gate the
        keyed verbs and both representations run). Typed-only: only
-       this ingress takes ``dt.datetime`` arguments, and this step is the sole
-       place one is touched — the gate normalizes each bound to UTC and RETURNS
-       the canonical instant literal step 5 writes into the instruction. It runs
-       BEFORE that build so a :class:`~parallax.core.unit_work.PredicateWrite`
-       is canonical from the moment it exists: a bound slot only ever holds
-       what `write-instruction.schema.json` defines an instant to be — an
-       ISO-8601 UTC timestamp, or the open-bound sentinel — so nothing
-       downstream of this lane, the buffering seam and the planner and SQL
-       generation alike, has to defend against anything else.
+       this ingress takes ``dt.datetime`` arguments. The gate normalizes each
+       bound to the managed UTC carrier retained by the prepared product;
+       canonical text belongs only to serialized Wire output.
     5. **Build + prepare the canonical instruction** (the typed peer of the
        Wire ingress's ``prepare_wire_write`` path). ``prepare_typed_write`` measures the selecting
        predicate with the whole ``validate_predicate`` vocabulary, then rejects
@@ -211,24 +206,18 @@ def buffer_predicate(
     entity = entity_of(meta, selection.target.canonical)
     _reject_uncomposable_assignments(meta, selection.target, mutation, assignments)
     declaring_entity = declaring(meta, entity)
-    valid_from_literal, until_literal = validate_window(
+    valid_from_managed, until_managed = validate_window(
         declaring_entity, mutation, valid_from, until
     )
-    doc: dict[str, object] = {
-        "mutation": mutation,
-        "target": {
-            "entity": selection.target.canonical,
-            "predicate": predicate_algebra.serialize(selection.predicate),
-        },
-    }
-    if assignments:
-        doc["assignments"] = [{"attr": str(a.attr), "value": a.value} for a in assignments]
-    if valid_from_literal is not None:
-        doc["validFrom"] = valid_from_literal
-    if until_literal is not None:
-        doc["until"] = until_literal
-    instruction = instructions.deserialize(doc)
-    assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
+    instruction = PredicateWrite(
+        mutation,
+        PredicateSelection(selection.target.canonical, selection.predicate),
+        tuple(
+            WriteAssignment(str(assignment.attr), assignment.value) for assignment in assignments
+        ),
+        valid_from_managed,
+        until_managed,
+    )
     prepared = instructions.prepare_typed_write(instruction, meta)
     assert isinstance(prepared, PreparedPredicateWrite)
     buffer_predicate_instruction(uow, model, conn, prepared, attempt)

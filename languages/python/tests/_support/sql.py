@@ -15,7 +15,7 @@ from parallax.core.object_query import (
     object_query,
     validate_object_query,
 )
-from parallax.core.predicate import PredicateNode, elaborate_predicate
+from parallax.core.predicate import PredicateNode, validate_predicate
 from parallax.core.sql_gen._compile import CompiledPredicate, CompiledRead
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._compile import (
@@ -77,5 +77,5 @@ def compile_write_predicate(
 ) -> CompiledPredicate:
     """Elaborate an authored test predicate before private write lowering."""
     return compile_validated_write_predicate(
-        elaborate_predicate(target, predicate, model), model, dialect, target
+        validate_predicate(target, predicate, model), model, dialect, target
     )

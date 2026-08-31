@@ -38,6 +38,7 @@ from parallax.core.entity import (
     EntityRowError,
     graph_construction_of,
     row_codec_of,
+    to_document,
 )
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._model import model_of
@@ -252,7 +253,7 @@ def test_full_row_carries_every_declarable_scalar_type() -> None:
     }
 
 
-def test_full_row_serializes_a_nullable_value_object_to_its_canonical_document() -> None:
+def test_full_row_renders_a_nullable_value_object_as_a_managed_document() -> None:
     customer = vm.Customer(
         id=1,
         name="Ada",
@@ -299,12 +300,18 @@ def test_full_row_serializes_a_value_object_to_its_full_containment_depth() -> N
     )
     profile = row_codec_of(mm.DOCUMENT_CODEC_MODEL).full_row(sample)["profile"]
     assert isinstance(profile, dict)
-    # A document's leaves are canonically ENCODED at every depth, where an
-    # Entity Attribute of the same declared type stays Python-typed above them:
-    # a document is one value, and the codec emits it whole.
-    assert profile["day"] == "2026-01-01"
-    assert profile["origin"] == {"city": "Oslo", "since": "2020-01-01"}
-    assert profile["entries"] == [{"kind": "k", "active": True, "price": "2.00", "issued": None}]
+    assert profile["amount"] == Decimal("1.25")
+    assert profile["blob"] == b"\x02"
+    assert profile["day"] == dt.date(2026, 1, 1)
+    assert profile["instant"] == dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    assert profile["origin"] == {"city": "Oslo", "since": dt.date(2020, 1, 1)}
+    assert profile["entries"] == [
+        {"kind": "k", "active": True, "price": Decimal("2.00"), "issued": None}
+    ]
+    assert sample.profile is not None
+    document = to_document(sample.profile)
+    assert document is not None
+    assert document["day"] == "2026-01-01"
 
 
 def test_a_row_emits_the_canonical_member_name_and_never_its_column() -> None:

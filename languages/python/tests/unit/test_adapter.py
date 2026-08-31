@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import decimal
 import json
@@ -18,7 +19,7 @@ from _second_dialect import BACKTICKED
 
 from _support.db_port import body_outcome
 from _support.repo import adapter_schema, canonical_snapshot_claim
-from parallax.conformance import adapter, case_format, engine
+from parallax.conformance import _case_ingress, adapter, case_format, engine, models
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.profile import Profile, profile_for
@@ -27,6 +28,11 @@ from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.object_query import AsOfRange, validate_object_query
+from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.predicate import serialize as serialize_predicate
+from parallax.core.unit_work import instructions
+from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
 
 _SCHEMA = adapter_schema()
 # The declared profile these suites run under, read off the one roster rather than
@@ -45,6 +51,137 @@ _RUN_ONLY_CASE = (
 _ENGINE_GAP_CASE = (
     case_format.default_cases_dir() / "m-txtime-write-007-predicate-terminate-materialize.yaml"
 )
+
+
+# The case-format write boundary is the sole place corpus YAML's numeric Decimal
+# spelling and synthetic managed carriers are normalized before strict Wire
+# preparation. The tests below exercise that seam directly; classification,
+# validation, and retained ownership remain assertions about its PreparedWrite
+# result or the core producer's own exception.
+
+
+def test_case_write_adapter_normalizes_a_case_decimal_number() -> None:
+    instruction = instructions.deserialize(
+        case_format.safe_load_yaml(
+            """
+mutation: insert
+entity: parallax.compatibility.Account
+rows:
+  - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+"""
+        )
+    )
+    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+    assert isinstance(prepared, PreparedKeyedWrite)
+    assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
+
+
+def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() -> None:
+    model = models.load_models()["account"]
+    for value in ("5.00", decimal.Decimal("5.00")):
+        instruction = instructions.KeyedWrite(
+            "insert",
+            "parallax.compatibility.Account",
+            ({"id": 7, "owner": "Newton", "balance": value, "version": 1},),
+        )
+        prepared = _case_ingress.prepare_case_write(instruction, model)
+        assert isinstance(prepared, PreparedKeyedWrite)
+        assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
+
+
+def test_case_write_adapter_normalizes_predicate_operands_and_assignments() -> None:
+    instruction = instructions.deserialize(
+        case_format.safe_load_yaml(
+            """
+mutation: update
+target:
+  entity: parallax.compatibility.Account
+  predicate:
+    lessThan: { attr: parallax.compatibility.Account.balance, value: 200.00 }
+assignments:
+  - { attr: parallax.compatibility.Account.balance, value: 0.00 }
+"""
+        )
+    )
+    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+    assert isinstance(prepared, PreparedPredicateWrite)
+    assert prepared.selection.predicate.operands is not None
+    assert prepared.selection.predicate.operands.values == (decimal.Decimal("200.00"),)
+    assert prepared.managed_assignments[0].value == decimal.Decimal("0.00")
+
+
+def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
+    stated = dt.datetime(2024, 7, 1, 2, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+    instruction = instructions.KeyedWrite(
+        "update",
+        "parallax.compatibility.Position",
+        ({"id": 1, "value": decimal.Decimal("5.00")},),
+        valid_from=stated,
+    )
+    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
+    assert isinstance(prepared, PreparedKeyedWrite)
+    assert prepared.bounds.valid_from == dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+
+def test_case_write_adapter_normalizes_case_temporal_bounds() -> None:
+    instruction = instructions.KeyedWrite(
+        "update",
+        "parallax.compatibility.Position",
+        ({"id": 1, "value": 5.00},),
+        valid_from="2024-02-01T00:00:00+00:00",
+    )
+    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
+    assert isinstance(prepared, PreparedKeyedWrite)
+    assert prepared.bounds.valid_from == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+
+
+def test_case_write_adapter_leaves_malformed_values_for_core_classification() -> None:
+    instruction = instructions.KeyedWrite(
+        "insert",
+        "parallax.compatibility.Account",
+        ({"id": 7, "owner": "Newton", "balance": True, "version": 1},),
+    )
+    with pytest.raises(instructions.InstructionRejectedError) as caught:
+        _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+    assert caught.value.rule == "neutral-literal-type-mismatch"
+
+
+def test_case_query_adapter_normalizes_declared_carriers_before_core_validation() -> None:
+    model = models.load_models()["position"]
+    query = deserialize_query(
+        case_format.safe_load_yaml(
+            """
+target: parallax.compatibility.Position
+predicate:
+  lessThan: { attr: parallax.compatibility.Position.value, value: 200.00 }
+temporal:
+  transaction-time: { asOf: latest }
+  valid-time:
+    asOfRange:
+      start: 2024-02-01T00:00:00+00:00
+      end: 2024-03-01T00:00:00+00:00
+"""
+        )
+    )
+
+    normalized = _case_ingress.normalize_case_query(query, model)
+
+    assert serialize_predicate(normalized.predicate) == {
+        "lessThan": {
+            "attr": "parallax.compatibility.Position.value",
+            "value": "200.00",
+        }
+    }
+    valid_time = normalized.temporal["valid-time"]
+    assert isinstance(valid_time, AsOfRange)
+    assert (valid_time.start, valid_time.end) == (
+        "2024-02-01T00:00:00.000000Z",
+        "2024-03-01T00:00:00.000000Z",
+    )
+    root = engine.case_entity(model, normalized.target.canonical)
+    validated = validate_object_query(root, normalized, model)
+    assert validated.predicate.operands is not None
+    assert validated.predicate.operands.values == (decimal.Decimal("200.00"),)
 
 
 class _FakePort:
@@ -1138,7 +1275,10 @@ def test_a_lifecycle_index_naming_a_different_statement_is_an_adapter_error() ->
         case: case_format.Case, port: DbPort, lifecycle: LifecycleRun
     ) -> tuple[list[engine.Emission], dict[str, Any]]:
         emissions, observations = real_run(case, port, lifecycle)
-        drifted = [engine.Emission(e.case_pointer, "select 0", e.binds) for e in emissions]
+        drifted = [
+            engine.Emission(e.case_pointer, dataclasses.replace(e.statement, sql="select 0"))
+            for e in emissions
+        ]
         return drifted, observations
 
     case_path = case_format.default_cases_dir() / "m-execution-lifecycle-001-standalone-read.yaml"

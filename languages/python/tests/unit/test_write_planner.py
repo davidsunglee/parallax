@@ -460,7 +460,7 @@ def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
         "insert",
         "Position",
         ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},),
-        valid_from=_B1,
+        valid_from=_B1_MANAGED,
     )
     update = KeyedWrite("update", "Position", ({"id": 9, "value": Decimal("150.00")},))
     plan = _plan([insert, update], _POSITION, tx_instant=instant_at(_B1))
@@ -1339,7 +1339,7 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
         "update",
         "Position",
         ({"id": 5, "value": Decimal("42.0")},),
-        valid_from="2024-03-01T00:00:00.000000Z",
+        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
     )
     key_ = object_key(position_update, _POSITION)
     assert key_ is not None

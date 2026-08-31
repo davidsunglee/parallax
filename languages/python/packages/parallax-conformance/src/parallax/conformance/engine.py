@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import decimal
+import json
 import os
 import socket
 import threading
@@ -27,6 +28,7 @@ from pathlib import Path
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import (
+    _case_ingress,
     case_format,
     models,
     provision,
@@ -60,7 +62,6 @@ from parallax.core.db_port import (
     Committed,
     DbPort,
     DocumentReadOrdinals,
-    JsonDocument,
     RollbackFailed,
     RolledBack,
     Row,
@@ -78,13 +79,11 @@ from parallax.core.metamodel import (
     EntityMetadata,
     MemberIdentity,
     Multiplicity,
-    NestedValueObjectMetadata,
     PrimaryKey,
     TemporalDimension,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
     ValueObjectMetadata,
-    WriteAssignmentError,
     entity_by_name,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -125,7 +124,6 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
     instructions,
     object_key,
-    validate_write,
 )
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
@@ -134,7 +132,6 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.unit_work.write_planner import reject_readless_document_many
-from parallax.core.wire import WireValue, decode_wire
 from parallax.descriptor import (
     DescriptorError,
     domain_model_from_document,
@@ -148,6 +145,10 @@ from parallax.snapshot.handle import (
     validate_source_pin,
 )
 from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._transaction import (
+    buffer_prepared_predicate_write,
+    buffer_prepared_wire_keyed_write,
+)
 from parallax.snapshot.materialize import FAMILY_VARIANT_KEY, source_hint_of
 
 __all__ = [
@@ -158,7 +159,6 @@ __all__ = [
     "compile_read_case",
     "compile_scenario_case",
     "compile_write_sequence_case",
-    "decode_write_row",
     "eligibility",
     "load_case_domain_model",
     "load_case_metamodel",
@@ -190,6 +190,7 @@ _READ_ERRORS = (
     TemporalReadError,
     handle.QueryTargetError,
     KeyError,
+    ValueError,
 )
 
 
@@ -198,37 +199,22 @@ class Emission:
     """One compiled statement emission (an entry of the adapter ``emissions`` array)."""
 
     case_pointer: str
-    sql: str
-    binds: tuple[object, ...]
+    statement: LoweredStatement
+
+    @property
+    def sql(self) -> str:
+        return self.statement.sql
+
+    @property
+    def binds(self) -> tuple[object, ...]:
+        return self.statement.binds
 
     def to_json(self) -> dict[str, object]:
         return {
             "casePointer": self.case_pointer,
-            "sql": self.sql,
-            "binds": [_json_bind(bind) for bind in self.binds],
+            "sql": self.statement.sql,
+            "binds": list(self.statement.wire_binds()),
         }
-
-
-def _json_bind(bind: object) -> object:
-    """Render one bind to JSON-native form for the emission wire (m-conformance-adapter).
-
-    A value-object document write binds the whole document as a :class:`JsonDocument`
-    carrier (m-db-port); on the wire it is its underlying JSON document. Every other
-    CASE-AUTHORED keyed bind is already JSON-native (scalars; a date rides as the
-    write-input string) — but a MATERIALIZING predicate write's carried-forward bind
-    (an observed gate value, or a chained row's payload
-    column) is sourced from a REAL resolved row, so it may be a driver-native
-    ``datetime.datetime`` / the native-infinity :class:`~parallax.core.base.
-    TemporalBound` sentinel / a ``Decimal`` — exactly the shapes production code
-    deliberately passes through UNCHANGED into the write pipeline (never pre-rendered
-    there; that seam's own contract, `parallax.snapshot.handle`). :func:`wire_value`
-    (this module's own read-side wire renderer) already covers every one of those
-    shapes, so it renders the emission wire form here too, rather than a second,
-    divergent conversion.
-    """
-    if isinstance(bind, JsonDocument):
-        return bind.value
-    return wire_value(bind)
 
 
 def _delivered(
@@ -245,11 +231,9 @@ def _delivered(
     put on the wire is reconciled with the plan it came from, so what the case
     grades is the plan only where the plan is what the database saw.
 
-    Binds are reconciled in wire space with the exact-Decimal fallback the corpus
-    grades goldens under (:func:`_same_bind`), because the two sides differ in
-    CARRIER by design: the plan holds the case-authored wire spelling and the
-    delivery holds the native value a decode produced. What the reconciliation
-    admits is that difference and nothing else.
+    Binds are reconciled through each statement's compiler-owned Wire projection,
+    so carrier differences are admitted only where typed metadata or an explicit
+    Wire override declares them.
     """
     if len(planned) != len(observed):
         raise EngineError(
@@ -263,97 +247,22 @@ def _delivered(
                 f"{where}: statement {index} is planned as {plan.sql!r} but the lifecycle "
                 f"delivered {ran.sql!r}"
             )
-        if len(plan.binds) != len(ran.binds) or not all(
-            _same_bind(left, right) for left, right in zip(plan.binds, ran.binds, strict=True)
-        ):
+        if not _same_wire_binds(plan.wire_binds(), ran.wire_binds()):
             raise EngineError(
-                f"{where}: statement {index} is planned with binds {plan.binds!r} but the "
-                f"lifecycle delivered {ran.binds!r}"
+                f"{where}: statement {index} is planned with binds (canonical Wire) "
+                f"{plan.wire_binds()!r} but the lifecycle delivered {ran.wire_binds()!r}"
             )
     return tuple(planned)
 
 
-def _same_bind(planned: object, executed: object) -> bool:
-    """One planned bind against the one the database was handed.
-
-    Reconciled in JSON space rather than by Python equality, because the only
-    difference the two sides may carry is the CARRIER: an authored ``250.00``
-    rides the plan as the literal the case wrote and reaches the database as the
-    ``Decimal`` its decode produced, and those are one value. A difference in
-    JSON TYPE is never a carrier difference, so the reconciliation is typed
-    first and numeric second — Python's own ``True == 1`` would otherwise report
-    a numeric bind as the boolean the plan holds.
-
-    Both sides are reconciled from the carrier they still hold rather than from
-    the wire spelling alone, at every depth, because the spelling is where the
-    evidence is lost: :func:`wire_value` renders a byte buffer to hex and a
-    UUID to its canonical text, so a rendered string that happens to parse as a
-    number says nothing about whether a decimal produced it.
-    """
-    left, right = _json_bind(planned), _json_bind(executed)
-    kind = _json_kind(left)
-    if kind != _json_kind(right) or kind == "number":
-        return _same_decimal(planned, executed)
-    if kind == "object":
-        one, other = cast("Mapping[str, object]", left), cast("Mapping[str, object]", right)
-        return set(one) == set(other) and all(_same_bind(one[key], other[key]) for key in one)
-    if kind == "array":
-        first, second = cast("Sequence[object]", left), cast("Sequence[object]", right)
-        return len(first) == len(second) and all(
-            _same_bind(one, other) for one, other in zip(first, second, strict=True)
-        )
-    return left == right
-
-
-def _json_kind(value: object) -> str:
-    """``value``'s JSON type, as :func:`_json_bind` leaves it.
-
-    ``opaque`` is a carrier :func:`wire_value` returned unchanged: it names no
-    JSON type, so two of them reconcile by their own equality alone. Nothing the
-    renderer DOES spell reaches the structural branches — a byte buffer is
-    already its hex string here, the way a ``Decimal`` is already its decimal
-    one — so an array is a document's own array and nothing else.
-    """
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, Mapping):
-        return "object"
-    if isinstance(value, Sequence):
-        return "array"
-    return "opaque"
-
-
-def _same_decimal(planned: object, executed: object) -> bool:
-    """Two binds that both carry a number, as exact decimals.
-
-    This is the whole of the one cross-type pair a carrier difference produces:
-    a ``Decimal`` renders as its exact decimal string while the plan holds the
-    number the case authored, so number-against-string reconciles HERE and
-    nowhere else, and only when the side spelled as a string is a ``Decimal``.
-    A string is otherwise a semantic value of its own — a byte buffer's hex, an
-    identifier, a date — and one that happens to parse as a number is a
-    delivered type the case never sanctioned rather than a spelling of one.
-    """
-    left, right = _decimal_carrier(planned), _decimal_carrier(executed)
-    return left is not None and right is not None and left == right
-
-
-def _decimal_carrier(value: object) -> decimal.Decimal | None:
-    """The exact decimal ``value`` CARRIES, or ``None`` when it carries none.
-
-    A ``Decimal`` and a JSON number carry one; nothing else does, the temporal
-    ``infinity`` sentinel and every numeric-looking string included."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, decimal.Decimal):
-        return value
-    return decimal.Decimal(str(value)) if isinstance(value, (int, float)) else None
+def _same_wire_binds(left: tuple[object, ...], right: tuple[object, ...]) -> bool:
+    if len(left) != len(right):
+        return False
+    return all(
+        json.dumps(one, sort_keys=True, separators=(",", ":"))
+        == json.dumps(other, sort_keys=True, separators=(",", ":"))
+        for one, other in zip(left, right, strict=True)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,14 +360,14 @@ def _declaring_metadata(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     return _family_declarer(model, case_entity(model, name))
 
 
-def _read_query(case: case_format.Case) -> ObjectQueryNode:
+def _read_query(case: case_format.Case, model: AcceptedMetamodel) -> ObjectQueryNode:
     when = case.document.get("when")
     if not isinstance(when, Mapping):
         raise EngineError(f"{case.path.name}: read case has no `when`")
     body = cast("Mapping[str, object]", when)
     if "objectQuery" not in body:
         raise EngineError(f"{case.path.name}: read case has no `objectQuery`")
-    return deserialize_query(body["objectQuery"])
+    return _case_ingress.normalize_case_query(deserialize_query(body["objectQuery"]), model)
 
 
 def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
@@ -543,8 +452,8 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
             f"{case.path.name}: only `read`-shape compile is implemented (a write/rejected/"
             f"scenario case compiles through its own dedicated lane; shape={case.shape})"
         )
-    query = _read_query(case)
     model = load_case_metamodel(case)
+    query = _read_query(case, model)
     dialect = dialect_for(dialect_name)
     try:
         metadata = case_entity(model, query.target.canonical)
@@ -564,7 +473,7 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
 def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
     """Compile a read case to its ordered emissions and round-trip count."""
     statement = _compile_statement(case, dialect_name).statement
-    emission = Emission("/objectQuery", statement.sql, statement.binds)
+    emission = Emission("/objectQuery", statement)
     return [emission], 1
 
 
@@ -605,9 +514,11 @@ def run_read_case(
     first would hand the wire that member's document spelling instead, making one
     logical value observably different under the two layouts.
     """
-    query = _read_query(case)
+    domain = load_case_domain_model(case)
+    model = models.accepted_model_of(domain)
+    query = _read_query(case, model)
     observed = lifecycle_run(lifecycle).observation()
-    db = handle.Database(port, load_case_domain_model(case), lifecycle_provider=observed.provider)
+    db = handle.Database(port, domain, lifecycle_provider=observed.provider)
     concurrency = _read_case_concurrency(case)
     try:
         result = (
@@ -687,9 +598,9 @@ def run_graph_case(
     for a root whose stored state contradicted the model, the record it published
     in place of itself.
     """
-    query = _read_query(case)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
+    query = _read_query(case, model)
     snapshot, observed = _wire_read(case, query, domain, port, lifecycle_run(lifecycle))
     if not _is_single_graph(query):
         raise EngineError(
@@ -771,9 +682,9 @@ def run_stream_case(
     canonical Lowered Statement it borrowed. Nothing here observes at the
     database port, which carries the driver's own text.
     """
-    query = _read_query(case)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
+    query = _read_query(case, model)
     if not _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a streamed `then.graph` case read a milestone SET — "
@@ -803,9 +714,9 @@ def run_streamed_graphs_case(
     `{pin, graph}` entries are recovered from those pins rather than from a second
     read per milestone.
     """
-    query = _read_query(case)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
+    query = _read_query(case, model)
     if _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a streamed `then.graphs` case read a single instant — "
@@ -860,9 +771,9 @@ def run_graphs_case(
     recovered from each root's own edge — the coordinate the pin states — rather
     than from a second read per milestone.
     """
-    query = _read_query(case)
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
+    query = _read_query(case, model)
     snapshot, observed = _wire_read(case, query, domain, port, lifecycle_run(lifecycle))
     if _is_single_graph(query):
         raise EngineError(
@@ -983,10 +894,7 @@ def _graph_root(root: object) -> Row | None:
 
 def _read_emissions(observed: LifecycleObservation) -> list[Emission]:
     """The read's own emissions: the statements production actually ran, in order."""
-    return [
-        Emission("/objectQuery", statement.sql, statement.binds)
-        for statement in observed.statements
-    ]
+    return [Emission("/objectQuery", statement) for statement in observed.statements]
 
 
 # The wire spelling each pinned as-of axis is emitted under in a milestone-set
@@ -1623,7 +1531,7 @@ def _build_temporal_instruction(
     if until is not None:
         doc["until"] = until
     instruction = instructions.deserialize(doc)
-    prepared = instructions.prepare_wire_write(instruction, model)
+    prepared = _case_ingress.prepare_case_write(instruction, model)
     assert isinstance(prepared, PreparedKeyedWrite)  # a temporal entry is always keyed
     entity_metadata = case_entity(model, entity_name)
     pk_key = object_key(prepared, model)
@@ -1717,108 +1625,6 @@ def _canonical_predicate_doc(raw_write: Mapping[str, object]) -> dict[str, objec
     doc = dict(raw_write)
     doc.pop("at", None)
     return doc
-
-
-# --------------------------------------------------------------------------- #
-# Case-format ingestion decode (m-case-format / m-wire): a case authors a      #
-# neutral write row in the SAME portable wire spellings a read golden does     #
-# (a decimal or a sub-microsecond-free timestamp as a bare number/ISO string,  #
-# bytes as lowercase hex, a uuid as a canonical string) — never the native     #
-# carrier the developer-facing write validators now require (they moved off   #
-# the full wire decode onto the narrower input-policy widening,               #
-# `~parallax.core.base.coerce_neutral_input`). This adapter is the ONE seam   #
-# lowers a case-authored row/assignment to native carriers before it ever     #
-# reaches `validate_write` / `validate_write_assignment` on the developer      #
-# verb's own path. Its input is serialized and decoding is strict; managed   #
-# values must not cross this boundary or be decoded a second time.           #
-# --------------------------------------------------------------------------- #
-def decode_write_row(
-    entity: EntityMetadata, row: Mapping[str, object], model: AcceptedMetamodel
-) -> dict[str, object]:
-    """One case-authored neutral write row, its wire-spelled scalar leaves
-    decoded to native carriers.
-
-    Mirrors ``write_validate.validate_write``'s own structural walk --
-    ``entity``'s family-effective attributes and applicable value objects
-    (`m-inheritance` "Inherited members") -- but TRANSFORMS rather than
-    validates: each present, non-null scalar leaf decodes through
-    :func:`~parallax.core.wire.decode_wire` against its declared
-    type, and a present value-object document (or each element of a `many`
-    occurrence) recurses the same way over its own declared composite
-    (:func:`_decoded_vo_value`). An absent field, an explicit null, a
-    DB-computed write marker, and every non-attribute control key are
-    returned exactly as authored.
-    """
-    view = inheritance.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return dict(row)
-    decoded = dict(row)
-    for attribute in view.applicable_attributes:
-        name = attribute.identity.name
-        if name in decoded and decoded[name] is not None:
-            decoded[name] = decode_wire(attribute.type, cast("WireValue", decoded[name]))
-    for value_object in view.applicable_value_objects:
-        name = value_object.identity.path[-1]
-        if name in decoded and decoded[name] is not None:
-            decoded[name] = _decoded_vo_value(value_object, decoded[name])
-    return decoded
-
-
-def _decoded_vo_value(
-    container: ValueObjectMetadata | NestedValueObjectMetadata, value: object
-) -> object:
-    """One present Value Object occurrence's own value, decoded leaf by leaf.
-
-    Mirrors ``parallax.core.metamodel.vo_document_violation``'s structural
-    walk: a `many` occurrence decodes each element, a to-one occurrence
-    decodes the one document. A value the walk cannot make sense of (not a
-    list, not a mapping) is left unchanged -- that reading is what classifies
-    it as a rejection; this function only ever transforms an otherwise
-    well-shaped document's own scalar leaves.
-    """
-    if container.multiplicity is Multiplicity.MANY:
-        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-            return value
-        return [
-            _decoded_vo_element(container, element) for element in cast("Sequence[object]", value)
-        ]
-    return _decoded_vo_element(container, value)
-
-
-def _decoded_vo_element(
-    container: ValueObjectMetadata | NestedValueObjectMetadata, value: object
-) -> object:
-    if not isinstance(value, Mapping):
-        return value
-    document = dict(cast("Mapping[str, object]", value))
-    for attribute in container.attributes:
-        name = attribute.identity.name
-        if name in document and document[name] is not None:
-            document[name] = decode_wire(attribute.type, cast("WireValue", document[name]))
-    for nested in container.value_objects:
-        name = nested.identity.path[-1]
-        if name in document and document[name] is not None:
-            document[name] = _decoded_vo_value(nested, document[name])
-    return document
-
-
-def _decoded_assignment_value(
-    entity: EntityMetadata, member: str, value: object, model: AcceptedMetamodel
-) -> object:
-    """One predicate-write assignment's case-authored value, decoded against
-    ``member``'s declared type on ``entity`` -- :func:`decode_write_row`'s
-    per-leaf decode, applied to a single named member rather than a whole
-    row."""
-    position = inheritance.view(model).entity(entity.identity)
-    if position is None:  # pragma: no cover - the facet covers every accepted Entity
-        return value
-    for attribute in position.applicable_attributes:
-        if attribute.identity.name == member:
-            return decode_wire(attribute.type, cast("WireValue", value))
-    for value_object in position.applicable_value_objects:
-        if value_object.identity.path[-1] == member:
-            return _decoded_vo_value(value_object, value)
-    return value
 
 
 def _is_versioned_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
@@ -2171,7 +1977,7 @@ def _build_instructions(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
-        prepared = instructions.prepare_wire_write(instruction, model)
+        prepared = _case_ingress.prepare_case_write(instruction, model)
         if binds_observations and not opens_a_row:
             key = object_key(prepared, model)
             if observation is None and key is not None:
@@ -2332,8 +2138,18 @@ def _lower_writes(
     return _lower_resolved(resolved, entries, model, dialect, concurrency, tx_instant, shadow)
 
 
+def _prepared_case_predicate_write(
+    raw_write: Mapping[str, object], model: AcceptedMetamodel
+) -> PreparedPredicateWrite:
+    instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
+    assert isinstance(instruction, PredicateWrite)
+    prepared = _case_ingress.prepare_case_write(instruction, model)
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return prepared
+
+
 def _lower_predicate_write_step(
-    raw_write: Mapping[str, object],
+    prepared: PreparedPredicateWrite,
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
@@ -2344,14 +2160,10 @@ def _lower_predicate_write_step(
     ``build_write_planner`` -> ``stream_lowered`` seam every other write path
     does (batching is a structural no-op for a lone predicate write).
 
-    Validation runs against a DECODED copy of the instruction
-    (:func:`_decoded_predicate_write`) — an assignment value may carry a case
-    wire spelling (`m-core-007`'s own decimal sibling) the coercion-only
-    developer-facing validator would otherwise reject — but ``instruction``
-    itself, the one this function actually lowers, stays exactly as authored:
-    this is a compile-time PURE re-lowering whose emitted bind is graded
-    byte-exact against the case's own golden, so decoding must never leak
-    into the value that reaches planning.
+    The case-format preparation seam normalizes only carrier differences before
+    strict Wire preparation. The prepared product retains managed values, and
+    its compiler metadata projects them back to canonical Wire for the emission
+    the case grades.
 
     A MATERIALIZING predicate write never reaches here: its case carries
     ``compileEligibility: run-only``, which short-circuits at
@@ -2359,9 +2171,6 @@ def _lower_predicate_write_step(
     this seam with one is therefore always a caller wiring defect, surfaced as
     planning's own defensive :class:`~parallax.core.unit_work.WritePlanningError`.
     """
-    instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
-    assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
-    prepared = instructions.prepare_wire_write(instruction, model)
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
     instant = _pinned_instant(_INERT_CLOCK_INSTANT)
@@ -2431,7 +2240,7 @@ def _compile_find(
     "raw case step" to compiled read, composing production's `m-sql` /
     `m-read-lock` building blocks rather than duplicating their logic.
     """
-    query = _step_query(step)
+    query = _step_query(step, model)
     metadata = case_entity(model, query.target.canonical)
     entity_query = _canonicalize_read(query, metadata, model)
     return compile_read(
@@ -2443,7 +2252,7 @@ def _compile_find(
     )
 
 
-def _step_query(step: Mapping[str, object]) -> ObjectQueryNode:
+def _step_query(step: Mapping[str, object], model: AcceptedMetamodel) -> ObjectQueryNode:
     """A scenario or coherence read step's own canonical Object Query.
 
     The query travels as authored. Root as-of injection and per-hop navigation
@@ -2455,7 +2264,7 @@ def _step_query(step: Mapping[str, object]) -> ObjectQueryNode:
     query_doc = step.get("objectQuery")
     if query_doc is None:
         raise EngineError("a scenario read step needs `objectQuery`")
-    return deserialize_query(query_doc)
+    return _case_ingress.normalize_case_query(deserialize_query(query_doc), model)
 
 
 def _run_standalone_find(
@@ -2474,7 +2283,8 @@ def _run_standalone_find(
     Strategy, never a property of the preference alone or of what the scenario
     goes on to write.
     """
-    query = _step_query(step)
+    model = models.accepted_model_of(domain)
+    query = _step_query(step, model)
     observed = lifecycle.observation()
     db = handle.Database(port, domain, lifecycle_provider=observed.provider)
     return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency), observed
@@ -2619,7 +2429,7 @@ def _lower_scenario_step(
         # `compileEligibility: run-only` short-circuits before
         # `_scenario_lowered` ever runs).
         statement = _lower_predicate_write_step(
-            cast("Mapping[str, object]", raw_write),
+            _prepared_case_predicate_write(cast("Mapping[str, object]", raw_write), context.model),
             context.model,
             dialect,
             context.concurrency,
@@ -2766,7 +2576,7 @@ def _emissions(
     pointer_statements: Sequence[tuple[str, Sequence[LoweredStatement]]],
 ) -> list[Emission]:
     return [
-        Emission(pointer, statement.sql, statement.binds)
+        Emission(pointer, statement)
         for pointer, statements in pointer_statements
         for statement in statements
     ]
@@ -2909,19 +2719,16 @@ def _compile_snapshot_scenario(
                             [],
                         )
                     emissions.extend(
-                        Emission(f"/scenario/{index}/write", statement.sql, statement.binds)
-                        for statement in statements
+                        Emission(f"/scenario/{index}/write", statement) for statement in statements
                     )
                 case "find":
-                    query = _step_query(step)
+                    query = _step_query(step, model)
                     metadata = case_entity(model, query.target.canonical)
                     entity_query = _canonicalize_read(query, metadata, model)
                     statement = compile_read(
                         entity_query, model, dialect, result_form="instance"
                     ).statement
-                    emissions.append(
-                        Emission(f"/scenario/{index}/objectQuery", statement.sql, statement.binds)
-                    )
+                    emissions.append(Emission(f"/scenario/{index}/objectQuery", statement))
     except (*_READ_ERRORS, *_LOWERING_ERRORS) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return emissions, len(emissions)
@@ -3039,13 +2846,12 @@ def _run_snapshot_scenario(
                     case, context, port, step, lifecycle
                 )
                 emissions.extend(
-                    Emission(f"/scenario/{index}/write", statement.sql, statement.binds)
-                    for statement in statements
+                    Emission(f"/scenario/{index}/write", statement) for statement in statements
                 )
                 round_trips += unit_trips
                 results.append(_NO_SCENARIO_RESULT)
             case "find":
-                query = _step_query(step)
+                query = _step_query(step, model)
                 mark = observation.round_trips
                 try:
                     # The case document's own spelling is resolved HERE, where the
@@ -3057,7 +2863,7 @@ def _run_snapshot_scenario(
                 except _READ_ERRORS as exc:
                     raise EngineError(f"{case.path.name}: {exc}") from exc
                 emissions.extend(
-                    Emission(f"/scenario/{index}/objectQuery", statement.sql, statement.binds)
+                    Emission(f"/scenario/{index}/objectQuery", statement)
                     for statement in observation.since(mark, "read")
                 )
                 round_trips += observation.round_trips - mark
@@ -3283,10 +3089,9 @@ def _applicable_member_names(model: AcceptedMetamodel, identity: EntityIdentity)
     Object occurrences it declares and the ones it inherits alike, whatever each
     one's own assignability.
 
-    Membership alone, which is the question both callers ask — a `mutate` step's
-    `set` (:func:`_edited_copy`) and a bare write row
-    (:func:`_reject_undeclared_bare_row_members`) — so one authored name is judged
-    a member or not the same way whichever form carries it. Inheritance is part of
+    Membership alone, which is the question a `mutate` step's `set`
+    (:func:`_edited_copy`) asks before the prepared-write producer judges its
+    values. Inheritance is part of
     that question and not a later one: `Dog` has `Pet`'s `licenseId` as plainly as
     its own `barkVolume`, so both are here. Whether a member may then be ASSIGNED
     is the later and separate verdict (:func:`_judged_assignments`), which is what
@@ -3302,6 +3107,22 @@ def _applicable_member_names(model: AcceptedMetamodel, identity: EntityIdentity)
         return frozenset()
     return frozenset(
         {attribute.identity.name for attribute in position.applicable_attributes}
+        | {occurrence.identity.path[-1] for occurrence in position.applicable_value_objects}
+    )
+
+
+def _prepared_row_member_names(
+    model: AcceptedMetamodel, identity: EntityIdentity
+) -> frozenset[str]:
+    position = inheritance.view(model).entity(identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return frozenset()
+    return frozenset(
+        {
+            attribute.identity.name
+            for attribute in position.applicable_attributes
+            if not attribute.framework_owned
+        }
         | {occurrence.identity.path[-1] for occurrence in position.applicable_value_objects}
     )
 
@@ -3471,16 +3292,14 @@ def _edited_copy(
     mapping's own keys: an inheritance participant's node publishes the synthetic
     `familyVariant` beside its members, and that key is read-time provenance no
     edit authors — while on a standalone Entity the same spelling is an ordinary
-    declared member the gate admits. What survives both is judged as any written
+    declared member the gate admits. What survives both is judged as any edited
     value is (:func:`~parallax.core.inheritance.validate_write_assignment`), so a
     primary-key, read-only or framework-owned target and an ill-typed value are
-    refused by the SAME verdict the typed `edit(**changes)` and the serialized
-    write boundary reach — one rule, whichever surface the assignment arrives
-    through. The value is decoded to its native carrier first
-    (:func:`_decoded_assignment_value`), because a case authors wire literals and
-    the judgement is about the value a member would hold; the copy carries the
-    decoded value for the same reason, so its member state is in the vocabulary
-    the read's own is.
+    refused by the SAME verdict the typed `edit(**changes)` reaches. The
+    conformance preparation seam first normalizes every authored value through
+    the canonical prepared-write producer, so this lane owns no second recursive
+    conversion; the edit-only assignment judgment receives the managed frozen
+    values that producer returned.
 
     Every verdict is reached over the WHOLE `set` before any member is copied, so
     a refused mutation derives nothing at all: `set` is an unordered mapping, and
@@ -3519,7 +3338,7 @@ def _edited_copy(
             f"{case.path.name}: `mutate` on step {on} assigns {unassignable!r}, which "
             f"{identity.name} has no assignable member of"
         )
-    edited = _judged_assignments(case, model, identity, assignments)
+    edited = _judged_assignments(case, model, identity, assignments, members)
     return _ScenarioStepResult(({**members, **edited},), source.pin, identity)
 
 
@@ -3528,6 +3347,7 @@ def _judged_assignments(
     model: AcceptedMetamodel,
     identity: EntityIdentity,
     assignments: Mapping[str, object],
+    current: Mapping[str, object],
 ) -> dict[str, object]:
     """One `mutate` step's `set`, decoded against ``identity``'s applicable members
     and judged assignable, or a loud refusal naming the case.
@@ -3539,23 +3359,35 @@ def _judged_assignments(
     corpus refuses such a case before either executor runs it, which is what makes
     the outcome portable; this verdict is the same rule reached again at run time,
     where it also guards the shapes a case never carries — a hand-built step, or a
-    node whose concrete Entity only the read knows. It is refused exactly as a bare
-    write row naming an undeclared member is
-    (:func:`_reject_undeclared_bare_row_members`).
+    node whose concrete Entity only the read knows. The conformance preparation
+    seam normalizes case carriers before the canonical producer judges them.
     """
+    prepared_members = _prepared_row_member_names(model, identity)
+    row = {name: value for name, value in current.items() if name in prepared_members}
+    row.update(assignments)
+    instruction = KeyedWrite("update", identity.canonical, (row,))
+    try:
+        prepared = _case_ingress.prepare_case_write(instruction, model)
+    except instructions.InstructionRejectedError as exc:
+        raise EngineError(
+            f"{case.path.name}: `mutate` carries a value that does not match the declared type "
+            f"— {exc}"
+        ) from exc
+    except (instructions.WriteInstructionError, WriteRejectedError) as exc:
+        raise EngineError(
+            f"{case.path.name}: `mutate` carries an invalid assignment — {exc}"
+        ) from exc
+    assert isinstance(prepared, PreparedKeyedWrite)
+    managed = prepared.rows[0]
     entity = case_entity(model, identity.canonical)
-    decoded = {
-        name: _decoded_assignment_value(entity, name, value, model)
-        for name, value in assignments.items()
-    }
-    for name, value in decoded.items():
+    for name in assignments:
         try:
-            inheritance.validate_write_assignment(model, entity, name, value)
-        except WriteAssignmentError as exc:
+            inheritance.validate_write_assignment(model, entity, name, managed[name])
+        except inheritance.WriteAssignmentError as exc:
             raise EngineError(
                 f"{case.path.name}: `mutate` assigns {name!r}, which an edit refuses — {exc}"
             ) from exc
-    return decoded
+    return dict(managed)
 
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
@@ -3593,11 +3425,26 @@ def _seed_shadow_from_fixtures(
         return
     fixtures = provision.load_fixtures(cast("str", case.document["model"]))
     for entity_name, rows in fixtures.items():
-        shadow.seed_fixtures(
-            model,
-            case_entity(model, entity_name),
-            cast("list[Mapping[str, object]]", rows),
-        )
+        entity = case_entity(model, entity_name)
+        if not _is_temporal_entity(model, entity.identity.canonical):
+            shadow.seed_fixtures(
+                model,
+                entity,
+                cast("list[Mapping[str, object]]", rows),
+            )
+            continue
+        managed_rows: list[Mapping[str, object]] = []
+        for row in cast("list[Mapping[str, object]]", rows):
+            open_bounds = {name: value for name, value in row.items() if value == INFINITY_LITERAL}
+            instruction = KeyedWrite(
+                "insert",
+                entity.identity.canonical,
+                ({name: value for name, value in row.items() if name not in open_bounds},),
+            )
+            prepared = _case_ingress.prepare_case_write(instruction, model)
+            assert isinstance(prepared, PreparedKeyedWrite)
+            managed_rows.append({**prepared.rows[0], **open_bounds})
+        shadow.seed_fixtures(model, entity, managed_rows)
 
 
 def _is_framework_write(
@@ -3918,8 +3765,8 @@ def _execute_keyed_unit(
     Resolution happens ONCE and both consumers read it, so a temporal write's
     observation is consumed (and its milestone retired) a single time; the
     emission is therefore the PURE re-lowering of the very instructions the
-    execution buffered, and a golden bind states what the plan holds rather than
-    what a driver happened to send. That plan is reported only where the
+    execution buffered, with binds observed through the lowered statement's
+    canonical Wire projection. That plan is reported only where the
     delivered lifecycle confirms the unit ran it (:func:`_delivered`), so being
     the plan and being what the database saw are one claim rather than two.
     """
@@ -3953,7 +3800,7 @@ def _run_readless_predicate_write(
     port: DbPort,
     domain: DomainModel,
     concurrency: Concurrency,
-    raw_write: Mapping[str, object],
+    instruction: PreparedPredicateWrite,
     statement: LoweredStatement,
     tx_instant: str,
     lifecycle: LifecycleRun,
@@ -3962,17 +3809,15 @@ def _run_readless_predicate_write(
 ) -> tuple[tuple[LoweredStatement, ...], int]:
     """Execute a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) through the SAME production ``db.transact`` entry point every
-    other write path uses — one transaction, stated through the PUBLIC
-    ``tx.wire.*_where`` verb its mutation names (`m-case-format`
-    "predicate-shaped case entries ... buffer through Transaction's own seam,
-    materialization then happens exactly where production does it").
+    other write path uses. The conformance adapter has already normalized the
+    case-format carriers into a core-owned ``PreparedPredicateWrite``; the
+    private execution bridge retains production ownership of dispatch,
+    materialization, lifecycle, and buffering without producing another
+    instruction.
 
-    The verb takes the case's own authored values: a Wire predicate write is
-    stated in the accepted wire spellings its serde admits, which is exactly
-    what a case authors, so nothing here decodes them first. The reported
-    emission is ``statement`` — `_lower_predicate_write_step`'s own parse of the
-    same raw document, so the golden bind stays the case-authored literal
-    whatever the verb does with its copy — and it is reported only where the
+    The reported emission is ``statement`` — lowered from that same prepared
+    product — and its compiler metadata renders the canonical Wire binds used
+    for grading and delivery reconciliation. It is reported only where the
     delivered lifecycle confirms this transaction ran it (:func:`_delivered`).
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
@@ -3985,7 +3830,7 @@ def _run_readless_predicate_write(
     )
 
     def body(tx: handle.Transaction) -> None:
-        _buffer_wire_predicate(tx, raw_write)
+        buffer_prepared_predicate_write(tx, instruction)
 
     with contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=concurrency)
@@ -3993,44 +3838,6 @@ def _run_readless_predicate_write(
         _delivered((statement,), observed.writes, "a readless predicate write"),
         observed.round_trips,
     )
-
-
-def _buffer_wire_predicate(tx: handle.Transaction, raw_write: Mapping[str, object]) -> None:
-    """Buffer one predicate-shaped case entry through the PUBLIC
-    ``tx.wire.*_where`` verb its mutation names.
-
-    Driven off the case's own canonical document rather than a deserialized
-    instruction, because that document already IS the Wire ingress's input: the
-    ``{entity, predicate}`` selection is the canonical target, and the
-    ``assignments`` list carries member references whose local names are the
-    change document's keys. What the verb then does — judge the selection, judge
-    every assignment, render the bounds, and dispatch readless or materializing
-    — is production's own, which is the point of stating it this way.
-    """
-    doc = _canonical_predicate_doc(raw_write)
-    mutation = cast("str", doc["mutation"])
-    target = cast("Mapping[str, object]", doc["target"])
-    changes = {
-        cast("str", assignment["attr"]).rpartition(".")[2]: assignment["value"]
-        for assignment in cast("Sequence[Mapping[str, object]]", doc.get("assignments", ()))
-    }
-    valid_from = _bound_instant(cast("str | None", doc.get("validFrom")))
-    until = _bound_instant(cast("str | None", doc.get("until")))
-    match mutation:
-        case "update":
-            tx.wire.update_where(target, changes, valid_from=valid_from)
-        case "updateUntil":
-            tx.wire.update_until_where(
-                target, changes, valid_from=_required(valid_from), until=_required(until)
-            )
-        case "delete":
-            tx.wire.delete_where(target)
-        case "terminate":
-            tx.wire.terminate_where(target, valid_from=valid_from)
-        case _:
-            tx.wire.terminate_until_where(
-                target, valid_from=_required(valid_from), until=_required(until)
-            )
 
 
 def _is_materializing_write_step(
@@ -4044,8 +3851,8 @@ def _is_materializing_write_step(
     write step, a READLESS predicate write, a find step, or ``None`` itself
     (no such step, e.g. the scenario's last step).
 
-    The returned instruction's own assignment values are DECODED to native
-    carriers (:func:`_decoded_predicate_write`): a materializing write has no
+    The returned prepared product holds producer-decoded managed assignment
+    values. A materializing write has no
     separate PURE re-lowering oracle (its own golden bind is graded against
     the ACTUAL executed SQL, `_run_materializing_pair`'s own port observation),
     so there is nothing for a decoded value to drift away from here.
@@ -4060,7 +3867,7 @@ def _is_materializing_write_step(
     )
     if not isinstance(instruction, PredicateWrite):
         return None
-    prepared = instructions.prepare_wire_write(instruction, model)
+    prepared = _case_ingress.prepare_case_write(instruction, model)
     assert isinstance(prepared, PreparedPredicateWrite)
     target_name = prepared.selection.target.identity.canonical
     if _is_temporal_entity(model, target_name) or _is_versioned_entity(model, target_name):
@@ -4113,7 +3920,7 @@ def _run_materializing_pair(
     write_step = steps[index + 1]
     instruction = _is_materializing_write_step(write_step, model)
     assert instruction is not None  # the caller already established this via the same check
-    find = _step_query(find_step)
+    find = _step_query(find_step, model)
     target = find.target.canonical
     write_target = instruction.selection.target.identity.canonical
     write_predicate = instruction.selection.predicate.authored
@@ -4132,7 +3939,16 @@ def _run_materializing_pair(
     # write target remains the bare predicate, so the two predicates compare
     # directly; `_canonicalize_read` would additionally inject interval
     # predicates and is therefore still not the apples-to-apples form.
-    if find.predicate != write_predicate:
+    comparable_find = _case_ingress.prepare_case_write(
+        PredicateWrite(
+            "delete",
+            instructions.PredicateSelection(write_target, find.predicate),
+            (),
+        ),
+        model,
+    )
+    assert isinstance(comparable_find, PreparedPredicateWrite)
+    if comparable_find.selection.predicate.authored != write_predicate:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
             "a resolving find over the SAME canonical predicate as the write's own target "
@@ -4152,7 +3968,7 @@ def _run_materializing_pair(
     )
 
     def body(tx: handle.Transaction) -> None:
-        _buffer_wire_predicate(tx, cast("Mapping[str, object]", write_step["write"]))
+        buffer_prepared_predicate_write(tx, instruction)
 
     with shadow.staged(doomed=rollback):
         with contextlib.suppress(_RollbackStep):
@@ -4738,10 +4554,10 @@ def _run_group_step(
     mark = observation.round_trips
     batch_size = _batch_size_of(step, f"/scenario/{index}/stream")
     if batch_size is None:
-        snapshot = tx.wire.find(_step_query(step))
+        snapshot = tx.wire.find(_step_query(step, model))
         read = _StepRead(tuple(snapshot.checked().results()), snapshot)
     else:
-        with tx.wire.stream(_step_query(step), batch_size=batch_size) as delivery:
+        with tx.wire.stream(_step_query(step, model), batch_size=batch_size) as delivery:
             read = _StepRead(tuple(delivery.checked()), None)
     nodes = _published_from(read.roots)
     state.finds[index] = nodes
@@ -4799,7 +4615,7 @@ def _run_uow_group(
             lowered.append(step)
             if read is None:
                 continue
-            query = _step_query(steps[index])
+            query = _step_query(steps[index], context.model)
             step_rows.append(_step_rows(context.model, index, query, read.roots))
             if read.graph is None:
                 continue
@@ -4985,7 +4801,7 @@ def _run_interleaved_group(
             )
             if read is not None:
                 result.rows[index] = _graph_rows(
-                    context.model, _step_query(steps[index]), read.roots
+                    context.model, _step_query(steps[index], context.model), read.roots
                 )
             if not is_last:
                 turnstile.advance()
@@ -5617,7 +5433,9 @@ def run_interleaved_scenario_case(
                 "step is a trailing verify find only"
             )
         read, read_observed = _run_standalone_find(port, domain, concurrency, step, lifecycle)
-        rows_by_index[index] = _graph_rows(model, _step_query(step), read.checked().results())
+        rows_by_index[index] = _graph_rows(
+            model, _step_query(step, model), read.checked().results()
+        )
         round_trips += read_observed.round_trips
         lowered[index] = _LoweredStep(
             f"/scenario/{index}/objectQuery", read_observed.reads, False, False
@@ -5713,7 +5531,7 @@ def run_scenario_case(
                 pairing = _is_materializing_write_step(next_step, model)
                 if pairing is not None and _names_one_entity(
                     model,
-                    _step_query(step).target.canonical,
+                    _step_query(step, model).target.canonical,
                     pairing.selection.target.identity.canonical,
                 ):
                     pair_lowered, pair_trips = _run_materializing_pair(
@@ -5732,7 +5550,7 @@ def run_scenario_case(
                         f"/scenario/{index}/objectQuery", read_observed.reads, False, False
                     )
                 )
-                query = _step_query(step)
+                query = _step_query(step, model)
                 step_rows.append(_step_rows(model, index, query, read.checked().results()))
                 observed = _read_step_graph(case, model, index, step, query, read)
                 if observed is not None:
@@ -5750,14 +5568,13 @@ def run_scenario_case(
                 # mishandling it. A READLESS write needs no pairing at all.
                 raw_predicate_write = cast("Mapping[str, object]", raw_write)
                 tx_instant = _entry_instant(raw_predicate_write)
-                statement = _lower_predicate_write_step(
-                    raw_predicate_write, model, dialect, concurrency
-                )
+                instruction = _prepared_case_predicate_write(raw_predicate_write, model)
+                statement = _lower_predicate_write_step(instruction, model, dialect, concurrency)
                 ran, predicate_trips = _run_readless_predicate_write(
                     port,
                     domain,
                     concurrency,
-                    raw_predicate_write,
+                    instruction,
                     statement,
                     tx_instant,
                     lifecycle,
@@ -6033,7 +5850,7 @@ def _resolve_conflict_writes(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": target, "rows": [clean_row]}
         )
-        prepared = instructions.prepare_wire_write(instruction, model)
+        prepared = _case_ingress.prepare_case_write(instruction, model)
         resolved.append(
             _ConflictWrite(clean_row, prepared, object_key(prepared, model), observation)
         )
@@ -6301,13 +6118,11 @@ def _run_conflict_write(
     the case.
 
     ``statements`` (the reported golden-comparable emission) is
-    :func:`_lower_conflict_write`'s own PURE re-lowering of the ORIGINAL,
-    undecoded rows: a case-authored wire spelling (`m-opt-lock-013`'s own decimal
-    `balance`) crosses the Wire verb's serde on the way to the real write without
-    the reported emission's bind ever drifting from the case-authored literal.
-    It is reported only where the delivered lifecycle confirms the attempt ran it
-    (:func:`_delivered`), which is what keeps that undecoded spelling a spelling
-    of what ran rather than a claim beside it.
+    :func:`_lower_conflict_write`'s own PURE re-lowering of the original rows.
+    Its Lowered Statement carries the metadata that projects native execution
+    carriers and planned carriers into one canonical Wire observation. It is
+    reported only where the delivered lifecycle confirms the attempt ran it
+    (:func:`_delivered`).
     """
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
     statements = _lower_conflict_write(model, port.dialect, concurrency, resolved)
@@ -6327,9 +6142,16 @@ def _run_conflict_write(
     def body(tx: handle.Transaction) -> int:
         for write, node in zip(resolved, sources, strict=True):
             if mutation == "delete":
-                tx.wire.delete(node)
+                assert isinstance(write.instruction, PreparedKeyedWrite)
+                buffer_prepared_wire_keyed_write(tx, write.instruction, node, frozenset())
             else:
-                tx.wire.update(node, _conflict_changes(write))
+                assert isinstance(write.instruction, PreparedKeyedWrite)
+                buffer_prepared_wire_keyed_write(
+                    tx,
+                    write.instruction,
+                    node,
+                    frozenset(_conflict_changes(write)),
+                )
         return landed  # the expectation machinery already verified this on success
 
     observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
@@ -6722,7 +6544,7 @@ def run_conflict_case(
                     lifecycle,
                 )
                 sources = None
-            emissions.extend(Emission(pointer, s.sql, s.binds) for s in statements)
+            emissions.extend(Emission(pointer, statement) for statement in statements)
             round_trips += attempt_trips
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -6808,7 +6630,7 @@ def run_error_case(
     emissions: list[Emission] = []
     final = len(trigger) - 1
     for index, (sql, binds) in enumerate(trigger):
-        emissions.append(Emission(f"/then/statements/{index}", sql, binds))
+        emissions.append(Emission(f"/then/statements/{index}", LoweredStatement(sql, binds)))
         try:
             port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
         except DatabaseError as exc:
@@ -6834,7 +6656,7 @@ def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     A `rejected` case's `when.write` input carries no explicit handle: the
     model-aware default `m-predicate` "the four-step validation rule" fixes is
     the inheritance family root when the model declares one, else the model's own
-    first entity. It is the entity `validate_write` checks the payload against. A
+    first entity. It is the entity the prepared-write producer checks the payload against. A
     `when.objectQuery` case names its own queried position and reaches none of
     this.
 
@@ -6904,13 +6726,11 @@ def run_rejected_case(case: case_format.Case) -> str:
     (①), which names no handle at all and is therefore resolved against the
     model's default entity (`_rejected_target`'s own convention, reused here —
     the family root when the model declares one, else the model's single
-    entity), DECODED to managed values (:func:`decode_write_row` — the case
-    authors this row in the SAME wire spellings a read golden uses, never the
-    native form the developer-facing validator now requires), and checked by the
-    shared `validate_write` (`m-value-object` write validation x `m-inheritance`
-    concrete-subtype write protocol) — the SAME validator the developer
-    transaction verbs call at buffer time, so the two
-    paths cannot drift.
+    entity), wrapped as the canonical keyed instruction, and routed through
+    the case-format preparation seam. That seam normalizes carriers and delegates
+    recursive Wire decoding, validation, and retained-value freezing to
+    :func:`~parallax.core.unit_work.instructions.prepare_wire_write`, so the
+    rejected lane cannot drift from ordinary Wire write ingress.
 
     Membership can decide the form only because `target` and `rows` are RESERVED
     from a bare row at this position (`compatibility-case.schema.json`
@@ -6989,11 +6809,11 @@ def run_rejected_case(case: case_format.Case) -> str:
         ):  # pragma: no cover - target implies predicate
             raise EngineError(f"{case.path.name}: rejected predicate write decoded as keyed")
         try:
-            prepared = instructions.prepare_wire_write(instruction, model)
+            prepared = _case_ingress.prepare_case_write(instruction, model)
             assert isinstance(prepared, PreparedPredicateWrite)
             target = case_entity(model, prepared.selection.target.identity.canonical)
             reject_readless_document_many(target, prepared)
-        except WriteRejectedError as exc:
+        except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
             return exc.rule
         raise EngineError(  # pragma: no cover - rejected cases must classify
             f"{case.path.name}: the model-aware validator accepted a predicate write the "
@@ -7006,57 +6826,18 @@ def run_rejected_case(case: case_format.Case) -> str:
         inheritance.validate_subtype_write(model, target, row)
     except inheritance.InheritanceError as exc:
         return exc.rule
-    _reject_undeclared_bare_row_members(case, target, row, model)
     try:
-        validate_write(target, decode_write_row(target, row, model), model)
-    except WriteRejectedError as exc:
+        durable_row = {name: value for name, value in row.items() if name != "observedVersion"}
+        instruction = KeyedWrite("insert", target.identity.canonical, (durable_row,))
+        _case_ingress.prepare_case_write(instruction, model)
+    except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
         return exc.rule
+    except instructions.WriteInstructionError as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
     raise EngineError(
         f"{case.path.name}: the model-aware validator accepted a write the case expects "
         "rejected pre-SQL"
     )
-
-
-# The framework control key a case-format write row may carry beside its members
-# (`compatibility-case.schema.json` `$defs/writeRow`): flush-time observation
-# context, never a declared member. The canonical durable instruction forbids it, so
-# a row that may not carry one is already refused at schema validation.
-_ROW_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion"})
-
-
-def _reject_undeclared_bare_row_members(
-    case: case_format.Case,
-    target: EntityMetadata,
-    row: Mapping[str, object],
-    model: AcceptedMetamodel,
-) -> None:
-    """Refuse a bare `when.write` row naming members ``target`` does not have.
-
-    Member honesty is a case-authoring judgement, not a violated normative MUST: an
-    undeclared name resolves to no declared position, so no rule of the closed
-    `then.rejectedRule` vocabulary is about it, and grading the row anyway reports
-    whichever rule some OTHER member happens to violate — a case that passes while
-    testing something it never claimed. The keyed instruction lane refuses the same
-    way (`instructions.prepare_wire_write`), so one neutral write row is judged one
-    way whichever form carries it.
-
-    Asked AFTER the concrete-subtype protocol (run just above, which is why this lane
-    calls it explicitly rather than leaving it to `validate_write`'s own first pass):
-    `m-inheritance` orders those rules first, and they own the family-specific names
-    a row may not carry — the tag column and the `tag` / `tagValue` / `familyVariant`
-    handles as `subtype-write-metadata-field`, a sibling branch's attribute as
-    `subtype-write-sibling-attribute` — which are classified rules rather than
-    authoring defects. It is asked BEFORE the member walk so that a row carrying
-    both an undeclared name and a real defect is refused rather than graded on the
-    defect.
-    """
-    applicable = _applicable_member_names(model, target.identity)
-    unknown = sorted(key for key in row if key not in applicable and key not in _ROW_CONTROL_KEYS)
-    if unknown:
-        raise EngineError(
-            f"{case.path.name}: the bare write row names {unknown}, which are not "
-            f"attributes or value objects of {target.identity.name}"
-        )
 
 
 def _rejected_keyed_write(
@@ -7072,7 +6853,7 @@ def _rejected_keyed_write(
     never an instruction field (`m-unit-work`), so it is not carried across.
 
     The refusal is the shared build-time
-    :func:`~parallax.core.unit_work.instructions.prepare_wire_write`'s — the
+    case-format preparation seam's strict Wire producer — the
     Wire producer parallel to the typed producer every keyed developer verb runs
     before it buffers anything — and it
     runs in the same PLACE, after the concrete-subtype payload-shape rules
@@ -7105,8 +6886,8 @@ def _rejected_keyed_write(
             except inheritance.InheritanceError as exc:
                 return exc.rule
     try:
-        instructions.prepare_wire_write(instruction, model)
-    except instructions.InstructionRejectedError as exc:
+        _case_ingress.prepare_case_write(instruction, model)
+    except (instructions.InstructionRejectedError, WriteRejectedError) as exc:
         return exc.rule
     raise EngineError(
         f"{case.path.name}: the model-aware validator accepted a keyed write instruction the "

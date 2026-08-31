@@ -66,7 +66,7 @@ from typing import Any, cast
 
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
-from parallax.core.base import NeutralType
+from parallax.core.base import TIMESTAMP, NeutralType
 from parallax.core.db_port import DbPort
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
@@ -97,7 +97,7 @@ from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
 )
-from parallax.core.wire import WireDecodingError, WireValue, decode_wire
+from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
 from parallax.snapshot.handle._write_inputs import (
@@ -173,6 +173,10 @@ class WireWriteLane:
     lifecycle: InstalledLifecycle | None
 
 
+def _wire_bound(value: dt.datetime | None) -> str | None:
+    return None if value is None else cast("str", encode_wire(TIMESTAMP, value))
+
+
 def wire_insert(
     lane: WireWriteLane,
     entity_name: str,
@@ -217,10 +221,14 @@ def wire_insert(
     entity = instructions.resolve_target(lane.model.meta, entity_name)
     _refuse_published_source(entity, data, mutation)
     declaring = declaring_of(lane.model.meta, entity)
-    valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
+    valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
     _refuse_framework_owned(lane.model.meta, entity, payload)
     authored = keyed_instruction(
-        mutation, entity.identity, payload, valid_from=valid_from_literal, until=until_literal
+        mutation,
+        entity.identity,
+        payload,
+        valid_from=_wire_bound(valid_from_managed),
+        until=_wire_bound(until_managed),
     )
     prepared = instructions.prepare_wire_write(authored, lane.model.meta)
     assert isinstance(prepared, PreparedKeyedWrite)
@@ -278,16 +286,15 @@ def wire_keyed_write(
     record = _concrete_entity(lane.model.meta, hint)
     declaring = declaring_of(lane.model.meta, record)
     validate_source_pin(record.identity, hint.pin)
-    valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
+    valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
     identity_row = dict(hint.object_key.primary_key)
-    members = _row_members(lane.model.meta, record)
     authored_identity = {name: source[name] for name in identity_row}
     raw_instruction = keyed_instruction(
         mutation,
         record.identity,
         {**authored_identity, **authored},
-        valid_from=valid_from_literal,
-        until=until_literal,
+        valid_from=_wire_bound(valid_from_managed),
+        until=_wire_bound(until_managed),
     )
     prepared = instructions.prepare_wire_write(
         raw_instruction,
@@ -295,7 +302,31 @@ def wire_keyed_write(
         assigned_members=frozenset(authored),
     )
     assert isinstance(prepared, PreparedKeyedWrite)
-    managed_assignments = {name: prepared.rows[0][name] for name in authored}
+    buffer_prepared_keyed_write(lane, observed, prepared, frozenset(authored))
+
+
+def buffer_prepared_keyed_write(
+    lane: WireWriteLane,
+    observed: object,
+    prepared: PreparedKeyedWrite,
+    assigned_members: frozenset[str],
+) -> None:
+    """Buffer a prepared keyed instruction against a published Wire source.
+
+    This is the representation-neutral tail of :func:`wire_keyed_write`. The
+    instruction producer has already normalized and judged the authored row;
+    this seam retains production ownership of source validation, effective
+    changes, evidence, claims, and buffering.
+    """
+    refuse_reentry(lane.lifecycle)
+    mutation = prepared.mutation
+    source, hint = _keyed_source(mutation, observed)
+    record = _concrete_entity(lane.model.meta, hint)
+    declaring = declaring_of(lane.model.meta, record)
+    validate_source_pin(record.identity, hint.pin)
+    identity_row = dict(hint.object_key.primary_key)
+    members = _row_members(lane.model.meta, record)
+    managed_assignments = {name: prepared.rows[0][name] for name in assigned_members}
     row, restorations = _authored_row(
         lane, record, hint, mutation, identity_row, members, managed_assignments, source
     )
@@ -352,7 +383,7 @@ def wire_predicate_write(
     authored = _authored_changes(mutation, changes)
     entity = instructions.resolve_target(lane.model.meta, entity_name)
     declaring = declaring_of(lane.model.meta, entity)
-    valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
+    valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
     members = _row_members(lane.model.meta, entity)
     unknown = sorted(set(authored) - set(members))
     if unknown:
@@ -368,10 +399,10 @@ def wire_predicate_write(
             {"attr": f"{entity.identity.canonical}.{member}", "value": value}
             for member, value in authored.items()
         ]
-    if valid_from_literal is not None:
-        doc["validFrom"] = valid_from_literal
-    if until_literal is not None:
-        doc["until"] = until_literal
+    if valid_from_managed is not None:
+        doc["validFrom"] = _wire_bound(valid_from_managed)
+    if until_managed is not None:
+        doc["until"] = _wire_bound(until_managed)
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # a `target` document always builds this shape
     prepared = instructions.prepare_wire_write(instruction, lane.model.meta)

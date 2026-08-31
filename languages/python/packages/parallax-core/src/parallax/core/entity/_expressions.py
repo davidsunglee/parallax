@@ -71,7 +71,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from parallax.core.base import ManagedValue, String, coerce_neutral_input, matches_neutral_type
+from parallax.core.base import (
+    ManagedValue,
+    NeutralType,
+    String,
+    coerce_neutral_input,
+    matches_neutral_type,
+)
 from parallax.core.entity._errors import EDIT_CODE_BY_RULE, EditError, EditViolation
 from parallax.core.metamodel import (
     AttributeLocation,
@@ -147,6 +153,22 @@ __all__ = [
 ]
 
 
+def _invalid_operand(
+    path: str,
+    neutral_type: NeutralType | None,
+    value: object,
+    rule: str,
+) -> QueryDefinitionError:
+    declared = "<unresolved>" if neutral_type is None else repr(neutral_type)
+    return QueryDefinitionError(
+        code="query-expression-invalid",
+        message=(
+            f"{path}: declared NeutralType {declared}; supplied Python carrier "
+            f"{type(value).__name__}; developer-input rule violated: {rule}"
+        ),
+    )
+
+
 def snake_to_camel(name: str) -> str:
     """The canonical member name a snake_case Python spelling denotes.
 
@@ -168,7 +190,7 @@ class _Documentable(Protocol):
     declaration cluster.
     """
 
-    def __parallax_document__(self) -> dict[str, object]: ...
+    def __parallax_managed_document__(self) -> dict[str, object]: ...
 
 
 _BOOL_HINT = (
@@ -504,23 +526,37 @@ class AttributeExpr[E, T]:
         return Predicate(Between(attr=str(self.ref), lower=lower_literal, upper=upper_literal))
 
     def _literal(self, value: object) -> Scalar:
-        if value is None:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=f"{self._dotted()}: use .is_null() or .is_not_null() for None",
+        member = self._resolved_scalar_member()
+        if member is None:
+            raise _invalid_operand(
+                self._dotted(),
+                None,
+                value,
+                "typed literal operations require resolved scalar metadata",
             )
-        member = self._require_scalar_member()
+        if value is None:
+            raise _invalid_operand(
+                self._dotted(),
+                member.type,
+                value,
+                "None is not a typed literal; use .is_null() or .is_not_null()",
+            )
         managed = coerce_neutral_input(value, member.type)
         if not matches_neutral_type(managed, member.type):
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=f"{self._dotted()}: {value!r} is not admitted by {member.type!r}",
+            raise _invalid_operand(
+                self._dotted(),
+                member.type,
+                value,
+                "the developer input policy does not admit this carrier for the declared type",
             )
         try:
             return cast("Scalar", encode_wire(member.type, cast("ManagedValue", managed)))
         except WireEncodingError as error:  # pragma: no cover - membership above proves encoding
-            raise QueryDefinitionError(
-                code="query-expression-invalid", message=f"{self._dotted()}: {error}"
+            raise _invalid_operand(
+                self._dotted(),
+                member.type,
+                value,
+                f"the managed value is not Wire-encodable: {error}",
             ) from error
 
     def _require_scalar_member(self) -> AttributeMetadata | ValueObjectAttributeMetadata:
@@ -782,11 +818,11 @@ def judged_edit_violation(
 def serialize_member(value: object) -> object:
     """Render Value Objects as managed typed-write documents."""
     if isinstance(value, _Documentable):
-        return value.__parallax_document__()
+        return value.__parallax_managed_document__()
     if isinstance(value, tuple):
         items = cast("tuple[object, ...]", value)
         return [
-            item.__parallax_document__() if isinstance(item, _Documentable) else item
+            item.__parallax_managed_document__() if isinstance(item, _Documentable) else item
             for item in items
         ]
     return value
@@ -842,23 +878,37 @@ class ElementAttributeExpr[V, T]:
         return leaf
 
     def _literal(self, value: object) -> Scalar:
-        if value is None:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=f"{self._dotted()}: use .is_null() or .is_not_null() for None",
+        if self._shape is None:
+            raise _invalid_operand(
+                self._dotted(),
+                None,
+                value,
+                "typed literal operations require resolved scalar metadata",
             )
         leaf = self._leaf()
+        if value is None:
+            raise _invalid_operand(
+                self._dotted(),
+                leaf.type,
+                value,
+                "None is not a typed literal; use .is_null() or .is_not_null()",
+            )
         managed = coerce_neutral_input(value, leaf.type)
         if not matches_neutral_type(managed, leaf.type):
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=f"{self._dotted()}: {value!r} is not admitted by {leaf.type!r}",
+            raise _invalid_operand(
+                self._dotted(),
+                leaf.type,
+                value,
+                "the developer input policy does not admit this carrier for the declared type",
             )
         try:
             return cast("Scalar", encode_wire(leaf.type, cast("ManagedValue", managed)))
         except WireEncodingError as error:
-            raise QueryDefinitionError(
-                code="query-expression-invalid", message=f"{self._dotted()}: {error}"
+            raise _invalid_operand(
+                self._dotted(),
+                leaf.type,
+                value,
+                f"the managed value is not Wire-encodable: {error}",
             ) from error
 
     def _cmp(self, kind: str, value: object) -> Predicate[V]:

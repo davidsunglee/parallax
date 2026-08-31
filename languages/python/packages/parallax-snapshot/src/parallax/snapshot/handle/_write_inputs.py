@@ -75,7 +75,7 @@ from types import MappingProxyType
 from typing import Final, Literal, Protocol, cast
 
 from parallax.core import opt_lock
-from parallax.core.base import TIMESTAMP, InstantError, normalize_instant
+from parallax.core.base import InstantError, normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.document_codec import occurrence_shape, reduce_declared_members
 from parallax.core.entity import Entity as EntityBase
@@ -127,7 +127,6 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
 )
-from parallax.core.wire import encode_wire
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._family import (
     axis_columns,
@@ -517,34 +516,16 @@ def keyed_instruction(
     entity: EntityIdentity,
     row: Mapping[str, object],
     *,
-    valid_from: str | None = None,
-    until: str | None = None,
+    valid_from: str | dt.datetime | None = None,
+    until: str | dt.datetime | None = None,
 ) -> KeyedWrite:
-    """One single-row keyed instruction, built through the durable IR's own door.
+    """One single-row authored keyed instruction.
 
-    The document route buys the IR's structural validation — no ``at`` alias, no
-    reserved observation control key — before anything measures the row against
-    the model, so every ingress that holds a value rather than an instruction
-    reaches planning through the same canonical shape a serialized instruction
-    does.
-
-    ``valid_from`` / ``until`` are the already-rendered instant literals a
-    temporal write carries; a non-temporal or Transaction-Time-Only target's
-    caller passes neither. They ride the instruction's own dimension-explicit
-    fields, never the row (`m-txtime-write` / `m-bitemp-write`; ADR 0010/0013).
+    Typed callers pass managed instants; the Wire ingress passes canonical
+    spellings for its own decode. Both ride the instruction's dimension-explicit
+    fields, never the row, and preparation applies the policy of the ingress.
     """
-    doc: dict[str, object] = {
-        "mutation": mutation,
-        "entity": entity.canonical,
-        "rows": [dict(row)],
-    }
-    if valid_from is not None:
-        doc["validFrom"] = valid_from
-    if until is not None:
-        doc["until"] = until
-    instruction = instructions.deserialize(doc)
-    assert isinstance(instruction, KeyedWrite)  # `doc` carries `rows`
-    return instruction
+    return KeyedWrite(mutation, entity.canonical, (row,), valid_from, until)
 
 
 def admit_and_buffer(
@@ -1253,8 +1234,8 @@ def validate_window(
     mutation: KeyedMutation,
     valid_from: object,
     until: object,
-) -> tuple[str | None, str | None]:
-    """One write verb's rendered Valid-Time bounds, validated together — the
+) -> tuple[dt.datetime | None, dt.datetime | None]:
+    """One write verb's managed Valid-Time bounds, validated together — the
     single window gate every keyed AND ``_where`` temporal verb runs, in both
     representations.
 
@@ -1279,10 +1260,10 @@ def validate_window(
     are ``ValueError``s, and all precede any evidence question.
     """
     _require_stated_window(declaring_entity, mutation, valid_from, until)
-    valid_from_literal = _validate_valid_from(declaring_entity, mutation, valid_from)
+    valid_from_managed = _validate_valid_from(declaring_entity, mutation, valid_from)
     if until is None:
-        return valid_from_literal, None
-    return valid_from_literal, _validate_until(declaring_entity, mutation, valid_from, until)
+        return valid_from_managed, None
+    return valid_from_managed, _validate_until(declaring_entity, mutation, valid_from, until)
 
 
 def _require_stated_window(
@@ -1301,8 +1282,8 @@ def _require_stated_window(
 
 def _validate_valid_from(
     declaring_entity: EntityMetadata, mutation: KeyedMutation, valid_from: object
-) -> str | None:
-    """Validate and render a write verb's ``valid_from`` (`python.md` §5):
+) -> dt.datetime | None:
+    """Validate and normalize a write verb's ``valid_from`` (`python.md` §5):
     a Bitemporal target requires it (the mutation's own Valid-Time instant
     ``B``, `m-bitemp-write` "Plain (unbounded) bitemporal writes"); a
     non-temporal or Transaction-Time-Only target takes none.
@@ -1324,13 +1305,7 @@ def _validate_valid_from(
                 f"{name}: a bitemporal {mutation!r} requires valid_from "
                 "(the mutation's own Valid-Time instant)"
             )
-        return cast(
-            "str",
-            encode_wire(
-                TIMESTAMP,
-                normalize_instant(_stated_instant(name, mutation, "valid_from", valid_from)),
-            ),
-        )
+        return normalize_instant(_stated_instant(name, mutation, "valid_from", valid_from))
     if valid_from is not None:
         shape = "a Transaction-Time-Only" if _is_temporal(declaring_entity) else "a non-temporal"
         raise instructions.WriteInstructionError(
@@ -1345,8 +1320,8 @@ def _validate_until(
     mutation: KeyedMutation,
     valid_from: object,
     until: object,
-) -> str:
-    """Validate + render a ``*Until`` verb's window bound (`python.md` §5:
+) -> dt.datetime:
+    """Validate + normalize a ``*Until`` verb's window bound (`python.md` §5:
     "both aware-UTC-microsecond datetimes, all validated at build" ... "the
     `*_until` trio additionally requires `until`, with `valid_from <
     until` ... all validated at build"): reject an equal or reversed window
@@ -1363,9 +1338,8 @@ def _validate_until(
     belongs to the bounded verbs alone, :func:`_require_stated_window` has
     already refused a window stated as one bound, and
     :func:`_validate_valid_from` has already refused a ``valid_from`` the
-    target's temporality does not admit. ``valid_from`` is re-derived here all
-    the same, because that function hands back the rendered literal rather than
-    the instant behind it, and ordering is a question about instants.
+    target's temporality does not admit. Both bounds are normalized here so the
+    ordering comparison is wholly expressed in managed instant space.
 
     NORMALIZES both bounds BEFORE comparing them: comparing raw, un-normalized
     datetimes let a naive ``until`` — measured against a ``valid_from`` its own
@@ -1384,7 +1358,7 @@ def _validate_until(
             f"{name}: {mutation!r} requires valid_from < until "
             f"(python.md §5) — got valid_from={valid_from!r}, until={until!r}"
         )
-    return cast("str", encode_wire(TIMESTAMP, until_normalized))
+    return until_normalized
 
 
 def normalize_assignment_values(

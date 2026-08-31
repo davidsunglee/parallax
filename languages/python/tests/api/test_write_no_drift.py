@@ -40,7 +40,6 @@ from _support.db_port import (
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.engine import decode_write_row
 from parallax.conformance.read_models import Payment
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.vo_models import (
@@ -56,7 +55,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.unit_work import WriteRejectedError, validate_write
+from parallax.core.unit_work import KeyedWrite, WriteRejectedError, instructions
 from parallax.snapshot.handle import Database, Transaction
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
@@ -593,13 +592,10 @@ def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None
     domain_model = MODELS[_case_model_stem(case_id)]
     model = model_of(domain_model)
     target = _rejected_write_target(domain_model)
-    # The case authors its row in the wire spellings a read golden uses, so it
-    # decodes to native carriers first — exactly as `engine.run_rejected_case`
-    # does — or a type mismatch, not the omission, would be what gets classified.
     authored = cast("Mapping[str, object]", case_document(case)["when"]["write"])
-    row = decode_write_row(target, authored, model)
+    instruction = KeyedWrite("insert", target.identity.canonical, (authored,))
     with pytest.raises(WriteRejectedError) as exc_info:
-        validate_write(target, row, model)
+        instructions.prepare_wire_write(instruction, model)
     assert exc_info.value.rule == expected_rule
 
 

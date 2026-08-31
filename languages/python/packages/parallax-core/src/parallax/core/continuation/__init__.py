@@ -186,15 +186,11 @@ class ContinuationPlan:
     def _coordinate(
         self, term: _Term, last_root: Mapping[AttributeIdentity, object]
     ) -> ManagedValue | None:
-        """``term``'s own coordinate off the last delivered root, as a literal.
+        """``term``'s managed coordinate from the last delivered root.
 
-        A projection holds each member as its declared type's own carrier, while
-        a comparison binds `m-predicate`'s neutral literal for it, so an instant
-        — the carrier the milestone edge puts in every milestone-set order — is
-        rendered to the canonical UTC ISO-8601 spelling every other instant bind
-        in the system carries. Every other carrier the order reaches already IS
-        its literal, and the cast reflects that runtime invariant rather than
-        widening the comparison node's own typed-literal contract.
+        Continuation predicate construction adopts the value the managed root
+        already carries. Predicate lowering owns its eventual bind carrier and
+        canonical Wire observation; this seam neither renders nor re-decodes it.
 
         A member the root does not carry — one whose stored value no conforming
         member could hold — leaves nothing bindable to continue from, so it is

@@ -224,6 +224,10 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         """
         return _document(self)
 
+    def __parallax_managed_document__(self) -> dict[str, object]:
+        """This value as a managed typed-write document."""
+        return _managed_document(self)
+
 
 def _use_edit(cls: type, door: str) -> EditError:
     """The refusal of an inherited copy path on a Value Object Class."""
@@ -257,7 +261,7 @@ def _edit_violations(
     violation locates at the model root. Locating at a member would have to name
     an occurrence, and this door reaches none.
 
-    A nested occurrence's value is rendered to its canonical document before it is
+    A nested occurrence's value is rendered to its managed document before it is
     judged, exactly as ``Entity.edit`` renders one, so both surfaces judge one
     shape; the edit itself still merges the caller's own live value.
     """

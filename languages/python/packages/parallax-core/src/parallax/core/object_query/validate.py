@@ -37,6 +37,9 @@ Rule provenance beyond ``m-predicate``'s own list:
 
 from __future__ import annotations
 
+import datetime as dt
+from typing import cast
+
 from parallax.core import inheritance
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -244,10 +247,18 @@ def _validate_temporal_selections(
             if isinstance(selection, History):
                 product = ValidatedHistorySelection(axis)
             elif isinstance(selection, AsOfRange):
+                managed_start = cast("dt.datetime", decode_wire(start.type, selection.start))
+                managed_end = cast("dt.datetime", decode_wire(start.type, selection.end))
+                if managed_start >= managed_end:
+                    raise ModelRejectedError(
+                        "query-clause-invalid",
+                        f"{root.identity.canonical}.{dimension}: asOfRange scans [start, end), "
+                        "so start < end",
+                    )
                 product = ValidatedRangeSelection(
                     axis,
-                    decode_wire(start.type, selection.start),
-                    decode_wire(start.type, selection.end),
+                    managed_start,
+                    managed_end,
                 )
             elif selection.coordinate == "latest":
                 product = ValidatedLatestSelection(axis)

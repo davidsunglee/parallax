@@ -39,7 +39,7 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
 )
-from parallax.core.predicate import serialize
+from parallax.core.predicate import QueryDefinitionError, serialize
 
 _CORPUS_TYPES: dict[str, NeutralType] = {
     "string": String(),
@@ -209,6 +209,26 @@ def test_an_entity_rooted_nested_predicate_carries_the_dotted_canonical_path() -
     assert serialize(predicate.node) == {
         "nestedEq": {"path": "parallax.compatibility.Customer.address.geo.country", "value": "DE"}
     }
+
+
+def test_invalid_nested_operand_reports_the_complete_developer_input_rule() -> None:
+    with pytest.raises(QueryDefinitionError) as caught:
+        _ = vm.Customer.address.geo.elevation == "high"
+    message = str(caught.value)
+    assert "parallax.compatibility.Customer.address.geo.elevation" in message
+    assert "declared NeutralType" in message
+    assert "supplied Python carrier str" in message
+    assert "developer-input rule violated" in message
+
+
+def test_invalid_element_operand_reports_the_complete_developer_input_rule() -> None:
+    with pytest.raises(QueryDefinitionError) as caught:
+        _element(vm.Geo.elevation).__eq__(None)
+    message = str(caught.value)
+    assert "elevation" in message
+    assert "declared NeutralType" in message
+    assert "supplied Python carrier NoneType" in message
+    assert "developer-input rule violated" in message
 
 
 def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() -> None:

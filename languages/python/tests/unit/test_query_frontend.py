@@ -82,6 +82,19 @@ def test_scalar_comparison_operators() -> None:
     }
 
 
+@pytest.mark.parametrize("value", ["not-an-int", None], ids=["wrong-carrier", "none"])
+def test_invalid_top_level_operands_report_the_complete_developer_input_rule(
+    value: object,
+) -> None:
+    with pytest.raises(QueryDefinitionError) as caught:
+        _ = Widget.id == value
+    message = str(caught.value)
+    assert "parallax.compatibility.Widget.id" in message
+    assert "declared NeutralType" in message
+    assert f"supplied Python carrier {type(value).__name__}" in message
+    assert "developer-input rule violated" in message
+
+
 def test_membership_between_null_and_string_operators() -> None:
     assert _op(Widget.id.in_([1, 2])) == {
         "in": {"attr": "parallax.compatibility.Widget.id", "values": [1, 2]}
