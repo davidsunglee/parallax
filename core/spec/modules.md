@@ -333,12 +333,14 @@ construction it may reference any behavioral module it harnesses.
   model, and obtains physical Tables, ordered slots, and branch presence from
   Storage Layout. These direct collaborations are not left to the transitive
   closure through `m-predicate`.
-- **`m-document-codec --> m-core`, `m-document-codec --> m-metamodel`.** The codec
-  spells a value of the neutral type algebra into a document, and reads a document's
-  member back by the type the model declared for it, so it names both the value spaces
-  and the accepted Metadata a document shape is derived from. It depends on nothing
-  else: it is pure, holds no connection, imports no driver, emits no SQL, and carries
-  no dialect seam, so a codec value crosses the database seam already portable.
+- **`m-document-codec --> m-core`, `m-document-codec --> m-metamodel`,
+  `m-document-codec --> m-wire`.** The codec places `m-wire`'s canonical leaf
+  spelling into a structured document, decodes stored leaves through its canonical
+  seam, and reads each member by the type its accepted Metadata declares. It
+  therefore names the managed value spaces, the document shape's Metadata, and the
+  sole serialized typed-literal owner. It depends on nothing else: it is pure,
+  holds no connection, imports no driver, emits no SQL, and carries no dialect
+  seam, so a codec value crosses the database seam already portable.
 - **`m-sql --> m-document-codec`.** A comparison against a document-resident member
   compares like with like only when both sides agree on the spelling, so lowering takes
   its literal from the codec rather than rendering one: the type's comparison text

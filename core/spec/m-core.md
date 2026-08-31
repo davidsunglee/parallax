@@ -226,14 +226,11 @@ lowered to a dialect-specific document extraction by `m-sql` / `m-dialect`). A
   (`timestamptz`) and the framework **MUST** normalize values to **UTC** at the
   boundary. Geographically distributed applications store and compare in UTC and
   convert only at presentation.
-- Core `Timestamp` values have **microsecond precision**: canonical timestamp
-  literals MAY carry 0 through 6 fractional second digits and implementations
-  MUST NOT silently truncate non-zero sub-microsecond precision. Inputs with
-  fewer than 6 fractional digits are interpreted exactly and MAY be normalized
-  with trailing zeros; inputs with more than 6 fractional digits MUST either
-  already represent an exact microsecond value (trailing zeros beyond the sixth
-  digit) or be rejected at the framework boundary. This keeps timestamp equality
-  and temporal interval predicates portable across the supported dialects.
+- Core `Timestamp` values have **microsecond precision**: every member denotes an
+  instant on an exact microsecond boundary. Developer-input coercion MUST NOT
+  silently round or truncate non-zero sub-microsecond precision. `m-wire` alone
+  defines which serialized fractional widths are admitted and which one is
+  canonical; those grammar choices do not enlarge this managed value space.
 - The `Timestamp` value space is **bounded by what its canonical spelling can
   carry**: the instants from `0001-01-01T00:00:00.000000Z` through
   `9999-12-31T23:59:59.999999Z`. An input naming an instant outside that range —
