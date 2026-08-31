@@ -5,13 +5,13 @@
 # `geo.elevation` is a `float64` attribute, so `nestedStartsWith` over it reads text
 # from a member that holds none. The literal `'1'` is ALSO wrong for that leaf — a
 # string against a numeric type — which is what makes this case discriminating: a
-# resolver checking the literal first would report `nested-literal-type-mismatch` and
+# resolver checking the literal first would report `neutral-literal-type-mismatch` and
 # blame the value for a problem that is actually the member's. m-predicate fixes the
 # order as subject first, literal second, so the diagnostic names the real fault. The
 # node is schema-valid (its `value` is a plain string, as the schema requires), so
 # only model-aware validation resolving the leaf's declared type catches it.
 model: models/customer.yaml
-tags: [m-predicate, m-value-object, rejected, negative, nested, string, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-wire, m-value-object, rejected, negative, nested, string, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   objectQuery:

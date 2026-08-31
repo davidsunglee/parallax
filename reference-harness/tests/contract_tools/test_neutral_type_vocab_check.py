@@ -1,9 +1,9 @@
-"""Docker-free tests for the neutral-type three-home vocabulary check.
+"""Docker-free tests for the neutral-type four-home vocabulary check.
 
 Guards the normative property `neutral_type_vocab_check` exists to prove: the
-`NeutralType` variant set is spelled in three places nothing else forces to
+`NeutralType` variant set is spelled in four places nothing else forces to
 agree — the `core/spec/m-core.md` algebra block, the `core/spec/m-descriptor.md`
-"Type spellings" table, and the `core/schemas/metamodel.schema.json`
+"Type spellings" table, the `m-wire.md` codec matrix, and the `core/schemas/metamodel.schema.json`
 `neutralType` pattern — and a variant added, removed, or renamed in one home
 but not the others must fail loudly rather than let the algebra, wire grammar,
 and schema silently diverge.
@@ -25,6 +25,7 @@ from reference_harness.neutral_type_vocab_check import (
     descriptor_spelling_variants,
     main,
     schema_pattern_variants,
+    wire_codec_variants,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -56,12 +57,16 @@ def _descriptor_markdown() -> str:
     return (_SPEC_DIR / "m-descriptor.md").read_text(encoding="utf-8")
 
 
+def _wire_markdown() -> str:
+    return (_SPEC_DIR / "m-wire.md").read_text(encoding="utf-8")
+
+
 def _schema() -> dict[str, object]:
     return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 def test_real_homes_agree() -> None:
-    assert check(_core_markdown(), _descriptor_markdown(), _schema()) == []
+    assert check(_core_markdown(), _descriptor_markdown(), _wire_markdown(), _schema()) == []
 
 
 def test_core_algebra_is_the_full_thirteen_variant_set() -> None:
@@ -74,6 +79,21 @@ def test_descriptor_spellings_are_the_full_thirteen_variant_set() -> None:
     assert descriptor_spelling_variants(_descriptor_markdown()) == _EXPECTED_VARIANTS
 
 
+def test_wire_codec_matrix_is_the_full_thirteen_variant_set() -> None:
+    assert wire_codec_variants(_wire_markdown()) == _EXPECTED_VARIANTS
+
+
+def test_wire_codec_row_removed_is_reported() -> None:
+    markdown = _wire_markdown().replace(
+        '| `uuid` | lowercase hyphenated 8-4-4-4-12 JSON string |',
+        '| `removed` | lowercase hyphenated 8-4-4-4-12 JSON string |',
+        1,
+    )
+    errors = check(_core_markdown(), _descriptor_markdown(), markdown, _schema())
+    assert any("'uuid'" in error and "m-wire" in error for error in errors)
+    assert any("'removed'" in error for error in errors)
+
+
 def test_schema_pattern_is_the_full_thirteen_variant_set() -> None:
     assert schema_pattern_variants(_schema()) == _EXPECTED_VARIANTS
 
@@ -84,7 +104,7 @@ def test_variant_dropped_from_the_schema_pattern_is_reported() -> None:
     defs = cast("dict[str, Any]", schema["$defs"])
     neutral_type = cast("dict[str, str]", defs["neutralType"])
     neutral_type["pattern"] = neutral_type["pattern"].replace("boolean|", "")
-    errors = check(_core_markdown(), _descriptor_markdown(), schema)
+    errors = check(_core_markdown(), _descriptor_markdown(), _wire_markdown(), schema)
     assert len(errors) == 1
     assert "'boolean'" in errors[0]
     assert "neutralType pattern" in errors[0]
@@ -115,7 +135,7 @@ def test_variant_renamed_in_the_core_algebra_is_reported() -> None:
     # A rename shows up as two one-home variants: the new name exists only in
     # the algebra block, and the old name is now missing from it.
     markdown = _core_markdown().replace("| String | Bytes", "| Str | Bytes", 1)
-    errors = check(markdown, _descriptor_markdown(), _schema())
+    errors = check(markdown, _descriptor_markdown(), _wire_markdown(), _schema())
     assert len(errors) == 2
     (str_error,) = [error for error in errors if "'str'" in error]
     assert "Type spellings table" in str_error
@@ -158,7 +178,7 @@ def test_duplicate_stale_algebra_fence_is_rejected() -> None:
 def test_spelling_row_removed_from_the_descriptor_table_is_reported() -> None:
     markdown = _descriptor_markdown().replace("| `Uuid` | `uuid` |\n", "")
     assert "uuid" not in descriptor_spelling_variants(markdown)
-    errors = check(_core_markdown(), markdown, _schema())
+    errors = check(_core_markdown(), markdown, _wire_markdown(), _schema())
     assert len(errors) == 1
     assert "'uuid'" in errors[0]
     assert "Type spellings table" in errors[0]
@@ -185,6 +205,7 @@ def _spec_tree(tmp_path: Path) -> Path:
     spec_dir.mkdir(parents=True)
     (spec_dir / "m-core.md").write_text(_core_markdown(), encoding="utf-8")
     (spec_dir / "m-descriptor.md").write_text(_descriptor_markdown(), encoding="utf-8")
+    (spec_dir / "m-wire.md").write_text(_wire_markdown(), encoding="utf-8")
     (tmp_path / "core" / "schemas").mkdir()
     return spec_dir
 

@@ -118,6 +118,40 @@ mutations, exceptions, or exports.
 
 ### Query and predicate API
 
+The Python target has two deliberately separate value boundaries. Developer-
+authored expressions, assignments, entity construction, and managed-object edits
+use `parallax.core.base` managed membership and developer-input coercion. They
+retain Python-facing `QueryDefinitionError` / `EditError` classifications and
+never expose serialized-literal failures. JSON query and write source passes
+through `parallax.core.wire.loads` and the sole declared-type decoder in
+`parallax.core.wire`; exact JSON number provenance survives until the connected
+model resolves the member type. The compatibility YAML loader applies the YAML
+1.2 core schema, preserves authored numeric tokens through the codec's private
+production seam, and submits the resulting structured value to the same decoder.
+`wire.loads` never parses YAML.
+
+Model-aware query preflight returns a private immutable
+`ValidatedObjectQuery` carrying the unchanged authored query, exact Metadata,
+and a `ValidatedPredicate` of managed operands. `parallax.core.deep_fetch`
+transforms it into one `ValidatedEntityQuery` per root or non-empty child read;
+the private `sql_gen._compile.compile_read` accepts only that product and returns
+`CompiledRead`, whose statement is a metadata-bearing `LoweredStatement`.
+
+Typed and Wire write adapters call separate `prepare_typed_write` and
+`prepare_wire_write` producers and converge on `PreparedWrite`. Buffering and
+the Write Planner retain managed values and produce closed `PlannedWrite` steps;
+the private `sql_gen._write.compile_write_step` accepts only one such step and
+returns `LoweredStatement`. Continuation, temporal, navigation, and child-key
+generation request producer-owned Predicate/Object Query derivation operations
+rather than constructing phase products or re-decoding values themselves.
+
+No SQL, document, adapter, continuation, or conformance path infers a declared
+type from a Python carrier. Public Wire output and conformance observations are
+recursively built-in JSON carriers in canonical `m-wire` form. Decimal stays
+`decimal.Decimal`, timestamps stay aware UTC `datetime`, UUID stays `uuid.UUID`,
+bytes stays `bytes`, and Float32 is the widened Python `float` carrier of the
+actual binary32 value.
+
 - **Every composed query value names the Entity it addresses.** The exported
   authoring vocabulary is parameterized: `AttributeExpr[E, T]`, `Predicate[E]`,
   `AllPredicate[E]`, `SortKey[E]`, `AttributeAssignment[E]`,
@@ -211,12 +245,12 @@ mutations, exceptions, or exports.
   the two classes nominally incompatible — so `TwinLeft.where(TwinRight.id == 1)`
   is a static error whose canonical query is the one
   `TwinLeft.where(TwinLeft.id == 1)` produces. The remedy is the same one: spell every term through the class the
-  query is rooted at. A comparison's value
-  parameter is deliberately not
-  narrowed to the member's declared Python type: a predicate's value is a wire
-  literal, and the canonical contract spells a decimal member's comparison as
-  the JSON number `600.00`, which the declared type would refuse. `.set(value)`
-  is the exception, because an Assignment's value genuinely is a member value.
+  query is rooted at. A comparison's value parameter is deliberately not
+  narrowed to the member's declared Python type because Python's developer-input
+  coercion policy may admit a lossless widening before membership is checked.
+  That developer path is not a serialized Wire literal path. `.set(value)`
+  applies the same developer-input coercion and membership contract immediately
+  because an Assignment's value is already a member value.
 - **One query-definition error family.** Every Python Attribute Expression,
   Relationship Path, Predicate, Assignment, Sort Key, or Object Query
   construction, composition, and refinement the frontend refuses **by a
@@ -560,22 +594,17 @@ mutations, exceptions, or exports.
   `QueryDefinitionError(query-expression-invalid)` without coercion. Omitting
   the option and explicitly passing `False` lower to the same canonical node
   with `caseInsensitive` absent; `True` emits the canonical true flag.
-- **Null-test spellings and membership.** Comparing a scalar Attribute
-  Expression or nested Value Object leaf to Python `None` with `==` or `!=`
-  normalizes to the same canonical null-test node as `.is_null()` or
-  `.is_not_null()`, respectively. The named methods are the documented,
-  lint-clean spellings; the operator forms do not introduce a second semantic
-  representation. Null tests are legal on both nullable and non-nullable
-  members and are not constant-folded. On a top-level non-nullable Attribute,
-  `isNull` matches no conforming row and `isNotNull` matches every conforming
-  row. A nested non-nullable leaf can still be not-present because a nullable
-  ancestor or stored-document path is absent under core's absence-collapse
-  rule. This predicate rule does not make explicit null a legal construction
-  or assignment value for a non-nullable member. Every operator other than
-  `==` and `!=` rejects `None`, even for a nullable member: relational
-  comparisons, `between(...)`, string predicates, and `.is_(...)` raise
-  `QueryDefinitionError(query-expression-invalid)`. A value collection supplied to `.in_(...)` or
-  `.not_in(...)` must not contain `None`. Any `None` member raises
+- **Null-test spellings and membership.** Every comparison, range, membership,
+  string-pattern, or `.is_(...)` operand of Python `None` raises
+  `QueryDefinitionError(query-expression-invalid)` during expression authoring,
+  regardless of member nullability. The message directs the caller to
+  `.is_null()` / `.is_not_null()`; `== None` and `!= None` are not null-test
+  aliases. The named null-test methods require a nullable resolved leaf and raise
+  the same error immediately for a non-nullable top-level, nested, or
+  element-scoped leaf. Direct or deserialized Predicate null-check nodes retain
+  the model-aware `null-check-non-nullable-member` rejection. A value collection
+  supplied to `.in_(...)` or `.not_in(...)` must not contain `None`. Any `None`
+  member raises
   `QueryDefinitionError(query-expression-invalid)` during expression
   construction. The frontend neither exposes provider three-valued membership
   surprises nor silently rewrites membership into an `isNull`/`isNotNull`
@@ -614,14 +643,18 @@ mutations, exceptions, or exports.
   `nestedStartsWith` / `nestedEndsWith` / `nestedContains`; and `.is_null()` /
   `.is_not_null()` to `nestedIsNull` / `nestedIsNotNull` (core's
   absence-collapse semantics). Nested string predicates share the top-level
-  case-insensitive option, wildcard escaping, and bind ordering. The first hop is
-  statically typed via the `Attr[...]` descriptor overloads; deeper hops
-  resolve dynamically and are validated against the declared value-object
-  structure at execution preflight, where the model is — an undeclared segment
-  raises `ModelRejectedError(nested-path-unknown-member)` and a literal
-  mismatching the leaf's declared neutral type
-  `ModelRejectedError(nested-literal-type-mismatch)`, never at
-  the database. A flat predicate whose path crosses a `multiplicity: many`
+  case-insensitive option, wildcard escaping, and bind ordering. Descriptor-
+  seeded top-level, nested, and element-scoped paths retain enough declaration
+  Metadata to resolve every deeper segment when the expression is authored. An
+  undeclared segment raises `QueryDefinitionError(query-expression-invalid)` at
+  that access, and a typed operation on a metadata-free directly constructed
+  expression raises the same error rather than falling back to Wire semantics.
+  Every native operand then passes through `coerce_neutral_input`, managed
+  membership, and `encode_wire` for the resolved leaf; a mismatch is immediate
+  `QueryDefinitionError(query-expression-invalid)`, never a serialized
+  `neutral-literal-*` failure. Direct Predicate nodes and deserialized mappings
+  retain model-aware path resolution and Wire decoding at execution preflight.
+  A flat predicate whose path crosses a `multiplicity: many`
   member keeps the flat node and therefore core's **any-element** semantics:
   each such predicate matches independently, so two ANDed flat predicates may
   be satisfied by *different* elements. **Same-element** composition and
@@ -651,11 +684,11 @@ mutations, exceptions, or exports.
   predicate-selected write: a `lower` strictly greater than its
   `upper` names an empty range and raises
   `ModelRejectedError(between-bounds-inverted)` rather than compiling to a
-  `BETWEEN` that silently matches nothing. The comparison is by literal kind —
-  two numbers or two strings, skipped for a mixed-kind or null pair — and equal
-  bounds stay legal, so only a pair no row could satisfy is refused. Semantic
-  interval APIs such as `as_of_range(...)` keep their own ordered-endpoint
-  requirement.
+  `BETWEEN` that silently matches nothing. Both bounds first decode through
+  `m-wire` against the same resolved leaf declaration; only after both succeed
+  are their managed values compared. Equal managed bounds stay legal, while a
+  conversion failure wins over ordering. Semantic interval APIs such as
+  `as_of_range(...)` keep their own ordered-endpoint requirement.
 
   A nested string predicate is legal only over a `String` member. `Date`, `Time`,
   `Timestamp`, `Uuid`, and `Bytes` all ride the algebra's portable `string`
@@ -4721,14 +4754,14 @@ scopes ordinarily do.
 | `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-document-codec` | `parallax.core.document_codec` | `parallax.core.document_codec` | `m-core`, `m-metamodel`, `m-wire` | generated forbidden contracts |
 | `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
-| `m-predicate` | `parallax.core.predicate` | `parallax.core.predicate` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
-| `m-object-query` | `parallax.core.object_query` | `parallax.core.object_query` | `m-predicate`, `m-metamodel`, `m-inheritance` | generated forbidden contracts |
+| `m-predicate` | `parallax.core.predicate` | `parallax.core.predicate` | `m-metamodel`, `m-inheritance`, `m-wire` | generated forbidden contracts |
+| `m-object-query` | `parallax.core.object_query` | `parallax.core.object_query` | `m-predicate`, `m-metamodel`, `m-inheritance`, `m-wire` | generated forbidden contracts |
 | Typed Object Query surface (support, child of `parallax.core.object_query`) | `parallax.core.object_query._fluent` | `parallax.core.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.entity` | generated forbidden contracts |
-| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | generated forbidden contracts |
+| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec`, `m-wire`, `m-unit-work`, `m-deep-fetch` | generated forbidden contracts |
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core`, `m-dialect` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
-| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-db-port`, `m-temporal-read` | generated forbidden contracts |
+| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
 | `m-execution-lifecycle` | `parallax.core.execution_lifecycle` | `parallax.core.execution_lifecycle` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
@@ -4738,10 +4771,10 @@ scopes ordinarily do.
 | `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-txtime-write` | generated forbidden contracts |
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
-| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | generated forbidden contracts |
+| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire` | generated forbidden contracts + cross-package contract |
-| Streamed-read page plan (support) | `parallax.core.continuation` | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| Streamed-read page plan (support) | `parallax.core.continuation` | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` | generated forbidden contracts |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
@@ -4749,18 +4782,18 @@ scopes ordinarily do.
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
-| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
+| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
 | Entity and Object Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
-| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
+| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Construction-input sentinels and the node handle (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._construction_input` | `parallax.core.entity._construction_input` | (none) | generated forbidden contracts |
 | Published instance state (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._instance_state` | `parallax.core.entity._instance_state` | `parallax.core.entity._construction_input`, `parallax.core.entity._pydantic_storage` | generated forbidden contracts |
 | A value's own Pydantic storage (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._pydantic_storage` | `parallax.core.entity._pydantic_storage` | (none) | generated forbidden contracts |
 | Exact-model member layouts (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
-| Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
+| Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
 Behavioral modules carry a module tag, so their allowed direct dependencies are
@@ -4809,6 +4842,8 @@ parallax.core.entity --> parallax.core._formation_profile
 parallax.core.entity._expressions --> parallax.core.metamodel
 parallax.core.entity._expressions --> parallax.core.predicate
 parallax.core.entity._expressions --> parallax.core.object_query
+parallax.core.entity._expressions --> parallax.core.base
+parallax.core.entity._expressions --> parallax.core.wire
 parallax.core.object_query._fluent --> parallax.core.base
 parallax.core.object_query._fluent --> parallax.core.metamodel
 parallax.core.object_query._fluent --> parallax.core.predicate
@@ -4831,12 +4866,14 @@ parallax.core.continuation --> parallax.core.inheritance
 parallax.core.continuation --> parallax.core.predicate
 parallax.core.continuation --> parallax.core.object_query
 parallax.core.continuation --> parallax.core.temporal_read
+parallax.core.continuation --> parallax.core.wire
 parallax.snapshot.handle --> parallax.core.continuation
 parallax.snapshot.handle --> parallax.snapshot.materialize
 parallax.snapshot.handle --> parallax.snapshot._read_result
 parallax.snapshot.handle --> parallax.snapshot._inspection
 parallax.snapshot.handle --> parallax.core.entity
 parallax.snapshot.handle --> parallax.core.base
+parallax.snapshot.handle --> parallax.core.wire
 parallax.snapshot.handle --> parallax.core.metamodel
 parallax.snapshot.handle --> parallax.core.predicate
 parallax.snapshot.handle --> parallax.core.inheritance
@@ -4876,6 +4913,7 @@ parallax.snapshot.handle._preflight --> parallax.core.predicate
 parallax.snapshot.handle._preflight --> parallax.core.object_query
 parallax.snapshot.handle._errors --> (none)
 parallax.snapshot.handle._family --> parallax.core.base
+parallax.snapshot.handle._family --> parallax.core.wire
 parallax.snapshot.handle._family --> parallax.core.metamodel
 parallax.snapshot.handle._family --> parallax.core.inheritance
 parallax.snapshot.handle._family --> parallax.core.storage_layout
@@ -4889,6 +4927,7 @@ parallax.snapshot.handle._family --> parallax.core.opt_lock
 parallax.snapshot.handle._family --> parallax.core.txtime_write
 parallax.snapshot.handle._family --> parallax.core.bitemp_write
 parallax.snapshot.handle._write_types --> parallax.core.base
+parallax.snapshot.handle._write_types --> parallax.core.wire
 parallax.snapshot.handle._write_types --> parallax.core.metamodel
 parallax.snapshot.handle._write_types --> parallax.core.inheritance
 parallax.snapshot.handle._write_types --> parallax.core.storage_layout
@@ -4902,6 +4941,7 @@ parallax.snapshot.handle._write_types --> parallax.core.opt_lock
 parallax.snapshot.handle._write_types --> parallax.core.txtime_write
 parallax.snapshot.handle._write_types --> parallax.core.bitemp_write
 parallax.snapshot.handle._keyed_sql --> parallax.core.base
+parallax.snapshot.handle._keyed_sql --> parallax.core.wire
 parallax.snapshot.handle._keyed_sql --> parallax.core.metamodel
 parallax.snapshot.handle._keyed_sql --> parallax.core.inheritance
 parallax.snapshot.handle._keyed_sql --> parallax.core.storage_layout
@@ -4915,6 +4955,7 @@ parallax.snapshot.handle._keyed_sql --> parallax.core.opt_lock
 parallax.snapshot.handle._keyed_sql --> parallax.core.txtime_write
 parallax.snapshot.handle._keyed_sql --> parallax.core.bitemp_write
 parallax.snapshot.handle._write_lowering --> parallax.core.base
+parallax.snapshot.handle._write_lowering --> parallax.core.wire
 parallax.snapshot.handle._write_lowering --> parallax.core.metamodel
 parallax.snapshot.handle._write_lowering --> parallax.core.inheritance
 parallax.snapshot.handle._write_lowering --> parallax.core.storage_layout
@@ -4928,6 +4969,7 @@ parallax.snapshot.handle._write_lowering --> parallax.core.opt_lock
 parallax.snapshot.handle._write_lowering --> parallax.core.txtime_write
 parallax.snapshot.handle._write_lowering --> parallax.core.bitemp_write
 parallax.snapshot.handle._step_lowering --> parallax.core.base
+parallax.snapshot.handle._step_lowering --> parallax.core.wire
 parallax.snapshot.handle._step_lowering --> parallax.core.metamodel
 parallax.snapshot.handle._step_lowering --> parallax.core.inheritance
 parallax.snapshot.handle._step_lowering --> parallax.core.storage_layout
@@ -4941,6 +4983,7 @@ parallax.snapshot.handle._step_lowering --> parallax.core.opt_lock
 parallax.snapshot.handle._step_lowering --> parallax.core.txtime_write
 parallax.snapshot.handle._step_lowering --> parallax.core.bitemp_write
 parallax.postgres --> parallax.core.base
+parallax.postgres --> parallax.core.wire
 parallax.postgres --> parallax.core.db_port
 parallax.postgres --> parallax.core.db_error
 parallax.postgres --> parallax.core.dialect
@@ -4979,6 +5022,21 @@ parallax.postgres --> parallax.core.dialect
   `uv run python tools/check_dag_sync.py && uv run lint-imports`. CI: the
   same pair as a blocking job; any import outside the closure, and any
   generated-contract drift, fails.
+- **Carrier-neutral private compiler reaches.** The defining leaves, imported
+  names, and authorized importing modules are exact. A second importer or name is
+  a new topology decision, not an incidental use of an existing scope grant.
+
+  ```carrier-neutral-private-reaches
+  parallax.core.sql_gen._compile | compile_read, CompiledRead, AttributeReadContract, MaterializedReadRow | parallax.snapshot.handle._read; parallax.snapshot.handle._predicate_writes; parallax.conformance.engine; parallax.conformance._actual_wire
+  parallax.core.sql_gen._write | compile_write_step | parallax.snapshot.handle._write_lowering; parallax.conformance.engine
+  ```
+
+  Snapshot's imports are first-party private implementation reaches;
+  conformance imports are development-only adapter reaches. Neither defining
+  leaf is exported from `parallax.core.sql_gen`, and no other consumer imports
+  these names. The topology contract test pins this block independently of the
+  broader generated scope graph. The source exact-set inventory MUST use this
+  same importer/name set, so an implementation cannot widen either set silently.
 - **The conformance family's accepted private reaches.** The enforcement unit is
   the scope, so the importing-side exemption above already reaches a granted
   scope's private modules; what the exemption does not decide is *which* of them
@@ -5156,9 +5214,9 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `WireValue`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

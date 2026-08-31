@@ -3,7 +3,8 @@
 `m-unit-work` is the transaction scope: the unit of work that **buffers,
 finalizes, and flushes** writes, and the automatic read-correctness rules that
 make in-transaction reads safe. It is expressed entirely in terms of **operations
-and object state** (`m-predicate`): it depends on `m-predicate`, on the
+and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
+serialized write-literal conversion, on the
 execution port `m-db-port`, and on `m-temporal-read` — whose Edge is the
 coordinate a Write Observation is filed under — but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
@@ -187,6 +188,38 @@ canonical form losslessly (`serialize(deserialize(x)) == x`), the write-side of 
 
 A Write Instruction is **buffered author intent** and stays that until flush. It
 is never a Planned Write, and a Planned Write is never serialized back into one.
+
+### Serialized write elaboration
+
+A serialized keyed row or predicate-selected assignment is structural input, not
+a planned value. After resolving the exact target Entity and member identity, the
+write frontend calls `m-wire.decodeWire(member.neutralType, literal)` exactly
+once for each non-null authored leaf. Null is handled by the member's nullability
+rule and is never passed to the Neutral Wire Codec. Recursive Value Object
+members are traversed by declared structure; opaque Json content is converted as
+one `Json` value and is not recursively inferred as neutral leaf types.
+
+Wire failures map to `neutral-literal-type-mismatch`,
+`neutral-literal-noncanonical`, or `neutral-literal-out-of-space`, with the
+canonical member identity and document path. The previous
+`write-value-type-mismatch` rule is retired for resolved scalar leaves. Unknown
+members, wrong document carriers, multiplicity violations, missing required
+members, nullability, and other structural failures retain their existing rules.
+
+Two producer operations converge on the same private immutable `PreparedWrite`
+algebra. `prepareWireWrite` applies the serialized decoding above;
+`prepareTypedWrite` applies `m-core.coerceNeutralInput` followed by managed
+membership and retains developer-facing mismatch errors. Neither consumer may
+choose the other policy from the runtime carrier it happens to receive.
+
+`PreparedKeyedWrite` carries the exact target, deeply owned managed rows, and
+prepared temporal bounds. `PreparedPredicateWrite` carries its
+`ValidatedMutationSelection`, ordered managed assignments, and prepared temporal
+bounds. Omission and nullable assignment remain structural states; no prepared
+variant retains an authored scalar literal or unresolved instruction field.
+Construction is restricted to these operations, with no public constructor or
+serialization contract. Buffering, evidence envelopes, coalescing, and planning
+retain the immutable product and do not decode or recursively copy it again.
 
 ### Write value provenance
 
@@ -443,7 +476,7 @@ label.
 ### Planned rows and assignments
 
 ```text
-PlannedValue = NeutralValue | Null | GeneratedValueExpression
+PlannedValue = ManagedValue | Null | GeneratedValueExpression
 
 PlannedRow(
     attributes:    AttributeIdentity     -> PlannedValue,
@@ -476,7 +509,7 @@ the planner resolves every caller-supplied value before a step is settled.
 ### Write Target
 
 ```text
-WriteTarget = KeyTarget | PredicateTarget | MilestoneTarget
+WriteTarget = KeyTarget | ValidatedMutationSelection | MilestoneTarget
 ```
 
 A **Write Target** is the semantic row selection of a Planned Write. It is
@@ -488,7 +521,10 @@ KeyTarget(
     key_values:     NonEmpty[complete concrete non-null value tuples],
 )
 
-PredicateTarget(predicate: Predicate)
+ValidatedMutationSelection(
+    target:    EntityIdentity,
+    predicate: ValidatedPredicate,
+)
 
 MilestoneTarget(
     key_attributes: NonEmpty[AttributeIdentity],
@@ -506,11 +542,12 @@ TemporalUpperBound = Finite(Instant) | Infinity
   than silently deduplicated. A singleton and a compatible multi-key selection
   are cardinalities of one target kind, not two — there is no separate key-set
   target.
-- A **Predicate Target** is legal only for a **readless** unversioned
-  Non-Temporal Planned Update or Planned Delete. It carries the typed predicate
-  and nothing else — no materialized keys, observation, pin, concurrency data, or
-  barrier flag — because the enclosing step owns the Entity Identity, and its
-  presence already implies `Unversioned`, `AnyCount`, and barrier behavior.
+- A **Validated Mutation Selection** is legal only for a **readless** unversioned
+  Non-Temporal Planned Update or Planned Delete. It carries the exact target and
+  producer-owned validated Predicate and nothing else — no materialized keys,
+  observation, pin, concurrency data, or barrier flag. Its presence already
+  implies `Unversioned`, `AnyCount`, and barrier behavior; mutation lowering never
+  fabricates an Object Query around it.
 - A **Milestone Target** addresses the current milestone slot: one complete key
   tuple plus one write-required **exclusive upper bound per As-Of Axis** — the
   observed predecessor's Valid-Time end where that axis exists, and invariant

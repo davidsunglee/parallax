@@ -57,7 +57,7 @@ shared-node states remain distinct without issuing later SQL.
 | `m-core` | src/core | core | none | depcheck.toml |
 | `m-db-error` | src/db-error | db-error | `m-db-port`, `m-dialect` | depcheck.toml |
 | `m-db-port` | src/db-port | db-port | `m-core`, `m-dialect` | depcheck.toml |
-| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | depcheck.toml |
+| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | depcheck.toml |
 | `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
 | `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel`, `m-wire` | depcheck.toml |
@@ -67,16 +67,16 @@ shared-node states remain distinct without issuing later SQL.
 | `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
 | `m-model-formation` | src/model-formation | model-formation | `m-metamodel` | depcheck.toml |
 | `m-navigate` | src/navigate | navigate | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |
-| `m-object-query` | src/object-query | object-query | `m-predicate`, `m-metamodel`, `m-inheritance` | depcheck.toml |
-| `m-predicate` | src/predicate | predicate | `m-metamodel`, `m-inheritance` | depcheck.toml |
+| `m-object-query` | src/object-query | object-query | `m-predicate`, `m-metamodel`, `m-inheritance`, `m-wire` | depcheck.toml |
+| `m-predicate` | src/predicate | predicate | `m-metamodel`, `m-inheritance`, `m-wire` | depcheck.toml |
 | `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |
 | `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |
 | `m-snapshot-read` | src/snapshot | snapshot | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire` | depcheck.toml |
-| `m-sql` | src/sql | sql | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | depcheck.toml |
+| `m-sql` | src/sql | sql | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec`, `m-wire`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
 | `m-relationship` | src/relationship | relationship | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-temporal-read` | src/temporal-read | temporal-read | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
-| `m-unit-work` | src/unit-work | unit-work | `m-predicate`, `m-db-port`, `m-temporal-read` | depcheck.toml |
+| `m-unit-work` | src/unit-work | unit-work | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read` | depcheck.toml |
 | `m-value-object` | src/value-object | value-object | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-wire` | src/wire | wire | `m-core` | depcheck.toml |
 | adapter composition | tests/composition | composition | postgres adapter | depcheck.toml |

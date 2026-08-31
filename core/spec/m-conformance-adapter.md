@@ -19,6 +19,20 @@ The adapter MUST NOT expose internal classes, finder builders, cache objects, or
 language-specific query surfaces. It accepts compatibility corpus files and
 returns JSON observations.
 
+Every modeled scalar leaf in an observation MUST be the canonical
+`m-wire.encodeWire(declaredType, managedValue)` output for its resolved
+declaration. This applies to rows, graphs, milestone pins, step observations,
+table state, and modeled statement binds. Declared Value Object documents apply
+the rule recursively; opaque Json is one recursive value and receives no inferred
+leaf types. Null is an enclosing member-presence value, not a typed literal.
+
+An adapter MUST fail conformance production rather than stringify, coerce, or
+otherwise repair a non-member carrier. The runner validates observations with
+canonical Wire decoding, so a noncanonical Decimal, bytes, UUID, temporal,
+integer, or float observation is an adapter failure even when it denotes the
+expected managed value. Dialect-native control binds that are not modeled values
+retain their owning SQL or dialect representation.
+
 The adapter SHOULD be implemented as a CLI because a CLI is portable across
 language ecosystems. A language MAY also expose the same interface as an
 in-process test helper, but the CLI is the shared contract.

@@ -30,7 +30,7 @@
       "allOf": [
         { "$ref": "#/$defs/neutralType" },
         {
-          "$comment": "The exclusion is a `not` over the excluded spelling rather than a second alternation, so the variant vocabulary keeps its single home in `neutralType` (the closed-vocabulary three-home consistency check binds that pattern to the m-core algebra and the m-descriptor spellings table).",
+          "$comment": "The exclusion is a `not` over the excluded spelling rather than a second alternation, so the variant vocabulary keeps its single home in `neutralType` (the closed-vocabulary four-home consistency check binds that pattern to the m-core algebra, the m-descriptor spellings table, and the m-wire codec matrix).",
           "not": { "const": "json" }
         }
       ]

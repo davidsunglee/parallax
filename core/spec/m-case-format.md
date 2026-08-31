@@ -8,6 +8,8 @@ internally consistent and that the golden SQL is correct for the data, across
 every database behind the provider seam. As a conformance-family module,
 `m-case-format` declares only the structural edge `m-case-format --> m-core`; by
 construction it harnesses (references) every behavioral module it grades.
+Serialized typed-literal meaning is never redefined here: `m-wire` is the
+authoritative codec and closed failure taxonomy this corpus observes.
 
 The canonical reference implementation is `reference-harness/` (Python + uv +
 sqlglot). Its *contract* is language-neutral; another ecosystem can re-implement
@@ -38,14 +40,14 @@ the readers do not agree by default. Under the YAML 1.1 types most host librarie
 still resolve, `yes` / `no` / `on` / `off` are booleans, so the ISO country code
 `NO` reads as `false`; `1_000` and the sexagesimal `1:30` are integers; and a bare
 `2024-01-01` becomes a host *date object* rather than the ISO string
-`m-document-codec` defines as that value's document spelling. Each is a different
+`m-wire` defines as that declared type's Wire spelling. Each is a different
 document, so two implementations reading one corpus file through two host defaults
 grade two different inputs — an `owner: on` at a `string` Attribute is a
-`write-value-type-mismatch` for one reader and an accepted string for the other,
+`neutral-literal-type-mismatch` for one reader and an accepted string for the other,
 and neither is wrong about the file it was handed.
 
 The corollary is that a corpus temporal, UUID, decimal, or `bytes` value is always
-its **portable literal** (`m-document-codec`), read as text and decoded against the
+its **portable literal** (`m-wire`), read as text and decoded against the
 declared type — never a value some loader happened to construct. Quoting such a
 scalar remains optional and changes nothing; under this schema it is a string
 either way.
@@ -310,6 +312,25 @@ canonical logical placement order so a golden document is deterministic to
 author (`m-storage-layout`). Deterministic construction and order-insensitive
 comparison are complementary — the first makes a golden bind stable, the second
 keeps the assertion honest across engines.
+
+#### Canonical literal oracles
+
+Fixture scalar leaves, expected rows/graphs/table state, statement binds, and
+document-valued binds are authored in the canonical output of
+`m-wire.encodeWire` for their resolved declaration. This is a static corpus
+oracle, not another decoder: the harness resolves the location's declared type,
+calls `decodeCanonicalWire`, and rejects the case document if canonical decoding
+fails. Public `when.objectQuery` predicate literals and `when.write` scalar leaves
+are ingress under test and instead call `decodeWire`, so negative cases can
+deliberately author noncanonical or out-of-space literals.
+
+Canonical checking is recursive through declared Value Object documents. Opaque
+Json values are checked as one recursive JSON value and never treated as inferred
+neutral leaves. Null is checked by the enclosing position's presence/nullability
+contract, never by the Neutral Wire Codec. Golden SQL text and dialect-native
+control binds such as `infinity`, path segments, and JSON mutation text are not
+typed literal positions unless the statement metadata identifies them as modeled
+values.
 
 #### Field table
 
@@ -1902,9 +1923,17 @@ nested-predicate resolver), the `m-value-object` materialization/navigation and
 write-validation contracts, and accepted-model formation rules. **Predicate**
 rules:
 
-- `between-bounds-inverted` — a `between`'s `lower` bound is strictly greater than
-  its `upper`, comparing same-kind literals only (both numbers, or both strings),
-  so the range is empty by construction (`m-predicate` bound ordering).
+- `neutral-literal-type-mismatch` — a serialized scalar literal's JSON carrier or
+  semantics cannot denote the resolved member's declared neutral type (`m-wire`).
+- `neutral-literal-noncanonical` — a serialized scalar literal denotes an
+  in-space value but violates an admitted representation rule (`m-wire`).
+- `neutral-literal-out-of-space` — a serialized scalar literal has the declared
+  type's shape but denotes no managed member (`m-wire`).
+
+- `between-bounds-inverted` — after both bounds decode successfully against the
+  same resolved declaration, the managed `lower` value is strictly greater than
+  the managed `upper` value, so the range is empty by construction
+  (`m-predicate` bound ordering).
 - `null-check-non-nullable-member` — an `isNull` / `isNotNull`, nested null
   check, or element-relative null check resolves to a leaf whose declaration is
   non-nullable, so the model-aware resolver rejects the predicate before SQL.
@@ -1912,9 +1941,6 @@ rules:
   no value object declared on the queried entity (`m-predicate`).
 - `nested-path-unknown-member` — an intermediate segment names no declared nested
   value object, or the leaf names no declared attribute (`m-predicate`).
-- `nested-literal-type-mismatch` — a nested comparison / range / membership
-  literal's type differs from the leaf attribute's declared neutral type
-  (`m-predicate` typed literals).
 - `nested-string-predicate-non-string-member` — a nested string predicate
   (`nestedLike` / `nestedNotLike` / `nestedStartsWith` / `nestedEndsWith` /
   `nestedContains`, in either nested scope) resolves to a leaf whose declared neutral
@@ -1984,12 +2010,18 @@ atomically as one whole document):
   **absent** `many` is not a violation: `Missing` and the empty array are one
   logical zero state, so an unnamed `many` occurrence stores `[]`
   (`m-value-object`, `m-document-codec`).
-- `write-value-type-mismatch` — a document field value's type differs from the
-  attribute's declared neutral type.
+- `write-value-type-mismatch` — a Value Object occurrence has the wrong
+  document/list carrier for its declared multiplicity, or a `many` array contains
+  a non-document element. This legacy name is structural only; it MUST NOT
+  classify a resolved scalar literal (`m-value-object`).
 - `predicate-write-readless-document-many-unsupported` — an unversioned,
   non-temporal predicate-selected update assigns a document-resident `many`.
   The predicate, target, and assignment are individually valid; their readless
   combination is refused before buffering or SQL (`m-batch-write`).
+
+The retired `nested-literal-type-mismatch` identifier is not an alias. The
+`write-value-type-mismatch` identifier remains only for structural/container
+positions; using it for a resolved scalar leaf is a corpus or adapter error.
 
 **Subtype-write** rules (`m-inheritance` concrete-subtype write protocol — a
 schema-valid neutral write input a model-aware validator MUST refuse pre-SQL,
@@ -2149,15 +2181,15 @@ carrying a globally undeclared key falls through to the member-honesty refusal
 above, which is the judgement that key actually needs.
 
 Each position is one of six declared kinds, and the value authored at it falls in
-one of five classes. The cells are the complete enumeration:
+one of the classes below. The cells are the complete enumeration:
 
-| declared position | absent | explicit `null` | admitted value | out-of-space scalar | value the position cannot hold |
+| declared position | absent | explicit `null` | admitted value | scalar codec failure | value the position cannot hold |
 | --- | --- | --- | --- | --- | --- |
-| Attribute, `nullable: false` | `write-required-attribute-missing` | `write-required-attribute-missing` | accepted — an in-space scalar literal | `write-value-type-mismatch` | `write-value-type-mismatch` |
-| Attribute, `nullable: true` | accepted | accepted | accepted — an in-space scalar literal | `write-value-type-mismatch` | `write-value-type-mismatch` |
-| Value Object `one`, `nullable: false` | `write-required-value-object-missing` | `write-required-value-object-missing` | accepted — a document | — | `write-value-type-mismatch` |
-| Value Object `one`, `nullable: true` | accepted | accepted | accepted — a document | — | `write-value-type-mismatch` |
-| Value Object `many` | accepted (the empty collection) | `write-required-value-object-missing` | accepted — a list of documents, `[]` included | — | `write-value-type-mismatch` |
+| Attribute, `nullable: false` | `write-required-attribute-missing` | `write-required-attribute-missing` | accepted managed value | matching `neutral-literal-*` reason | `neutral-literal-type-mismatch` |
+| Attribute, `nullable: true` | accepted | accepted | accepted managed value | matching `neutral-literal-*` reason | `neutral-literal-type-mismatch` |
+| Value Object `one`, `nullable: false` | `write-required-value-object-missing` | `write-required-value-object-missing` | accepted document | — | `write-value-type-mismatch` |
+| Value Object `one`, `nullable: true` | accepted | accepted | accepted document | — | `write-value-type-mismatch` |
+| Value Object `many` | accepted (the empty collection) | `write-required-value-object-missing` | accepted list of documents, `[]` included | — | `write-value-type-mismatch` |
 | framework-owned Attribute | accepted | accepted | accepted | accepted | accepted |
 
 Reading the columns:
@@ -2166,52 +2198,10 @@ Reading the columns:
   Attribute, one document at a `one` occurrence, a list of documents at a `many` one.
   A present document is not a leaf verdict — each member inside it answers its own
   row of this table, which is how the three rules hold at any depth.
-- **In-space** is membership of the declared neutral type's value space, asked of the
-  **portable literal** the case authors: the literal is in space when it *decodes* to
-  a member (`m-core`, `m-document-codec`). Decoding is **many-to-one** where the
-  document encoding is one-to-one — a value is stored in exactly one canonical
-  spelling, while every spelling the grammar below names that value with decodes to
-  it — so a non-canonical but admitted literal is in space and stores as the
-  canonical form.
-- The **portable literal grammar** of each string-carried type is exactly the
-  document spelling `m-document-codec` fixes, widened by these variations and no
-  others. It is enumerated rather than left to a host parser: every mainstream
-  language ships an ISO-8601, UUID, and decimal parser with its own incidental
-  extensions, and adopting one implementation's would make the others reproduce
-  *it* rather than this contract.
-
-  | type | admitted spellings |
-  | --- | --- |
-  | `bytes` | hexadecimal in **either digit case**, two digits per octet, no prefix and no separator |
-  | `uuid` | 32 hexadecimal digits in **either digit case**, grouped 8-4-4-4-12 or with **no hyphens at all** |
-  | `date` | `YYYY-MM-DD`, and a valid calendar date |
-  | `time` | `hh:mm:ss` with an optional `.` fraction, or with the **seconds omitted**; no offset |
-  | `timestamp` | `YYYY-MM-DDThh:mm:ss` with an optional `.` fraction, closed by `Z` or by **any** `±hh:mm` offset |
-  | `decimal(p,s)` | a JSON number, or the exact spelling: a `-` only below zero, integer digits with no leading zero, an optional `.` fraction |
-
-  So a brace-wrapped or `urn:uuid:` UUID, a hyphen in any other position, a week or
-  ordinal or basic-format date, a space or any other character where the `T`
-  belongs, an offset carrying seconds, and a decimal carrying a digit separator, a
-  leading `+`, surrounding whitespace, an exponent, or `nan` / `infinity` are each
-  **out of space**, however readily some host parser takes them.
-- A **number literal at a `float32` / `float64`** names the float of the declared
-  width nearest it (`m-document-codec`), so the only such literal out of space is
-  one whose magnitude the width cannot hold — `1e39` at a `float32`. The carrier a
-  loader happens to put the number in decides nothing: `20`, `20.0`, `16777217`, and
-  `16777217.0` are all in space at a `float32`, because `20` and `20.0` are one JSON
-  number and so are `16777217` and `16777217.0`. This is deliberately **not** an
-  exactness rule — the last two store as `16777216`, a different number than the case
-  wrote — and a case that means to author a value the width holds exactly must
-  therefore write one; the grader will not catch it. Exactness cannot be recovered by
-  refusing inexact literals here, because a canonical `float32` spelling is routinely
-  inexact (`1e30` is the one `m-document-codec` gives `1.0000000150474662e30`), so
-  the refusing rule is "exact **or** canonical" and narrows the value space rather
-  than the case format.
-- **Out of space** is a literal that decodes to no member: an integer beyond its
-  declared width; a number whose magnitude the declared float width cannot hold; a
-  decimal the declared precision and scale cannot hold exactly; text with no UTF-8
-  encoding; a temporal literal carrying non-zero sub-microsecond precision; and any
-  spelling outside the grammar above.
+- **Scalar codec classification** is exactly `m-wire.decodeWire` against the
+  resolved declaration. This module owns no widened grammar, host-parser
+  exception, or carrier-specific conversion. The authored token's exact numeric
+  provenance reaches the codec when the corpus came from text.
 - A **DB-computed marker** (`{computed: …}` / `{increment: …}`) is admitted at a
   scalar Attribute and is a value no other position can hold. The disambiguation is
   by the position's declared metamodel ROLE, never by the value's shape, so a
@@ -2220,8 +2210,8 @@ Reading the columns:
 - **A value the position cannot hold** is the multiplicity and document rules: a
   non-document at a `one` occurrence, a non-list at a `many` one, a non-document
   element inside a `many` list, and a document or list at a scalar Attribute. It is a
-  **type mismatch**, not an absence: the member was named, so no required-ness rule
-  is what it violates.
+  structural Value Object shape mismatch except at a scalar Attribute, where the
+  resolved codec reports a type mismatch. It is not absence: the member was named.
 - A **framework-owned** Attribute (the optimistic-lock version, an As-Of Axis
   endpoint, a table-per-hierarchy tag column) is outside the walk entirely: the
   framework supplies its value, so its absence is no caller omission. A payload that

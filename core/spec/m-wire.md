@@ -1,14 +1,83 @@
-# m-wire — Canonical Wire Values
+# m-wire — Neutral Wire Codec
 
-`m-wire` owns the **one canonical output spelling** of every neutral value that
-leaves the framework as portable data. It depends on `m-core` alone: a spelling
-is fixed per `NeutralType`, so the module needs the type vocabulary and nothing
-else — no model, no shape, no path, no layout, no dialect.
+`m-wire` owns the complete serialized typed-literal boundary: strict JSON source
+loading, admitted literal decoding, canonical stored decoding, and the **one
+canonical output spelling** of every managed value. It depends on `m-core`
+alone. It knows no model, shape, path, layout, predicate, query, SQL, dialect,
+driver, continuation, transaction, or conformance case.
 
 The module is **pure**. It performs no I/O, holds no connection, imports no
-driver, emits no SQL, and knows nothing of documents, rows, graphs, or
-transactions. It answers exactly one question — *how is a value of this declared
-type written* — and its inverse.
+driver, and emits no SQL. A consumer supplies a declared `NeutralType`; this
+module never guesses one from a carrier.
+
+## Operations and failures
+
+The Neutral Wire Codec exposes four operations:
+
+```text
+loads(jsonTextOrBytes) -> WireValue
+decodeWire(declaredType, admittedWireValue) -> ManagedValue
+decodeCanonicalWire(declaredType, canonicalWireValue) -> ManagedValue
+encodeWire(declaredType, managedValue) -> WireValue
+```
+
+`WireValue` is the recursive JSON data model: null, boolean, integer, finite
+number, string, array, or string-keyed object. Private numeric provenance used
+between `loads` and typed decoding is not part of that interface. `encodeWire`
+returns only ordinary built-in JSON carriers and recursively ordinary
+containers.
+
+Decoding raises one classified failure:
+
+```text
+WireDecodingReason = TypeMismatch | Noncanonical | OutOfSpace
+```
+
+- **TypeMismatch** means the JSON carrier or its semantics cannot denote the
+  declared type, such as a string for Int32, `1.5` for Int32, or malformed Date
+  text.
+- **Noncanonical** means the literal denotes an in-space value but violates an
+  admitted representation rule, such as uppercase bytes, a Timestamp offset,
+  or the wrong Decimal scale.
+- **OutOfSpace** means the literal has the declared type's shape but denotes no
+  managed member, such as integer overflow, an impossible date, float overflow,
+  or a recursive Json number outside the finite host JSON space.
+
+Public serialized ingress maps those reasons to
+`neutral-literal-type-mismatch`, `neutral-literal-noncanonical`, and
+`neutral-literal-out-of-space`, adding its own member or path location. Stored
+canonical decoding maps every failure to the document codec's existing
+`LeafUndecodable` verdict. `encodeWire` instead raises a framework/developer
+encoding error when its input is not already a managed member; it performs no
+developer coercion.
+
+## Strict JSON source loading
+
+`loads` accepts any valid JSON root from text or bytes. It rejects duplicate
+object member names at every depth and the non-JSON constants `NaN`, `Infinity`,
+and `-Infinity` as JSON parse failures before structural or model-aware
+validation. Duplicate diagnostics identify the repeated key; exact source
+offset accuracy is not required.
+
+Every authored JSON number retains its exact token privately until a declared
+type is known. Integral and fractional/exponent tokens are both retained,
+including signed zero and values outside the host float range. Untouched
+pass-through preserves that meaning; replacing or numerically modifying the leaf
+makes the resulting programmatic carrier authoritative. Callers never import,
+construct, inspect, or test the concrete provenance representation.
+
+Parser allocation and work are proportional to source characters and parsed
+members. Duplicate detection uses a hash-based seen-name set per object. Numeric
+token handling applies the bounded `m-core` float projection precheck before any
+power-of-ten expansion.
+
+JSON text or bytes entering a public Wire read or write MUST pass through this
+operation before framework or model resolution. Wire verbs continue to accept
+structured mappings and values rather than each adding raw-body overloads. A
+deliberately constructed mapping passes directly. Output Parallax publishes is
+ordinary JSON data and serializes through an ordinary JSON encoder; generic
+reserialization of an unconsumed `loads` result is valid JSON but is not promised
+to preserve authored number tokens.
 
 ## One spelling, two consumers
 
@@ -31,23 +100,39 @@ comparing the extracted text directly (`m-dialect`, `m-document-codec`), so a
 changed spelling changes stored bytes, predicate results, and ordering results
 together. It is never a presentation preference.
 
-## The canonical spellings
+## Neutral Wire Codec matrix
 
-Every Neutral Type has exactly one Wire Value spelling:
+The matrix is exhaustive over the closed `NeutralType` algebra. “Alternative”
+means admitted by `decodeWire` but rejected by `decodeCanonicalWire` after the
+same one-pass conversion. A dash means that reason has no distinct representative
+for that type under this grammar.
 
-| Neutral type | Wire Value |
-|---|---|
-| `boolean` | JSON boolean |
-| `int32`, `int64` | JSON number, integral, no exponent or fraction |
-| `float32`, `float64` | JSON number, finite, the shortest number that decodes back to the value (below) |
-| `string` | JSON string |
-| `decimal(p, s)` | JSON string, the exact decimal spelling: a `-` only for a value below zero, the integer digits with no leading zero (a single `0` when the integer part is zero), and — when `s > 0` — `.` and exactly `s` fraction digits |
-| `bytes` | JSON string, lowercase hexadecimal, two digits per byte, no prefix or separator |
-| `date` | JSON string, ISO-8601 `YYYY-MM-DD` |
-| `time` | JSON string, ISO-8601 `hh:mm:ss`, with `.ffffff` when the value carries sub-second precision |
-| `timestamp` | JSON string, ISO-8601 UTC at microsecond precision: `YYYY-MM-DDThh:mm:ss.ffffffZ` |
-| `uuid` | JSON string, canonical lowercase 8-4-4-4-12 form |
-| `json` | the JSON value itself |
+| Declared type | Admitted JSON carrier and grammar | Managed conversion | Canonical output | Admitted alternatives | Type mismatch | Noncanonical | Out of space |
+|---|---|---|---|---|---|---|---|
+| `boolean` | boolean | same truth value | boolean | none | `"true"` | — | — |
+| `int32` | finite JSON number with an exact integral value | exact integer, signed 32-bit range | integral JSON number | none distinguishable under JSON-value equality | `1.5` | — | `2147483648` |
+| `int64` | finite JSON number with an exact integral value | exact integer, signed 64-bit range | integral JSON number | none distinguishable under JSON-value equality | `"1"` or `1.5` | — | `9223372036854775808` |
+| `float32` | finite JSON number | nearest binary32, ties even, widened to host float; zero is positive | shortest binary32 round trip | any other spelling rounding to the same value | `"1.0"` | `-0.0` | `1e39` |
+| `float64` | finite JSON number | nearest binary64, ties even; zero is positive | shortest binary64 round trip | any other spelling rounding to the same value | `"1.0"` | `0.10000000000000001` | `1e309` |
+| `decimal(p,s)` | plain JSON string with exactly `s` fractional digits; no exponent, plus, unnecessary leading zero, or negative zero | exact fixed-scale Decimal, with no rounding or binary intermediate | same declared-scale string | none | JSON number `10.25` | `"10.2"`, `"-0.00"` | coefficient exceeds precision `p` |
+| `string` | JSON string of Unicode scalar text | same text | same JSON string | none | `42` | — | unpaired surrogate |
+| `bytes` | JSON string of lowercase hexadecimal, two digits per byte | octet sequence | same lowercase hex | none | `42` or odd digit count | `"0A1B"` | — |
+| `date` | JSON string `YYYY-MM-DD` | proleptic-Gregorian date | same fixed-width string | none | `20260101` | `"2026-1-1"` | `"2026-02-30"` |
+| `time` | JSON string `hh:mm:ss`, or fraction of exactly three or six digits; no zone | wall-clock time at microsecond precision | omit zero fraction; otherwise six digits | zero fraction written explicitly; nonzero millisecond written with three digits | `42` | `"09:30:00.000"` | `"24:00:00"` |
+| `timestamp` | JSON string in UTC `Z`, with no fraction or exactly three or six digits | UTC instant at microsecond precision | exactly six fraction digits plus `Z` | no fraction or three-digit fraction | `42` | `"2026-01-15T09:30:00Z"` | impossible date or year outside 0001–9999 |
+| `uuid` | lowercase hyphenated 8-4-4-4-12 JSON string | 128-bit UUID | same lowercase hyphenated string | none | `42` or malformed hex groups | uppercase or hyphenless text | — |
+| `json` | recursively valid JSON except bare top-level null; numbers fit the finite host JSON space | fresh ordinary recursive JSON structure; numeric provenance erased | recursively ordinary JSON | none distinguishable under JSON-value equality | top-level `null` or non-JSON host object | — | nested number outside finite host JSON space |
+
+Well-formed but disallowed Bytes case, UUID case/hyphenation, Decimal spelling,
+and Timestamp offset representations are deliberately not broad aliases. They
+denote in-space values but fail public decoding as `Noncanonical`; they are not
+repaired. Malformed hex or UUID text denotes no value and is `TypeMismatch` as
+the matrix states. For Timestamp, a numeric offset including `+00:00` is
+noncanonical rather than an admitted alternative. Decimal never admits a JSON
+number.
+
+Every public decoder dispatches explicitly over all thirteen variants with no
+default or catch-all arm. The admitted conversion runs exactly once.
 
 Seven rules make the table total rather than illustrative.
 
@@ -130,17 +215,18 @@ the binary32 value `1.0000000150474662e30` — so the honest refusing rule is
 "exact **or** already the canonical spelling of the value it rounds to", which
 narrows what a `float32` member may hold rather than how a number is read.
 
-**Encoding and decoding are inverse.** For every value of a declared type,
-decoding its Wire Value yields an equal value, and that Wire Value is the unique
-one this table admits. So a value's wire form does not depend on which consumer
-wrote it, and a predicate literal binds the same value a writer stored — an
-equality comparison over a `date` or a `decimal` compares like with like without
-any consumer normalizing first. Uniqueness is uniqueness of the JSON *value*: a
-string spelling is unique character for character, while a JSON number is a
-number, so `1` and `1.0` are one value and neither a serializer's rendering nor
-an engine's numeric normalization can make two spellings of one value differ. For
-a binary float that uniqueness is what the shortest-number rule above delivers —
-without it the table would admit many JSON numbers per value.
+**The codec laws are exhaustive.** For every declared type and managed member:
+
+```text
+decodeCanonicalWire(t, encodeWire(t, managed)) == managed
+encodeWire(t, decodeWire(t, admitted)) == canonical
+decodeCanonicalWire(t, canonical) succeeds
+decodeCanonicalWire(t, distinguishable admitted alternative) is Noncanonical
+```
+
+Canonical comparison is variant-aware rather than generic host equality. It
+observes float zero sign, exact authored number meaning, temporal fraction width,
+and string characters. Object member order remains unobservable for Json.
 
 **The open upper bound is not a value of any space.** A temporal interval's open
 upper bound is `m-core`'s infinity sentinel rather than a `timestamp` value, so
@@ -153,13 +239,19 @@ asking for the spelling of a value that is not there, and is refused.
 never guesses a type from a value's shape, so a `string` member holding
 `"2026-01-01"` stays that string.
 
+## Null and boundary ownership
+
+Null is not a typed literal because it is not a member of any `NeutralType`.
+Writes own member nullability, predicates use dedicated null-check nodes,
+continuations generate those nodes, and document handling distinguishes missing,
+JSON null, and SQL NULL. Nested null remains ordinary content inside a managed
+Json value.
+
 ## What this module does not own
 
-- **Accepted *input* spellings.** Each serde seam states what it accepts on the
-  way in — the descriptor type spellings (`m-descriptor`), the case fixture forms
-  (`m-case-format`), the predicate node encoding (`m-predicate`). Those remain
-  as specified where they are stated. This module fixes only what is written
-  out, and a seam that accepts several inputs still emits exactly one of them.
+- **Structural shape and semantic location.** Schemas and surface adapters decide
+  where a literal may occur, then resolve a member and call this codec. They do
+  not duplicate the matrix's declared-type grammar.
 - **Where a value sits.** Document shape, presence, absence, unknown keys, and
   patching belong to `m-document-codec`; the shape of a Wire Snapshot, the member
   names its keys carry, and **which** members it carries belong to
@@ -173,6 +265,6 @@ never guesses a type from a value's shape, so a `string` member holding
   is a `m-dialect` / `m-sql` decision, stated where the comparison is
   (`m-document-codec` "Portable leaf encodings"). It is a *consequence* of the
   spellings here, and the two MUST move together.
-- **Validation of stored data.** Whether a stored value is the canonical
-  spelling of the value it names, and what a non-canonical or undecodable one
-  does to a read, belong to `m-document-codec` and `m-snapshot-read`.
+- **Surface error location.** The codec classifies a literal; the consuming
+  predicate, write, case, or document seam adds its member/path location and maps
+  the reason into that surface's vocabulary.

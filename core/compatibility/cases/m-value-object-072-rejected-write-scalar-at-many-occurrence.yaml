@@ -5,8 +5,8 @@
 # empty one is its zero state. Contact's `address.phones` is a `many` occurrence; this
 # write binds the string `"555"` to it. The distinction from m-value-object-042 is what
 # the write did: omitting `phones` would have stored the empty collection, whereas
-# naming it with a non-array binds a value the occurrence's multiplicity cannot hold, so
-# the rule is the type mismatch. Every other member is present and well-typed.
+# naming it with a non-array binds a carrier the occurrence's multiplicity cannot hold,
+# so the rule is structural. Every other member is present and well-typed.
 model: models/contact.yaml
 tags: [m-value-object, rejected, negative, write, slice-snapshot-1, slice-managed-1]
 shape: rejected

@@ -1,6 +1,6 @@
-# Negative (m-predicate typed-literal MUST, and the order the two range checks run
-# in): an element-scoped range whose BOUNDS mistype the declared leaf is refused as a
-# type mismatch, not as an inverted range.
+# Negative (m-wire typed-literal conversion, and the order the two range checks run
+# in): an element-scoped range whose bounds cannot denote the declared leaf is refused
+# as a neutral literal type mismatch, not as an inverted range.
 #
 # `phones.type`/`phones.number` are `string` attributes, so bounding the
 # element-relative `number` by the NUMBERS 42 and 7 mismatches the leaf's declared
@@ -14,7 +14,7 @@
 # either bound position, and the element scope is reached through the enclosing
 # `nestedExists` `where`, so only model-aware validation inside that scope catches it.
 model: models/customer.yaml
-tags: [m-predicate, m-value-object, rejected, negative, nested, between, scoped, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-wire, m-value-object, rejected, negative, nested, between, scoped, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   objectQuery:
@@ -28,4 +28,4 @@ when:
             lower: 42
             upper: 7
 then:
-  rejectedRule: nested-literal-type-mismatch
+  rejectedRule: neutral-literal-type-mismatch

@@ -60,6 +60,66 @@ from _source_inventory_support import (
 from _support.repo import PY_ROOT
 from parallax.core.unit_work import WritePlanner
 
+_PRIVATE_SQL_REACH_FENCE = "```carrier-neutral-private-reaches\n"
+_CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
+    (
+        "parallax.snapshot.handle._read",
+        "parallax.core.sql_gen._compile",
+    ): frozenset(
+        {"compile_read", "CompiledRead", "AttributeReadContract", "MaterializedReadRow"}
+    ),
+    (
+        "parallax.snapshot.handle._predicate_writes",
+        "parallax.core.sql_gen._compile",
+    ): frozenset(
+        {"compile_read", "CompiledRead", "AttributeReadContract", "MaterializedReadRow"}
+    ),
+    (
+        "parallax.conformance.engine",
+        "parallax.core.sql_gen._compile",
+    ): frozenset(
+        {"compile_read", "CompiledRead", "AttributeReadContract", "MaterializedReadRow"}
+    ),
+    (
+        "parallax.conformance._actual_wire",
+        "parallax.core.sql_gen._compile",
+    ): frozenset(
+        {"compile_read", "CompiledRead", "AttributeReadContract", "MaterializedReadRow"}
+    ),
+    (
+        "parallax.snapshot.handle._write_lowering",
+        "parallax.core.sql_gen._write",
+    ): frozenset({"compile_write_step"}),
+    (
+        "parallax.conformance.engine",
+        "parallax.core.sql_gen._write",
+    ): frozenset({"compile_write_step"}),
+}
+
+
+def _documented_carrier_neutral_private_sql_reaches() -> dict[tuple[str, str], frozenset[str]]:
+    language_spec = (PY_ROOT / "spec" / "python.md").read_text(encoding="utf-8")
+    _, marker, remainder = language_spec.partition(_PRIVATE_SQL_REACH_FENCE)
+    assert marker
+    body, closing, _ = remainder.partition("```\n")
+    assert closing
+    reaches: dict[tuple[str, str], frozenset[str]] = {}
+    for row in body.splitlines():
+        if not row.strip():
+            continue
+        module, names_text, importers_text = (cell.strip() for cell in row.split("|"))
+        names = frozenset(name.strip() for name in names_text.split(","))
+        for importer in importers_text.split(";"):
+            reaches[(importer.strip(), module)] = names
+    return reaches
+
+
+def test_carrier_neutral_private_sql_reaches_match_the_language_contract() -> None:
+    assert _documented_carrier_neutral_private_sql_reaches() == (
+        _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES
+    )
+
+
 # Snapshot's reaches into `parallax.core.entity`.
 #
 # The enforcement unit is the scope, not a package's `__all__`, so a granted

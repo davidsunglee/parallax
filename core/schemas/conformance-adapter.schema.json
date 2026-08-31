@@ -173,7 +173,7 @@
       "pattern": "^($|/.*)$"
     },
     "bindValue": {
-      "description": "A JSON-serializable bind value. Objects and arrays are allowed for structured-document values such as JSON, JSONB, or VARIANT.",
+      "description": "A JSON-serializable bind value. A modeled value is emitted in m-wire canonical form for its resolved NeutralType; dialect-native control binds retain their SQL/dialect contract. Objects and arrays are allowed for structured-document values.",
       "type": ["string", "number", "boolean", "null", "object", "array"]
     },
     "binds": {
@@ -202,6 +202,7 @@
       "items": { "$ref": "#/$defs/emission" }
     },
     "row": {
+      "description": "A logical observed row. Every modeled scalar leaf uses m-wire canonical output for its resolved declaration; declared Value Object documents apply that rule recursively.",
       "type": "object",
       "additionalProperties": true
     },
@@ -293,6 +294,7 @@
           "$ref": "#/$defs/jsonPointer"
         },
         "graph": {
+          "description": "A logical object graph whose modeled scalar leaves use m-wire canonical output. Opaque Json values are not recursively assigned inferred NeutralTypes.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
@@ -620,6 +622,7 @@
           "items": { "$ref": "#/$defs/milestoneGraphObservation" }
         },
         "tableState": {
+          "description": "Observed logical table state. Modeled scalar cells and declared document leaves use m-wire canonical output for their resolved declarations.",
           "type": ["object", "null"],
           "additionalProperties": {
             "type": "array",

@@ -45,12 +45,20 @@ def test_real_prose_and_schema_vocabularies_match() -> None:
     assert check(_real_markdown(), _real_schema()) == []
 
 
-def test_real_prose_vocabulary_is_the_full_fifty_rule_set() -> None:
+def test_real_prose_vocabulary_is_the_full_fifty_two_rule_set() -> None:
     # A sanity floor: the parser found every bulleted group PLUS the
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 50
+    assert len(prose) == 52
+    assert {
+        "neutral-literal-type-mismatch",
+        "neutral-literal-noncanonical",
+        "neutral-literal-out-of-space",
+    } <= prose
+    assert "write-value-type-mismatch" in prose
+    assert "nested-literal-type-mismatch" not in prose
+    assert "write-value-object-shape-mismatch" not in prose
     assert "metamodel-index-identity-duplicate" in prose  # the foundational resolver rule
     assert "inheritance-temporality-not-root-owned" in prose  # a root-owned family rule
     assert "inheritance-optimistic-locking-not-root-owned" in prose  # the D-25 rule
@@ -76,9 +84,17 @@ def test_real_prose_vocabulary_is_the_full_fifty_rule_set() -> None:
     assert "storage-layout-index-over-document-member" in prose
 
 
-def test_real_schema_enum_is_the_full_fifty_rule_set() -> None:
+def test_real_schema_enum_is_the_full_fifty_two_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 50
+    assert len(rules) == 52
+    assert {
+        "neutral-literal-type-mismatch",
+        "neutral-literal-noncanonical",
+        "neutral-literal-out-of-space",
+    } <= rules
+    assert "write-value-type-mismatch" in rules
+    assert "nested-literal-type-mismatch" not in rules
+    assert "write-value-object-shape-mismatch" not in rules
     assert "metamodel-index-identity-duplicate" in rules
     assert "between-bounds-inverted" in rules
     assert "null-check-non-nullable-member" in rules

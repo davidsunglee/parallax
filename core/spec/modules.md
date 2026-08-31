@@ -93,8 +93,8 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 
 | Module | Summary | Status | Coverage |
 |---|---|---|---|
-| `m-core` | Neutral types, UTC / timezone, temporal infinity | active | cases |
-| `m-wire` | Canonical wire value spelling per Neutral Type (storage and transport) | active | cases |
+| `m-core` | Neutral types, managed value membership, developer coercion, UTC / timezone, temporal infinity | active | cases |
+| `m-wire` | Strict JSON loading and the sole serialized typed-literal codec per Neutral Type | active | cases |
 | `m-metamodel` | Representation-independent declarations, identity, lookup, and compiled metadata | active | cases |
 | `m-model-formation` | Explicit deterministic composition of model rules and facet compilers | active | cases |
 | `m-descriptor` | Canonical descriptor interchange & serde | active | cases |
@@ -175,9 +175,11 @@ m-relationship --> m-metamodel
 m-relationship --> m-model-formation
 m-predicate --> m-metamodel
 m-predicate --> m-inheritance
+m-predicate --> m-wire
 m-object-query --> m-predicate
 m-object-query --> m-metamodel
 m-object-query --> m-inheritance
+m-object-query --> m-wire
 m-agg --> m-predicate
 m-sql --> m-predicate
 m-sql --> m-object-query
@@ -187,6 +189,9 @@ m-sql --> m-inheritance
 m-sql --> m-storage-layout
 m-sql --> m-relationship
 m-sql --> m-document-codec
+m-sql --> m-wire
+m-sql --> m-unit-work
+m-sql --> m-deep-fetch
 m-sql-agg --> m-agg
 m-sql-agg --> m-sql
 m-dialect --> m-core
@@ -195,6 +200,7 @@ m-db-port --> m-dialect
 m-db-error --> m-db-port
 m-db-error --> m-dialect
 m-unit-work --> m-predicate
+m-unit-work --> m-wire
 m-unit-work --> m-db-port
 m-unit-work --> m-temporal-read
 m-read-lock --> m-unit-work
@@ -223,6 +229,9 @@ m-deep-fetch --> m-navigate
 m-deep-fetch --> m-relationship
 m-deep-fetch --> m-object-query
 m-deep-fetch --> m-inheritance
+m-deep-fetch --> m-predicate
+m-deep-fetch --> m-unit-work
+m-deep-fetch --> m-wire
 m-op-list --> m-deep-fetch
 m-snapshot-read --> m-deep-fetch
 m-snapshot-read --> m-document-codec
@@ -271,11 +280,14 @@ construction it may reference any behavioral module it harnesses.
   model Identities, not descriptor records or authoring strings. Relationship
   execution remains owned by `m-navigate`, which consumes the compiled
   `m-relationship` facet; Predicate does not rebuild that facet.
-- **`m-object-query --> m-predicate`, `--> m-metamodel`, `--> m-inheritance`.** A
+- **`m-predicate --> m-wire`; `m-object-query --> m-predicate`, `--> m-wire`,
+  `--> m-metamodel`, `--> m-inheritance`.** A
   query CARRIES a predicate as one clause; it never extends the selection grammar.
   Its own clauses name canonical model Identities (the queried target, a Sort Key's
   attribute, an Include Path's relationships) and resolve their shared Subtype
   Selection through the effective-concrete-set rules `m-inheritance` owns.
+  Predicate elaboration decodes serialized typed literals exactly once through
+  `m-wire`, and Object Query owns the mandatory validated-product boundary.
 - **`m-temporal-read --> m-object-query`, `m-deep-fetch --> m-object-query`,
   `m-sql --> m-object-query`.** The three modules that REALIZE a clause depend on
   the query that states it, never the reverse: **a clause's value belongs to the
@@ -365,6 +377,11 @@ construction it may reference any behavioral module it harnesses.
 - **`m-deep-fetch --> m-relationship`.** Deep fetch resolves and lowers the
   relationship facet it fetches through (join shape, symmetric reverse) directly,
   rather than leaving that reach to the transitive closure through `m-navigate`.
+- **`m-deep-fetch --> m-predicate`, `--> m-unit-work`, `--> m-wire`.** Deep-fetch
+  levels are resolved flat reads within the owning transaction. Their authored
+  selections arrive elaborated, while generated child-key membership consumes
+  managed values directly rather than creating public literals for another Wire
+  pass.
 - **`m-navigate --> m-temporal-read`.** Navigation is temporal-aware: a pinned
   as-of value propagates per hop to every temporal entity in the path. As-of
   *reads* are algebra-level, so navigation references `m-temporal-read`, not the
@@ -388,6 +405,14 @@ construction it may reference any behavioral module it harnesses.
   inventing an opaque parallel one. The edge is to the read *model* only: nothing here
   reaches as-of lowering, and the direction stays one-way, since
   `m-temporal-read` names no unit-of-work construct.
+- **`m-unit-work --> m-wire`.** Serialized keyed rows, assignments, and
+  predicate-selected writes decode resolved scalar leaves once before they become
+  buffered prepared-write products. Managed-object mutation remains developer
+  input governed by `m-core`.
+- **`m-sql --> m-deep-fetch`, `--> m-unit-work`, `--> m-wire`.** SQL's private
+  compilers consume resolved flat reads and planned writes. The Wire edge exists
+  for canonical document values and carrier contracts, not to authorize SQL to
+  decode an authored literal; resolution and conversion have already happened.
 - **`m-execution-lifecycle --> m-unit-work`, `--> m-auto-retry`, `--> m-db-port`,
   `--> m-db-error`, `--> m-sql`.** Transient observability is a
   **composition-level publisher**: its event vocabulary names the statement a

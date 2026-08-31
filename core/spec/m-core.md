@@ -1,9 +1,11 @@
 # m-core — Core Conventions
 
 The normative primitives the whole spec rests on: the structured `NeutralType`
-algebra, the `NeutralValue` value spaces, the timezone/UTC rules, and the
-temporal-infinity representation. `m-core` depends on nothing; every other
-module depends on it, directly or transitively.
+algebra, managed value spaces, developer-input coercion, the timezone/UTC rules,
+and the temporal-infinity representation. `m-core` depends on nothing; every
+other module depends on it, directly or transitively. It owns no serialized-
+literal grammar, canonical spelling, or parser provenance; those belong to
+`m-wire`.
 
 ## JSON container detachment
 
@@ -88,18 +90,20 @@ variant to an equivalent concrete column type through the dialect seam
 **Deferred (optional / extension, not in the core algebra yet):** `Int16`,
 `Int8`, `Char`.
 
-## `NeutralValue` — logical value spaces
+## Managed values and logical value spaces
 
-A `NeutralValue` is a value drawn from the declared `NeutralType`'s logical
-value space. There is no tagged wrapper type: every position that carries a
-`NeutralValue` — a predicate literal or assignment value (`m-predicate`), a
-neutral row cell —
-is already typed by its declaration, so the declared type identifies the value
-space and a stored tag could never carry information the declaration does not.
-How such a value is WRITTEN OUT — its one canonical spelling per type, for
-stored documents and for transport alike — belongs to `m-wire`, never to a
-behavioral algorithm. What a serde seam ACCEPTS on the way in remains that
-seam's own (the `m-predicate` node encoding, the `m-case-format` fixture forms).
+A **managed value** is a host-language carrier belonging to the declared
+`NeutralType`'s logical value space. `NeutralValue` is the language-neutral name
+for that value; `ManagedValue` is the implementation vocabulary for its carrier.
+Neither is a tagged wrapper. Every position carrying one is already typed by its
+declaration, so a stored tag could carry no additional information. Runtime
+membership against the accompanying `NeutralType` remains authoritative because
+a host-language union alone cannot express integer width, float width, Decimal
+precision/scale, top-level `Json` null exclusion, or temporal bounds.
+
+How a managed value is written, and which serialized literals decode to one,
+belongs exclusively to `m-wire`. A behavioral algorithm MUST NOT infer a neutral
+type from a carrier or implement a parallel string/number conversion table.
 
 | `NeutralType` | Logical value space | Equality / normalization laws |
 |---|---|---|
@@ -134,6 +138,57 @@ space itself. A position admits null only through its own contract (a
 `nullable` member), so a null at
 such a position always denotes that contractual null rather than a value drawn
 from any value space, and null equals only itself.
+
+## Managed membership and developer-input coercion
+
+`matchesNeutralType(value, declaredType)` asks one question: whether an existing
+managed carrier belongs to the declared logical value space. It is total and
+non-throwing. It performs no coercion, parsing, serialized-literal decoding, or
+canonicalization. In particular, Float32 membership requires the host float to
+be exactly the widened carrier of one finite IEEE-754 binary32 value; a wider
+fractional carrier that would round to binary32 is not already a member.
+
+`coerceNeutralInput(value, declaredType)` is the developer-facing runtime input
+policy. It is total and non-throwing: it returns a managed value when the policy
+admits the input and otherwise returns the original non-member for the caller's
+own error adapter to reject. The policy is deliberately narrower than Wire
+decoding:
+
+- exact managed carriers are retained, with valid offset-aware timestamps
+  normalized to UTC and float negative zero normalized to positive zero;
+- an integer may widen to Decimal exactly;
+- an integer may widen to Float32 or Float64 only when the target width carries
+  it losslessly;
+- a host float is projected immediately to the declared float width, rejecting
+  overflow and non-finite values, and Float32 returns the widened host carrier of
+  the actual binary32 result;
+- a canonical UUID string may widen to a UUID carrier where a language's
+  developer surface documents that convenience; and
+- serialized spellings such as timestamp strings, byte hex, Decimal strings,
+  and arbitrary Wire number alternatives are not developer-input coercions.
+
+Developer adapters apply coercion and then managed membership before storage,
+SQL lowering, or canonical encoding. Failures stay in the owning developer
+surface's vocabulary. They never become `neutral-literal-*` failures and never
+leak `m-wire` decoding errors.
+
+## Float projection at a declared width
+
+`nearestFloatAtWidth(value, declaredFloatType)` is the provenance-neutral
+`m-core` operation shared by developer coercion and `m-wire`. Its input is an
+exact integer, finite host float, or exact decimal value; its result is the
+nearest finite value of the declared IEEE-754 width under round-to-nearest-even,
+widened into the host float carrier, or absence when the value overflows that
+space. It covers normals, subnormals, underflow to positive zero, both tie
+directions, and positive-zero normalization. It never observes a source token or
+serialized carrier subclass.
+
+Work and allocation are bounded by the input coefficient digits plus the fixed
+target width, not by the represented exponent. Before constructing an integer
+ratio or a power of ten, an implementation MUST classify magnitudes provably
+outside the target format's rounding neighborhood directly as overflow or
+rounded zero. A fixed-size token such as `1e1000000000` therefore cannot trigger
+exponent-sized allocation or work.
 
 ## The `Json` embedded-value type
 

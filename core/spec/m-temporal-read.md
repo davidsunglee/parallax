@@ -130,6 +130,15 @@ For a dimension pinned to coordinate `d`:
 The injected temporal terms follow the user predicate in canonical bind order.
 For Bitemporal reads, Valid-Time terms precede Transaction-Time terms.
 
+These terms are producer-owned generated predicates. A finite coordinate is
+already a managed UTC Timestamp; this module supplies it with the exact resolved
+axis Attribute to `m-predicate`, which calls `encodeWire` once to construct the
+ordinary authored comparison and adopts the managed value in the validated
+occurrence without decoding its own output. `Latest` contributes the `m-core`
+infinity sentinel through its structural temporal operation rather than as a
+Timestamp literal. A public query's authored temporal strings are decoded once
+while `m-object-query` validates the query, before this injection step.
+
 ## Selections
 
 ```text
