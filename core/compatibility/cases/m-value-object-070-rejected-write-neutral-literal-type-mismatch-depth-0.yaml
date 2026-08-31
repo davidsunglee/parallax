@@ -1,0 +1,22 @@
+# Negative (m-wire typed-literal conversion): a depth-0 attribute literal that cannot
+# denote the declared type is refused PRE-SQL.
+#
+# The neutral literal taxonomy is asked of every typed leaf the write row reaches,
+# including the entity's own attributes. Contact's `id` is an `int64`; this
+# write supplies the STRING `"five"` for it. Every other member is present and
+# well-typed, isolating the mismatch to `id`.
+model: models/contact.yaml
+tags: [m-value-object, m-wire, rejected, negative, write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    id: "five"
+    name: Acme
+    address:
+      street: 1 Main St
+      city: Oslo
+      geo:
+        country: "NO"
+        point: { lat: 59.9, lon: 10.7 }
+then:
+  rejectedRule: neutral-literal-type-mismatch

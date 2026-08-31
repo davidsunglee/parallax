@@ -11,8 +11,9 @@ That is the whole structural point: an ordering or a row cap over an eager fetch
 has **no spelling** here rather than a rejection rule, and the value fixes its own
 semantics without a wrapper position or call sequence deciding them.
 
-`m-object-query` depends on `m-predicate` (it carries one as a clause and never
-extends the selection grammar), on `m-metamodel` (each clause names canonical
+`m-object-query` depends on `m-predicate` (it carries one as a clause and invokes
+its semantic elaboration), on `m-wire` (serialized typed-literal conversion
+reached through that elaboration), on `m-metamodel` (each clause names canonical
 Identities), and on `m-inheritance` (the shared Subtype Selection resolves against
 a family's effective concrete-subtype set). The three modules that **realize** a
 clause — `m-temporal-read` for Temporal Selection, `m-deep-fetch` for Includes,
@@ -300,19 +301,32 @@ different dimensions.
 
 ## Planning boundary
 
-A planner consumes the query's clauses **directly**. It never rebuilds a wrapper
-tree, and no private value re-expresses the query as one.
+`validateObjectQuery(authoredQuery, acceptedModel)` is the mandatory semantic
+boundary for every supported read entry point. It resolves and validates every
+clause, invokes Predicate elaboration, and returns one private immutable
+`ValidatedObjectQuery`. That product retains the unchanged authored query and
+carries the exact resolved target, `ValidatedPredicate`, temporal selections,
+Sort Keys, Include Paths, result narrowing, and row cap. Every name is an exact
+canonical identity, every typed coordinate or operand is managed, collections are
+deeply immutable, and no public constructor or serialization contract exists.
 
-Two internal values sit at that boundary, and neither is a wire encoding:
+The product is the complete resolved meaning of one authored Object Query, not a
+lowered SQL request and not a wrapper rebuilt from selected clauses. A producer-
+owned page-derivation operation accepts a validated base plus an already-validated
+seek predicate, resolved effective order, and cap, and returns another
+`ValidatedObjectQuery` without re-resolving or decoding the base.
 
-- an **Entity Query** is the normalized query for ONE root or related Entity —
-  target, predicate with temporal terms already injected, resolved result
-  narrowing, ordering, cap — and is what `m-sql` compiles. A deep-fetch child level
-  derives one from gathered parent keys, so it exists without any authored query
-  behind it.
-- an **Object Query Plan** is the complete root-plus-levels plan `m-deep-fetch`
-  produces.
+`m-deep-fetch` is the mandatory next phase. It consumes
+`ValidatedObjectQuery` and produces the resolved flat-read products for the root
+and each non-empty child level. Each such private `ValidatedEntityQuery` may
+exist without an authored Object Query behind it, but consumers never substitute
+one for the complete validated parent at the public preflight boundary.
 
 Every supported read entry point validates and classifies the Object Query before
 SQL generation, connection acquisition or port access, participating unit-of-work
 force-flush, and any other observable side effect.
+
+Downstream SQL and deep-fetch compilation MUST NOT resolve authored names, infer
+neutral types, decode literals, or repeat model-aware validation. A child read
+derived during deep fetch is constructed from already-resolved metadata and
+managed parent keys, so it obeys the same invariant without a second Wire pass.

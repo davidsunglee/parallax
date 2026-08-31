@@ -97,7 +97,7 @@
       }
     },
     "writeAssignment": {
-      "description": "One ordered predicate-write assignment. `attr` is a qualified descriptor attribute or top-level value-object reference and `value` is a neutral literal: a scalar / null for an attribute or the complete object / array document for a value object. Duplicate and unassignable (framework-owned / PK / relationship) references are rejected by model-aware validation.",
+      "description": "One ordered predicate-write assignment. Model-aware elaboration resolves `attr`, then decodes each non-null declared scalar leaf exactly once with m-wire. Nullability and complete Value Object document carriers remain structural rules; this schema intentionally does not duplicate per-type literal grammar. Duplicate and unassignable references are rejected by model-aware validation.",
       "type": "object",
       "additionalProperties": false,
       "required": ["attr", "value"],
@@ -120,7 +120,7 @@
       "additionalProperties": { "$ref": "#/$defs/writeRowValue" }
     },
     "writeRowValue": {
-      "description": "The value a neutral write-row field carries, classified by its Entity Layout contributor (NOT from the value's shape): a scalar literal / explicit `null` for a scalar attribute; a one-key DB-computed marker (`writeComputedMarker`) for a computed scalar column; or the WHOLE embedded value-object document — a JSON object for a `one` member, a JSON array of objects for a `many` member — bound atomically in its layout position. The branches are NON-exclusive (`anyOf`): a marker-shaped value-object document validates via both the marker and the document branch, and the model role decides. This is the single shared value vocabulary `compatibility-case.schema.json`'s flush-context write row references rather than redefining.",
+      "description": "The structural value a neutral write-row field carries, classified by its resolved Entity Layout contributor rather than by carrier shape. Model-aware elaboration decodes each non-null scalar leaf exactly once with m-wire; a Value Object remains its whole object or array document and DB-computed markers retain their role-owned meaning. This schema intentionally does not duplicate per-type literal grammar.",
       "anyOf": [
         { "type": ["string", "number", "boolean", "null"] },
         { "$ref": "#/$defs/writeComputedMarker" },

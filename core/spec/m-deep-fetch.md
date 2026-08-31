@@ -2,9 +2,12 @@
 
 `m-deep-fetch` specifies how **deep fetch** eagerly populates an object graph
 while **eliminating N+1** round trips. It depends on `m-object-query` (the
-**Includes** clause it realizes), `m-relationship` (the compiled directions a
-path traverses), `m-navigate` (per-hop as-of propagation), and `m-inheritance`
-(the Subtype Selections a path resolves). The **SQL emission** is `m-sql`.
+validated query and **Includes** clause it realizes), `m-predicate` (elaborated
+selection products), `m-unit-work` (the owning transaction and read/write
+boundary), `m-wire` (managed keys already produced at ingress), `m-relationship`
+(the compiled directions a path traverses), `m-navigate` (per-hop as-of
+propagation), and `m-inheritance` (the Subtype Selections a path resolves). The
+**SQL emission** is `m-sql`.
 This module ties them to observable behavior. The two lifecycle result surfaces
 — query-backed lists (`m-op-list`) for the managed lifecycle, snapshot
 graphs (`m-snapshot-read`) for the plain-value lifecycle — sit **above** deep
@@ -294,6 +297,29 @@ The normative rules, whatever the trigger:
 
 A plain-value graph (`m-snapshot-read`) has **no trigger at all**: a snapshot
 graph is closed-world and never issues SQL after materialization.
+
+## Resolved flat reads and generated key membership
+
+The deep-fetch planner consumes only the validated products of
+`m-object-query`. A root or child `ValidatedEntityQuery` is the private
+**resolved flat read**: it carries exact modeled identities, a validated
+Predicate containing managed values, resolved temporal coordinates, resolved
+ordering and projection, and compact result metadata. It contains no authored
+path, raw literal, or public predicate node requiring another semantic pass.
+
+For a child level, the planner gathers managed parent key values from the
+materialized parents, deduplicates them in encounter order, and freezes one
+managed tuple. It passes that tuple and the already-resolved child correlation
+Attribute to `m-predicate`'s generated-membership operation. The producer checks
+managed membership, calls `encodeWire` once per key to create the ordinary
+authored `in` node, and adopts the same managed tuple in the validated occurrence
+without decoding its own output. Every gathered key MUST already satisfy the
+resolved Attribute's neutral type; violating that invariant is an internal
+framework error rather than `neutral-literal-*` rejection.
+
+The resulting child read flows through the same private SQL compiler as a root
+read and is consumed exactly once. SQL compilation cannot accept a public Object
+Query or authored predicate as a fallback.
 
 ## What the harness verifies
 

@@ -5,8 +5,8 @@
 # not settle the elements'. Contact's `address.phones` is a `many` occurrence; this write
 # binds a well-formed one-element array whose element is the string `"555"` rather than a
 # phone document. The distinction from m-value-object-072 is where the defect sits — the
-# occurrence's own value there, one element of it here — and both name the same rule,
-# because an element that is not a document is a value its declared position cannot hold.
+# occurrence's own value there, one element of it here — and both name the same
+# structural rule because the element is not a document.
 model: models/contact.yaml
 tags: [m-value-object, rejected, negative, write, slice-snapshot-1, slice-managed-1]
 shape: rejected

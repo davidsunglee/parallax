@@ -1,0 +1,21 @@
+# Negative (m-wire typed-literal conversion): an integral JSON number outside the
+# resolved Int64 value space is refused before SQL.
+#
+# Contact.id resolves to int64. The authored number has the right JSON carrier and
+# integral semantics, but exceeds the signed 64-bit maximum by one. This separates an
+# out-of-space value from a carrier mismatch and from an in-space noncanonical spelling.
+model: models/contact.yaml
+tags: [m-value-object, m-wire, rejected, negative, write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    id: 9223372036854775808
+    name: Acme
+    address:
+      street: 1 Main St
+      city: Oslo
+      geo:
+        country: "NO"
+        point: { lat: 59.9, lon: 10.7 }
+then:
+  rejectedRule: neutral-literal-out-of-space

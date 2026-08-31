@@ -1,0 +1,26 @@
+# Negative (m-wire canonical literal grammar): a Decimal negative-zero spelling
+# denotes zero but is noncanonical and is refused pre-SQL.
+#
+# The exact decimal spelling m-wire fixes carries a `-` only for a value
+# BELOW zero. `-0.00` denotes the in-space zero value, whose canonical spelling is
+# `0.00`; public typed-literal ingress distinguishes that representation defect from
+# both a carrier mismatch and an out-of-space coefficient. Every other member is
+# absent-and-nullable, isolating the verdict to `amount`.
+#
+# The semantic distinction is that the grammar decides this, not a host decimal parser.
+# `Decimal("-0.00")`, `BigDecimal("-0.00")`, and `strtod` all accept the spelling and
+# answer a signed zero, so an implementation that delegates admits it and stores a
+# value the codec cannot emit canonically — the round trip would answer `0.00`, a
+# different document than the one written. The neighbouring `-0.01` IS in space and is
+# not authored here; the boundary this case pins is the magnitude, not the sign.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-wire, m-value-object, rejected, negative, write, json, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    id: 141
+    label: SignedZero
+    profile:
+      amount: "-0.00"
+then:
+  rejectedRule: neutral-literal-noncanonical

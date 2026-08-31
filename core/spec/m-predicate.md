@@ -11,9 +11,10 @@ representation admits by accident — a row cap as a Boolean term, an ordering o
 an eager fetch — have no spelling here rather than a rejection rule.
 
 `m-predicate` depends on `m-metamodel` (resolved predicates are bound to
-canonical Entity, Attribute, Relationship, and Value Object Identities) and on
+canonical Entity, Attribute, Relationship, and Value Object Identities), on
 `m-inheritance` (the `narrow` node constrains a polymorphic entity position
-against the family's effective concrete-subtype set). Relationship behavior is
+against the family's effective concrete-subtype set), and on `m-wire` (for
+serialized typed-literal conversion). Relationship behavior is
 not reconstructed here: `m-navigate` consumes the compiled `m-relationship`
 facet.
 
@@ -66,6 +67,12 @@ against the model. Examples:
 ```json
 { "eq": { "attr": "Order.id", "value": 42 } }
 ```
+
+Serialized Predicate literal positions admit only non-null string, number, or
+boolean Wire Values. Arrays and objects remain valid at write and document seams
+for a member declared as Json, but they are not Predicate literals. Static
+Predicate schemas enforce only this model-free carrier shape; declared-type
+grammar is checked after member resolution.
 
 ## Predicate set
 
@@ -161,13 +168,11 @@ binds: lower, then upper) and is equivalent to `>= lower AND <= upper`.
 **Bound-ordering rule.** The two bounds describe a range, so a `lower` strictly
 greater than its `upper` names an empty range no row can satisfy; a resolver
 **MUST** reject it (`between-bounds-inverted`) rather than emit a predicate that
-silently matches nothing (`m-case-format` rejected vocabulary). Bounds are
-compared by **literal kind**: the rule applies only when both bounds are the same
-kind — both `number`s, or both `string`s — and is skipped when the kinds differ
-or either bound is `null`. Only a **strictly** greater `lower` is rejected; equal
-bounds name the single-value range `>= v AND <= v` and are legal. Comparing by
-literal kind keeps the rule free of attribute-type resolution, and ISO-8601
-`date` / `timestamp` literals order correctly under string comparison.
+silently matches nothing (`m-case-format` rejected vocabulary). Resolution is
+ordered: resolve the subject, decode the lower bound, decode the upper bound,
+then compare the two managed values. A conversion failure therefore wins over
+`between-bounds-inverted`. Only a **strictly** greater lower bound is rejected;
+equal bounds name the single-value range and are legal.
 
 ### Null
 
@@ -257,11 +262,14 @@ algebra — one single-key tagged node per operator, each with a closed body:
 | `nestedIsNotNull` | `{ "nestedIsNotNull": { "path" } }` | the value at `path` **is present** (the complement) |
 
 The five string predicates carry a plain `string` `value` rather than a polymorphic
-literal; the rest of the comparison / range / membership `value`(s) are polymorphic
-`literal`s (`string`
-/ `number` / `boolean` / `null`), and each type **MUST** match the leaf attribute's
-declared neutral type; a resolver **MUST** reject a type-mismatched literal (e.g. a
-`number` compared against a `string`-typed attribute). The presence tests
+literal; the rest of the comparison / range / membership `value`(s) are non-null
+serialized typed literals (`string` / finite `number` / `boolean`). Null is not a
+member of any neutral type; null tests use the dedicated presence nodes. After
+resolving the exact leaf, a resolver **MUST** call
+`m-wire.decodeWire(leaf.neutralType, literal)` exactly once and retain only the
+managed result. Wire failures map to `neutral-literal-type-mismatch`,
+`neutral-literal-noncanonical`, or `neutral-literal-out-of-space`, with the
+canonical resolved member and literal location. The presence tests
 (`nestedIsNull` / `nestedIsNotNull`) carry a `path` only. `m-sql` lowers a nested
 read to a dialect-specific extraction from the structured-document column and,
 where the declared type requires one, **casts** it before comparing; the extraction
@@ -273,10 +281,8 @@ algebra.
 `nestedBetween` is **one** canonical node — it is never rewritten into a pair of
 comparisons, because the two forms diverge through a `many` segment (below). Both
 its bounds are typed literals against the same leaf, and the bound-ordering rule
-above governs it unchanged. Within a range node the checks are ordered **subject
-first, bounds second**: the path resolves and both bounds are type-checked before
-the bounds are ordered, so a mistyped bound draws `nested-literal-type-mismatch`
-rather than being ordered as a raw literal.
+above governs it unchanged. The previous `nested-literal-type-mismatch` rule is
+retired; nested and depth-0 conversion failures use the same neutral taxonomy.
 
 The five nested string predicates carry the **String** section's semantics above
 unchanged, against the nested extraction instead of a column: `nestedLike` /
@@ -302,8 +308,8 @@ the literal checked.
 resolve nested member -> leaf
 if the predicate is a string predicate and leaf.type is not String:
     reject("nested-string-predicate-non-string-member")
-if not literal_matches_type(value, leaf.type):
-    reject("nested-literal-type-mismatch")
+if decodeWire(leaf.type, value) fails:
+    reject(the corresponding neutral-literal reason)
 ```
 
 Ordering them the other way would blame the literal for the member's problem, and —
@@ -589,6 +595,45 @@ specified once in `m-inheritance`. This module adds these operand consequences:
 `union all` over the selected concrete tables under `table-per-concrete-subtype`,
 and grouped branch predicates when a branch carries a concrete-subtype predicate —
 is fixed by `m-sql`.
+
+## Semantic elaboration boundary
+
+Public Wire predicate nodes are untrusted serialized syntax. Predicate
+elaboration consumes that syntax plus the accepted model and returns one private
+immutable `ValidatedPredicate` whose variants mirror the authored Predicate union
+one for one. The product is not a second public AST and has no serialization
+contract. Construction is restricted to this module so illegal
+subject/operator/literal combinations are not representable downstream.
+
+Every validated occurrence retains its corresponding authored node for
+diagnostics. A typed value occurrence additionally retains the exact resolved
+leaf Attribute and its complete managed operand shape: one value for comparison,
+two ordered bounds for `between`, or one managed tuple for membership rather than
+one wrapper per element. Recursive variants retain validated children,
+string-pattern variants retain their existing non-codec facts, and no variant
+carries storage placement, bind form, or precomputed SQL text. Reusing one
+authored node at two semantic positions creates two validated occurrences;
+repeating one validated occurrence across physical SQL branches reuses that
+occurrence.
+
+Elaboration dispatches exhaustively over the closed authored union. For each
+typed literal it resolves the subject and operator first, calls
+`m-wire.decodeWire` exactly once, and stores the managed result. It never mutates
+the authored node. A new authored variant therefore requires both an elaboration
+arm and a lowering arm rather than falling through a default.
+
+This module also owns private generated-node operations. A generated scalar term
+receives an exact resolved Attribute and managed value, checks managed membership,
+calls `m-wire.encodeWire` once to construct the ordinary authored node, and adopts
+the managed value directly in the corresponding validated occurrence. Generated
+membership does the same for one already-owned managed tuple. Neither operation
+decodes its own output, and no consumer constructs validated variants directly.
+
+`m-object-query` stores this elaborated product. `m-sql` and `m-deep-fetch`
+compile it without resolving paths, inferring types, decoding literals, or
+repeating validation. Programmatic fluent predicates instead use
+`m-core.coerceNeutralInput` followed by managed membership and retain their
+language-owned type mismatch behavior; they do not expose Wire failure names.
 
 ## Forward map of the rest of the algebra
 

@@ -1,20 +1,101 @@
 # m-sql — SQL Generation & Equivalence Contract
 
-`m-sql` is the contract that turns one `m-object-query` `EntityQuery` into
-per-dialect SQL, and the rules that make "equivalent SQL per database"
-**testable**. `m-sql` depends on `m-object-query` (the query value it lowers),
-`m-predicate` (the selection algebra that value carries), and `m-dialect` (the
-dialect that decides the concrete SQL).
+`m-sql` is the contract that turns validated read and planned-write products
+into per-dialect SQL, and the rules that make "equivalent SQL per database"
+**testable**. `m-sql` depends on `m-object-query` and `m-deep-fetch` (resolved
+flat reads), `m-predicate` (elaborated selections), `m-unit-work` (planned
+writes), `m-document-codec` and `m-wire` (canonical document values), and
+`m-dialect` (the dialect that decides concrete SQL).
 It reads canonical model identities from `m-metamodel`, family and
 discriminator semantics from `m-inheritance`, physical Tables and slots from
 `m-storage-layout`, and compiled relationship directions from `m-relationship`.
 
-The compilation interface accepts the `EntityQuery` fields directly: the exact
-target Entity Identity, a predicate with temporal terms already injected,
-optional query-wide narrowing, ordered result keys, and an optional row cap.
-Compilation resolves the target against the accepted model and lowers those
-fields; it does not discover them by peeling query-wide clauses out of the
-predicate.
+The read compiler accepts one `ValidatedEntityQuery`: the exact target Entity
+Identity, a validated predicate with temporal terms already injected, optional
+query-wide narrowing, ordered result keys, resolved projection, and an optional
+row cap. Compilation lowers those already-resolved fields; it does not discover
+them by peeling query-wide clauses out of a public query and does not receive an
+accepted model to perform another resolution pass.
+
+## Private compiler inputs
+
+SQL compilation is private behind two closed entry points:
+
+```text
+compileResolvedRead(ValidatedEntityQuery, Dialect) -> CompiledRead
+compilePlannedWrite(PlannedWrite, Dialect) -> LoweredStatement
+```
+
+Neither entry point accepts a public Object Query, Predicate, Write Instruction,
+authored member name, or raw serialized literal. A `ValidatedEntityQuery` carries
+exact target/member identities, an elaborated predicate of managed values,
+resolved temporal terms and ordering, and compact result metadata sufficient for
+row decoding and deep-fetch key gathering. A `PlannedWrite` carries the closed
+`m-unit-work` variant, exact member identities, managed values or generated-value
+expressions, target, concurrency decision, and affected-row policy.
+
+`CompiledRead` carries one metadata-bearing `LoweredStatement` plus the compact
+result contract required for row materialization. `LoweredStatement` is the
+single statement value described below, including its plain binds, typed spans,
+repeated descriptors, and sparse Wire overrides. A multi-step write plan invokes
+the write compiler once per `PlannedWrite`; no generic metadata-free `Statement`
+result bypasses these products.
+
+The compiler is a one-way consumer. It MUST NOT resolve a model reference, infer
+a neutral type, invoke developer coercion, decode a Wire literal, or expose a
+public raw-SQL escape hatch around these products. Driver parameter adaptation is
+a carrier-to-driver operation after semantic conversion; it cannot repair or
+reinterpret a managed value.
+
+Read result metadata is compact and semantic: selected slots identify exact
+modeled members and document judging roots, correlation slots identify exact
+deep-fetch keys, and variant/temporal slots carry only the information required
+by materialization. It is not a second model snapshot and contains no name-to-
+member lookup table.
+
+## Driver binds and canonical Wire projection
+
+A lowered statement retains driver-ready binds as one plain ordered tuple. SQL
+chooses the physical representation of each typed value: a direct typed column or
+typed document cast binds the managed carrier, while document text extraction
+binds canonical comparison text supplied by `m-document-codec`. No per-bind
+wrapper carries value, type, and form together.
+
+Where canonical compatibility projection needs declared-type information, the
+statement carries compact private metadata over that tuple:
+
+```text
+BindForm = MANAGED | COMPARISON_TEXT
+
+TypedBindSpan(start, stop, declaredType, form)
+RepeatedTypedBindSpan(start, width, stride, repetitions, declaredType, form)
+WireBindOverride(index, canonicalWireValue)
+```
+
+`start` is inclusive and `stop` is exclusive. An ordinary span covers one
+contiguous run of typed-literal binds with equal declared type and form; equal
+adjacent runs coalesce across Predicate origins. A structural, path,
+discriminator, guard, document, or framework bind creates a gap. A type or form
+change starts another span even when the adjacent Python carriers compare equal.
+
+A fixed heterogeneous bulk-row shape records one repeated descriptor per maximal
+equal type/form run in one row. Increasing row count increases binds but not the
+number of descriptors. Repeated descriptors are never expanded while fragments
+are appended; fragment composition offsets and validates their ranges and keeps
+ordinary-span coalescing linear in descriptor count.
+
+Sparse overrides cover framework binds whose driver form and canonical Wire form
+differ, such as a dialect-specific temporal sentinel. Ordinary structural Wire
+values require no override. The database adapter ignores all span and override
+metadata.
+
+The statement's canonical bind-projection operation walks the compact metadata,
+calls `encodeWire` only for `MANAGED` spans, emits `COMPARISON_TEXT` values as the
+already-canonical Wire strings they represent, applies sparse overrides, and
+unwraps document values. It never infers a `NeutralType` from a runtime carrier.
+An unannotated bind in a publicly constructible statement may pass through only
+when it is already an ordinary Wire Value or a document wrapper; any other
+carrier is a SQL-generation error rather than a guessed encoding.
 
 The core does **not** mandate *how* an implementation produces SQL (a language
 MAY lower the algebra onto an external SQL IR inside `m-sql`). The core mandates

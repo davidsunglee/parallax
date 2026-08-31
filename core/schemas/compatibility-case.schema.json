@@ -1143,13 +1143,15 @@
           ]
         },
         "rejectedRule": {
-          "description": "The stable pre-SQL validation rule violated by a rejected case. The closed enum below is authoritative. Model-formation codes distinguish the fixed resolver's foundational Metamodel invariants, Inheritance-owned TPH/TPCS topology, root-owned temporal/persistence/optimistic facts and materialized-key collisions, and Storage Layout-owned independent Table-mapping and within-owner physical-column collisions; query and write codes retain declaration-owned member identity while validating effective applicability.",
+          "description": "The stable pre-SQL validation rule violated by a rejected case. The closed enum below is authoritative. Resolved serialized scalar leaves use the carrier-neutral m-wire taxonomy uniformly across depth-0, nested, predicate, and write ingress; structural document and model rules retain separate identifiers.",
           "enum": [
             "between-bounds-inverted",
             "null-check-non-nullable-member",
             "nested-path-first-segment-not-value-object",
             "nested-path-unknown-member",
-            "nested-literal-type-mismatch",
+            "neutral-literal-type-mismatch",
+            "neutral-literal-noncanonical",
+            "neutral-literal-out-of-space",
             "nested-string-predicate-non-string-member",
             "deep-fetch-value-object-segment",
             "navigate-value-object-target",

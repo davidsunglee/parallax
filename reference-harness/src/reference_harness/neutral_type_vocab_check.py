@@ -1,9 +1,8 @@
-"""Assert the neutral-type vocabulary's three homes agree (the closed-vocabulary
-three-home consistency check)::
+"""Assert the neutral-type vocabulary's four homes agree::
 
     uv run python -m reference_harness.neutral_type_vocab_check core/spec
 
-The neutral-type variant set is spelled in THREE places that nothing else
+The neutral-type variant set is spelled in FOUR places that nothing else
 forces to agree:
 
 1. the structured ``NeutralType`` algebra block in ``core/spec/m-core.md``
@@ -13,7 +12,8 @@ forces to agree:
    silently accepted);
 2. the "Type spellings" table in ``core/spec/m-descriptor.md`` (the canonical
    lowercase wire spelling per variant, bound to the "Type spellings" section);
-3. the ``neutralType`` ``pattern`` regex in ``core/schemas/metamodel.schema.json``
+3. the exhaustive "Neutral Wire Codec matrix" in ``core/spec/m-wire.md``;
+4. the ``neutralType`` ``pattern`` regex in ``core/schemas/metamodel.schema.json``
    (the canonical full-variant vocabulary; ``scalarType`` composes it minus
    ``json`` for the narrower alternation a member ``type`` position accepts).
 
@@ -21,10 +21,10 @@ A variant added, removed, or renamed in one home but not the others would let
 the algebra, the wire grammar, and the schema silently diverge — a model could
 then pass schema validation with a type the algebra does not define, or the
 spec could promise a variant no descriptor can spell. This module parses all
-three homes, normalizes each to the lowercase variant-token set (``Decimal`` /
+four homes, normalizes each to the lowercase variant-token set (``Decimal`` /
 ``decimal(<p>,<s>)`` / ``decimal\\(...\\)`` all normalize to ``decimal``), and
 fails when any home lacks a variant another declares — so a future variant
-lands in all three homes or not at all.
+lands in all four homes or not at all.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ __all__ = [
     "descriptor_spelling_variants",
     "main",
     "schema_pattern_variants",
+    "wire_codec_variants",
 ]
 
 
@@ -68,6 +69,7 @@ _PATTERN_TOKEN = re.compile(r"^[a-z][a-z0-9]*")
 
 _ALGEBRA_SECTION_MARKER = "`NeutralType` algebra"
 _TYPE_SPELLINGS_MARKER = "Type spellings"
+_WIRE_CODEC_MARKER = "Neutral Wire Codec matrix"
 
 
 def _section(markdown: str, heading_contains: str, source: str) -> str:
@@ -138,6 +140,29 @@ def descriptor_spelling_variants(descriptor_markdown: str) -> set[str]:
     return variants
 
 
+def wire_codec_variants(wire_markdown: str) -> set[str]:
+    """The declared-type rows in the exhaustive m-wire codec matrix."""
+    section = _section(wire_markdown, _WIRE_CODEC_MARKER, "m-wire.md")
+    variants: set[str] = set()
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not cells:
+            continue
+        match = _SPELLING_CELL.fullmatch(cells[0])
+        if match is None:
+            continue
+        variant = match.group(1)
+        if variant in variants:
+            raise VocabMismatch(f"duplicate {variant!r} row in the m-wire codec matrix")
+        variants.add(variant)
+    if not variants:
+        raise VocabMismatch("no declared-type rows found in the m-wire codec matrix")
+    return variants
+
+
 def schema_pattern_variants(schema: object) -> set[str]:
     """The lowercase variant tokens the schema's `neutralType` pattern alternation admits.
 
@@ -168,16 +193,22 @@ def schema_pattern_variants(schema: object) -> set[str]:
     return variants
 
 
-def check(core_markdown: str, descriptor_markdown: str, schema: dict[str, object]) -> list[str]:
-    """Every inconsistency between the three variant homes (empty ⇒ consistent).
+def check(
+    core_markdown: str,
+    descriptor_markdown: str,
+    wire_markdown: str,
+    schema: dict[str, object],
+) -> list[str]:
+    """Every inconsistency between the four variant homes (empty ⇒ consistent).
 
-    Propagates `VocabMismatch` from the three extractors when any home is
+    Propagates `VocabMismatch` from the four extractors when any home is
     missing or malformed; the returned list covers only set-level disagreement
     between successfully parsed homes.
     """
     homes = {
         "the m-core NeutralType algebra block": core_algebra_variants(core_markdown),
         "the m-descriptor Type spellings table": descriptor_spelling_variants(descriptor_markdown),
+        "the m-wire Neutral Wire Codec matrix": wire_codec_variants(wire_markdown),
         "the metamodel.schema.json neutralType pattern": schema_pattern_variants(schema),
     }
     union = set().union(*homes.values())
@@ -190,11 +221,11 @@ def check(core_markdown: str, descriptor_markdown: str, schema: dict[str, object
 
 
 def main(argv: list[str]) -> int:
-    """CLI entry point: parse the three homes under the spec directory *argv[0]*
+    """CLI entry point: parse the four homes under the spec directory *argv[0]*
     (schema location derived via `schemas_dir`) and report agreement on stdout /
     disagreement on stderr.
 
-    Exit codes: 0 — the three homes agree; 1 — a home inside a readable input
+    Exit codes: 0 — the four homes agree; 1 — a home inside a readable input
     is missing or malformed (`VocabMismatch`, schema JSON that does not parse,
     or a schema document whose root is not a JSON object; reported, never
     raised to the caller) or the homes disagree; 2 — usage error, or an input
@@ -209,8 +240,9 @@ def main(argv: list[str]) -> int:
     spec_dir = Path(argv[0])
     core_path = spec_dir / "m-core.md"
     descriptor_path = spec_dir / "m-descriptor.md"
+    wire_path = spec_dir / "m-wire.md"
     texts: list[str] = []
-    for path in (core_path, descriptor_path):
+    for path in (core_path, descriptor_path, wire_path):
         if not path.is_file():
             print(f"not a file: {path}", file=sys.stderr)
             return 2
@@ -219,7 +251,7 @@ def main(argv: list[str]) -> int:
         except (OSError, UnicodeDecodeError) as exc:
             print(f"unreadable spec file {path}: {exc}", file=sys.stderr)
             return 2
-    core_markdown, descriptor_markdown = texts
+    core_markdown, descriptor_markdown, wire_markdown = texts
 
     try:
         schema_path = schemas_dir(spec_dir) / "metamodel.schema.json"
@@ -240,7 +272,7 @@ def main(argv: list[str]) -> int:
             raise VocabMismatch(
                 f"malformed schema JSON in {schema_path}: the document root is not a JSON object"
             )
-        errors = check(core_markdown, descriptor_markdown, schema)
+        errors = check(core_markdown, descriptor_markdown, wire_markdown, schema)
     except VocabMismatch as exc:
         print(f"neutral-type vocabulary check FAILED: {exc}", file=sys.stderr)
         return 1
@@ -256,7 +288,7 @@ def main(argv: list[str]) -> int:
 
     print(
         "neutral-type vocabulary check OK: the m-core algebra, m-descriptor spellings, "
-        "and schema pattern agree"
+        "m-wire codec matrix, and schema pattern agree"
     )
     return 0
 

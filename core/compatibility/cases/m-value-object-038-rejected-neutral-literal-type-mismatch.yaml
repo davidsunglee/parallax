@@ -1,5 +1,5 @@
-# Negative (m-predicate typed-literal MUST, resolved Q7): a nested comparison whose
-# literal type mismatches the declared attribute is refused PRE-SQL.
+# Negative (m-wire typed-literal conversion): a nested comparison whose literal
+# cannot denote the declared attribute type is refused PRE-SQL.
 #
 # Because a value object's structure is DECLARED, the leaf attribute has a neutral
 # type and the comparison is TYPED. `Customer.address.city` is a `string` attribute,
@@ -8,7 +8,7 @@
 # literal"). The node is schema-valid — the polymorphic `literal` admits a number —
 # so only model-aware validation, resolving the leaf's declared `string` type, catches it.
 model: models/customer.yaml
-tags: [m-value-object, m-predicate, rejected, negative, nested, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-wire, rejected, negative, nested, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   objectQuery:
@@ -18,4 +18,4 @@ when:
         path: parallax.compatibility.Customer.address.city
         value: 42
 then:
-  rejectedRule: nested-literal-type-mismatch
+  rejectedRule: neutral-literal-type-mismatch

@@ -113,6 +113,7 @@ MODULE_SCOPE: Mapping[str, str] = {
 _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
     {
         "parallax.core.base",
+        "parallax.core.wire",
         "parallax.core.metamodel",
         "parallax.core.inheritance",
         "parallax.core.storage_layout",
@@ -167,6 +168,8 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # semantic view is what makes that provable rather than asserted.
     "parallax.core.entity._expressions": frozenset(
         {
+            "parallax.core.base",
+            "parallax.core.wire",
             "parallax.core.metamodel",
             "parallax.core.predicate",
             "parallax.core.object_query",
@@ -261,6 +264,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.predicate",
             "parallax.core.object_query",
             "parallax.core.temporal_read",
+            "parallax.core.wire",
         }
     ),
     "parallax.snapshot.handle": frozenset(
@@ -271,6 +275,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.snapshot._inspection",
             "parallax.core.entity",
             "parallax.core.base",
+            "parallax.core.wire",
             "parallax.core.metamodel",
             "parallax.core.predicate",
             "parallax.core.inheritance",
@@ -370,6 +375,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.postgres": frozenset(
         {
             "parallax.core.base",
+            "parallax.core.wire",
             "parallax.core.db_port",
             "parallax.core.db_error",
             "parallax.core.dialect",

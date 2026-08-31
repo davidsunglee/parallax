@@ -116,7 +116,7 @@ and that document is always a codec product: a consumer obtains a `One`'s object
 from `encode` and a `Many`'s array from `encodeMany`, never by assembling a
 host-language value graph or a JSON array of its own. Nesting is therefore
 expressed by composition rather than by a second interface, and every leaf at
-every depth still passes through the encoding table below.
+every depth still passes through `m-wire.encodeWire` against its declaration.
 
 ## Operations
 
@@ -195,9 +195,9 @@ without it, a `many` occurrence would have exactly one construction route, a
 consumer assembling the array itself, which is the one JSON structure this module
 would then not own. An empty sequence yields `[]`, the same document a `Missing`
 or `ExplicitNull` `Many` member encodes to (below). Every element crosses the
-encoding table, and an element mapping may itself carry a nested occurrence's
-document, so a `many` of nested occurrences composes to any depth through these
-two operations and no other.
+same declaration-driven `m-wire.encodeWire` leaf boundary, and an element
+mapping may itself carry a nested occurrence's document, so a `many` of nested
+occurrences composes to any depth through these two operations and no other.
 
 `decode` reads one known path and answers with its presence. The path is resolved
 against the shape, so the declared Neutral Type comes from the model rather than
@@ -320,7 +320,7 @@ text.
 
 `encodeCandidate` builds the **containment candidate** a to-many equality binds:
 the object carrying exactly the constrained paths, each at its declared position
-under `shape` and spelled by the encoding table below, and no other key. It exists
+under `shape` and spelled by `m-wire.encodeWire`, and no other key. It exists
 because a dialect may express "some element of this `Many` equals this" as
 document **containment** rather than as an extraction — MariaDB's `json_contains`
 does (`m-dialect`, `m-sql`) — and containment compares **JSON values**, so neither
@@ -375,9 +375,10 @@ document, and a returned document shares no mutable state with one passed in.
 
 A document leaf's spelling is the value's canonical **Wire Value** (`m-wire`):
 one spelling per Neutral Type, total over the type algebra, unique per value, and
-inverse under decoding. This module states no table of its own and admits no
-second spelling — the characters a Wire read renders are the characters a
-document stores, so storage and transport cannot drift apart.
+inverse under `decodeCanonicalWire`. This module states no table, parser, or
+conversion of its own and admits no second spelling — the characters a Wire read
+renders are the characters a document stores, so storage and transport cannot
+drift apart.
 
 A member whose declared type has no Wire Value is not storable in a document, and
 `json` is never a leaf spelling: no Attribute and no Value Object field may
@@ -407,25 +408,22 @@ predicate and ordering results, and MUST therefore be made together with
 `m-dialect`'s corresponding decision — adding a cast for that type — rather than
 alone.
 
-**Reading a value and validating a stored document are two questions.** `m-wire`
-answers the first for every value wherever it appears — a case literal, a
-predicate literal, a member of a document being decoded — and never refuses on
-canonicality, because what a value names cannot depend on who wrote it.
+**Reading a value and validating a stored document are two questions.** Public
+serialized ingress calls `decodeWire`; a stored leaf calls
+`decodeCanonicalWire`. The latter performs the same admitted conversion exactly
+once and additionally compares the supplied representation with `encodeWire`'s
+variant-aware canonical output. The document codec maps every Wire failure reason
+to its existing `LeafUndecodable` finding at the Logical Judging Cursor; it does
+not expose `neutral-literal-*` rules for corrupt stored state.
 
-Canonicality is a separate, *writer* obligation, and the seam that reads a
-document back **out of storage** is where it is enforced: that seam MUST reject a
-stored value that is not the canonical spelling of the value it names, when its
-carrier preserves enough information to tell the two apart. A `decimal(p, s)`
-short of its declared scale, uppercase hexadecimal, a `timestamp` at a non-UTC
-offset, an uppercase or hyphenless UUID, and a float number that is not the
-shortest one for the value it names all decode into their declared type and are
-still a DIFFERENT document from the one a writer of that value would have stored.
-When parsing has already collapsed two spellings to the same carrier value, as a
-binary64 carrier does for `float64`, the seam cannot recover the distinction and
-MUST materialize the declared value; that does not weaken the obligation on the
-writer. A case literal is not a stored document and is not subject to this check —
-it is an input a case authored, graded for membership alone (`m-case-format`
-"In-space").
+A `decimal(p, s)` short of its declared scale, uppercase hexadecimal, a
+`timestamp` at a non-UTC offset, an uppercase or hyphenless UUID, and a float
+number that is not the shortest one for the value it names are therefore stored
+data findings even when admitted public ingress could name the same managed
+value. Stored canonical decoding receives number provenance from `m-wire.loads`
+when the provider supplies JSON text. A provider-native parsed document that has
+already erased distinguishable numeric spelling cannot recover it and validates
+the remaining value semantics; this does not weaken the obligation on writers.
 
 **Rejection is not repair.** A stored leaf that is the encoding of nothing is
 invalid stored data ("Invalid stored data", below): the codec reports it and

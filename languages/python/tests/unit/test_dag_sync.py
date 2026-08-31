@@ -76,6 +76,7 @@ def test_transitive_closure_follows_edges() -> None:
         "parallax.core.metamodel",
         "parallax.core.model_formation",
         "parallax.core.base",
+        "parallax.core.wire",
     }
     assert dag.transitive_closure(adjacency, "parallax.core.base") == frozenset()
 
@@ -157,6 +158,7 @@ def test_parse_support_scope_graph_reads_the_spec_fence() -> None:
     assert declared["parallax.postgres"] == frozenset(
         {
             "parallax.core.base",
+            "parallax.core.wire",
             "parallax.core.db_port",
             "parallax.core.db_error",
             "parallax.core.dialect",
@@ -248,6 +250,7 @@ def test_parse_support_scope_table_reads_the_prose_rows() -> None:
     assert prose["parallax.postgres"] == frozenset(
         {
             "parallax.core.base",
+            "parallax.core.wire",
             "parallax.core.db_port",
             "parallax.core.db_error",
             "parallax.core.dialect",

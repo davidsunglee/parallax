@@ -14,8 +14,8 @@
       "$ref": "identity.schema.json#/$defs/relationshipRef"
     },
     "literal": {
-      "description": "A scalar literal value usable as a bind.",
-      "type": ["string", "number", "boolean", "null"]
+      "description": "A non-null serialized typed literal. After the subject resolves, model-aware elaboration decodes it exactly once with m-wire against the resolved NeutralType; null tests use dedicated predicate nodes. The schema intentionally does not duplicate per-type literal grammar.",
+      "type": ["string", "number", "boolean"]
     },
     "predicate": {
       "type": "object",
@@ -335,7 +335,7 @@
       "$ref": "identity.schema.json#/$defs/nestedRef"
     },
     "nestedComparison": {
-      "description": "A nested-field comparison: a valueObject inner attribute (referenced by a dotted path) compared against a TYPED literal. The `path` resolves against the model's declared valueObject structure (first segment a declared valueObject on the entity, intermediates nested valueObjects, leaf a declared attribute); the `value` is a polymorphic `literal` whose type MUST match the leaf attribute's declared type (m-predicate). The dialect-specific document extraction (m-sql/m-dialect) casts to that declared type before comparing.",
+      "description": "A nested-field comparison: a valueObject inner attribute compared against a non-null serialized typed literal. The path resolves to one declared leaf, then m-wire decodes the value exactly once against that leaf's NeutralType before SQL lowering.",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "value"],
