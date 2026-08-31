@@ -76,7 +76,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import assert_never, cast
 
-from parallax.core import inheritance, relationship
+from parallax.core import inheritance
 from parallax.core.base import ManagedValue, NeutralType, String
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -87,6 +87,8 @@ from parallax.core.metamodel import (
     NestedValueObjectMetadata,
     RelationshipDeclaration,
     RelationshipIdentity,
+    RelationshipJoin,
+    ReverseRelationshipDeclaration,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
@@ -311,20 +313,14 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
         case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
             target = relationship_target(rel, model, wrong_kind_rule="navigate-value-object-target")
             direction = _resolved_relationship(rel, model)
-            resolved = relationship.view(model).relationship(direction)
-            if resolved is None:  # pragma: no cover - accepted models compile every direction
-                raise ValueError(f"{rel!r} names no resolved relationship direction")
-            source_view = inheritance.view(model).entity(resolved.join.source.entity)
-            target_view = inheritance.view(model).entity(resolved.join.target.entity)
+            join = _direction_join(direction, model)
+            source_view = inheritance.view(model).entity(join.source.entity)
+            target_view = inheritance.view(model).entity(join.target.entity)
             source = (
-                None
-                if source_view is None
-                else source_view.applicable_attribute(resolved.join.source.name)
+                None if source_view is None else source_view.applicable_attribute(join.source.name)
             )
             member = (
-                None
-                if target_view is None
-                else target_view.applicable_attribute(resolved.join.target.name)
+                None if target_view is None else target_view.applicable_attribute(join.target.name)
             )
             if source is None or member is None:  # pragma: no cover - formation validates joins
                 raise ValueError(f"{rel!r} has unresolved relationship join members")
@@ -359,6 +355,20 @@ def _resolved_relationship(rel: str, model: Metamodel) -> RelationshipIdentity:
     if declaring is None:
         raise ValueError(f"{rel!r} names no resolved relationship direction")
     return RelationshipIdentity(declaring.identity, member_name)
+
+
+def _direction_join(direction: RelationshipIdentity, model: Metamodel) -> RelationshipJoin:
+    """The exact source-to-target join for one identity-resolved direction."""
+    declaring = model.entity(direction.source_entity)
+    declaration = None if declaring is None else declaring.relationship(direction.name)
+    if isinstance(declaration, DefiningRelationshipDeclaration):
+        return declaration.join
+    if isinstance(declaration, ReverseRelationshipDeclaration):
+        peer_owner = model.entity(declaration.reverse_of.source_entity)
+        peer = None if peer_owner is None else peer_owner.relationship(declaration.reverse_of.name)
+        if isinstance(peer, DefiningRelationshipDeclaration):
+            return RelationshipJoin(source=peer.join.target, target=peer.join.source)
+    raise ValueError(f"{direction!r} names no resolved relationship direction")
 
 
 def _decode_operand(subject: str, value: object, neutral_type: NeutralType) -> ManagedValue:

@@ -58,7 +58,7 @@ def compile_read(
         requested = "none"
     projection = deep_fetch.ReadProjectionRequest(
         requested,
-        result_form == "instance" or include_value_objects is True or bool(include_value_objects),
+        result_form == "instance" or include_value_objects is True,
     )
     return compile_entity_query(
         deep_fetch.plan(validated, model, projection=projection).root,

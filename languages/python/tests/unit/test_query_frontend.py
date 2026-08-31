@@ -264,33 +264,22 @@ def test_one_attribute_orders_a_query_once() -> None:
         Widget.where(Widget.all).order_by(Widget.qty.asc()).order_by(Widget.qty.desc())
 
 
-def test_nested_value_object_expression_paths() -> None:
-    # Built directly rather than through class access, so it names no Entity
-    # Class and its parameters carry nothing.
+def test_metadata_free_nested_value_object_expression_paths_refuse_typed_operations() -> None:
     address: AttributeExpr[Any, Any] = AttributeExpr("Customer", "address")
-    assert _op(address.city == "Oslo") == {
-        "nestedEq": {"path": "Customer.address.city", "value": "Oslo"}
-    }
-    assert _op(address.geo.country != "US") == {
-        "nestedNotEq": {"path": "Customer.address.geo.country", "value": "US"}
-    }
-    assert _op(address.geo.elevation > 5) == {
-        "nestedGt": {"path": "Customer.address.geo.elevation", "value": 5}
-    }
-    assert _op(address.geo.elevation >= 5) == {
-        "nestedGte": {"path": "Customer.address.geo.elevation", "value": 5}
-    }
-    assert _op(address.geo.elevation < 5) == {
-        "nestedLt": {"path": "Customer.address.geo.elevation", "value": 5}
-    }
-    assert _op(address.geo.elevation <= 5) == {
-        "nestedLte": {"path": "Customer.address.geo.elevation", "value": 5}
-    }
-    assert _op(address.city.in_(["Oslo", "Berlin"])) == {
-        "nestedIn": {"path": "Customer.address.city", "values": ["Oslo", "Berlin"]}
-    }
-    assert _op(address.city.is_null()) == {"nestedIsNull": {"path": "Customer.address.city"}}
-    assert _op(address.city.is_not_null()) == {"nestedIsNotNull": {"path": "Customer.address.city"}}
+    operations = (
+        lambda: address.city == "Oslo",
+        lambda: address.geo.country != "US",
+        lambda: address.geo.elevation > 5,
+        lambda: address.geo.elevation >= 5,
+        lambda: address.geo.elevation < 5,
+        lambda: address.geo.elevation <= 5,
+        lambda: address.city.in_(["Oslo", "Berlin"]),
+        lambda: address.city.is_null(),
+        lambda: address.city.is_not_null(),
+    )
+    for operation in operations:
+        with pytest.raises(QueryDefinitionError, match="resolved scalar metadata"):
+            operation()
 
 
 def test_expression_bool_and_scalar_guards() -> None:

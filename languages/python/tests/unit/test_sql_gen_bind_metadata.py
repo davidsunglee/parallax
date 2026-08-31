@@ -43,7 +43,7 @@ def test_statement_metadata_preserves_ranges_gaps_forms_offsets_and_overrides() 
     statement.append_fragment(fragment.finish(""))
 
     lowered = statement.finish("select ?, ?, ?, ?, ?, ?")
-    spans = lowered._typed_bind_spans  # pyright: ignore[reportPrivateUsage]
+    spans = lowered.typed_bind_spans
     assert [
         (span.start, span.stop, span.neutral_type, span.form)
         for span in spans
@@ -53,10 +53,9 @@ def test_statement_metadata_preserves_ranges_gaps_forms_offsets_and_overrides() 
         (3, 4, STRING, "COMPARISON_TEXT"),
         (4, 5, DATE, "MANAGED"),
     ]
-    assert [
-        (override.index, override.value)
-        for override in lowered._wire_bind_overrides  # pyright: ignore[reportPrivateUsage]
-    ] == [(5, "infinity")]
+    assert [(override.index, override.value) for override in lowered.wire_bind_overrides] == [
+        (5, "infinity")
+    ]
     assert lowered.wire_binds() == (
         "1.20",
         "2.30",
@@ -85,7 +84,7 @@ def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None
         "locking",
     )[0]
 
-    spans = statement._typed_bind_spans  # pyright: ignore[reportPrivateUsage]
+    spans = statement.typed_bind_spans
     assert len(spans) == 3
     assert [
         (span.start, span.width, span.stride, span.repetitions, span.form)

@@ -106,6 +106,18 @@ class LoweredStatement:
     _wire_bind_overrides: tuple[_WireBindOverride, ...] = field(default=(), repr=False)
     _compiler_proven: bool = field(default=False, repr=False, compare=False)
 
+    @property
+    def typed_bind_spans(self) -> tuple[_BindSpan, ...]:
+        return self._typed_bind_spans
+
+    @property
+    def wire_bind_overrides(self) -> tuple[_WireBindOverride, ...]:
+        return self._wire_bind_overrides
+
+    @property
+    def is_compiler_proven(self) -> bool:
+        return self._compiler_proven
+
     def wire_binds(self) -> tuple[WireValue, ...]:
         unprojected = object()
         projected: list[WireValue | object] = [unprojected] * len(self.binds)
@@ -340,13 +352,13 @@ class StatementBuilder:
 
     def append_fragment(self, statement: LoweredStatement) -> None:
         """Append a compiler-proven fragment without discarding bind provenance."""
-        if not statement._compiler_proven:
+        if not statement.is_compiler_proven:
             raise SqlGenError("only a finished compiler fragment may be appended")
         offset = len(self._binds)
         self._binds.extend(statement.binds)
         self._classified += len(statement.binds)
-        self._typed_spans.extend(span.shifted(offset) for span in statement._typed_bind_spans)
-        for override in statement._wire_bind_overrides:
+        self._typed_spans.extend(span.shifted(offset) for span in statement.typed_bind_spans)
+        for override in statement.wire_bind_overrides:
             self._wire_overrides[offset + override.index] = override.value
 
     def finish(self, sql: str) -> LoweredStatement:
