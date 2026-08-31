@@ -6,7 +6,7 @@ is a sibling field, so clause authoring order carries no meaning and no clause
 can nest inside another. Recursion belongs to ``m-predicate`` alone, which this
 module carries as one field.
 
-:class:`EntityQuery` is the internal, non-wire value ``m-sql`` compiles — one
+The private deep-fetch flat-query product is the non-wire value ``m-sql`` compiles — one
 root or related-Entity query whose temporal terms are already injected into its
 predicate. It is deliberately separate from :class:`ObjectQueryNode`: a child
 fetch level derives one without ever being an authored query.
@@ -33,7 +33,6 @@ __all__ = [
     "VALID_TIME",
     "AsOf",
     "AsOfRange",
-    "EntityQuery",
     "History",
     "IncludePath",
     "IncludeSegment",
@@ -243,24 +242,6 @@ class ObjectQueryNode:
     order_by: tuple[OrderKey, ...] = ()
     limit: int | None = None
     includes: tuple[IncludePath, ...] = field(default_factory=tuple)
-
-
-@dataclass(frozen=True, slots=True)
-class EntityQuery:
-    """The normalized query for one root or related Entity.
-
-    An Object Query's clauses are resolved at the planning boundary. SQL
-    compilation therefore receives the target and clauses directly, with temporal
-    terms already injected into ``predicate`` and ``narrow_to`` already resolved
-    to Entity Identities. It is never a wire encoding: a deep-fetch child level
-    derives one from gathered parent keys without any authored query existing.
-    """
-
-    target: EntityIdentity
-    predicate: PredicateNode
-    narrow_to: tuple[EntityIdentity, ...] | None = None
-    order_by: tuple[OrderKey, ...] = ()
-    limit: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

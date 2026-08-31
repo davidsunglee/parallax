@@ -44,7 +44,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen._write import compile_write
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     ChangedFrom,
     ChunkedColumn,
@@ -61,7 +61,6 @@ from parallax.core.unit_work import (
     PredecessorShape,
     PredicateMutation,
     PredicateSelection,
-    PreparedPredicateWrite,
     PredicateWrite,
     TemporalColumns,
     TransactionInstant,
@@ -69,10 +68,13 @@ from parallax.core.unit_work import (
     WriteAssignment,
     WritePlanner,
     whole,
-    prepare_typed_write,
 )
 from parallax.core.unit_work.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
+)
+from parallax.core.unit_work.instructions import (
+    PreparedPredicateWrite,
+    prepare_typed_write,
 )
 from parallax.core.unit_work.planner import Targets  # forbidden-plan-context regression only
 from parallax.snapshot.handle import Database, Transaction, build_write_planner
@@ -298,9 +300,7 @@ def _predicate(entity: str, mutation: PredicateMutation) -> PreparedPredicateWri
             mutation,
             PredicateSelection(
                 entity,
-                predicate_algebra.Comparison(
-                    "lessThan", f"{entity}.balance", "1000000.00"
-                ),
+                predicate_algebra.Comparison("lessThan", f"{entity}.balance", "1000000.00"),
             ),
         ),
         _ACCOUNT,
@@ -392,13 +392,9 @@ def _version_group(
             "update",
             PredicateSelection(
                 entity,
-                predicate_algebra.Comparison(
-                    "lessThan", f"{entity}.balance", "1000000.00"
-                ),
+                predicate_algebra.Comparison("lessThan", f"{entity}.balance", "1000000.00"),
             ),
-            assignments=(
-                WriteAssignment(f"{entity}.balance", Decimal(str(assigned))),
-            ),
+            assignments=(WriteAssignment(f"{entity}.balance", Decimal(str(assigned))),),
         ),
         _ACCOUNT,
     )
@@ -453,9 +449,7 @@ def _temporal_group(
             "terminate",
             PredicateSelection(
                 entity,
-                predicate_algebra.Comparison(
-                    "lessThan", f"{entity}.value", "1000000.00"
-                ),
+                predicate_algebra.Comparison("lessThan", f"{entity}.value", "1000000.00"),
             ),
         ),
         _BALANCE,
@@ -849,7 +843,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
         cast("dict[str, object]", predecessor_phones[0])["number"] = "999"
 
     assert plan.steps[2] == changed
-    statement = compile_write(plan.steps[2], _BRANCH, POSTGRES)
+    statement = compile_write_step(plan.steps[2], _BRANCH, POSTGRES)
     assert statement.binds[-1] == JsonDocument(
         {
             "street": "30 New Road",

@@ -71,7 +71,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from parallax.core.base import ManagedValue, coerce_neutral_input, matches_neutral_type
+from parallax.core.base import ManagedValue, String, coerce_neutral_input, matches_neutral_type
 from parallax.core.entity._errors import EDIT_CODE_BY_RULE, EditError, EditViolation
 from parallax.core.metamodel import (
     AttributeLocation,
@@ -80,12 +80,14 @@ from parallax.core.metamodel import (
     EntityLocation,
     ModelLocation,
     NestedValueObjectMetadata,
+    ValueObjectAttributeDeclaration,
     ValueObjectAttributeIdentity,
     ValueObjectAttributeLocation,
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
     ValueObjectLocation,
     ValueObjectMetadata,
+    ValueObjectShapeDeclaration,
     WriteAssignmentError,
     judge_assignment,
 )
@@ -159,7 +161,7 @@ def snake_to_camel(name: str) -> str:
 
 @runtime_checkable
 class _Documentable(Protocol):
-    """A value that renders itself as a canonical nested document.
+    """A value that renders itself as a managed nested document.
 
     Value Objects satisfy this. Naming the capability structurally rather than
     importing the frontend keeps this module free of an edge back into the
@@ -502,9 +504,12 @@ class AttributeExpr[E, T]:
         return Predicate(Between(attr=str(self.ref), lower=lower_literal, upper=upper_literal))
 
     def _literal(self, value: object) -> Scalar:
-        member = self._resolved_scalar_member()
-        if member is None:
-            return _as_scalar(value)
+        if value is None:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: use .is_null() or .is_not_null() for None",
+            )
+        member = self._require_scalar_member()
         managed = coerce_neutral_input(value, member.type)
         if not matches_neutral_type(managed, member.type):
             raise QueryDefinitionError(
@@ -517,6 +522,15 @@ class AttributeExpr[E, T]:
             raise QueryDefinitionError(
                 code="query-expression-invalid", message=f"{self._dotted()}: {error}"
             ) from error
+
+    def _require_scalar_member(self) -> AttributeMetadata | ValueObjectAttributeMetadata:
+        member = self._resolved_scalar_member()
+        if member is None:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: literal operations require resolved scalar metadata",
+            )
+        return member
 
     def _resolved_scalar_member(self) -> AttributeMetadata | ValueObjectAttributeMetadata | None:
         if isinstance(self._member, AttributeMetadata):
@@ -544,7 +558,8 @@ class AttributeExpr[E, T]:
         return Predicate(NullCheck(op="isNotNull", attr=str(self.ref)))
 
     def _reject_non_nullable_null_check(self) -> None:
-        if self._path or self._member is None or self._member.nullable:
+        member = self._require_scalar_member()
+        if member.nullable:
             return
         raise QueryDefinitionError(
             code="query-expression-invalid",
@@ -571,6 +586,12 @@ class AttributeExpr[E, T]:
         # omits `caseInsensitive` (None), a set flag emits `true`. It never
         # authors an explicit `false` — that only arises from deserializing a
         # document that spelled it out (round-trip fidelity lives in the serde).
+        member = self._require_scalar_member()
+        if not isinstance(member.type, String):
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: string operations require a String leaf",
+            )
         flag = True if case_insensitive else None
         if self._path:
             return Predicate(
@@ -707,26 +728,6 @@ class AttributeExpr[E, T]:
         return hash((self._entity, self._head, self._path))
 
 
-def _as_scalar(value: object) -> Scalar:
-    """``value`` as a wire literal, refusing anything that is not one.
-
-    ``__eq__`` / ``__ne__`` keep ``object`` for Liskov, so this is the only place
-    a non-literal is refused on those two operators. It is a SHAPE rule and needs
-    no model, so it is the frontend's own refusal and carries the frontend's
-    code; whether a literal's TYPE matches the member's declared one stays the
-    model-aware validator's question.
-    """
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    raise QueryDefinitionError(
-        code="query-expression-invalid",
-        message=(
-            f"a comparison takes a non-null scalar literal (string / number / boolean), "
-            f"got {type(value).__name__}"
-        ),
-    )
-
-
 def member_location(member: AttributeMetadata | ValueObjectMetadata) -> ModelLocation:
     """Where a resolved member's own refusal is located.
 
@@ -779,9 +780,7 @@ def judged_edit_violation(
 
 
 def serialize_member(value: object) -> object:
-    """A member's write-row value: a Value Object renders to its canonical
-    document, a tuple of them to a list of documents (a Many occurrence), and
-    every other value passes through unchanged."""
+    """Render Value Objects as managed typed-write documents."""
     if isinstance(value, _Documentable):
         return value.__parallax_document__()
     if isinstance(value, tuple):
@@ -794,67 +793,133 @@ def serialize_member(value: object) -> object:
 
 
 class ElementAttributeExpr[V, T]:
-    """A Value Object element-scoped attribute expression (``Phone.type``).
+    """A Value Object element-scoped attribute expression with resolved leaf facts."""
 
-    ``V`` is the Value Object class the member was reached through and ``T`` its
-    declared Python type, so mixing two Value Objects' members inside one
-    quantifier scope is refused the same way mixing two Entities' members is.
+    __slots__ = ("_path", "_shape")
 
-    Always builds element-relative ``nested*`` nodes with no leading entity
-    prefix, for use inside a relationship or value-object quantifier's interior
-    predicates. Deeper hops resolve dynamically, mirroring
-    :class:`AttributeExpr`'s own value-object hop.
-    """
-
-    __slots__ = ("_path",)
-
-    def __init__(self, path: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        path: tuple[str, ...],
+        shape: ValueObjectShapeDeclaration | None = None,
+    ) -> None:
         self._path = path
+        self._shape = shape
 
     def __getattr__(self, name: str) -> ElementAttributeExpr[V, Any]:
         if name.startswith("_"):
             raise AttributeError(name)
-        return ElementAttributeExpr((*self._path, name))
+        return ElementAttributeExpr((*self._path, name), self._shape)
 
     def _dotted(self) -> str:
         return ".".join(self._path)
 
-    def _cmp(self, kind: str, value: Scalar) -> Predicate[V]:
-        return Predicate(NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=value))
+    def _leaf(self) -> ValueObjectAttributeDeclaration:
+        container = self._shape
+        if container is None:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: literal operations require resolved scalar metadata",
+            )
+        for segment in self._path[:-1]:
+            canonical = snake_to_camel(segment)
+            occurrence = next(
+                (item for item in container.value_objects if item.name == canonical),
+                None,
+            )
+            if occurrence is None:
+                raise QueryDefinitionError(
+                    code="query-expression-invalid",
+                    message=f"{self._dotted()}: {canonical!r} is not a nested Value Object",
+                )
+            container = occurrence.shape
+        name = snake_to_camel(self._path[-1])
+        leaf = next((item for item in container.attributes if item.name == name), None)
+        if leaf is None:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: {name!r} is not a scalar leaf",
+            )
+        return leaf
 
-    def __eq__(self, other: object) -> Predicate[V]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
-        return self._cmp("eq", _as_scalar(other))
+    def _literal(self, value: object) -> Scalar:
+        if value is None:
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: use .is_null() or .is_not_null() for None",
+            )
+        leaf = self._leaf()
+        managed = coerce_neutral_input(value, leaf.type)
+        if not matches_neutral_type(managed, leaf.type):
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: {value!r} is not admitted by {leaf.type!r}",
+            )
+        try:
+            return cast("Scalar", encode_wire(leaf.type, cast("ManagedValue", managed)))
+        except WireEncodingError as error:
+            raise QueryDefinitionError(
+                code="query-expression-invalid", message=f"{self._dotted()}: {error}"
+            ) from error
 
-    def __ne__(self, other: object) -> Predicate[V]:  # type: ignore[override] - DSL comparison builds a Predicate, not object's bool
-        return self._cmp("ne", _as_scalar(other))
+    def _cmp(self, kind: str, value: object) -> Predicate[V]:
+        return Predicate(
+            NestedComparison(op=_NESTED_CMP[kind], path=self._dotted(), value=self._literal(value))
+        )
 
-    def __gt__(self, other: Scalar) -> Predicate[V]:
+    def __eq__(self, other: object) -> Predicate[V]:  # type: ignore[override]
+        return self._cmp("eq", other)
+
+    def __ne__(self, other: object) -> Predicate[V]:  # type: ignore[override]
+        return self._cmp("ne", other)
+
+    def __gt__(self, other: object) -> Predicate[V]:
         return self._cmp("gt", other)
 
-    def __ge__(self, other: Scalar) -> Predicate[V]:
+    def __ge__(self, other: object) -> Predicate[V]:
         return self._cmp("ge", other)
 
-    def __lt__(self, other: Scalar) -> Predicate[V]:
+    def __lt__(self, other: object) -> Predicate[V]:
         return self._cmp("lt", other)
 
-    def __le__(self, other: Scalar) -> Predicate[V]:
+    def __le__(self, other: object) -> Predicate[V]:
         return self._cmp("le", other)
 
     def is_(self, value: bool) -> Predicate[V]:
         return self._cmp("eq", value)
 
-    def in_(self, values: list[Scalar]) -> Predicate[V]:
-        return Predicate(NestedMembership(op="nestedIn", path=self._dotted(), values=tuple(values)))
-
-    def not_in(self, values: list[Scalar]) -> Predicate[V]:
+    def in_(self, values: list[object]) -> Predicate[V]:
         return Predicate(
-            NestedMembership(op="nestedNotIn", path=self._dotted(), values=tuple(values))
+            NestedMembership(
+                op="nestedIn",
+                path=self._dotted(),
+                values=tuple(self._literal(value) for value in values),
+            )
         )
 
-    def between(self, lower: Scalar, upper: Scalar) -> Predicate[V]:
-        return Predicate(NestedRange(path=self._dotted(), lower=lower, upper=upper))
+    def not_in(self, values: list[object]) -> Predicate[V]:
+        return Predicate(
+            NestedMembership(
+                op="nestedNotIn",
+                path=self._dotted(),
+                values=tuple(self._literal(value) for value in values),
+            )
+        )
+
+    def between(self, lower: object, upper: object) -> Predicate[V]:
+        return Predicate(
+            NestedRange(
+                path=self._dotted(),
+                lower=self._literal(lower),
+                upper=self._literal(upper),
+            )
+        )
 
     def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate[V]:
+        if not isinstance(self._leaf().type, String):
+            raise QueryDefinitionError(
+                code="query-expression-invalid",
+                message=f"{self._dotted()}: string operations require a String leaf",
+            )
         return Predicate(
             NestedStringMatch(
                 op=_NESTED_STRINGS[op],
@@ -880,16 +945,26 @@ class ElementAttributeExpr[V, T]:
         return self._string("contains", value, case_insensitive)
 
     def is_null(self) -> Predicate[V]:
+        self._reject_non_nullable_null_check()
         return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))
 
     def is_not_null(self) -> Predicate[V]:
+        self._reject_non_nullable_null_check()
         return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
+
+    def _reject_non_nullable_null_check(self) -> None:
+        if self._leaf().nullable:
+            return
+        raise QueryDefinitionError(
+            code="query-expression-invalid",
+            message=f"{self._dotted()}: null checks require a nullable scalar leaf",
+        )
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
 
-    def __hash__(self) -> int:  # pragma: no cover - expressions are not dict keys
-        return hash(self._path)
+    def __hash__(self) -> int:
+        return hash((self._path, self._shape))
 
 
 @dataclass(frozen=True, slots=True)

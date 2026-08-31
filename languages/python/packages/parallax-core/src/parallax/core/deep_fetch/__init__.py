@@ -1,82 +1,13 @@
-"""``parallax.core.deep_fetch`` enforcement scope (m-deep-fetch).
+"""Resolved deep-fetch planning (m-deep-fetch).
 
-The **pure** deep-fetch planner: it turns one canonical
-:class:`~parallax.core.object_query.ObjectQueryNode` into an ordered
-:class:`ObjectQueryPlan` — one flat root
-:class:`~parallax.core.object_query.EntityQuery` plus a dependency-ordered
-list of :class:`FetchLevel` entries,
-each knowing how to build its own child query from its parent level's distinct
-gathered keys. It never compiles a statement (``m-sql``), never executes
-anything (``m-db-port``), and reifies no list — the two lifecycle result
-surfaces (query-backed lists, snapshot graphs) are built **on top of** this
-plan by their own modules (``m-op-list --> m-deep-fetch``,
-``m-snapshot-read --> m-deep-fetch``).
+The planner consumes a :class:`ValidatedObjectQuery` plus a caller-owned
+:class:`ReadProjectionRequest`. It injects terms from resolved temporal selections,
+canonicalizes validated navigation, resolves the requested projection, and produces
+one flat :class:`ValidatedEntityQuery` for the root plus dependency-ordered child
+levels. Predicate-write materialization enters through :func:`plan_mutation_read`,
+which owns construction of its flat read from a :class:`PreparedPredicateWrite`.
 
-Per the dependency graph, ``m-deep-fetch`` depends on ``m-navigate``,
-``m-relationship``, ``m-object-query``, and ``m-inheritance`` — transitively
-reaching ``m-predicate`` and ``m-temporal-read``, both of which this module
-imports directly (the DAG permits any edge ``m-navigate`` itself reaches). A level's
-to-many decision and its correlation columns are read off the compiled
-direction ``m-navigate`` resolves, because a reverse declaration carries neither
-an inverted cardinality nor a swapped join of its own. This planning boundary owns
-root composition (``inject_as_of`` then ``navigate.canonicalize``); each level's own propagated
-as-of term and relationship resolution reuse ``parallax.core.navigate``'s
-:func:`~parallax.core.navigate.hop_as_of_terms` /
-:func:`~parallax.core.navigate.resolve_relationship` — the SAME primitives a
-navigation hop's own interior rewrite uses — so a deep-fetch child level's
-temporal propagation can never drift from a navigation filter's.
-
-## Dedup identity and shared-prefix folding
-
-Levels form a **trie** over the declared paths: each ``IncludeSegment`` is looked
-up (or inserted) as a child of its parent level (the root, or an earlier level)
-keyed by ``(the segment's relationship reference, whether a narrow was AUTHORED,
-the resolved effective concrete-subtype set)`` — the dedup identity
-``m-deep-fetch.md`` fixes, with the authored flag carried alongside the resolved
-set because a segment's own view key is derived from it. Two paths sharing a
-prefix therefore walk into the SAME trie node and never duplicate a level; two
-hops narrowed to different concrete sets resolve to DIFFERENT keys, and a broad
-hop is never the same hop as an authored narrow over the same relationship —
-including a REDUNDANT narrow resolving to the target's entire effective set,
-which returns the same rows under a distinct bracketed view key. Each distinct
-key counts toward `L`.
-
-A path may additionally carry a **source guard** (``IncludePath.appliesTo``), which
-restricts the queried objects the path starts from. It joins the key at the ROOT
-position only, and it keys on the **resolved source set** rather than on whether a
-guard was authored — the deliberate opposite of the segment rule above, because a
-guard creates no view of its own. Two guards resolving to the same concretes are
-therefore one hop, a guard admitting every root object IS the broad path, and every
-proper guard resolves to a strict subset and separates automatically.
-
-## Back-reference cycles (m-case-format "Back-reference cycles")
-
-m-case-format stops recursion at a **true cycle** — a relationship reaching an
-**ancestor node on the current path** — so the shortcut this module applies is
-sound only where the reached node is that ancestor by construction, never merely
-where the reached *family* was seen before. The condition is the **inverse edge**:
-a segment is a back-reference when it is **to-one** and its direction is the peer
-of the very direction its parent level was reached by (each names the other as its
-reverse, across the same association). The parent row then carries the ancestor's
-key on the SAME correlation attribute the arrival hop joined on, so walking it
-backwards can only land on the parent level's own parent — already materialized.
-Such a level is marked :attr:`FetchLevel.is_back_reference` and carries no child
-query at all — the assembler resolves it from the graph-local identity map, never
-issuing SQL for it (m-deep-fetch's "at most 1 + L" ceiling is an upper bound; a
-back-reference level costs zero).
-
-Every other family revisit is an ordinary queried level, because nothing pins the
-reached row to the path's ancestor:
-
-- a **to-many** segment gathers its rows by the CHILD's own foreign key to the
-  parent, so they are whatever that key selects rather than the ancestor the path
-  arrived from — the owner of the Dog a path reached may own Dogs the read never
-  materialized;
-- a to-one segment over a **different association** than the one the path arrived
-  on revisits the family through an unrelated key, so it may select a row of that
-  family the read never materialized at all;
-- a to-one segment hanging directly off the **root** revisits the root's own family
-  with no arrival edge behind it, so there is no ancestor row to resolve against.
+This module compiles and executes nothing. SQL sees only the resolved flat products.
 """
 
 from __future__ import annotations
@@ -85,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal, NamedTuple, cast
 
-from parallax.core import inheritance, navigate
+from parallax.core import inheritance, navigate, relationship
 from parallax.core.base import ManagedValue
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.metamodel import (
@@ -99,15 +30,16 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     SortDirection,
     TemporalDimension,
-    entity_by_name,
+    ValueObjectMetadata,
 )
-from parallax.core.object_query import (
-    IncludePath,
-    IncludeSegment,
-    OrderKey,
+from parallax.core.object_query._validated import (
+    ValidatedIncludePath,
+    ValidatedIncludeSegment,
     ValidatedObjectQuery,
+    ValidatedOrderTerm,
+    ValidatedTemporalSelection,
+    resolved_order_term,
 )
-from parallax.core.predicate import PredicateNode
 from parallax.core.predicate._validated import (
     ValidatedPredicate,
 )
@@ -119,10 +51,11 @@ from parallax.core.predicate._validated import (
 )
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import (
-    inject_validated_as_of,
-    resolve_pinned_instants,
+    inject_resolved_as_of,
+    resolved_pinned_instants,
     validated_hop_as_of_terms,
 )
+from parallax.core.unit_work.instructions import PreparedPredicateWrite
 
 __all__ = [
     "CorrelationMember",
@@ -132,13 +65,28 @@ __all__ = [
     "ObjectQueryPlan",
     "ParentRef",
     "RootRef",
-    "ValidatedEntityQuery",
     "plan",
 ]
 
 
 class DeepFetchError(ValueError):
     """A deep-fetch path cannot be planned against the metamodel."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReadProjectionRequest:
+    """Snapshot-owned demand that deep fetch resolves against an exact target."""
+
+    value_objects: Literal["none", "all"] | frozenset[str]
+    observe_structured_document: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedReadProjection:
+    """The exact resolved Value Object/document demand lowerable by SQL."""
+
+    value_objects: tuple[ValueObjectMetadata, ...]
+    observe_structured_document: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,14 +134,10 @@ class ValidatedEntityQuery:
     target: EntityIdentity
     entity: EntityMetadata
     validated_predicate: ValidatedPredicate
+    projection: ResolvedReadProjection
     narrow_to: tuple[EntityIdentity, ...] | None = None
-    order_by: tuple[OrderKey, ...] = ()
+    order_by: tuple[ValidatedOrderTerm, ...] = ()
     limit: int | None = None
-
-    @property
-    def predicate(self) -> PredicateNode:
-        """The retained authored predicate, for diagnostics and plan inspection."""
-        return self.validated_predicate.authored
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,7 +197,7 @@ class FetchLevel:
     child: EntityMetadata | None = None
     related: CorrelationMember | None = None
     as_of_terms: tuple[ValidatedPredicate, ...] = ()
-    order_keys: tuple[OrderKey, ...] = ()
+    order_terms: tuple[ValidatedOrderTerm, ...] = ()
     narrow_to: tuple[EntityIdentity, ...] | None = None
     source_position: tuple[EntityIdentity, ...] | None = None
     related_member: AttributeMetadata | None = None
@@ -293,75 +237,89 @@ class FetchLevel:
             entity=target,
             validated_predicate=predicate,
             narrow_to=self.narrow_to,
-            order_by=self.order_keys,
+            order_by=self.order_terms,
+            projection=_projection_for(target, None, ReadProjectionRequest("all", True)),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class ObjectQueryPlan:
-    """A deep fetch's canonicalized root query plus its ordered levels.
-
-    ``root`` is ready for ``compile_read`` unchanged (clauses resolved, as-of
-    injected, navigation canonicalized). ``levels`` is dependency-ordered: a level's own
-    ``parent`` (root, or an earlier level) always precedes it, so a single
-    left-to-right pass satisfies every level's data dependency.
-    """
+    """A resolved flat root query plus dependency-ordered fetch levels."""
 
     root: ValidatedEntityQuery
     levels: tuple[FetchLevel, ...]
 
 
-def plan(query: ValidatedObjectQuery, model: Metamodel) -> ObjectQueryPlan:
-    """Plan ``query``'s Includes against ``model`` and canonicalize its root.
-
-    ``query`` is the read's canonical Object Query — clauses already flat, so
-    nothing here peels or rebuilds anything. A query carrying no Includes plans
-    with zero levels (the degenerate "materialize with no relationships" case a
-    plain snapshot read, or a milestone-set ``history`` / ``asOfRange`` read,
-    needs — both funnel through the SAME root canonicalization this function
-    performs). ``entity`` is the queried root Entity the caller resolved from
-    ``query.target`` — an inheritance participant (abstract root, abstract
-    subtype, or concrete subtype) declares no as-of axes of its own when its
-    family's axes live on the root (`m-inheritance`), so the root query's as-of
-    injection resolves through the Inheritance Facet's family root rather than
-    ``entity``'s own (possibly empty) declaration.
-    """
+def plan(
+    query: ValidatedObjectQuery,
+    model: Metamodel,
+    *,
+    projection: ReadProjectionRequest,
+) -> ObjectQueryPlan:
+    """Plan validated Includes and resolve the caller's projection request."""
     entity = query.root
-    authored = query.authored
     families = inheritance.view(model)
     temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
-    root_pins = resolve_pinned_instants(authored.temporal, temporal_entity)
-    root_injected = inject_validated_as_of(
-        query.validated_predicate, authored.temporal, temporal_entity
-    )
+    root_pins = resolved_pinned_instants(query.temporal)
+    root_injected = inject_resolved_as_of(query.predicate, query.temporal, temporal_entity)
     predicate = navigate.canonicalize_validated(root_injected, model, entity, root_pins)
     narrow_to = (
-        _resolve_identities(model, authored.narrow_to) if authored.narrow_to is not None else None
+        None if query.narrow_to is None else tuple(item.identity for item in query.narrow_to)
     )
     root = ValidatedEntityQuery(
         target=entity.identity,
         entity=entity,
         validated_predicate=predicate,
         narrow_to=narrow_to,
-        order_by=authored.order_by,
-        limit=authored.limit,
+        order_by=query.order_by,
+        projection=_projection_for(entity, families, projection),
+        limit=query.limit,
     )
 
     builder = _PlanBuilder(model=model, families=families, root_pins=root_pins)
     builder.seed_root(entity)
-    for path in authored.includes:
+    for path in query.includes:
         builder.add_path(path)
     return ObjectQueryPlan(root=root, levels=tuple(builder.levels))
 
 
-def _resolve_identities(model: Metamodel, names: Sequence[str]) -> tuple[EntityIdentity, ...]:
-    resolved: list[EntityIdentity] = []
-    for name in names:
-        entity = entity_by_name(model, name)
-        if entity is None:
-            raise DeepFetchError(f"{name!r} names no single Entity in the model")
-        resolved.append(entity.identity)
-    return tuple(resolved)
+def plan_mutation_read(
+    write: PreparedPredicateWrite,
+    *,
+    model: Metamodel,
+    temporal: tuple[ValidatedTemporalSelection, ...],
+    projection: ReadProjectionRequest,
+) -> ValidatedEntityQuery:
+    """Produce the one resolved flat read required to materialize a predicate write."""
+    entity = write.selection.target
+    families = inheritance.view(model)
+    temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
+    root_pins = resolved_pinned_instants(temporal)
+    injected = inject_resolved_as_of(write.selection.predicate, temporal, temporal_entity)
+    predicate = navigate.canonicalize_validated(injected, model, entity, root_pins)
+    assigned = frozenset(
+        assignment.member.identity.path[-1]
+        for assignment in write.managed_assignments
+        if not isinstance(assignment.member, AttributeMetadata)
+    )
+    requested = projection.value_objects
+    if requested == "all":
+        value_objects: Literal["all"] | frozenset[str] = "all"
+    elif requested == "none":
+        value_objects = assigned
+    else:
+        value_objects = requested | assigned
+    resolved_projection = _projection_for(
+        entity,
+        families,
+        ReadProjectionRequest(value_objects, projection.observe_structured_document),
+    )
+    return ValidatedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        validated_predicate=predicate,
+        projection=resolved_projection,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -410,7 +368,7 @@ def _new_owners() -> dict[int, EntityMetadata]:
 class _PlanBuilder:
     model: Metamodel
     families: InheritanceFacet
-    root_pins: Mapping[TemporalDimension, str]
+    root_pins: Mapping[TemporalDimension, ManagedValue]
     levels: list[FetchLevel] = field(default_factory=_new_levels)
     _children: dict[_TrieKey, int] = field(default_factory=_new_children)
     # The relationship direction each trie node was REACHED by, absent for the root:
@@ -425,35 +383,39 @@ class _PlanBuilder:
 
     def seed_root(self, root_entity: EntityMetadata) -> None:
         self._owners[_ROOT_ID] = root_entity
-        self._root_position = _resolve_root_source(self.model, self.families, root_entity, None)
+        self._root_position = _resolve_root_source(self.model, self.families, root_entity)
 
-    def add_path(self, path: IncludePath) -> None:
-        source = _resolve_root_source(
-            self.model, self.families, self._owners[_ROOT_ID], path.applies_to
-        )
+    def add_path(self, path: ValidatedIncludePath) -> None:
+        source = path.source_position
         parent_id = _ROOT_ID
         for segment in path.segments:
             parent_id = self._add_segment(parent_id, segment, source)
 
     def _add_segment(
-        self, parent_id: int, segment: IncludeSegment, root_source: tuple[EntityIdentity, ...]
+        self,
+        parent_id: int,
+        segment: ValidatedIncludeSegment,
+        root_source: tuple[EntityIdentity, ...],
     ) -> int:
         if parent_id != _ROOT_ID and self.levels[parent_id].is_back_reference:
             raise DeepFetchError(
-                f"{segment.rel!r}: a deep-fetch path cannot continue past a back-reference "
+                f"{segment.relationship!r}: a deep-fetch path cannot continue "
+                "past a back-reference "
                 "level (m-case-format 'Back-reference cycles' — the ancestor-revisit hop's "
                 "rows are already fully known; no corpus case needs a level beneath one)"
             )
         owner = self._owners[parent_id]
-        direction = navigate.resolve_relationship(segment.rel, owner.identity, self.model)
-        related_entity = _entity(self.model, direction.join.target.entity)
-        position = _resolve_position(self.model, self.families, related_entity, segment)
-        narrowed = bool(segment.narrow_to)
+        direction = relationship.view(self.model).relationship(segment.relationship)
+        if direction is None:
+            raise DeepFetchError(f"resolved relationship {segment.relationship!r} is absent")
+        related_entity = segment.target
+        position = segment.position
+        narrowed = segment.authored_narrow
         source = root_source if parent_id == _ROOT_ID else None
         key = _TrieKey(
             parent=parent_id,
             root_source=source,
-            rel=segment.rel,
+            rel=f"{direction.identity.source_entity.canonical}.{direction.identity.name}",
             narrowed=narrowed,
             position=position,
         )
@@ -467,7 +429,7 @@ class _PlanBuilder:
             self._arrivals.get(parent_id), direction
         )
 
-        _, _, rel_local = segment.rel.rpartition(".")
+        rel_local = direction.identity.name
         attach_key = _view_key(rel_local, narrowed, position, self.families)
         owner = CorrelationMember(
             identity=direction.join.source,
@@ -490,7 +452,8 @@ class _PlanBuilder:
                 source_position=source_position,
             )
         else:
-            child_target, narrow_to = _child_target(self.model, direction, position, segment)
+            child_target = position[0] if len(position) == 1 else direction.join.target.entity
+            narrow_to = position if len(position) > 1 and narrowed else None
             child = _entity(self.model, child_target)
             related_member = _attribute_metadata(self.families, direction.join.target)
             level = FetchLevel(
@@ -507,7 +470,7 @@ class _PlanBuilder:
                     reference=f"{child_target.canonical}.{direction.join.target.name}",
                 ),
                 as_of_terms=validated_hop_as_of_terms(related_entity, self.model, self.root_pins),
-                order_keys=_order_keys(direction, child_target.canonical),
+                order_terms=_resolved_order_terms(direction, child, self.families),
                 narrow_to=narrow_to,
                 source_position=source_position,
                 related_member=related_member,
@@ -519,6 +482,50 @@ class _PlanBuilder:
         self._arrivals[index] = direction
         self._owners[index] = related_entity
         return index
+
+
+def _projection_for(
+    entity: EntityMetadata,
+    families: InheritanceFacet | None,
+    request: ReadProjectionRequest,
+) -> ResolvedReadProjection:
+    available = (
+        tuple(entity.declared_value_objects)
+        if families is None
+        else tuple(_entity_view(families, entity.identity).applicable_value_objects)
+    )
+    if request.value_objects == "all":
+        selected = available
+    elif request.value_objects == "none":
+        selected = ()
+    else:
+        selected = tuple(
+            occurrence
+            for occurrence in available
+            if occurrence.identity.path[-1] in request.value_objects
+        )
+    return ResolvedReadProjection(selected, request.observe_structured_document)
+
+
+def _resolved_order_terms(
+    direction: RelationshipMetadata,
+    child: EntityMetadata,
+    families: InheritanceFacet,
+) -> tuple[ValidatedOrderTerm, ...]:
+    view = _entity_view(families, child.identity)
+    terms: list[ValidatedOrderTerm] = []
+    for order in direction.order_by:
+        member = view.applicable_attribute(order.attribute.name)
+        if member is None:
+            raise DeepFetchError(f"resolved relationship order member {order.attribute} is absent")
+        terms.append(
+            resolved_order_term(
+                member,
+                direction=_SORT_DIRECTIONS[order.direction],
+                nulls=_NULL_PLACEMENTS[order.nulls],
+            )
+        )
+    return tuple(terms)
 
 
 def _is_inverse_edge(arrival: RelationshipMetadata | None, direction: RelationshipMetadata) -> bool:
@@ -590,58 +597,10 @@ def _attribute_metadata(facet: InheritanceFacet, attribute: AttributeIdentity) -
     return declared
 
 
-def _narrowed_position(
-    model: Metamodel, facet: InheritanceFacet, to: Sequence[str]
-) -> tuple[EntityIdentity, ...] | None:
-    """The canonical effective concrete set an authored ``to`` list denotes, or
-    ``None`` when a name denotes no single Entity or the members span two families.
-
-    Each name is a query reference and resolves model-wide by
-    :func:`~parallax.core.metamodel.entity_by_name`'s rule, never into the
-    referring Entity's own namespace — the caller classifies the miss in its own
-    vocabulary, as `m-predicate`'s validator does for the same spellings.
-    """
-    members: list[EntityIdentity] = []
-    for name in to:
-        entity = entity_by_name(model, name)
-        if entity is None:
-            return None
-        members.append(entity.identity)
-    position = facet.position(tuple(members))
-    return None if position is None else tuple(position.concrete_subtypes)
-
-
-def _resolve_position(
-    model: Metamodel, facet: InheritanceFacet, related: EntityMetadata, segment: IncludeSegment
-) -> tuple[EntityIdentity, ...]:
-    """The hop's resolved effective concrete-subtype set (m-deep-fetch dedup
-    identity's second component): the segment's own narrow when authored, else
-    the relationship target's own effective set — a non-polymorphic target's
-    trivial one-name set either way.
-
-    A family position names its members by their DECLARED names, because those
-    are the names a narrowed view key spells and the names a graph assembler
-    keys a row's own concrete and family identity by; a non-participant names
-    itself canonically, as the relationship's own declared target does.
-    """
-    if related.inheritance is None:
-        return (related.identity,)
-    if segment.narrow_to:
-        position = _narrowed_position(model, facet, segment.narrow_to)
-        if position is None:
-            raise DeepFetchError(
-                f"narrow to {list(segment.narrow_to)} names an entity the model does not "
-                "declare, or spans more than one inheritance family"
-            )
-        return position
-    return tuple(_entity_view(facet, related.identity).concrete_subtypes)
-
-
 def _resolve_root_source(
     model: Metamodel,
     facet: InheritanceFacet,
     root: EntityMetadata,
-    narrow: tuple[str, ...] | None,
 ) -> tuple[EntityIdentity, ...]:
     """The concrete source set ONE path starts from (m-deep-fetch's root hop identity).
 
@@ -655,15 +614,7 @@ def _resolve_root_source(
     """
     if root.inheritance is None:
         return (root.identity,)
-    if narrow is None:
-        return tuple(_entity_view(facet, root.identity).concrete_subtypes)
-    position = _narrowed_position(model, facet, narrow)
-    if position is None:
-        raise DeepFetchError(
-            f"path-root narrow to {list(narrow)} names an entity the model does not "
-            "declare, or spans more than one inheritance family"
-        )
-    return position
+    return tuple(_entity_view(facet, root.identity).concrete_subtypes)
 
 
 def _view_key(
@@ -683,31 +634,6 @@ def _view_key(
     return f"{rel_local}[{','.join(variants)}]"
 
 
-def _child_target(
-    model: Metamodel,
-    direction: RelationshipMetadata,
-    position: tuple[EntityIdentity, ...],
-    segment: IncludeSegment,
-) -> tuple[EntityIdentity, tuple[EntityIdentity, ...] | None]:
-    """The level's own read target entity, and its ``Narrow.to`` (or
-    ``None``) — the child-level analogue of `m-sql`'s abstract-read dispatch,
-    but keyed on the RESOLVED POSITION'S cardinality rather than whether the
-    named target is itself abstract (m-deep-fetch: a single-concrete narrowed
-    view carries no `familyVariant`, unlike a top-level abstract-target read):
-    a position resolving to exactly one concrete targets that concrete directly
-    (no `Narrow` node — `m-sql`'s existing concrete-target dispatch already
-    yields the correct tag filter with no tag projection); a position spanning
-    2+ concretes targets the relationship's own (polymorphic) position, `Narrow`-
-    wrapped only when the segment itself authored one (a broad hop reaching 2+
-    concretes naturally needs no wrapper — `m-sql`'s own effective-set
-    resolution already returns the same set from the bare target)."""
-    if len(position) == 1:
-        return position[0], None
-    if segment.narrow_to:
-        return direction.join.target.entity, _resolve_identities(model, segment.narrow_to)
-    return direction.join.target.entity, None
-
-
 _SORT_DIRECTIONS: Final[Mapping[SortDirection, Literal["asc", "desc"]]] = {
     SortDirection.ASCENDING: "asc",
     SortDirection.DESCENDING: "desc",
@@ -717,24 +643,3 @@ _NULL_PLACEMENTS: Final[Mapping[NullPlacement, Literal["first", "last"]]] = {
     NullPlacement.NULLS_FIRST: "first",
     NullPlacement.NULLS_LAST: "last",
 }
-
-
-def _order_keys(direction: RelationshipMetadata, qualifier: str) -> tuple[OrderKey, ...]:
-    """The declared relationship ``orderBy``, canonicalized to qualified `OrderKey`s
-    (m-deep-fetch "Ordered to-many children"). The class-name qualifier is
-    resolution-inert (`m-sql`'s `entity_attribute` matches on the bare attribute
-    name alone) but keeps the reference grammar's shape.
-
-    This is the translation boundary between the metamodel's Sort Direction and
-    Null Placement and Predicate's own wire vocabulary: an accepted
-    ordering term always carries both (an omitted direction normalizes to
-    ascending and an omitted placement to nulls-last at formation), while an
-    authored sort key may still leave either of its own unset."""
-    return tuple(
-        OrderKey(
-            attr=f"{qualifier}.{term.attribute.name}",
-            direction=_SORT_DIRECTIONS[term.direction],
-            nulls=_NULL_PLACEMENTS[term.nulls],
-        )
-        for term in direction.order_by
-    )

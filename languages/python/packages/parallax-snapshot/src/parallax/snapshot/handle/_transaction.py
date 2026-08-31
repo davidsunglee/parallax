@@ -55,9 +55,10 @@ from parallax.core.execution_lifecycle._activity import (
     refuse_reentry,
 )
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
-from parallax.core.object_query import ObjectQueryNode, ValidatedObjectQuery
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
-from parallax.core.temporal_read import scans_an_axis
+from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.temporal_read import scans_validated_axis
 from parallax.core.unit_work import (
     KeyedMutation,
     SettledEvidence,
@@ -730,7 +731,7 @@ class Transaction:
     ) -> Snapshot[Any]:
         """One participating read's own activity: execute, convert, publish."""
         with self._attempt.read(node.target, publication.interface) as read:
-            if scans_an_axis(node):
+            if scans_validated_axis(validated.temporal):
                 return publication.from_history(
                     find_history(
                         validated,

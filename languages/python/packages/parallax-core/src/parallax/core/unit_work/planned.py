@@ -17,7 +17,12 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final
 
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    EntityMetadata,
+    ValueObjectIdentity,
+)
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.unit_work.observe import PredecessorRow
 
@@ -60,7 +65,6 @@ __all__ = [
     "PlannedUpdate",
     "PlannedValue",
     "PlannedWrite",
-    "PredicateTarget",
     "SelfIncrement",
     "Shortfall",
     "StaleWrite",
@@ -343,15 +347,16 @@ class KeyTarget:
 
 
 @dataclass(frozen=True, slots=True)
-class PredicateTarget:
-    """A readless selection of every row matching one typed predicate.
+class ValidatedMutationSelection:
+    """A resolved mutation target and its occurrence-local semantic predicate.
 
     It carries the predicate and nothing else: the enclosing step already names
-    the Entity, and a Predicate Target's presence already implies an unversioned
+    the Entity, and a Validated Mutation Selection's presence already implies an unversioned
     Non-Temporal step, an unbounded expected effect, and ordering-barrier
     behavior.
     """
 
+    target: EntityMetadata
     predicate: ValidatedPredicate
 
 
@@ -421,7 +426,7 @@ class MilestoneTarget:
             )
 
 
-type WriteTarget = KeyTarget | PredicateTarget | MilestoneTarget
+type WriteTarget = KeyTarget | ValidatedMutationSelection | MilestoneTarget
 """The semantic row selection of a Planned Write, distinct from observed
 predecessor state and from any concurrency condition."""
 
@@ -593,10 +598,11 @@ def _settle(
                 "Planned Insert successors and never survives as an in-place revision or a "
                 "physical deletion"
             )
-        case PredicateTarget():
+        case ValidatedMutationSelection():
             if not isinstance(concurrency, Unversioned) or not isinstance(affected_rows, AnyCount):
                 raise ValueError(
-                    f"{entity.canonical}: a Predicate Target is readless, so it implies "
+                    f"{entity.canonical}: a Validated Mutation Selection is readless, "
+                    "so it implies "
                     "Unversioned concurrency and an unbounded expected effect"
                 )
         case KeyTarget():

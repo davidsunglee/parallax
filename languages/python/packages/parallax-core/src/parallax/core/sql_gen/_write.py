@@ -1,6 +1,6 @@
 """Private lowering from managed planned writes to SQL statements.
 
-:func:`compile_write` answers the single PHYSICAL question a finalized
+:func:`compile_write_step` answers the single PHYSICAL question a finalized
 :class:`~parallax.core.unit_work.PlannedWrite` leaves open: how one storage
 layout and one dialect express it. It reads the target's Storage Layout Entity
 view for column participation and order, derives the table-per-hierarchy tag at
@@ -63,9 +63,7 @@ from parallax.core.sql_gen._compile import compile_write_predicate
 from parallax.core.sql_gen._context import (
     LoweredStatement,
     SqlGenError,
-)
-from parallax.core.sql_gen._context import (
-    StatementBuilder as _Ctx,
+    StatementBuilder,
 )
 from parallax.core.storage_layout import (
     DocumentPath,
@@ -88,10 +86,10 @@ from parallax.core.unit_work.planned import (
     PlannedInsert,
     PlannedUpdate,
     PlannedWrite,
-    PredicateTarget,
     SelfIncrement,
     TemporalConcurrency,
     TemporalGate,
+    ValidatedMutationSelection,
     Versioned,
     VersionGate,
     WriteTarget,
@@ -121,15 +119,17 @@ class _DocumentAssignments:
 type _Cell = tuple[str, object, NeutralType | None]
 
 
-def _ctx(meta: Metamodel, dialect: Dialect) -> _Ctx:
-    return _Ctx(meta, inheritance.view(meta), storage_layout.view(meta), dialect)
+def _ctx(meta: Metamodel, dialect: Dialect) -> StatementBuilder:
+    return StatementBuilder(meta, inheritance.view(meta), storage_layout.view(meta), dialect)
 
 
-def _bind(ctx: _Ctx, value: object, neutral_type: NeutralType | None = None) -> None:
-    if neutral_type is None or value is None:
-        ctx.bind(value)
+def _bind(ctx: StatementBuilder, value: object, neutral_type: NeutralType | None = None) -> None:
+    if neutral_type is not None and value is not None:
+        ctx.bind_managed(value, neutral_type)
+    elif isinstance(value, JsonDocument):
+        ctx.bind_document(value)
     else:
-        ctx.bind_typed(value, neutral_type)
+        ctx.bind_structural(value)
 
 
 def _attribute(meta: Metamodel, identity: AttributeIdentity) -> AttributeMetadata:
@@ -194,7 +194,7 @@ def version_attribute(
     )
 
 
-def compile_write(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
+def compile_write_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
     """Lower one finalized step to its single DML statement."""
     match step:
         case PlannedInsert():
@@ -249,12 +249,12 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Low
     table = view.layout.table.name
     ctx = _ctx(meta, dialect)
     if not any(isinstance(value, MaxPlusOne) for _, value, _ in rows[0]):
-        for row in rows:
-            for _column_name, value, neutral_type in row:
-                _bind(ctx, value, neutral_type)
+        ctx.bind_typed_rows(
+            tuple(tuple(value for _column, value, _type in row) for row in rows),
+            tuple(neutral_type for _column, _value, neutral_type in rows[0]),
+        )
         tuples = ", ".join(f"({', '.join('?' for _ in row)})" for row in rows)
-        ctx.repeat_typed_pattern(start=0, width=len(rows[0]), repetitions=len(rows))
-        return ctx.statement(f"insert into {table}({columns}) values {tuples}")
+        return ctx.finish(f"insert into {table}({columns}) values {tuples}")
     if len(rows) > 1:
         raise SqlGenError(
             f"multi-entry insert on {entity.identity.name!r}: a generated-value expression "
@@ -264,12 +264,12 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Low
     for column, value, neutral_type in rows[0]:
         if isinstance(value, MaxPlusOne):
             select_parts.append(f"coalesce(max(t0.{dialect.quote(column)}), ?) + ?")
-            ctx.bind(0)
-            ctx.bind(1)
+            ctx.bind_framework(0)
+            ctx.bind_framework(1)
         else:
             select_parts.append("?")
             _bind(ctx, value, neutral_type)
-    return ctx.statement(
+    return ctx.finish(
         f"insert into {table}({columns}) select {', '.join(select_parts)} from {table} t0"
     )
 
@@ -291,7 +291,7 @@ def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Low
     assignment_sql = _assignment_clause(ctx, view, step.assignments, meta, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
-    return ctx.statement(
+    return ctx.finish(
         f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}"
     )
 
@@ -311,7 +311,7 @@ def _lower_close(step: PlannedClose, meta: Metamodel, dialect: Dialect) -> Lower
     assignment_sql = _assignment_clause(ctx, view, step.assignments, meta, entity, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _temporal_gate(ctx, view, step.concurrency, entity, meta, dialect)
-    return ctx.statement(
+    return ctx.finish(
         f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}"
     )
 
@@ -323,11 +323,11 @@ def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> Low
     ctx = _ctx(meta, dialect)
     where_sql = _target_predicate(ctx, view, step.target, entity, meta, dialect)
     gate_sql = _gate(ctx, view, step.concurrency, meta, dialect)
-    return ctx.statement(f"delete from {view.layout.table.name} where {where_sql}{gate_sql}")
+    return ctx.finish(f"delete from {view.layout.table.name} where {where_sql}{gate_sql}")
 
 
 def _assignment_clause(
-    ctx: _Ctx,
+    ctx: StatementBuilder,
     view: EntityLayoutView,
     assignments: PlannedAssignments,
     meta: Metamodel,
@@ -354,7 +354,7 @@ def _assignment_clause(
 
 
 def _assignment(
-    ctx: _Ctx,
+    ctx: StatementBuilder,
     column: str,
     value: object,
     neutral_type: NeutralType | None,
@@ -369,7 +369,7 @@ def _assignment(
     """
     quoted = dialect.quote(column)
     if isinstance(value, SelfIncrement):
-        ctx.bind(value.amount)
+        ctx.bind_framework(value.amount)
         return f"{quoted} = {quoted} + ?"
     if isinstance(value, _DocumentAssignments):
         expression, mutation_binds = dialect.document_mutation(quoted, value.assignments)
@@ -378,9 +378,9 @@ def _assignment(
             leaf_type = value.leaf_types[assignment_index]
             if offset == 1 and leaf_type is not None:
                 wire_value = cast("WireValue", value.assignments[assignment_index].value)
-                ctx.bind_override(bind, wire_value)
+                ctx.bind_framework(bind, wire_value=wire_value)
             else:
-                ctx.bind(bind)
+                _bind(ctx, bind)
         return f"{quoted} = {expression}"
     _bind(ctx, value, neutral_type)
     return f"{quoted} = ?"
@@ -402,7 +402,7 @@ def _document_binds(binds: Sequence[object]) -> tuple[object, ...]:
 
 
 def _target_predicate(
-    ctx: _Ctx,
+    ctx: StatementBuilder,
     view: EntityLayoutView,
     target: WriteTarget,
     entity: EntityMetadata,
@@ -418,9 +418,11 @@ def _target_predicate(
     bounds after that guard, so the whole address renders before any gate.
     """
     match target:
-        case PredicateTarget(predicate):
+        case ValidatedMutationSelection(predicate=predicate):
             compiled = compile_write_predicate(predicate, meta, dialect, entity)
-            ctx.extend(compiled.lowered or LoweredStatement(compiled.sql, compiled.binds))
+            if compiled.lowered is None:  # pragma: no cover - compiler always retains proof
+                raise SqlGenError("compiled predicate carries no lowered statement")
+            ctx.append_fragment(compiled.lowered)
             return compiled.sql
         case KeyTarget():
             key_sql = _key_predicate(ctx, view, target, entity, meta, dialect)
@@ -437,7 +439,7 @@ def _target_predicate(
 
 
 def _axis_ends(
-    ctx: _Ctx,
+    ctx: StatementBuilder,
     view: EntityLayoutView,
     target: MilestoneTarget,
     entity: EntityMetadata,
@@ -451,12 +453,12 @@ def _axis_ends(
         if isinstance(bound, Finite):
             _bind(ctx, bound.instant, _attribute(meta, attribute).type)
         else:
-            ctx.bind_override(INFINITY_LITERAL, INFINITY_LITERAL)
+            ctx.bind_framework(INFINITY_LITERAL, wire_value=INFINITY_LITERAL)
     return "".join(parts)
 
 
 def _key_predicate(
-    ctx: _Ctx,
+    ctx: StatementBuilder,
     view: EntityLayoutView,
     target: KeyTarget,
     entity: EntityMetadata,
@@ -478,27 +480,23 @@ def _key_predicate(
     keys_sql = f"({', '.join(dialect.quote(column) for column in columns)})"
     row_hole = f"({', '.join('?' for _ in columns)})"
     holes = ", ".join(row_hole for _ in target.key_values)
-    start = len(ctx.binds)
-    for values in target.key_values:
-        for value, neutral_type in zip(values, types, strict=True):
-            _bind(ctx, value, neutral_type)
-    ctx.repeat_typed_pattern(start=start, width=len(types), repetitions=len(target.key_values))
+    ctx.bind_typed_rows(target.key_values, types)
     return f"{keys_sql} in ({holes})"
 
 
-def _tag_guard(ctx: _Ctx, view: EntityLayoutView, dialect: Dialect) -> str:
+def _tag_guard(ctx: StatementBuilder, view: EntityLayoutView, dialect: Dialect) -> str:
     """`` and <tag.column> = ?`` plus its bind for a table-per-hierarchy concrete,
     else nothing — the guard joins the identity predicates immediately after the
     key (`m-inheritance` / `m-sql`)."""
     discriminator = view.discriminator
     if discriminator is None:
         return ""
-    ctx.bind(discriminator.value)
+    ctx.bind_framework(discriminator.value)
     return f" and {dialect.quote(discriminator.slot.column.name)} = ?"
 
 
 def _gate(
-    ctx: _Ctx,
+    ctx: StatementBuilder,
     view: EntityLayoutView,
     concurrency: NonTemporalConcurrency,
     meta: Metamodel,
@@ -523,7 +521,7 @@ def _gate(
 
 
 def _temporal_gate(
-    ctx: _Ctx,
+    ctx: StatementBuilder,
     view: EntityLayoutView,
     concurrency: TemporalConcurrency,
     entity: EntityMetadata,

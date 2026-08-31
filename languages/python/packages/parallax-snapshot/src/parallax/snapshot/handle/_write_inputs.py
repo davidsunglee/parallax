@@ -109,7 +109,6 @@ from parallax.core.unit_work import (
     ObservedStateKey,
     ParticipationToken,
     PredecessorRow,
-    PreparedKeyedWrite,
     RetainedObservation,
     SettledEvidence,
     SourceHint,
@@ -124,6 +123,9 @@ from parallax.core.unit_work import (
     keyed_intent,
     observed_state_key,
     validate_write,
+)
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
 )
 from parallax.core.wire import encode_wire
 from parallax.snapshot._inspection import snapshot_state_of
@@ -586,7 +588,9 @@ def admit_and_buffer(
     ledger.buffer(item)
 
 
-def instruction_identity(meta: Metamodel, instruction: KeyedWrite) -> EntityIdentity:
+def instruction_identity(
+    meta: Metamodel, instruction: KeyedWrite | PreparedKeyedWrite
+) -> EntityIdentity:
     """The Entity Identity ``instruction``'s own spelling names.
 
     Read by a claim refusal's message, which runs after validation has already
@@ -594,6 +598,8 @@ def instruction_identity(meta: Metamodel, instruction: KeyedWrite) -> EntityIden
     this model somehow does not carry, rather than raising a second failure while
     reporting the first.
     """
+    if isinstance(instruction, PreparedKeyedWrite):
+        return instruction.target.identity
     entity = entity_by_name(meta, instruction.entity)
     if entity is None:  # pragma: no cover - validation resolved the spelling already
         return EntityIdentity(namespace="", name=instruction.entity)

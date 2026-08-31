@@ -77,11 +77,11 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
     (
         "parallax.snapshot.handle._write_lowering",
         "parallax.core.sql_gen._write",
-    ): frozenset({"compile_write"}),
+    ): frozenset({"compile_write_step"}),
     (
         "parallax.conformance.engine",
         "parallax.core.sql_gen._write",
-    ): frozenset({"compile_write"}),
+    ): frozenset({"compile_write_step"}),
 }
 
 
@@ -246,7 +246,9 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.engine", "parallax.core.sql_gen._compile"): frozenset(
         {"CompiledRead", "compile_read"}
     ),
-    ("parallax.conformance.engine", "parallax.core.sql_gen._write"): frozenset({"compile_write"}),
+    ("parallax.conformance.engine", "parallax.core.sql_gen._write"): frozenset(
+        {"compile_write_step"}
+    ),
     ("parallax.conformance.another_source", "parallax.snapshot.handle._preflight"): frozenset(
         {"preflight"}
     ),

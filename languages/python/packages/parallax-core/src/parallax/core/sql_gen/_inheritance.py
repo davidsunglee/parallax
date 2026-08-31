@@ -24,9 +24,9 @@ narrowed and un-narrowed lanes share one planner.
 **This module returns PLANS and never lowers a predicate.** Every plan below
 carries its read's own predicate as an un-lowered node, and the tag guard as its
 INPUTS (:class:`TagPredicate`) rather than as anything bound. `_compile`
-constructs the statement's :class:`~parallax.core.sql_gen._context.Ctx` and
+constructs the statement's :class:`~parallax.core.sql_gen._context.StatementBuilder` and
 assembles the family reads; `_predicate` owns every descent, including the
-mid-predicate `narrow` that :func:`plan_branch_narrow` describes. Either way the
+mid-predicate `narrow` that :func:`plan_validated_branch_narrow` describes. Either way the
 caller lowers its own operand first and only THEN calls :func:`tag_guard` and
 appends what it returns. That split is what keeps the m-sql "Grouped branch
 predicates" ordering (binds read branch-predicate-first, then tag) structural
@@ -102,9 +102,8 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     ValueObjectIdentity,
     ValueObjectMetadata,
-    entity_by_name,
 )
-from parallax.core.predicate import Narrow, PredicateNode
+from parallax.core.predicate import PredicateNode
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -638,46 +637,6 @@ def transform_structured_column(transform: _RowMaterializer) -> str | None:
 # --------------------------------------------------------------------------- #
 # Position resolution.                                                         #
 # --------------------------------------------------------------------------- #
-def _referenced_entities(
-    model: Metamodel, names: Sequence[str]
-) -> tuple[EntityIdentity, ...] | None:
-    """The Identities ``names`` denote as query references
-    (:func:`~parallax.core.metamodel.entity_by_name`), or ``None`` when any of
-    them denotes no single Entity."""
-    resolved: list[EntityIdentity] = []
-    for name in names:
-        entity = entity_by_name(model, name)
-        if entity is None:
-            return None
-        resolved.append(entity.identity)
-    return tuple(resolved)
-
-
-def narrow_position(
-    model: Metamodel, facet: InheritanceFacet, to: Sequence[str]
-) -> InheritancePositionView:
-    """The projection a `narrow`'s authored ``to`` list denotes.
-
-    Each authored name is a query reference and resolves model-wide by
-    `entity_by_name`'s rule, never into the queried Entity's own namespace, and
-    the facet resolves the members' union to the position's canonical effective
-    concrete-subtype set and its projection supersets.
-
-    `validate_predicate` runs upstream and guarantees the resolved set is
-    non-empty and a subset of the active position (`m-predicate` "the four-step
-    validation rule") before this compiler ever sees the node, so this need
-    only resolve — never re-validate.
-    """
-    members = _referenced_entities(model, to)
-    position = None if members is None else facet.position(members)
-    if position is None:
-        raise SqlGenError(
-            f"narrow to {list(to)} names an entity the model does not declare, "
-            "or spans more than one inheritance family"
-        )
-    return position
-
-
 def query_narrow_position(
     facet: InheritanceFacet, to: tuple[EntityIdentity, ...]
 ) -> InheritancePositionView:
@@ -792,7 +751,7 @@ def tag_guard(
 # Each is a frozen description of ONE family read: what it selects from, what  #
 # it projects (rendered on demand against the statement's own alias, the one   #
 # thing only `_compile` knows), the un-lowered `inner` predicate, the tag       #
-# guard's inputs, and the row transform. Nothing here holds a `Ctx`, a bind     #
+# guard's inputs, and the row transform. Nothing here holds a `StatementBuilder`, a bind     #
 # list, or an alias.                                                           #
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
@@ -1300,11 +1259,10 @@ class TpcsUnionPlan:
 class BranchNarrowPlan:
     """A `narrow` reached MID-predicate (nested inside and/or/not/group) — a
     **grouped branch predicate** (m-sql "Grouped branch predicates"). Carries the
-    branch's own un-lowered ``operand`` and the inputs its tag guard needs; the
-    caller lowers the operand FIRST, then guards.
+    resolved effective position and the inputs its tag guard needs; the caller
+    lowers the validated child FIRST, then guards.
     """
 
-    operand: PredicateNode
     position: tuple[EntityIdentity, ...]
     tag: TagPredicate | None
 
@@ -1708,29 +1666,15 @@ def _result_aliases(spellings: Sequence[str]) -> tuple[str, ...]:
     return tuple(aliases)
 
 
-def plan_branch_narrow(
-    model: Metamodel,
+def plan_validated_branch_narrow(
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     entity: EntityMetadata,
-    narrow: Narrow,
+    position: tuple[EntityIdentity, ...],
 ) -> BranchNarrowPlan:
-    """Plan a mid-predicate `narrow` (m-sql "Grouped branch predicates").
-
-    The branch's own operand composes with its own tag guard via `and` at the
-    caller, which lowers the operand first so its binds precede the guard's.
-    """
+    """Plan a mid-predicate narrow from its validated effective position."""
     view = entity_view(facet, entity.identity)
-    position = narrow_position(model, facet, narrow.to)
     if not isinstance(view.strategy, TablePerHierarchy):
-        return BranchNarrowPlan(
-            operand=narrow.operand,
-            position=tuple(position.concrete_subtypes),
-            tag=None,
-        )
+        return BranchNarrowPlan(position, None)
     layout = _table_layout(storage, facet, entity.identity)
-    return BranchNarrowPlan(
-        operand=narrow.operand,
-        position=tuple(position.concrete_subtypes),
-        tag=TagPredicate(tag_column(layout, view.root), tuple(position.concrete_subtypes)),
-    )
+    return BranchNarrowPlan(position, TagPredicate(tag_column(layout, view.root), position))

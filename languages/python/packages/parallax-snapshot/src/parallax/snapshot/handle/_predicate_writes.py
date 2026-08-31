@@ -58,19 +58,11 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
-    TemporalDimension,
     entity_by_name,
 )
-from parallax.core.object_query import (
-    AsOf,
-    ObjectQueryNode,
-    TemporalSelection,
-    ValidatedObjectQuery,
-    object_query,
-)
-from parallax.core.object_query import TemporalDimension as TemporalDimensionName
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
-from parallax.core.predicate import PredicateNode, QueryDefinitionError
+from parallax.core.object_query._validated import latest_temporal_selections
+from parallax.core.predicate import QueryDefinitionError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.temporal_read import Pin
@@ -85,7 +77,6 @@ from parallax.core.unit_work import (
     PredecessorShape,
     PredicateMutation,
     PredicateWrite,
-    PreparedPredicateWrite,
     TemporalColumns,
     TemporalObservation,
     UnitOfWork,
@@ -96,6 +87,9 @@ from parallax.core.unit_work import (
     instructions,
     observed_state_key,
     whole,
+)
+from parallax.core.unit_work.instructions import (
+    PreparedPredicateWrite,
 )
 from parallax.core.unit_work.write_planner import assigned_many_path
 from parallax.snapshot.handle._family import (
@@ -127,20 +121,6 @@ from parallax.snapshot.materialize import observable_columns
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
 _ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", "updateUntil"})
-
-
-def _current_selection(
-    target: EntityIdentity, predicate: PredicateNode, entity: EntityMetadata
-) -> ObjectQueryNode:
-    """The internal resolving query: the write's own predicate, pinned at Latest
-    on every declared dimension."""
-    temporal: dict[TemporalDimensionName, TemporalSelection] = {
-        (
-            "valid-time" if axis.dimension is TemporalDimension.VALID_TIME else "transaction-time"
-        ): AsOf(coordinate="latest")
-        for axis in entity.declared_as_of_axes
-    }
-    return object_query(target, predicate, temporal=temporal)
 
 
 def buffer_predicate(
@@ -357,7 +337,8 @@ def buffer_predicate_instruction(
     holding no Entity Class reaches this seam exactly as a typed caller does.
     """
     meta = model.meta
-    entity = entity_of(meta, instruction.target.entity)
+    entity = instruction.selection.target
+    assert entity is not None
     inheritance.reject_predicate_write(entity)
     declaring_entity = declaring(meta, entity)
     version_attr = version_attribute(meta, declaring_entity)
@@ -512,13 +493,6 @@ def _materialize_predicate_write(
         occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
     }
     comparison_assignments = normalize_assignment_values(assignments, occurrences)
-    needs_documents: bool | frozenset[str]
-    if predecessor_need:
-        needs_documents = True
-    elif assignment_bearing:
-        needs_documents = frozenset(member for member in assignments if member_columns[member][1])
-    else:
-        needs_documents = False
 
     # The resolve is a Read of its own (`m-execution-lifecycle`: every
     # statement-reaching operation belongs to exactly one Read, Write Batch, or
@@ -542,23 +516,21 @@ def _materialize_predicate_write(
     # second extraction that could disagree with the first.
     def resolve() -> tuple[CompiledRead, StagedRows]:
         with attempt.read(entity.identity, "ROWS") as read:
-            selection = _current_selection(
-                entity.identity, instruction.target.predicate, declaring_entity
-            )
-            validated = ValidatedObjectQuery(
-                authored=selection,
-                root=entity,
-                validated_predicate=instruction.validated_predicate,
-                result_position=(entity.identity,),
-                order_terms=(),
+            query = deep_fetch.plan_mutation_read(
+                instruction,
+                model=meta,
+                temporal=latest_temporal_selections(declaring_entity),
+                projection=deep_fetch.ReadProjectionRequest(
+                    "all" if predecessor_need else "none",
+                    predecessor_need,
+                ),
             )
             compiled = compile_read(
-                deep_fetch.plan(validated, meta).root,
+                query,
                 meta,
                 conn.dialect,
                 result_form="row",
                 lock=lock,
-                include_value_objects=needs_documents,
             )
             driver_rows = execute_read(conn, compiled, read)
             return compiled, stage_publishable_rows(model, compiled, driver_rows, pin=Pin())

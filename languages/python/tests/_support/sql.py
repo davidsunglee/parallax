@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
-from parallax.core.deep_fetch import ValidatedEntityQuery
+from parallax.core import deep_fetch
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.object_query import OrderKey
-from parallax.core.predicate import (
-    PredicateNode,
-    elaborate_predicate,
-    root_position,
-    validate_narrow,
+from parallax.core.object_query import (
+    OrderKey,
+    TemporalDimension,
+    TemporalSelection,
+    object_query,
+    validate_object_query,
 )
+from parallax.core.predicate import PredicateNode, elaborate_predicate
 from parallax.core.sql_gen._compile import CompiledPredicate, CompiledRead
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._compile import (
@@ -30,33 +32,40 @@ def compile_read(
     narrow_to: tuple[EntityIdentity, ...] | None = None,
     order_by: tuple[OrderKey, ...] = (),
     limit: int | None = None,
+    temporal: Mapping[TemporalDimension, TemporalSelection] | None = None,
     result_form: Literal["row", "instance"] = "row",
     lock: LockMode | None = None,
     include_value_objects: bool | frozenset[str] = False,
 ) -> CompiledRead:
     """Compile ``predicate`` as the predicate of ``target``'s Entity Query."""
-    position = root_position(model, target)
-    if narrow_to is not None:
-        position = validate_narrow(
-            tuple(identity.canonical for identity in narrow_to), position, model
-        )
-    query = ValidatedEntityQuery(
-        target=target.identity,
-        entity=target,
-        validated_predicate=elaborate_predicate(
-            target, predicate, model, position=position
+    query = object_query(
+        target.identity,
+        predicate,
+        narrow_to=(
+            None if narrow_to is None else tuple(identity.canonical for identity in narrow_to)
         ),
-        narrow_to=narrow_to,
+        temporal=temporal,
         order_by=order_by,
         limit=limit,
     )
+    validated = validate_object_query(target, query, model)
+    requested: Literal["none", "all"] | frozenset[str]
+    if result_form == "instance" or include_value_objects is True:
+        requested = "all"
+    elif isinstance(include_value_objects, frozenset):
+        requested = include_value_objects
+    else:
+        requested = "none"
+    projection = deep_fetch.ReadProjectionRequest(
+        requested,
+        result_form == "instance" or include_value_objects is True or bool(include_value_objects),
+    )
     return compile_entity_query(
-        query,
+        deep_fetch.plan(validated, model, projection=projection).root,
         model,
         dialect,
         result_form=result_form,
         lock=lock,
-        include_value_objects=include_value_objects,
     )
 
 

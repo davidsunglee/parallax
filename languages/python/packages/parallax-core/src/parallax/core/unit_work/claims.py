@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from parallax.core.unit_work.instructions import INSERT_MUTATIONS, KeyedWrite
+from parallax.core.unit_work.instructions import INSERT_MUTATIONS, PreparedKeyedWrite
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey
 from parallax.core.unit_work.retain import RetainedObservation
@@ -69,11 +69,11 @@ class WriteIntent:
     """
 
     kind: WriteIntentKind
-    valid_from: str | None = None
-    until: str | None = None
+    valid_from: object | None = None
+    until: object | None = None
 
     @property
-    def region(self) -> tuple[str | None, str | None]:
+    def region(self) -> tuple[object | None, object | None]:
         """The temporal region this intent claims — its two Valid-Time bounds."""
         return (self.valid_from, self.until)
 
@@ -176,7 +176,7 @@ two cannot be combined, and the arriving verb refuses.
 """
 
 
-def keyed_intent(instruction: KeyedWrite) -> WriteIntent | None:
+def keyed_intent(instruction: PreparedKeyedWrite) -> WriteIntent | None:
     """What ``instruction`` intends against existing state, or ``None`` for an
     insert, which intends nothing against any.
 
@@ -193,7 +193,11 @@ def keyed_intent(instruction: KeyedWrite) -> WriteIntent | None:
     kind: WriteIntentKind = (
         "assignment" if instruction.mutation in _ASSIGNMENT_MUTATIONS else "destructive"
     )
-    return WriteIntent(kind=kind, valid_from=instruction.valid_from, until=instruction.until)
+    return WriteIntent(
+        kind=kind,
+        valid_from=instruction.bounds.valid_from,
+        until=instruction.bounds.until,
+    )
 
 
 def admits(held: WriteIntent | None, arriving: WriteIntent) -> ClaimVerdict:

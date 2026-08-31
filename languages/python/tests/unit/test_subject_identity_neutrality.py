@@ -14,6 +14,8 @@ readless predicate write, batching, and a temporal close-and-chain).
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from _support.clock_probes import inert_instant, instant_at
@@ -67,7 +69,7 @@ def test_the_subject_identity_type_itself_performs_no_validation() -> None:
 
 def _plan_under(
     subject: SubjectIdentity,
-    buffer: list[BufferItem],
+    buffer: list[BufferItem | KeyedWrite | PredicateWrite],
     model: Metamodel,
     *,
     observations: dict[ObjectKey, WriteObservation] | None = None,
@@ -89,7 +91,7 @@ def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
 
 
 def _assert_neutral(
-    buffer: list[BufferItem],
+    buffer: list[BufferItem | KeyedWrite | PredicateWrite],
     model: Metamodel,
     *,
     observations: dict[ObjectKey, WriteObservation] | None = None,
@@ -128,12 +130,14 @@ def _assert_neutral(
 
 
 def test_a_non_temporal_insert_is_audit_neutral() -> None:
-    insert = KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 5.00},))
+    insert = KeyedWrite(
+        "insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("5.00")},)
+    )
     _assert_neutral([insert], _ACCOUNT)
 
 
 def test_a_versioned_update_with_an_observation_is_audit_neutral() -> None:
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},))
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},))
     key = object_key(update, _ACCOUNT)
     assert key is not None
     _assert_neutral(
@@ -153,22 +157,24 @@ def test_a_readless_predicate_write_is_audit_neutral() -> None:
     predicate = PredicateWrite(
         "delete",
         PredicateSelection(
-            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", 200.00)
+            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", "200.00")
         ),
     )
     _assert_neutral([predicate], _WALLET)
 
 
 def test_a_batched_insert_run_is_audit_neutral() -> None:
-    buffer: list[BufferItem] = [
-        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": 1.00},)),
-        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": 2.00},)),
+    buffer: list[BufferItem | KeyedWrite | PredicateWrite] = [
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),
+        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": Decimal("2.00")},)),
     ]
     _assert_neutral(buffer, _WALLET)
 
 
 def test_a_temporal_close_and_chain_is_audit_neutral() -> None:
-    update = KeyedWrite("update", "Balance", ({"id": 1, "acctNum": "A", "value": 175.00},))
+    update = KeyedWrite(
+        "update", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("175.00")},)
+    )
     key = object_key(update, _BALANCE)
     assert key is not None
     observation = TemporalObservation(
@@ -176,7 +182,7 @@ def test_a_temporal_close_and_chain_is_audit_neutral() -> None:
             members={
                 "id": 1,
                 "acctNum": "A",
-                "value": 100.00,
+                "value": Decimal("100.00"),
                 "txStart": "2024-01-01T00:00:00+00:00",
                 "txEnd": "infinity",
             }

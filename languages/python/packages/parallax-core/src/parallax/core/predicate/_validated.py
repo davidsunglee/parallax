@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from parallax.core.base import ManagedValue, NeutralType, matches_neutral_type
 from parallax.core.metamodel import (
     AttributeMetadata,
+    EntityIdentity,
     EntityMetadata,
     NestedValueObjectMetadata,
+    RelationshipIdentity,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
 )
@@ -30,14 +32,14 @@ from parallax.core.wire import encode_wire
 
 type ResolvedPredicateMember = AttributeMetadata | ValueObjectAttributeMetadata
 type ResolvedValueObject = ValueObjectMetadata | NestedValueObjectMetadata
-type BindForm = Literal["managed", "comparison-text", "framework"]
+type BindForm = Literal["managed", "framework"]
 
 
 @dataclass(frozen=True, slots=True)
-class ValidatedOperand:
+class ValidatedOperands:
     """One interpreted operand and the physical form SQL may choose for it."""
 
-    value: ManagedValue | object
+    values: tuple[ManagedValue | object, ...]
     neutral_type: NeutralType | None
     form: BindForm = "managed"
 
@@ -52,10 +54,14 @@ class ValidatedPredicate:
 
     authored: PredicateNode
     children: tuple[ValidatedPredicate, ...] = ()
-    operands: tuple[ValidatedOperand, ...] = ()
+    operands: ValidatedOperands | None = None
     member: ResolvedPredicateMember | None = None
     container: ResolvedValueObject | None = None
     relationship_target: EntityMetadata | None = None
+    relationship: RelationshipIdentity | None = None
+    relationship_source: AttributeMetadata | None = None
+    relationship_member: AttributeMetadata | None = None
+    position: tuple[EntityIdentity, ...] | None = None
 
     def only_child(self) -> ValidatedPredicate:
         if len(self.children) != 1:
@@ -63,9 +69,25 @@ class ValidatedPredicate:
         return self.children[0]
 
 
-def framework_operand(value: object) -> ValidatedOperand:
-    """Construct an untyped framework bind, never a serialized typed literal."""
-    return ValidatedOperand(value, None, "framework")
+def derive_predicate(
+    source: ValidatedPredicate,
+    authored: PredicateNode,
+    children: tuple[ValidatedPredicate, ...],
+) -> ValidatedPredicate:
+    """Rewrite structure while retaining every resolved fact on the occurrence."""
+    return replace(source, authored=authored, children=children)
+
+
+def empty_predicate() -> ValidatedPredicate:
+    """Produce the generated predicate that admits no rows."""
+    from parallax.core.predicate._nodes import NoneOp
+
+    return ValidatedPredicate(NoneOp())
+
+
+def framework_operands(*values: object) -> ValidatedOperands:
+    """Construct untyped framework binds, never serialized typed literals."""
+    return ValidatedOperands(values, None, "framework")
 
 
 def managed_comparison(
@@ -81,7 +103,7 @@ def managed_comparison(
     authored = Comparison(op=op, attr=attr, value=cast("Scalar", encode_wire(member.type, value)))
     return ValidatedPredicate(
         authored,
-        operands=(ValidatedOperand(value, member.type),),
+        operands=ValidatedOperands((value,), member.type),
         member=member,
     )
 
@@ -92,7 +114,7 @@ def framework_comparison(
     """Build a comparison over a framework sentinel that is not a typed literal."""
     return ValidatedPredicate(
         Comparison(op=op, attr=attr, value=str(value)),
-        operands=(framework_operand(value),),
+        operands=framework_operands(value),
         member=member,
     )
 
@@ -110,7 +132,7 @@ def managed_membership(
     )
     return ValidatedPredicate(
         authored,
-        operands=tuple(ValidatedOperand(value, member.type) for value in values),
+        operands=ValidatedOperands(values, member.type),
         member=member,
     )
 

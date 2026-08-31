@@ -140,7 +140,7 @@ the private `sql_gen._compile.compile_read` accepts only that product and return
 Typed and Wire write adapters call separate `prepare_typed_write` and
 `prepare_wire_write` producers and converge on `PreparedWrite`. Buffering and
 the Write Planner retain managed values and produce closed `PlannedWrite` steps;
-the private `sql_gen._write.compile_write` accepts only one such step and
+the private `sql_gen._write.compile_write_step` accepts only one such step and
 returns `LoweredStatement`. Continuation, temporal, navigation, and child-key
 generation request producer-owned Predicate/Object Query derivation operations
 rather than constructing phase products or re-decoding values themselves.
@@ -5001,7 +5001,7 @@ parallax.postgres --> parallax.core.dialect
   ```carrier-neutral-private-reaches
   parallax.core.sql_gen._compile | CompiledRead, MaterializedReadRow, compile_read | parallax.snapshot.handle._read
   parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.snapshot.handle._predicate_writes; parallax.conformance.engine
-  parallax.core.sql_gen._write | compile_write | parallax.snapshot.handle._write_lowering; parallax.conformance.engine
+  parallax.core.sql_gen._write | compile_write_step | parallax.snapshot.handle._write_lowering; parallax.conformance.engine
   ```
 
   Snapshot's imports are first-party private implementation reaches;

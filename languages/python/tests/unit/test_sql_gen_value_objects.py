@@ -21,6 +21,7 @@ from _corpus_model_support import formed, model, target
 from _support.sql import compile_read
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
+from parallax.core.object_query import History
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen import SqlGenError
 
@@ -330,11 +331,24 @@ def test_document_slots_stay_atomic_and_follow_every_scalar_tier() -> None:
         ),
     )
     meta = formed(Metamodel(entities=(site,)))
-    instance = compile_read(oa.All(), meta, POSTGRES, target(meta, "Site"), result_form="instance")
+    instance = compile_read(
+        oa.All(),
+        meta,
+        POSTGRES,
+        target(meta, "Site"),
+        temporal={"transaction-time": History()},
+        result_form="instance",
+    )
     assert instance.statement.sql == (
         "select t0.id, t0.label, t0.in_z, t0.out_z, not t0.address is null, t0.address from site t0"
     )
-    row_form = compile_read(oa.All(), meta, POSTGRES, target(meta, "Site"))
+    row_form = compile_read(
+        oa.All(),
+        meta,
+        POSTGRES,
+        target(meta, "Site"),
+        temporal={"transaction-time": History()},
+    )
     assert row_form.statement.sql == "select t0.id, t0.label, t0.in_z, t0.out_z from site t0"
 
 

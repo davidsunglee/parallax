@@ -77,7 +77,7 @@ from __future__ import annotations
 
 from typing import Final, assert_never
 
-from parallax.core.metamodel import EntityIdentity, Metamodel, entity_by_name
+from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.opt_lock._compile import (
     MODEL_COMPILER,
     OptimisticLockModelCompiler,
@@ -106,7 +106,6 @@ from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     Concurrency,
     KeyedMutation,
-    KeyedWrite,
     ObjectKey,
     RetainedObservation,
     SettledEvidence,
@@ -114,6 +113,7 @@ from parallax.core.unit_work import (
     WriteObservation,
     object_key,
 )
+from parallax.core.unit_work.instructions import PreparedKeyedWrite
 
 __all__ = [
     "FACET_KEY",
@@ -316,7 +316,7 @@ def settled_evidence(
 
 def instruction_evidence(
     model: Metamodel,
-    instruction: KeyedWrite,
+    instruction: PreparedKeyedWrite,
     *,
     supplied: WriteObservation | RetainedObservation | None,
 ) -> SettledEvidence | None:
@@ -341,21 +341,14 @@ def instruction_evidence(
     from the verb the same write goes through would grade a coalescing no program
     gets. Nothing here reads a database, so the pure caller keeps that property.
 
-    The target is resolved against ``model`` first, so the derivation is handed
-    the Optimistic Key of an Entity this model carries; a spelling it does not
-    carry is a lookup that found nothing and raises, rather than settling the
-    write on an arm reached because the target was unrecognized.
+    The prepared instruction already carries exact target Metadata, so this
+    derivation reads no authored Entity spelling and performs no second target
+    resolution after the preparation seam.
     """
     if supplied is not None:
         return supplied
-    entity = entity_by_name(model, instruction.entity)
-    if entity is None:
-        raise KeyError(
-            f"{instruction.entity!r} names no Entity this model declares, so there is no "
-            "target to derive what its write settles against"
-        )
     return settled_evidence(
-        optimistic_key(model, entity.identity),
+        optimistic_key(model, instruction.target.identity),
         instruction.mutation,
         object_key=object_key(instruction, model),
         observation=None,

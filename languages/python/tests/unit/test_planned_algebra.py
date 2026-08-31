@@ -33,11 +33,13 @@ from collections.abc import Callable
 from typing import cast
 
 import pytest
+from _corpus_model_support import model as corpus_model
+from _corpus_model_support import target as entity_of
 
 from _support.clock_probes import inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
-from parallax.core.predicate import All
+from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
+from parallax.core.predicate import All, validate_predicate
 from parallax.core.unit_work import (
     ANY_COUNT,
     INFINITY,
@@ -66,7 +68,6 @@ from parallax.core.unit_work import (
     PlannedSteps,
     PlannedUpdate,
     PredecessorRow,
-    PredicateTarget,
     SelfIncrement,
     Shortfall,
     TemporalConcurrency,
@@ -79,8 +80,11 @@ from parallax.core.unit_work import (
     planned_steps,
     shortfall_for,
 )
+from parallax.core.unit_work.planned import ValidatedMutationSelection
 
-_ACCOUNT = EntityIdentity(None, "Account")
+_ACCOUNT_MODEL = corpus_model("account")
+_ACCOUNT_META = entity_of(_ACCOUNT_MODEL, "Account")
+_ACCOUNT = _ACCOUNT_META.identity
 _ID = AttributeIdentity(_ACCOUNT, "id")
 _OWNER = AttributeIdentity(_ACCOUNT, "owner")
 _VERSION = AttributeIdentity(_ACCOUNT, "version")
@@ -263,8 +267,14 @@ def test_a_predicate_target_implies_unversioned_and_an_unbounded_effect(
 ) -> None:
     # A readless predicate resolves no rows, so it can carry no per-row observed
     # version and can promise no row count: a zero-row match succeeds.
-    with pytest.raises(ValueError, match="Predicate Target is readless"):
-        _delete(PredicateTarget(predicate=All()), concurrency, affected_rows)
+    with pytest.raises(ValueError, match="Validated Mutation Selection is readless"):
+        _delete(
+            ValidatedMutationSelection(
+                _ACCOUNT_META, validate_predicate(_ACCOUNT_META, All(), _ACCOUNT_MODEL)
+            ),
+            concurrency,
+            affected_rows,
+        )
 
 
 @pytest.mark.parametrize(

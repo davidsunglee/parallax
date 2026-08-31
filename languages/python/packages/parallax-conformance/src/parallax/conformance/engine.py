@@ -97,7 +97,7 @@ from parallax.core.predicate import (
 )
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.sql_gen._write import compile_write
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.temporal_read import Pin, TemporalReadError, query_pin, scans_an_axis
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
@@ -111,8 +111,6 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
     PlanningRequest,
     PredicateWrite,
-    PreparedPredicateWrite,
-    PreparedWrite,
     RetainedObservation,
     StaleWriteError,
     SubjectIdentity,
@@ -129,7 +127,12 @@ from parallax.core.unit_work import (
     object_key,
     validate_write,
 )
-from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PreparedWrite,
+    WriteInstruction,
+)
 from parallax.core.unit_work.write_planner import reject_readless_document_many
 from parallax.core.wire import WireValue, decode_wire
 from parallax.descriptor import (
@@ -489,7 +492,11 @@ def _canonicalize_read(
     canonicalization before SQL sees the result.
     """
     validated = preflight(query, model=model, form=form)
-    return deep_fetch.plan(validated, model).root
+    projection = deep_fetch.ReadProjectionRequest(
+        "none" if form == "rows" else "all",
+        form == "graph",
+    )
+    return deep_fetch.plan(validated, model, projection=projection).root
 
 
 def _family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityMetadata:
@@ -723,7 +730,7 @@ def _batch_size_of(carrier: Mapping[str, object], where: str) -> int | None:
             f"{where}: a streamed delivery declares a positive integer "
             f"`stream.batchSize` (got {size!r})"
         )
-    return size
+    return int(size)
 
 
 def _stream_batch_size(case: case_format.Case) -> int:
@@ -1616,8 +1623,8 @@ def _build_temporal_instruction(
     if until is not None:
         doc["until"] = until
     instruction = instructions.deserialize(doc)
-    prepared = instructions.prepare_typed_write(instruction, model)
-    assert isinstance(prepared, KeyedWrite)  # a temporal entry is always keyed
+    prepared = instructions.prepare_wire_write(instruction, model)
+    assert isinstance(prepared, PreparedKeyedWrite)  # a temporal entry is always keyed
     entity_metadata = case_entity(model, entity_name)
     pk_key = object_key(prepared, model)
     is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
@@ -2164,7 +2171,7 @@ def _build_instructions(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
-        prepared = instructions.prepare_typed_write(instruction, model)
+        prepared = instructions.prepare_wire_write(instruction, model)
         if binds_observations and not opens_a_row:
             key = object_key(prepared, model)
             if observation is None and key is not None:
@@ -2251,7 +2258,9 @@ def _buffered(
     one seam every producer's rows pass through — and by the carriers' own
     structural refusals; this function only forwards what they left.
     """
-    assert isinstance(instruction, KeyedWrite)  # every producer of this seam resolves keyed writes
+    assert isinstance(
+        instruction, PreparedKeyedWrite
+    )  # every producer of this seam resolves keyed writes
     return buffered_write(
         instruction, opt_lock.instruction_evidence(model, instruction, supplied=observation)
     )
@@ -3591,7 +3600,9 @@ def _seed_shadow_from_fixtures(
         )
 
 
-def _is_framework_write(instruction: WriteInstruction, model: AcceptedMetamodel) -> bool:
+def _is_framework_write(
+    instruction: WriteInstruction | PreparedWrite, model: AcceptedMetamodel
+) -> bool:
     """Whether ``instruction`` states the FRAMEWORK's own bookkeeping rather than
     a write a developer authors.
 
@@ -3609,9 +3620,14 @@ def _is_framework_write(instruction: WriteInstruction, model: AcceptedMetamodel)
     is shaped like a marker, and only a scalar Attribute can carry the marker
     form at all (`m-case-format` "Write-sequence cases").
     """
-    if not isinstance(instruction, KeyedWrite):  # pragma: no cover - this lane resolves keyed only
+    if not isinstance(instruction, (KeyedWrite, PreparedKeyedWrite)):
         return False
-    scalars = _scalar_attribute_names(model, instruction.entity)
+    entity = (
+        instruction.target.identity.canonical
+        if isinstance(instruction, PreparedKeyedWrite)
+        else instruction.entity
+    )
+    scalars = _scalar_attribute_names(model, entity)
     return any(
         name in scalars
         and isinstance(value, Mapping)
@@ -3769,19 +3785,24 @@ def _unit_source_reads(
     """
     opened: set[ObjectKey] = set()
     for write in resolved:
-        if cast("KeyedWrite", write.instruction).mutation in INSERT_MUTATIONS:
-            key = object_key(write.instruction, model)
+        instruction = write.instruction
+        if not isinstance(instruction, PreparedKeyedWrite):
+            continue
+        if instruction.mutation in INSERT_MUTATIONS:
+            key = object_key(instruction, model)
             if key is not None:
                 opened.add(key)
     needed: dict[str, dict[ObjectKey, None]] = {}
     for write in resolved:
-        instruction = cast("KeyedWrite", write.instruction)
+        instruction = write.instruction
+        if not isinstance(instruction, PreparedKeyedWrite):
+            continue
         if instruction.mutation in INSERT_MUTATIONS:
             continue
         key = object_key(instruction, model)
         if key is None or key in opened:
             continue
-        canonical = case_entity(model, instruction.entity).identity.canonical
+        canonical = instruction.target.identity.canonical
         needed.setdefault(canonical, {})[key] = None
     return [_unit_source_query(model, entity, tuple(keys)) for entity, keys in needed.items()]
 
@@ -4041,9 +4062,8 @@ def _is_materializing_write_step(
         return None
     prepared = instructions.prepare_wire_write(instruction, model)
     assert isinstance(prepared, PreparedPredicateWrite)
-    if _is_temporal_entity(model, instruction.target.entity) or _is_versioned_entity(
-        model, instruction.target.entity
-    ):
+    target_name = prepared.selection.target.identity.canonical
+    if _is_temporal_entity(model, target_name) or _is_versioned_entity(model, target_name):
         return prepared
     return None
 
@@ -4095,11 +4115,13 @@ def _run_materializing_pair(
     assert instruction is not None  # the caller already established this via the same check
     find = _step_query(find_step)
     target = find.target.canonical
-    if not _names_one_entity(model, target, instruction.target.entity):
+    write_target = instruction.selection.target.identity.canonical
+    write_predicate = instruction.selection.predicate.authored
+    if not _names_one_entity(model, target, write_target):
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
             f"a resolving find over the SAME target entity (find targets {target!r}, write "
-            f"targets {instruction.target.entity!r} — m-case-format 'Materializing cases' "
+            f"targets {write_target!r} — m-case-format 'Materializing cases' "
             "requires the prior find to share the write's own target)"
         )
     # `m-case-format` "Materializing cases": for every versioned or temporal
@@ -4110,11 +4132,11 @@ def _run_materializing_pair(
     # write target remains the bare predicate, so the two predicates compare
     # directly; `_canonicalize_read` would additionally inject interval
     # predicates and is therefore still not the apples-to-apples form.
-    if find.predicate != instruction.target.predicate:
+    if find.predicate != write_predicate:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
             "a resolving find over the SAME canonical predicate as the write's own target "
-            f"predicate (find {find.predicate!r}, write {instruction.target.predicate!r} "
+            f"predicate (find {find.predicate!r}, write {write_predicate!r} "
             "— m-case-format 'Materializing cases' requires the prior find to use the same "
             "concrete target and canonical predicate)"
         )
@@ -4135,7 +4157,7 @@ def _run_materializing_pair(
     with shadow.staged(doomed=rollback):
         with contextlib.suppress(_RollbackStep):
             database.transact(body, concurrency=concurrency)
-        shadow.note_materialized_write(case_entity(model, instruction.target.entity))
+        shadow.note_materialized_write(case_entity(model, write_target))
     # The split is the port method each statement ran through rather than a
     # position in one flat list, so a resolve that issued more than one call, or
     # a batch the planner split, still lands where the corpus authors it: the
@@ -4485,29 +4507,32 @@ def _buffer_wire_write(
     the empty change set, which is the ordinary no-op.
     """
     instruction = write.instruction
-    assert isinstance(instruction, KeyedWrite)  # every resolved entry this lane buffers is keyed
-    entity_metadata = case_entity(model, instruction.entity)
+    assert isinstance(
+        instruction, PreparedKeyedWrite
+    )  # every resolved entry this lane buffers is keyed
+    entity_name = instruction.target.identity.canonical
+    entity_metadata = instruction.target
     row = dict(instruction.rows[0])
-    valid_from = _bound_instant(instruction.valid_from)
-    until = _bound_instant(instruction.until)
+    valid_from = _bound_instant(instruction.bounds.valid_from)
+    until = _bound_instant(instruction.bounds.until)
     if instruction.mutation in INSERT_MUTATIONS:
         payload = _wire_insert_payload(model, entity_metadata, row)
         opened = (
             tx.wire.insert_until(
-                instruction.entity,
+                entity_name,
                 payload,
                 valid_from=_required(valid_from),
                 until=_required(until),
             )
             if instruction.mutation == "insertUntil"
-            else tx.wire.insert(instruction.entity, payload, valid_from=valid_from)
+            else tx.wire.insert(entity_name, payload, valid_from=valid_from)
         )
         state.opened[_node_object_key(opened)] = opened
         return
     key = object_key(instruction, model)
-    node = _group_source_node(instruction.entity, key, state, named)
+    node = _group_source_node(entity_name, key, state, named)
     identity = dict(key.primary_key) if key is not None else {}
-    changes = {name: value for name, value in row.items() if name not in identity}
+    changes = {name: wire_value(value) for name, value in row.items() if name not in identity}
     match instruction.mutation:
         case "update":
             tx.wire.update(node, changes, valid_from=valid_from)
@@ -4537,18 +4562,21 @@ def _wire_insert_payload(
     """
     view = inheritance.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return dict(row)
+        return {name: wire_value(value) for name, value in row.items()}
     owned = {
         attribute.identity.name
         for attribute in view.applicable_attributes
         if attribute.framework_owned
     }
-    return {name: value for name, value in row.items() if name not in owned}
+    return {name: wire_value(value) for name, value in row.items() if name not in owned}
 
 
-def _bound_instant(literal: str | None) -> dt.datetime | None:
+def _bound_instant(literal: str | dt.datetime | None) -> dt.datetime | None:
     """One instruction-level Valid-Time bound as the instant a verb takes."""
-    return None if literal is None else normalize_instant(dt.datetime.fromisoformat(literal))
+    if literal is None:
+        return None
+    instant = dt.datetime.fromisoformat(literal) if isinstance(literal, str) else literal
+    return normalize_instant(instant)
 
 
 def _required(instant: dt.datetime | None) -> dt.datetime:
@@ -5684,7 +5712,9 @@ def run_scenario_case(
                 next_step = steps[index + 1] if index + 1 < len(steps) else None
                 pairing = _is_materializing_write_step(next_step, model)
                 if pairing is not None and _names_one_entity(
-                    model, _step_query(step).target.canonical, pairing.target.entity
+                    model,
+                    _step_query(step).target.canonical,
+                    pairing.selection.target.identity.canonical,
                 ):
                     pair_lowered, pair_trips = _run_materializing_pair(
                         port, domain, model, concurrency, steps, index, shadow, lifecycle
@@ -6003,7 +6033,7 @@ def _resolve_conflict_writes(
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": target, "rows": [clean_row]}
         )
-        prepared = instructions.prepare_typed_write(instruction, model)
+        prepared = instructions.prepare_wire_write(instruction, model)
         resolved.append(
             _ConflictWrite(clean_row, prepared, object_key(prepared, model), observation)
         )
@@ -6341,7 +6371,7 @@ def _run_conflict_close(
     """Lower and execute one TEMPORAL conflict attempt's close — ONE
     transaction opened on the port itself, ``clock=FixedClock(at)``. Composes the SAME two halves
     production does — :func:`~parallax.snapshot.handle.plan_temporal_close`
-    settles the step, :func:`~parallax.core.sql_gen._write.compile_write` renders it —
+    settles the step, :func:`~parallax.core.sql_gen._write.compile_write_step` renders it —
     for a conflict case's own close-only probe, never a REAL chaining mutation,
     and executes it on the port's own transaction; a standalone close has
     nothing to coalesce or FK-order with, so it bypasses the buffer/flush
@@ -6394,7 +6424,7 @@ def _run_conflict_close(
         observed_tx_start,
         observed_valid_end,
     )
-    statement = compile_write(step, model, port.dialect)
+    statement = compile_write_step(step, model, port.dialect)
 
     # A standalone close is no keyed mutation and no unit of work buffers it, so
     # it runs on the port's own transaction — public `m-db-port`, the same
@@ -6961,7 +6991,7 @@ def run_rejected_case(case: case_format.Case) -> str:
         try:
             prepared = instructions.prepare_wire_write(instruction, model)
             assert isinstance(prepared, PreparedPredicateWrite)
-            target = case_entity(model, instruction.target.entity)
+            target = case_entity(model, prepared.selection.target.identity.canonical)
             reject_readless_document_many(target, prepared)
         except WriteRejectedError as exc:
             return exc.rule
@@ -7097,6 +7127,12 @@ def wire_value(value: object) -> object:
     """
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[object, object]", value)
+        return {str(name): wire_value(member) for name, member in mapping.items()}
+    if isinstance(value, (list, tuple)):
+        sequence = cast("Sequence[object]", value)
+        return [wire_value(member) for member in sequence]
     if isinstance(value, TemporalBound):
         # A temporal interval's open upper bound (the m-core infinity sentinel the
         # port returns for native `timestamptz` infinity) renders as the canonical

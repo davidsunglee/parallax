@@ -12,7 +12,7 @@ construction or the model resolution fails at the unit layer first.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -340,7 +340,7 @@ def test_between_bounds_the_rule_stands_aside_for_accept(lower: Scalar, upper: S
     _validate("Order", _between(lower, upper), _ORDERS)
 
 
-@pytest.mark.parametrize("lower", [20.0, 5, "5", None, True, "2024-02-01"])
+@pytest.mark.parametrize("lower", [20.0, 5, "5", True, "2024-02-01"])
 def test_between_rejects_a_bound_outside_the_resolved_value_space(lower: Scalar) -> None:
     exc = _rejects(_between(lower, "50.75"), _ORDERS, "Order")
     assert exc.rule in {"neutral-literal-type-mismatch", "neutral-literal-noncanonical"}
@@ -732,10 +732,38 @@ def test_nested_comparison_valid_string_literal_accepts() -> None:
     _validate("Customer", op, _CUSTOMER)  # no raise
 
 
-def test_nested_comparison_rejects_null_literal() -> None:
-    # Null tests are represented by dedicated null-check predicate nodes.
-    op = NestedComparison(op="nestedEq", path="Customer.address.city", value=None)
-    assert _rejects(op, _CUSTOMER, "Customer").rule == "neutral-literal-type-mismatch"
+@pytest.mark.parametrize(
+    "constructor",
+    [
+        lambda: Comparison(op="eq", attr="Order.price", value=cast("Scalar", None)),
+        lambda: Between(attr="Order.price", lower=cast("Scalar", None), upper="1.00"),
+        lambda: StringMatch(op="like", attr="Order.name", value=cast("Scalar", None)),
+        lambda: Membership(op="in", attr="Order.name", values=("A", cast("Scalar", None))),
+        lambda: NestedComparison(
+            op="nestedEq", path="Customer.address.city", value=cast("Scalar", None)
+        ),
+        lambda: NestedRange(
+            path="Customer.address.city",
+            lower=cast("Scalar", None),
+            upper="Z",
+        ),
+        lambda: NestedMembership(
+            op="nestedIn",
+            path="Customer.address.city",
+            values=("Oslo", cast("Scalar", None)),
+        ),
+        lambda: NestedStringMatch(
+            op="nestedLike",
+            path="Customer.address.city",
+            value=cast("Scalar", None),
+        ),
+    ],
+)
+def test_literal_nodes_reject_none_at_construction(
+    constructor: Callable[[], PredicateNode],
+) -> None:
+    with pytest.raises(ValueError, match=r"\.is_null\(\).+\.is_not_null\(\)"):
+        constructor()
 
 
 def test_nested_membership_all_valid_literals_accepts() -> None:

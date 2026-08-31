@@ -128,6 +128,8 @@ from parallax.core.unit_work import (
     PredicateWrite,
     WriteAssignment,
     WriteInstructionError,
+)
+from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.snapshot.handle._preflight import preflight
@@ -962,11 +964,9 @@ def test_a_value_object_member_past_the_occurrence_erases() -> None:
     # The Value-Object twin of the hop erasure: the Entity survives the hop, so a
     # foreign-Entity nested predicate is still refused statically, while the
     # member's own existence is a model question the gate answers.
-    with pytest.raises(ModelRejectedError) as caught:
-        preflighted(
-            SnapOrderStatus.where(SnapOrderStatus.primary_tag.no_such_member == "x"), _ORDERS
-        )
-    assert caught.value.rule == "nested-path-unknown-member"
+    with pytest.raises(QueryDefinitionError) as caught:
+        _ = SnapOrderStatus.primary_tag.no_such_member == "x"
+    assert caught.value.code == "query-expression-invalid"
 
 
 def test_a_second_narrow_clause_is_refused_at_the_clause_alone() -> None:

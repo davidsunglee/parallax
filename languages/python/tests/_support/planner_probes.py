@@ -15,14 +15,16 @@ from parallax.core.unit_work import (
     MaterializedWriteGroup,
     ObjectClaimedWrite,
     ObjectKey,
-    PreparedKeyedWrite,
-    PreparedPredicateWrite,
-    PredicateWrite,
     ObservedKeyedWrite,
+    PredicateWrite,
     SubjectIdentity,
     WriteObservation,
     buffered_write,
     object_key,
+)
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
     prepare_typed_write,
 )
 
@@ -62,31 +64,9 @@ def observed_buffer(
     return resolved
 
 
-def _prepared_item(
-    item: BufferItem | KeyedWrite | PredicateWrite, model: Metamodel
-) -> BufferItem:
-    if isinstance(item, ObservedKeyedWrite):
-        instruction = prepare_typed_write(item.instruction, model)
-        assert isinstance(instruction, PreparedKeyedWrite)
-        return ObservedKeyedWrite(
-            instruction,
-            item.observation,
-            claim=item.claim,
-            restorations=item.restorations,
-        )
-    if isinstance(item, ObjectClaimedWrite):
-        instruction = prepare_typed_write(item.instruction, model)
-        assert isinstance(instruction, PreparedKeyedWrite)
-        return ObjectClaimedWrite(instruction, restorations=item.restorations)
-    if isinstance(item, MaterializedWriteGroup):
-        prepared = prepare_typed_write(item.mutation, model)
-        assert not isinstance(prepared, PreparedKeyedWrite)
-        return MaterializedWriteGroup(
-            mutation=prepared,
-            key_attributes=item.key_attributes,
-            key_columns=item.key_columns,
-            observations=item.observations,
-        )
+def _prepared_item(item: BufferItem | KeyedWrite | PredicateWrite, model: Metamodel) -> BufferItem:
+    if isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite | MaterializedWriteGroup):
+        return item
     if isinstance(item, KeyedWrite | PredicateWrite) and not isinstance(
         item, PreparedKeyedWrite | PreparedPredicateWrite
     ):

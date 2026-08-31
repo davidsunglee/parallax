@@ -126,7 +126,7 @@ def enforce_affected_rows(step: PlannedWrite, actual_count: int) -> None:
     policy = step.affected_rows
     if isinstance(policy, AnyCount) or actual_count == policy.expected:
         return
-    # A step carrying an exact count addresses rows by key: a Predicate Target
+    # A step carrying an exact count addresses rows by key: a Validated Mutation Selection
     # implies an unbounded effect and a Milestone Target belongs to a close,
     # both refused while the step is settled.
     target = step.target

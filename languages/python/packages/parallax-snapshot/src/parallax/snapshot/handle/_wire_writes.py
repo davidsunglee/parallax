@@ -46,28 +46,22 @@ predicate node, and `m-core`'s :class:`~parallax.core.base.InstantError` for a
 bound that is no instant. All are ``ValueError``s raised before the evidence
 question.
 
-**Caller-owned input is snapshotted before the verb returns.** Inserted data,
-changes, the predicate target, and the temporal bounds are copied recursively at
-the call, so later mutation of any nested list or mapping cannot alter buffered
-intent. A keyed source is not copied: it is already deeply frozen, and what the
-verb retains of it is its identity, its resolved evidence, and — only for the
-members the caller explicitly changed — the value it published. Capture is also
-where a document's own shape is judged (:func:`_authored_document`), because the
-copy is the traversal that would otherwise fail on it.
+**Caller-owned input is owned by preparation before the verb returns.** The ingress
+first validates document shape without copying, then unit-work preparation converts
+and freezes the retained product in one traversal. A keyed source is already deeply
+frozen; the verb retains only its identity, resolved evidence, and explicitly changed
+published values.
 
-Wire input is stated in the ACCEPTED wire spellings its serde seam admits
-(`m-wire`: one canonical output spelling per Neutral Type, accepted input
-spellings as specified at each seam), so every value crosses
-:func:`~parallax.core.wire.decode_wire` once here and reaches the
-instruction IR as the native carrier every other ingress hands it.
+Wire input is stated in the accepted spellings its serde seam admits. This adapter
+validates document shape and delegates source-specific decoding plus retained-value
+ownership to :func:`parallax.core.unit_work.instructions.prepare_wire_write`.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import partial
 from typing import Any, cast
 
 from parallax.core import inheritance
@@ -92,14 +86,17 @@ from parallax.core.unit_work import (
     KeyedMutation,
     PredicateMutation,
     PredicateWrite,
-    PreparedPredicateWrite,
     SettledEvidence,
     SourceHint,
     UnitOfWork,
     instructions,
     object_key,
 )
-from parallax.core.wire import WireValue, decode_wire
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+)
+from parallax.core.wire import WireDecodingError, WireValue, decode_wire
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
 from parallax.snapshot.handle._write_inputs import (
@@ -109,7 +106,6 @@ from parallax.snapshot.handle._write_inputs import (
     cancels_a_pending_assignment,
     keyed_instruction,
     resolve_write_evidence,
-    validate_keyed_instruction,
     validate_source_pin,
     validate_window,
     written_object_of_row,
@@ -221,15 +217,16 @@ def wire_insert(
     _refuse_published_source(entity, data, mutation)
     declaring = declaring_of(lane.model.meta, entity)
     valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
-    row = _decoded_row(lane.model.meta, entity, payload)
-    _refuse_framework_owned(lane.model.meta, entity, row)
-    instruction = keyed_instruction(
-        mutation, entity.identity, row, valid_from=valid_from_literal, until=until_literal
+    _refuse_framework_owned(lane.model.meta, entity, payload)
+    authored = keyed_instruction(
+        mutation, entity.identity, payload, valid_from=valid_from_literal, until=until_literal
     )
-    instruction = validate_keyed_instruction(lane.model.meta, instruction)
-    admit_and_buffer(lane.uow, lane.model.meta, instruction, None)
+    prepared = instructions.prepare_wire_write(authored, lane.model.meta)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    row = prepared.rows[0]
+    admit_and_buffer(lane.uow, lane.model.meta, prepared, None)
     lane.inserts.record(written_object_of_row(entity, declaring, row))
-    opened = object_key(instruction, lane.model.meta)
+    opened = object_key(prepared, lane.model.meta)
     # A Create Payload is a complete document, so the row it buffers always
     # names its own object by the time validation has admitted it.
     assert opened is not None
@@ -283,16 +280,23 @@ def wire_keyed_write(
     valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
     identity_row = dict(hint.object_key.primary_key)
     members = _row_members(lane.model.meta, record)
-    assignments = _judged_changes(lane.model.meta, record, members, authored)
+    authored_identity = {name: source[name] for name in identity_row}
+    raw_instruction = keyed_instruction(
+        mutation,
+        record.identity,
+        {**authored_identity, **authored},
+        valid_from=valid_from_literal,
+        until=until_literal,
+    )
+    prepared = instructions.prepare_wire_write(raw_instruction, lane.model.meta)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    managed_assignments = {name: prepared.rows[0][name] for name in authored}
     row, restorations = _authored_row(
-        lane, record, hint, mutation, identity_row, members, assignments, source
+        lane, record, hint, mutation, identity_row, members, managed_assignments, source
     )
     if row is None:
         return
-    instruction = keyed_instruction(
-        mutation, record.identity, row, valid_from=valid_from_literal, until=until_literal
-    )
-    instruction = validate_keyed_instruction(lane.model.meta, instruction)
+    prepared = instructions.derive_keyed_write(prepared, (row,))
     written = written_object_of_row(record, declaring, identity_row)
     evidence: SettledEvidence | None = (
         None
@@ -307,7 +311,7 @@ def wire_keyed_write(
             participation=lane.uow.participation,
         )
     )
-    admit_and_buffer(lane.uow, lane.model.meta, instruction, evidence, restorations=restorations)
+    admit_and_buffer(lane.uow, lane.model.meta, prepared, evidence, restorations=restorations)
 
 
 def wire_predicate_write(
@@ -344,17 +348,20 @@ def wire_predicate_write(
     entity = instructions.resolve_target(lane.model.meta, entity_name)
     declaring = declaring_of(lane.model.meta, entity)
     valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
-    assignments = _judged_changes(
-        lane.model.meta, entity, _row_members(lane.model.meta, entity), authored
-    )
+    members = _row_members(lane.model.meta, entity)
+    unknown = sorted(set(authored) - set(members))
+    if unknown:
+        raise instructions.WriteInstructionError(
+            f"{entity.identity.canonical}: assignments name undeclared members {unknown}"
+        )
     doc: dict[str, object] = {
         "mutation": mutation,
         "target": selection,
     }
-    if assignments:
+    if authored:
         doc["assignments"] = [
             {"attr": f"{entity.identity.canonical}.{member}", "value": value}
-            for member, value in assignments.items()
+            for member, value in authored.items()
         ]
     if valid_from_literal is not None:
         doc["validFrom"] = valid_from_literal
@@ -362,7 +369,7 @@ def wire_predicate_write(
         doc["until"] = until_literal
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # a `target` document always builds this shape
-    prepared = instructions.prepare_typed_write(instruction, lane.model.meta)
+    prepared = instructions.prepare_wire_write(instruction, lane.model.meta)
     assert isinstance(prepared, PreparedPredicateWrite)
     buffer_predicate_instruction(lane.uow, lane.model, lane.conn, prepared, lane.attempt)
 
@@ -401,7 +408,9 @@ def _authored_row(
     restored: set[str] = set()
     for member, value in assignments.items():
         # Every assigned member resolved: `_judged_changes` refused the rest.
-        if value == _decoded_member(members[member], observed.get(member)):
+        if value == _decoded_member(
+            members[member], observed.get(member), f"{record.identity.canonical}.{member}"
+        ):
             restored.add(member)
             continue
         effective[member] = value
@@ -493,46 +502,6 @@ def _selection_shape(target: Mapping[str, object]) -> str:
     return name
 
 
-def _judged_changes(
-    meta: Metamodel,
-    entity: EntityMetadata,
-    members: Mapping[str, _DeclaredMember],
-    changes: Mapping[str, object],
-) -> dict[str, object]:
-    """``changes`` decoded to native carriers, every named member judged.
-
-    Both halves run before anything about concurrency is asked, and both run for
-    EVERY named member rather than only the ones that turn out to be effective:
-    a caller assigning a primary key or the framework-owned version its exact
-    current value has still named a member no write may assign, and answering
-    that with silence would make legality depend on the stored state.
-
-    The verdict is
-    :func:`~parallax.core.inheritance.validate_write_assignment`'s — the one
-    judgement the typed ``.set(...)`` path, ``Entity.edit(**changes)``, and the
-    canonical predicate assignment all reach — so a Wire assignment is refused
-    for exactly the reasons its Typed peer is.
-
-    Returning only the accepted names is what lets everything downstream index
-    ``members`` directly: a change that survives this has a declaration.
-    """
-    judged: dict[str, object] = {}
-    for member, value in changes.items():
-        declared = members.get(member)
-        if declared is None:
-            raise instructions.WriteInstructionError(
-                f"{entity.identity.name}: {member!r} does not name a declared member of this "
-                "Entity, so no write can assign it"
-            )
-        decoded = _decoded_member(declared, value)
-        try:
-            inheritance.validate_write_assignment(meta, entity, member, decoded)
-        except inheritance.WriteAssignmentError as exc:
-            raise instructions.WriteInstructionError(str(exc)) from exc
-        judged[member] = decoded
-    return judged
-
-
 def _refuse_published_source(entity: EntityMetadata, data: object, mutation: KeyedMutation) -> None:
     """Refuse an insert whose payload is a value a Wire read published.
 
@@ -602,103 +571,52 @@ def _member_name(member: _DeclaredMember) -> str:
     return member.identity.path[-1]
 
 
-def _decoded_row(
-    meta: Metamodel, entity: EntityMetadata, data: Mapping[str, object]
-) -> dict[str, object]:
-    """One authored Create Payload as the canonical row an insert OPENS.
-
-    The walk is over the AUTHORED keys rather than the declared members, so a key
-    the model declares no member for passes through untouched and the member-name
-    honesty gate — rather than a decoding failure — is what names it.
-
-    A `many` occurrence is then filled in wherever the payload omitted one, at the
-    Entity's own level exactly as :func:`_decoded_document` does at every level
-    below it. Only an OPENING row is canonical this way, which is why this walk
-    and not the change set's: a payload states a complete document, so a `many` it
-    does not name is that occurrence's zero rather than a member left alone, while
-    a revising write's unnamed member is untouched.
-    """
-    members = _row_members(meta, entity)
-    row = {key: _decoded_member(members.get(key), value) for key, value in data.items()}
-    return _with_zero_state_occurrences(
-        row, (member for member in members.values() if not isinstance(member, AttributeMetadata))
-    )
-
-
-def _decoded_member(member: _DeclaredMember | None, value: object) -> object:
-    """``value`` in ``member``'s declared native carrier.
-
-    Total and nonthrowing, exactly like the seam it delegates to: an absent
-    member, a null value, and a value no declared decoding recognizes all pass
-    through unchanged, so the judgement that follows is what refuses them and a
-    decoding failure never stands in for a type verdict.
-    """
-    return _decoded(_position_decoder(member), value)
-
-
-type _Decoder = Callable[[object], object]
-"""What one authored position's value crosses, resolved from the model once and
-applied to whatever the caller wrote there."""
-
-
-def _decoded(decoder: _Decoder | None, value: object) -> object:
-    """``value`` through ``decoder``, or as authored where there is nothing to
-    apply — an absent declaration or a null, neither of which a serde seam has
-    anything to say about."""
-    return value if value is None or decoder is None else decoder(value)
-
-
-def _position_decoder(member: _DeclaredMember | None) -> _Decoder | None:
-    if member is None:
+def _decoded_member(member: _DeclaredMember, value: object, path: str) -> object:
+    if value is None:
         return None
     if isinstance(member, AttributeMetadata):
-        return partial(_decoded_leaf, member.type)
-    return partial(_decoded_occurrence, member)
+        return _decoded_leaf(member.type, value, path)
+    return _decoded_occurrence(member, value, path)
 
 
-def _decoded_leaf(neutral_type: NeutralType, value: object) -> object:
-    return decode_wire(neutral_type, cast("WireValue", value))
+def _decoded_leaf(neutral_type: NeutralType, value: object, path: str) -> object:
+    try:
+        return decode_wire(neutral_type, cast("WireValue", value))
+    except WireDecodingError as error:
+        raise instructions.InstructionRejectedError(
+            f"neutral-literal-{error.reason}", f"{path}: {error}"
+        ) from error
 
 
-def _decoded_occurrence(occurrence: _VoContainer, value: object) -> object:
-    """One present occurrence value: a `many`'s whole ordered replacement, or a
-    `one`'s single document."""
+def _decoded_occurrence(occurrence: _VoContainer, value: object, path: str) -> object:
     if occurrence.multiplicity is Multiplicity.MANY:
         if not isinstance(value, Sequence) or isinstance(value, str | bytes):
             return value
-        return [_decoded_document(occurrence, element) for element in cast("Sequence[Any]", value)]
-    return _decoded_document(occurrence, value)
+        return [
+            _decoded_document(occurrence, element, f"{path}[{index}]")
+            for index, element in enumerate(cast("Sequence[Any]", value))
+        ]
+    return _decoded_document(occurrence, value, path)
 
 
-def _decoded_document(container: _VoContainer, value: object) -> object:
-    """One occurrence document, decoded over the keys it actually carries.
-
-    Authored-key-driven for :func:`_decoded_row`'s reason, which also makes
-    absence structural here: a member the document omits is not a member this
-    walk decodes, and an undeclared key inside the document is left exactly as
-    authored for the composite judgement to name. A leaf inside an occurrence
-    carries its own metadata type rather than an Entity Attribute's, so what the
-    two levels share is the resolved decoder rather than the member.
-
-    A nested ``many`` is the one position the authored keys do not decide, because
-    it has no absent state (:func:`_with_zero_state_occurrences`).
-    """
+def _decoded_document(container: _VoContainer, value: object, path: str) -> object:
     if not isinstance(value, Mapping):
         return value
-    decoders: Mapping[str, _Decoder] = {
-        **{
-            attribute.identity.name: partial(_decoded_leaf, attribute.type)
-            for attribute in container.attributes
-        },
-        **{
-            nested.identity.path[-1]: partial(_decoded_occurrence, nested)
-            for nested in container.value_objects
-        },
-    }
-    decoded: dict[str, object] = {
-        key: _decoded(decoders.get(key), nested)
-        for key, nested in cast("Mapping[str, object]", value).items()
-    }
+    attributes = {attribute.identity.name: attribute for attribute in container.attributes}
+    occurrences = {nested.identity.path[-1]: nested for nested in container.value_objects}
+    decoded: dict[str, object] = {}
+    for key, nested in cast("Mapping[str, object]", value).items():
+        child_path = f"{path}.{key}"
+        if (attribute := attributes.get(key)) is not None:
+            decoded[key] = (
+                None if nested is None else _decoded_leaf(attribute.type, nested, child_path)
+            )
+        elif (occurrence := occurrences.get(key)) is not None:
+            decoded[key] = (
+                None if nested is None else _decoded_occurrence(occurrence, nested, child_path)
+            )
+        else:
+            decoded[key] = nested
     return _with_zero_state_occurrences(decoded, container.value_objects)
 
 
@@ -730,90 +648,37 @@ def _with_zero_state_occurrences(
     return decoded
 
 
-def _authored_document(value: object, described: str) -> dict[str, object]:
-    """``value`` as one caller-owned Wire document: judged for shape, and copied.
-
-    A Wire document is a mapping of names to values at every depth — the shape
-    `m-wire` transports and the shape the instruction IR reads — so the three
-    ways a Python value can fail to be one are refused HERE, as
-    :class:`~parallax.core.unit_work.WriteInstructionError`, before any member is
-    resolved and long before the evidence question: a non-mapping, a key that is
-    not a name, and a container that contains itself. Left to the walks
-    downstream they would surface as ``AttributeError``, ``TypeError`` from a
-    key sort, and ``RecursionError`` — none of which is a verdict on the write.
-
-    Shape and capture are one pass because they are one traversal, and neither
-    is a judgement about the model: what this answers is whether a document was
-    stated at all, which is the question every judgement after it presupposes.
-    """
+def _authored_document(value: object, described: str) -> Mapping[str, object]:
+    """Return a shape-validated Wire document without taking ownership yet."""
     if not isinstance(value, Mapping):
         raise instructions.WriteInstructionError(
             f"{described} must be a document of names to values, got {type(value).__name__}"
         )
-    return _captured_mapping(cast("Mapping[str, object]", value), described, ())
+    document = cast("Mapping[str, object]", value)
+    _validate_authored(document, described, ())
+    return document
 
 
-def _authored_changes(mutation: KeyedMutation, changes: WireChanges | None) -> dict[str, object]:
-    """A write's authored assignments, captured — or the empty set a destructive
-    or close verb states by naming no member at all.
-
-    Which verb was called is what decides whether ``None`` means anything: a
-    ``delete`` / ``terminate`` / ``terminateUntil`` passes no change set and its
-    ``None`` is that absence, while the update family's signature requires the
-    document, so a ``None`` there is a caller that stated none. Neither an empty
-    document nor a falsy value of another type says "no changes": ``{}`` is a
-    document that names no member — whose meaning :data:`WireChanges` states,
-    and which the two families answer differently — and everything else is a
-    document the caller failed to state, which reading as absence would answer
-    with a silent no-op instead of a refusal.
-    """
+def _authored_changes(mutation: KeyedMutation, changes: WireChanges | None) -> Mapping[str, object]:
+    """Return validated assignments, or the empty set a destructive verb states."""
     if changes is None and mutation not in _UPDATE_MUTATIONS:
         return {}
     return _authored_document(changes, f"a Wire `{mutation}`'s change set")
 
 
-def _captured[T](value: T, described: str, enclosing: tuple[int, ...]) -> T:
-    """``value`` with every mapping and sequence in it copied, keys judged.
-
-    A verb's captured intent is its own from the moment it returns, so a caller
-    that keeps and mutates the document it passed changes nothing about the
-    write. Ordinary containers rather than frozen ones, because what leaves here
-    is write input the pipeline reads exactly as an instruction document's own
-    rows are read; the cost is proportional to authored input alone, and a
-    keyed source — already frozen, and never copied — is not among it.
-
-    Copying preserves each container's authored TYPE. Rewriting a tuple as a
-    list would be a spelling translation rather than a copy, and it would make
-    this the one boundary that admits an array `m-predicate`'s own serde
-    refuses: the captured target reaches that serde verbatim, and a laundered
-    tuple would be accepted here and rejected for the identical document
-    elsewhere.
-
-    ``enclosing`` is the identity of every container on the path to this one,
-    which is what makes the walk total over caller-owned input: a container
-    reachable from itself is refused rather than descended into. Two siblings
-    referencing one document are not a cycle and are copied twice, exactly as a
-    caller sharing a subdocument between two members would expect.
-    """
+def _validate_authored(value: object, described: str, enclosing: tuple[int, ...]) -> None:
     if isinstance(value, Mapping):
         mapping = cast("Mapping[str, object]", value)
-        return cast("T", _captured_mapping(mapping, described, enclosing))
+        ancestry = _entered_ancestry(mapping, described, enclosing)
+        for key, nested in mapping.items():
+            _document_key(key, described)
+            _validate_authored(nested, described, ancestry)
+        return
     if isinstance(value, list | tuple):
         sequence = cast("Sequence[object]", value)
         ancestry = _entered_ancestry(sequence, described, enclosing)
-        elements = [_captured(nested, described, ancestry) for nested in sequence]
-        return cast("T", tuple(elements) if isinstance(value, tuple) else elements)
-    return value
-
-
-def _captured_mapping(
-    mapping: Mapping[str, object], described: str, enclosing: tuple[int, ...]
-) -> dict[str, object]:
-    ancestry = _entered_ancestry(mapping, described, enclosing)
-    return {
-        _document_key(key, described): _captured(nested, described, ancestry)
-        for key, nested in mapping.items()
-    }
+        for nested in sequence:
+            _validate_authored(nested, described, ancestry)
 
 
 def _entered_ancestry(

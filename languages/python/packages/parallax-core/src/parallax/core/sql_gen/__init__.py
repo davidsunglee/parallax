@@ -1,6 +1,6 @@
 """``parallax.core.sql_gen`` enforcement scope (m-sql).
 
-SQL generation: the read compiler that lowers one flat ``EntityQuery`` into a canonical
+SQL generation: the read compiler that lowers one flat ``ValidatedEntityQuery`` into a canonical
 ``LoweredStatement`` per dialect. Dialect variation enters only through the
 injected ``Dialect`` strategy. ``m-sql`` depends on ``m-object-query`` (the query
 value), ``m-predicate`` (the selection it carries), and ``m-dialect``.
@@ -17,9 +17,10 @@ longer answers physical shape. Every storage-shaped caller (DDL derivation,
 keyed write emission, table read-back) reads those same views, so no consumer
 rebuilds a physical order of its own.
 
-That implementation is five private modules, each owning one concern:
+That implementation is six private modules, each owning one concern:
 
-* ``_compile`` — the two entry points. Ordinary projection, the shared
+* ``_write`` — the exact private ``compile_write_step`` seam for finalized DML.
+* ``_compile`` — read and predicate-fragment compilation. Ordinary projection, the shared
   ``order by`` / ``limit`` / read-lock tail, normalization, and
   statement assembly, including the inheritance-family read forms it builds from
   the plans ``_inheritance`` resolves.
@@ -44,7 +45,7 @@ hand-written Import Linter contracts in `languages/python/pyproject.toml`
 (alongside the generated behavioral-DAG contracts, which remain authoritative
 for `m-sql`'s own edges)::
 
-    _compile -> _predicate -> _navigation -> _inheritance -> _context
+    _write -> _compile -> _predicate -> _navigation -> _inheritance -> _context
 
 ``_navigation`` and ``_inheritance`` return immutable PLANS and lower nothing,
 which is what keeps that graph acyclic instead of mutually recursive: neither

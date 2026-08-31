@@ -1,41 +1,15 @@
-"""The flat-Entity-Query read compiler (m-sql): lower -> normalize.
+"""Lower resolved flat Entity Queries to canonical SQL (m-sql).
 
-``compile_read`` turns one flat ``m-object-query`` ``EntityQuery`` into one canonical
-``LoweredStatement`` for a dialect. Lowering descends through `_predicate`'s one
-dispatcher (no visitor framework — see the third paragraph); the dialect strategy
-supplies every dialect-specific string. The emitted SQL is produced directly in
-canonical normalized form (alias-qualified columns, lowercase, single-space
-separated, canonical clause order), so ``normalize`` is a fixed-point identity
-check rather than a rewrite — the language target never depends on the reference harness's
-sqlglot normalizer (non-normative). The ``m-deep-fetch`` planning boundary reads
-the Object Query's clauses directly, injects temporal terms through
-``m-temporal-read``, and canonicalizes navigation before producing the flat
-``EntityQuery`` this module consumes. An ``includes`` clause is planned there into
-one ``EntityQuery`` per relationship level, so every query arriving here reads a
-SINGLE level and this compiler has no include path to lower and no relationship
-level to discover.
-
-Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
-superset projection, table-per-concrete-subtype union-all) are ASSEMBLED here
-(`m-sql` "Metamodel-extension lowering") from plans
-`_inheritance` resolves — which is where the `parallax.core.inheritance` edge
-lives, a legal one since `modules.md` already reaches `m-inheritance`
-transitively through `m-predicate`. Query validation runs upstream (the read
-preflight seam, which every entry point calls), so a narrow reaching this
-compiler is already known position-valid; nothing in this package re-validates
-it.
-
-Predicate lowering itself is NOT here. `_predicate` owns every descent into a
-predicate — the scalar vocabulary, navigation, value-object traversal, and the
-mid-predicate `narrow` — behind one entry point (`lower_predicate`) taking an
-immutable resolution scope. This module builds each statement's scope, calls
-that entry point for the read's own predicate (per `union all` branch, where
-there is one), and assembles the clause tail around the fragment it returns.
+``compile_read`` consumes :class:`ValidatedEntityQuery`: target metadata, predicate
+members and operands, temporal/navigation rewrites, ordering, narrowing, and the
+resolved read projection are already retained. This package chooses physical layout,
+renders dialect expressions, records role-classified binds, and assembles inheritance
+branches; it performs no authored reference or relationship resolution.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
@@ -57,11 +31,10 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectMetadata,
 )
-from parallax.core.object_query import OrderKey
+from parallax.core.object_query._validated import ValidatedOrderTerm
 from parallax.core.predicate import Narrow
 from parallax.core.predicate._validated import ValidatedPredicate
-from parallax.core.sql_gen._context import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._context import StatementBuilder as _Ctx
+from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
 # The family LANE of this compiler — distinct from `parallax.core.inheritance`
@@ -318,63 +291,22 @@ def _projection(
     layout: _TableLayout,
     dialect: Dialect,
     alias: str,
-    result_form: _ResultForm,
+    projected_vos: tuple[ValueObjectMetadata, ...],
     *,
-    include_value_objects: bool | frozenset[str] = False,
+    observation: bool,
 ) -> tuple[
     str,
     list[object],
     tuple[DocumentReadOrdinals, ...],
     _RowTransform,
 ]:
-    """The base read projection (m-sql *Read projection*), a function of the model.
+    """Render the resolved Value Object projection in canonical layout order.
 
-    The Entity's own Table Layout fixes the whole order — `Identity`,
-    `Domain`, `Temporal`, `Audit`, then `Document`, stable in declaration order
-    inside each tier — and this selects from it. Every applicable scalar slot is
-    projected, and the dialect maps each to its select-list expression (a `bytes`
-    column projects `encode(col, ?)`; every other column its plain reference).
-    The framework-owned inheritance discriminator and `familyVariant` are never
-    reached here: an inheritance-family read is built by
-    :func:`_compile_tph_read` / :func:`_compile_tpcs_read`.
-
-    An **instance-form** read (the object lane) additionally projects the
-    `Document` slots — each json document is an adjacent SQL-presence / value
-    pair over one alias-qualified reference — so a value-object-bearing entity's
-    whole document rides the owner's single statement (the one-round-trip materialization contract,
-    m-value-object). A row-form read omits them by default.
-
-    ``include_value_objects`` opts a **row-form** read into the `Document` slots
-    too, WITHOUT becoming instance-form (`m-case-format` *Predicate-selected
-    write instruction*): a materializing predicate write's own internal
-    resolving read stays row-form (it constructs no instance) but still needs
-    the raw VO document(s) the observation it records, or its own no-op
-    comparison, must read — the caller (the materializing predicate-write
-    resolve in `parallax.snapshot.handle`) derives this from the write's own
-    needs, never from `result_form`. ``True`` projects EVERY declared value
-    object (a temporal target, whose Predecessor Row is complete and whose
-    carried rows keep whichever documents the assignments do NOT themselves
-    reassign); a ``frozenset`` of value-object NAMES projects ONLY those (a
-    versioned target's comparison-only need — minimal-read discipline,
-    `m-sql`) — in EITHER case the layout's `Document` slot order is preserved,
-    never the caller's own set iteration order.
-
-    The third result is the read's own row transform. Under Relational Document
-    Layout the members selected above may live inside the Table's one shared
-    Structured Column, which is then projected once, last, and fanned back out
-    per row; under `Columns` layout none of them does, so the select list is
-    unchanged and the transform is the identity.
-
-    The two lanes that widen to every declared member — instance-form and
-    ``include_value_objects is True`` — are also the OBSERVATION lane, and they
-    project that Structured Column wherever the Table has one, even where no
-    member lives inside it: what such a read observes includes the stored
-    document a Predecessor Row retains (`m-sql` *Read projection*, rule 5).
+    ``projected_vos`` is deep fetch's exact retained selection. ``observation`` requests
+    the Structured Column needed for predecessor evidence even when no selected member
+    occupies it. Neither choice is inferred from result form in this compiler.
     """
-    observation = result_form == "instance" or include_value_objects is True
-    projected_vos = _projected_value_objects(
-        entity.declared_value_objects, result_form, include_value_objects
-    )
+
     columns = _select_projection(
         layout.columns,
         entity.declared_attributes,
@@ -389,20 +321,6 @@ def _projection(
     transform = _direct_document_transform(transform, ((entity.identity, layout, projected_vos),))
     sql, binds, document_reads = _render_projection(dialect, alias, columns)
     return sql, list(binds), document_reads, transform
-
-
-def _projected_value_objects(
-    declared: Sequence[ValueObjectMetadata],
-    result_form: _ResultForm,
-    include_value_objects: bool | frozenset[str],
-) -> tuple[ValueObjectMetadata, ...]:
-    if result_form == "instance" or include_value_objects is True:
-        return tuple(declared)
-    if isinstance(include_value_objects, frozenset):
-        return tuple(
-            member for member in declared if member.identity.path[-1] in include_value_objects
-        )
-    return ()
 
 
 def _scalar_read_contracts(
@@ -456,53 +374,13 @@ def compile_read(
     *,
     result_form: _ResultForm = "row",
     lock: LockMode | None = None,
-    include_value_objects: bool | frozenset[str] = False,
 ) -> CompiledRead:
-    """Compile one Entity Query to a self-contained :class:`CompiledRead`.
+    """Compile one resolved Entity Query into a self-contained read.
 
-    ``query.target`` is an exact accepted Entity Identity. The compiler resolves
-    it against ``model`` and reads the predicate, narrowing, ordering, and cap
-    off sibling fields; there is no clause to peel before lowering starts.
-
-    The result carries everything either row consumer needs — the canonical
-    ``LoweredStatement`` for ``dialect``, the root ``narrow_to`` to materialize
-    under, and both metadata-preserving and flat row transforms — so no caller
-    re-derives `familyVariant`, narrowing, or projection keys from the query.
-
-    ``result_form`` selects the projection lane (m-sql *Read projection*): a
-    **row-form** read (the values lane — the corpus predicate `read` cases and the
-    internal materialized-write resolving read) projects scalars only by default;
-    ``include_value_objects`` below explicitly widens that default. An
-    **instance-form** read (the object lane — a find / snapshot / deep-fetch whose
-    rows materialize into instances) additionally projects the value-object document
-    columns. The conformance engine derives it from the case's asserted result
-    member (`then.rows` = row-form; `then.graph` / `then.graphs` = instance-form).
-
-    ``include_value_objects`` opts a **row-form** read into the value-object
-    document columns too, independent of ``result_form`` (`m-case-format`
-    *Predicate-selected write instruction* — a materializing predicate write's
-    own resolving read projects need-sensitively, on EVERY target class):
-    ``True`` projects every declared document (a temporal target, whose
-    observation retains a complete Predecessor Row and whose carried rows keep
-    whichever documents an assignment-bearing verb does NOT itself reassign);
-    a ``frozenset`` of value-object NAMES projects ONLY those (a versioned
-    target's own per-row no-op comparison need — minimal-read discipline,
-    never every declared document). An inheritance-family target never reaches this flag (a
-    predicate-selected write on a family is rejected before this compiler,
-    `m-inheritance`), so it is not threaded into the inheritance lowering
-    below.
-
-    ``lock`` renders the transactional read-lock suffix (m-sql *Read-lock suffix*,
-    applied through the m-dialect seam): ``locking`` appends the dialect's
-    shared-row-lock suffix (Postgres ``for share of t0``) after every other
-    clause; ``optimistic`` and the default (``None`` — a non-transactional read)
-    append nothing. Grouped / aggregate reads are not yet reachable. The value is
-    the read TARGET's already-derived Effective Concurrency Strategy, never a raw
-    Concurrency Preference — every caller composes
-    :func:`~parallax.snapshot.handle.entity_read_lock` for the Entity this
-    statement materializes, so one deep fetch's levels may disagree. This
-    compiler is the renderer and makes no part of that decision.
+    ``result_form`` chooses only the materialization contract. Projection membership is
+    already present on ``query``; ``lock`` is the caller-derived effective read lock.
     """
+
     target = query.entity
     facet = _inheritance_view(model)
     storage = _storage_view(model)
@@ -538,7 +416,7 @@ def compile_read(
         )
     # One context per statement (the mutable accumulator), one resolution scope
     # over it (the immutable "what does a leaf resolve against" half).
-    ctx = _Ctx(model, facet, storage, dialect)
+    ctx = StatementBuilder(model, facet, storage, dialect)
     layout = _table_layout(storage, facet, target.identity)
     scope = _EntityScope(ctx, target, layout)
 
@@ -547,10 +425,10 @@ def compile_read(
         layout,
         dialect,
         scope.alias,
-        result_form,
-        include_value_objects=include_value_objects,
+        query.projection.value_objects,
+        observation=query.projection.observe_structured_document,
     )
-    ctx.binds.extend(proj_binds)
+    ctx.bind_structural_all(proj_binds)
     select = f"select {proj_sql}"
     parts = [select, f"from {layout.table.name} {scope.alias}"]
 
@@ -559,7 +437,7 @@ def compile_read(
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, scope, order_keys, limit, lock)
 
-    statement = _normalize(ctx.statement(" ".join(parts)))
+    statement = _normalize(ctx.finish(" ".join(parts)))
     # A non-family read projects no tag and no variant literal, so the only
     # transform it can carry is the document fan-out its own projection decided.
     position = (target.identity,)
@@ -570,7 +448,7 @@ def compile_read(
         target.identity,
         position,
         position_documents,
-        _projected_value_objects(target.declared_value_objects, result_form, include_value_objects),
+        query.projection.value_objects,
         document_reads,
         _scalar_read_contracts(model, facet, storage, dialect, position),
         transform,
@@ -580,28 +458,15 @@ def compile_read(
 def compile_write_predicate(
     op: ValidatedPredicate, model: Metamodel, dialect: Dialect, target: EntityMetadata
 ) -> CompiledPredicate:
-    """Render a BARE write predicate (`m-batch-write.md` "Predicate-selected
-    readless forms"): the UNALIASED where-clause SQL and its ordered binds —
-    `balance < ?`, never the resolving read's aliased `t0.balance < ?`.
-
-    Reuses the Predicate lowering (`_predicate.lower_predicate`) with
-    an unaliased column formatter (:attr:`_EntityScope.unaliased`) rather than
-    forking SQL text assembly — the same `And`/`Or`/`Group`/`Comparison`/...
-    dispatch a read's `where` clause lowers through, so a write's rendered
-    predicate can never drift from the read compiler's own operator vocabulary.
-    ``op`` is a :class:`PredicateNode`, which is the whole guarantee: result
-    shaping, narrowing, Temporal Selection, and Includes are Object Query clauses
-    with no spelling in this type at all (`m-unit-work` write-instruction
-    vocabulary), so nothing here has a result-shaping input to refuse.
-    """
+    """Render an unaliased, already-validated write predicate."""
     facet = _inheritance_view(model)
     storage = _storage_view(model)
-    ctx = _Ctx(model, facet, storage, dialect)
+    ctx = StatementBuilder(model, facet, storage, dialect)
     scope = _EntityScope(
         ctx, target, _table_layout(storage, facet, target.identity), unaliased=True
     )
     where_sql = _lower_predicate(op, scope)
-    statement = ctx.statement(where_sql)
+    statement = ctx.finish(where_sql)
     return CompiledPredicate(
         statement.sql,
         statement.binds,
@@ -612,7 +477,7 @@ def compile_write_predicate(
 def _append_result_shape(
     parts: list[str],
     scope: _EntityScope,
-    order_keys: tuple[OrderKey, ...],
+    order_keys: tuple[ValidatedOrderTerm, ...],
     limit: int | None,
     lock: LockMode | None,
 ) -> None:
@@ -627,14 +492,14 @@ def _append_result_shape(
         parts.append("order by " + ", ".join(terms))
     if limit is not None:
         parts.append(scope.dialect.limit_clause())
-        scope.ctx.bind(limit)
+        scope.ctx.bind_structural(limit)
     if lock == "locking":
         # The shared-row-lock suffix is the last thing in the statement (after any
         # `where` / `order by` / `limit`).
         parts.append(scope.dialect.read_lock_suffix(scope.alias))
 
 
-def _order_term(scope: _EntityScope, key: OrderKey) -> str:
+def _order_term(scope: _EntityScope, key: ValidatedOrderTerm) -> str:
     """One ``order by`` term: the dialect's Null Placement term for a NULLABLE key,
     else the plain form (`m-sql` "``order by`` key terms").
 
@@ -648,10 +513,10 @@ def _order_term(scope: _EntityScope, key: OrderKey) -> str:
     text-compared spellings order as their values do, and everything else orders
     inside the engine's own type system through the cast.
     """
-    direction = key.direction or "asc"
-    column_sql = scope.subject_of(key.attr).compared
-    if scope.entity_attribute(key.attr).nullable:
-        return scope.dialect.null_order(column_sql, direction, key.nulls or "last")
+    direction = key.direction
+    column_sql = scope.subject_for(key.member).compared
+    if key.member.nullable:
+        return scope.dialect.null_order(column_sql, direction, key.nulls)
     return f"{column_sql} {direction}"
 
 
@@ -661,7 +526,7 @@ def _order_term(scope: _EntityScope, key: OrderKey) -> str:
 #                                                                               #
 # `_inheritance` resolves the read's queried POSITION and hands back an          #
 # immutable plan; the three assemblers below are its only consumers. Each one   #
-# constructs this statement's own `_Ctx` (a table-per-concrete-subtype union    #
+# constructs this statement's own `StatementBuilder` (a table-per-concrete-subtype union    #
 # constructs one PER BRANCH, which is what restarts each branch at `t0`), splices #
 # the plan's projection binds, lowers the plan's un-lowered `inner` predicate,   #
 # and only THEN appends the tag guard's binds — the m-sql "Grouped branch        #
@@ -672,7 +537,7 @@ def _compile_inheritance_read(
     entity: EntityMetadata,
     predicate: ValidatedPredicate,
     narrow_to: tuple[EntityIdentity, ...] | None,
-    order_keys: tuple[OrderKey, ...],
+    order_keys: tuple[ValidatedOrderTerm, ...],
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -744,7 +609,7 @@ def _compile_tph_read(
     plan: _TphPlan,
     predicate: ValidatedPredicate,
     entity: EntityMetadata,
-    order_keys: tuple[OrderKey, ...],
+    order_keys: tuple[ValidatedOrderTerm, ...],
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -759,7 +624,7 @@ def _compile_tph_read(
     is projected — is decided by :func:`_plan_inheritance_read`; this builds the
     statement's context and sequences the four bind phases.
     """
-    ctx = _Ctx(model, facet, storage, dialect)
+    ctx = StatementBuilder(model, facet, storage, dialect)
     scope = _EntityScope(
         ctx,
         entity,
@@ -767,7 +632,7 @@ def _compile_tph_read(
         position=plan.position,
     )
     proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
-    ctx.binds.extend(proj_binds)
+    ctx.bind_structural_all(proj_binds)
 
     select = f"select {proj_sql}"
     parts = [select, f"from {plan.table} {scope.alias}"]
@@ -780,7 +645,7 @@ def _compile_tph_read(
         # then tag).
         tag_sql, tag_binds = _tph_tag_guard(scope, facet, plan.tag)
         where_terms.append(tag_sql)
-        ctx.binds.extend(tag_binds)
+        ctx.bind_framework_all(tag_binds)
     if where_terms:
         parts.append("where " + " and ".join(where_terms))
 
@@ -801,7 +666,7 @@ def _compile_tph_read(
             ),
             plan.transform,
         )
-    statement = _normalize(ctx.statement(" ".join(parts)))
+    statement = _normalize(ctx.finish(" ".join(parts)))
     return statement, document_reads, plan.transform
 
 
@@ -809,7 +674,7 @@ def _compile_tph_partitioned(
     plan: _TphPlan,
     predicate: ValidatedPredicate,
     entity: EntityMetadata,
-    order_keys: tuple[OrderKey, ...],
+    order_keys: tuple[ValidatedOrderTerm, ...],
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -823,7 +688,7 @@ def _compile_tph_partitioned(
     layout = _table_layout(storage, facet, entity.identity)
     key_columns = tuple(slot.column.name for slot in layout.physical_primary_key)
     for branch_index, concrete in enumerate(plan.position):
-        branch_ctx = _Ctx(model, facet, storage, dialect)
+        branch_ctx = StatementBuilder(model, facet, storage, dialect)
         base_scope = _EntityScope(
             branch_ctx,
             entity,
@@ -858,28 +723,28 @@ def _compile_tph_partitioned(
                 branch_scope.alias,
                 document_pairs=not order_keys and limit is None,
             )
-            branch_ctx.binds.extend(projection_binds)
-        branch_ctx.binds.extend(tag_binds)
-        branch_ctx.binds.extend(fence_binds)
+            branch_ctx.bind_structural_all(projection_binds)
+        branch_ctx.bind_framework_all(tag_binds)
+        branch_ctx.bind_framework_all(fence_binds)
         inner = _lower_predicate(_planned_inner(predicate, plan.inner), branch_scope)
         parts = [f"select {projection}", f"from ({tagged}) {tagged_alias}"]
         if inner:
             parts.append(f"where {inner}")
         branch_sql = " ".join(parts)
         branch_sqls.append(branch_sql)
-        branches.append(branch_ctx.statement(branch_sql))
+        branches.append(branch_ctx.finish(branch_sql))
 
     union = " union all ".join(branch_sqls)
     if lock is not None:
-        outer_ctx = _Ctx(model, facet, storage, dialect)
+        statement_ctx = StatementBuilder(model, facet, storage, dialect)
         outer_scope = _EntityScope(
-            outer_ctx,
+            statement_ctx,
             entity,
             layout,
             position=plan.position,
         )
         projection, projection_binds, document_reads = plan.projection(dialect, outer_scope.alias)
-        outer_ctx.binds.extend(projection_binds)
+        statement_ctx.bind_structural_all(projection_binds)
         join_terms = " and ".join(
             f"{dialect.qualified('u', column)} = {dialect.qualified(outer_scope.alias, column)}"
             for column in key_columns
@@ -889,50 +754,43 @@ def _compile_tph_partitioned(
             f"from {plan.table} {outer_scope.alias}",
             f"join ({union}) u on {join_terms}",
         ]
-        _append_result_shape(parts, outer_scope, order_keys, limit, lock)
-        statement_ctx = _Ctx(model, facet, storage, dialect)
-        for bind in projection_binds:
-            statement_ctx.bind(bind)
         for branch in branches:
-            statement_ctx.extend(branch)
-        for bind in outer_ctx.binds[len(projection_binds) :]:
-            statement_ctx.bind(bind)
-        return _normalize(statement_ctx.statement(" ".join(parts))), document_reads
+            statement_ctx.append_fragment(branch)
+        _append_result_shape(parts, outer_scope, order_keys, limit, lock)
+        return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
 
     if not order_keys and limit is None:
         _projection, _projection_binds, document_reads = plan.projection(dialect, "t0")
-        statement_ctx = _Ctx(model, facet, storage, dialect)
+        statement_ctx = StatementBuilder(model, facet, storage, dialect)
         for branch in branches:
-            statement_ctx.extend(branch)
-        return _normalize(statement_ctx.statement(union)), document_reads
+            statement_ctx.append_fragment(branch)
+        return _normalize(statement_ctx.finish(union)), document_reads
 
-    outer_ctx = _Ctx(model, facet, storage, dialect)
+    statement_ctx = StatementBuilder(model, facet, storage, dialect)
     outer_scope = _EntityScope(
-        outer_ctx,
+        statement_ctx,
         entity,
         layout,
         alias="u",
         position=plan.position,
     )
     projection, projection_binds, document_reads = plan.projection(dialect, outer_scope.alias)
-    outer_ctx.binds.extend(projection_binds)
+    statement_ctx.bind_structural_all(projection_binds)
     parts = [
         f"select {projection}",
         f"from ({union}) {outer_scope.alias}",
     ]
-    _append_result_shape(parts, outer_scope, order_keys, limit, None)
-    statement_ctx = _Ctx(model, facet, storage, dialect)
     for branch in branches:
-        statement_ctx.extend(branch)
-    statement_ctx.extend(outer_ctx.statement(""))
-    return _normalize(statement_ctx.statement(" ".join(parts))), document_reads
+        statement_ctx.append_fragment(branch)
+    _append_result_shape(parts, outer_scope, order_keys, limit, None)
+    return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
 
 
 def _compile_tpcs_read(
     plan: _TpcsUnionPlan,
     predicate: ValidatedPredicate,
     entity: EntityMetadata,
-    order_keys: tuple[OrderKey, ...],
+    order_keys: tuple[ValidatedOrderTerm, ...],
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -942,7 +800,7 @@ def _compile_tpcs_read(
     """Assemble a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
     table-per-concrete-subtype lowering").
 
-    Each branch gets a FRESH ``_Ctx``: that is the whole mechanism behind a branch
+    Each branch gets a FRESH ``StatementBuilder``: that is the whole mechanism behind a branch
     restarting its own alias scheme at `t0`, and behind the per-branch binds being
     separable so they concatenate in the plan's canonical branch order.
 
@@ -958,7 +816,7 @@ def _compile_tpcs_read(
     branch_statements: list[LoweredStatement] = []
     document_reads: tuple[DocumentReadOrdinals, ...] | None = None
     for branch in plan.branches:
-        branch_ctx = _Ctx(model, facet, storage, dialect)
+        branch_ctx = StatementBuilder(model, facet, storage, dialect)
         branch_scope = _EntityScope(
             branch_ctx,
             entity,
@@ -973,24 +831,24 @@ def _compile_tpcs_read(
             document_reads = branch_document_reads
         elif document_reads != branch_document_reads:  # pragma: no cover - aligned union invariant
             raise SqlGenError("table-per-concrete-subtype branches disagree on document ordinals")
-        branch_ctx.binds.extend(proj_binds)
+        branch_ctx.bind_structural_all(proj_binds)
         parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
         where_sql = _lower_predicate(_planned_inner(predicate, plan.inner), branch_scope)
         if where_sql:
             parts.append(f"where {where_sql}")
         branch_sql = " ".join(parts)
         branch_sqls.append(branch_sql)
-        branch_statements.append(branch_ctx.statement(branch_sql))
+        branch_statements.append(branch_ctx.finish(branch_sql))
 
     union = " union all ".join(branch_sqls)
     if not wrapped:
-        statement_ctx = _Ctx(model, facet, storage, dialect)
+        statement_ctx = StatementBuilder(model, facet, storage, dialect)
         for branch in branch_statements:
-            statement_ctx.extend(branch)
-        statement = _normalize(statement_ctx.statement(union))
+            statement_ctx.append_fragment(branch)
+        statement = _normalize(statement_ctx.finish(union))
         return statement, document_reads or (), plan.transform
 
-    outer_ctx = _Ctx(model, facet, storage, dialect)
+    outer_ctx = StatementBuilder(model, facet, storage, dialect)
     outer_scope = _EntityScope(
         outer_ctx,
         entity,
@@ -1007,16 +865,16 @@ def _compile_tpcs_read(
         outer_parts.append("order by " + ", ".join(terms))
     if limit is not None:
         outer_parts.append(dialect.limit_clause())
-        outer_ctx.bind(limit)
-    statement_ctx = _Ctx(model, facet, storage, dialect)
+        outer_ctx.bind_structural(limit)
+    statement_ctx = StatementBuilder(model, facet, storage, dialect)
     for branch in branch_statements:
-        statement_ctx.extend(branch)
-    statement_ctx.extend(outer_ctx.statement(""))
-    statement = _normalize(statement_ctx.statement(" ".join(outer_parts)))
+        statement_ctx.append_fragment(branch)
+    statement_ctx.append_fragment(outer_ctx.finish(""))
+    statement = _normalize(statement_ctx.finish(" ".join(outer_parts)))
     return statement, outer_document_reads, plan.transform
 
 
-def _tpcs_order_term(plan: _TpcsUnionPlan, scope: _EntityScope, key: OrderKey) -> str:
+def _tpcs_order_term(plan: _TpcsUnionPlan, scope: _EntityScope, key: ValidatedOrderTerm) -> str:
     """One ``order by`` term measured against a wrapped union's result alias.
 
     One thing differs from :func:`_order_term`: a member is named by the result
@@ -1029,11 +887,11 @@ def _tpcs_order_term(plan: _TpcsUnionPlan, scope: _EntityScope, key: OrderKey) -
     position, so a legal key is owned by every branch and never meets that branch's
     typed `NULL` placeholder.
     """
-    attribute = scope.entity_attribute(key.attr)
-    direction = key.direction or "asc"
+    attribute = key.member
+    direction = key.direction
     term = _tpcs_order_subject(plan, scope, attribute)
     if attribute.nullable:
-        return scope.dialect.null_order(term, direction, key.nulls or "last")
+        return scope.dialect.null_order(term, direction, key.nulls)
     return f"{term} {direction}"
 
 
@@ -1056,7 +914,7 @@ def _tpcs_order_subject(
     if document is None:
         return reference
     extraction, path_binds = scope.dialect.nested_extract(reference, document.path)
-    scope.ctx.binds.extend(path_binds)
+    scope.ctx.bind_structural_all(path_binds)
     return scope.dialect.nested_cast(extraction, attribute.type)
 
 
@@ -1064,7 +922,7 @@ def _compile_tpcs_single(
     plan: _TpcsSinglePlan,
     predicate: ValidatedPredicate,
     entity: EntityMetadata,
-    order_keys: tuple[OrderKey, ...],
+    order_keys: tuple[ValidatedOrderTerm, ...],
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -1085,17 +943,17 @@ def _compile_tpcs_single(
     sequences its bind phases explicitly — here projection, then user predicate,
     then limit; there is no framework tag guard on this lane.
     """
-    ctx = _Ctx(model, facet, storage, dialect)
+    ctx = StatementBuilder(model, facet, storage, dialect)
     scope = _EntityScope(ctx, entity, _table_layout(storage, facet, plan.position[0]))
     proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
-    ctx.binds.extend(proj_binds)
+    ctx.bind_structural_all(proj_binds)
     select = f"select {proj_sql}"
     parts = [select, f"from {plan.table} {scope.alias}"]
     where_sql = _lower_predicate(_planned_inner(predicate, plan.inner), scope)
     if where_sql:
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, scope, order_keys, limit, lock)
-    statement = _normalize(ctx.statement(" ".join(parts)))
+    statement = _normalize(ctx.finish(" ".join(parts)))
     return statement, document_reads, plan.transform
 
 

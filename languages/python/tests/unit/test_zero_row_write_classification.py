@@ -30,6 +30,7 @@ enforcer, to the retry decision.
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal
 
 import pytest
 from _corpus_model_support import model as corpus_model
@@ -92,7 +93,7 @@ def _locking_policy(
 @pytest.mark.parametrize(
     "write",
     [
-        KeyedWrite("update", "Account", ({"id": 2, "balance": 250.00},)),
+        KeyedWrite("update", "Account", ({"id": 2, "balance": Decimal("250.00")},)),
         KeyedWrite("delete", "Account", ({"id": 2},)),
     ],
     ids=["update", "delete"],
@@ -111,7 +112,7 @@ def test_a_versioned_locking_write_reaching_no_row_is_the_non_retriable_stale_wr
 @pytest.mark.parametrize(
     "write",
     [
-        KeyedWrite("update", "Wallet", ({"id": 2, "balance": 250.00},)),
+        KeyedWrite("update", "Wallet", ({"id": 2, "balance": Decimal("250.00")},)),
         KeyedWrite("delete", "Wallet", ({"id": 2},)),
     ],
     ids=["update", "delete"],

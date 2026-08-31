@@ -32,6 +32,7 @@ itself.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
 from types import MappingProxyType
@@ -68,7 +69,7 @@ from parallax.core.metamodel import Column as CoreColumn
 from parallax.core.metamodel import Table as CoreTable
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
-from parallax.core.sql_gen._write import compile_write
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -91,7 +92,6 @@ from parallax.core.unit_work import (
     PlannedUpdate,
     PlanningRequest,
     PredicateSelection,
-    PredicateTarget,
     PredicateWrite,
     SelfIncrement,
     Versioned,
@@ -102,7 +102,12 @@ from parallax.core.unit_work import (
     WriteObservation,
     WritePlanningError,
 )
-from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
+from parallax.core.unit_work.planned import (
+    PlannedWrite as PlannedStep,
+)
+from parallax.core.unit_work.planned import (
+    ValidatedMutationSelection,
+)
 from parallax.descriptor import _records
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 
@@ -167,17 +172,23 @@ def test_non_temporal_write_requires_an_effective_table() -> None:
     account = dataclasses.replace(records("account").entity("Account"), table=None)
     malformed = formed(_records.Metamodel(entities=(account,)))
     with pytest.raises(SqlGenError, match="write target has no effective table"):
-        _lower(KeyedWrite("insert", "Account", ({"id": 1},)), malformed)
+        _lower(
+            KeyedWrite(
+                "insert",
+                "Account",
+                ({"id": 1, "owner": "A", "balance": Decimal("1.00"), "version": 1},),
+            ),
+            malformed,
+        )
 
 
-# --------------------------------------------------------------------------- #
-# Non-temporal keyed lowering — byte-exact against the corpus goldens.         #
-# --------------------------------------------------------------------------- #
 def test_insert_projects_every_present_column_in_column_order() -> None:
     # m-unit-work-001 step 0.
     statement = _lower(
         KeyedWrite(
-            "insert", "Account", ({"id": 7, "owner": "Newton", "balance": 5.00, "version": 1},)
+            "insert",
+            "Account",
+            ({"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1},),
         ),
         ACCOUNT,
     )[0]
@@ -204,12 +215,12 @@ def test_insert_orders_columns_by_column_order_not_row_order() -> None:
     # m-unit-work-003 step 0: the row is authored id..orderedOn; the emission follows
     # the Entity Layout's slots (orderedOn -> ordered_on last among Order's scalars).
     row = {
-        "orderedOn": "2024-07-01",
+        "orderedOn": dt.date(2024, 7, 1),
         "id": 100,
         "name": "Hopper",
         "sku": "X-1",
         "qty": 1,
-        "price": 9.99,
+        "price": Decimal("9.99"),
         "active": True,
     }
     statement = _lower(KeyedWrite("insert", "Order", (row,)), ORDERS)[0]
@@ -217,14 +228,14 @@ def test_insert_orders_columns_by_column_order_not_row_order() -> None:
         "insert into orders(id, name, sku, qty, price, active, ordered_on) "
         "values (?, ?, ?, ?, ?, ?, ?)"
     )
-    assert statement.binds == (100, "Hopper", "X-1", 1, 9.99, True, "2024-07-01")
+    assert statement.binds == (100, "Hopper", "X-1", 1, Decimal("9.99"), True, dt.date(2024, 7, 1))
 
 
 def test_update_sets_non_pk_columns_in_column_order_keyed_by_pk() -> None:
     # m-unit-work-005 step 1: the version advances from this unit of work's own
     # recorded observation (`m-opt-lock`), never a row-carried value.
     statement = _lower(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)),
+        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
         ACCOUNT,
         observation=VersionObservation(observed_version=1),
     )[0]
@@ -249,12 +260,16 @@ def test_value_object_document_binds_as_one_json_document_in_column_order() -> N
     # occurrence and always contributes its array, the sole zero-element
     # representation, exactly as the developer path's `to_document` already did.
     statement = _lower(
-        KeyedWrite("insert", "Customer", ({"id": 1, "name": "Ada", "address": {"city": "Oslo"}},)),
+        KeyedWrite(
+            "insert",
+            "Customer",
+            ({"id": 1, "name": "Ada", "address": {"street": "1 Main", "city": "Oslo"}},),
+        ),
         CUSTOMER,
     )[0]
     assert statement.sql == "insert into customer(id, name, address) values (?, ?, ?)"
     assert statement.binds[:2] == (1, "Ada")
-    assert statement.binds[2] == JsonDocument({"city": "Oslo", "phones": []})
+    assert statement.binds[2] == JsonDocument({"street": "1 Main", "city": "Oslo", "phones": []})
 
 
 def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() -> None:
@@ -271,6 +286,7 @@ def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() ->
                     "id": 2,
                     "name": "Bo",
                     "address": {
+                        "street": "2 Main",
                         "city": "Bergen",
                         "geo": {"country": "NO", "elevation": 12},
                         "phones": [{"type": "home", "number": "555-0100"}],
@@ -282,6 +298,7 @@ def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() ->
     )[0]
     assert statement.binds[2] == JsonDocument(
         {
+            "street": "2 Main",
             "city": "Bergen",
             "geo": {"country": "NO", "elevation": 12.0},
             "phones": [{"type": "home", "number": "555-0100"}],
@@ -303,16 +320,22 @@ def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() ->
                 "name": "H",
                 "sku": "X",
                 "qty": 1,
-                "price": 1.0,
+                "price": Decimal("1.00"),
                 "active": True,
-                "orderedOn": "2024-07-01",
+                "orderedOn": dt.date(2024, 7, 1),
             },
         ),
-        (PAYMENT, "CardPayment", {"id": 1, "amount": 10.00, "cardNetwork": "Visa"}),
+        (PAYMENT, "CardPayment", {"id": 1, "amount": Decimal("10.00"), "cardNetwork": "Visa"}),
         (
             DOCUMENT,
             "Invoice",
-            {"id": 1, "title": "T", "folderId": 9, "currency": "USD", "amountDue": 10.00},
+            {
+                "id": 1,
+                "title": "T",
+                "folderId": 9,
+                "currency": "USD",
+                "amountDue": Decimal("10.00"),
+            },
         ),
     ],
 )
@@ -333,7 +356,11 @@ def test_update_sets_every_layout_slot_the_row_names_except_the_model_key() -> N
     # the model key the predicate carries; the tag slot is a guard, never a SET
     # column, even though it precedes both domain slots in the shared table.
     statement = _lower(
-        KeyedWrite("update", "CardPayment", ({"id": 1, "amount": 130.00, "cardNetwork": "Visa"},)),
+        KeyedWrite(
+            "update",
+            "CardPayment",
+            ({"id": 1, "amount": Decimal("130.00"), "cardNetwork": "Visa"},),
+        ),
         PAYMENT,
     )[0]
     assert _layout_columns(PAYMENT, "CardPayment") == ("id", "kind", "amount", "card_network")
@@ -352,8 +379,8 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
             "insert",
             "CardPayment",
             (
-                {"id": 1, "amount": 10.00, "cardNetwork": "Visa"},
-                {"cardNetwork": "Amex", "amount": 20.00, "id": 2},
+                {"id": 1, "amount": Decimal("10.00"), "cardNetwork": "Visa"},
+                {"cardNetwork": "Amex", "amount": Decimal("20.00"), "id": 2},
             ),
         ),
         PAYMENT,
@@ -369,7 +396,7 @@ def test_multi_row_insert_column_list_is_the_shared_layout_slot_filter() -> None
 # m-opt-lock: the version gate / advance / conflict policy.                    #
 # --------------------------------------------------------------------------- #
 def test_versioned_update_without_a_row_carried_version_requires_observation() -> None:
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 50.00},))
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("50.00")},))
     with pytest.raises(
         opt_lock.UnobservedVersionError, match="requires the version its source value observed"
     ):
@@ -378,7 +405,7 @@ def test_versioned_update_without_a_row_carried_version_requires_observation() -
 
 def test_versioned_update_derives_the_advance_from_the_observation_locking_mode() -> None:
     # locking mode: version = observed + 1 in the SET, no gate.
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 50.00},))
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("50.00")},))
     statement = _lower(
         update, ACCOUNT, observation=VersionObservation(observed_version=3), concurrency="locking"
     )[0]
@@ -389,7 +416,7 @@ def test_versioned_update_derives_the_advance_from_the_observation_locking_mode(
 def test_versioned_update_gates_on_the_observed_version_optimistic_mode() -> None:
     # optimistic mode: SAME advance, plus `and version = ?` binding the observed
     # value LAST.
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 50.00},))
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("50.00")},))
     statement = _lower(
         update,
         ACCOUNT,
@@ -407,7 +434,9 @@ def test_versioned_update_carrying_a_literal_version_is_refused() -> None:
     # (`m-opt-lock` "Version values are framework-owned") — the framework-owned
     # field is never caller data, so it is never silently double-assigned
     # against the derived advance, EVEN when an observation is also available.
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00, "version": 2},))
+    update = KeyedWrite(
+        "update", "Account", ({"id": 1, "balance": Decimal("175.00"), "version": 2},)
+    )
     with pytest.raises(opt_lock.CallerAuthoredVersionError, match="framework-owned"):
         _lower(
             update,
@@ -487,7 +516,7 @@ def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_v
     insert = KeyedWrite(
         "insert",
         "Account",
-        ({"id": 9, "owner": "Noether", "balance": 5.00, "version": 99},),
+        ({"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 99},),
     )
     statement = _lower(insert, ACCOUNT)[0]
     assert statement.sql == "insert into account(id, owner, balance, version) values (?, ?, ?, ?)"
@@ -502,7 +531,9 @@ def test_versioned_insert_derives_the_initial_version_ignoring_any_row_carried_v
 def test_tph_insert_derives_the_tag_at_its_columnorder_position() -> None:
     # m-inheritance-007.
     insert = KeyedWrite(
-        "insert", "CardPayment", ({"id": 10, "amount": 200.00, "cardNetwork": "Mastercard"},)
+        "insert",
+        "CardPayment",
+        ({"id": 10, "amount": Decimal("200.00"), "cardNetwork": "Mastercard"},),
     )
     statement = _lower(insert, PAYMENT)[0]
     assert (
@@ -513,7 +544,7 @@ def test_tph_insert_derives_the_tag_at_its_columnorder_position() -> None:
 
 def test_tph_update_of_a_root_declared_attribute_is_tag_guarded() -> None:
     # m-inheritance-008.
-    update = KeyedWrite("update", "CardPayment", ({"id": 1, "amount": 130.00},))
+    update = KeyedWrite("update", "CardPayment", ({"id": 1, "amount": Decimal("130.00")},))
     statement = _lower(update, PAYMENT)[0]
     assert statement.sql == "update payment set amount = ? where id = ? and kind = ?"
     assert statement.binds == (130.00, 1, "card")
@@ -532,7 +563,7 @@ def test_tpcs_insert_targets_the_concretes_own_table_no_tag() -> None:
     insert = KeyedWrite(
         "insert",
         "Invoice",
-        ({"id": 10, "title": "Invoice-C", "currency": "USD", "amountDue": 300.00},),
+        ({"id": 10, "title": "Invoice-C", "currency": "USD", "amountDue": Decimal("300.00")},),
     )
     statement = _lower(insert, DOCUMENT)[0]
     assert (
@@ -623,18 +654,12 @@ def test_unrecognized_computed_strategy_is_refused() -> None:
         _lower(insert, PK_MAX)
 
 
-def test_a_mapping_that_does_not_match_the_one_key_marker_shape_binds_literally() -> None:
-    # `write_planner._marker`'s SHAPE classification (m-value-object "Writing"
-    # marker disambiguation) requires EXACTLY one key naming a recognized marker —
-    # a differently-shaped mapping (here, two keys) is neither a marker nor a
-    # value-object document (which would already be JsonDocument-wrapped by
-    # this point), so it is bound as an ordinary literal, never refused.
+def test_a_mapping_outside_the_marker_shape_is_not_a_string_literal() -> None:
     update = KeyedWrite(
         "update", "Attendee", ({"id": 1, "name": {"computed": "maxPlusOne", "extra": True}},)
     )
-    statement = _lower(update, PK_MAX)[0]
-    assert statement.sql == "update attendee set name = ? where id = ?"
-    assert statement.binds == ({"computed": "maxPlusOne", "extra": True}, 1)
+    with pytest.raises(ValueError, match="does not match the declared type"):
+        _lower(update, PK_MAX)
 
 
 # --------------------------------------------------------------------------- #
@@ -645,9 +670,11 @@ def test_insert_then_update_coalesces_to_one_final_value_insert() -> None:
     statements = _flush_and_lower(
         [
             KeyedWrite(
-                "insert", "Account", ({"id": 8, "owner": "Turing", "balance": 1.00, "version": 1},)
+                "insert",
+                "Account",
+                ({"id": 8, "owner": "Turing", "balance": Decimal("1.00"), "version": 1},),
             ),
-            KeyedWrite("update", "Account", ({"id": 8, "balance": 99.00},)),
+            KeyedWrite("update", "Account", ({"id": 8, "balance": Decimal("99.00")},)),
         ],
         ACCOUNT,
     )
@@ -668,9 +695,11 @@ def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
     statements = _flush_and_lower(
         [
             KeyedWrite(
-                "insert", "Account", ({"id": 9, "owner": "Noether", "balance": 5.00, "version": 1},)
+                "insert",
+                "Account",
+                ({"id": 9, "owner": "Noether", "balance": Decimal("5.00"), "version": 1},),
             ),
-            KeyedWrite("update", "Account", ({"id": 1, "balance": 20.00},)),
+            KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("20.00")},)),
             KeyedWrite("delete", "Account", ({"id": 3},)),
         ],
         ACCOUNT,
@@ -693,7 +722,9 @@ def test_insert_then_delete_cancels_to_no_dml() -> None:
     # m-unit-work-010: the cancelled flush emits nothing.
     statements = _flush_and_lower(
         [
-            KeyedWrite("insert", "Account", ({"id": 9, "owner": "Noether", "balance": 5.00},)),
+            KeyedWrite(
+                "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
+            ),
             KeyedWrite("delete", "Account", ({"id": 9},)),
         ],
         ACCOUNT,
@@ -767,11 +798,11 @@ def test_multi_row_insert_with_differing_row_shapes_is_refused() -> None:
         "insert",
         "Wallet",
         (
-            {"id": 10, "owner": "Mira", "balance": 100.00},
+            {"id": 10, "owner": "Mira", "balance": Decimal("100.00")},
             {"id": 11, "owner": "Omar"},
         ),
     )
-    with pytest.raises(ValueError, match="names the same members"):
+    with pytest.raises(ValueError, match="required attribute is absent"):
         _lower(mixed, WALLET)
 
 
@@ -791,8 +822,8 @@ def test_multi_row_insert_collapses_to_one_statement_many_value_tuples() -> None
         "insert",
         "Wallet",
         (
-            {"id": 10, "owner": "Mira", "balance": 100.00},
-            {"id": 11, "owner": "Omar", "balance": 20.00},
+            {"id": 10, "owner": "Mira", "balance": Decimal("100.00")},
+            {"id": 11, "owner": "Omar", "balance": Decimal("20.00")},
         ),
     )
     statement = _lower(insert, WALLET)[0]
@@ -814,8 +845,8 @@ def test_multi_row_insert_on_a_versioned_entity_derives_initial_version_per_row(
         "insert",
         "Account",
         (
-            {"id": 20, "owner": "Curie", "balance": 10.00},
-            {"id": 21, "owner": "Bohr", "balance": 20.00, "version": 99},
+            {"id": 20, "owner": "Curie", "balance": Decimal("10.00")},
+            {"id": 21, "owner": "Bohr", "balance": Decimal("20.00"), "version": 99},
         ),
     )
     statement = _lower(insert, ACCOUNT)[0]
@@ -841,7 +872,7 @@ def test_batched_update_collapses_to_one_in_list_statement() -> None:
     update = KeyedWrite(
         "update",
         "Wallet",
-        ({"id": 10, "balance": 500.00}, {"id": 11, "balance": 500.00}),
+        ({"id": 10, "balance": Decimal("500.00")}, {"id": 11, "balance": Decimal("500.00")}),
     )
     statement = _lower(update, WALLET)[0]
     assert statement.sql == "update wallet set balance = ? where id in (?, ?)"
@@ -859,7 +890,7 @@ def test_a_preformed_multi_row_update_still_faces_the_collapse_decision() -> Non
     update = KeyedWrite(
         "update",
         "Wallet",
-        ({"id": 10, "balance": 111.00}, {"id": 11, "balance": 222.00}),
+        ({"id": 10, "balance": Decimal("111.00")}, {"id": 11, "balance": Decimal("222.00")}),
     )
     first, second = _lower(update, WALLET)
     assert first.sql == "update wallet set balance = ? where id = ?"
@@ -890,7 +921,9 @@ def test_batched_writes_on_an_inheritance_participant_carry_the_family_tag_guard
     assert statement.binds == (1, 2, "card")
 
     update = KeyedWrite(
-        "update", "CardPayment", ({"id": 1, "amount": 5.00}, {"id": 2, "amount": 5.00})
+        "update",
+        "CardPayment",
+        ({"id": 1, "amount": Decimal("5.00")}, {"id": 2, "amount": Decimal("5.00")}),
     )
     updated = _lower(update, PAYMENT)[0]
     assert updated.sql == "update payment set amount = ? where id in (?, ?) and kind = ?"
@@ -942,7 +975,7 @@ def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=2, on_shortfall=MISSING_TARGET),
     )
-    statement = compile_write(step, WALLET, POSTGRES)
+    statement = compile_write_step(step, WALLET, POSTGRES)
     assert statement.sql == "delete from wallet where (id, owner) in ((?, ?), (?, ?))"
     assert statement.binds == (1, "Ada", 2, "Bo")
 
@@ -987,10 +1020,12 @@ def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
     # never offered to the marker classification at all — it still lowers to one
     # JsonDocument bind, marker-shaped or not.
     insert = KeyedWrite(
-        "insert", "Customer", ({"id": 5, "name": "Vera", "address": {"city": "Berlin"}},)
+        "insert",
+        "Customer",
+        ({"id": 5, "name": "Vera", "address": {"street": "3 Main", "city": "Berlin"}},),
     )
     statement = _lower(insert, CUSTOMER)[0]
-    assert statement.binds[-1] == JsonDocument({"city": "Berlin", "phones": []})
+    assert statement.binds[-1] == JsonDocument({"street": "3 Main", "city": "Berlin", "phones": []})
 
 
 # --------------------------------------------------------------------------- #
@@ -1065,7 +1100,7 @@ def test_step_lowering_reads_an_immutable_write_input_into_a_plain_json_document
         entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
     )
 
-    statement = compile_write(step, CUSTOMER, POSTGRES)
+    statement = compile_write_step(step, CUSTOMER, POSTGRES)
 
     assert statement.binds[-1] == JsonDocument(
         {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
@@ -1077,7 +1112,9 @@ def test_step_lowering_reads_an_immutable_write_input_into_a_plain_json_document
 
 def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -> None:
     steps = _finalize(
-        KeyedWrite("insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": 100.00},)),
+        KeyedWrite(
+            "insert", "Wallet", ({"id": 10, "owner": "Mira", "balance": Decimal("100.00")},)
+        ),
         WALLET,
     )
     assert steps is not None
@@ -1090,7 +1127,7 @@ def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -
                     attributes={
                         _attribute(WALLET, "Wallet", "id"): 10,
                         _attribute(WALLET, "Wallet", "owner"): "Mira",
-                        _attribute(WALLET, "Wallet", "balance"): 100.00,
+                        _attribute(WALLET, "Wallet", "balance"): Decimal("100.00"),
                     }
                 ),
                 origin=NEW_LINEAGE,
@@ -1103,7 +1140,9 @@ def test_finalization_derives_the_initial_version_the_row_never_authors() -> Non
     # The version is framework-owned end to end (ADR 0013): the settled step
     # already carries it, so nothing downstream re-derives it from the model.
     steps = _finalize(
-        KeyedWrite("insert", "Account", ({"id": 9, "owner": "Noether", "balance": 5.00},)),
+        KeyedWrite(
+            "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
+        ),
         ACCOUNT,
     )
     assert steps is not None
@@ -1136,16 +1175,11 @@ def test_finalization_classifies_a_pk_gen_marker_into_a_generated_value() -> Non
     ],
     ids=["two-key", "unrecognized-key"],
 )
-def test_a_mapping_outside_the_marker_shape_stays_an_ordinary_insert_cell(
+def test_a_mapping_outside_the_marker_shape_is_rejected_as_a_string(
     value: dict[str, object],
 ) -> None:
-    # Marker classification requires EXACTLY one key naming a recognized marker.
-    # A differently shaped mapping is neither a marker nor a value-object
-    # document (its member is a scalar Attribute), so it stays a literal bind
-    # rather than earning a refusal.
-    statement = _lower(KeyedWrite("insert", "Attendee", ({"id": 1, "name": value},)), PK_MAX)[0]
-    assert statement.sql == "insert into attendee(id, name) values (?, ?)"
-    assert statement.binds == (1, value)
+    with pytest.raises(ValueError, match="does not match the declared type"):
+        _lower(KeyedWrite("insert", "Attendee", ({"id": 1, "name": value},)), PK_MAX)
 
 
 def test_a_write_row_naming_no_family_member_is_refused_at_finalization() -> None:
@@ -1169,7 +1203,7 @@ def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() 
     # mode chose, the advance that rides the assignments, and how a shortfall
     # against its expected effect classifies.
     steps = _finalize(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)),
+        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
         ACCOUNT,
         observation=VersionObservation(observed_version=3),
         concurrency="optimistic",
@@ -1183,7 +1217,10 @@ def test_finalization_settles_an_addressed_update_into_target_gate_and_policy() 
                 key_attributes=(_attribute(ACCOUNT, "Account", "id"),), key_values=((1,),)
             ),
             assignments=PlannedAssignments(
-                attributes={_attribute(ACCOUNT, "Account", "balance"): 175.00, version: 4}
+                attributes={
+                    _attribute(ACCOUNT, "Account", "balance"): Decimal("175.00"),
+                    version: 4,
+                }
             ),
             concurrency=Versioned(gate=VersionGate(attribute=version, observed_version=3)),
             affected_rows=ExactCount(expected=1, on_shortfall=OPTIMISTIC_CONFLICT),
@@ -1233,7 +1270,7 @@ def test_finalization_gives_a_readless_predicate_write_an_unbounded_expectation(
     assert steps is not None
     (step,) = steps
     assert isinstance(step, PlannedDelete)
-    assert isinstance(step.target, PredicateTarget)
+    assert isinstance(step.target, ValidatedMutationSelection)
     assert step.target.predicate.authored == predicate
     assert step.affected_rows == ANY_COUNT
 
@@ -1289,7 +1326,7 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
             ),
         ),
     )
-    statement = compile_write(step, ORDERS, POSTGRES)
+    statement = compile_write_step(step, ORDERS, POSTGRES)
     assert statement.sql == "insert into order_item(id, order_id, quantity) values (?, ?, ?)"
     assert statement.binds == (200, 100, 3)
 
@@ -1300,7 +1337,7 @@ def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> N
     row = PlannedRow(
         attributes={
             _attribute(PAYMENT, "CardPayment", "id"): 1,
-            _attribute(PAYMENT, "CardPayment", "amount"): 10.00,
+            _attribute(PAYMENT, "CardPayment", "amount"): Decimal("10.00"),
             _attribute(PAYMENT, "CardPayment", "cardNetwork"): "Visa",
         }
     )
@@ -1308,7 +1345,7 @@ def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> N
         entity=_identity(PAYMENT, "CardPayment"),
         entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
     )
-    statement = compile_write(step, PAYMENT, POSTGRES)
+    statement = compile_write_step(step, PAYMENT, POSTGRES)
     assert (
         statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
     )
@@ -1352,7 +1389,7 @@ def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_nam
         entity=_CRATE,
         entries=(InsertEntry(row=PlannedRow(attributes={_CRATE_ID: 7}), origin=NEW_LINEAGE),),
     )
-    statement = compile_write(step, _CRATE_MODEL, POSTGRES)
+    statement = compile_write_step(step, _CRATE_MODEL, POSTGRES)
     assert statement.sql == "insert into crate(id, labels) values (?, ?)"
     assert statement.binds == (7, JsonDocument([]))
 
@@ -1368,7 +1405,7 @@ def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
     )
-    statement = compile_write(step, _CRATE_MODEL, POSTGRES)
+    statement = compile_write_step(step, _CRATE_MODEL, POSTGRES)
     assert statement.sql == "update crate set note = ? where id = ?"
     assert statement.binds == ("fragile", 7)
 
@@ -1388,4 +1425,4 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
         ),
     )
     with pytest.raises(SqlGenError, match="one row at a time"):
-        compile_write(step, PK_MAX, POSTGRES)
+        compile_write_step(step, PK_MAX, POSTGRES)

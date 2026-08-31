@@ -65,6 +65,21 @@ __all__ = [
 
 # A non-null serialized typed literal. Null tests use dedicated nodes.
 Scalar = str | int | float | bool
+
+
+def _require_non_null_literal(value: object) -> None:
+    if value is None:
+        raise QueryDefinitionError(
+            code="query-expression-invalid",
+            message="None is not a Predicate literal; use .is_null() or .is_not_null()",
+        )
+
+
+def _require_non_null_literals(values: tuple[Scalar, ...]) -> None:
+    for value in values:
+        _require_non_null_literal(value)
+
+
 SubtypeSelection = tuple[str, ...]
 
 
@@ -159,6 +174,9 @@ class Comparison:
     attr: str
     value: Scalar
 
+    def __post_init__(self) -> None:
+        _require_non_null_literal(self.value)
+
 
 @dataclass(frozen=True, slots=True)
 class Between:
@@ -167,6 +185,10 @@ class Between:
     attr: str
     lower: Scalar
     upper: Scalar
+
+    def __post_init__(self) -> None:
+        _require_non_null_literal(self.lower)
+        _require_non_null_literal(self.upper)
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +216,9 @@ class StringMatch:
     value: str
     case_insensitive: bool | None = None
 
+    def __post_init__(self) -> None:
+        _require_non_null_literal(self.value)
+
 
 @dataclass(frozen=True, slots=True)
 class Membership:
@@ -202,6 +227,9 @@ class Membership:
     op: MembershipOp
     attr: str
     values: tuple[Scalar, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_null_literals(self.values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +279,9 @@ class NestedComparison:
     path: str
     value: Scalar
 
+    def __post_init__(self) -> None:
+        _require_non_null_literal(self.value)
+
 
 @dataclass(frozen=True, slots=True)
 class NestedRange:
@@ -266,6 +297,10 @@ class NestedRange:
     lower: Scalar
     upper: Scalar
 
+    def __post_init__(self) -> None:
+        _require_non_null_literal(self.lower)
+        _require_non_null_literal(self.upper)
+
 
 @dataclass(frozen=True, slots=True)
 class NestedMembership:
@@ -279,6 +314,9 @@ class NestedMembership:
     op: NestedMembershipOp
     path: str
     values: tuple[Scalar, ...]
+
+    def __post_init__(self) -> None:
+        _require_non_null_literals(self.values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,6 +336,9 @@ class NestedStringMatch:
     path: str
     value: str
     case_insensitive: bool | None = None
+
+    def __post_init__(self) -> None:
+        _require_non_null_literal(self.value)
 
 
 @dataclass(frozen=True, slots=True)

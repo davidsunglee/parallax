@@ -145,7 +145,7 @@ class ObservedKeyedWrite:
     its gate, and its license derive from a single object.
 
     The observation is always present. A write that has none takes a shape with
-    no observation field at all — a bare ``KeyedWrite`` for an insert, or for an
+    no observation field at all — a bare ``PreparedKeyedWrite`` for an insert, or for an
     instruction naming several rows, which no claim can address; an
     :class:`ObjectClaimedWrite` for a single-row unversioned Non-Temporal
     write — so absence stays structural (`m-unit-work`) rather than becoming a
@@ -207,19 +207,22 @@ class ObservedKeyedWrite:
         if self.instruction.mutation in INSERT_MUTATIONS:
             raise ValueError(
                 f"an insert carries no Write Observation: `{self.instruction.mutation}` on "
-                f"{self.instruction.entity!r} buffers bare (m-unit-work: absence is structural)"
+                f"{self.instruction.target.identity.canonical!r} buffers bare "
+                "(m-unit-work: absence is structural)"
             )
         if len(self.instruction.rows) != 1:
             raise ValueError(
                 "a Write Observation is evidence about one row: "
-                f"`{self.instruction.mutation}` on {self.instruction.entity!r} addresses "
+                f"`{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} addresses "
                 f"{len(self.instruction.rows)} rows (m-unit-work: each observed version "
                 "belongs to exactly one row)"
             )
         if self.claim is not None and self.claim.evidence is not self.observation:
             raise ValueError(
                 "a claim is the retained form of the observation its carrier settles against: "
-                f"`{self.instruction.mutation}` on {self.instruction.entity!r} was built with a "
+                f"`{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} was built with a "
                 "claim naming other evidence (m-unit-work: one resolution serves the address, "
                 "the gate, and the license)"
             )
@@ -260,13 +263,15 @@ class ObjectClaimedWrite:
         if self.instruction.mutation in INSERT_MUTATIONS:
             raise ValueError(
                 f"an insert claims no object: `{self.instruction.mutation}` on "
-                f"{self.instruction.entity!r} buffers bare (m-unit-work: an opening row has no "
+                f"{self.instruction.target.identity.canonical!r} buffers bare "
+                "(m-unit-work: an opening row has no "
                 "prior row to claim)"
             )
         if len(self.instruction.rows) != 1:
             raise ValueError(
                 "an object claim addresses one object: "
-                f"`{self.instruction.mutation}` on {self.instruction.entity!r} addresses "
+                f"`{self.instruction.mutation}` on "
+                f"{self.instruction.target.identity.canonical!r} addresses "
                 f"{len(self.instruction.rows)} rows (m-unit-work: a claim is about the object a "
                 "write settles against)"
             )
@@ -333,7 +338,7 @@ def buffered_write(
     )
 
 
-# One buffer item: an ordinary write instruction, a keyed write travelling with
+# One buffer item: a prepared write product, a keyed write travelling with
 # the claim its verb took for it (the observation it settles against, or the
 # object an unversioned Non-Temporal write claims), or a materializing predicate
 # write's compact Materialized Write Group (`m-unit-work` "Materialized Write Groups",

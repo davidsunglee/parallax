@@ -71,8 +71,8 @@ from parallax.core.unit_work import (
     PredecessorRow,
     PredicateMutation,
     PredicateSelection,
-    PredicateTarget,
     PredicateWrite,
+    RetainedObservation,
     TemporalObservation,
     TransactionInstant,
     VersionColumns,
@@ -86,6 +86,13 @@ from parallax.core.unit_work import (
     object_key,
     whole,
 )
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    WriteInstructionError,
+    prepare_typed_write,
+)
+from parallax.core.unit_work.planned import ValidatedMutationSelection
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import build_write_planner
 
@@ -108,8 +115,11 @@ _B1_MANAGED = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INSTANT = inert_instant()
 
 
+type _TestBufferItem = BufferItem | KeyedWrite | PredicateWrite
+
+
 def _plan(
-    buffer: list[BufferItem],
+    buffer: Sequence[_TestBufferItem],
     model: Metamodel,
     *,
     observations: dict[ObjectKey, WriteObservation] | None = None,
@@ -167,6 +177,29 @@ def _single_key(step: PlannedUpdate | PlannedDelete) -> object:
     return value
 
 
+def _prepared_keyed(write: KeyedWrite, model: Metamodel) -> PreparedKeyedWrite:
+    prepared = prepare_typed_write(write, model)
+    assert isinstance(prepared, PreparedKeyedWrite)
+    return prepared
+
+
+def _observed(
+    write: KeyedWrite,
+    observation: WriteObservation,
+    *,
+    claim: RetainedObservation | None = None,
+    restorations: frozenset[str] = frozenset(),
+) -> ObservedKeyedWrite:
+    prepared = _prepared_keyed(write, _ACCOUNT)
+    return ObservedKeyedWrite(prepared, observation, claim=claim, restorations=restorations)
+
+
+def _claimed(
+    write: KeyedWrite, *, restorations: frozenset[str] = frozenset()
+) -> ObjectClaimedWrite:
+    return ObjectClaimedWrite(_prepared_keyed(write, _WALLET), restorations=restorations)
+
+
 def _version_group(
     entity: str,
     mutation: PredicateMutation,
@@ -202,8 +235,11 @@ def _version_group(
             for assignment in assignments
         ),
     )
+    model = _WALLET if entity == "Wallet" else _ACCOUNT
+    prepared = prepare_typed_write(predicate, model)
+    assert isinstance(prepared, PreparedPredicateWrite)
     return MaterializedWriteGroup(
-        mutation=predicate,
+        mutation=prepared,
         key_attributes=(key_name,),
         key_columns=(whole(keys.build()),),
         observations=VersionColumns(versions=whole(versions.build())),
@@ -218,8 +254,10 @@ def _shape(plan: WritePlan) -> list[tuple[str, str]]:
 # Coalesce (m-unit-work "Same-transaction write coalescing").                 #
 # --------------------------------------------------------------------------- #
 def test_nontemporal_insert_then_update_coalesces_to_one_insert() -> None:
-    insert = KeyedWrite("insert", "Account", ({"id": 9, "owner": "Noether", "balance": 5.00},))
-    update = KeyedWrite("update", "Account", ({"id": 9, "balance": 99.00},))
+    insert = KeyedWrite(
+        "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
+    )
+    update = KeyedWrite("update", "Account", ({"id": 9, "balance": Decimal("99.00")},))
     plan = _plan([insert, update], _ACCOUNT)
     (step,) = plan.steps
     assert isinstance(step, PlannedInsert)
@@ -227,7 +265,7 @@ def test_nontemporal_insert_then_update_coalesces_to_one_insert() -> None:
     # A single INSERT with final values, never INSERT + UPDATE; the framework
     # still derives the initial version onto the ONE surviving row.
     assert row["owner"] == "Noether"
-    assert row["balance"] == 99.00
+    assert row["balance"] == Decimal("99.00")
     assert row["version"] == 1
 
 
@@ -239,12 +277,18 @@ def test_two_assignments_of_one_observed_state_merge_with_the_later_value_winnin
     # merge would leave.
     key = corpus_object_key("Account", ("id", 1))
     observation = VersionObservation(observed_version=4)
-    first = KeyedWrite("update", "Account", ({"id": 1, "owner": "Grace", "balance": 125.00},))
-    second = KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},))
+    first = KeyedWrite(
+        "update", "Account", ({"id": 1, "owner": "Grace", "balance": Decimal("125.00")},)
+    )
+    second = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},))
     plan = _plan([first, second], _ACCOUNT, observations={key: observation})
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate)
-    assert _assignment_values(step) == {"owner": "Grace", "balance": 175.00, "version": 5}
+    assert _assignment_values(step) == {
+        "owner": "Grace",
+        "balance": Decimal("175.00"),
+        "version": 5,
+    }
 
 
 def test_a_restored_member_is_dropped_after_the_merge_rather_than_before_it() -> None:
@@ -254,10 +298,12 @@ def test_a_restored_member_is_dropped_after_the_merge_rather_than_before_it() ->
     # member only the first named standing.
     key = corpus_object_key("Account", ("id", 1))
     observation = VersionObservation(observed_version=4)
-    first = KeyedWrite("update", "Account", ({"id": 1, "owner": "Grace", "balance": 125.00},))
+    first = KeyedWrite(
+        "update", "Account", ({"id": 1, "owner": "Grace", "balance": Decimal("125.00")},)
+    )
     second = KeyedWrite("update", "Account", ({"id": 1},))
     plan = _plan(
-        [first, ObservedKeyedWrite(second, observation, restorations=frozenset({"balance"}))],
+        [first, _observed(second, observation, restorations=frozenset({"balance"}))],
         _ACCOUNT,
         observations={key: observation},
     )
@@ -272,10 +318,10 @@ def test_a_wholly_restored_merge_leaves_no_step_at_all() -> None:
     # nets to zero across two verbs emits no DML.
     key = corpus_object_key("Account", ("id", 1))
     observation = VersionObservation(observed_version=4)
-    first = KeyedWrite("update", "Account", ({"id": 1, "balance": 125.00},))
+    first = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("125.00")},))
     second = KeyedWrite("update", "Account", ({"id": 1},))
     plan = _plan(
-        [first, ObservedKeyedWrite(second, observation, restorations=frozenset({"balance"}))],
+        [first, _observed(second, observation, restorations=frozenset({"balance"}))],
         _ACCOUNT,
         observations={key: observation},
     )
@@ -285,7 +331,7 @@ def test_a_wholly_restored_merge_leaves_no_step_at_all() -> None:
 def test_a_destructive_intent_supersedes_the_assignments_buffered_before_it() -> None:
     key = corpus_object_key("Account", ("id", 1))
     observation = VersionObservation(observed_version=4)
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 125.00},))
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("125.00")},))
     delete = KeyedWrite("delete", "Account", ({"id": 1},))
     plan = _plan([update, delete], _ACCOUNT, observations={key: observation})
     (step,) = plan.steps
@@ -305,12 +351,12 @@ def test_writes_of_two_observed_states_of_one_object_stay_independent() -> None:
     # Coalescing is keyed by the observed STATE, not by the object: two writes
     # settling against two generations of one row are two intents, and merging
     # them would gate the survivor on a version one of them never saw.
-    first = ObservedKeyedWrite(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": 125.00},)),
+    first = _observed(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("125.00")},)),
         VersionObservation(observed_version=4),
     )
-    second = ObservedKeyedWrite(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)),
+    second = _observed(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},)),
         VersionObservation(observed_version=5),
     )
     plan = _plan([first, second], _ACCOUNT, concurrency="optimistic")
@@ -325,37 +371,35 @@ def test_a_second_state_of_one_object_does_not_close_the_first_states_claim() ->
     # second of which no read ever saw current.
     earlier = VersionObservation(observed_version=4)
     later = VersionObservation(observed_version=5)
-    first = ObservedKeyedWrite(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": 125.00},)), earlier
+    first = _observed(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("125.00")},)), earlier
     )
-    interleaved = ObservedKeyedWrite(
-        KeyedWrite("update", "Account", ({"id": 1, "owner": "Grace"},)), later
-    )
-    third = ObservedKeyedWrite(
-        KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},)), earlier
+    interleaved = _observed(KeyedWrite("update", "Account", ({"id": 1, "owner": "Grace"},)), later)
+    third = _observed(
+        KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},)), earlier
     )
     plan = _plan([first, interleaved, third], _ACCOUNT, concurrency="optimistic")
     merged, standing = plan.steps
     assert isinstance(merged, PlannedUpdate)
     assert isinstance(standing, PlannedUpdate)
-    assert _assignment_values(merged) == {"balance": 175.00, "version": 5}
+    assert _assignment_values(merged) == {"balance": Decimal("175.00"), "version": 5}
     assert _assignment_values(standing) == {"owner": "Grace", "version": 6}
 
 
 def test_object_claimed_writes_of_one_unversioned_row_merge_into_one_step() -> None:
     # The object-claimed arm reaches the same algebra by the same call: what such
     # writes share is the object, because no state stands behind them.
-    first = ObjectClaimedWrite(KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)))
-    second = ObjectClaimedWrite(KeyedWrite("update", "Wallet", ({"id": 1, "owner": "Grace"},)))
+    first = _claimed(KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)))
+    second = _claimed(KeyedWrite("update", "Wallet", ({"id": 1, "owner": "Grace"},)))
     plan = _plan([first, second], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate)
-    assert _assignment_values(step) == {"balance": 5.00, "owner": "Grace"}
+    assert _assignment_values(step) == {"balance": Decimal("5.00"), "owner": "Grace"}
 
 
 def test_an_object_claimed_destruction_supersedes_the_assignment_before_it() -> None:
-    update = ObjectClaimedWrite(KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)))
-    delete = ObjectClaimedWrite(KeyedWrite("delete", "Wallet", ({"id": 1},)))
+    update = _claimed(KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)))
+    delete = _claimed(KeyedWrite("delete", "Wallet", ({"id": 1},)))
     plan = _plan([update, delete], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
@@ -365,15 +409,15 @@ def test_identical_object_claimed_destructions_plan_one_step() -> None:
     # Unclaimed, the pair reaches the batch collapse as a repeated authored key,
     # which a Key Target refuses — so deduplication is what keeps a legal two-verb
     # sequence out of an internal invariant failure.
-    delete = ObjectClaimedWrite(KeyedWrite("delete", "Wallet", ({"id": 1},)))
+    delete = _claimed(KeyedWrite("delete", "Wallet", ({"id": 1},)))
     plan = _plan([delete, delete], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
 
 
 def test_a_wholly_restoring_object_claimed_merge_leaves_no_step_at_all() -> None:
-    first = ObjectClaimedWrite(KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)))
-    second = ObjectClaimedWrite(
+    first = _claimed(KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)))
+    second = _claimed(
         KeyedWrite("update", "Wallet", ({"id": 1},)), restorations=frozenset({"balance"})
     )
     plan = _plan([first, second], _WALLET)
@@ -384,8 +428,8 @@ def test_object_claimed_writes_of_two_rows_still_collapse_into_one_batch() -> No
     # A claim is per object, so two objects' deletes are two claims — and each
     # leaves coalescing as the bare instruction it always was, which is what keeps
     # `m-batch-write`'s set-based collapse reachable for unversioned rows.
-    first = ObjectClaimedWrite(KeyedWrite("delete", "Wallet", ({"id": 1},)))
-    second = ObjectClaimedWrite(KeyedWrite("delete", "Wallet", ({"id": 2},)))
+    first = _claimed(KeyedWrite("delete", "Wallet", ({"id": 1},)))
+    second = _claimed(KeyedWrite("delete", "Wallet", ({"id": 2},)))
     plan = _plan([first, second], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
@@ -398,51 +442,60 @@ def _assignment_values(step: PlannedUpdate) -> dict[str, object]:
 
 
 def test_audit_insert_then_update_coalesces_in_place() -> None:
-    insert = KeyedWrite("insert", "Balance", ({"id": 9, "acctNum": "D", "value": 100.00},))
-    update = KeyedWrite("update", "Balance", ({"id": 9, "value": 150.00},))
+    insert = KeyedWrite(
+        "insert", "Balance", ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},)
+    )
+    update = KeyedWrite("update", "Balance", ({"id": 9, "value": Decimal("150.00")},))
     plan = _plan([insert, update], _BALANCE, tx_instant=instant_at(_B1))
     (step,) = plan.steps
     assert isinstance(step, PlannedInsert)  # one current milestone, no close
     (row,) = _insert_rows(step)
     assert row["acctNum"] == "D"
-    assert row["value"] == 150.00
+    assert row["value"] == Decimal("150.00")
     assert row["txStart"] == _B1_MANAGED
 
 
 def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
     insert = KeyedWrite(
-        "insert", "Position", ({"id": 9, "acctNum": "D", "value": 100.00},), valid_from=_B1
+        "insert",
+        "Position",
+        ({"id": 9, "acctNum": "D", "value": Decimal("100.00")},),
+        valid_from=_B1,
     )
-    update = KeyedWrite("update", "Position", ({"id": 9, "value": 150.00},))
+    update = KeyedWrite("update", "Position", ({"id": 9, "value": Decimal("150.00")},))
     plan = _plan([insert, update], _POSITION, tx_instant=instant_at(_B1))
     (step,) = plan.steps
     assert isinstance(step, PlannedInsert)  # one fully-current rectangle, no head/tail split
     (row,) = _insert_rows(step)
     assert row["acctNum"] == "D"
-    assert row["value"] == 150.00
+    assert row["value"] == Decimal("150.00")
     assert row["validStart"] == _B1_MANAGED
 
 
 def test_insert_then_delete_cancels_to_no_dml() -> None:
-    insert = KeyedWrite("insert", "Account", ({"id": 9, "owner": "Noether", "balance": 5.00},))
+    insert = KeyedWrite(
+        "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
+    )
     delete = KeyedWrite("delete", "Account", ({"id": 9},))
     plan = _plan([insert, delete], _ACCOUNT)
     assert len(plan.steps) == 0  # both annihilate — the net-zero elision across two verbs
 
 
 def test_insert_then_multiple_updates_fold_into_one_insert() -> None:
-    insert = KeyedWrite("insert", "Account", ({"id": 9, "owner": "Noether", "balance": 5.00},))
-    update1 = KeyedWrite("update", "Account", ({"id": 9, "balance": 50.00},))
+    insert = KeyedWrite(
+        "insert", "Account", ({"id": 9, "owner": "Noether", "balance": Decimal("5.00")},)
+    )
+    update1 = KeyedWrite("update", "Account", ({"id": 9, "balance": Decimal("50.00")},))
     update2 = KeyedWrite("update", "Account", ({"id": 9, "owner": "Markov"},))
     plan = _plan([insert, update1, update2], _ACCOUNT)
     (step,) = plan.steps
     (row,) = _insert_rows(step)
     assert row["owner"] == "Markov"
-    assert row["balance"] == 50.00
+    assert row["balance"] == Decimal("50.00")
 
 
 def test_update_of_a_row_not_inserted_this_transaction_is_not_coalesced() -> None:
-    update = KeyedWrite("update", "Wallet", ({"id": 1, "balance": 0.00},))
+    update = KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("0.00")},))
     plan = _plan([update], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate)
@@ -455,26 +508,31 @@ def test_delete_of_a_row_not_inserted_this_transaction_is_not_coalesced() -> Non
     assert isinstance(step, PlannedDelete)
 
 
-def test_multi_row_and_unkeyed_and_predicate_writes_do_not_coalesce() -> None:
-    # Wallet (unversioned, non-temporal): a readless predicate write is only
-    # ever legal there, so this stays about the coalescing exemption alone.
-    multi = KeyedWrite("insert", "Wallet", ({"id": 8, "balance": 1.00}, {"id": 9, "balance": 2.00}))
-    unkeyed = KeyedWrite("insert", "Wallet", ({"owner": "Ada", "balance": 1.00},))  # no PK in row
+def test_multi_row_and_predicate_writes_do_not_coalesce() -> None:
+    # Wallet is unversioned and non-temporal, so a readless predicate write is
+    # legal there. Neither input is a single-object keyed write, so both pass
+    # through as independent steps.
+    multi = KeyedWrite(
+        "insert",
+        "Wallet",
+        (
+            {"id": 8, "owner": "A", "balance": Decimal("1.00")},
+            {"id": 9, "owner": "B", "balance": Decimal("2.00")},
+        ),
+    )
     predicate = PredicateWrite(
         "delete", PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 1))
     )
-    plan = _plan([multi, unkeyed, predicate], _WALLET)
-    # None is a single-object keyed write, so none coalesces — all pass through
-    # (the multi-row insert is one step, `unkeyed` and the predicate one each).
-    assert len(plan.steps) == 3
+    plan = _plan([multi, predicate], _WALLET)
+    assert len(plan.steps) == 2
 
 
 # --------------------------------------------------------------------------- #
 # Dependency ordering (foreign-key parents-before-children).                  #
 # --------------------------------------------------------------------------- #
 def test_inserts_order_parents_before_children() -> None:
-    buffer: list[BufferItem] = [
-        KeyedWrite("insert", "OrderStatus", ({"id": 100, "orderId": 1},)),
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("insert", "OrderStatus", ({"id": 100, "orderId": 1, "code": "new"},)),
         KeyedWrite(
             "insert", "OrderTag", ({"id": 1000, "orderId": 1, "label": "x", "priority": 1},)
         ),
@@ -482,7 +540,16 @@ def test_inserts_order_parents_before_children() -> None:
         KeyedWrite(
             "insert",
             "Order",
-            ({"id": 1, "name": "N", "qty": 1, "price": 1.0, "active": True, "orderedOn": _B1},),
+            (
+                {
+                    "id": 1,
+                    "name": "N",
+                    "qty": 1,
+                    "price": Decimal("1.0"),
+                    "active": True,
+                    "orderedOn": dt.date(2024, 1, 1),
+                },
+            ),
         ),
     ]
     plan = _plan(buffer, _ORDERS)
@@ -490,7 +557,7 @@ def test_inserts_order_parents_before_children() -> None:
 
 
 def test_deletes_order_children_before_parents() -> None:
-    buffer: list[BufferItem] = [
+    buffer: list[_TestBufferItem] = [
         KeyedWrite("delete", "Order", ({"id": 1},)),
         KeyedWrite("delete", "OrderItem", ({"id": 10},)),
         KeyedWrite("delete", "OrderStatus", ({"id": 100},)),
@@ -500,13 +567,22 @@ def test_deletes_order_children_before_parents() -> None:
 
 
 def test_mixed_flush_is_insert_then_update_then_delete() -> None:
-    buffer: list[BufferItem] = [
+    buffer: list[_TestBufferItem] = [
         KeyedWrite("delete", "OrderStatus", ({"id": 100},)),
         KeyedWrite("update", "OrderItem", ({"id": 10, "quantity": 5},)),
         KeyedWrite(
             "insert",
             "Order",
-            ({"id": 2, "name": "N", "qty": 1, "price": 1.0, "active": True, "orderedOn": _B1},),
+            (
+                {
+                    "id": 2,
+                    "name": "N",
+                    "qty": 1,
+                    "price": Decimal("1.0"),
+                    "active": True,
+                    "orderedOn": dt.date(2024, 1, 1),
+                },
+            ),
         ),
     ]
     plan = _plan(buffer, _ORDERS)
@@ -521,7 +597,7 @@ def test_one_to_one_relationships_contribute_no_fk_edge() -> None:
     # Person <-> Passport are both one-to-one: neither the many-to-one nor the
     # one-to-many edge fires, so ranking falls back to the accepted model's own
     # canonical Entity order.
-    buffer: list[BufferItem] = [
+    buffer: list[_TestBufferItem] = [
         KeyedWrite("insert", "Person", ({"id": 1, "name": "A"},)),
         KeyedWrite("insert", "Passport", ({"id": 2, "personId": 1, "number": "X"},)),
     ]
@@ -556,7 +632,7 @@ def test_a_defining_many_to_one_orders_its_source_after_its_target() -> None:
             ),
         )
     )
-    buffer: list[BufferItem] = [
+    buffer: list[_TestBufferItem] = [
         KeyedWrite("insert", "Alpha", ({"id": 1, "zetaId": 2},)),
         KeyedWrite("insert", "Zeta", ({"id": 2},)),
     ]
@@ -568,7 +644,7 @@ def test_an_instruction_naming_an_undeclared_entity_is_a_planning_error() -> Non
     # instruction naming one the accepted Metamodel does not declare is refused
     # as a caller wiring defect during planning — never silently ranked first
     # by the ordering stage's own defensive fallback and lowered anyway.
-    buffer: list[BufferItem] = [
+    buffer: list[_TestBufferItem] = [
         KeyedWrite("insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)),
         KeyedWrite("insert", "Gadget", ({"id": 1, "name": "G"},)),
     ]
@@ -584,7 +660,7 @@ def test_an_undeclared_entitys_keyed_update_survives_elision_to_the_same_refusal
     # pairs an undeclared insert with a resolvable one): pairing this update with
     # any undeclared insert of the same entity would let the insert's own
     # refusal fire first and leave elision's behavior unobserved.
-    buffer: list[BufferItem] = [KeyedWrite("update", "Gadget", ({"id": 1},))]
+    buffer: list[_TestBufferItem] = [KeyedWrite("update", "Gadget", ({"id": 1},))]
     with pytest.raises(ValueError, match="Gadget"):
         _plan(buffer, _ORDERS)
 
@@ -611,13 +687,22 @@ def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction()
     # push the leading delete to the back, moving BOTH across the predicate
     # write — a readless predicate does not reveal which rows it matches, so
     # either move could change what it writes. The barrier pins all three.
-    buffer: list[BufferItem] = [
+    buffer: list[_TestBufferItem] = [
         KeyedWrite("delete", "OrderItem", ({"id": 10},)),
         _predicate_update("Order"),
         KeyedWrite(
             "insert",
             "Order",
-            ({"id": 2, "name": "N", "qty": 1, "price": 1.0, "active": True, "orderedOn": _B1},),
+            (
+                {
+                    "id": 2,
+                    "name": "N",
+                    "qty": 1,
+                    "price": Decimal("1.0"),
+                    "active": True,
+                    "orderedOn": dt.date(2024, 1, 1),
+                },
+            ),
         ),
     ]
     plan = _plan(buffer, _ORDERS)
@@ -628,7 +713,7 @@ def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction()
     ]
     predicate_step = plan.steps[1]
     assert isinstance(predicate_step, PlannedUpdate)
-    assert isinstance(predicate_step.target, PredicateTarget)
+    assert isinstance(predicate_step.target, ValidatedMutationSelection)
     assert predicate_step.target.predicate.authored == predicate_algebra.Comparison(
         "eq", "Order.id", 1
     )
@@ -638,32 +723,50 @@ def test_fk_ordering_still_applies_independently_within_each_barrier_region() ->
     # Ordering is unconstrained WITHIN a region: each side is bucketed and
     # ordered on its own (parents before children), and the two sides never
     # see each other's items.
-    buffer: list[BufferItem] = [
+    buffer: list[_TestBufferItem] = [
         KeyedWrite("insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)),
         KeyedWrite(
             "insert",
             "Order",
-            ({"id": 1, "name": "N", "qty": 1, "price": 1.0, "active": True, "orderedOn": _B1},),
+            (
+                {
+                    "id": 1,
+                    "name": "N",
+                    "qty": 1,
+                    "price": Decimal("1.0"),
+                    "active": True,
+                    "orderedOn": dt.date(2024, 1, 1),
+                },
+            ),
         ),
         _predicate_update("OrderTag"),
         KeyedWrite(
             "insert", "OrderTag", ({"id": 1000, "orderId": 1, "label": "x", "priority": 1},)
         ),
-        KeyedWrite("insert", "OrderStatus", ({"id": 100, "orderId": 1},)),
+        KeyedWrite("insert", "OrderStatus", ({"id": 100, "orderId": 1, "code": "new"},)),
     ]
     plan = _plan(buffer, _ORDERS)
     assert _entities(plan) == ["Order", "OrderItem", "OrderTag", "OrderStatus", "OrderTag"]
 
 
 def test_two_readless_predicate_writes_partition_the_buffer_into_three_regions() -> None:
-    buffer: list[BufferItem] = [
+    buffer: list[_TestBufferItem] = [
         KeyedWrite("delete", "Order", ({"id": 1},)),
         _predicate_update("Order"),
         KeyedWrite("delete", "OrderItem", ({"id": 10},)),
         KeyedWrite(
             "insert",
             "Order",
-            ({"id": 2, "name": "N", "qty": 1, "price": 1.0, "active": True, "orderedOn": _B1},),
+            (
+                {
+                    "id": 2,
+                    "name": "N",
+                    "qty": 1,
+                    "price": Decimal("1.0"),
+                    "active": True,
+                    "orderedOn": dt.date(2024, 1, 1),
+                },
+            ),
         ),
         _predicate_update("OrderItem"),
         KeyedWrite("insert", "OrderItem", ({"id": 11, "orderId": 2, "sku": "A", "quantity": 1},)),
@@ -689,7 +792,7 @@ def test_empty_change_set_update_emits_no_instruction() -> None:
 
 
 def test_nonempty_change_set_update_survives_elision() -> None:
-    update = KeyedWrite("update", "Wallet", ({"id": 1, "balance": 7.00},))
+    update = KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("7.00")},))
     plan = _plan([update], _WALLET)
     assert len(plan.steps) == 1
 
@@ -701,7 +804,7 @@ def test_a_key_only_row_of_a_preformed_multi_row_update_is_eliminated() -> None:
     # splits it into its rows and hands the key-only child an update with no
     # member to write. Eliminating the row here also keeps the elimination
     # ahead of batching, where the normative stage order puts it.
-    update = KeyedWrite("update", "Wallet", ({"id": 1}, {"id": 2, "balance": 9.00}))
+    update = KeyedWrite("update", "Wallet", ({"id": 1}, {"id": 2, "balance": Decimal("9.00")}))
     plan = _plan([update], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate)
@@ -718,7 +821,7 @@ def test_a_plural_temporal_update_is_refused_rather_than_narrowed_by_no_op_elimi
     # legal singleton: dropping the key-only row would silently discard one of
     # the two milestone chains the author wrote, which is exactly the reduction
     # `m-unit-work` requires an implementation to refuse.
-    update = KeyedWrite("update", "Balance", ({"id": 1}, {"id": 2, "value": 9.00}))
+    update = KeyedWrite("update", "Balance", ({"id": 1}, {"id": 2, "value": Decimal("9.00")}))
     with pytest.raises(ValueError, match="temporal target carries 2 rows"):
         _plan([update], _BALANCE)
 
@@ -784,7 +887,9 @@ def test_object_key_resolves_the_family_effective_primary_key() -> None:
     # is declared on the family root `Payment` alone, m-inheritance "Inherited
     # members") -- a bare `Entity.primary_key` view would wrongly see no key,
     # making every inheritance-family keyed write unidentifiable.
-    key_ = object_key(KeyedWrite("update", "CardPayment", ({"id": 1, "amount": 5.00},)), _PAYMENT)
+    key_ = object_key(
+        KeyedWrite("update", "CardPayment", ({"id": 1, "amount": Decimal("5.00")},)), _PAYMENT
+    )
     assert key_ == corpus_object_key("CardPayment", ("id", 1))
 
 
@@ -805,8 +910,8 @@ def test_object_key_is_none_for_a_marker_shaped_primary_key_value() -> None:
 
 
 def test_recorded_observations_bind_to_their_own_planned_update() -> None:
-    row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},))
-    row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": 0.00},))
+    row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("0.00")},))
+    row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": Decimal("0.00")},))
     key1 = object_key(row1, _ACCOUNT)
     key2 = object_key(row2, _ACCOUNT)
     assert key1 is not None and key2 is not None
@@ -832,7 +937,7 @@ def test_an_observation_on_an_unversioned_non_temporal_update_is_refused() -> No
     # see without the model (an insert, a plural instruction); the planner is
     # the model-aware boundary every carrier crosses, so it refuses the other
     # half rather than settling the write with the evidence discarded.
-    update = KeyedWrite("update", "Wallet", ({"id": 1, "balance": 7.00},))
+    update = KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("7.00")},))
     key_ = object_key(update, _WALLET)
     assert key_ is not None
     with pytest.raises(WritePlanningError, match="unversioned Non-Temporal 'update'"):
@@ -852,7 +957,11 @@ def test_a_materialized_group_on_an_unversioned_non_temporal_target_is_refused()
     # optional either, so a group whose target turns out unversioned is refused
     # rather than settled Unversioned with every row's observed version dropped.
     group = _version_group(
-        "Wallet", "update", "id", [(1, 7), (2, 8)], [WriteAssignment("Wallet.balance", 5.00)]
+        "Wallet",
+        "update",
+        "id",
+        [(1, 7), (2, 8)],
+        [WriteAssignment("Wallet.balance", Decimal("5.00"))],
     )
     with pytest.raises(WritePlanningError, match="unversioned Non-Temporal 'update'"):
         _plan([group], _WALLET, concurrency="optimistic")
@@ -871,7 +980,7 @@ def _row_values_from_assignments(step: PlannedUpdate) -> dict[str, object]:
 # Affected-rows policy and optimistic gates (m-opt-lock, ADR 0044/0047).      #
 # --------------------------------------------------------------------------- #
 def test_a_versioned_update_with_a_recorded_observation_carries_a_settled_gate() -> None:
-    update = KeyedWrite("update", "Account", ({"id": 1, "balance": 175.00},))
+    update = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("175.00")},))
     key_ = object_key(update, _ACCOUNT)
     assert key_ is not None
     plan = _plan(
@@ -943,10 +1052,10 @@ def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
 # Batching (m-batch-write's collapse-eligibility policy, production-wired).   #
 # --------------------------------------------------------------------------- #
 def test_batching_merges_adjacent_same_entity_same_mutation_inserts() -> None:
-    buffer: list[BufferItem] = [
-        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": 1.00},)),
-        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": 2.00},)),
-        KeyedWrite("insert", "Wallet", ({"id": 3, "owner": "Cy", "balance": 3.00},)),
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),
+        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": Decimal("2.00")},)),
+        KeyedWrite("insert", "Wallet", ({"id": 3, "owner": "Cy", "balance": Decimal("3.00")},)),
     ]
     plan = _plan(buffer, _WALLET)
     (step,) = plan.steps
@@ -955,7 +1064,9 @@ def test_batching_merges_adjacent_same_entity_same_mutation_inserts() -> None:
 
 
 def test_batching_merges_uniform_updates_but_not_a_lone_row() -> None:
-    buffer: list[BufferItem] = [KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},))]
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("5.00")},))
+    ]
     plan = _plan(buffer, _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate)
@@ -969,10 +1080,10 @@ def test_a_known_no_op_between_two_uniform_updates_does_not_prevent_their_batch(
     # boundary between the two uniform updates surrounding it. Batching first
     # would instead leave the no-op splitting the run, and the two survivors
     # would settle as two separate singleton steps rather than one batch.
-    buffer: list[BufferItem] = [
-        KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)),
         KeyedWrite("update", "Wallet", ({"id": 2},)),  # a known no-op: only the PK
-        KeyedWrite("update", "Wallet", ({"id": 3, "balance": 5.00},)),
+        KeyedWrite("update", "Wallet", ({"id": 3, "balance": Decimal("5.00")},)),
     ]
     plan = _plan(buffer, _WALLET)
     (step,) = plan.steps
@@ -981,19 +1092,19 @@ def test_a_known_no_op_between_two_uniform_updates_does_not_prevent_their_batch(
 
 
 def test_batching_declines_a_non_uniform_update_run_leaving_rows_separate() -> None:
-    buffer: list[BufferItem] = [
-        KeyedWrite("update", "Wallet", ({"id": 1, "balance": 111.00},)),
-        KeyedWrite("update", "Wallet", ({"id": 2, "balance": 222.00},)),
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("111.00")},)),
+        KeyedWrite("update", "Wallet", ({"id": 2, "balance": Decimal("222.00")},)),
     ]
     plan = _plan(buffer, _WALLET)
     assert len(plan.steps) == 2  # `batch_write.update_collapses` declines: not uniform
 
 
 def test_batching_never_regroups_across_an_intervening_different_entity() -> None:
-    buffer: list[BufferItem] = [
-        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": 1.00},)),
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),
         KeyedWrite("insert", "Person", ({"id": 99, "name": "P"},)),
-        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": 2.00},)),
+        KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": Decimal("2.00")},)),
     ]
     model = formed(
         DescriptorMetamodel(entities=(*_MODELS["wallet"].entities, *_MODELS["person"].entities))
@@ -1018,8 +1129,8 @@ def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
     # Both rows are observed because only an observed write of a versioned row
     # can be planned at all; the exclusion is therefore proven on the shape
     # production actually produces, not on an unversioned stand-in.
-    row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": 5.00},))
-    row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": 5.00},))
+    row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("5.00")},))
+    row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": Decimal("5.00")},))
     key1, key2 = object_key(row1, _ACCOUNT), object_key(row2, _ACCOUNT)
     assert key1 is not None
     assert key2 is not None
@@ -1043,12 +1154,12 @@ def test_batching_never_merges_across_an_intervening_materialized_write_group() 
     # collapse decision admits, and they would settle as ONE two-entry insert
     # if the group did not close the run it interrupted.
     group = _version_group(
-        "Account", "update", "id", [(9, 1)], [WriteAssignment("Account.balance", 5.00)]
+        "Account", "update", "id", [(9, 1)], [WriteAssignment("Account.balance", Decimal("5.00"))]
     )
-    buffer: list[BufferItem] = [
-        KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 5.00},)),
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("5.00")},)),
         group,
-        KeyedWrite("insert", "Account", ({"id": 2, "owner": "Bo", "balance": 5.00},)),
+        KeyedWrite("insert", "Account", ({"id": 2, "owner": "Bo", "balance": Decimal("5.00")},)),
     ]
     plan = _plan(buffer, _ACCOUNT)
     inserts = [step for step in plan.steps if isinstance(step, PlannedInsert)]
@@ -1066,7 +1177,7 @@ def test_batching_never_touches_a_predicate_write() -> None:
     plan = _plan([predicate], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
-    assert isinstance(step.target, PredicateTarget)
+    assert isinstance(step.target, ValidatedMutationSelection)
     assert step.target.predicate.authored == predicate_algebra.Comparison(
         "lessThan", "Wallet.balance", "1.00"
     )
@@ -1079,7 +1190,11 @@ def test_batching_never_touches_a_predicate_write() -> None:
 # --------------------------------------------------------------------------- #
 def test_materialized_group_settles_to_one_step_per_resolved_row_in_order() -> None:
     group = _version_group(
-        "Account", "update", "id", [(1, 1), (2, 1)], [WriteAssignment("Account.balance", 10.00)]
+        "Account",
+        "update",
+        "id",
+        [(1, 1), (2, 1)],
+        [WriteAssignment("Account.balance", Decimal("10.00"))],
     )
     plan = _plan([group], _ACCOUNT)
     assert len(plan.steps) == 2
@@ -1100,10 +1215,11 @@ def test_materialized_group_refuses_a_milestone_verb_on_a_non_temporal_target(
     # write and nothing to close. Settled as an ordinary versioned update it
     # would consume each row's observed version while silently discarding the
     # bounds — the same mismatch an addressed keyed write is refused for.
-    assignments = [WriteAssignment("Account.balance", 5.00)] if mutation == "updateUntil" else []
-    group = _version_group("Account", mutation, "id", [(1, 1)], assignments)
-    with pytest.raises(ValueError, match="temporal milestone verb"):
-        _plan([group], _ACCOUNT)
+    assignments = (
+        [WriteAssignment("Account.balance", Decimal("5.00"))] if mutation == "updateUntil" else []
+    )
+    with pytest.raises(WriteInstructionError, match="temporal milestone verb"):
+        _version_group("Account", mutation, "id", [(1, 1)], assignments)
 
 
 def test_materialized_group_rejects_an_authored_version_assignment() -> None:
@@ -1111,19 +1227,18 @@ def test_materialized_group_rejects_an_authored_version_assignment() -> None:
     # version attribute — the version is framework-owned end to end (`m-opt-
     # lock` "Version values are framework-owned") — checked once for the
     # whole group, since every resolved row shares the same assignment.
-    group = _version_group(
-        "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.version", 9)]
-    )
-    with pytest.raises(ValueError, match="framework-owned"):
-        _plan([group], _ACCOUNT)
+    with pytest.raises(WriteInstructionError, match="framework-owned"):
+        _version_group("Account", "update", "id", [(1, 1)], [WriteAssignment("Account.version", 9)])
 
 
 def test_materialized_group_is_exempt_from_same_object_coalescing() -> None:
     # A group's own row is never folded with an unrelated buffered insert of
     # the SAME object identity — it passes through coalesce opaque.
-    insert = KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 1.00},))
+    insert = KeyedWrite(
+        "insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
+    )
     group = _version_group(
-        "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.balance", 2.00)]
+        "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.balance", Decimal("2.00"))]
     )
     plan = _plan([insert, group], _ACCOUNT)
     assert _shape(plan) == [("insert", "Account"), ("update", "Account")]
@@ -1135,7 +1250,11 @@ def test_materialized_group_is_exempt_from_batching() -> None:
     # mutation, uniform values) — each per-row gated write stays its own step
     # (`m-batch-write`).
     group = _version_group(
-        "Account", "update", "id", [(1, 1), (2, 1)], [WriteAssignment("Account.balance", 5.00)]
+        "Account",
+        "update",
+        "id",
+        [(1, 1), (2, 1)],
+        [WriteAssignment("Account.balance", Decimal("5.00"))],
     )
     plan = _plan([group], _ACCOUNT)
     assert len(plan.steps) == 2
@@ -1151,7 +1270,9 @@ def test_materialized_group_moves_as_one_block_under_dependency_ordering() -> No
     # group carries observation columns, which only an observation-entitled
     # target may hold; FK-rank ordering is proven on its own above.
     group = _version_group("Account", "delete", "id", [(2, 1), (1, 1)])
-    other = KeyedWrite("insert", "Account", ({"id": 10, "owner": "Ada", "balance": 1.00},))
+    other = KeyedWrite(
+        "insert", "Account", ({"id": 10, "owner": "Ada", "balance": Decimal("1.00")},)
+    )
     plan = _plan([group, other], _ACCOUNT)
     shapes: list[tuple[str, object]] = []
     for step in plan.steps:
@@ -1174,7 +1295,9 @@ def test_planning_never_captures_the_transaction_instant_for_canceled_work() -> 
     # surviving write could need a Transaction-Time boundary, so the clock
     # behind the holder the request carries is never consulted.
     clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
-    insert = KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 1.00},))
+    insert = KeyedWrite(
+        "insert", "Account", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
+    )
     delete = KeyedWrite("delete", "Account", ({"id": 1},))
     plan = _plan([insert, delete], _ACCOUNT, tx_instant=TransactionInstant(clock))
     assert len(plan.steps) == 0
@@ -1183,13 +1306,17 @@ def test_planning_never_captures_the_transaction_instant_for_canceled_work() -> 
 
 def test_planning_captures_the_transaction_instant_only_for_surviving_temporal_work() -> None:
     clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
-    non_temporal = KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": 1.00},))
+    non_temporal = KeyedWrite(
+        "insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)
+    )
     plan = _plan([non_temporal], _WALLET, tx_instant=TransactionInstant(clock))
     assert len(plan.steps) == 1
     assert clock.calls == 0
 
     temporal_clock = CountingClock([dt.datetime(2024, 6, 1, tzinfo=dt.UTC)])
-    temporal = KeyedWrite("insert", "Balance", ({"id": 1, "acctNum": "A", "value": 1.00},))
+    temporal = KeyedWrite(
+        "insert", "Balance", ({"id": 1, "acctNum": "A", "value": Decimal("1.00")},)
+    )
     plan = _plan([temporal], _BALANCE, tx_instant=TransactionInstant(temporal_clock))
     (step,) = plan.steps
     assert isinstance(step, PlannedInsert)
@@ -1211,13 +1338,13 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
     position_update = KeyedWrite(
         "update",
         "Position",
-        ({"id": 5, "value": 42.0},),
+        ({"id": 5, "value": Decimal("42.0")},),
         valid_from="2024-03-01T00:00:00.000000Z",
     )
     key_ = object_key(position_update, _POSITION)
     assert key_ is not None
-    buffer: list[BufferItem] = [
-        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": 1.00},)),
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),
         position_update,
         KeyedWrite("delete", "Wallet", ({"id": 2},)),
     ]
@@ -1245,7 +1372,7 @@ def _bitemporal_observation() -> WriteObservation:
             members={
                 "id": 5,
                 "acctNum": "P5",
-                "value": 1.0,
+                "value": Decimal("1.0"),
                 "validStart": "2024-01-01T00:00:00+00:00",
                 "validEnd": "infinity",
                 "txStart": "2024-01-01T00:00:00+00:00",

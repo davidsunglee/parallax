@@ -58,7 +58,7 @@ from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.unit_work import (
     Concurrency,
     FixedClock,
@@ -102,7 +102,7 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., FindResult]:
     real = handle_read.find
 
     def recording(
-        query: ObjectQueryNode,
+        query: ValidatedObjectQuery,
         model: CatalogedModel,
         port: DbPort,
         *,
@@ -495,7 +495,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
     assert close_binds == (
-        "2024-06-01T00:00:00+00:00",
+        FIXED,
         1,
         "infinity",
         dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
@@ -504,7 +504,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     assert chain_sql == POSTGRES.to_driver_sql(
         "insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)"
     )
-    assert chain_binds == (1, "A-1", Decimal("150.00"), "2024-06-01T00:00:00+00:00", "infinity")
+    assert chain_binds == (1, "A-1", Decimal("150.00"), FIXED, "infinity")
 
 
 def _branch_row(*, address: dict[str, object] | None) -> Row:
@@ -543,13 +543,13 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
     # recorded observation.
     assert head_binds[1] == "Central Branch"
     assert head_binds[2] == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    assert head_binds[3] == "2024-03-01T00:00:00+00:00"
+    assert head_binds[3] == dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
     # The TAIL rectangle opens at the mutation instant with the new payload and
     # closes at the OBSERVED valid_end. That upper bound is the third value
     # only the observation carries: the edited copy never names it, and without
     # this assertion a corrupted `observation.valid_end` would go undetected.
     assert tail_binds[1] == "Renamed Branch"
-    assert tail_binds[2] == "2024-03-01T00:00:00+00:00"
+    assert tail_binds[2] == dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
     assert tail_binds[3] == INFINITY_INSTANT
 
 
@@ -752,8 +752,8 @@ def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None
     submit_read_binds = [op for op in port.calls if isinstance(op, ReadCall)][1].binds
     # The transported Valid-Time coordinate reaches the submit read's own
     # containment terms; the Transaction-Time one never reaches a statement.
-    assert from_z.isoformat() in submit_read_binds
-    assert in_z.isoformat() not in submit_read_binds
+    assert from_z in submit_read_binds
+    assert in_z not in submit_read_binds
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
     close_sql = write_ops[0].sql
     close_binds = write_ops[0].binds

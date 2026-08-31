@@ -12,6 +12,7 @@ and the metamodel-aware member-name honesty validator.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any, cast
 
 import jsonschema
@@ -158,7 +159,7 @@ _INSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": 1.00}],
+            "rows": [{"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": 1}],
         },
     ),
     (
@@ -437,7 +438,7 @@ def test_member_name_honesty_accepts_declared_members() -> None:
         {
             "mutation": "insert",
             "entity": "Account",
-            "rows": [{"id": 9, "owner": "Ada", "balance": 1.00}],
+            "rows": [{"id": 9, "owner": "Ada", "balance": 1}],
         }
     )
     wi.prepare_typed_write(keyed, _ACCOUNT)
@@ -449,6 +450,34 @@ def test_member_name_honesty_accepts_declared_members() -> None:
         }
     )
     wi.prepare_typed_write(predicate, _ACCOUNT)
+
+
+@pytest.mark.parametrize(
+    ("member", "value"),
+    [("price", "1.00"), ("orderedOn", "2024-07-01")],
+)
+def test_typed_preparation_does_not_decode_wire_literals(member: str, value: str) -> None:
+    instruction = wi.KeyedWrite("update", "Order", ({"id": 1, member: value},))
+    with pytest.raises(ValueError, match="does not match the declared type"):
+        wi.prepare_typed_write(instruction, _MODELS["orders"])
+    wi.prepare_wire_write(instruction, _MODELS["orders"])
+
+
+def test_preparation_owns_nested_values_once_and_derivation_retains_them() -> None:
+    address = {"street": "Main", "city": "Berlin"}
+    instruction = wi.KeyedWrite(
+        "insert",
+        "Customer",
+        ({"id": 9, "name": "Ada", "address": address},),
+    )
+    prepared = wi.prepare_typed_write(instruction, _MODELS["customer"])
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    retained = prepared.rows[0]["address"]
+    address["city"] = "Oslo"
+    assert cast("Mapping[str, object]", retained)["city"] == "Berlin"
+    derived = wi.derive_keyed_write(prepared, prepared.rows)
+    assert derived.rows[0] is prepared.rows[0]
+    assert derived.rows[0]["address"] is retained
 
 
 def test_member_name_honesty_rejects_undeclared_row_member() -> None:
@@ -473,7 +502,7 @@ def test_member_name_honesty_accepts_a_family_participants_inherited_members() -
         {
             "mutation": "insert",
             "entity": "CardPayment",
-            "rows": [{"id": 1, "amount": 200.00, "cardNetwork": "Visa"}],
+            "rows": [{"id": 1, "amount": 200, "cardNetwork": "Visa"}],
         }
     )
     wi.prepare_typed_write(keyed, _PAYMENT)
@@ -608,7 +637,7 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
         {
             "mutation": "updateUntil",
             "entity": "Position",
-            "rows": [{"id": 1, "value": 5.00}],
+            "rows": [{"id": 1, "value": 5}],
             "validFrom": _B1,
             "until": _B2,
         },
@@ -631,7 +660,7 @@ def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
         {
             "mutation": "update",
             "entity": "Position",
-            "rows": [{"id": 1, "value": 5.00}, {"id": 2, "value": 6.00}],
+            "rows": [{"id": 1, "value": 5}, {"id": 2, "value": 6.00}],
             "validFrom": _B1,
         }
     )
@@ -648,7 +677,7 @@ def test_a_plural_keyed_instruction_is_accepted_on_a_non_temporal_target() -> No
         {
             "mutation": "update",
             "entity": "Account",
-            "rows": [{"id": 1, "balance": 5.00}, {"id": 2, "balance": 6.00}],
+            "rows": [{"id": 1, "balance": 5}, {"id": 2, "balance": 6}],
         }
     )
     wi.prepare_typed_write(plural, _ACCOUNT)
@@ -678,7 +707,7 @@ def test_member_name_honesty_covers_value_object_members() -> None:
         {
             "mutation": "insert",
             "entity": "Customer",
-            "rows": [{"id": 9, "name": "Ada", "address": {"city": "Berlin"}}],
+            "rows": [{"id": 9, "name": "Ada", "address": {"street": "Main", "city": "Berlin"}}],
         }
     )
     wi.prepare_typed_write(keyed, customer)
