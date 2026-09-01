@@ -7,13 +7,23 @@ import json
 import math
 import sys
 from collections.abc import Mapping
-from typing import cast
+from typing import Self, cast
 
 from parallax.core.base._neutral import ManagedValueExclusion
 from parallax.core.wire._types import WireValue
 
 
-class _AuthoredInt(int):
+class _ImmutableAuthoredNumber:
+    __slots__ = ()
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+
+class _AuthoredInt(int, _ImmutableAuthoredNumber):
     token: str
 
     def __new__(cls, token: str) -> _AuthoredInt:
@@ -24,12 +34,6 @@ class _AuthoredInt(int):
         number.token = token
         return number
 
-    def __copy__(self) -> _AuthoredInt:
-        return self
-
-    def __deepcopy__(self, memo: dict[int, object]) -> _AuthoredInt:
-        return self
-
 
 class _OutOfSpaceAuthoredInt(_AuthoredInt, ManagedValueExclusion):
     def __new__(cls, token: str) -> _OutOfSpaceAuthoredInt:
@@ -38,7 +42,7 @@ class _OutOfSpaceAuthoredInt(_AuthoredInt, ManagedValueExclusion):
         return number
 
 
-class _AuthoredFloat(float):
+class _AuthoredFloat(float, _ImmutableAuthoredNumber):
     token: str
 
     def __new__(cls, token: str) -> _AuthoredFloat:
@@ -48,12 +52,6 @@ class _AuthoredFloat(float):
         number = super().__new__(cls, value)
         number.token = token
         return number
-
-    def __copy__(self) -> _AuthoredFloat:
-        return self
-
-    def __deepcopy__(self, memo: dict[int, object]) -> _AuthoredFloat:
-        return self
 
 
 class _OutOfSpaceAuthoredFloat(_AuthoredFloat, ManagedValueExclusion):
