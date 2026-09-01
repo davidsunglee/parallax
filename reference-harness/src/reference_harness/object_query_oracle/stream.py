@@ -16,6 +16,7 @@ here is how far the list is walked and what proves it is exhausted.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from ..case import Case, Entity
@@ -81,9 +82,15 @@ def _binds_equal(authored: list[Any], derived: list[Any]) -> bool:
     """
     if len(authored) != len(derived):
         return False
-    return all(
-        scalars_equal(left, right, None) for left, right in zip(authored, derived, strict=True)
-    )
+
+    def equal(left: Any, right: Any) -> bool:
+        if isinstance(left, bool) or isinstance(right, bool):
+            return type(left) is type(right) and left is right
+        if isinstance(left, (int, float, Decimal)) and isinstance(right, (int, float, Decimal)):
+            return Decimal(str(left)) == Decimal(str(right))
+        return scalars_equal(left, right, None)
+
+    return all(equal(left, right) for left, right in zip(authored, derived, strict=True))
 
 
 @dataclass(frozen=True, slots=True)

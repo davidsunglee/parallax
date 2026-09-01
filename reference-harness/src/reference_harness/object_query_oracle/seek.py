@@ -25,6 +25,7 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.expressions.core import Expr
 
+from .. import portable_literal
 from ..case import Case, Entity
 from ..case_assertions import CaseFailure
 from ..inheritance import Family, query_position
@@ -79,10 +80,12 @@ class ContinuationTerm:
     direction: Literal["asc", "desc"]
     nulls: Literal["first", "last"]
     nullable: bool
+    neutral_type: str
 
 
 def _direct_term(
     column: str,
+    neutral_type: str,
     *,
     direction: Literal["asc", "desc"],
     nulls: Literal["first", "last"],
@@ -96,6 +99,7 @@ def _direct_term(
         direction=direction,
         nulls=nulls,
         nullable=nullable,
+        neutral_type=neutral_type,
     )
 
 
@@ -198,6 +202,7 @@ def _resident_term(
         direction=direction,
         nulls=nulls,
         nullable=nullable,
+        neutral_type=member.type_spelling or "string",
     )
 
 
@@ -315,7 +320,11 @@ def continuation_order(
         if address not in resident | _document_resident_members(case, entity):
             terms.append(
                 _direct_term(
-                    attribute["column"], direction=direction, nulls=nulls, nullable=nullable
+                    attribute["column"],
+                    attribute["type"],
+                    direction=direction,
+                    nulls=nulls,
+                    nullable=nullable,
                 )
             )
             continue
@@ -341,13 +350,25 @@ def continuation_order(
     if not names_the_key:
         terms.append(
             _direct_term(
-                _primary_key_column(case, root), direction="asc", nulls="last", nullable=False
+                _primary_key_column(case, root),
+                root.attribute_by_name(
+                    next(
+                        attribute["name"]
+                        for attribute in root.attributes
+                        if attribute.get("primaryKey")
+                    )
+                )["type"],
+                direction="asc",
+                nulls="last",
+                nullable=False,
             )
         )
     named = {term.column for term in terms}
     for column in _milestone_edge_columns(query, root):
         if column not in named:
-            terms.append(_direct_term(column, direction="asc", nulls="last", nullable=False))
+            terms.append(
+                _direct_term(column, "timestamp", direction="asc", nulls="last", nullable=False)
+            )
     return terms
 
 
@@ -480,7 +501,8 @@ def _hoisted_range(term: ContinuationTerm, coordinate: Any) -> ComposedSeek:
 
 
 def _comparison_leaf(term: ContinuationTerm, comparator: str, coordinate: Any) -> ComposedSeek:
-    return ComposedSeek(f"{term.compared} {comparator} ?", (*term.path_binds, coordinate))
+    canonical = portable_literal.canonicalize(coordinate, term.neutral_type)
+    return ComposedSeek(f"{term.compared} {comparator} ?", (*term.path_binds, canonical))
 
 
 def _null_leaf(term: ContinuationTerm, *, negated: bool = False) -> ComposedSeek:

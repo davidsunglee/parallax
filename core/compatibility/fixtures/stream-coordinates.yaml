@@ -1,0 +1,20 @@
+# Canonical authored literals for the streamed-coordinate compatibility model.
+parallax.compatibility.StreamCoordinate:
+  - id: 101
+    day: "2026-01-15"
+    clock: "09:30:00"
+    amount: "10.25"
+    payload: "0a1b"
+    token: "00000000-0000-4000-8000-0000000000ab"
+    instant: "2026-01-15T09:30:00.000000Z"
+    f32: 1.5
+    f64: 2.25
+  - id: 102
+    day: "2026-02-01"
+    clock: "10:45:00"
+    amount: "19.99"
+    payload: "ff00"
+    token: "123e4567-e89b-12d3-a456-426614174000"
+    instant: "2026-02-01T10:45:00.000000Z"
+    f32: 2.5
+    f64: 9.75

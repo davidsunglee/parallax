@@ -14,24 +14,28 @@ provider / conformance lanes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from parallax.conformance import case_format
+from parallax.conformance._case_literal import normalize_case_literal
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import JSON, STRING
+from parallax.core.base import JSON, STRING, TIMESTAMP, NeutralType
 from parallax.core.db_port import DbPort, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
     NULL,
     DocumentShape,
     Leaf,
+    Occurrence,
     Presence,
     Present,
     encode_document,
+    encode_many,
     entity_shape,
+    occurrence_shape,
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -41,6 +45,7 @@ from parallax.core.metamodel import (
     IndexIdentity,
     IndexMetadata,
     Metamodel,
+    Multiplicity,
     ValueObjectIdentity,
     ValueObjectMetadata,
     derive_primary_key_index,
@@ -204,17 +209,25 @@ def _unique_constraints(model: Metamodel, layout: TableLayout, dialect: Dialect)
     return constraints
 
 
-def _fixture_member(slot: ColumnSlot) -> tuple[str, bool] | None:
-    """One slot's authorable fixture member name and whether it is a document.
+def _fixture_member(
+    model: Metamodel, slot: ColumnSlot
+) -> tuple[str, AttributeMetadata | DocumentShape] | None:
+    """One slot's authorable fixture member and its declared projection metadata.
 
     A framework-owned discriminator has no fixture member: its value is derived
     from the concrete's own ``tagValue`` (m-inheritance).
     """
     contributor = slot.contributor
     if isinstance(contributor, AttributeIdentity):
-        return contributor.name, False
+        return contributor.name, _declared_attribute(model, contributor)
     if isinstance(contributor, ValueObjectIdentity):
-        return contributor.path[-1], True
+        entity = model.entity(contributor.entity)
+        value_object = None if entity is None else entity.value_object(contributor.path[-1])
+        if value_object is None:  # pragma: no cover - a slot names an accepted declaration
+            raise ValueError(
+                f"{contributor.entity.canonical}: no value object {contributor.path[-1]!r}"
+            )
+        return contributor.path[-1], occurrence_shape(value_object)
     return None
 
 
@@ -256,6 +269,10 @@ def _fixture_document(shape: DocumentShape, row: Mapping[str, object]) -> object
     omitted key stays absent, an authored null becomes JSON null, and a `many`
     occurrence always contributes its array.
     """
+    return encode_document(shape, _fixture_values(shape, row))
+
+
+def _fixture_values(shape: DocumentShape, row: Mapping[str, object]) -> dict[str, Presence]:
     values: dict[str, Presence] = {}
     for member in shape.members:
         if member.name not in row:
@@ -264,14 +281,45 @@ def _fixture_document(shape: DocumentShape, row: Mapping[str, object]) -> object
         if raw is None:
             values[member.name] = NULL
             continue
-        values[member.name] = Present(
-            decode_wire(member.type, cast("WireValue", raw)) if isinstance(member, Leaf) else raw
-        )
-    return encode_document(shape, values)
+        if isinstance(member, Leaf):
+            value = _fixture_literal(member.type, raw)
+        else:
+            value = _fixture_occurrence(member, raw)
+        values[member.name] = Present(value)
+    return values
+
+
+def _fixture_occurrence(member: Occurrence, raw: object) -> object:
+    if member.multiplicity is Multiplicity.MANY:
+        if not isinstance(raw, Sequence) or isinstance(raw, str | bytes):
+            return raw
+        source = cast("Sequence[object]", raw)
+        elements = [
+            _fixture_values(member.shape, cast("Mapping[str, object]", element))
+            for element in source
+            if isinstance(element, Mapping)
+        ]
+        return encode_many(member.shape, elements)
+    if not isinstance(raw, Mapping):
+        return raw
+    return _fixture_document(member.shape, cast("Mapping[str, object]", raw))
+
+
+def _fixture_literal(neutral_type: NeutralType, value: object) -> object:
+    if neutral_type == TIMESTAMP and value == "infinity":
+        return value
+    return decode_wire(
+        neutral_type,
+        cast("WireValue", normalize_case_literal(neutral_type, value)),
+    )
 
 
 def _fixture_insert(
-    view: EntityLayoutView, shape: DocumentShape, row: Mapping[str, object], dialect: Dialect
+    model: Metamodel,
+    view: EntityLayoutView,
+    shape: DocumentShape,
+    row: Mapping[str, object],
+    dialect: Dialect,
 ) -> tuple[str, list[object]]:
     """One fixture row's ``insert``, following the Entity Layout slot order.
 
@@ -286,18 +334,29 @@ def _fixture_insert(
             columns.append(dialect.quote(slot.column.name))
             binds.append(JsonDocument(_fixture_document(shape, row)))
             continue
-        member = _fixture_member(slot)
+        member = _fixture_member(model, slot)
         if member is None:
             assert view.discriminator is not None  # only a shared table has a discriminator slot
             columns.append(dialect.quote(slot.column.name))
             binds.append(view.discriminator.value)
             continue
-        name, is_document = member
+        name, projection = member
         if name not in row:
             continue  # the fixture omits this cell
         columns.append(dialect.quote(slot.column.name))
         value = row[name]
-        binds.append(JsonDocument(value) if is_document else value)
+        if value is None:
+            binds.append(None)
+        elif isinstance(projection, DocumentShape):
+            binds.append(
+                JsonDocument(
+                    _fixture_document(projection, cast("Mapping[str, object]", value))
+                    if isinstance(value, Mapping)
+                    else value
+                )
+            )
+        else:
+            binds.append(_fixture_literal(projection.type, value))
     placeholders = ", ".join("?" for _ in columns)
     sql = (
         f"insert into {dialect.quote(view.layout.table.name)} "
@@ -332,7 +391,7 @@ def fixture_statements(
             continue
         shape = entity_shape(*_document_members(model, view.layout, entity.identity))
         statements.extend(
-            _fixture_insert(view, shape, cast("Mapping[str, object]", row), dialect)
+            _fixture_insert(model, view, shape, cast("Mapping[str, object]", row), dialect)
             for row in cast("list[object]", rows)
             if isinstance(row, Mapping)
         )

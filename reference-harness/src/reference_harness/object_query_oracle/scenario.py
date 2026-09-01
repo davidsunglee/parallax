@@ -35,7 +35,7 @@ from ..case import Case, Entity, entry_pairs, frozen_view
 from ..case_assertions import CaseFailure, coerce_identity_key, reported_against, rows_equal
 from ..predicate_write_validate import requires_predicate_write_materialization
 from ..serde import canonical
-from . import execute, graph, includes, materialize, retained, stream
+from . import execute, graph, includes, materialize, retained, row, stream
 from .executor import ReadExecutor
 
 
@@ -135,6 +135,7 @@ class ScenarioReads:
                 step_index,
                 [execute.project_like(row, delivered) for row in materialized],
                 delivered,
+                entity,
             )
         rows = (
             delivered
@@ -172,7 +173,7 @@ class ScenarioReads:
         rows = execute.query_rows(case, reader, statement, binds)
         reference = self._reference_rows(step, reader)
         if reference is not None:
-            self._assert_reference_rows(step_index, reference, rows)
+            self._assert_reference_rows(step_index, reference, rows, entity)
         # The step is presented as the read it is, so the seam reads its result
         # form off the step's own read semantics rather than being told one: the
         # sole row-form step read is a materializing predicate write's resolve, and
@@ -365,6 +366,7 @@ class ScenarioReads:
         step_index: int,
         reference_rows: list[dict[str, Any]],
         golden_rows: Sequence[dict[str, Any]],
+        entity: Entity | None,
     ) -> None:
         """Compare an independent formulation's rows to the ones the golden read reached.
 
@@ -373,7 +375,12 @@ class ScenarioReads:
         delivery compares what its pages already materialized.
         """
         case = self._case
-        if not rows_equal(reference_rows, golden_rows, case.tolerance):
+        equal = (
+            rows_equal(reference_rows, golden_rows, case.tolerance)
+            if entity is None
+            else row.rows_equal(reference_rows, golden_rows, case.model, entity, case.tolerance)
+        )
+        if not equal:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}] referenceSql rows != golden rows.\n"
                 f"  reference: {reference_rows!r}\n"
@@ -405,8 +412,18 @@ class ScenarioReads:
         """
         case = self._case
         expect = step.get("expectRows")
-        if expect is not None and not rows_equal(
-            rows, expect, case.tolerance, ordered="stream" in step
+        entity = self._read_entity(step_index)
+        if expect is not None and not (
+            rows_equal(rows, expect, case.tolerance, ordered="stream" in step)
+            if entity is None
+            else row.rows_equal(
+                rows,
+                expect,
+                case.model,
+                entity,
+                case.tolerance,
+                ordered="stream" in step,
+            )
         ):
             raise CaseFailure(
                 f"{case.path.name}: scenario[{step_index}] rows != expectRows.\n"

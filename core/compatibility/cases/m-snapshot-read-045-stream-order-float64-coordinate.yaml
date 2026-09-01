@@ -1,0 +1,24 @@
+# A streamed page ordered by document-resident `float64` retains the binary64
+# value and projects its shortest canonical number under the resolved member.
+# The authored predicate and generated continuation both cast extraction to
+# `double precision` and bind `2.25`. This complements the binary32 witness by
+# proving the same Python carrier does not erase the declared width at page two.
+model: models/stream-coordinates.yaml
+tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, float64, document-layout, cast, graph, slice-snapshot-1]
+shape: read
+compileEligibility: { mode: run-only, reason: query-result-dependent }
+when:
+  objectQuery:
+    target: parallax.compatibility.StreamCoordinate
+    predicate: { eq: { attr: parallax.compatibility.StreamCoordinate.f64, value: 2.25 } }
+    orderBy: [{ attr: parallax.compatibility.StreamCoordinate.f64 }]
+  stream: { batchSize: 1 }
+then:
+  statements:
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from stream_coordinate t0 where cast(jsonb_extract_path_text(t0.coordinates, ?) as double precision) = ? order by cast(jsonb_extract_path_text(t0.coordinates, ?) as double precision) asc, t0.id asc limit ?" }
+      binds: { postgres: [f64, 2.25, f64, 1] }
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from stream_coordinate t0 where cast(jsonb_extract_path_text(t0.coordinates, ?) as double precision) = ? and cast(jsonb_extract_path_text(t0.coordinates, ?) as double precision) >= ? and (cast(jsonb_extract_path_text(t0.coordinates, ?) as double precision) > ? or (cast(jsonb_extract_path_text(t0.coordinates, ?) as double precision) = ? and t0.id > ?)) order by cast(jsonb_extract_path_text(t0.coordinates, ?) as double precision) asc, t0.id asc limit ?" }
+      binds: { postgres: [f64, 2.25, f64, 2.25, f64, 2.25, f64, 2.25, 101, f64, 1] }
+  referenceSql: { postgres: "select id, cast(coordinates ->> 'f64' as double precision) as f64 from stream_coordinate where cast(coordinates ->> 'f64' as double precision) = 2.25" }
+  graph: { StreamCoordinate: [{ id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }] }
+  roundTrips: 2

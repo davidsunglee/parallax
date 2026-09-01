@@ -48,15 +48,15 @@ then:
     - sql:
         postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
-      binds: [100, 1000, 1000, 1000, "2024-01-01T00:00:00+00:00", 1]
+      binds: [100, 1000, 1000, 1000, "2024-01-01T00:00:00.000000Z", 1]
     - sql:
         postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
-      binds: [100, 1000, 1000, 1000, "2024-04-01T00:00:00+00:00", 1]
+      binds: [100, 1000, 1000, 1000, "2024-04-01T00:00:00.000000Z", 1]
     - sql:
         postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
-      binds: [100, 1001, 1001, 1001, "2024-01-01T00:00:00+00:00", 1]
+      binds: [100, 1001, 1001, 1001, "2024-01-01T00:00:00.000000Z", 1]
   referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where invoice_id = 100
   graphs:
     - pin: { transaction-time: "2024-01-01T00:00:00+00:00" }

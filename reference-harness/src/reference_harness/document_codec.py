@@ -32,6 +32,7 @@ import uuid as _uuid
 from collections.abc import Callable
 from typing import Any
 
+from . import portable_literal
 from .portable_literal import AuthoredNumber, decode_number
 
 __all__ = [
@@ -122,27 +123,12 @@ def encode_leaf(type_spelling: str, value: Any) -> Any:
     """
     if value is None:
         return None
-    decimal_type = _DECIMAL_TYPE.match(type_spelling)
-    if decimal_type is not None:
-        return _exact_decimal(value, int(decimal_type.group(2)))
-    if type_spelling == "bytes":
-        return _hex(value)
-    if type_spelling == "date":
-        return _date(value).isoformat()
-    if type_spelling == "time":
-        return _time(value).isoformat()
-    if type_spelling == "timestamp":
-        return _instant(value).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
-    if type_spelling == "uuid":
-        return str(_as_uuid(value))
-    if type_spelling in ("float32", "float64"):
-        return _shortest_number(type_spelling, value)
-    if type_spelling == "boolean" or type_spelling in _INTEGER_BOUNDS or type_spelling == "string":
-        member = _value_space_member(type_spelling, value)
-        if member is _NOT_ENCODED:
-            raise DocumentEncodingError(f"{value!r} names no {type_spelling} value")
-        return member
-    raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
+    if _DECIMAL_TYPE.match(type_spelling) is not None and isinstance(value, (int, float)):
+        value = decimal.Decimal(repr(value) if isinstance(value, float) else value)
+    try:
+        return portable_literal.canonicalize(value, type_spelling)
+    except portable_literal.PortableLiteralError as exc:
+        raise DocumentEncodingError(str(exc)) from exc
 
 
 def decode_leaf(type_spelling: str, value: Any) -> Any:
@@ -168,16 +154,42 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
     """
     if value is None:
         return None
-    member = _encoded_member(type_spelling, value)
-    if member is _NOT_ENCODED:
+    try:
+        managed = portable_literal.decode_canonical(value, type_spelling)
+        if _DECIMAL_TYPE.match(type_spelling) is not None or type_spelling in (
+            "float32",
+            "float64",
+        ):
+            return managed
+        if type_spelling == "timestamp":
+            return managed.isoformat()
+        return value
+    except portable_literal.PortableLiteralError as exc:
+        if (
+            "names no" in str(exc)
+            and type_spelling
+            not in {
+                "boolean",
+                "int32",
+                "int64",
+                "float32",
+                "float64",
+                "string",
+                "bytes",
+                "date",
+                "time",
+                "timestamp",
+                "uuid",
+                "json",
+            }
+            and _DECIMAL_TYPE.match(type_spelling) is None
+        ):
+            raise DocumentEncodingError(
+                f"{type_spelling!r} names no neutral type this table covers"
+            ) from exc
         raise DocumentEncodingError(
             f"{value!r} is not a {type_spelling!r} encoding — invalid stored data"
-        )
-    if _DECIMAL_TYPE.match(type_spelling) is not None or type_spelling in ("float32", "float64"):
-        return member
-    if type_spelling == "timestamp":
-        return member.isoformat()
-    return value
+        ) from exc
 
 
 def _encoded_member(type_spelling: str, value: Any) -> Any:

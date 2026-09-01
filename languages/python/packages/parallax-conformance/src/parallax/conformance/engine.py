@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import decimal
 import json
 import os
 import socket
 import threading
-import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +32,7 @@ from parallax.conformance import (
     provision,
     temporal_state,
 )
+from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
@@ -178,8 +177,6 @@ __all__ = [
     "run_stream_case",
     "run_streamed_graphs_case",
     "run_write_sequence_case",
-    "wire_row",
-    "wire_value",
 ]
 
 
@@ -534,7 +531,10 @@ def run_read_case(
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return (
         _read_emissions(observed),
-        [wire_row(_conforming_row(case, row)) for row in result.rows],
+        [
+            ActualWireProjection(model).published_row(query, _conforming_row(case, row))
+            for row in result.rows
+        ],
         observed.round_trips,
     )
 
@@ -616,7 +616,7 @@ def run_graph_case(
         _read_emissions(observed),
         {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
         observed.round_trips,
-        _stored_data_records(roots),
+        _stored_data_records(roots, model),
     )
 
 
@@ -699,7 +699,7 @@ def run_stream_case(
         _read_emissions(observed),
         {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
         observed.round_trips,
-        _stored_data_records(roots),
+        _stored_data_records(roots, model),
     )
 
 
@@ -730,7 +730,7 @@ def run_streamed_graphs_case(
     root_key = _graph_root_key(query.target.canonical, model)
     entity = _declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
-        {"pin": _wire_pin(pin), "graph": {root_key: milestone_roots}}
+        {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: milestone_roots}}
         for pin, milestone_roots in _milestone_groups(entity, roots)
     ]
     return _read_emissions(observed), graphs_wire, observed.round_trips
@@ -787,7 +787,7 @@ def run_graphs_case(
     root_key = _graph_root_key(query.target.canonical, model)
     entity = _declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
-        {"pin": _wire_pin(pin), "graph": {root_key: roots}}
+        {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: roots}}
         for pin, roots in _milestone_partition(entity, snapshot.checked().results())
     ]
     return _read_emissions(observed), graphs_wire, observed.round_trips
@@ -903,26 +903,6 @@ def _read_emissions(observed: LifecycleObservation) -> list[Emission]:
 
 # The wire spelling each pinned as-of axis is emitted under in a milestone-set
 # graph's pin entry. The coordinate itself is structured everywhere above this seam.
-_PIN_AXIS_NAMES: Final[tuple[tuple[str, str], ...]] = (
-    ("valid-time", "valid_time"),
-    ("transaction-time", "tx_time"),
-)
-
-
-def _wire_pin(pin: Pin) -> dict[str, object]:
-    """One milestone's edge pin on the wire, keyed by dimension spelling.
-
-    An axis the milestone's Entity does not declare carries no coordinate and is
-    absent, which is what a :class:`~parallax.core.temporal_read.Pin` already
-    says by holding ``None`` there.
-    """
-    return {
-        name: wire_value(getattr(pin, field))
-        for name, field in _PIN_AXIS_NAMES
-        if getattr(pin, field) is not None
-    }
-
-
 def _graph_root_key(target: str, model: AcceptedMetamodel) -> str:
     """The `then.graph` root key the query's own ``target`` denotes.
 
@@ -937,7 +917,9 @@ def _graph_root_key(target: str, model: AcceptedMetamodel) -> str:
     return entity.identity.name
 
 
-def _stored_data_records(roots: Sequence[object]) -> list[dict[str, object]] | None:
+def _stored_data_records(
+    roots: Sequence[object], model: AcceptedMetamodel
+) -> list[dict[str, object]] | None:
     """The `then.storedDataIssues` observation, or ``None`` for a clean read.
 
     One entry per INVALID result position, in result order: the position itself,
@@ -946,14 +928,16 @@ def _stored_data_records(roots: Sequence[object]) -> list[dict[str, object]] | N
     expectation is never handed an empty array to explain.
     """
     records = [
-        _stored_data_record(cast("handle.InvalidData[object]", root))
+        _stored_data_record(cast("handle.InvalidData[object]", root), model)
         for root in roots
         if isinstance(root, handle.InvalidData)
     ]
     return records or None
 
 
-def _stored_data_record(record: handle.InvalidData[object]) -> dict[str, object]:
+def _stored_data_record(
+    record: handle.InvalidData[object], model: AcceptedMetamodel
+) -> dict[str, object]:
     """One published :class:`~parallax.snapshot.InvalidData` on the wire.
 
     ``hydrated`` states the one thing the graph position cannot: whether the
@@ -964,7 +948,7 @@ def _stored_data_record(record: handle.InvalidData[object]) -> dict[str, object]
         "ordinal": record.ordinal,
         "hydrated": record.data is not None,
         "issues": sorted(
-            (_stored_data_issue(issue) for issue in record.issues),
+            (_stored_data_issue(issue, model) for issue in record.issues),
             key=lambda issue: (
                 cast("str", issue["code"]),
                 cast("str", issue.get("member") or ""),
@@ -974,7 +958,9 @@ def _stored_data_record(record: handle.InvalidData[object]) -> dict[str, object]
     }
 
 
-def _stored_data_issue(issue: handle.StoredDataIssue) -> dict[str, object]:
+def _stored_data_issue(
+    issue: handle.StoredDataIssue, model: AcceptedMetamodel
+) -> dict[str, object]:
     """One diagnosis as its cross-language record (`m-snapshot-read`).
 
     ``member`` is absent for an unresolved family tag alone — its discriminator
@@ -985,7 +971,7 @@ def _stored_data_issue(issue: handle.StoredDataIssue) -> dict[str, object]:
     if issue.member is not None:
         rendered["member"] = _member_path(issue.member)
     if issue.object_key is not None:
-        rendered["objectKey"] = _wire_object_key(issue.object_key)
+        rendered["objectKey"] = ActualWireProjection(model).object_key(issue.object_key)
     return rendered
 
 
@@ -1004,14 +990,6 @@ def _member_path(member: MemberIdentity) -> str:
         case ValueObjectAttributeIdentity():
             occurrence = member.value_object
             return ".".join((occurrence.entity.canonical, *occurrence.path, member.name))
-
-
-def _wire_object_key(key: ObjectKey) -> dict[str, object]:
-    """One Object Key on the wire: its Entity plus its ordered primary-key values."""
-    return {
-        "entity": key.entity.canonical,
-        "key": {name: wire_value(value) for name, value in key.primary_key},
-    }
 
 
 # --------------------------------------------------------------------------- #
@@ -2330,14 +2308,29 @@ def _graph_rows(
     carries, which is exactly why the format names the variant instead.
     """
     columns, family = _read_projection(model, query)
-    return [_projected_row(columns, family, _graph_root(root) or {}) for root in roots]
+    projection = ActualWireProjection(model)
+    return [_projected_row(projection, columns, family, _graph_root(root) or {}) for root in roots]
 
 
 def _projected_row(
-    columns: Mapping[str, str], family: bool, node: Mapping[str, object]
+    projection: ActualWireProjection,
+    columns: Mapping[str, tuple[str, AttributeMetadata | ValueObjectMetadata]],
+    family: bool,
+    node: Mapping[str, object],
 ) -> Mapping[str, object]:
     """One published node as its projection's row."""
-    published = {columns[name]: value for name, value in node.items() if name in columns}
+    published: dict[str, object] = {}
+    for name, value in node.items():
+        resolved = columns.get(name)
+        if resolved is None:
+            continue
+        column, member = resolved
+        if value is None:
+            published[column] = None
+        elif isinstance(member, AttributeMetadata):
+            published[column] = projection.scalar(member, value)
+        else:
+            published[column] = projection.value_object(member, value)
     if not family or not node:
         return published
     variant = node.get("familyVariant")
@@ -2346,12 +2339,16 @@ def _projected_row(
             "an abstract-position read publishes a concrete node carrying "
             f"`familyVariant`; this one published {sorted(node)}"
         )
-    return {**dict.fromkeys(columns.values()), **published, "familyVariant": variant}
+    return {
+        **dict.fromkeys(column for column, _member in columns.values()),
+        **published,
+        "familyVariant": variant,
+    }
 
 
 def _read_projection(
     model: AcceptedMetamodel, query: ObjectQueryNode
-) -> tuple[Mapping[str, str], bool]:
+) -> tuple[Mapping[str, tuple[str, AttributeMetadata | ValueObjectMetadata]], bool]:
     """The columns ``query`` projects, and whether it reads an abstract position.
 
     Abstractness is the ADDRESSED position's own role, exactly as it is where
@@ -2392,17 +2389,22 @@ def _step_rows(
     """
     return {
         "at": f"/scenario/{index}",
-        "rows": [wire_row(row) for row in _graph_rows(model, query, roots)],
+        "rows": [dict(row) for row in _graph_rows(model, query, roots)],
     }
 
 
 def _member_columns(
     attributes: Sequence[AttributeMetadata], value_objects: Sequence[ValueObjectMetadata]
-) -> Mapping[str, str]:
+) -> Mapping[str, tuple[str, AttributeMetadata | ValueObjectMetadata]]:
     """Each member name paired with its own column, in projection order."""
-    columns = {attribute.identity.name: attribute.storage.name for attribute in attributes}
+    columns: dict[str, tuple[str, AttributeMetadata | ValueObjectMetadata]] = {
+        attribute.identity.name: (attribute.storage.name, attribute) for attribute in attributes
+    }
     columns.update(
-        {occurrence.identity.path[-1]: occurrence.storage.name for occurrence in value_objects}
+        {
+            occurrence.identity.path[-1]: (occurrence.storage.name, occurrence)
+            for occurrence in value_objects
+        }
     )
     return columns
 
@@ -4352,7 +4354,10 @@ def _buffer_wire_write(
     key = object_key(instruction, model)
     node = _group_source_node(entity_name, key, state, named)
     identity = dict(key.primary_key) if key is not None else {}
-    changes = {name: wire_value(value) for name, value in row.items() if name not in identity}
+    changes = ActualWireProjection(model).entity_values(
+        entity_metadata,
+        {name: value for name, value in row.items() if name not in identity},
+    )
     match instruction.mutation:
         case "update":
             tx.wire.update(node, changes, valid_from=valid_from)
@@ -4380,15 +4385,7 @@ def _wire_insert_payload(
     Entity constructor and the Wire insert alike — so the value the case states
     is dropped here rather than smuggled through a door built to close it.
     """
-    view = inheritance.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        return {name: wire_value(value) for name, value in row.items()}
-    owned = {
-        attribute.identity.name
-        for attribute in view.applicable_attributes
-        if attribute.framework_owned
-    }
-    return {name: wire_value(value) for name, value in row.items() if name not in owned}
+    return ActualWireProjection(model).entity_values(entity, row, omit_framework=True)
 
 
 def _bound_instant(literal: str | dt.datetime | None) -> dt.datetime | None:
@@ -5659,7 +5656,8 @@ def read_table_state(port: DbPort, model: AcceptedMetamodel) -> dict[str, list[R
         columns = ", ".join(dialect.quote(slot.column.name) for slot in layout.columns)
         sql = f"select {columns} from {dialect.quote(layout.table.name)}"
         rows = port.execute(dialect.to_driver_sql(sql), [])
-        state[layout.table.name] = [wire_row(row) for row in rows]
+        projection = ActualWireProjection(model)
+        state[layout.table.name] = [projection.table_row(layout, row) for row in rows]
     return state
 
 
@@ -7118,52 +7116,3 @@ def _rejected_keyed_write(
         f"{case.path.name}: the model-aware validator accepted a keyed write instruction the "
         "case expects rejected pre-SQL"
     )
-
-
-def wire_value(value: object) -> object:
-    """Render one managed scalar to its canonical wire form (m-db-port / m-core).
-
-    JSON-native scalars pass through; a ``Decimal`` renders as its exact decimal
-    string. A ``datetime`` is a ``timestamp`` INSTANT: it is normalized through the
-    m-core boundary form (aware → UTC/µs, a naive value rejected loudly) BEFORE
-    ISO-rendering, so a non-UTC offset is canonicalized rather than graded as-is. A
-    ``date`` / ``time`` is not an instant and renders ISO-8601 as-is; a ``UUID``
-    renders as its canonical string, and a byte buffer as lowercase hex. Anything
-    already wire (or an unrecognized carrier) is returned unchanged.
-    """
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, Mapping):
-        mapping = cast("Mapping[object, object]", value)
-        return {str(name): wire_value(member) for name, member in mapping.items()}
-    if isinstance(value, (list, tuple)):
-        sequence = cast("Sequence[object]", value)
-        return [wire_value(member) for member in sequence]
-    if isinstance(value, TemporalBound):
-        # A temporal interval's open upper bound (the m-core infinity sentinel the
-        # port returns for native `timestamptz` infinity) renders as the canonical
-        # `infinity` literal — the same literal the golden binds and `then.rows` use.
-        return INFINITY_LITERAL
-    if isinstance(value, decimal.Decimal):
-        return str(value)
-    if isinstance(value, dt.datetime):
-        # `datetime` subclasses `date`, so this instant branch MUST precede the
-        # `date`/`time` branch below.
-        return normalize_instant(value).isoformat()
-    if isinstance(value, (dt.date, dt.time)):
-        return value.isoformat()
-    if isinstance(value, uuid.UUID):
-        return str(value)
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return value.hex()
-    return value
-
-
-def wire_row(row: Mapping[str, object]) -> Row:
-    """Render every managed value of one observed row to canonical wire form.
-
-    Takes any mapping, because the two sources differ in kind: a table-state read
-    hands over the driver's own row, and the values lane hands over the immutable
-    one production published.
-    """
-    return {key: wire_value(value) for key, value in row.items()}

@@ -1,0 +1,21 @@
+# StreamCoordinate places all eight newly witnessed continuation scalar types in
+# one Structured Column so generated seeks exercise declared projection and
+# document extraction together.
+entity:
+  name: StreamCoordinate
+  namespace: parallax.compatibility
+  table: stream_coordinate
+  persistence: read-only
+  layout:
+    document:
+      column: coordinates
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: day, type: date }
+    - { name: clock, type: time }
+    - { name: amount, type: "decimal(12,2)" }
+    - { name: payload, type: bytes }
+    - { name: token, type: uuid }
+    - { name: instant, type: timestamp }
+    - { name: f32, type: float32 }
+    - { name: f64, type: float64 }

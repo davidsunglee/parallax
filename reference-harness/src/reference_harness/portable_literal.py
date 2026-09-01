@@ -61,6 +61,245 @@ _MICROSECOND_DIGITS = 6
 # number rounds past it to an infinity: half an ulp above it, `2**128 - 2**103`.
 _BINARY32_MAX_BITS = 0x7F7FFFFF
 _BINARY32_OVERFLOW = Fraction(2) ** 128 - Fraction(2) ** 103
+_DECIMAL_TYPE = re.compile(r"^decimal\(([0-9]+),\s*([0-9]+)\)$")
+
+
+class PortableLiteralError(ValueError):
+    """A value is not an admitted or canonical literal of its declared type."""
+
+
+def decode(value: Any, neutral_type: str) -> Any:
+    """Decode one admitted portable literal under ``neutral_type``.
+
+    This model-free interface is the reference implementation of the m-wire
+    table. It deliberately imports no production package.
+    """
+    if value is None:
+        raise PortableLiteralError("null is enclosing presence, not a typed literal")
+    decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
+    if decimal_type is not None:
+        precision, scale = (int(part) for part in decimal_type.groups())
+        if isinstance(value, str):
+            parsed = decode_decimal(value)
+        elif isinstance(value, AuthoredNumber):
+            parsed = decimal.Decimal(value.literal)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            parsed = decimal.Decimal(repr(value) if isinstance(value, float) else value)
+        else:
+            parsed = None
+        if parsed is not None and _decimal_in_space(parsed, precision, scale):
+            return parsed
+    elif neutral_type == "boolean" and isinstance(value, bool):
+        return value
+    elif neutral_type in ("int32", "int64"):
+        bound = 2**31 if neutral_type == "int32" else 2**63
+        if isinstance(value, int) and not isinstance(value, bool) and -bound <= value < bound:
+            return value
+    elif neutral_type in ("float32", "float64"):
+        decoded = decode_number(value, binary32=neutral_type == "float32")
+        if decoded is not None:
+            return decoded
+    elif neutral_type == "string" and isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            pass
+        else:
+            return value
+    elif neutral_type == "bytes":
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return bytes(value)
+        if isinstance(value, str):
+            decoded = decode_octets(value)
+            if decoded is not None:
+                return decoded
+    elif neutral_type == "date" and isinstance(value, str):
+        decoded = decode_date(value)
+        if decoded is not None:
+            return decoded
+    elif neutral_type == "time" and isinstance(value, str):
+        decoded = decode_time(value)
+        if decoded is not None:
+            return decoded
+    elif neutral_type == "timestamp" and isinstance(value, str):
+        decoded = decode_timestamp(value)
+        if decoded is not None:
+            return decoded.astimezone(datetime.UTC)
+    elif neutral_type == "uuid" and isinstance(value, str):
+        decoded = decode_uuid(value)
+        if decoded is not None:
+            return decoded
+    elif neutral_type == "json" and _json_member(value):
+        return _copy_json(value)
+    raise PortableLiteralError(f"{value!r} names no {neutral_type} value")
+
+
+def decode_canonical(value: Any, neutral_type: str) -> Any:
+    """Decode ``value`` only when it is the canonical output for its member."""
+    managed = decode(value, neutral_type)
+    canonical = encode(managed, neutral_type)
+    equal = (
+        _spelled_number(value) == _spelled_number(canonical)
+        if neutral_type in ("int32", "int64", "float32", "float64")
+        else _same_json_scalar(value, canonical)
+    )
+    if not equal:
+        raise PortableLiteralError(f"{value!r} is not canonical for {neutral_type}")
+    return managed
+
+
+def encode(value: Any, neutral_type: str) -> Any:
+    """Encode an existing managed value as the declared type's canonical literal."""
+    if value is None:
+        raise PortableLiteralError("null is enclosing presence, not a typed literal")
+    decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
+    if decimal_type is not None and isinstance(value, decimal.Decimal):
+        precision, scale = (int(part) for part in decimal_type.groups())
+        if _decimal_in_space(value, precision, scale):
+            return f"{value:.{scale}f}"
+    elif neutral_type == "boolean" and isinstance(value, bool):
+        return value
+    elif neutral_type in ("int32", "int64"):
+        return decode(value, neutral_type)
+    elif neutral_type in ("float32", "float64"):
+        target = decode_number(value, binary32=neutral_type == "float32")
+        if target is not None:
+            return _shortest_float(target, binary32=neutral_type == "float32")
+    elif neutral_type == "string" and isinstance(value, str):
+        return decode(value, neutral_type)
+    elif neutral_type == "bytes" and isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    elif (
+        neutral_type == "date"
+        and isinstance(value, datetime.date)
+        and not isinstance(value, datetime.datetime)
+    ):
+        return value.isoformat()
+    elif neutral_type == "time" and isinstance(value, datetime.time) and value.tzinfo is None:
+        return value.isoformat()
+    elif (
+        neutral_type == "timestamp"
+        and isinstance(value, datetime.datetime)
+        and value.tzinfo is not None
+    ):
+        return value.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    elif neutral_type == "uuid" and isinstance(value, uuid.UUID):
+        return str(value)
+    elif neutral_type == "json" and _json_member(value):
+        return _copy_json(value)
+    raise PortableLiteralError(f"{value!r} is not a managed {neutral_type} value")
+
+
+def canonicalize(value: Any, neutral_type: str) -> Any:
+    """An admitted authored literal or managed value as canonical Wire."""
+    try:
+        return encode(value, neutral_type)
+    except PortableLiteralError:
+        return encode(decode(value, neutral_type), neutral_type)
+
+
+def values_equal(
+    left: Any, right: Any, neutral_type: str, tolerance: decimal.Decimal | None
+) -> bool:
+    """Compare after two independent declared-type canonical projections."""
+    try:
+        one = canonicalize(left, neutral_type)
+        other = canonicalize(right, neutral_type)
+    except PortableLiteralError:
+        return False
+    if tolerance is not None and neutral_type in (
+        "int32",
+        "int64",
+        "float32",
+        "float64",
+    ):
+        return abs(decimal.Decimal(str(one)) - decimal.Decimal(str(other))) <= tolerance
+    return _same_json(one, other)
+
+
+def _decimal_in_space(value: decimal.Decimal, precision: int, scale: int) -> bool:
+    if not value.is_finite():
+        return False
+    _sign, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        return False
+    coefficient = int("".join(str(digit) for digit in digits))
+    if coefficient == 0:
+        return True
+    while coefficient % 10 == 0:
+        coefficient //= 10
+        exponent += 1
+    return exponent >= -scale and len(str(coefficient)) + exponent + scale <= precision
+
+
+def _shortest_float(value: float, *, binary32: bool) -> float:
+    for precision in range(1, 18):
+        candidate = float(f"{value:.{precision}g}")
+        if decode_number(candidate, binary32=binary32) == value:
+            return candidate
+    return value
+
+
+def _json_member(value: Any) -> bool:
+    if value is None or isinstance(value, (bool, str)):
+        return True
+    if isinstance(value, int) and not isinstance(value, bool):
+        return -(2**63) <= value < 2**64
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, list):
+        return all(_json_member(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(name, str) and _json_member(item) for name, item in value.items())
+    return False
+
+
+def _copy_json(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_copy_json(item) for item in value]
+    if isinstance(value, dict):
+        return {name: _copy_json(item) for name, item in value.items()}
+    return value
+
+
+def _same_json(left: Any, right: Any) -> bool:
+    if isinstance(left, dict) or isinstance(right, dict):
+        return (
+            isinstance(left, dict)
+            and isinstance(right, dict)
+            and left.keys() == right.keys()
+            and all(_same_json(left[name], right[name]) for name in left)
+        )
+    if isinstance(left, list) or isinstance(right, list):
+        return (
+            isinstance(left, list)
+            and isinstance(right, list)
+            and len(left) == len(right)
+            and all(_same_json(one, other) for one, other in zip(left, right, strict=True))
+        )
+    return _same_json_scalar(left, right)
+
+
+def _same_json_scalar(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left is right
+    if isinstance(left, (int, float)) or isinstance(right, (int, float)):
+        return (
+            isinstance(left, (int, float))
+            and not isinstance(left, bool)
+            and isinstance(right, (int, float))
+            and not isinstance(right, bool)
+            and decimal.Decimal(str(left)) == decimal.Decimal(str(right))
+        )
+    return type(left) is type(right) and left == right
+
+
+def _spelled_number(value: Any) -> decimal.Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, decimal.Decimal)):
+        return None
+    if isinstance(value, AuthoredNumber):
+        return decimal.Decimal(value.literal)
+    return decimal.Decimal(repr(value) if isinstance(value, float) else value)
 
 
 class AuthoredNumber(float):
@@ -101,7 +340,7 @@ def decode_number(value: Any, *, binary32: bool) -> float | None:
     from the authored digits when :class:`AuthoredNumber` kept them and otherwise
     from the carrier's own exact value.
     """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float, decimal.Decimal)):
         return None
     if isinstance(value, float) and not math.isfinite(value):
         return None
@@ -117,7 +356,7 @@ def decode_number(value: Any, *, binary32: bool) -> float | None:
     return math.copysign(_nearest_binary32(abs(exact)), value)
 
 
-def _exact_number(value: int | float) -> Fraction:
+def _exact_number(value: int | float | decimal.Decimal) -> Fraction:
     """The number *value* names, exactly: its authored digits, else its carrier."""
     if isinstance(value, AuthoredNumber):
         return Fraction(decimal.Decimal(value.literal))

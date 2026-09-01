@@ -1,0 +1,24 @@
+# A streamed page ordered by a document-resident `uuid` canonicalizes the root's
+# managed UUID through the resolved member before composing its seek. The caller
+# predicate and continuing statement bind the identical lowercase hyphenated
+# spelling; a carrier-based renderer could accidentally preserve another admitted
+# form and fail only on the generated second page this case requires.
+model: models/stream-coordinates.yaml
+tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, uuid, document-layout, graph, slice-snapshot-1]
+shape: read
+compileEligibility: { mode: run-only, reason: query-result-dependent }
+when:
+  objectQuery:
+    target: parallax.compatibility.StreamCoordinate
+    predicate: { eq: { attr: parallax.compatibility.StreamCoordinate.token, value: "00000000-0000-4000-8000-0000000000ab" } }
+    orderBy: [{ attr: parallax.compatibility.StreamCoordinate.token }]
+  stream: { batchSize: 1 }
+then:
+  statements:
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
+      binds: { postgres: [token, "00000000-0000-4000-8000-0000000000ab", token, 1] }
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? and jsonb_extract_path_text(t0.coordinates, ?) >= ? and (jsonb_extract_path_text(t0.coordinates, ?) > ? or (jsonb_extract_path_text(t0.coordinates, ?) = ? and t0.id > ?)) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
+      binds: { postgres: [token, "00000000-0000-4000-8000-0000000000ab", token, "00000000-0000-4000-8000-0000000000ab", token, "00000000-0000-4000-8000-0000000000ab", token, "00000000-0000-4000-8000-0000000000ab", 101, token, 1] }
+  referenceSql: { postgres: "select id, coordinates ->> 'token' as token from stream_coordinate where coordinates ->> 'token' = '00000000-0000-4000-8000-0000000000ab'" }
+  graph: { StreamCoordinate: [{ id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }] }
+  roundTrips: 2

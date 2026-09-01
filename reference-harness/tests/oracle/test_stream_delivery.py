@@ -23,6 +23,7 @@ import pytest
 
 from reference_harness.case import Case
 from reference_harness.case_assertions import CaseFailure
+from reference_harness.case_preflight import preflight_case_literals
 from reference_harness.object_query_oracle import assert_case_read
 
 from .conftest import ScriptedReads
@@ -40,6 +41,57 @@ _DOCUMENT_RESIDENT = "m-snapshot-read-035-stream-order-document-resident.yaml"
 _HISTORY_BOUNDARY = "m-snapshot-read-036-stream-history-page-boundary.yaml"
 _MILESTONE_EDGE_PINS = "m-snapshot-read-037-stream-milestone-edge-pins.yaml"
 _TABLELESS_POSITION = "m-inheritance-136-tpcs-union-vo-projection.yaml"
+
+_TYPED_COORDINATES = (
+    (
+        "m_snapshot_read_038",
+        "m-snapshot-read-038-stream-order-date-coordinate.yaml",
+        "day",
+        "2026-01-15",
+    ),
+    (
+        "m_snapshot_read_039",
+        "m-snapshot-read-039-stream-order-time-coordinate.yaml",
+        "clock",
+        "09:30:00",
+    ),
+    (
+        "m_snapshot_read_040",
+        "m-snapshot-read-040-stream-order-decimal-coordinate.yaml",
+        "amount",
+        "10.25",
+    ),
+    (
+        "m_snapshot_read_041",
+        "m-snapshot-read-041-stream-order-bytes-coordinate.yaml",
+        "payload",
+        "0a1b",
+    ),
+    (
+        "m_snapshot_read_042",
+        "m-snapshot-read-042-stream-order-uuid-coordinate.yaml",
+        "token",
+        "00000000-0000-4000-8000-0000000000ab",
+    ),
+    (
+        "m_snapshot_read_043",
+        "m-snapshot-read-043-stream-order-timestamp-coordinate.yaml",
+        "instant",
+        "2026-01-15T09:30:00.000000Z",
+    ),
+    (
+        "m_snapshot_read_044",
+        "m-snapshot-read-044-stream-order-float32-coordinate.yaml",
+        "f32",
+        1.5,
+    ),
+    (
+        "m_snapshot_read_045",
+        "m-snapshot-read-045-stream-order-float64-coordinate.yaml",
+        "f64",
+        2.25,
+    ),
+)
 
 # --- the physical rows the pages return --------------------------------------
 
@@ -267,6 +319,32 @@ def _resident_script() -> list[list[dict[str, Any]]]:
     ]
 
 
+def _typed_coordinate_script(member: str, value: object) -> list[list[dict[str, Any]]]:
+    document = {
+        "day": "2026-01-15",
+        "clock": "09:30:00",
+        "amount": "10.25",
+        "payload": "0a1b",
+        "token": "00000000-0000-4000-8000-0000000000ab",
+        "instant": "2026-01-15T09:30:00.000000Z",
+        "f32": 1.5,
+        "f64": 2.25,
+    }
+    document[member] = value
+    reference = {
+        "id": 101,
+        "day": "2026-01-15",
+        "clock": "09:30:00",
+        "amount": Decimal("10.25"),
+        "payload": "0a1b",
+        "token": "00000000-0000-4000-8000-0000000000ab",
+        "instant": "2026-01-15T09:30:00+00:00",
+        "f32": 1.5,
+        "f64": 2.25,
+    }
+    return [[{"id": 101, "coordinates": document}], [], [reference]]
+
+
 def _history_script() -> list[list[dict[str, Any]]]:
     """`m-snapshot-read-036`: one milestone per page, then the empty terminal page."""
     return [[_LINES[0]], [_LINES[1]], [_LINES[2]], [], [dict(row) for row in _LINES]]
@@ -415,6 +493,27 @@ def test_a_document_resident_order_seeks_through_its_own_extraction(
     assert reads.calls[1][1] == tuple(case.statement_binds(1, dialect))
 
 
+@pytest.mark.parametrize(
+    ("_case_id", "case_name", "member", "value"),
+    _TYPED_COORDINATES,
+    ids=[entry[0] for entry in _TYPED_COORDINATES],
+)
+def test_streamed_coordinate_types_share_declared_projection_across_authored_and_generated_terms(
+    corpus_case: CaseLoader,
+    _case_id: str,
+    case_name: str,
+    member: str,
+    value: object,
+) -> None:
+    case = corpus_case(case_name)
+    preflight_case_literals(case)
+    reads = ScriptedReads(results=_typed_coordinate_script(member, value))
+
+    assert_case_read(case, reads)
+
+    assert reads.calls[1][1] == tuple(case.statement_binds(1, "postgres"))
+
+
 def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
     corpus_case: CaseLoader,
 ) -> None:
@@ -430,7 +529,7 @@ def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
 
     assert_case_read(case, reads)
 
-    assert reads.calls[2][1] == (100, 1000, 1000, 1000, "2024-04-01T00:00:00+00:00", 1)
+    assert reads.calls[2][1] == (100, 1000, 1000, 1000, "2024-04-01T00:00:00.000000Z", 1)
 
 
 # --- a delivery that reached the right rows the wrong way --------------------
