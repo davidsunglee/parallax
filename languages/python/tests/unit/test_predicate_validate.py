@@ -820,6 +820,35 @@ def test_nested_string_predicate_on_a_string_member_accepts(tag: NestedStringOp)
     )
 
 
+def test_string_patterns_retain_non_codec_operands_in_every_scope() -> None:
+    # String-pattern syntax is not a serialized typed literal, so top-level,
+    # nested-path, and nested-element occurrences retain their text without a
+    # declared codec type while still retaining the resolved String member.
+    orders = formed(_ORDERS)
+    scalar = validate_predicate(
+        _root(orders, "Order"),
+        StringMatch(op="startsWith", attr="Order.name", value="A"),
+        orders,
+    )
+    customer = formed(_CUSTOMER)
+    nested = validate_predicate(
+        _root(customer, "Customer"),
+        NestedStringMatch(op="nestedContains", path="Customer.address.city", value="sl"),
+        customer,
+    )
+    elements = validate_predicate(
+        _root(customer, "Customer"),
+        NestedExists(
+            path="Customer.address.phones",
+            where=NestedStringMatch(op="nestedEndsWith", path="number", value="55"),
+        ),
+        customer,
+    )
+    for product in (scalar, nested, elements.only_child()):
+        assert product.operands is not None
+        assert product.operands.neutral_type is None
+
+
 @pytest.mark.parametrize("tag", _STRING_TAGS)
 def test_nested_string_predicate_on_a_numeric_member_names_the_member(tag: NestedStringOp) -> None:
     # `geo.elevation` is float64 and the literal is a string, so BOTH nested rules

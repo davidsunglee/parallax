@@ -25,15 +25,15 @@ when:
         target:
           entity: parallax.compatibility.Wallet
           predicate:
-            lessThan: { attr: parallax.compatibility.Wallet.balance, value: '200.00' }
+            lessThan: { attr: parallax.compatibility.Wallet.balance, value: 200.00 }
         assignments:
-          - { attr: parallax.compatibility.Wallet.balance, value: '150.00' }
+          - { attr: parallax.compatibility.Wallet.balance, value: 150.00 }
           - { attr: parallax.compatibility.Wallet.owner, value: Updated }
       roundTrips: 1
       statements:
         - sql:
             postgres: update wallet set owner = ?, balance = ? where balance < ?
-          binds: [Updated, '150.00', '200.00']
+          binds: [Updated, 150.00, 200.00]
     - objectQuery:
         target: parallax.compatibility.Wallet
         predicate:
@@ -47,7 +47,7 @@ when:
           binds: [Updated]
       referenceSql: select id, owner, balance from wallet where owner = 'Updated'
       expectRows:
-        - { id: 1, owner: Updated, balance: '150.00' }
-        - { id: 3, owner: Updated, balance: '150.00' }
+        - { id: 1, owner: Updated, balance: 150.00 }
+        - { id: 3, owner: Updated, balance: 150.00 }
 then:
   roundTrips: 2

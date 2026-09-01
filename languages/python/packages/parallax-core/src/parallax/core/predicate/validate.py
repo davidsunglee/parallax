@@ -249,7 +249,7 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
                     "string-predicate-non-string-member",
                     f"{attr!r}: a string predicate requires a string member",
                 )
-            return _validated_leaf(op, member, (value,))
+            return _validated_string_pattern(op, member, value)
         case Membership(attr=attr, values=values):
             member = _require_attribute(attr, model, scope)
             return _validated_leaf(op, member, values)
@@ -276,7 +276,7 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
         case NestedStringMatch(path=path, value=value):
             leaf = _resolve_nested_leaf(path, model)
             _check_string_member(path, leaf)
-            return _validated_leaf(op, leaf, (value,))
+            return _validated_string_pattern(op, leaf, value)
         case NestedNullCheck():
             leaf = _resolve_nested_leaf(op.path, model)
             _require_nullable_null_check(op.path, leaf.nullable)
@@ -381,6 +381,18 @@ def _validated_leaf(
             tuple(_decode_operand(_subject_of(authored), value, member.type) for value in values),
             member.type,
         ),
+        member=member,
+    )
+
+
+def _validated_string_pattern(
+    authored: PredicateNode,
+    member: ResolvedPredicateMember,
+    value: str,
+) -> ValidatedPredicate:
+    return ValidatedPredicate(
+        authored,
+        operands=ValidatedOperands((value,), None),
         member=member,
     )
 
@@ -835,7 +847,7 @@ def _elaborate_element_predicate(op: PredicateNode, container: _VoContainer) -> 
         case NestedStringMatch(path=path, value=value):
             leaf = _resolve_element_leaf(container, path)
             _check_string_member(path, leaf)
-            return _validated_leaf(op, leaf, (value,))
+            return _validated_string_pattern(op, leaf, value)
         case NestedNullCheck(path=path):
             leaf = _resolve_element_leaf(container, path)
             _require_nullable_null_check(path, leaf.nullable)
