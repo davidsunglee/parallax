@@ -116,7 +116,12 @@ def _query(case: Case, query: Mapping[str, object], where: str) -> None:
                         )
 
 
-def _predicate(case: Case, entity: Entity, node: Mapping[str, object], where: str) -> None:
+def _predicate(
+    case: Case,
+    scope: Entity | dict[str, Any],
+    node: Mapping[str, object],
+    where: str,
+) -> None:
     for operation, payload in node.items():
         if operation in ("and", "or") and isinstance(payload, Mapping):
             operands = payload.get("operands")
@@ -124,28 +129,41 @@ def _predicate(case: Case, entity: Entity, node: Mapping[str, object], where: st
                 continue
             for index, child in enumerate(operands):
                 if isinstance(child, Mapping):
-                    _predicate(case, entity, child, f"{where}.{operation}.operands[{index}]")
+                    _predicate(case, scope, child, f"{where}.{operation}.operands[{index}]")
             continue
-        if operation in ("group", "not", "narrow") and isinstance(payload, Mapping):
+        if operation in ("group", "not") and isinstance(payload, Mapping):
             operand = payload.get("operand")
             if isinstance(operand, Mapping):
-                _predicate(case, entity, operand, f"{where}.{operation}.operand")
+                _predicate(case, scope, operand, f"{where}.{operation}.operand")
             continue
-        if operation in ("navigate", "exists", "notExists") and isinstance(payload, Mapping):
-            related = _related_entity(case, entity, payload.get("rel"))
+        if operation == "narrow" and isinstance(scope, Entity) and isinstance(payload, Mapping):
+            operand = payload.get("operand")
+            if isinstance(operand, Mapping):
+                _predicate(case, scope, operand, f"{where}.{operation}.operand")
+            continue
+        if (
+            operation in ("navigate", "exists", "notExists")
+            and isinstance(scope, Entity)
+            and isinstance(payload, Mapping)
+        ):
+            related = _related_entity(case, scope, payload.get("rel"))
             operand = payload.get("op")
             if related is not None and isinstance(operand, Mapping):
                 _predicate(case, related, operand, f"{where}.{operation}.op")
             continue
-        if operation in ("nestedExists", "nestedNotExists") and isinstance(payload, Mapping):
-            occurrence = _predicate_value_object(case, entity, payload.get("path"))
+        if (
+            operation in ("nestedExists", "nestedNotExists")
+            and isinstance(scope, Entity)
+            and isinstance(payload, Mapping)
+        ):
+            occurrence = _predicate_value_object(case, scope, payload.get("path"))
             operand = payload.get("where")
             if occurrence is not None and isinstance(operand, Mapping):
-                _element_predicate(case, occurrence, operand, f"{where}.{operation}.where")
+                _predicate(case, occurrence, operand, f"{where}.{operation}.where")
             continue
         if not isinstance(payload, Mapping):
             continue
-        member = _predicate_member(case, entity, payload)
+        member = _predicate_member(case, scope, payload)
         if member is None:
             continue
         neutral_type = member.get("type")
@@ -181,19 +199,27 @@ def _reference_entity(case: Case, fallback: Entity, reference: str) -> Entity:
 
 
 def _predicate_member(
-    case: Case, entity: Entity, payload: Mapping[str, object]
+    case: Case, scope: Entity | dict[str, Any], payload: Mapping[str, object]
 ) -> dict[str, Any] | None:
+    if not isinstance(scope, Entity):
+        reference = payload.get("path")
+        if not isinstance(reference, str):
+            return None
+        try:
+            return resolve_element_ref(scope, reference)
+        except Exception:
+            return None
     reference = payload.get("attr")
     if isinstance(reference, str):
         _owner, members = split_reference(reference)
         try:
-            return _reference_entity(case, entity, reference).attribute_by_name(members[-1])
+            return _reference_entity(case, scope, reference).attribute_by_name(members[-1])
         except KeyError:
             return None
     reference = payload.get("path")
     if isinstance(reference, str):
         try:
-            return resolve_nested_ref(_reference_entity(case, entity, reference), reference)
+            return resolve_nested_ref(_reference_entity(case, scope, reference), reference)
         except Exception:
             return None
     return None
@@ -218,61 +244,6 @@ def _predicate_value_object(case: Case, entity: Entity, reference: object) -> di
         return resolve_value_object_ref(_reference_entity(case, entity, reference), reference)
     except Exception:
         return None
-
-
-def _element_predicate(
-    case: Case,
-    occurrence: dict[str, Any],
-    node: Mapping[str, object],
-    where: str,
-) -> None:
-    for operation, payload in node.items():
-        if operation in ("and", "or") and isinstance(payload, Mapping):
-            operands = payload.get("operands")
-            if isinstance(operands, Sequence):
-                for index, child in enumerate(operands):
-                    if isinstance(child, Mapping):
-                        _element_predicate(
-                            case,
-                            occurrence,
-                            child,
-                            f"{where}.{operation}.operands[{index}]",
-                        )
-            continue
-        if operation in ("group", "not") and isinstance(payload, Mapping):
-            operand = payload.get("operand")
-            if isinstance(operand, Mapping):
-                _element_predicate(case, occurrence, operand, f"{where}.{operation}.operand")
-            continue
-        if not isinstance(payload, Mapping):
-            continue
-        path = payload.get("path")
-        if not isinstance(path, str):
-            continue
-        try:
-            member = resolve_element_ref(occurrence, path)
-        except Exception:
-            continue
-        neutral_type = member.get("type")
-        if not isinstance(neutral_type, str):
-            continue
-        for name in ("value", "lower", "upper"):
-            if name in payload:
-                _literal(
-                    case,
-                    payload[name],
-                    neutral_type,
-                    f"{where}.{operation}.{name}",
-                )
-        values = payload.get("values")
-        if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
-            for index, value in enumerate(values):
-                _literal(
-                    case,
-                    value,
-                    neutral_type,
-                    f"{where}.{operation}.values[{index}]",
-                )
 
 
 def _write_carrier(
@@ -449,6 +420,37 @@ def _preflight_expected(case: Case) -> None:
             expected = step.get("expectGraph")
             if expected is not None:
                 _expected_graph(case, expected, f"when.{sequence_name}[{index}].expectGraph")
+    _expected_concurrency_rows(case)
+
+
+def _expected_concurrency_rows(case: Case) -> None:
+    concurrency = case.when.get("concurrency")
+    if not isinstance(concurrency, Mapping):
+        return
+    rounds = concurrency.get("rounds")
+    if not isinstance(rounds, Sequence) or isinstance(rounds, (str, bytes)):
+        return
+    for round_index, round_value in enumerate(rounds):
+        if not isinstance(round_value, Mapping):
+            continue
+        for session_name in ("A", "B"):
+            session = round_value.get(session_name)
+            if not isinstance(session, Mapping):
+                continue
+            rows = session.get("expectRows")
+            if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+                continue
+            for row_index, row in enumerate(rows):
+                if isinstance(row, Mapping):
+                    _expected_entity_row(
+                        case,
+                        case.model.root_entity,
+                        row,
+                        (
+                            f"when.concurrency.rounds[{round_index}].{session_name}"
+                            f".expectRows[{row_index}]"
+                        ),
+                    )
 
 
 def _expected_table_state(case: Case) -> None:

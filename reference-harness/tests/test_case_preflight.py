@@ -264,6 +264,30 @@ def test_preflight_resolves_nested_predicate_paths() -> None:
         preflight_case_literals(_case(predicate=predicate))
 
 
+def test_preflight_uses_the_same_recursive_walk_for_element_predicates() -> None:
+    predicate = {
+        "nestedExists": {
+            "path": "example.Reading.profile",
+            "where": {
+                "not": {
+                    "operand": {
+                        "nestedEq": {
+                            "path": "expires",
+                            "value": "15 January 2026",
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    with pytest.raises(
+        CaseFailure,
+        match=r"nestedExists\.where\.not\.operand\.nestedEq\.value.*type-mismatch for date",
+    ):
+        preflight_case_literals(_case(predicate=predicate))
+
+
 def test_preflight_checks_predicate_write_assignments() -> None:
     source = _case()
     case = Case(
@@ -437,3 +461,72 @@ def test_preflight_checks_top_level_expected_rows_against_their_family_variant()
 def test_preflight_checks_scenario_expected_rows_against_their_family_variant() -> None:
     with pytest.raises(CaseFailure, match=r"expectRows\[0\]\.detail.*type-mismatch for decimal"):
         preflight_case_literals(_polymorphic_case(scenario=True))
+
+
+@pytest.mark.parametrize("session", ["A", "B"])
+def test_preflight_requires_canonical_concurrency_expected_rows(session: str) -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "concurrencySuccess",
+            "when": {
+                "concurrency": {
+                    "rounds": [
+                        {
+                            session: {
+                                "kind": "read",
+                                "expectRows": [
+                                    {
+                                        "id": 1,
+                                        "amount": "10.5",
+                                        "physicalSqlOnly": "not-a-modeled-literal",
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            },
+            "then": {},
+        },
+        source.model,
+    )
+
+    with pytest.raises(
+        CaseFailure,
+        match=rf"when\.concurrency\.rounds\[0\]\.{session}\.expectRows\[0\]\.amount.*noncanonical",
+    ):
+        preflight_case_literals(case)
+
+
+def test_preflight_leaves_physical_sql_only_concurrency_values_untyped() -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "concurrencySuccess",
+            "when": {
+                "concurrency": {
+                    "rounds": [
+                        {
+                            "A": {
+                                "kind": "read",
+                                "expectRows": [
+                                    {
+                                        "id": 1,
+                                        "amount": "10.50",
+                                        "physicalSqlOnly": "not-a-modeled-literal",
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            },
+            "then": {},
+        },
+        source.model,
+    )
+
+    preflight_case_literals(case)
