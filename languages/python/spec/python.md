@@ -3383,7 +3383,13 @@ and outcome types, entity/interface, counters, duration, error type/code,
 database category/native code, and truncation flags, while Diagnostic adds the
 bounded message and stack. Started and ordinary non-root Finished events use
 DEBUG, successful root summaries INFO, retry-eligible rollbacks WARNING, and
-failed roots or rollback failures ERROR. Applications use standard-library
+failed roots or rollback failures ERROR. The Logger is asked `isEnabledFor` for
+an event's exact level before that event is described, and an event it declines
+produces no record and no field mapping; counting is unconditional, so a root
+summary's totals cover the transitions no record described. A Logger whose
+`isEnabledFor` and `log` disagree therefore loses a record `log` would have
+kept: the exposure every guarded-logging idiom carries, accepted here rather
+than detected around. Applications use standard-library
 queue handlers or custom Providers for structlog, Loguru, OpenTelemetry, and
 other backends.
 
