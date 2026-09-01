@@ -238,3 +238,69 @@ def test_preflight_checks_expected_graph_relationship_children() -> None:
 
     with pytest.raises(CaseFailure, match=r"samples\[0\]\.quantity.*names no int32"):
         preflight_case_literals(case)
+
+
+def _polymorphic_case(*, scenario: bool) -> Case:
+    model = Model(
+        Path("payment.yaml"),
+        {
+            "entities": [
+                {
+                    "name": "Payment",
+                    "namespace": "example",
+                    "table": "payment",
+                    "inheritance": {
+                        "role": "root",
+                        "strategy": "table-per-hierarchy",
+                        "tag": {"column": "kind"},
+                    },
+                    "attributes": [
+                        {"name": "id", "type": "int64", "column": "id", "primaryKey": True}
+                    ],
+                },
+                {
+                    "name": "CardPayment",
+                    "namespace": "example",
+                    "inheritance": {
+                        "role": "concrete-subtype",
+                        "parent": "example.Payment",
+                        "tagValue": "card",
+                    },
+                    "attributes": [{"name": "detail", "type": "string", "column": "detail"}],
+                },
+                {
+                    "name": "CashPayment",
+                    "namespace": "example",
+                    "inheritance": {
+                        "role": "concrete-subtype",
+                        "parent": "example.Payment",
+                        "tagValue": "cash",
+                    },
+                    "attributes": [{"name": "detail", "type": "decimal(18,2)", "column": "detail"}],
+                },
+            ]
+        },
+        {},
+    )
+    query = {"target": "example.Payment", "predicate": {"all": {}}}
+    row = {"id": 1, "detail": "not-a-decimal", "familyVariant": "CashPayment"}
+    document = (
+        {
+            "shape": "scenario",
+            "when": {"scenario": [{"objectQuery": query, "expectRows": [row]}]},
+            "then": {},
+        }
+        if scenario
+        else {"shape": "read", "when": {"objectQuery": query}, "then": {"rows": [row]}}
+    )
+    return Case(Path("synthetic-polymorphic.yaml"), document, model)
+
+
+def test_preflight_checks_top_level_expected_rows_against_their_family_variant() -> None:
+    with pytest.raises(CaseFailure, match=r"then\.rows\[0\]\.detail.*names no decimal"):
+        preflight_case_literals(_polymorphic_case(scenario=False))
+
+
+def test_preflight_checks_scenario_expected_rows_against_their_family_variant() -> None:
+    with pytest.raises(CaseFailure, match=r"expectRows\[0\]\.detail.*names no decimal"):
+        preflight_case_literals(_polymorphic_case(scenario=True))

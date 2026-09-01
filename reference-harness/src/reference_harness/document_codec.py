@@ -33,7 +33,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import portable_literal
-from .portable_literal import AuthoredNumber, decode_number
+from .portable_literal import AuthoredInteger, AuthoredNumber, decode_number
 
 __all__ = [
     "DocumentEncodingError",
@@ -98,19 +98,23 @@ def decode_stored(raw: Any) -> Any:
     every consumer above the driver is dialect-agnostic. A SQL ``NULL`` column stays
     ``None``.
 
-    A number keeps the digits it was stored with
-    (:class:`~reference_harness.portable_literal.AuthoredNumber`): a float leaf's
-    canonical spelling is a property of those digits, so parsing them into a binary
-    float here would make ``0.1`` and ``0.10000000000000001`` one value and leave
-    :func:`decode_leaf` nothing to refuse the second by.
+    A fractional number and integer-token negative zero keep the digits they were
+    stored with: a float leaf's canonical spelling is a property of those digits, so
+    parsing them into ordinary host numbers here would make ``0.1`` and
+    ``0.10000000000000001`` one value and erase the sign from ``-0`` before
+    :func:`decode_leaf` could refuse either noncanonical spelling.
     """
     if raw is None:
         return None
     if isinstance(raw, (bytes, bytearray, memoryview)):
         raw = bytes(raw).decode()
     if isinstance(raw, str):
-        return json.loads(raw, parse_float=AuthoredNumber)
+        return json.loads(raw, parse_float=AuthoredNumber, parse_int=_stored_integer)
     return raw
+
+
+def _stored_integer(literal: str) -> int:
+    return AuthoredInteger(literal) if literal == "-0" else int(literal)
 
 
 def encode_leaf(type_spelling: str, value: Any) -> Any:
@@ -157,6 +161,8 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
     try:
         managed = portable_literal.decode_canonical(value, type_spelling)
         if _DECIMAL_TYPE.match(type_spelling) is not None or type_spelling in (
+            "int32",
+            "int64",
             "float32",
             "float64",
         ):
@@ -233,11 +239,11 @@ def _spelled_number(value: Any) -> decimal.Decimal:
     and so are `1e30` and the integer `10**30`, though the binary float holding either
     is a third number equal to neither.
 
-    An :class:`~reference_harness.portable_literal.AuthoredNumber` is the one carrier
-    that keeps its own digits, which is what leaves `0.10000000000000001`
-    distinguishable from the `0.1` it parses to.
+    The authored-number carriers keep their own digits, which is what leaves
+    `0.10000000000000001` distinguishable from the `0.1` it parses to and `-0`
+    distinguishable from positive zero.
     """
-    if isinstance(value, AuthoredNumber):
+    if isinstance(value, (AuthoredInteger, AuthoredNumber)):
         return decimal.Decimal(value.literal)
     if isinstance(value, float):
         return decimal.Decimal(repr(value))

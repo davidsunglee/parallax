@@ -19,6 +19,7 @@ from parallax.conformance import provision
 from parallax.core.db_port import JsonDocument
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.wire import WireDecodingError
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,
@@ -284,6 +285,30 @@ def test_fixture_statements_skip_non_list_and_non_mapping_rows() -> None:
 def test_fixture_statements_skip_a_non_list_entity_block() -> None:
     # An entity whose fixture value is not a list contributes no insert statements.
     assert provision.fixture_statements(_MODELS["customer"], {"Customer": "not-a-list"}) == []
+
+
+def test_fixture_statements_refuse_infinity_for_an_ordinary_timestamp() -> None:
+    fixtures = {"Event": [{"id": 1, "occurredAt": "infinity"}]}
+
+    with pytest.raises(WireDecodingError):
+        provision.fixture_statements(_MODELS["event"], fixtures)
+
+
+def test_fixture_statements_preserve_infinity_for_a_temporal_end_attribute() -> None:
+    fixtures = {
+        "Balance": [
+            {
+                "id": 1,
+                "acctNum": "A",
+                "value": "1.00",
+                "txStart": "2026-01-01T00:00:00Z",
+                "txEnd": "infinity",
+            }
+        ]
+    }
+
+    ((_sql, binds),) = provision.fixture_statements(_MODELS["balance"], fixtures)
+    assert binds[-1] == "infinity"
 
 
 def test_schema_statements_enforce_unique_secondary_indices() -> None:

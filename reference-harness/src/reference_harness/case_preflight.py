@@ -375,20 +375,9 @@ def _preflight_expected(case: Case) -> None:
         target = query.get("target")
         if isinstance(target, str):
             entity = case.model.entity(target)
-            by_column = {attribute["column"]: attribute for attribute in entity.attributes}
             for index, row in enumerate(rows):
-                if not isinstance(row, Mapping):
-                    continue
-                for name, value in row.items():
-                    member = by_column.get(name)
-                    if member is not None:
-                        _attribute_literal(
-                            case,
-                            entity,
-                            member,
-                            value,
-                            f"then.rows[{index}].{name}",
-                        )
+                if isinstance(row, Mapping):
+                    _expected_entity_row(case, entity, row, f"then.rows[{index}]")
     for name in ("graph", "graphs", "stepGraphs"):
         expected = case.then.get(name)
         if expected is not None:
@@ -408,7 +397,7 @@ def _preflight_expected(case: Case) -> None:
                     if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes)):
                         for row_index, row in enumerate(rows):
                             if isinstance(row, Mapping):
-                                _entity_row(
+                                _expected_entity_row(
                                     case,
                                     entity,
                                     row,
