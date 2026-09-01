@@ -375,48 +375,6 @@ the engine builds installs a Provider, asserted over the source
 (`tests/unit/test_lifecycle_observation.py`), so an unobserved lane is one that
 opens no Handle at all and says so.
 
-### D-79 — The logging built-in builds a field mapping for every transition, including the ones its Logger will drop
-
-*Medium — 1.25 µs/event of the production fan-out's 4.34, paid at every level.*
-Relates to
-`parallax.core.execution_lifecycle._logging._LoggingHandler.handle`.
-
-**What.** `handle` renders each event and fills a `dict` of correlation, payload,
-and — for a root's Finished — ten counters, then hands it to `Logger.log` through
-`extra=`. Under any production level most of those records are dropped
-immediately: the level rule gives `DEBUG` to every Started and every non-root
-Finished, so an `INFO` Logger over the baseline workload keeps two of twenty
-records and the mapping is built for all twenty.
-`languages/python/docs/execution-lifecycle-baseline.md` isolates the cost — the
-configuration whose Logger keeps nothing still measures 1.25 µs/event, 29% of the
-production fan-out's dispatch.
-
-The repair that has no correctness premise is a **lazily materialized `extra`
-mapping**: pass `Logger.log` a `Mapping` that holds the event, the detail, and
-the Handler's counters and renders the fields on first access. `Logger.makeRecord`
-iterates `extra` only for a record that has already survived `isEnabledFor`, so a
-dropped record touches nothing and a kept one pays exactly what it pays today,
-with no question asked of the Logger that the Logger did not already answer.
-
-**Why it is deferred rather than fixed.** It is a redesign of what the built-in
-hands the standard library, and it deserves its own change and its own review.
-`makeRecord` copies `extra` key by key and rejects the three reserved names, so
-the lazy mapping has to satisfy the whole `Mapping` protocol against an
-implementation detail of the standard library, and every Provider composed
-downstream — a `QueueHandler`, a formatter, an exporter — reads the record's
-attributes after that copy rather than the mapping, which has to be verified
-rather than assumed.
-
-What must NOT be done instead, because it was tried and reverted: asking
-`Logger.isEnabledFor` before describing, and skipping the mapping when the answer
-is no. `Logger.log` and `Logger.handle` reach overridable Logger state, so a
-Logger an application legitimately configures can answer the guard's query and
-`log`'s own query differently and lose a record that ships today — a subclass
-whose `log` emits past the level, a Logger carrying another Logger's bound `log`,
-and a stateful `disabled` descriptor or `isEnabledFor` are three such shapes, and
-narrowing the guard to exclude each of them found a fourth each time. An
-optimization on a built-in Provider may not decide which records exist.
-
 ### D-80 — A logical node's whole member row is first-projection-wins, and nothing states the equal-positions premise that makes it sound
 
 *Low today, latent — sound for every read shape this target compiles now, and
@@ -834,6 +792,7 @@ prose.
 - **D-73** → fixed. A Wire read publishes what one materialization carries — the members the stored document held, plus and minus what `m-snapshot-read` fixes at each — so both representations observe one value; `core/spec/m-snapshot-read.md` *What a materialized value carries* states the read contract and `python.md` §4 the published node.
 - **D-84** → closed by [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory). The Snapshot Stream's Execution Lifecycle producer exists: `parallax.core.execution_lifecycle._activity` opens a `SNAPSHOT_STREAM` root for a standalone delivery and a child of the current Transaction Attempt for a participating one, one Stream Batch per page, and each page's Database Calls under that batch. `engine.run_stream_case` therefore reads its `emissions` and `observations.roundTrips` off the delivered stream like every other lane, `_DeliveredCalls` is gone, and so is the run sweep's own port seam.
 - **D-86** → closed by [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory). The envelope carries the channel: `core/spec/m-conformance-adapter.md` *Per-step row observations* defines `stepRows` — one `{ at, rows }` entry per scenario read step the adapter drives, carrying the values that step PUBLISHED rather than the result sets its statements returned — and `tests/compatibility/test_run_sweep.py` grades every step's `expectRows` against it, the injected-port capture lane (`_ReadCapturePort`, `_scenario_read_schedule`, `_logical_row_transform`) deleted with it. One read step owns no entry, and the spec says which and why: a materializing predicate write's resolving read is production's own internal resolve, handed to no caller, so what holds an implementation to that step is its golden resolve statement and the per-row binds the write derives from those very rows.
+- **D-79** → closed by [COR-110](https://linear.app/flimflam/issue/COR-110/logginglifecycleprovider-builds-a-field-mapping-for-every-event) — by the `Logger.isEnabledFor` guard the entry ruled out by name, not by the lazily materialized `Mapping` it prescribed, which is not built. `_LoggingHandler.handle` takes each event's exact level from the one exhaustive match that already names its transition, so the approximation the reverted attempt made — and the Logger detector that existed only to bound it — are gone rather than narrowed a fourth time. The entry's rule that an optimization on a built-in Provider may not decide which records exist is therefore **withdrawn rather than satisfied**: the three Logger shapes it names are real, they defeat every library that guards on `isEnabledFor`, and Parallax now accepts that exposure instead of holding itself to a stricter contract. The always-paid term falls from 1.25 to 0.90 µs/event (`execution-lifecycle-baseline.md`), and the mapping would now defer work for records the guard has already stopped creating.
 
 ## History
 
@@ -847,3 +806,4 @@ carry at all — needs the entry it stood for:
 - `.humanlayer/tasks/cor-85-typed-and-wire-apis/19-deferred-ledger.md` — D-71, D-73.
 - `.humanlayer/tasks/cor-83-stream-deep-fetch-reads-at-fixed-memory/08-deferred-ledger.md` — D-84, D-86.
 - `.humanlayer/tasks/cor-115-reference-harness-object-query-oracle/08-deferred-ledger.md` — D-55.
+- `.humanlayer/tasks/cor-110-logging-lifecycle-diet/08-deferred-ledger.md` — D-79.
