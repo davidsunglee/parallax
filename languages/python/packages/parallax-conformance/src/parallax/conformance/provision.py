@@ -46,6 +46,7 @@ from parallax.core.metamodel import (
     IndexMetadata,
     Metamodel,
     Multiplicity,
+    TemporalDimension,
     ValueObjectIdentity,
     ValueObjectMetadata,
     derive_primary_key_index,
@@ -306,12 +307,24 @@ def _fixture_occurrence(member: Occurrence, raw: object) -> object:
     return _fixture_document(member.shape, cast("Mapping[str, object]", raw))
 
 
-def _fixture_literal(neutral_type: NeutralType, value: object) -> object:
-    if neutral_type == TIMESTAMP and value == "infinity":
+def _fixture_literal(
+    neutral_type: NeutralType, value: object, *, temporal_end: bool = False
+) -> object:
+    if temporal_end and neutral_type == TIMESTAMP and value == "infinity":
         return value
     return decode_wire(
         neutral_type,
         cast("WireValue", normalize_case_literal(neutral_type, value)),
+    )
+
+
+def _is_temporal_end(model: Metamodel, member: AttributeMetadata) -> bool:
+    entity = model.entity(member.identity.entity)
+    if entity is None:  # pragma: no cover - accepted Metadata owns every member
+        return False
+    return any(
+        (axis := entity.as_of_axis(dimension)) is not None and axis.end_attribute == member.identity
+        for dimension in TemporalDimension
     )
 
 
@@ -357,7 +370,13 @@ def _fixture_insert(
                 )
             )
         else:
-            binds.append(_fixture_literal(projection.type, value))
+            binds.append(
+                _fixture_literal(
+                    projection.type,
+                    value,
+                    temporal_end=_is_temporal_end(model, projection),
+                )
+            )
     placeholders = ", ".join("?" for _ in columns)
     sql = (
         f"insert into {dialect.quote(view.layout.table.name)} "

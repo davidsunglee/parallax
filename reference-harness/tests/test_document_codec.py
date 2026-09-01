@@ -212,6 +212,7 @@ def test_decode_stored_is_dialect_agnostic() -> None:
     assert decode_stored(b'{"a": 1}') == {"a": 1}  # MariaDB JSON bytes
     assert decode_stored({"a": 1}) == {"a": 1}  # Postgres parsed jsonb
     assert decode_stored(None) is None  # SQL NULL column
+    assert type(decode_leaf("int32", decode_stored('{"a": 1}')["a"])) is int
 
 
 def test_two_numbers_naming_one_float_remain_two_spellings_through_the_parse() -> None:
@@ -234,11 +235,17 @@ def test_negative_zero_is_normalized_when_written_and_refused_when_stored() -> N
     assert encode_leaf("float64", -0.0) == 0.0
     assert encode_leaf("decimal(12,2)", Decimal("-0.00")) == "0.00"
 
-    stored = decode_stored('{"float32": -0.0, "float64": -0.0}')
+    stored = decode_stored(
+        '{"float32": -0, "float64": -0, "fractional32": -0.0, "fractional64": -0.0}'
+    )
     with pytest.raises(DocumentEncodingError, match="invalid stored data"):
         decode_leaf("float32", stored["float32"])
     with pytest.raises(DocumentEncodingError, match="invalid stored data"):
         decode_leaf("float64", stored["float64"])
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        decode_leaf("float32", stored["fractional32"])
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        decode_leaf("float64", stored["fractional64"])
 
 
 def test_an_integer_stored_leaf_spells_the_same_number_a_float_carrier_would() -> None:

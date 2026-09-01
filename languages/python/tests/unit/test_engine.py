@@ -1013,6 +1013,41 @@ def test_graph_rows_narrows_an_abstract_positions_projection_to_its_selection() 
     assert rows == [{"id": 1, "name": "Sedan", "version": 5, "doors": 4, "familyVariant": "Car"}]
 
 
+def test_graph_rows_selects_reused_member_names_from_each_published_variant() -> None:
+    case = _case("m-inheritance-124")
+    when = cast("Mapping[str, object]", case.document["when"])
+    query = deserialize_query(when["objectQuery"])
+
+    rows = engine._graph_rows(  # pyright: ignore[reportPrivateUsage] - the engine's own row renderer
+        engine.load_case_metamodel(case),
+        query,
+        [
+            {
+                "id": 1,
+                "detail": "visa-4242",
+                "authorizationCode": "AUTH-7",
+                "familyVariant": "CardPayment",
+            },
+            {"id": 2, "detail": "12.50", "familyVariant": "CashPayment"},
+        ],
+    )
+
+    assert rows == [
+        {
+            "id": 1,
+            "detail": "visa-4242",
+            "authorization_code": "AUTH-7",
+            "familyVariant": "CardPayment",
+        },
+        {
+            "id": 2,
+            "detail": "12.50",
+            "authorization_code": None,
+            "familyVariant": "CashPayment",
+        },
+    ]
+
+
 def test_graph_rows_refuses_an_abstract_read_that_published_no_variant() -> None:
     # An abstract position publishes concrete nodes, so a node arriving without the
     # variant is a lane that resolved nothing rather than a row to render: which
@@ -5388,11 +5423,33 @@ def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> N
     )
     cash = projection.table_row(
         layout,
-        {"id": 2, "kind": "cash", "payload": {"detail": decimal.Decimal("12.50")}},
+        {
+            "id": 2,
+            "kind": "cash",
+            "payload": {"detail": "12.50", "future": None},
+        },
     )
 
     assert card["payload"] == {"detail": "visa-4242"}
-    assert cash["payload"] == {"detail": "12.50"}
+    assert cash["payload"] == {"detail": "12.50", "future": None}
+
+
+def test_table_state_validates_direct_value_objects_as_stored_wire_documents() -> None:
+    from parallax.core import storage_layout
+
+    meta = models.load_models()["document-codec"]
+    (layout,) = storage_layout.view(meta).tables
+
+    projected = ActualWireProjection(meta).table_row(
+        layout,
+        {
+            "id": 1,
+            "label": "sample",
+            "profile": {"amount": "12.50", "future": None},
+        },
+    )
+
+    assert projected["profile"] == {"amount": "12.50", "future": None}
 
 
 def test_read_table_state_normalizes_values_without_changing_the_projection() -> None:

@@ -94,7 +94,7 @@ def decode(value: Any, neutral_type: str) -> Any:
     elif neutral_type in ("int32", "int64"):
         bound = 2**31 if neutral_type == "int32" else 2**63
         if isinstance(value, int) and not isinstance(value, bool) and -bound <= value < bound:
-            return value
+            return int(value)
     elif neutral_type in ("float32", "float64"):
         decoded = decode_number(value, binary32=neutral_type == "float32")
         if decoded is not None:
@@ -299,7 +299,7 @@ def _same_json_scalar(left: Any, right: Any) -> bool:
 def _spelled_number(value: Any) -> decimal.Decimal | None:
     if isinstance(value, bool) or not isinstance(value, (int, float, decimal.Decimal)):
         return None
-    if isinstance(value, AuthoredNumber):
+    if isinstance(value, (AuthoredInteger, AuthoredNumber)):
         return decimal.Decimal(value.literal)
     return decimal.Decimal(repr(value) if isinstance(value, float) else value)
 
@@ -307,6 +307,17 @@ def _spelled_number(value: Any) -> decimal.Decimal | None:
 def _is_negative_zero_number(value: Any) -> bool:
     spelled = _spelled_number(value)
     return spelled is not None and spelled.is_zero() and spelled.is_signed()
+
+
+class AuthoredInteger(int):
+    """A JSON integer token that retains its authored sign and digits."""
+
+    literal: str
+
+    def __new__(cls, literal: str) -> AuthoredInteger:
+        number = super().__new__(cls, literal)
+        number.literal = literal
+        return number
 
 
 class AuthoredNumber(float):
@@ -368,7 +379,7 @@ def decode_number(value: Any, *, binary32: bool) -> float | None:
 
 def _exact_number(value: int | float | decimal.Decimal) -> Fraction:
     """The number *value* names, exactly: its authored digits, else its carrier."""
-    if isinstance(value, AuthoredNumber):
+    if isinstance(value, (AuthoredInteger, AuthoredNumber)):
         return Fraction(decimal.Decimal(value.literal))
     return Fraction(value)
 

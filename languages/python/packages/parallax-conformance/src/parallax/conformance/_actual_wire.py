@@ -193,7 +193,9 @@ class ActualWireProjection:
             if isinstance(contributor, AttributeIdentity):
                 projected[name] = self.scalar(self._attribute(contributor), value)
             elif isinstance(contributor, ValueObjectIdentity):
-                projected[name] = self.value_object(self._value_object(contributor), value)
+                projected[name] = self.published_value_object(
+                    self._value_object(contributor), value
+                )
             elif isinstance(contributor, RelationalDocument):
                 projected[name] = self._relational_document(layout, row, value)
             else:
@@ -255,7 +257,10 @@ class ActualWireProjection:
             raise ValueError(
                 f"{occurrence.identity.path}: a value-object element requires a mapping"
             )
-        source = cast("Mapping[str, object]", value)
+        source = cast(
+            "Mapping[str, object]",
+            encode_wire(JSON, decode_canonical_wire(JSON, cast("WireValue", value))),
+        )
         attributes = {member.identity.name: member for member in occurrence.attributes}
         nested = {member.identity.path[-1]: member for member in occurrence.value_objects}
         projected: dict[str, object] = {}
@@ -272,8 +277,7 @@ class ActualWireProjection:
             if child is not None:
                 projected[name] = self.published_value_object(child, item)
                 continue
-            managed = decode_canonical_wire(JSON, cast("WireValue", item))
-            projected[name] = encode_wire(JSON, managed)
+            projected[name] = item
         return projected
 
     def _query_members(
@@ -300,8 +304,9 @@ class ActualWireProjection:
     ) -> WireValue:
         if value is None:
             return None
-        if not isinstance(value, Mapping):
-            return self._typed(JSON, value)
+        canonical = encode_wire(JSON, decode_canonical_wire(JSON, cast("WireValue", value)))
+        if not isinstance(canonical, Mapping):
+            return canonical
         members: dict[
             str,
             dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata | ValueObjectMetadata],
@@ -311,7 +316,7 @@ class ActualWireProjection:
                 members.setdefault(name, {})[member.identity] = member
         selected: dict[str, AttributeMetadata | ValueObjectMetadata] | None = None
         projected: dict[str, object] = {}
-        for name, item in cast("Mapping[str, object]", value).items():
+        for name, item in cast("Mapping[str, object]", canonical).items():
             options = tuple(members.get(name, {}).values())
             if len(options) == 1:
                 member = options[0]
@@ -323,11 +328,11 @@ class ActualWireProjection:
             else:
                 member = None
             if isinstance(member, AttributeMetadata):
-                projected[name] = self.scalar(member, item)
+                projected[name] = self.published_scalar(member, item)
             elif member is not None:
-                projected[name] = self.value_object(member, item)
+                projected[name] = self.published_value_object(member, item)
             else:
-                projected[name] = self._typed(JSON, item)
+                projected[name] = item
         return cast("WireValue", projected)
 
     def _entity_document_members(

@@ -2309,22 +2309,54 @@ def _graph_rows(
     """
     columns, family = _read_projection(model, query)
     projection = ActualWireProjection(model)
-    return [_projected_row(projection, columns, family, _graph_root(root) or {}) for root in roots]
+    return [
+        _projected_row(model, projection, columns, family, _graph_root(root) or {})
+        for root in roots
+    ]
 
 
 def _projected_row(
+    model: AcceptedMetamodel,
     projection: ActualWireProjection,
-    columns: Mapping[str, tuple[str, AttributeMetadata | ValueObjectMetadata]],
+    columns: Mapping[str, tuple[tuple[str, AttributeMetadata | ValueObjectMetadata], ...]],
     family: bool,
     node: Mapping[str, object],
 ) -> Mapping[str, object]:
     """One published node as its projection's row."""
+    variant = node.get("familyVariant")
+    selected: frozenset[MemberIdentity] | None = None
+    if family and node:
+        if not isinstance(variant, str):
+            raise EngineError(
+                "an abstract-position read publishes a concrete node carrying "
+                f"`familyVariant`; this one published {sorted(node)}"
+            )
+        entity = case_entity(model, variant)
+        view = inheritance.view(model).entity(entity.identity)
+        if view is None:  # pragma: no cover - every accepted Entity has a view
+            raise EngineError(f"{entity.identity.canonical}: no inheritance position")
+        selected = frozenset(
+            member.identity
+            for member in (*view.applicable_attributes, *view.applicable_value_objects)
+        )
     published: dict[str, object] = {}
     for name, value in node.items():
-        resolved = columns.get(name)
-        if resolved is None:
+        options = columns.get(name, ())
+        if not options:
             continue
-        column, member = resolved
+        if len(options) == 1:
+            column, member = options[0]
+        else:
+            matches = tuple(
+                option
+                for option in options
+                if selected is not None and option[1].identity in selected
+            )
+            if len(matches) != 1:
+                raise EngineError(
+                    f"{variant!r} does not select one declaration for published member {name!r}"
+                )
+            column, member = matches[0]
         if value is None:
             published[column] = None
         elif isinstance(member, AttributeMetadata):
@@ -2333,14 +2365,8 @@ def _projected_row(
             published[column] = projection.published_value_object(member, value)
     if not family or not node:
         return published
-    variant = node.get("familyVariant")
-    if variant is None:
-        raise EngineError(
-            "an abstract-position read publishes a concrete node carrying "
-            f"`familyVariant`; this one published {sorted(node)}"
-        )
     return {
-        **dict.fromkeys(column for column, _member in columns.values()),
+        **dict.fromkeys(column for options in columns.values() for column, _member in options),
         **published,
         "familyVariant": variant,
     }
@@ -2348,7 +2374,10 @@ def _projected_row(
 
 def _read_projection(
     model: AcceptedMetamodel, query: ObjectQueryNode
-) -> tuple[Mapping[str, tuple[str, AttributeMetadata | ValueObjectMetadata]], bool]:
+) -> tuple[
+    Mapping[str, tuple[tuple[str, AttributeMetadata | ValueObjectMetadata], ...]],
+    bool,
+]:
     """The columns ``query`` projects, and whether it reads an abstract position.
 
     Abstractness is the ADDRESSED position's own role, exactly as it is where
@@ -2395,18 +2424,19 @@ def _step_rows(
 
 def _member_columns(
     attributes: Sequence[AttributeMetadata], value_objects: Sequence[ValueObjectMetadata]
-) -> Mapping[str, tuple[str, AttributeMetadata | ValueObjectMetadata]]:
+) -> Mapping[str, tuple[tuple[str, AttributeMetadata | ValueObjectMetadata], ...]]:
     """Each member name paired with its own column, in projection order."""
-    columns: dict[str, tuple[str, AttributeMetadata | ValueObjectMetadata]] = {
-        attribute.identity.name: (attribute.storage.name, attribute) for attribute in attributes
-    }
-    columns.update(
-        {
-            occurrence.identity.path[-1]: (occurrence.storage.name, occurrence)
-            for occurrence in value_objects
-        }
-    )
-    return columns
+    columns: dict[
+        str, dict[MemberIdentity, tuple[str, AttributeMetadata | ValueObjectMetadata]]
+    ] = {}
+    for member in (*attributes, *value_objects):
+        name = (
+            member.identity.name
+            if isinstance(member, AttributeMetadata)
+            else member.identity.path[-1]
+        )
+        columns.setdefault(name, {})[member.identity] = (member.storage.name, member)
+    return {name: tuple(options.values()) for name, options in columns.items()}
 
 
 def _lower_scenario_step(
