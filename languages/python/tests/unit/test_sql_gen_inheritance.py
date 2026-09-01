@@ -636,8 +636,18 @@ def test_tph_temporal_slots_follow_every_domain_slot_across_ancestry() -> None:
     # the four interval Attributes (Temporal), yet the subtypes' own Domain
     # slots — `coupon` (Bond) and `ticker` (Equity) — still precede every
     # root-owned Temporal slot in the shared Table.
-    compiled = compile_read(oa.All(), INSTRUMENT, POSTGRES, target(INSTRUMENT, "Instrument"))
-    assert compiled.statement.sql == (
+    compiled = compile_read(
+        oa.All(),
+        INSTRUMENT,
+        POSTGRES,
+        target(INSTRUMENT, "Instrument"),
+        temporal={
+            "valid-time": oq.AsOf("latest"),
+            "transaction-time": oq.AsOf("latest"),
+        },
+    )
+    projection, _separator, _predicate = compiled.statement.sql.partition(" where ")
+    assert projection == (
         "select t0.id, t0.kind, t0.price, t0.coupon, t0.ticker, "
         "t0.from_z, t0.thru_z, t0.in_z, t0.out_z from instrument t0"
     )
@@ -649,14 +659,25 @@ def test_tpcs_union_uses_one_logical_contributor_order_across_branches() -> None
     # then the root-owned `Temporal` slots — is shared by both branches, and a
     # branch that does not own a contributor renders the typed `NULL`
     # placeholder in that contributor's own position rather than reordering.
-    compiled = compile_read(oa.All(), RATE, POSTGRES, target(RATE, "Rate"))
+    compiled = compile_read(
+        oa.All(),
+        RATE,
+        POSTGRES,
+        target(RATE, "Rate"),
+        temporal={
+            "valid-time": oq.AsOf("latest"),
+            "transaction-time": oq.AsOf("latest"),
+        },
+    )
     branches = compiled.statement.sql.split(" union all ")
-    assert branches[0] == (
+    first_projection, _separator, _predicate = branches[0].partition(" where ")
+    second_projection, _separator, _predicate = branches[1].partition(" where ")
+    assert first_projection == (
         "select t0.id, t0.amount, t0.grade, cast(null as decimal(18, 2)) spread, "
         "t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'DepositRate' family_variant "
         "from deposit_rate t0"
     )
-    assert branches[1] == (
+    assert second_projection == (
         "select t0.id, t0.amount, cast(null as varchar(8)) grade, t0.spread, "
         "t0.from_z, t0.thru_z, t0.in_z, t0.out_z, 'LoanRate' family_variant "
         "from loan_rate t0"
@@ -667,8 +688,18 @@ def test_tpcs_single_concrete_projects_its_own_table_layout_tier_order() -> None
     # The concrete's own Entity Layout view: ancestry `Identity` and `Domain`
     # slots, its own `Domain` slot, then the inherited `Temporal` slots — no
     # discriminator and no variant literal.
-    compiled = compile_read(oa.All(), RATE, POSTGRES, target(RATE, "DepositRate"))
-    assert compiled.statement.sql == (
+    compiled = compile_read(
+        oa.All(),
+        RATE,
+        POSTGRES,
+        target(RATE, "DepositRate"),
+        temporal={
+            "valid-time": oq.AsOf("latest"),
+            "transaction-time": oq.AsOf("latest"),
+        },
+    )
+    projection, _separator, _predicate = compiled.statement.sql.partition(" where ")
+    assert projection == (
         "select t0.id, t0.amount, t0.grade, t0.from_z, t0.thru_z, t0.in_z, t0.out_z "
         "from deposit_rate t0"
     )

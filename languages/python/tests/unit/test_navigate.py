@@ -5,13 +5,15 @@ compile/run sweeps: per-hop as-of propagation (declared-axis matching, the
 latest default, a non-temporal hop carrying no term, a temporal hop reached from
 a polymorphic position resolving through the family root), multi-hop
 propagation of the SAME root pin, and the strict-identity rule for a
-navigation-free predicate. Correlation-column / polymorphic-tag SQL emission is
-`m-sql`'s own concern, covered in `test_sql_gen_navigation.py`; these tests feed
-the rewritten query straight to `compile_read` only to assert the FRAGMENT
-`canonicalize` injected, never the join columns.
+navigation-free predicate. The SQL assertions exercise the validated planning
+path separately; raw generated temporal terms are never fed back through strict
+serialized-literal elaboration.
 """
 
 from __future__ import annotations
+
+import datetime as dt
+import decimal
 
 import pytest
 from _corpus_model_support import formed, target
@@ -22,14 +24,18 @@ from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, TemporalDimension
 from parallax.core.navigate import canonicalize, resolve_relationship
+from parallax.core.object_query import AsOf, TemporalSelection
+from parallax.core.object_query import TemporalDimension as QueryTemporalDimension
 from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
 POLICY = accepted_model("policy")
 LEASE = accepted_model("lease")
 
-_B = "2024-03-01T00:00:00+00:00"
-_P = "2024-02-01T00:00:00+00:00"
+_B = "2024-03-01T00:00:00Z"
+_P = "2024-02-01T00:00:00Z"
+_B_MANAGED = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+_P_MANAGED = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 
 VALID_TIME = TemporalDimension.VALID_TIME
 TX_TIME = TemporalDimension.TRANSACTION_TIME
@@ -43,9 +49,21 @@ TENANT = target(LEASE, "Tenant")
 LEASE_ENTITY = target(LEASE, "Lease")
 
 
-def _where(op: oa.PredicateNode, model: Metamodel, name: str) -> tuple[str, tuple[object, ...]]:
+def _where(
+    op: oa.PredicateNode,
+    model: Metamodel,
+    name: str,
+    *,
+    temporal: dict[QueryTemporalDimension, TemporalSelection] | None = None,
+) -> tuple[str, tuple[object, ...]]:
     """The `where` clause and binds `m-sql` lowers ``op`` to over ``model``."""
-    statement = compile_read(op, model, POSTGRES, target(model, name)).statement
+    statement = compile_read(
+        op,
+        model,
+        POSTGRES,
+        target(model, name),
+        temporal=temporal,
+    ).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
 
@@ -126,8 +144,10 @@ def test_non_temporal_bare_hop_stays_op_none() -> None:
 # temporal -> non-temporal (the child carries NO as-of term).                  #
 # --------------------------------------------------------------------------- #
 def test_non_temporal_root_reaching_a_temporal_target_defaults_every_axis_to_latest() -> None:
-    canonical = canonicalize(oa.Exists(rel="Tenant.leases"), LEASE, TENANT)
-    where, binds = _where(canonical, LEASE, "Tenant")
+    op = oa.Exists(rel="Tenant.leases")
+    canonical = canonicalize(op, LEASE, TENANT)
+    assert canonical is not op
+    where, binds = _where(op, LEASE, "Tenant")
     assert where == "exists (select 1 from lease t1 where t1.tenant_id = t0.id and t1.out_z = ?)"
     assert binds == ("infinity",)
 
@@ -145,25 +165,38 @@ def test_temporal_root_reaching_a_non_temporal_target_carries_no_as_of_term() ->
 def test_bare_hop_over_a_temporal_target_gets_the_latest_default_both_axes() -> None:
     op = oa.Exists(
         rel="Policy.coverages",
-        op=oa.Comparison(op="greaterThanEquals", attr="Coverage.amount", value=600),
+        op=oa.Comparison(op="greaterThanEquals", attr="Coverage.amount", value="600.00"),
     )
     canonical = canonicalize(op, POLICY, POLICY_ENTITY)
-    where, binds = _where(canonical, POLICY, "Policy")
+    assert canonical is not op
+    where, binds = _where(
+        op,
+        POLICY,
+        "Policy",
+        temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
+    )
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and t1.amount >= ? "
-        "and t1.thru_z = ? and t1.out_z = ?)"
+        "and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?"
     )
-    assert binds == (600, "infinity", "infinity")
+    assert binds == (decimal.Decimal("600.00"), "infinity", "infinity", "infinity", "infinity")
 
 
 def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
-    canonical = canonicalize(oa.Exists(rel="Policy.coverages"), POLICY, POLICY_ENTITY)
-    where, binds = _where(canonical, POLICY, "Policy")
+    op = oa.Exists(rel="Policy.coverages")
+    canonical = canonicalize(op, POLICY, POLICY_ENTITY)
+    assert canonical is not op
+    where, binds = _where(
+        op,
+        POLICY,
+        "Policy",
+        temporal={"valid-time": AsOf("latest"), "transaction-time": AsOf("latest")},
+    )
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id "
-        "and t1.thru_z = ? and t1.out_z = ?)"
+        "and t1.thru_z = ? and t1.out_z = ?) and t0.thru_z = ? and t0.out_z = ?"
     )
-    assert binds == ("infinity", "infinity")
+    assert binds == ("infinity", "infinity", "infinity", "infinity")
 
 
 # --------------------------------------------------------------------------- #
@@ -172,23 +205,53 @@ def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:
 def test_root_pinned_instant_propagates_to_the_hop_valid_time_first() -> None:
     op = oa.Exists(rel="Policy.coverages")
     canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B, TX_TIME: _P})
-    where, binds = _where(canonical, POLICY, "Policy")
+    assert canonical is not op
+    where, binds = _where(
+        op,
+        POLICY,
+        "Policy",
+        temporal={"valid-time": AsOf(_B), "transaction-time": AsOf(_P)},
+    )
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
-        "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?)"
+        "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?) "
+        "and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
     )
-    assert binds == (_B, _B, _P, _P)
+    assert binds == (
+        _B_MANAGED,
+        _B_MANAGED,
+        _P_MANAGED,
+        _P_MANAGED,
+        _B_MANAGED,
+        _B_MANAGED,
+        _P_MANAGED,
+        _P_MANAGED,
+    )
 
 
 def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
     op = oa.Exists(rel="Policy.coverages")
     canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B})
-    where, binds = _where(canonical, POLICY, "Policy")
+    assert canonical is not op
+    where, binds = _where(
+        op,
+        POLICY,
+        "Policy",
+        temporal={"valid-time": AsOf(_B), "transaction-time": AsOf("latest")},
+    )
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
-        "t1.from_z <= ? and t1.thru_z > ? and t1.out_z = ?)"
+        "t1.from_z <= ? and t1.thru_z > ? and t1.out_z = ?) "
+        "and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
     )
-    assert binds == (_B, _B, "infinity")
+    assert binds == (
+        _B_MANAGED,
+        _B_MANAGED,
+        "infinity",
+        _B_MANAGED,
+        _B_MANAGED,
+        "infinity",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -197,15 +260,35 @@ def test_root_pin_on_one_axis_only_still_defaults_the_other_to_latest() -> None:
 def test_multi_hop_propagates_the_same_root_pin_to_every_hop() -> None:
     op = oa.Exists(rel="Policy.coverages", op=oa.Exists(rel="Coverage.claims"))
     canonical = canonicalize(op, POLICY, POLICY_ENTITY, root_pins={VALID_TIME: _B, TX_TIME: _P})
-    where, binds = _where(canonical, POLICY, "Policy")
+    assert canonical is not op
+    where, binds = _where(
+        op,
+        POLICY,
+        "Policy",
+        temporal={"valid-time": AsOf(_B), "transaction-time": AsOf(_P)},
+    )
     assert where == (
         "exists (select 1 from coverage t1 where t1.policy_id = t0.id and "
         "exists (select 1 from claim t2 where t2.coverage_id = t1.id and "
         "t2.from_z <= ? and t2.thru_z > ? and t2.in_z <= ? and t2.out_z > ?) and "
-        "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?)"
+        "t1.from_z <= ? and t1.thru_z > ? and t1.in_z <= ? and t1.out_z > ?) "
+        "and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
     )
     # The inner hop's as-of binds lower BEFORE the outer hop's own (source order).
-    assert binds == (_B, _B, _P, _P, _B, _B, _P, _P)
+    assert binds == (
+        _B_MANAGED,
+        _B_MANAGED,
+        _P_MANAGED,
+        _P_MANAGED,
+        _B_MANAGED,
+        _B_MANAGED,
+        _P_MANAGED,
+        _P_MANAGED,
+        _B_MANAGED,
+        _B_MANAGED,
+        _P_MANAGED,
+        _P_MANAGED,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -274,8 +357,10 @@ _ZOO = formed(deserialize(_ZOO_MODEL))
 def test_polymorphic_temporal_relationship_target_resolves_axes_via_the_family_root() -> None:
     # `Zoo.creatures` targets the abstract root `Creature` directly, so this also
     # covers the non-narrowed, whole-family case (m-sql injects no tag predicate).
-    canonical = canonicalize(oa.Exists(rel="Zoo.creatures"), _ZOO, target(_ZOO, "Zoo"))
-    where, binds = _where(canonical, _ZOO, "Zoo")
+    op = oa.Exists(rel="Zoo.creatures")
+    canonical = canonicalize(op, _ZOO, target(_ZOO, "Zoo"))
+    assert canonical is not op
+    where, binds = _where(op, _ZOO, "Zoo")
     assert where == (
         "exists (select 1 from lion t1 where t1.zoo_id = t0.id and t1.thru_z = ? and t1.out_z = ?)"
     )

@@ -36,6 +36,7 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
     STRING,
+    TIMESTAMP,
     InstantError,
     PresentDocument,
     TemporalBound,
@@ -48,13 +49,16 @@ from parallax.core.db_port import Committed, DbPort, JsonDocument, Row, Transact
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import (
     AbstractRoot,
+    AsOfAxisMetadata,
     AttributeIdentity,
     Column,
     ConcreteSubtype,
     EntityIdentity,
     ExactEntityReference,
+    PrimaryKey,
     Table,
     TablePerHierarchy,
+    TemporalDimension,
     ValueObjectAttributeDeclaration,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
@@ -4332,6 +4336,201 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
     assert affected == 1
     assert len(port.writes) == 1
     assert table_state is not None and "balance" in table_state
+
+
+def test_a_temporal_close_decodes_case_carriers_before_the_probe() -> None:
+    # Compatibility's close-only form authors an integral JSON number and broad
+    # ISO timestamps, but the probe and its SQL binds must receive the declared
+    # Int64 and Timestamp managed values rather than those authored carriers.
+    case = _synthetic_write(
+        "conflict",
+        {
+            "model": "models/balance.yaml",
+            "when": {
+                "uow": {"concurrency": "optimistic"},
+                "write": {"id": 2.0},
+                "at": "2024-10-01T00:00:00+00:00",
+                "observedTxStart": "2024-02-01T00:00:00+00:00",
+            },
+        },
+    )
+    emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
+        case, FakeWritePort()
+    )
+    binds = emissions[0].binds
+    assert affected == 1
+    assert type(binds[1]) is int and binds[1] == 2
+    assert isinstance(binds[0], dt.datetime)
+    assert isinstance(binds[3], dt.datetime)
+
+
+def test_a_decimal_temporal_key_requires_its_canonical_wire_string() -> None:
+    # Compatibility's standalone close has no generic prepared-write ingress, so
+    # its local declared-type preparation must accept canonical Decimal Wire and
+    # reject a JSON number before either value can become a planned key or bind.
+    entity = EntityIdentity("parallax.test", "DecimalTemporal")
+    model = form_metamodel(
+        source(
+            Declaration(
+                identity=entity,
+                container=Table("decimal_temporal"),
+                attributes=(
+                    attribute(
+                        entity,
+                        "id",
+                        type=DecimalType(6, 2),
+                        primary_key=PrimaryKey(),
+                    ),
+                    attribute(entity, "txStart", type=TIMESTAMP),
+                    attribute(entity, "txEnd", type=TIMESTAMP),
+                ),
+                as_of_axes=(
+                    AsOfAxisMetadata(
+                        TemporalDimension.TRANSACTION_TIME,
+                        AttributeIdentity(entity, "txStart"),
+                        AttributeIdentity(entity, "txEnd"),
+                    ),
+                ),
+            )
+        )
+    )
+    accepted = engine._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+        model,
+        entity.canonical,
+        {"id": "12.30"},
+        "2024-10-01T00:00:00+00:00",
+        "2024-02-01T00:00:00+00:00",
+        None,
+        None,
+    )
+    assert accepted.identity == (("id", decimal.Decimal("12.30")),)
+    with pytest.raises(engine.EngineError, match="neutral-literal-type-mismatch"):
+        engine._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+            model,
+            entity.canonical,
+            {"id": 12.30},
+            "2024-10-01T00:00:00+00:00",
+            "2024-02-01T00:00:00+00:00",
+            None,
+            None,
+        )
+    with pytest.raises(engine.EngineError, match="neutral-literal-noncanonical"):
+        engine._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+            model,
+            entity.canonical,
+            {"id": "12.3"},
+            "2024-10-01T00:00:00+00:00",
+            "2024-02-01T00:00:00+00:00",
+            None,
+            None,
+        )
+
+
+@pytest.mark.parametrize("bad_key", ["2", True, 2.5])
+def test_a_temporal_close_rejects_a_malformed_primary_key_before_planning(
+    bad_key: object,
+) -> None:
+    # Compatibility's close-only row must satisfy its family-effective primary
+    # key's declared Int64 Wire contract, so string, boolean, and fractional
+    # carriers all stop before the close probe can turn one into an SQL bind.
+    case = _synthetic_write(
+        "conflict",
+        {
+            "model": "models/balance.yaml",
+            "when": {
+                "uow": {"concurrency": "optimistic"},
+                "write": {"id": bad_key},
+                "at": "2024-10-01T00:00:00+00:00",
+                "observedTxStart": "2024-02-01T00:00:00+00:00",
+            },
+        },
+    )
+    with pytest.raises(engine.EngineError, match="primary key `id` is neutral-literal"):
+        engine.run_conflict_case(case, FakeWritePort())
+
+
+@pytest.mark.parametrize(
+    ("model", "when", "position"),
+    [
+        (
+            "models/balance.yaml",
+            {
+                "write": {"id": 2},
+                "at": "not-an-instant",
+                "observedTxStart": "2024-02-01T00:00:00+00:00",
+            },
+            "at",
+        ),
+        (
+            "models/balance.yaml",
+            {
+                "write": {"id": 2},
+                "at": "2024-10-01T00:00:00+00:00",
+                "observedTxStart": "not-an-instant",
+            },
+            "observedTxStart",
+        ),
+        (
+            "models/position.yaml",
+            {
+                "write": {"id": 1},
+                "at": "2024-10-01T00:00:00+00:00",
+                "observedTxStart": "2024-04-01T00:00:00+00:00",
+                "observedValidStart": "not-an-instant",
+            },
+            "observedValidStart",
+        ),
+        (
+            "models/position.yaml",
+            {
+                "write": {"id": 1, "validEnd": "not-an-instant"},
+                "at": "2024-10-01T00:00:00+00:00",
+                "observedTxStart": "2024-04-01T00:00:00+00:00",
+            },
+            "validEnd",
+        ),
+    ],
+)
+def test_a_temporal_close_rejects_each_malformed_coordinate_before_planning(
+    model: str, when: dict[str, object], position: str
+) -> None:
+    # Compatibility's temporary close form carries four independently authored
+    # coordinates; each must fail at its resolved Timestamp boundary rather than
+    # reaching milestone selection, close planning, execution, or driver binds.
+    when["uow"] = {"concurrency": "optimistic"}
+    case = _synthetic_write("conflict", {"model": model, "when": when})
+    with pytest.raises(engine.EngineError, match=position):
+        engine.run_conflict_case(case, FakeWritePort())
+
+
+def test_a_bitemporal_close_preserves_only_the_authored_wire_open_bound() -> None:
+    # Compatibility's address form may author the exact `infinity` Wire sentinel
+    # for Valid-Time, which remains the framework open bound while every finite
+    # coordinate is decoded to datetime; a pre-managed sentinel is not an
+    # alternative serialized spelling and is refused before planning.
+    case = _edge_named_close(
+        {
+            "uow": {"concurrency": "optimistic"},
+            "write": {"id": 1, "validEnd": "infinity"},
+            "at": "2024-10-01T00:00:00+00:00",
+            "observedTxStart": "2024-04-01T00:00:00+00:00",
+        }
+    )
+    emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
+        case, FakeWritePort()
+    )
+    assert affected == 1
+    assert emissions[0].binds[2] == "infinity"
+    managed_bound = _edge_named_close(
+        {
+            "uow": {"concurrency": "optimistic"},
+            "write": {"id": 1, "validEnd": TemporalBound.INFINITY},
+            "at": "2024-10-01T00:00:00+00:00",
+            "observedTxStart": "2024-04-01T00:00:00+00:00",
+        }
+    )
+    with pytest.raises(engine.EngineError, match="neutral-literal-type-mismatch"):
+        engine.run_conflict_case(managed_bound, FakeWritePort())
 
 
 @pytest.mark.parametrize(

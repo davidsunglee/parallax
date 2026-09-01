@@ -5,9 +5,10 @@ Each rejected rule is pinned with the exact identifier `validate_predicate`
 raises, alongside the representative VALID predicates that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
 that is NOT outside the active position). The 21 in-slice rejected corpus
-cases are additionally round-tripped through the real validator here (not
-just via the engine's rejected sweep), so a regression in either the node
-construction or the model resolution fails at the unit layer first.
+cases are additionally round-tripped through case normalization and the real
+validator here (not just via the engine's rejected sweep), so a regression in
+node construction, case ingress, or model resolution fails at the unit layer
+first.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from typing import Any, cast
 import pytest
 from _corpus_model_support import formed, records
 
-from parallax.conformance import case_format
+from parallax.conformance import _case_ingress, case_format
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query import (
     AsOf,
@@ -303,8 +304,10 @@ def test_corpus_rejected_case_classifies_to_its_own_rejected_rule(case_id: str) 
     when = cast("Mapping[str, Any]", case.document["when"])
     then = cast("Mapping[str, Any]", case.document["then"])
     meta = _MODEL_BY_FILE[Path(case.model).name]
-    query = deserialize_query(cast("Mapping[str, object]", when["objectQuery"]))
     model = formed(meta)
+    query = _case_ingress.normalize_case_query(
+        deserialize_query(cast("Mapping[str, object]", when["objectQuery"])), model
+    )
     root = _root(model, query.target.canonical)
     with pytest.raises(ModelRejectedError) as excinfo:
         validate_object_query(root, query, model)

@@ -254,7 +254,7 @@ def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> Validate
             member = _require_attribute(attr, model, scope)
             return _validated_leaf(op, member, values)
         case NullCheck(attr=attr):
-            member = resolve_attribute_reference(attr, model, scope)
+            member = check_attribute_reference(attr, model, scope)
             _check_attribute_null_check(attr, model)
             return ValidatedPredicate(op, member=member)
         case Between(attr=attr, lower=lower, upper=upper):
@@ -579,7 +579,7 @@ def validate_narrow(to: tuple[str, ...], scope: PositionScope, model: Metamodel)
     return PositionScope(effective=resolved)
 
 
-def resolve_attribute_reference(
+def check_attribute_reference(
     attr_ref: str, model: Metamodel, scope: PositionScope
 ) -> AttributeMetadata | None:
     """Resolve one ``Class.attribute`` reference and check it against ``scope``.
@@ -607,14 +607,8 @@ def resolve_attribute_reference(
     return attribute
 
 
-def check_attribute_reference(
-    attr_ref: str, model: Metamodel, scope: PositionScope
-) -> AttributeMetadata | None:
-    return resolve_attribute_reference(attr_ref, model, scope)
-
-
 def _require_attribute(attr_ref: str, model: Metamodel, scope: PositionScope) -> AttributeMetadata:
-    attribute = resolve_attribute_reference(attr_ref, model, scope)
+    attribute = check_attribute_reference(attr_ref, model, scope)
     if attribute is None:
         class_name, _, _member = attr_ref.rpartition(".")
         raise ValueError(f"{attr_ref!r} names no declared attribute on {class_name}")

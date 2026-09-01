@@ -581,8 +581,8 @@ def _table_rows(text: str) -> list[list[str]]:
 def _row_scopes(scope_cell: str, owner_cell: str) -> list[str]:
     """The enforcement scopes a §7 row declares.
 
-    Normally the "Enforcement scope" cell names them. The write-lowering child
-    group states "those six scopes, sharing one grant row" there and enumerates
+    Normally the "Enforcement scope" cell names them. The write-execution child
+    group states "those three scopes, sharing one grant row" there and enumerates
     them in the "Source owner/path" cell instead, so a scope cell naming none
     falls back to the owner cell. Within a cell, a backticked token starting
     with a dot (``._write_lowering``) abbreviates a sibling of the preceding full
