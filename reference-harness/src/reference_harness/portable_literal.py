@@ -13,9 +13,11 @@ basic-format runs, and any character at all as the date/time separator,
 whitespace, and exponents — would become the contract a second language has to
 reproduce, and no specification states it.
 
-Decoding is MANY-TO-ONE where the document encoding is one-to-one: a value is
-stored in exactly one canonical spelling, while every spelling this grammar
-admits names the same value and stores as that canonical one.
+Authored-Wire decoding is strict: alternative spellings classified as
+noncanonical are rejected rather than normalized. Provider-observed values use
+a separate canonicalization boundary for the limited carrier adaptations the
+compatibility contract permits. Encoding accepts managed members only and emits
+the one canonical Wire spelling.
 
 Every digit in this grammar is an ASCII digit. Python's ``\\d`` also matches every
 Unicode decimal digit, so a regex written with it would decode a date spelled in
@@ -190,7 +192,7 @@ def encode(value: Any, neutral_type: str) -> Any:
             return _exact_decimal(value.copy_abs() if value.is_zero() else value, scale)
     elif neutral_type == "boolean" and isinstance(value, bool):
         return value
-    elif neutral_type in ("int32", "int64"):
+    elif neutral_type in ("int32", "int64") and type(value) is int:
         return decode(value, neutral_type)
     elif neutral_type in ("float32", "float64"):
         target = decode_number(value, binary32=neutral_type == "float32")
