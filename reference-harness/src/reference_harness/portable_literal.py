@@ -261,6 +261,10 @@ def _copy_json(value: Any) -> Any:
         return [_copy_json(item) for item in value]
     if isinstance(value, dict):
         return {name: _copy_json(item) for name, item in value.items()}
+    if isinstance(value, AuthoredInteger):
+        return int(value)
+    if isinstance(value, AuthoredNumber):
+        return float(value)
     return value
 
 

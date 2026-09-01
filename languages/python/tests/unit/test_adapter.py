@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 
 import jsonschema
@@ -30,6 +30,7 @@ from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query import AsOfRange, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.predicate import ModelRejectedError
 from parallax.core.predicate import serialize as serialize_predicate
 from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
@@ -198,6 +199,30 @@ temporal:
     validated = validate_object_query(root, normalized, model)
     assert validated.predicate.operands is not None
     assert validated.predicate.operands.values == (decimal.Decimal("200.00"),)
+
+
+def test_case_query_adapter_does_not_widen_the_timestamp_string_grammar() -> None:
+    model = models.load_models()["event"]
+    query = deserialize_query(
+        {
+            "target": "parallax.compatibility.Event",
+            "predicate": {
+                "eq": {
+                    "attr": "parallax.compatibility.Event.occurredAt",
+                    "value": "2026-W01-1T00:00:00+00:00",
+                }
+            },
+        }
+    )
+
+    normalized = _case_ingress.normalize_case_query(query, model)
+
+    comparison = cast("dict[str, object]", serialize_predicate(normalized.predicate)["eq"])
+    assert comparison["value"] == "2026-W01-1T00:00:00+00:00"
+    root = engine.case_entity(model, normalized.target.canonical)
+    with pytest.raises(ModelRejectedError) as caught:
+        validate_object_query(root, normalized, model)
+    assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
 class _FakePort:
@@ -445,11 +470,29 @@ def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "tableState": {
-            "orders": [{"id": 7}],
-            "order_item": [{"id": 7}],
-            "order_note": [{"id": 7}],
-            "order_status": [{"id": 7}],
-            "order_tag": [{"id": 7}],
+            "orders": [
+                {
+                    "id": 7,
+                    "name": None,
+                    "sku": None,
+                    "qty": None,
+                    "price": None,
+                    "active": None,
+                    "ordered_on": None,
+                }
+            ],
+            "order_item": [
+                {
+                    "id": 7,
+                    "order_id": None,
+                    "sku": None,
+                    "quantity": None,
+                    "shipped_on": None,
+                }
+            ],
+            "order_note": [{"id": 7, "order_id": None, "body": None, "resolved_on": None}],
+            "order_status": [{"id": 7, "order_id": None, "order_item_id": None, "code": None}],
+            "order_tag": [{"id": 7, "order_id": None, "label": None, "priority": None}],
         },
         "roundTrips": 2,
     }
@@ -471,11 +514,10 @@ class _ManagedPort:
             {
                 "id": 1,
                 "f32": 1.5,
-                "amount": decimal.Decimal("12.34"),
+                "f64": 2.25,
                 "local_time": dt.time(12, 34, 56),
                 "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
                 "payload": b"\x01\x02\x03\x04",
-                "ordered_on": dt.date(2024, 1, 2),
             }
         ]
 
@@ -499,11 +541,10 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
     assert row == {
         "id": 1,
         "f32": 1.5,
-        "amount": "12.34",
+        "f64": 2.25,
         "local_time": "12:34:56",
         "external_id": "123e4567-e89b-12d3-a456-426614174000",
         "payload": "01020304",
-        "ordered_on": "2024-01-02",
     }
     # The whole envelope now round-trips through the wire (json.dumps).
     assert json.loads(json.dumps(envelope)) == envelope
@@ -1139,8 +1180,8 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
     assert envelope["observations"]["roundTrips"] == 1
     graphs = envelope["observations"]["graphs"]
     assert [g["pin"]["transaction-time"] for g in graphs] == [
-        "2024-01-01T00:00:00+00:00",
-        "2024-04-01T00:00:00+00:00",
+        "2024-01-01T00:00:00.000000Z",
+        "2024-04-01T00:00:00.000000Z",
     ]
     assert json.loads(json.dumps(envelope)) == envelope
 

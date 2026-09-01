@@ -48,6 +48,21 @@ def test_each_type_decodes_and_encodes_independently(
     assert literal.canonicalize(authored, spelling) == canonical
 
 
+def test_json_normalization_erases_authored_number_provenance() -> None:
+    authored = {
+        "integer": literal.AuthoredInteger("-0"),
+        "fractional": literal.AuthoredNumber("0.10000000000000001"),
+    }
+
+    for normalized in (
+        literal.decode(authored, "json"),
+        literal.encode(authored, "json"),
+        literal.canonicalize(authored, "json"),
+    ):
+        assert type(normalized["integer"]) is int
+        assert type(normalized["fractional"]) is float
+
+
 def test_canonical_decode_refuses_an_admitted_alternative() -> None:
     with pytest.raises(literal.PortableLiteralError, match="not canonical"):
         literal.decode_canonical("0A0b", "bytes")

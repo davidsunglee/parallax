@@ -206,8 +206,8 @@ parallax.compatibility.Customer:
 # to exercise the fan-out shapes the witness pins:
 #
 #   id 100  customer 1 (Ada)   label HQ     address present (an undeclared `zip`
-#                                            inside geo is DROPPED by the declared
-#                                            projection, like the Customer rows)
+#                                            inside geo is preserved as opaque JSON
+#                                            beside the declared projection)
 #   id 101  customer 1 (Ada)   label Depot  address NULL — the null-DOCUMENT child:
 #                                            the whole value object materializes
 #                                            null, the absence collapse pinned at

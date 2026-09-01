@@ -11,6 +11,8 @@ proven by the Docker provider lane.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from _corpus_model_support import corpus, corpus_records, formed
 from _document_layout_support import document_model
@@ -261,6 +263,22 @@ def test_fixture_statements_wrap_value_objects() -> None:
     statements = provision.fixture_statements(_MODELS["customer"], fixtures)
     _sql, binds = statements[0]
     assert any(isinstance(bind, JsonDocument) for bind in binds)
+
+
+def test_fixture_statements_preserve_unknown_value_object_members() -> None:
+    fixtures = provision.load_fixtures("models/customer.yaml")
+    statements = provision.fixture_statements(_MODELS["customer"], fixtures)
+    location = next(
+        binds
+        for sql, binds in statements
+        if sql.startswith("insert into location ") and binds[0] == 100
+    )
+
+    address = location[-1]
+    assert isinstance(address, JsonDocument)
+    document = cast("dict[str, object]", address.value)
+    geo = cast("dict[str, object]", document["geo"])
+    assert geo["zip"] == "0150"
 
 
 def test_load_fixtures_missing_model_is_empty() -> None:

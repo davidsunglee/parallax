@@ -33,7 +33,6 @@ from parallax.core.document_codec import (
     Presence,
     Present,
     encode_document,
-    encode_many,
     entity_shape,
     occurrence_shape,
 )
@@ -59,7 +58,7 @@ from parallax.core.storage_layout import (
     RelationalDocument,
     TableLayout,
 )
-from parallax.core.wire import WireValue, decode_wire
+from parallax.core.wire import WireValue, decode_wire, encode_wire
 
 if TYPE_CHECKING:
     from parallax.postgres import PostgresAdapter
@@ -259,7 +258,9 @@ def _document_members(
     )
 
 
-def _fixture_document(shape: DocumentShape, row: Mapping[str, object]) -> object:
+def _fixture_document(
+    shape: DocumentShape, row: Mapping[str, object], *, preserve_unknown: bool = True
+) -> object:
     """One fixture row's Structured Column, composed through the codec.
 
     Each document-resident member is authored in the row under its own member
@@ -270,7 +271,15 @@ def _fixture_document(shape: DocumentShape, row: Mapping[str, object]) -> object
     omitted key stays absent, an authored null becomes JSON null, and a `many`
     occurrence always contributes its array.
     """
-    return encode_document(shape, _fixture_values(shape, row))
+    encoded = encode_document(shape, _fixture_values(shape, row))
+    if not preserve_unknown:
+        return encoded
+    declared = {member.name for member in shape.members}
+    unknown = {name: value for name, value in row.items() if name not in declared}
+    if not unknown:
+        return encoded
+    canonical = encode_wire(JSON, decode_wire(JSON, cast("WireValue", unknown)))
+    return {**encoded, **cast("Mapping[str, object]", canonical)}
 
 
 def _fixture_values(shape: DocumentShape, row: Mapping[str, object]) -> dict[str, Presence]:
@@ -297,11 +306,10 @@ def _fixture_occurrence(member: Occurrence, raw: object) -> object:
         source = cast("Sequence[object]", raw)
         if any(not isinstance(element, Mapping) for element in source):
             raise ValueError(f"{member.name}: every many occurrence element must be a mapping")
-        elements = [
-            _fixture_values(member.shape, cast("Mapping[str, object]", element))
+        return [
+            _fixture_document(member.shape, cast("Mapping[str, object]", element))
             for element in source
         ]
-        return encode_many(member.shape, elements)
     if not isinstance(raw, Mapping):
         return raw
     return _fixture_document(member.shape, cast("Mapping[str, object]", raw))
@@ -346,7 +354,7 @@ def _fixture_insert(
     for slot in view.columns:
         if isinstance(slot.contributor, RelationalDocument):
             columns.append(dialect.quote(slot.column.name))
-            binds.append(JsonDocument(_fixture_document(shape, row)))
+            binds.append(JsonDocument(_fixture_document(shape, row, preserve_unknown=False)))
             continue
         member = _fixture_member(model, slot)
         if member is None:
