@@ -113,18 +113,18 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find(corp
     # (read-your-own-writes for UPDATE; `m-opt-lock`'s prior-observation rule).
     case = corpus_case("m-unit-work-005-ryow-update.yaml")
     observe, write, find = case.scenario
-    assert observe["expectRows"] == [{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}]
+    assert observe["expectRows"] == [{"id": 1, "owner": "Ada", "balance": "100.00", "version": 1}]
     # The write step carries the structured keyed buffer: a single keyed UPDATE of
     # account 1 (no row-carried version — the advance derives from the observing
     # find), its golden SQL unchanged.
     (instruction,) = write["write"]
     assert instruction["mutation"] == "update"
     assert instruction["entity"] == "parallax.compatibility.Account"
-    assert instruction["rows"] == [{"id": 1, "balance": 175.00}]
+    assert instruction["rows"] == [{"id": 1, "balance": "175.00"}]
     assert write["statements"][0]["sql"]["postgres"].startswith("update account set")
     assert "objectQuery" in find
     # The dependent find asserts the flushed new balance/version (the RYOW observable).
-    assert find["expectRows"] == [{"id": 1, "owner": "Ada", "balance": 175.00, "version": 2}]
+    assert find["expectRows"] == [{"id": 1, "owner": "Ada", "balance": "175.00", "version": 2}]
     assert_judged(case)
 
 
@@ -134,7 +134,7 @@ def test_read_your_own_writes_delete_scenario_observes_absence(corpus_case) -> N
     # (read-your-own-writes for DELETE; `m-opt-lock`'s prior-observation rule).
     case = corpus_case("m-unit-work-006-ryow-delete.yaml")
     observe, write, find = case.scenario
-    assert observe["expectRows"] == [{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}]
+    assert observe["expectRows"] == [{"id": 3, "owner": "Grace", "balance": "10.00", "version": 1}]
     # The keyed DELETE of account 3 is gated on the observed version under the
     # case's default preference (the observation licenses the write; the gate
     # follows the target's own Effective Concurrency Strategy).
@@ -161,7 +161,7 @@ def test_insert_update_combining_scenario_emits_exactly_one_insert(corpus_case) 
     sql = statement["sql"]["postgres"]
     assert sql.startswith("insert into account") and "update" not in sql
     # The single INSERT carries the FINAL (post-combine) balance, not the initial one.
-    assert statement["binds"] == [8, "Turing", 99.00, 1]
+    assert statement["binds"] == [8, "Turing", "99.00", 1]
     assert_judged(case)
 
 

@@ -54,21 +54,20 @@ _ENGINE_GAP_CASE = (
 )
 
 
-# The case-format write boundary is the sole place corpus YAML's numeric Decimal
-# spelling and synthetic managed carriers are normalized before strict Wire
-# preparation. The tests below exercise that seam directly; classification,
-# validation, and retained ownership remain assertions about its PreparedWrite
-# result or the core producer's own exception.
+# The case-format boundary canonicalizes synthetic managed carriers before strict
+# Wire preparation. Corpus-authored values already use canonical Wire carriers;
+# classification, validation, and retained ownership remain assertions about its
+# PreparedWrite result or the core producer's own exception.
 
 
-def test_case_write_adapter_normalizes_a_case_decimal_number() -> None:
+def test_case_write_adapter_accepts_a_canonical_case_decimal() -> None:
     instruction = instructions.deserialize(
         case_format.safe_load_yaml(
             """
 mutation: insert
 entity: parallax.compatibility.Account
 rows:
-  - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+  - { id: 7, owner: Newton, balance: "5.00", version: 1 }
 """
         )
     )
@@ -77,14 +76,14 @@ rows:
     assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
 
 
-def test_case_write_adapter_preserves_decimal_digits_beyond_binary_float_precision() -> None:
+def test_case_write_adapter_preserves_canonical_decimal_digits() -> None:
     instruction = instructions.deserialize(
         case_format.safe_load_yaml(
             """
 mutation: insert
 entity: parallax.compatibility.Account
 rows:
-  - { id: 7, owner: Newton, balance: 1234567890123456.78, version: 1 }
+  - { id: 7, owner: Newton, balance: "1234567890123456.78", version: 1 }
 """
         )
     )
@@ -106,7 +105,7 @@ def test_case_write_adapter_accepts_canonical_wire_and_managed_decimal_values() 
         assert prepared.rows[0]["balance"] == decimal.Decimal("5.00")
 
 
-def test_case_write_adapter_normalizes_predicate_operands_and_assignments() -> None:
+def test_case_write_adapter_accepts_canonical_predicate_operands_and_assignments() -> None:
     instruction = instructions.deserialize(
         case_format.safe_load_yaml(
             """
@@ -114,9 +113,9 @@ mutation: update
 target:
   entity: parallax.compatibility.Account
   predicate:
-    lessThan: { attr: parallax.compatibility.Account.balance, value: 200.00 }
+    lessThan: { attr: parallax.compatibility.Account.balance, value: "200.00" }
 assignments:
-  - { attr: parallax.compatibility.Account.balance, value: 0.00 }
+  - { attr: parallax.compatibility.Account.balance, value: "0.00" }
 """
         )
     )
@@ -140,12 +139,12 @@ def test_case_write_adapter_normalizes_managed_temporal_bounds() -> None:
     assert prepared.bounds.valid_from == dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
 
-def test_case_write_adapter_normalizes_case_temporal_bounds() -> None:
+def test_case_write_adapter_accepts_canonical_case_temporal_bounds() -> None:
     instruction = instructions.KeyedWrite(
         "update",
         "parallax.compatibility.Position",
-        ({"id": 1, "value": 5.00},),
-        valid_from="2024-02-01T00:00:00+00:00",
+        ({"id": 1, "value": "5.00"},),
+        valid_from="2024-02-01T00:00:00.000000Z",
     )
     prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["position"])
     assert isinstance(prepared, PreparedKeyedWrite)
@@ -163,20 +162,20 @@ def test_case_write_adapter_leaves_malformed_values_for_core_classification() ->
     assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
-def test_case_query_adapter_normalizes_declared_carriers_before_core_validation() -> None:
+def test_case_query_adapter_preserves_canonical_carriers_before_core_validation() -> None:
     model = models.load_models()["position"]
     query = deserialize_query(
         case_format.safe_load_yaml(
             """
 target: parallax.compatibility.Position
 predicate:
-  lessThan: { attr: parallax.compatibility.Position.value, value: 200.00 }
+  lessThan: { attr: parallax.compatibility.Position.value, value: "200.00" }
 temporal:
   transaction-time: { asOf: latest }
   valid-time:
     asOfRange:
-      start: 2024-02-01T00:00:00+00:00
-      end: 2024-03-01T00:00:00+00:00
+      start: 2024-02-01T00:00:00.000000Z
+      end: 2024-03-01T00:00:00.000000Z
 """
         )
     )

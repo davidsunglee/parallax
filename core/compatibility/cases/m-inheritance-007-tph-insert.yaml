@@ -24,13 +24,13 @@ when:
       statements: 1
       note: insert a CardPayment; kind='card' is derived from tagValue, not authored
       rows:
-        - { id: 10, amount: 200.00, cardNetwork: Mastercard }
+        - { id: 10, amount: "200.00", cardNetwork: Mastercard }
 then:
   statements:
     - sql:
         postgres: insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)
-      binds: [10, card, 200.00, Mastercard]
+      binds: [10, card, "200.00", Mastercard]
   tableState:
     payment:
-      - { id: 10, kind: card, amount: 200.00, card_network: Mastercard, tendered: null }
+      - { id: 10, kind: card, amount: "200.00", card_network: Mastercard, tendered: null }
   roundTrips: 1

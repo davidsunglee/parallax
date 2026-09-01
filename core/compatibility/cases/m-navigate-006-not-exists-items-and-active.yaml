@@ -24,5 +24,5 @@ then:
       binds: [true]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id not in (select order_id from order_item) and active = true
   rows:
-    - { id: 4, name: Margaret, sku: null, qty: 20, price: 40.00, active: true, ordered_on: 2024-04-20 }
+    - { id: 4, name: Margaret, sku: null, qty: 20, price: "40.00", active: true, ordered_on: 2024-04-20 }
   roundTrips: 1

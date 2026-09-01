@@ -15,6 +15,7 @@ from typing import cast
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY_LITERAL, JSON, ManagedValue, NeutralType, TemporalBound
 from parallax.core.db_port import Row
+from parallax.core.dialect import projection_result_key
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -35,6 +36,7 @@ from parallax.core.storage_layout import RelationalDocument, TableLayout
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ObjectKey
 from parallax.core.wire import (
+    WireDecodingError,
     WireValue,
     decode_canonical_wire,
     encode_wire,
@@ -77,6 +79,10 @@ class ActualWireProjection:
         ] = {}
         for member in (*attributes, *value_objects):
             by_column.setdefault(member.storage.name, {})[member.identity] = member
+            if isinstance(member, AttributeMetadata):
+                by_column.setdefault(projection_result_key(member.storage.name, member.type), {})[
+                    member.identity
+                ] = member
         selected: dict[str, AttributeMetadata | ValueObjectMetadata] | None = None
         projected: Row = {}
         for name, value in row.items():
@@ -95,11 +101,22 @@ class ActualWireProjection:
                         item.storage.name: item
                         for item in (*concrete_attributes, *concrete_value_objects)
                     }
+                    selected.update(
+                        {
+                            projection_result_key(item.storage.name, item.type): item
+                            for item in concrete_attributes
+                        }
+                    )
                 member = selected.get(name)
             else:
                 member = None
             if isinstance(member, AttributeMetadata):
-                projected[name] = self.scalar(member, value)
+                result_key = projection_result_key(member.storage.name, member.type)
+                projected[name] = (
+                    self.published_scalar(member, value)
+                    if name == result_key and result_key != member.storage.name
+                    else self.scalar(member, value)
+                )
             elif member is not None:
                 projected[name] = self.value_object(member, value)
             else:
@@ -171,17 +188,20 @@ class ActualWireProjection:
         return encode_wire(member.type, managed)
 
     def published_value_object(self, occurrence: _ValueObject, value: object) -> object:
-        """Validate a Value Object document already published by a Wire read."""
+        """Project a provider-observed Value Object without repairing corruption."""
         if value is None:
             return None
+        canonical = encode_wire(JSON, decode_canonical_wire(JSON, cast("WireValue", value)))
         if occurrence.multiplicity is Multiplicity.MANY:
-            if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-                raise ValueError(
-                    f"{occurrence.identity.path}: a many occurrence requires a sequence"
-                )
-            source = cast("Sequence[object]", value)
+            if not isinstance(canonical, Sequence) or isinstance(
+                canonical, (str, bytes, bytearray)
+            ):
+                return canonical
+            source = cast("Sequence[object]", canonical)
             return [self._published_value_object_element(occurrence, item) for item in source]
-        return self._published_value_object_element(occurrence, value)
+        if not isinstance(canonical, Mapping):
+            return canonical
+        return self._published_value_object_element(occurrence, canonical)
 
     def table_row(self, layout: TableLayout, row: Mapping[str, object]) -> Row:
         """One complete physical table row in its compiled slot sequence."""
@@ -270,8 +290,12 @@ class ActualWireProjection:
                 if item is None:
                     projected[name] = None
                 else:
-                    managed = decode_canonical_wire(leaf.type, cast("WireValue", item))
-                    projected[name] = encode_wire(leaf.type, managed)
+                    try:
+                        managed = decode_canonical_wire(leaf.type, cast("WireValue", item))
+                    except WireDecodingError:
+                        projected[name] = item
+                    else:
+                        projected[name] = encode_wire(leaf.type, managed)
                 continue
             child = nested.get(name)
             if child is not None:

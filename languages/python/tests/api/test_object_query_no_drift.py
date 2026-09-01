@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -69,7 +70,6 @@ from parallax.conformance.read_models import (
 from parallax.conformance.read_stories import READ_STORIES
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.conformance.vo_models import (
-    CONTACT_MODEL,
     Branch,
     Contact,
     ContactPhone,
@@ -218,12 +218,11 @@ def test_expression_rejects_bool_misuse() -> None:
 
 # --------------------------------------------------------------------------- #
 # Rejected-case proofs (m-predicate / m-navigate / m-value-object): a rejected #
-# case's `when.objectQuery` never reaches execution — the SAME model-aware     #
-# validation the corpus's own rejected lane calls (m-conformance-adapter) runs #
-# at the shared read gate rather than at `Entity.where`, because authoring     #
-# reaches no model. No-drift here is two proofs: the idiomatic query builds    #
-# the case's own `when.objectQuery`, and executing it raises                   #
-# `ModelRejectedError` naming the EXACT `then.rejectedRule`.               #
+# case's `when.objectQuery` never reaches execution. Cases whose native values #
+# and operators are valid build the same document and reach model-aware        #
+# validation. Serialized-only carrier/operator failures are rejected by the   #
+# fluent authoring surface as `query-expression-invalid`; their corpus rules   #
+# remain graded by the serialized rejected lane.                               #
 # --------------------------------------------------------------------------- #
 # Each entry builds the whole rejected query, naming the same queried target the
 # case does — a rejected case now carries its own `target` rather than falling
@@ -236,19 +235,8 @@ def test_expression_rejects_bool_misuse() -> None:
 # is that no static parameter can decide it — the model is what says whether
 # `Dog` is a subtype of the queried position at all.
 REJECTED_BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
-    "m-predicate-039": lambda: Order.where(Order.price.between(50.75, 20.00)),
+    "m-predicate-039": lambda: Order.where(Order.price.between(Decimal("50.75"), Decimal("20.00"))),
     "m-predicate-040": lambda: vm.Customer.where(vm.Customer.address.geo.elevation.between(12, 5)),
-    "m-predicate-041": lambda: vm.Customer.where(
-        vm.Customer.address.phones.exists(vm.Phone.number.between(42, 7))
-    ),
-    "m-predicate-042": lambda: vm.Customer.where(
-        vm.Customer.address.geo.elevation.starts_with("1")
-    ),
-    "m-predicate-043": lambda: Contact.where(Contact.address.phones.expires.starts_with("2024")),
-    "m-predicate-044": lambda: Contact.where(
-        Contact.address.phones.exists(ContactPhone.expires.ends_with("-01"))
-    ),
-    "m-value-object-038": lambda: vm.Customer.where(vm.Customer.address.city == 42),
     # The animal-owner mirror composes `Person` alongside the family, so a
     # predicate over the owner is CONSTRUCTIBLE at the family position and is
     # refused for naming an entity outside it rather than for naming nothing.
@@ -286,11 +274,6 @@ def test_the_rejected_query_builds_the_corpus_object_query(case_id: str) -> None
 REJECTED_MODELS: dict[str, DomainModel] = {
     "m-predicate-039": ORDERS_MODEL,
     "m-predicate-040": vm.CUSTOMER_MODEL,
-    "m-predicate-041": vm.CUSTOMER_MODEL,
-    "m-predicate-042": vm.CUSTOMER_MODEL,
-    "m-predicate-043": CONTACT_MODEL,
-    "m-predicate-044": CONTACT_MODEL,
-    "m-value-object-038": vm.CUSTOMER_MODEL,
     "m-predicate-045": ANIMAL_OWNER_MODEL,
     "m-inheritance-040": ANIMAL_OWNER_MODEL,
     "m-inheritance-041": sm.ANIMAL_MODEL,
@@ -298,6 +281,26 @@ REJECTED_MODELS: dict[str, DomainModel] = {
     "m-inheritance-132": sm.ANIMAL_MODEL,
     "m-inheritance-042": sm.ANIMAL_MODEL,
 }
+
+
+AUTHORING_REJECTIONS: dict[str, Callable[[], object]] = {
+    "m-predicate-041": lambda: vm.Customer.address.phones.exists(vm.Phone.number.between(42, 7)),
+    "m-predicate-042": lambda: vm.Customer.address.geo.elevation.starts_with("1"),
+    "m-predicate-043": lambda: Contact.address.phones.expires.starts_with("2024"),
+    "m-predicate-044": lambda: Contact.address.phones.exists(ContactPhone.expires.ends_with("-01")),
+    "m-value-object-038": lambda: vm.Customer.address.city == 42,
+}
+
+
+@pytest.mark.parametrize("case_id", sorted(AUTHORING_REJECTIONS), ids=sorted(AUTHORING_REJECTIONS))
+def test_serialized_only_rejections_fail_at_native_query_authoring(case_id: str) -> None:
+    assert case_document(_CASES[case_id])["then"]["rejectedRule"] in {
+        "neutral-literal-type-mismatch",
+        "nested-string-predicate-non-string-member",
+    }
+    with pytest.raises(QueryDefinitionError) as caught:
+        AUTHORING_REJECTIONS[case_id]()
+    assert caught.value.code == "query-expression-invalid"
 
 
 @pytest.mark.parametrize("case_id", sorted(REJECTED_BUILDERS), ids=sorted(REJECTED_BUILDERS))

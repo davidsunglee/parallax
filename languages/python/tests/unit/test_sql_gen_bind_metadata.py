@@ -127,6 +127,33 @@ def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None
     )
 
 
+def test_same_type_bind_growth_retains_one_descriptor() -> None:
+    bind_count = 4_096
+    builder = _builder()
+    for _ in range(bind_count):
+        builder.bind_managed("value", STRING)
+
+    statement = builder.finish("")
+
+    assert statement.typed_bind_spans == (_TypedBindSpan(0, bind_count, STRING, "MANAGED"),)
+
+
+def test_heterogeneous_row_growth_retains_one_descriptor_per_column() -> None:
+    row_count = 4_096
+    builder = _builder()
+    builder.bind_typed_rows(
+        (("managed", "comparison"),) * row_count,
+        ((STRING, "MANAGED"), (STRING, "COMPARISON_TEXT")),
+    )
+
+    statement = builder.finish("")
+
+    assert statement.typed_bind_spans == (
+        _RepeatedTypedBindSpan(0, 1, 2, row_count, STRING, "MANAGED"),
+        _RepeatedTypedBindSpan(1, 1, 2, row_count, STRING, "COMPARISON_TEXT"),
+    )
+
+
 def test_repeated_typed_rows_leave_nullable_none_positions_unannotated() -> None:
     builder = _builder()
     builder.bind_typed_rows(

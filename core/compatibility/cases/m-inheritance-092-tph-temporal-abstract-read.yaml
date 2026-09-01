@@ -27,14 +27,14 @@ when:
       transaction-time:
         asOf: latest
       valid-time:
-        asOf: '2024-06-01T00:00:00+00:00'
+        asOf: "2024-06-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: select t0.id, t0.kind, t0.price, t0.coupon, t0.ticker, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from instrument t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-      binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", infinity]
-  referenceSql: select id, kind, price, coupon, ticker, from_z, thru_z, in_z, out_z from instrument where from_z <= '2024-06-01T00:00:00+00:00'::timestamptz and thru_z > '2024-06-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz
+      binds: ["2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", infinity]
+  referenceSql: "select id, kind, price, coupon, ticker, from_z, thru_z, in_z, out_z from instrument where from_z <= '2024-06-01T00:00:00+00:00'::timestamptz and thru_z > '2024-06-01T00:00:00+00:00'::timestamptz and out_z = 'infinity'::timestamptz"
   rows:
-    - { id: 1, price: 100.00, coupon: 5.00, ticker: null, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, familyVariant: Bond }
-    - { id: 2, price: 200.00, coupon: null, ticker: ACME, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity, familyVariant: Stock }
+    - { id: 1, price: "100.00", coupon: "5.00", ticker: null, from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity, familyVariant: Bond }
+    - { id: 2, price: "200.00", coupon: null, ticker: ACME, from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity, familyVariant: Stock }
   roundTrips: 1

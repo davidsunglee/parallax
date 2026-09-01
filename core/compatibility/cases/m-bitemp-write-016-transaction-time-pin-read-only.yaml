@@ -31,7 +31,7 @@ when:
             value: 1
         temporal:
           transaction-time:
-            asOf: '2024-02-01T00:00:00+00:00'
+            asOf: "2024-02-01T00:00:00.000000Z"
           valid-time:
             asOf: latest
       roundTrips: 1
@@ -39,13 +39,13 @@ when:
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?
-          binds: [1, infinity, "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+          binds: [1, infinity, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
       expectRows:
-        - { pos_id: 1, acct_num: A, val: 90.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
+        - { pos_id: 1, acct_num: A, val: "90.00", from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-04-01T00:00:00.000000Z" }
     - action: mutate
       "on": 0
       set:
-        value: 999.00
+        value: "999.00"
       roundTrips: 0
       expectError: transaction-time-pin-read-only
       note: mutating a finite Transaction-Time-axis view raises transaction-time-pin-read-only and emits NO DML

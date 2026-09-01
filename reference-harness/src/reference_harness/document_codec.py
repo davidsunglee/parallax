@@ -24,7 +24,6 @@ Three things live here rather than in three consumers:
 
 from __future__ import annotations
 
-import decimal
 import json
 import re
 from typing import Any
@@ -112,8 +111,6 @@ def encode_leaf(type_spelling: str, value: Any) -> Any:
     """
     if value is None:
         return None
-    if _DECIMAL_TYPE.match(type_spelling) is not None and isinstance(value, (int, float)):
-        value = decimal.Decimal(repr(value) if isinstance(value, float) else value)
     try:
         return portable_literal.canonicalize(value, type_spelling)
     except portable_literal.PortableLiteralError as exc:

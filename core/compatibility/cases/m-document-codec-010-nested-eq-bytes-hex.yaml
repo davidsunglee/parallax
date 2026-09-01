@@ -19,7 +19,7 @@ when:
     predicate:
       nestedEq:
         path: parallax.compatibility.Sample.profile.blob
-        value: 0A1B
+        value: "0a1b"
 then:
   statements:
     - sql:

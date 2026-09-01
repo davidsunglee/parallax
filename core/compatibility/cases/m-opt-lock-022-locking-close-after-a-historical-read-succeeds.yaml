@@ -55,7 +55,7 @@ when:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ? for share of t0
           binds: [1, infinity]
       expectRows:
-        - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+        - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
     - uow: audit-then-close
       objectQuery:
         target: parallax.compatibility.Balance
@@ -65,37 +65,37 @@ when:
             value: 1
         temporal:
           transaction-time:
-            asOf: '2024-04-01T00:00:00+00:00'
+            asOf: "2024-04-01T00:00:00.000000Z"
       roundTrips: 1
       note: audit the SAME key at the past Transaction-Time instant 2024-04-01 — the superseded milestone (value 100), a DIFFERENT milestone of the same primary key
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ? for share of t0
-          binds: [1, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+          binds: [1, "2024-04-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z"]
       expectRows:
-        - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+        - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
     - uow: audit-then-close
       write:
         - mutation: update
           entity: parallax.compatibility.Balance
           rows:
-            - { id: 1, acctNum: A, value: 175.00 }
-          at: "2024-10-01T00:00:00+00:00"
+            - { id: 1, acctNum: A, value: "175.00" }
+          at: "2024-10-01T00:00:00.000000Z"
       roundTrips: 2
       note: the close is ACCEPTED and commits — no gate predicate (locking mode), addressing the milestone still open on Transaction Time rather than the historical one the audit read returned
       statements:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 1, infinity]
+          binds: ["2024-10-01T00:00:00.000000Z", 1, infinity]
         - sql:
             postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-          binds: [1, A, 175.00, "2024-10-01T00:00:00+00:00", infinity]
+          binds: [1, A, "175.00", "2024-10-01T00:00:00.000000Z", infinity]
 then:
   roundTrips: 4
   tableState:
     balance:
-      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
-      - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: "2024-10-01T00:00:00+00:00" }
-      - { bal_id: 1, acct_num: A, val: 175.00, in_z: "2024-10-01T00:00:00+00:00", out_z: infinity }
-      - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
-      - { bal_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+      - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+      - { bal_id: 1, acct_num: A, val: "175.00", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+      - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
+      - { bal_id: 3, acct_num: C, val: "50.00", in_z: "2024-03-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }

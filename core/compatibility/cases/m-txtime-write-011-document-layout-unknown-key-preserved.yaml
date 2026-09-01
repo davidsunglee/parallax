@@ -32,7 +32,7 @@ given:
     - sql: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 7
-        - "2026-01-01T00:00:00+00:00"
+        - "2026-01-01T00:00:00.000000Z"
         - infinity
         - title: Coastal Run
           crew: 6
@@ -53,19 +53,19 @@ when:
           crew: 6
           manifest:
             cargo: grain
-      at: "2026-06-01T00:00:00+00:00"
+      at: "2026-06-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: update voyage set out_z = ? where id = ? and out_z = ?
         mariadb: update voyage set out_z = ? where id = ? and out_z = ?
-      binds: ["2026-06-01T00:00:00+00:00", 7, infinity]
+      binds: ["2026-06-01T00:00:00.000000Z", 7, infinity]
     - sql:
         postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
         mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
       binds:
         - 7
-        - "2026-06-01T00:00:00+00:00"
+        - "2026-06-01T00:00:00.000000Z"
         - infinity
         - title: Coastal Return
           crew: 6
@@ -77,8 +77,8 @@ then:
   tableState:
     voyage:
       - id: 7
-        in_z: "2026-01-01T00:00:00+00:00"
-        out_z: "2026-06-01T00:00:00+00:00"
+        in_z: "2026-01-01T00:00:00.000000Z"
+        out_z: "2026-06-01T00:00:00.000000Z"
         payload:
           title: Coastal Run
           crew: 6
@@ -88,7 +88,7 @@ then:
             sealNumber: S-4021
           legs: []
       - id: 7
-        in_z: "2026-06-01T00:00:00+00:00"
+        in_z: "2026-06-01T00:00:00.000000Z"
         out_z: infinity
         payload:
           title: Coastal Return

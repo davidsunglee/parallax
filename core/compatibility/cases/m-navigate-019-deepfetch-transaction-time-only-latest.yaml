@@ -31,9 +31,9 @@ then:
     Invoice:
       - id: 100
         name: INV-100
-        txStart: "2024-01-01T00:00:00+00:00"
+        txStart: "2024-01-01T00:00:00.000000Z"
         txEnd: infinity
         lines:
-          - { id: 1000, invoiceId: 100, amount: 75.00, txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
-          - { id: 1001, invoiceId: 100, amount: 25.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
+          - { id: 1000, invoiceId: 100, amount: "75.00", txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
+          - { id: 1001, invoiceId: 100, amount: "25.00", txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity }
   roundTrips: 2

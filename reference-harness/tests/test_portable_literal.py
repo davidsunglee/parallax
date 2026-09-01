@@ -22,18 +22,18 @@ from reference_harness import portable_literal as literal
         ("float64", 2.25, 2.25, 2.25),
         ("decimal(12,2)", "10.50", decimal.Decimal("10.50"), "10.50"),
         ("string", "Ada", "Ada", "Ada"),
-        ("bytes", "0A0b", b"\x0a\x0b", "0a0b"),
+        ("bytes", "0a0b", b"\x0a\x0b", "0a0b"),
         ("date", "2026-01-15", dt.date(2026, 1, 15), "2026-01-15"),
-        ("time", "09:30", dt.time(9, 30), "09:30:00"),
+        ("time", "09:30:00", dt.time(9, 30), "09:30:00"),
         (
             "timestamp",
-            "2026-01-15T13:30:00+02:00",
+            "2026-01-15T11:30:00.000000Z",
             dt.datetime(2026, 1, 15, 11, 30, tzinfo=dt.UTC),
             "2026-01-15T11:30:00.000000Z",
         ),
         (
             "uuid",
-            "123E4567E89B12D3A456426614174000",
+            "123e4567-e89b-12d3-a456-426614174000",
             uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
             "123e4567-e89b-12d3-a456-426614174000",
         ),
@@ -65,7 +65,26 @@ def test_json_normalization_erases_authored_number_provenance() -> None:
 
 def test_canonical_decode_refuses_an_admitted_alternative() -> None:
     with pytest.raises(literal.PortableLiteralError, match="not canonical"):
-        literal.decode_canonical("0A0b", "bytes")
+        literal.decode_canonical("2026-01-15T09:30:00Z", "timestamp")
+
+
+@pytest.mark.parametrize(
+    ("spelling", "value", "reason"),
+    [
+        ("int64", "1", "type-mismatch"),
+        ("int64", 2**63, "out-of-space"),
+        ("decimal(4,2)", "-0.00", "noncanonical"),
+        ("bytes", "0A1B", "noncanonical"),
+        ("timestamp", "2026-01-15T09:30:00+00:00", "noncanonical"),
+        ("uuid", "123E4567-E89B-12D3-A456-426614174000", "noncanonical"),
+    ],
+)
+def test_public_decode_classifies_rejected_literals(
+    spelling: str, value: object, reason: str
+) -> None:
+    with pytest.raises(literal.PortableLiteralError) as exc_info:
+        literal.decode(value, spelling)
+    assert exc_info.value.reason == reason
 
 
 def test_null_is_not_a_typed_literal() -> None:

@@ -33,15 +33,15 @@ when:
       statements: 1
       note: merge-back of a detached copy whose deleted original is NOT found re-inserts it
       rows:
-        - { id: 1, owner: Ada, balance: 175.00 }
+        - { id: 1, owner: Ada, balance: "175.00" }
 then:
   statements:
     - sql:
         postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-      binds: [1, Ada, 175.00, 1]
+      binds: [1, Ada, "175.00", 1]
   tableState:
     account:
-      - { id: 1, owner: Ada, balance: 175.00, version: 1 }
-      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+      - { id: 1, owner: Ada, balance: "175.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }
   roundTrips: 1

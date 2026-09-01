@@ -13,21 +13,21 @@
 parallax.compatibility.Ledger:
   - id: 1
     acctNum: A
-    value: 100.00
-    txStart: "2024-01-01T00:00:00+00:00"
-    txEnd: "2024-06-01T00:00:00+00:00"
+    value: "100.00"
+    txStart: "2024-01-01T00:00:00.000000Z"
+    txEnd: "2024-06-01T00:00:00.000000Z"
   - id: 1
     acctNum: A
-    value: 150.00
-    txStart: "2024-06-01T00:00:00+00:00"
+    value: "150.00"
+    txStart: "2024-06-01T00:00:00.000000Z"
     txEnd: infinity
   - id: 2
     acctNum: B
-    value: 200.00
-    txStart: "2024-02-01T00:00:00+00:00"
+    value: "200.00"
+    txStart: "2024-02-01T00:00:00.000000Z"
     txEnd: infinity
   - id: 3
     acctNum: C
-    value: 50.00
-    txStart: "2024-03-01T00:00:00+00:00"
-    txEnd: "2024-08-01T00:00:00+00:00"
+    value: "50.00"
+    txStart: "2024-03-01T00:00:00.000000Z"
+    txEnd: "2024-08-01T00:00:00.000000Z"

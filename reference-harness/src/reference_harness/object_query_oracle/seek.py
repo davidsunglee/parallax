@@ -501,7 +501,7 @@ def _hoisted_range(term: ContinuationTerm, coordinate: Any) -> ComposedSeek:
 
 
 def _comparison_leaf(term: ContinuationTerm, comparator: str, coordinate: Any) -> ComposedSeek:
-    canonical = portable_literal.canonicalize(coordinate, term.neutral_type)
+    canonical = portable_literal.canonicalize_observed(coordinate, term.neutral_type)
     return ComposedSeek(f"{term.compared} {comparator} ?", (*term.path_binds, canonical))
 
 

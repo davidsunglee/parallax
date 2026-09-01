@@ -3950,6 +3950,35 @@
       ]
     }
   },
+  "models/stream-coordinates.yaml": {
+    "stream_coordinate": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.StreamCoordinate"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.StreamCoordinate.id",
+          "declaringOwner": "parallax.compatibility.StreamCoordinate",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.StreamCoordinate"
+          ],
+          "column": "coordinates",
+          "contributor": "relationalDocument:parallax.compatibility.StreamCoordinate",
+          "declaringOwner": "parallax.compatibility.StreamCoordinate",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/subscriber.yaml": {
     "subscriber": {
       "columns": [

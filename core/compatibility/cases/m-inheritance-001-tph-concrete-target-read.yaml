@@ -23,6 +23,6 @@ then:
       binds: [card]
   referenceSql: select id, amount, card_network from payment where kind = 'card'
   rows:
-    - { id: 1, amount: 100.00, card_network: Visa }
-    - { id: 2, amount: 50.00, card_network: Amex }
+    - { id: 1, amount: "100.00", card_network: Visa }
+    - { id: 2, amount: "50.00", card_network: Amex }
   roundTrips: 1

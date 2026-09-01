@@ -48,9 +48,9 @@ then:
   referenceSql: select id, title, folder_id, currency, amount_due, null as body, null as paid_amount, 'Invoice' as family_variant from invoice union all select id, title, folder_id, currency, null as amount_due, null as body, paid_amount, 'Receipt' as family_variant from receipt union all select id, title, folder_id, null as currency, null as amount_due, body, null as paid_amount, 'Memo' as family_variant from memo
   graph:
     Document:
-      - { id: 1, title: Invoice-A, folderId: 100, currency: USD, amountDue: 120.00, familyVariant: Invoice }
-      - { id: 2, title: Invoice-B, folderId: 101, currency: EUR, amountDue: 80.00, familyVariant: Invoice }
-      - { id: 1, title: Receipt-A, folderId: 100, currency: USD, paidAmount: 120.00, familyVariant: Receipt }
+      - { id: 1, title: Invoice-A, folderId: 100, currency: USD, amountDue: "120.00", familyVariant: Invoice }
+      - { id: 2, title: Invoice-B, folderId: 101, currency: EUR, amountDue: "80.00", familyVariant: Invoice }
+      - { id: 1, title: Receipt-A, folderId: 100, currency: USD, paidAmount: "120.00", familyVariant: Receipt }
       - id: 1
         title: Memo-A
         folderId: 102

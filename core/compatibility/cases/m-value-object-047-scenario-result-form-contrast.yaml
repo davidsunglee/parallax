@@ -93,7 +93,7 @@ when:
       expectRows:
         - sup_id: 2
           name: Baltic Traders
-          in_z: "2024-02-01T00:00:00+00:00"
+          in_z: "2024-02-01T00:00:00.000000Z"
           out_z: infinity
           address:
             street: 5 Port Road
@@ -121,7 +121,7 @@ when:
       expectRows:
         - sup_id: 1
           name: Nordic Foods
-          in_z: "2024-06-01T00:00:00+00:00"
+          in_z: "2024-06-01T00:00:00.000000Z"
           out_z: infinity
           address:
             street: 2 New Avenue
@@ -136,14 +136,14 @@ when:
           entity: parallax.compatibility.Supplier
           predicate:
             eq: { attr: parallax.compatibility.Supplier.name, value: Nordic Foods }
-        at: "2024-10-01T00:00:00+00:00"
+        at: "2024-10-01T00:00:00.000000Z"
       roundTrips: 1
       note: close the resolved current row (out_z = at), gated on step 1's observed in_z; a Transaction-Time-only close copies no payload, so no document rides this write's read
       statements:
         - sql:
             postgres: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
             mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00"]
+          binds: ["2024-10-01T00:00:00.000000Z", 1, infinity, "2024-06-01T00:00:00.000000Z"]
     - objectQuery:
         target: parallax.compatibility.Supplier
         predicate:
@@ -152,7 +152,7 @@ when:
             value: Nordic Foods
         temporal:
           transaction-time:
-            asOf: '2024-08-01T00:00:00+00:00'
+            asOf: "2024-08-01T00:00:00.000000Z"
       roundTrips: 1
       note: >-
         verify (INSTANCE-FORM managed find, same form as step 0, address Document slot present) —
@@ -167,13 +167,13 @@ when:
         - sql:
             postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.name = ? and t0.in_z <= ? and t0.out_z > ?
             mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.name = ? and t0.in_z <= ? and t0.out_z > ?
-          binds: [Nordic Foods, "2024-08-01T00:00:00+00:00", "2024-08-01T00:00:00+00:00"]
-      referenceSql: select sup_id, name, in_z, out_z, address from supplier where name = 'Nordic Foods' and in_z <= '2024-08-01T00:00:00+00:00' and out_z > '2024-08-01T00:00:00+00:00'
+          binds: [Nordic Foods, "2024-08-01T00:00:00.000000Z", "2024-08-01T00:00:00.000000Z"]
+      referenceSql: "select sup_id, name, in_z, out_z, address from supplier where name = 'Nordic Foods' and in_z <= '2024-08-01T00:00:00+00:00' and out_z > '2024-08-01T00:00:00+00:00'"
       expectRows:
         - sup_id: 1
           name: Nordic Foods
-          in_z: "2024-06-01T00:00:00+00:00"
-          out_z: "2024-10-01T00:00:00+00:00"
+          in_z: "2024-06-01T00:00:00.000000Z"
+          out_z: "2024-10-01T00:00:00.000000Z"
           address:
             street: 2 New Avenue
             city: Bergen

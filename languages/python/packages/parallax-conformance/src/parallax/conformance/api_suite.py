@@ -1200,6 +1200,15 @@ _VO_PORTABLE_LITERAL_UNREACHABLE_REASON: Final[str] = (
     "directly; there is no idiomatic spelling that routes a wire literal through `tx.insert`"
 )
 
+_VO_WIRE_INTEGER_OUT_OF_SPACE_UNREACHABLE_REASON: Final[str] = (
+    "the case authors an out-of-range WIRE integer at `Contact.id`, while the typed "
+    "surface accepts only an already-constructed native `int64` member. Pydantic rejects "
+    "the value while constructing `Contact`, before `tx.insert` can exercise the serialized "
+    "`decode_wire` classification. The conformance rejected lane and m-wire codec tests grade "
+    "the normative `neutral-literal-out-of-space` result; no idiomatic Typed spelling can "
+    "route this authored Wire number through the write verb"
+)
+
 _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
     "`ContactAddress(street=42, ...)` raises Pydantic's own `ValidationError` (a `str` "
     "field never coerces an `int`) before the instance can even be constructed, let alone "
@@ -1643,6 +1652,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-072": _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON,
     "m-value-object-073": _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON,
     "m-value-object-074": _VO_PORTABLE_LITERAL_UNREACHABLE_REASON,
+    "m-value-object-075": _VO_WIRE_INTEGER_OUT_OF_SPACE_UNREACHABLE_REASON,
     # -- m-value-object: remaining write-family siblings --------------------- #
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,

@@ -45,7 +45,7 @@ then:
         name: Ada
         sku: A-100
         qty: 5
-        price: 10.50
+        price: "10.50"
         active: true
         orderedOn: 2024-01-05
         items:
@@ -59,7 +59,7 @@ then:
               name: Ada
               sku: A-100
               qty: 5
-              price: 10.50
+              price: "10.50"
               active: true
               orderedOn: 2024-01-05
           - id: 11
@@ -72,7 +72,7 @@ then:
               name: Ada
               sku: A-100
               qty: 5
-              price: 10.50
+              price: "10.50"
               active: true
               orderedOn: 2024-01-05
   roundTrips: 2

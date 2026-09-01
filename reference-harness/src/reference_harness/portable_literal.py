@@ -1,10 +1,9 @@
-"""The portable literal grammar of each Neutral Type, and its decode.
+"""The independent admitted and canonical Wire grammar of each Neutral Type.
 
-`m-document-codec` gives every Neutral Type exactly one document spelling, and
-`m-case-format` widens that to the spellings a CASE may author: hexadecimal in
-either digit case, a `uuid`'s hyphens optional, a `time` with its seconds
-omitted, and a `timestamp` at any UTC offset. Those two lists are the whole
-grammar, so it is written out here rather than delegated to a host parser.
+The harness derives expected values from the normative m-wire matrix without
+importing the production codec. Public decoding accepts only the matrix's
+admitted grammar; canonical decoding additionally requires the codec's one
+output spelling.
 
 Delegating is the failure this module exists to prevent (ADR 0016): a host
 parser's incidental surface — Python's ``uuid.UUID`` also taking brace-wrapped
@@ -34,23 +33,27 @@ import re
 import struct
 import uuid
 from fractions import Fraction
-from typing import Any
+from typing import Any, Never
 
 _DATE = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})$")
-_TIME = re.compile(r"^([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]+))?)?$")
+_LOOSE_DATE = re.compile(r"^([0-9]{1,4})-([0-9]{1,2})-([0-9]{1,2})$")
+_TIME = re.compile(r"^([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]{3}|[0-9]{6}))?$")
+_LOOSE_TIME = re.compile(r"^([0-9]{1,2}):([0-9]{1,2})(?::([0-9]{1,2})(?:\.([0-9]+))?)?$")
 _TIMESTAMP = re.compile(
     r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})"
-    r"(?:\.([0-9]+))?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    r"(?:\.([0-9]{3}|[0-9]{6}))?(Z|[+-][0-9]{2}:[0-9]{2})$"
 )
+_LOOSE_TIMESTAMP = re.compile(
+    r"^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})T([0-9]{1,2}):([0-9]{1,2}):"
+    r"([0-9]{1,2})(?:\.([0-9]+))?(Z|[+-][0-9]{2}:[0-9]{2})$"
+)
+_UUID_CANONICAL = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _UUID_HYPHENATED = re.compile(r"^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
 _UUID_BARE = re.compile(r"^[0-9a-fA-F]{32}$")
 
 # A `-` names a value BELOW zero, so a negative spelling carries a magnitude that
 # is not zero: `-0` and `-0.0` name zero, which has the one spelling `0` / `0.0`.
-_DECIMAL = re.compile(
-    r"^(?:(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
-    r"|-(?:0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(?:\.[0-9]+)?))$"
-)
+_DECIMAL_NUMBER = re.compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 # A value beyond this many fractional digits is only in space when the extra
@@ -67,6 +70,14 @@ _DECIMAL_TYPE = re.compile(r"^decimal\(([0-9]+),\s*([0-9]+)\)$")
 class PortableLiteralError(ValueError):
     """A value is not an admitted or canonical literal of its declared type."""
 
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def _fail(reason: str, value: object, neutral_type: str) -> Never:
+    raise PortableLiteralError(reason, f"{value!r} is {reason} for {neutral_type}")
+
 
 def decode(value: Any, neutral_type: str) -> Any:
     """Decode one admitted portable literal under ``neutral_type``.
@@ -75,63 +86,86 @@ def decode(value: Any, neutral_type: str) -> Any:
     table. It deliberately imports no production package.
     """
     if value is None:
-        raise PortableLiteralError("null is enclosing presence, not a typed literal")
+        raise PortableLiteralError(
+            "type-mismatch", "null is enclosing presence, not a typed literal"
+        )
     decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
     if decimal_type is not None:
         precision, scale = (int(part) for part in decimal_type.groups())
-        if isinstance(value, str):
-            parsed = decode_decimal(value)
-        elif isinstance(value, AuthoredNumber):
-            parsed = decimal.Decimal(value.literal)
-        elif isinstance(value, (int, float)) and not isinstance(value, bool):
-            parsed = decimal.Decimal(repr(value) if isinstance(value, float) else value)
-        else:
-            parsed = None
-        if parsed is not None and _decimal_in_space(parsed, precision, scale):
-            return parsed.copy_abs() if parsed.is_zero() else parsed
-    elif neutral_type == "boolean" and isinstance(value, bool):
-        return value
+        if not isinstance(value, str):
+            _fail("type-mismatch", value, neutral_type)
+        text = str(value)
+        if _DECIMAL_NUMBER.fullmatch(text) is None:
+            _fail("type-mismatch", value, neutral_type)
+        parsed = decimal.Decimal(text)
+        if not _decimal_in_space(parsed, precision, scale):
+            _fail("out-of-space", value, neutral_type)
+        managed = parsed.copy_abs() if parsed.is_zero() else parsed
+        canonical = _exact_decimal(managed, scale)
+        if canonical != text:
+            _fail("noncanonical", value, neutral_type)
+        return managed
+    if neutral_type == "boolean":
+        if isinstance(value, bool):
+            return value
+        _fail("type-mismatch", value, neutral_type)
     elif neutral_type in ("int32", "int64"):
         bound = 2**31 if neutral_type == "int32" else 2**63
-        if isinstance(value, int) and not isinstance(value, bool) and -bound <= value < bound:
-            return int(value)
+        number = _source_decimal(value)
+        if number is None or not number.is_finite() or number != number.to_integral_value():
+            _fail("type-mismatch", value, neutral_type)
+        managed = int(number)
+        if not -bound <= managed < bound:
+            _fail("out-of-space", value, neutral_type)
+        return managed
     elif neutral_type in ("float32", "float64"):
+        if _source_decimal(value) is None:
+            _fail("type-mismatch", value, neutral_type)
         decoded = decode_number(value, binary32=neutral_type == "float32")
-        if decoded is not None:
-            return decoded
-    elif neutral_type == "string" and isinstance(value, str):
+        if decoded is None:
+            _fail("out-of-space", value, neutral_type)
+        return decoded
+    elif neutral_type == "string":
+        if not isinstance(value, str):
+            _fail("type-mismatch", value, neutral_type)
         try:
             value.encode("utf-8")
         except UnicodeEncodeError:
-            pass
-        else:
-            return value
+            _fail("out-of-space", value, neutral_type)
+        return value
     elif neutral_type == "bytes":
-        if isinstance(value, (bytes, bytearray, memoryview)):
-            return bytes(value)
-        if isinstance(value, str):
-            decoded = decode_octets(value)
-            if decoded is not None:
-                return decoded
-    elif neutral_type == "date" and isinstance(value, str):
-        decoded = decode_date(value)
-        if decoded is not None:
-            return decoded
-    elif neutral_type == "time" and isinstance(value, str):
-        decoded = decode_time(value)
-        if decoded is not None:
-            return decoded
-    elif neutral_type == "timestamp" and isinstance(value, str):
-        decoded = decode_timestamp(value)
-        if decoded is not None:
-            return decoded.astimezone(datetime.UTC)
-    elif neutral_type == "uuid" and isinstance(value, str):
-        decoded = decode_uuid(value)
-        if decoded is not None:
-            return decoded
-    elif neutral_type == "json" and _json_member(value):
-        return _copy_json(value)
-    raise PortableLiteralError(f"{value!r} names no {neutral_type} value")
+        if not isinstance(value, str):
+            _fail("type-mismatch", value, neutral_type)
+        text = str(value)
+        if len(text) % 2 or any(character not in _HEX_DIGITS for character in text):
+            _fail("type-mismatch", value, neutral_type)
+        if text != text.lower():
+            _fail("noncanonical", value, neutral_type)
+        return bytes.fromhex(text)
+    elif neutral_type == "date":
+        return _decode_date_classified(value, neutral_type)
+    elif neutral_type == "time":
+        return _decode_time_classified(value, neutral_type)
+    elif neutral_type == "timestamp":
+        return _decode_timestamp_classified(value, neutral_type)
+    elif neutral_type == "uuid":
+        if not isinstance(value, str):
+            _fail("type-mismatch", value, neutral_type)
+        text = str(value)
+        if _UUID_CANONICAL.fullmatch(text) is not None:
+            return uuid.UUID(text)
+        if _UUID_HYPHENATED.fullmatch(text) is not None or _UUID_BARE.fullmatch(text) is not None:
+            _fail("noncanonical", value, neutral_type)
+        _fail("type-mismatch", value, neutral_type)
+    elif neutral_type == "json":
+        if value is None:
+            _fail("type-mismatch", value, neutral_type)
+        if _json_member(value):
+            return _copy_json(value)
+        _fail("out-of-space" if _json_shape(value) else "type-mismatch", value, neutral_type)
+    raise PortableLiteralError(
+        "type-mismatch", f"{neutral_type!r} names no neutral type this table covers"
+    )
 
 
 def decode_canonical(value: Any, neutral_type: str) -> Any:
@@ -144,28 +178,28 @@ def decode_canonical(value: Any, neutral_type: str) -> Any:
         else _same_json_scalar(value, canonical)
     )
     if not equal:
-        raise PortableLiteralError(f"{value!r} is not canonical for {neutral_type}")
+        raise PortableLiteralError("noncanonical", f"{value!r} is not canonical for {neutral_type}")
     return managed
 
 
 def encode(value: Any, neutral_type: str) -> Any:
     """Encode an existing managed value as the declared type's canonical literal."""
     if value is None:
-        raise PortableLiteralError("null is enclosing presence, not a typed literal")
+        raise PortableLiteralError(
+            "type-mismatch", "null is enclosing presence, not a typed literal"
+        )
     decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
     if decimal_type is not None and isinstance(value, decimal.Decimal):
         precision, scale = (int(part) for part in decimal_type.groups())
         if _decimal_in_space(value, precision, scale):
-            if value.is_zero():
-                value = value.copy_abs()
-            return f"{value:.{scale}f}"
+            return _exact_decimal(value.copy_abs() if value.is_zero() else value, scale)
     elif neutral_type == "boolean" and isinstance(value, bool):
         return value
     elif neutral_type in ("int32", "int64"):
         return decode(value, neutral_type)
     elif neutral_type in ("float32", "float64"):
         target = decode_number(value, binary32=neutral_type == "float32")
-        if target is not None:
+        if isinstance(value, float) and target is not None and target == value:
             return _shortest_float(target, binary32=neutral_type == "float32")
     elif neutral_type == "string" and isinstance(value, str):
         return decode(value, neutral_type)
@@ -189,7 +223,7 @@ def encode(value: Any, neutral_type: str) -> Any:
         return str(value)
     elif neutral_type == "json" and _json_member(value):
         return _copy_json(value)
-    raise PortableLiteralError(f"{value!r} is not a managed {neutral_type} value")
+    raise PortableLiteralError("type-mismatch", f"{value!r} is not a managed {neutral_type} value")
 
 
 def canonicalize(value: Any, neutral_type: str) -> Any:
@@ -204,9 +238,20 @@ def values_equal(
     left: Any, right: Any, neutral_type: str, tolerance: decimal.Decimal | None
 ) -> bool:
     """Compare after two independent declared-type canonical projections."""
+    if type(left) is type(right) and left == right:
+        return True
+    decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
+    if tolerance is not None and decimal_type is not None:
+        try:
+            one = left if isinstance(left, decimal.Decimal) else decode(left, neutral_type)
+            other = right if isinstance(right, decimal.Decimal) else decode(right, neutral_type)
+        except PortableLiteralError:
+            return False
+        if isinstance(one, decimal.Decimal) and isinstance(other, decimal.Decimal):
+            return abs(one - other) <= tolerance
     try:
-        one = canonicalize(left, neutral_type)
-        other = canonicalize(right, neutral_type)
+        one = canonicalize_observed(left, neutral_type)
+        other = canonicalize_observed(right, neutral_type)
     except PortableLiteralError:
         return False
     if tolerance is not None and neutral_type in (
@@ -217,6 +262,45 @@ def values_equal(
     ):
         return abs(decimal.Decimal(str(one)) - decimal.Decimal(str(other))) <= tolerance
     return _same_json(one, other)
+
+
+def canonicalize_observed(value: Any, neutral_type: str) -> Any:
+    """Project a canonical Wire or provider-observed value to canonical Wire.
+
+    Provider timestamp rows commonly expose an ISO offset string rather than a
+    managed ``datetime``. This seam is intentionally wider than authored
+    :func:`decode`; compatibility inputs still require the canonical Wire form.
+    """
+    try:
+        return canonicalize(value, neutral_type)
+    except PortableLiteralError:
+        if neutral_type == "timestamp" and isinstance(value, str):
+            try:
+                parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+            else:
+                if parsed.tzinfo is not None:
+                    return encode(parsed, neutral_type)
+        raise
+
+
+def _source_decimal(value: object) -> decimal.Decimal | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, decimal.Decimal)):
+        return None
+    if isinstance(value, (AuthoredInteger, AuthoredNumber)):
+        return decimal.Decimal(value.literal)
+    if isinstance(value, decimal.Decimal):
+        return value
+    if isinstance(value, int):
+        return decimal.Decimal(value)
+    if not math.isfinite(value):
+        return None
+    return decimal.Decimal.from_float(value)
+
+
+def _exact_decimal(value: decimal.Decimal, scale: int) -> str:
+    return format(value, f".{scale}f")
 
 
 def _decimal_in_space(value: decimal.Decimal, precision: int, scale: int) -> bool:
@@ -253,6 +337,16 @@ def _json_member(value: Any) -> bool:
         return all(_json_member(item) for item in value)
     if isinstance(value, dict):
         return all(isinstance(name, str) and _json_member(item) for name, item in value.items())
+    return False
+
+
+def _json_shape(value: Any) -> bool:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return True
+    if isinstance(value, list):
+        return all(_json_shape(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(name, str) and _json_shape(item) for name, item in value.items())
     return False
 
 
@@ -445,6 +539,25 @@ def decode_date(literal: str) -> datetime.date | None:
         return None
 
 
+def _decode_date_classified(value: object, neutral_type: str) -> datetime.date:
+    if not isinstance(value, str):
+        _fail("type-mismatch", value, neutral_type)
+    strict = _DATE.fullmatch(value)
+    if strict is not None:
+        decoded = decode_date(value)
+        if decoded is None:
+            _fail("out-of-space", value, neutral_type)
+        return decoded
+    loose = _LOOSE_DATE.fullmatch(value)
+    if loose is None:
+        _fail("type-mismatch", value, neutral_type)
+    try:
+        datetime.date(*(int(part) for part in loose.groups()))
+    except ValueError:
+        _fail("out-of-space", value, neutral_type)
+    _fail("noncanonical", value, neutral_type)
+
+
 def decode_time(literal: str) -> datetime.time | None:
     """*literal* as the wall-clock time it spells, else ``None``.
 
@@ -463,6 +576,26 @@ def decode_time(literal: str) -> datetime.time | None:
         return datetime.time(int(hour), int(minute), int(second or 0), microsecond)
     except ValueError:
         return None
+
+
+def _decode_time_classified(value: object, neutral_type: str) -> datetime.time:
+    if not isinstance(value, str):
+        _fail("type-mismatch", value, neutral_type)
+    decoded = decode_time(value)
+    if decoded is not None:
+        return decoded
+    loose = _LOOSE_TIME.fullmatch(value)
+    if loose is None:
+        _fail("type-mismatch", value, neutral_type)
+    hour, minute, second, fraction = loose.groups()
+    microsecond = _microseconds(fraction)
+    if microsecond is None:
+        _fail("out-of-space", value, neutral_type)
+    try:
+        datetime.time(int(hour), int(minute), int(second or 0), microsecond)
+    except ValueError:
+        _fail("out-of-space", value, neutral_type)
+    _fail("noncanonical", value, neutral_type)
 
 
 def decode_timestamp(literal: str) -> datetime.datetime | None:
@@ -498,6 +631,38 @@ def decode_timestamp(literal: str) -> datetime.datetime | None:
         return None
 
 
+def _decode_timestamp_classified(value: object, neutral_type: str) -> datetime.datetime:
+    if not isinstance(value, str):
+        _fail("type-mismatch", value, neutral_type)
+    decoded = decode_timestamp(value)
+    if decoded is not None:
+        if not value.endswith("Z"):
+            _fail("noncanonical", value, neutral_type)
+        return decoded.astimezone(datetime.UTC)
+    loose = _LOOSE_TIMESTAMP.fullmatch(value)
+    if loose is None:
+        _fail("type-mismatch", value, neutral_type)
+    year, month, day, hour, minute, second, fraction, zone = loose.groups()
+    microsecond = _microseconds(fraction)
+    offset = _offset(zone)
+    if microsecond is None or offset is None:
+        _fail("out-of-space", value, neutral_type)
+    try:
+        datetime.datetime(
+            int(year),
+            int(month),
+            int(day),
+            int(hour),
+            int(minute),
+            int(second),
+            microsecond,
+            tzinfo=offset,
+        )
+    except ValueError:
+        _fail("out-of-space", value, neutral_type)
+    _fail("noncanonical", value, neutral_type)
+
+
 def decode_uuid(literal: str) -> uuid.UUID | None:
     """*literal* as the 128-bit value it spells, else ``None``.
 
@@ -521,7 +686,7 @@ def decode_decimal(literal: str) -> decimal.Decimal | None:
     not spell — and none of the leading ``+``, digit separator, or surrounding
     space a host parser might otherwise take.
     """
-    if _DECIMAL.match(literal) is None:
+    if _DECIMAL_NUMBER.fullmatch(literal) is None:
         return None
     return decimal.Decimal(literal)
 

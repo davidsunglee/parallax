@@ -441,15 +441,10 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-inheritance-128",
     }
 )
-# `m-unit-work-028` writes against CLASSIFIED stored data: Customer 6 stores
-# `address.geo` as a scalar where a `one` occurrence is declared, so the entry's own
-# resolving read publishes a hydratable classification rather than a plain node. What
-# both lanes grade is that the classification changes nothing — the emission is the
-# ordinary source-independent `set name = ?`, and the run lane's `tableState`
-# additionally shows the malformed document surviving unrewritten, so the next read
-# classifies it for the same reason. Compile-eligible because no bind depends on what
-# the read returned.
-_CLASSIFIED_SOURCE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-unit-work-028"})
+# `m-unit-work-028` writes against CLASSIFIED stored data created by out-of-band
+# physical corruption. Its single-connection setup makes it run-only; the API story
+# grades that the corruption remains classified and unrewritten across the write.
+_CLASSIFIED_SOURCE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset()
 # The cross-layout Value Object WRITE twins (`m-case-format` *Cross-layout twin
 # proofs*), one logical model authored once per Storage Layout arm. Each pair's
 # authored write and round trips are compared statically by the twin-layout gate;

@@ -63,16 +63,16 @@ then:
       binds: [1, 1, 1, 1, "2024-06-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z", 1]
   referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 1
   graphs:
-    - pin: { valid-time: "2024-01-01T00:00:00+00:00", transaction-time: "2024-01-01T00:00:00+00:00" }
+    - pin: { valid-time: "2024-01-01T00:00:00.000000Z", transaction-time: "2024-01-01T00:00:00.000000Z" }
       graph:
         Position:
-          - { id: 1, acctNum: A, value: 90.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
-    - pin: { valid-time: "2024-01-01T00:00:00+00:00", transaction-time: "2024-04-01T00:00:00+00:00" }
+          - { id: 1, acctNum: A, value: "90.00", validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: "2024-04-01T00:00:00.000000Z" }
+    - pin: { valid-time: "2024-01-01T00:00:00.000000Z", transaction-time: "2024-04-01T00:00:00.000000Z" }
       graph:
         Position:
-          - { id: 1, acctNum: A, value: 100.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: "2024-06-01T00:00:00+00:00", txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
-    - pin: { valid-time: "2024-06-01T00:00:00+00:00", transaction-time: "2024-04-01T00:00:00+00:00" }
+          - { id: 1, acctNum: A, value: "100.00", validStart: "2024-01-01T00:00:00.000000Z", validEnd: "2024-06-01T00:00:00.000000Z", txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
+    - pin: { valid-time: "2024-06-01T00:00:00.000000Z", transaction-time: "2024-04-01T00:00:00.000000Z" }
       graph:
         Position:
-          - { id: 1, acctNum: A, value: 200.00, validStart: "2024-06-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
+          - { id: 1, acctNum: A, value: "200.00", validStart: "2024-06-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
   roundTrips: 4

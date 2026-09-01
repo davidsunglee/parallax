@@ -110,7 +110,7 @@ def _opt_int(m: Mapping[str, object], key: str, where: str) -> int | None:
         return None
     if not isinstance(value, int) or isinstance(value, bool):
         raise DescriptorError(f"{where}: `{key}` must be an integer")
-    return value
+    return int(value)
 
 
 def _enum(value: str, allowed: frozenset[str], key: str, where: str) -> str:

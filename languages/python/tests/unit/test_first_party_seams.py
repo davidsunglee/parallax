@@ -211,7 +211,7 @@ def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:
     port = ScriptedPort(Transact(Read(rows=[ACCOUNT_ROW]), Write(), Read(rows=[ACCOUNT_ROW])))
 
     def fn(tx: Transaction) -> None:
-        tx.wire.update(_node(tx), {"balance": 11})
+        tx.wire.update(_node(tx), {"balance": "11.00"})
         tx.read_rows(_account_query())
 
     _run(port, fn)
@@ -236,7 +236,7 @@ def test_a_write_eliminated_before_dml_leaves_its_claim_unspent() -> None:
         snapshot = tx.wire.find(_account_query())
         claim = published_claims(snapshot)[0]
         node = snapshot.result()
-        tx.wire.update(node, {"balance": 125})
+        tx.wire.update(node, {"balance": "125.00"})
         tx.wire.update(node, {"balance": node["balance"]})
         tx.wire.insert(
             "parallax.compatibility.Account", {"id": 7, "owner": "Newton", "balance": "5.00"}
@@ -259,11 +259,11 @@ def test_a_surviving_write_spends_its_own_claim() -> None:
     def fn(tx: Transaction) -> RetainedObservation:
         snapshot = tx.wire.find(_account_query())
         claim = published_claims(snapshot)[0]
-        tx.wire.update(snapshot.result(), {"balance": 11})
+        tx.wire.update(snapshot.result(), {"balance": "11.00"})
         return claim
 
     assert _run(port, fn).consumed is True
-    assert port.calls[2] == WriteCall(UPDATE_SQL, (11, 2, 3, 1))
+    assert port.calls[2] == WriteCall(UPDATE_SQL, (Decimal("11.00"), 2, 3, 1))
 
 
 # --------------------------------------------------------------------------- #
@@ -290,7 +290,7 @@ def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do(
 
 def test_a_predicate_write_buffers_through_the_shared_predicate_seam() -> None:
     port = ScriptedPort(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
-    _run(port, lambda tx: tx.wire.update_where(_predicate_target(), {"balance": 11}))
+    _run(port, lambda tx: tx.wire.update_where(_predicate_target(), {"balance": "11.00"}))
     # A versioned target materializes: the resolving read, then one keyed write
     # per resolved row (`m-opt-lock`, ADR 0014) — the readless template is not
     # available and the Wire ingress does not invent one.

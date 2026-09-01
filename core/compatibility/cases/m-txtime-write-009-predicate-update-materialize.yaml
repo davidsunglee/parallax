@@ -46,7 +46,7 @@ when:
         predicate:
           lessThan:
             attr: parallax.compatibility.Balance.value
-            value: 250.00
+            value: "250.00"
         temporal:
           transaction-time:
             asOf: latest
@@ -54,40 +54,40 @@ when:
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.val < ? and t0.out_z = ? for share of t0
-          binds: [250.00, infinity]
+          binds: ["250.00", infinity]
       referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where val < 250.00 and out_z = 'infinity'::timestamptz for share of balance
       expectRows:
-        - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
-        - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
+        - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+        - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
     - write:
         mutation: update
         target:
           entity: parallax.compatibility.Balance
           predicate:
-            lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
+            lessThan: { attr: parallax.compatibility.Balance.value, value: "250.00" }
         assignments:
-          - { attr: parallax.compatibility.Balance.value, value: 175.00 }
-        at: "2024-10-01T00:00:00+00:00"
+          - { attr: parallax.compatibility.Balance.value, value: "175.00" }
+        at: "2024-10-01T00:00:00.000000Z"
       roundTrips: 4
       statements:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 1, infinity]
+          binds: ["2024-10-01T00:00:00.000000Z", 1, infinity]
         - sql:
             postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-          binds: [1, A, 175.00, "2024-10-01T00:00:00+00:00", infinity]
+          binds: [1, A, "175.00", "2024-10-01T00:00:00.000000Z", infinity]
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 2, infinity]
+          binds: ["2024-10-01T00:00:00.000000Z", 2, infinity]
         - sql:
             postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-          binds: [2, B, 175.00, "2024-10-01T00:00:00+00:00", infinity]
+          binds: [2, B, "175.00", "2024-10-01T00:00:00.000000Z", infinity]
     - objectQuery:
         target: parallax.compatibility.Balance
         predicate:
           lessThan:
             attr: parallax.compatibility.Balance.value
-            value: 250.00
+            value: "250.00"
         temporal:
           transaction-time:
             asOf: latest
@@ -95,10 +95,10 @@ when:
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.val < ? and t0.out_z = ? for share of t0
-          binds: [250.00, infinity]
+          binds: ["250.00", infinity]
       referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where val < 250.00 and out_z = 'infinity'::timestamptz for share of balance
       expectRows:
-        - { bal_id: 1, acct_num: A, val: 175.00, in_z: "2024-10-01T00:00:00+00:00", out_z: infinity }
-        - { bal_id: 2, acct_num: B, val: 175.00, in_z: "2024-10-01T00:00:00+00:00", out_z: infinity }
+        - { bal_id: 1, acct_num: A, val: "175.00", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
+        - { bal_id: 2, acct_num: B, val: "175.00", in_z: "2024-10-01T00:00:00.000000Z", out_z: infinity }
 then:
   roundTrips: 6

@@ -24,6 +24,12 @@ class _AuthoredInt(int):
         number.token = token
         return number
 
+    def __copy__(self) -> _AuthoredInt:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _AuthoredInt:
+        return self
+
 
 class _OutOfSpaceAuthoredInt(_AuthoredInt, ManagedValueExclusion):
     def __new__(cls, token: str) -> _OutOfSpaceAuthoredInt:
@@ -42,6 +48,12 @@ class _AuthoredFloat(float):
         number = super().__new__(cls, value)
         number.token = token
         return number
+
+    def __copy__(self) -> _AuthoredFloat:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _AuthoredFloat:
+        return self
 
 
 class _OutOfSpaceAuthoredFloat(_AuthoredFloat, ManagedValueExclusion):

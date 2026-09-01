@@ -42,7 +42,7 @@ then:
         name: Margaret
         sku: null
         qty: 20
-        price: 40.00
+        price: "40.00"
         active: true
         orderedOn: 2024-04-20
         items: []

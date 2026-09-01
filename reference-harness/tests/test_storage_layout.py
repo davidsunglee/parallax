@@ -1299,8 +1299,8 @@ def test_fixture_load_binds_absent_cells_as_none_in_entity_layout_order() -> Non
     # sibling's required column is absent from its own column list entirely.
     shared = [entry for entry in provider.loads if entry[0] == "layout_payment"]
     assert [(columns, rows) for _table, columns, rows in shared] == [
-        (["id", "kind", "amount", "card_network"], [[1, "card", 100.00, "Visa"]]),
-        (["id", "kind", "amount", "tendered"], [[2, "cash", 20.00, 25.00]]),
+        (["id", "kind", "amount", "card_network"], [[1, "card", "100.00", "Visa"]]),
+        (["id", "kind", "amount", "tendered"], [[2, "cash", "20.00", "25.00"]]),
     ]
 
 
@@ -1319,7 +1319,9 @@ def test_fixture_load_derives_each_variant_discriminator_through_its_view() -> N
 
 def test_a_fixture_row_naming_the_discriminator_is_not_an_authorable_member() -> None:
     model = _storage_layout_model()
-    rows = {"parallax.compatibility.LayoutCardPayment": [{"id": 9, "amount": 1.00, "kind": "card"}]}
+    rows = {
+        "parallax.compatibility.LayoutCardPayment": [{"id": 9, "amount": "1.00", "kind": "card"}]
+    }
     corrupted = Model(model.path, model.descriptor, fixtures=cast("Any", rows))
     with pytest.raises(ValueError, match="unknown member"):
         load_fixture_rows(corrupted, cast("Any", _RecordingProvider()))

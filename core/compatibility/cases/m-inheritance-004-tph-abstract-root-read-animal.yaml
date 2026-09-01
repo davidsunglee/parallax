@@ -25,5 +25,5 @@ then:
     - { id: 1, name: Rex, owner_id: 10, license_id: L-100, bark_volume: 7, indoor: null, tusk_length: null, familyVariant: Dog }
     - { id: 2, name: Fido, owner_id: 11, license_id: L-101, bark_volume: 3, indoor: null, tusk_length: null, familyVariant: Dog }
     - { id: 3, name: Whiskers, owner_id: 10, license_id: L-200, bark_volume: null, indoor: true, tusk_length: null, familyVariant: Cat }
-    - { id: 4, name: Tusker, owner_id: 12, license_id: null, bark_volume: null, indoor: null, tusk_length: 12.50, familyVariant: WildBoar }
+    - { id: 4, name: Tusker, owner_id: 12, license_id: null, bark_volume: null, indoor: null, tusk_length: "12.50", familyVariant: WildBoar }
   roundTrips: 1

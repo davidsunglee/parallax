@@ -22,8 +22,8 @@
 parallax.compatibility.Supplier:
   - id: 1
     name: Nordic Foods
-    txStart: "2024-01-01T00:00:00+00:00"
-    txEnd: "2024-06-01T00:00:00+00:00"
+    txStart: "2024-01-01T00:00:00.000000Z"
+    txEnd: "2024-06-01T00:00:00.000000Z"
     address:
       street: 1 Old Street
       city: Oslo
@@ -33,7 +33,7 @@ parallax.compatibility.Supplier:
         - { type: home, number: '555-0100' }
   - id: 1
     name: Nordic Foods
-    txStart: "2024-06-01T00:00:00+00:00"
+    txStart: "2024-06-01T00:00:00.000000Z"
     txEnd: infinity
     address:
       street: 2 New Avenue
@@ -44,7 +44,7 @@ parallax.compatibility.Supplier:
         - { type: work, number: '555-0200' }
   - id: 2
     name: Baltic Traders
-    txStart: "2024-02-01T00:00:00+00:00"
+    txStart: "2024-02-01T00:00:00.000000Z"
     txEnd: infinity
     address:
       street: 5 Port Road

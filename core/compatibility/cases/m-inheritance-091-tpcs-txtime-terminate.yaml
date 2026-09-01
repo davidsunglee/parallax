@@ -26,24 +26,24 @@ when:
       statements: 1
       note: open a current milestone [2024-01-01, infinity) in the concrete spot_quote table
       rows:
-        - { id: 1, price: 50.00, symbol: ACME }
-      at: "2024-01-01T00:00:00+00:00"
+        - { id: 1, price: "50.00", symbol: ACME }
+      at: "2024-01-01T00:00:00.000000Z"
     - mutation: terminate
       entity: parallax.compatibility.SpotQuote
       statements: 1
       note: close the current row in the concrete table; no tag guard, insert nothing
       rows:
         - { id: 1 }
-      at: "2024-08-01T00:00:00+00:00"
+      at: "2024-08-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)
-      binds: [1, 50.00, ACME, "2024-01-01T00:00:00+00:00", infinity]
+      binds: [1, "50.00", ACME, "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
         postgres: update spot_quote set out_z = ? where id = ? and out_z = ?
-      binds: ["2024-08-01T00:00:00+00:00", 1, infinity]
+      binds: ["2024-08-01T00:00:00.000000Z", 1, infinity]
   tableState:
     spot_quote:
-      - { id: 1, price: 50.00, symbol: ACME, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
+      - { id: 1, price: "50.00", symbol: ACME, in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
   roundTrips: 3

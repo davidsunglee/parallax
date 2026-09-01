@@ -59,7 +59,7 @@ when:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [1]
       expectRows:
-        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
     - uow: mixed-flush
       objectQuery:
         target: parallax.compatibility.Account
@@ -74,17 +74,17 @@ when:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [3]
       expectRows:
-        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
     - uow: mixed-flush
       write:
         - mutation: insert
           entity: parallax.compatibility.Account
           rows:
-            - { id: 9, owner: Noether, balance: 5.00, version: 1 }
+            - { id: 9, owner: Noether, balance: "5.00", version: 1 }
         - mutation: update
           entity: parallax.compatibility.Account
           rows:
-            - { id: 1, balance: 20.00 }
+            - { id: 1, balance: "20.00" }
         - mutation: delete
           entity: parallax.compatibility.Account
           rows:
@@ -94,10 +94,10 @@ when:
       statements:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-          binds: [9, Noether, 5.00, 1]
+          binds: [9, Noether, "5.00", 1]
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [20.00, 2, 1, 1]
+          binds: ["20.00", 2, 1, 1]
         - sql:
             postgres: delete from account where id = ? and version = ?
           binds: [3, 1]
@@ -107,15 +107,15 @@ when:
         predicate:
           lessThan:
             attr: parallax.compatibility.Account.balance
-            value: 50.00
+            value: "50.00"
       roundTrips: 1
       note: the combined net state — account 1 (20.00) + account 9 (5.00); account 3 was deleted, account 2 excluded. The group COMMITS after this, its last step.
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
-          binds: [50.00]
+          binds: ["50.00"]
       expectRows:
-        - { id: 1, owner: Ada, balance: 20.00, version: 2 }
-        - { id: 9, owner: Noether, balance: 5.00, version: 1 }
+        - { id: 1, owner: Ada, balance: "20.00", version: 2 }
+        - { id: 9, owner: Noether, balance: "5.00", version: 1 }
 then:
   roundTrips: 6

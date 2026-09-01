@@ -22,5 +22,5 @@ then:
       binds: [A, infinity]
   referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where acct_num = 'A' and out_z = 'infinity'::timestamptz
   rows:
-    - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+    - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
   roundTrips: 1

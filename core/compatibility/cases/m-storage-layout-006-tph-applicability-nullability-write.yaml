@@ -24,23 +24,23 @@ when:
       statements: 1
       note: insert a card variant; kind='card' is derived, tendered does not apply
       rows:
-        - { id: 1, amount: 100.00, cardNetwork: Visa }
+        - { id: 1, amount: "100.00", cardNetwork: Visa }
     - mutation: insert
       entity: parallax.compatibility.LayoutCashPayment
       statements: 1
       note: insert a cash variant into the same shared table; card_network does not apply
       rows:
-        - { id: 2, amount: 20.00, tendered: 25.00 }
+        - { id: 2, amount: "20.00", tendered: "25.00" }
 then:
   statements:
     - sql:
         postgres: insert into layout_payment(id, kind, amount, card_network) values (?, ?, ?, ?)
-      binds: [1, card, 100.00, Visa]
+      binds: [1, card, "100.00", Visa]
     - sql:
         postgres: insert into layout_payment(id, kind, amount, tendered) values (?, ?, ?, ?)
-      binds: [2, cash, 20.00, 25.00]
+      binds: [2, cash, "20.00", "25.00"]
   tableState:
     layout_payment:
-      - { id: 1, kind: card, amount: 100.00, card_network: Visa, tendered: null }
-      - { id: 2, kind: cash, amount: 20.00, card_network: null, tendered: 25.00 }
+      - { id: 1, kind: card, amount: "100.00", card_network: Visa, tendered: null }
+      - { id: 2, kind: cash, amount: "20.00", card_network: null, tendered: "25.00" }
   roundTrips: 2

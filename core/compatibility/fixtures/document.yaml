@@ -29,18 +29,18 @@ parallax.compatibility.Invoice:
   - id: 1
     title: Invoice-A
     currency: USD
-    amountDue: 120.00
+    amountDue: "120.00"
     folderId: 100
   - id: 2
     title: Invoice-B
     currency: EUR
-    amountDue: 80.00
+    amountDue: "80.00"
     folderId: 101
 parallax.compatibility.Receipt:
   - id: 1
     title: Receipt-A
     currency: USD
-    paidAmount: 120.00
+    paidAmount: "120.00"
     folderId: 100
 parallax.compatibility.Memo:
   - id: 1

@@ -85,8 +85,8 @@ def test_wire_codec_matrix_is_the_full_thirteen_variant_set() -> None:
 
 def test_wire_codec_row_removed_is_reported() -> None:
     markdown = _wire_markdown().replace(
-        '| `uuid` | lowercase hyphenated 8-4-4-4-12 JSON string |',
-        '| `removed` | lowercase hyphenated 8-4-4-4-12 JSON string |',
+        "| `uuid` | lowercase hyphenated 8-4-4-4-12 JSON string |",
+        "| `removed` | lowercase hyphenated 8-4-4-4-12 JSON string |",
         1,
     )
     errors = check(_core_markdown(), _descriptor_markdown(), markdown, _schema())

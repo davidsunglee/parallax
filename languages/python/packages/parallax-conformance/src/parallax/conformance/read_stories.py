@@ -50,6 +50,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Final
 
 from parallax.conformance.graph_models import Coverage, Policy
@@ -263,10 +264,11 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-navigate-018",
         "A semi-join across a temporal hop, explicitly pinned to latest",
         "policy",
-        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
+        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= Decimal("600.00"))).as_of(
             tx_time=LATEST, valid_time=LATEST
         ),
-        "query = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(\n"
+        'query = Policy.where(Policy.coverages.exists(Coverage.amount >= Decimal("600.00")))'
+        ".as_of(\n"
         "    tx_time=LATEST, valid_time=LATEST\n"
         ")",
     ),
@@ -274,12 +276,14 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "m-navigate-023",
         "The same semi-join, selecting current Valid Time and defaulting Transaction Time",
         "policy",
-        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
+        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= Decimal("600.00"))).as_of(
             valid_time=LATEST
         ),
         (
-            "query = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00))"
-            ".as_of(valid_time=LATEST)"
+            'query = Policy.where(Policy.coverages.exists(Coverage.amount >= Decimal("600.00")))'
+            ".as_of(\n"
+            "    valid_time=LATEST\n"
+            ")"
         ),
     ),
     # -- m-inheritance (TPH/TPCS rows reads), payment/document/animal.yaml --- #

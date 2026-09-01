@@ -793,7 +793,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
                 "update",
                 PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
                 assignments=(WriteAssignment("Branch.address", assigned_address),),
-                valid_from="2024-07-01T00:00:00.000000Z",
+                valid_from=dt.datetime(2024, 7, 1, tzinfo=dt.UTC),
             ),
             _BRANCH,
         ),

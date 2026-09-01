@@ -26,6 +26,6 @@ then:
       binds: [2]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders order by qty desc limit 2
   rows:
-    - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: 50.75, active: false, ordered_on: 2024-05-25 }
-    - { id: 42, name: Grace, sku: A-999, qty: 30, price: 99.99, active: true, ordered_on: 2024-06-30 }
+    - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: "50.75", active: false, ordered_on: 2024-05-25 }
+    - { id: 42, name: Grace, sku: A-999, qty: 30, price: "99.99", active: true, ordered_on: 2024-06-30 }
   roundTrips: 1

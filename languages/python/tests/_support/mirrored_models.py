@@ -621,6 +621,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "`customer`'s top-level Value Object in one descriptor so physical composition can "
             "be witnessed, adding no declaration construct of its own"
         ),
+        "stream-coordinates": (
+            "compatibility-only model for continuation-coordinate carrier coverage; its scalar "
+            "declarations are already mirrored by `writable-scalars` and its purpose is the "
+            "serialized streaming boundary rather than a new class-frontend construct"
+        ),
         "classification-transparency-layout-twin-columns": (
             "no mirror authored; this production descriptor is the Columns arm of the "
             "cross-layout stored-data classification proof, and the twin-layout gate compares "

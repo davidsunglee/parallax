@@ -12,6 +12,7 @@ uncommitted writes, that a rollback genuinely discards them — is
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -132,7 +133,7 @@ def test_a_grouped_finds_reference_sql_oracle_runs_on_the_held_session() -> None
     # uncommitted grouped write the two connections would observe DIFFERENT states,
     # silently breaking the "independent-but-equivalent" contract.
     case = _uncommitted_write_then_reference_sql_case()
-    rows = Rows(({"id": 2, "owner": "Linus", "balance": 249.00, "version": 1},))
+    rows = Rows(({"id": 2, "owner": "Linus", "balance": Decimal("249.00"), "version": 1},))
     with ScriptedProvider(script=[Affected(1), rows, rows]) as db:
         assert_unit_work_scenario(case, db)
 
@@ -286,8 +287,8 @@ def test_a_step_that_fails_an_observable_stops_the_scenario_where_it_stands(
     answered with rows nobody graded.
     """
     case = damaged_case("m-unit-work-005-ryow-update.yaml")
-    case.when["scenario"][0]["expectRows"] = [{"id": 1, "owner": "Ada", "balance": 1.0}]
-    observed = Rows(({"id": 1, "owner": "Ada", "balance": 100.0, "version": 1},))
+    case.when["scenario"][0]["expectRows"] = [{"id": 1, "owner": "Ada", "balance": "1.00"}]
+    observed = Rows(({"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},))
     db = ScriptedProvider(script=[observed])
 
     with pytest.raises(CaseFailure, match=r"scenario\[0\]"):
@@ -334,7 +335,7 @@ def _uncommitted_write_then_reference_sql_case() -> Case:
                     "statements": [
                         {
                             "sql": {"postgres": "update account set balance = ? where id = ?"},
-                            "binds": [249.00, 2],
+                            "binds": ["249.00", 2],
                         }
                     ],
                 },

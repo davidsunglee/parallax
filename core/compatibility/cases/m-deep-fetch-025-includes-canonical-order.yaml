@@ -40,7 +40,7 @@ then:
         name: Ada
         sku: A-100
         qty: 5
-        price: 10.50
+        price: "10.50"
         active: true
         orderedOn: 2024-01-05
         items:
@@ -55,21 +55,21 @@ then:
         name: Linus
         sku: B-200
         qty: 10
-        price: 20.00
+        price: "20.00"
         active: true
         orderedOn: 2024-02-10
         items:
           - { id: 21, orderId: 2, sku: A-300, quantity: 4, shippedOn: 2024-02-20 }
         statuses:
           - { id: 102, orderId: 2, orderItemId: null, code: SHIPPED }
-      - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, orderedOn: 2024-03-15, items: [], statuses: [] }
-      - { id: 4, name: Margaret, sku: null, qty: 20, price: 40.00, active: true, orderedOn: 2024-04-20, items: [], statuses: [] }
-      - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: 50.75, active: false, orderedOn: 2024-05-25, items: [], statuses: [] }
+      - { id: 3, name: ada, sku: A-300, qty: 15, price: "30.25", active: false, orderedOn: 2024-03-15, items: [], statuses: [] }
+      - { id: 4, name: Margaret, sku: null, qty: 20, price: "40.00", active: true, orderedOn: 2024-04-20, items: [], statuses: [] }
+      - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: "50.75", active: false, orderedOn: 2024-05-25, items: [], statuses: [] }
       - id: 42
         name: Grace
         sku: A-999
         qty: 30
-        price: 99.99
+        price: "99.99"
         active: true
         orderedOn: 2024-06-30
         items:

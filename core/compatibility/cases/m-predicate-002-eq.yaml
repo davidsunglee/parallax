@@ -25,5 +25,5 @@ then:
       binds: [42]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id = 42
   rows:
-    - { id: 42, name: Grace, sku: A-999, qty: 30, price: 99.99, active: true, ordered_on: 2024-06-30 }
+    - { id: 42, name: Grace, sku: A-999, qty: 30, price: "99.99", active: true, ordered_on: 2024-06-30 }
   roundTrips: 1

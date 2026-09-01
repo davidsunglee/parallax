@@ -27,26 +27,26 @@ when:
       all: {}
     temporal:
       transaction-time:
-        asOf: '2024-02-01T00:00:00+00:00'
+        asOf: "2024-02-01T00:00:00.000000Z"
       valid-time:
-        asOf: '2024-03-01T00:00:00+00:00'
+        asOf: "2024-03-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
         mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
-      binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+      binds: ["2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
   referenceSql:
-    postgres: select br_id, name, from_z, thru_z, in_z, out_z from branch where from_z <= '2024-03-01T00:00:00+00:00'::timestamptz and thru_z > '2024-03-01T00:00:00+00:00'::timestamptz and in_z <= '2024-02-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz
+    postgres: "select br_id, name, from_z, thru_z, in_z, out_z from branch where from_z <= '2024-03-01T00:00:00+00:00'::timestamptz and thru_z > '2024-03-01T00:00:00+00:00'::timestamptz and in_z <= '2024-02-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz"
     mariadb: select br_id, name, from_z, thru_z, in_z, out_z from branch where from_z <= '2024-03-01 00:00:00' and thru_z > '2024-03-01 00:00:00' and in_z <= '2024-02-01 00:00:00' and out_z > '2024-02-01 00:00:00'
   graph:
     Branch:
       - id: 1
         name: Central Branch
-        validStart: "2024-01-01T00:00:00+00:00"
+        validStart: "2024-01-01T00:00:00.000000Z"
         validEnd: infinity
-        txStart: "2024-01-01T00:00:00+00:00"
-        txEnd: "2024-04-01T00:00:00+00:00"
+        txStart: "2024-01-01T00:00:00.000000Z"
+        txEnd: "2024-04-01T00:00:00.000000Z"
         address:
           street: 10 Old Road
           city: Helsinki

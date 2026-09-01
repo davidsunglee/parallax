@@ -32,43 +32,43 @@ when:
         predicate:
           lessThan:
             attr: parallax.compatibility.Account.balance
-            value: 200.00
+            value: "200.00"
       roundTrips: 1
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
-          binds: [200.00]
+          binds: ["200.00"]
       referenceSql: select id, owner, balance, version from account where balance < 200.00 for share of account
       expectRows:
-        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
     - write:
         mutation: update
         target:
           entity: parallax.compatibility.Account
           predicate:
-            lessThan: { attr: parallax.compatibility.Account.balance, value: 200.00 }
+            lessThan: { attr: parallax.compatibility.Account.balance, value: "200.00" }
         assignments:
-          - { attr: parallax.compatibility.Account.balance, value: 100.00 }
+          - { attr: parallax.compatibility.Account.balance, value: "100.00" }
       roundTrips: 1
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
-          binds: [100.00, 2, 3]
+          binds: ["100.00", 2, 3]
     - objectQuery:
         target: parallax.compatibility.Account
         predicate:
           lessThan:
             attr: parallax.compatibility.Account.balance
-            value: 200.00
+            value: "200.00"
       roundTrips: 1
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ? for share of t0
-          binds: [200.00]
+          binds: ["200.00"]
       referenceSql: select id, owner, balance, version from account where balance < 200.00 for share of account
       expectRows:
-        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-        - { id: 3, owner: Grace, balance: 100.00, version: 2 }
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 3, owner: Grace, balance: "100.00", version: 2 }
 then:
   roundTrips: 3

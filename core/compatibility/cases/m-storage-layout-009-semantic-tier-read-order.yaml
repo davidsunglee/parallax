@@ -39,8 +39,8 @@ then:
     LayoutReading:
       - id: 1
         sensor: north
-        celsius: 21.50
-        txStart: "2024-02-01T00:00:00+00:00"
+        celsius: "21.50"
+        txStart: "2024-02-01T00:00:00.000000Z"
         txEnd: infinity
         probe:
           model: TH-2

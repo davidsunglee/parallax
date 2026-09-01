@@ -24,5 +24,5 @@ then:
       binds: [PACKED]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (select order_id from order_item where id in (select order_item_id from order_status where code = 'PACKED'))
   rows:
-    - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+    - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }
   roundTrips: 1

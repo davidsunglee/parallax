@@ -19,7 +19,7 @@ when:
       entity: parallax.compatibility.CashPayment
       statements: 1
       rows:
-        - { id: 11, detail: 25.00 }
+        - { id: 11, detail: "25.00" }
 then:
   statements:
     - sql:

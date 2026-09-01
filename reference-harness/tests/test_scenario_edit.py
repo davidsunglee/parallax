@@ -128,7 +128,7 @@ def _narrowed_edit(
     ("model_rel", "target", "assignments"),
     [
         ("models/orders.yaml", _ORDER, {"name": "Mutant"}),
-        ("models/orders.yaml", _ORDER, {"price": 10.50, "qty": 5}),
+        ("models/orders.yaml", _ORDER, {"price": "10.50", "qty": 5}),
         ("models/orders.yaml", _ORDER, {"sku": None}),
         (
             "models/customer.yaml",
@@ -150,7 +150,7 @@ def test_an_assignment_the_model_admits_is_accepted(
         ({"nickname": "Nick"}, "Order.nickname: names no assignable attribute or value object"),
         ({"items": []}, "Order.items: names no assignable attribute or value object"),
         ({"id": 2}, "Order.id: primary-key fields may not be assigned"),
-        ({"qty": "five"}, "Order.qty: value 'five' does not match the declared type 'int32'"),
+        ({"qty": "five"}, "Order.qty: literal 'five' is type-mismatch for declared type 'int32'"),
         ({"name": None}, "Order.name: required attribute (nullable:false) is absent or null"),
     ],
 )
@@ -255,7 +255,7 @@ def test_a_refusal_no_narrowing_can_fix_is_reported_from_the_concrete_that_has_i
     # WildBoar answer only that the name is nothing of theirs, which says less than
     # Dog's own verdict on the value.
     assert _edit("models/animal.yaml", _ANIMAL, {"barkVolume": "loud"}) == [
-        "probe: `mutate` set Dog.barkVolume: value 'loud' does not match the declared "
+        "probe: `mutate` set Dog.barkVolume: literal 'loud' is type-mismatch for declared "
         "type 'int32' — no concrete the edited node may be (Cat, Dog, WildBoar) admits "
         "the whole set"
     ]
@@ -282,7 +282,8 @@ def test_a_narrowing_to_one_concrete_is_judged_as_that_concrete_alone() -> None:
     # case reaches every position in the family through the clause the read already has.
     assert _narrowed_edit("models/animal.yaml", _PET, [_CAT], {"indoor": True}) == []
     assert _narrowed_edit("models/animal.yaml", _ANIMAL, [_DOG], {"barkVolume": "loud"}) == [
-        "probe: `mutate` set Dog.barkVolume: value 'loud' does not match the declared type 'int32'"
+        "probe: `mutate` set Dog.barkVolume: literal 'loud' is type-mismatch for declared "
+        "type 'int32'"
     ]
 
 
@@ -308,7 +309,7 @@ def test_a_chained_edit_is_judged_against_the_find_its_chain_started_from() -> N
         {"action": "mutate", "on": 1, "set": {"sku": 7}},
     ]
     assert _judged("models/orders.yaml", steps, 2) == [
-        "probe: `mutate` set Order.sku: value 7 does not match the declared type 'string'"
+        "probe: `mutate` set Order.sku: literal 7 is type-mismatch for declared type 'string'"
     ]
 
 
@@ -406,7 +407,7 @@ def test_a_derivation_rooted_at_a_relationship_result_keeps_that_position() -> N
             {"action": "mutate", "on": 2, "set": {"quantity": "five"}},
         ]
         assert _judged("models/orders.yaml", steps, 3) == [
-            "probe: `mutate` set OrderItem.quantity: value 'five' does not match the "
+            "probe: `mutate` set OrderItem.quantity: literal 'five' is type-mismatch for "
             "declared type 'int32'"
         ]
 

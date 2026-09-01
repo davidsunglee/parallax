@@ -1208,6 +1208,32 @@
       "valueObject": {}
     }
   },
+  "models/stream-coordinates.yaml": {
+    "parallax.compatibility.StreamCoordinate": {
+      "attribute": {
+        "amount": "amount",
+        "clock": "clock",
+        "day": "day",
+        "f32": "f32",
+        "f64": "f64",
+        "id": "id",
+        "instant": "instant",
+        "payload": "payload",
+        "token": "token"
+      },
+      "documentPath": {
+        "amount": "coordinates:amount",
+        "clock": "coordinates:clock",
+        "day": "coordinates:day",
+        "f32": "coordinates:f32",
+        "f64": "coordinates:f64",
+        "instant": "coordinates:instant",
+        "payload": "coordinates:payload",
+        "token": "coordinates:token"
+      },
+      "valueObject": {}
+    }
+  },
   "models/subscriber.yaml": {
     "parallax.compatibility.Subscriber": {
       "attribute": {

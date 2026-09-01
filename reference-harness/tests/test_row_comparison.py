@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from reference_harness.case_assertions import rows_equal, scalars_equal
-from reference_harness.portable_literal import values_equal
+from reference_harness.portable_literal import AuthoredInteger, AuthoredNumber, values_equal
 
 
 def test_distinct_high_precision_decimals_are_not_equal() -> None:
@@ -25,6 +25,12 @@ def test_untyped_carrier_differences_are_not_repaired() -> None:
 def test_declared_type_projection_is_the_only_cross_carrier_equivalence() -> None:
     assert values_equal(Decimal("10.50"), "10.50", "decimal(12,2)", None)
     assert not scalars_equal(Decimal("10.50"), "10.50", None)
+
+
+def test_retained_json_number_tokens_equal_the_same_native_carrier() -> None:
+    assert scalars_equal(AuthoredInteger("2"), 2, None)
+    assert scalars_equal(AuthoredNumber("1.5"), 1.5, None)
+    assert not scalars_equal(AuthoredInteger("2"), 2.0, None)
 
 
 def test_bool_and_none_stay_out_of_numeric_space() -> None:

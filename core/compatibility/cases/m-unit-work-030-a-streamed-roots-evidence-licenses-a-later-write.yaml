@@ -63,23 +63,23 @@ when:
           binds: [2, 2]
       referenceSql: select id, owner, balance, version from account
       expectRows:
-        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
     - uow: two-deliveries
       "on": 0
       write:
         - mutation: update
           entity: parallax.compatibility.Account
           rows:
-            - { id: 1, balance: 125.00 }
+            - { id: 1, balance: "125.00" }
       roundTrips: 1
       note: settle against the FIRST delivery — the gate binds the version it published for a root it delivered on a page since released
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
             mariadb: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [125.00, 2, 1, 1]
+          binds: ["125.00", 2, 1, 1]
     - uow: two-deliveries
       objectQuery:
         target: parallax.compatibility.Account
@@ -100,22 +100,22 @@ when:
           binds: [2, 2]
       referenceSql: select id, owner, balance, version from account
       expectRows:
-        - { id: 1, owner: Ada, balance: 125.00, version: 2 }
-        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+        - { id: 1, owner: Ada, balance: "125.00", version: 2 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
     - uow: two-deliveries
       "on": 2
       write:
         - mutation: update
           entity: parallax.compatibility.Account
           rows:
-            - { id: 1, balance: 175.00 }
+            - { id: 1, balance: "175.00" }
       roundTrips: 1
       note: settle against the SECOND delivery — the gate binds version 2; naming step 0 would gate on a version the row has left
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
             mariadb: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [175.00, 3, 1, 2]
+          binds: ["175.00", 3, 1, 2]
 then:
   roundTrips: 6

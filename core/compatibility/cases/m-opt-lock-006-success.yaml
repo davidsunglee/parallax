@@ -33,12 +33,12 @@ compileEligibility:
 when:
   uow:
     concurrency: optimistic
-  write: { id: 2, balance: 500.00, observedVersion: 1 }
+  write: { id: 2, balance: "500.00", observedVersion: 1 }
 then:
   statements:
     - sql:
         postgres: update account set balance = ?, version = ? where id = ? and version = ?
-      binds: [500.00, 2, 2, 1]
+      binds: ["500.00", 2, 2, 1]
   affectedRows: 1
   roundTrips: 2
   executionLifecycle:
@@ -106,6 +106,6 @@ then:
             transactionInvocationFinished: { outcome: committed }
   tableState:
     account:
-      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-      - { id: 2, owner: Linus, balance: 500.00, version: 2 }
-      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Linus, balance: "500.00", version: 2 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }

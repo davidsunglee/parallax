@@ -36,20 +36,20 @@ when:
             title: Coal Run
           marks:
             - { code: X }
-      at: "2026-06-01T00:00:00+00:00"
+      at: "2026-06-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: update write_twin_log set out_z = ? where id = ? and out_z = ?
         mariadb: update write_twin_log set out_z = ? where id = ? and out_z = ?
-      binds: ["2026-06-01T00:00:00+00:00", 5, infinity]
+      binds: ["2026-06-01T00:00:00.000000Z", 5, infinity]
     - sql:
         postgres: insert into write_twin_log(id, label, in_z, out_z, spec, marks) values (?, ?, ?, ?, ?, ?)
         mariadb: insert into write_twin_log(id, label, in_z, out_z, spec, marks) values (?, ?, ?, ?, ?, ?)
       binds:
         - 5
         - voyager
-        - "2026-06-01T00:00:00+00:00"
+        - "2026-06-01T00:00:00.000000Z"
         - infinity
         - title: Coal Run
         - - { code: X }
@@ -57,8 +57,8 @@ then:
     write_twin_log:
       - id: 5
         label: voyager
-        in_z: "2026-01-01T00:00:00+00:00"
-        out_z: "2026-06-01T00:00:00+00:00"
+        in_z: "2026-01-01T00:00:00.000000Z"
+        out_z: "2026-06-01T00:00:00.000000Z"
         spec:
           title: Ore Run
           origin: { country: "NO" }
@@ -66,7 +66,7 @@ then:
           - { code: X }
       - id: 5
         label: voyager
-        in_z: "2026-06-01T00:00:00+00:00"
+        in_z: "2026-06-01T00:00:00.000000Z"
         out_z: infinity
         spec:
           title: Coal Run

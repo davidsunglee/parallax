@@ -48,7 +48,7 @@ when:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [3]
       expectRows:
-        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
     - uow: observed-delete
       write:
         - mutation: delete

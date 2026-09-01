@@ -50,8 +50,8 @@ when:
               country: FI
             phones:
               - { type: main, number: '555-1000' }
-      validFrom: "2024-01-01T00:00:00+00:00"
-      at: "2024-01-01T00:00:00+00:00"
+      validFrom: "2024-01-01T00:00:00.000000Z"
+      at: "2024-01-01T00:00:00.000000Z"
     - mutation: updateUntil
       entity: parallax.compatibility.Branch
       statements: 4
@@ -67,9 +67,9 @@ when:
             phones:
               - { type: main, number: '555-3000' }
               - { type: fax, number: '555-3001' }
-      validFrom: "2024-03-01T00:00:00+00:00"
-      at: "2024-02-15T00:00:00+00:00"
-      until: "2024-09-01T00:00:00+00:00"
+      validFrom: "2024-03-01T00:00:00.000000Z"
+      at: "2024-02-15T00:00:00.000000Z"
+      until: "2024-09-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
@@ -78,9 +78,9 @@ then:
       binds:
         - 1
         - Central Branch
-        - "2024-01-01T00:00:00+00:00"
+        - "2024-01-01T00:00:00.000000Z"
         - infinity
-        - "2024-01-01T00:00:00+00:00"
+        - "2024-01-01T00:00:00.000000Z"
         - infinity
         - street: 10 Old Road
           city: Helsinki
@@ -91,16 +91,16 @@ then:
     - sql:
         postgres: update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ? and in_z = ?
         mariadb: update branch set out_z = ? where br_id = ? and thru_z = ? and out_z = ? and in_z = ?
-      binds: ["2024-02-15T00:00:00+00:00", 1, infinity, infinity, "2024-01-01T00:00:00+00:00"]
+      binds: ["2024-02-15T00:00:00.000000Z", 1, infinity, infinity, "2024-01-01T00:00:00.000000Z"]
     - sql:
         postgres: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
         mariadb: insert into branch(br_id, name, from_z, thru_z, in_z, out_z, address) values (?, ?, ?, ?, ?, ?, ?)
       binds:
         - 1
         - Central Branch
-        - "2024-01-01T00:00:00+00:00"
-        - "2024-03-01T00:00:00+00:00"
-        - "2024-02-15T00:00:00+00:00"
+        - "2024-01-01T00:00:00.000000Z"
+        - "2024-03-01T00:00:00.000000Z"
+        - "2024-02-15T00:00:00.000000Z"
         - infinity
         - street: 10 Old Road
           city: Helsinki
@@ -114,9 +114,9 @@ then:
       binds:
         - 1
         - Central Branch
-        - "2024-03-01T00:00:00+00:00"
-        - "2024-09-01T00:00:00+00:00"
-        - "2024-02-15T00:00:00+00:00"
+        - "2024-03-01T00:00:00.000000Z"
+        - "2024-09-01T00:00:00.000000Z"
+        - "2024-02-15T00:00:00.000000Z"
         - infinity
         - street: 30 New Road
           city: Tampere
@@ -131,9 +131,9 @@ then:
       binds:
         - 1
         - Central Branch
-        - "2024-09-01T00:00:00+00:00"
+        - "2024-09-01T00:00:00.000000Z"
         - infinity
-        - "2024-02-15T00:00:00+00:00"
+        - "2024-02-15T00:00:00.000000Z"
         - infinity
         - street: 10 Old Road
           city: Helsinki
@@ -145,10 +145,10 @@ then:
     branch:
       - br_id: 1
         name: Central Branch
-        from_z: "2024-01-01T00:00:00+00:00"
+        from_z: "2024-01-01T00:00:00.000000Z"
         thru_z: infinity
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: "2024-02-15T00:00:00+00:00"
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-02-15T00:00:00.000000Z"
         address:
           street: 10 Old Road
           city: Helsinki
@@ -158,9 +158,9 @@ then:
             - { type: main, number: '555-1000' }
       - br_id: 1
         name: Central Branch
-        from_z: "2024-01-01T00:00:00+00:00"
-        thru_z: "2024-03-01T00:00:00+00:00"
-        in_z: "2024-02-15T00:00:00+00:00"
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-03-01T00:00:00.000000Z"
+        in_z: "2024-02-15T00:00:00.000000Z"
         out_z: infinity
         address:
           street: 10 Old Road
@@ -171,9 +171,9 @@ then:
             - { type: main, number: '555-1000' }
       - br_id: 1
         name: Central Branch
-        from_z: "2024-03-01T00:00:00+00:00"
-        thru_z: "2024-09-01T00:00:00+00:00"
-        in_z: "2024-02-15T00:00:00+00:00"
+        from_z: "2024-03-01T00:00:00.000000Z"
+        thru_z: "2024-09-01T00:00:00.000000Z"
+        in_z: "2024-02-15T00:00:00.000000Z"
         out_z: infinity
         address:
           street: 30 New Road
@@ -185,9 +185,9 @@ then:
             - { type: fax, number: '555-3001' }
       - br_id: 1
         name: Central Branch
-        from_z: "2024-09-01T00:00:00+00:00"
+        from_z: "2024-09-01T00:00:00.000000Z"
         thru_z: infinity
-        in_z: "2024-02-15T00:00:00+00:00"
+        in_z: "2024-02-15T00:00:00.000000Z"
         out_z: infinity
         address:
           street: 10 Old Road

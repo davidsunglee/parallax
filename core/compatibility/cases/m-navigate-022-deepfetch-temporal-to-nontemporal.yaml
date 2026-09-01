@@ -34,7 +34,7 @@ then:
       - id: 10
         tenantId: 1
         term: "24mo"
-        txStart: "2024-04-01T00:00:00+00:00"
+        txStart: "2024-04-01T00:00:00.000000Z"
         txEnd: infinity
         notes:
           - { id: 100, leaseId: 10, text: signed }
