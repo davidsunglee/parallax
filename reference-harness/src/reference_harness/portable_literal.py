@@ -88,7 +88,7 @@ def decode(value: Any, neutral_type: str) -> Any:
         else:
             parsed = None
         if parsed is not None and _decimal_in_space(parsed, precision, scale):
-            return parsed
+            return parsed.copy_abs() if parsed.is_zero() else parsed
     elif neutral_type == "boolean" and isinstance(value, bool):
         return value
     elif neutral_type in ("int32", "int64"):
@@ -139,7 +139,7 @@ def decode_canonical(value: Any, neutral_type: str) -> Any:
     managed = decode(value, neutral_type)
     canonical = encode(managed, neutral_type)
     equal = (
-        _spelled_number(value) == _spelled_number(canonical)
+        not _is_negative_zero_number(value) and _spelled_number(value) == _spelled_number(canonical)
         if neutral_type in ("int32", "int64", "float32", "float64")
         else _same_json_scalar(value, canonical)
     )
@@ -156,6 +156,8 @@ def encode(value: Any, neutral_type: str) -> Any:
     if decimal_type is not None and isinstance(value, decimal.Decimal):
         precision, scale = (int(part) for part in decimal_type.groups())
         if _decimal_in_space(value, precision, scale):
+            if value.is_zero():
+                value = value.copy_abs()
             return f"{value:.{scale}f}"
     elif neutral_type == "boolean" and isinstance(value, bool):
         return value
@@ -302,6 +304,11 @@ def _spelled_number(value: Any) -> decimal.Decimal | None:
     return decimal.Decimal(repr(value) if isinstance(value, float) else value)
 
 
+def _is_negative_zero_number(value: Any) -> bool:
+    spelled = _spelled_number(value)
+    return spelled is not None and spelled.is_zero() and spelled.is_signed()
+
+
 class AuthoredNumber(float):
     """A document number that remembers the digits it was written with.
 
@@ -349,11 +356,14 @@ def decode_number(value: Any, *, binary32: bool) -> float | None:
             widened = float(value)
         except OverflowError:
             return None
-        return widened if math.isfinite(widened) else None
+        if not math.isfinite(widened):
+            return None
+        return 0.0 if widened == 0.0 else widened
     exact = _exact_number(value)
     if abs(exact) >= _BINARY32_OVERFLOW:
         return None
-    return math.copysign(_nearest_binary32(abs(exact)), value)
+    narrowed = math.copysign(_nearest_binary32(abs(exact)), value)
+    return 0.0 if narrowed == 0.0 else narrowed
 
 
 def _exact_number(value: int | float | decimal.Decimal) -> Fraction:

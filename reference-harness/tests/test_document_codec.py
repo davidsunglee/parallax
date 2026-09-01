@@ -229,6 +229,18 @@ def test_two_numbers_naming_one_float_remain_two_spellings_through_the_parse() -
         decode_leaf("float64", stored["noncanonical"])
 
 
+def test_negative_zero_is_normalized_when_written_and_refused_when_stored() -> None:
+    assert encode_leaf("float32", -0.0) == 0.0
+    assert encode_leaf("float64", -0.0) == 0.0
+    assert encode_leaf("decimal(12,2)", Decimal("-0.00")) == "0.00"
+
+    stored = decode_stored('{"float32": -0.0, "float64": -0.0}')
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        decode_leaf("float32", stored["float32"])
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        decode_leaf("float64", stored["float64"])
+
+
 def test_an_integer_stored_leaf_spells_the_same_number_a_float_carrier_would() -> None:
     # A JSON number is a number, so the carrier a parser answered with settles
     # nothing: `1e30` is the canonical `float64` document number, and the integer

@@ -866,7 +866,7 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
     return node
 
 
-def variant_entity(model: Model, entity: Entity, row: dict[str, Any]) -> Entity:
+def variant_entity(model: Model, entity: Entity, row: Mapping[str, Any]) -> Entity:
     """The concrete Entity *row* names through its own materialized ``familyVariant``.
 
     *entity* is the position a read TARGETED, which for an abstract-target read

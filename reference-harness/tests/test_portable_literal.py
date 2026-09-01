@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import math
 import uuid
 
 import pytest
@@ -60,3 +61,17 @@ def test_null_is_not_a_typed_literal() -> None:
 def test_declared_projection_not_host_carrier_inference_decides_equality() -> None:
     assert literal.values_equal(decimal.Decimal("10.50"), "10.50", "decimal(12,2)", None)
     assert not literal.values_equal(decimal.Decimal("10.51"), "10.50", "decimal(12,2)", None)
+
+
+@pytest.mark.parametrize("spelling", ["float32", "float64"])
+def test_float_negative_zero_is_admitted_as_positive_but_not_canonical(spelling: str) -> None:
+    managed = literal.decode(-0.0, spelling)
+
+    assert math.copysign(1.0, managed) == 1.0
+    assert math.copysign(1.0, literal.encode(-0.0, spelling)) == 1.0
+    with pytest.raises(literal.PortableLiteralError, match="not canonical"):
+        literal.decode_canonical(-0.0, spelling)
+
+
+def test_decimal_managed_negative_zero_encodes_as_positive_zero() -> None:
+    assert literal.encode(decimal.Decimal("-0.00"), "decimal(12,2)") == "0.00"

@@ -247,17 +247,18 @@ def graphs_equal(
     def equal_entity_node(a: Any, b: Any, entity: Entity) -> bool:
         if not isinstance(a, dict) or not isinstance(b, dict) or a.keys() != b.keys():
             return False
+        concrete = materialize.variant_entity(model, entity, a)
         value_objects = {
-            value_object["name"]: value_object for value_object in entity.value_objects
+            value_object["name"]: value_object for value_object in concrete.value_objects
         }
         relationships = {
-            relationship["name"]: relationship for relationship in entity.relationship_metadata
+            relationship["name"]: relationship for relationship in concrete.relationship_metadata
         }
-        attributes = {attribute["name"]: attribute for attribute in entity.attributes}
-        temporal_end_columns = {axis["end_column"] for axis in entity.temporal_runtime_axes}
+        attributes = {attribute["name"]: attribute for attribute in concrete.attributes}
+        temporal_end_columns = {axis["end_column"] for axis in concrete.temporal_runtime_axes}
         temporal_end_members = {
             attribute["name"]
-            for attribute in entity.attributes
+            for attribute in concrete.attributes
             if attribute["column"] in temporal_end_columns
         }
         for key in a:

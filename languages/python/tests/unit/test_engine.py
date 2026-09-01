@@ -68,6 +68,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._context import (
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
@@ -228,6 +229,36 @@ def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> 
             "familyVariant": "CardPayment",
         }
     ]
+
+
+def test_read_row_projects_reused_tph_columns_from_each_row_variant() -> None:
+    case = _case("m-inheritance-124")
+    model = models.load_models()["document-layout"]
+    when = cast("Mapping[str, object]", case.document["when"])
+    query = deserialize_query(when["objectQuery"])
+    projection = ActualWireProjection(model)
+
+    card = projection.published_row(
+        query,
+        {
+            "id": 1,
+            "detail": "visa-4242",
+            "authorization_code": "AUTH-7",
+            "familyVariant": "CardPayment",
+        },
+    )
+    cash = projection.published_row(
+        query,
+        {
+            "id": 2,
+            "detail": decimal.Decimal("12.50"),
+            "authorization_code": None,
+            "familyVariant": "CashPayment",
+        },
+    )
+
+    assert card["detail"] == "visa-4242"
+    assert cash["detail"] == "12.50"
 
 
 def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column() -> None:
