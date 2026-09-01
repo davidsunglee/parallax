@@ -270,11 +270,8 @@ def canonicalize_observed(value: Any, neutral_type: str) -> Any:
         return canonicalize(value, neutral_type)
     except PortableLiteralError:
         if neutral_type == "timestamp" and isinstance(value, str):
-            try:
-                parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-            except ValueError:
-                pass
-            else:
+            parsed = decode_timestamp(value)
+            if parsed is not None:
                 if parsed.tzinfo is not None:
                     return encode(parsed, neutral_type)
         raise
@@ -627,68 +624,6 @@ def _decode_timestamp_classified(value: object, neutral_type: str) -> datetime.d
     if not value.endswith("Z"):
         _fail("noncanonical", value, neutral_type)
     return decoded.astimezone(datetime.UTC)
-
-
-def decode_uuid(literal: str) -> uuid.UUID | None:
-    """*literal* as the 128-bit value it spells, else ``None``.
-
-    Thirty-two hexadecimal digits in either case, grouped 8-4-4-4-12 or written
-    with no hyphens at all — the two spellings `m-case-format` admits. Case
-    carries no information (`m-core`), so both decode to the value the canonical
-    lowercase hyphenated form stores.
-    """
-    if _UUID_HYPHENATED.match(literal) is None and _UUID_BARE.match(literal) is None:
-        return None
-    return uuid.UUID(literal.replace("-", ""))
-
-
-def decode_decimal(literal: str) -> decimal.Decimal | None:
-    """*literal* as the exact decimal it spells, else ``None``.
-
-    The exact decimal spelling `m-document-codec` fixes: a ``-`` only for a value
-    below zero — so ``-0`` and ``-0.0`` spell nothing, zero being neither below
-    nor signed — integer digits with no leading zero, and an optional fraction.
-    No exponent — a `decimal` carries a declared scale, which an exponent does
-    not spell — and none of the leading ``+``, digit separator, or surrounding
-    space a host parser might otherwise take.
-    """
-    if _DECIMAL_NUMBER.fullmatch(literal) is None:
-        return None
-    return decimal.Decimal(literal)
-
-
-def decode_octets(literal: str) -> bytes | None:
-    """*literal* as the octets it spells, else ``None``.
-
-    Two hexadecimal digits per octet in either digit case, no prefix and no
-    separator, so an odd digit count and an embedded space each name no octet
-    sequence.
-    """
-    if len(literal) % 2 != 0 or any(character not in _HEX_DIGITS for character in literal):
-        return None
-    return bytes.fromhex(literal)
-
-
-def decoded_as(value: Any, neutral_type: str | None) -> Any:
-    """*value* decoded to the host carrier of *neutral_type*, or ``None``.
-
-    ``None`` means the value spells no member, so a caller deciding membership
-    reads it as a refusal. Only the string-carried spaces decode; every other
-    type is carried natively in the document.
-    """
-    if not isinstance(value, str):
-        return None
-    if neutral_type == "date":
-        return decode_date(value)
-    if neutral_type == "time":
-        return decode_time(value)
-    if neutral_type == "timestamp":
-        return decode_timestamp(value)
-    if neutral_type == "uuid":
-        return decode_uuid(value)
-    if neutral_type == "bytes":
-        return decode_octets(value)
-    return None
 
 
 def _microseconds(fraction: str | None) -> int | None:

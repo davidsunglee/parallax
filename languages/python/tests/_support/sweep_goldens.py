@@ -382,9 +382,9 @@ _BATCH_COLLAPSE_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 )
 # `m-core-007` witnesses the decimal(p,s) write BOUNDARY itself (m-core "Decimal
 # precision/scale WRITE boundary"): a single-row insert authoring a decimal(18,4)
-# value at all four fractional digits (9999.9999). The case YAML necessarily
-# authors that value as a wire-spelled Python float; it decodes to a native
-# `Decimal` at the case-format ingestion seam before the (coercion-only)
+# value at all four fractional digits (9999.9999). The case YAML authors that
+# value as a canonical Wire string; it decodes to a native `Decimal` at the
+# case-format ingestion seam before the (coercion-only)
 # developer-facing write validator ever sees it. Compile-exercised byte-identical
 # here regardless — a keyed write's compile-time lowering never runs value-type
 # validation at all (member-name honesty only) — and the SAME case joins the

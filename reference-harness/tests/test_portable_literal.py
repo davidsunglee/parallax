@@ -91,6 +91,28 @@ def test_public_decode_classifies_rejected_literals(
     assert exc_info.value.reason == reason
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-W01-1T09:30:00Z",
+        "20260101T093000Z",
+        "2026-01-01X09:30:00Z",
+        "2026-01-01T09:30:00.1234560Z",
+    ],
+)
+def test_observed_timestamp_refuses_host_parser_extensions(value: str) -> None:
+    with pytest.raises(literal.PortableLiteralError) as exc_info:
+        literal.canonicalize_observed(value, "timestamp")
+    assert exc_info.value.reason == "type-mismatch"
+
+
+def test_observed_timestamp_accepts_a_strict_provider_offset() -> None:
+    assert (
+        literal.canonicalize_observed("2026-01-15T11:30:00.000000+02:00", "timestamp")
+        == "2026-01-15T09:30:00.000000Z"
+    )
+
+
 def test_null_is_not_a_typed_literal() -> None:
     with pytest.raises(literal.PortableLiteralError, match="enclosing presence"):
         literal.decode(None, "string")
