@@ -163,7 +163,7 @@ class ActualWireProjection:
             elif isinstance(contributor, ValueObjectIdentity):
                 projected[name] = self.value_object(self._value_object(contributor), value)
             elif isinstance(contributor, RelationalDocument):
-                projected[name] = self._relational_document(layout, value)
+                projected[name] = self._relational_document(layout, row, value)
             else:
                 projected[name] = value
         return projected
@@ -263,27 +263,33 @@ class ActualWireProjection:
             return tuple(view.superset_attributes), tuple(view.superset_value_objects)
         return tuple(view.applicable_attributes), tuple(view.applicable_value_objects)
 
-    def _relational_document(self, layout: TableLayout, value: object) -> WireValue:
+    def _relational_document(
+        self, layout: TableLayout, row: Mapping[str, object], value: object
+    ) -> WireValue:
         if value is None:
             return None
         if not isinstance(value, Mapping):
             return self._typed(JSON, value)
-        members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
-        for entity in self._model.entities:
-            view = inheritance.view(self._model).entity(entity.identity)
-            if view is None:
-                continue
-            for attribute in view.applicable_attributes:
-                placement = layout.placement(attribute.identity)
-                if isinstance(placement, storage_layout.DocumentPath):
-                    members.setdefault(attribute.identity.name, attribute)
-            for occurrence in view.applicable_value_objects:
-                placement = layout.placement(occurrence.identity)
-                if isinstance(placement, storage_layout.DocumentPath):
-                    members.setdefault(occurrence.identity.path[-1], occurrence)
+        members: dict[
+            str,
+            dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata | ValueObjectMetadata],
+        ] = {}
+        for entity in self._table_entities(layout):
+            for name, member in self._entity_document_members(layout, entity).items():
+                members.setdefault(name, {})[member.identity] = member
+        selected: dict[str, AttributeMetadata | ValueObjectMetadata] | None = None
         projected: dict[str, object] = {}
         for name, item in cast("Mapping[str, object]", value).items():
-            member = members.get(name)
+            options = tuple(members.get(name, {}).values())
+            if len(options) == 1:
+                member = options[0]
+            elif options:
+                selected = selected or self._entity_document_members(
+                    layout, self._table_row_entity(layout, row)
+                )
+                member = selected.get(name)
+            else:
+                member = None
             if isinstance(member, AttributeMetadata):
                 projected[name] = self.scalar(member, item)
             elif member is not None:
@@ -291,6 +297,49 @@ class ActualWireProjection:
             else:
                 projected[name] = self._typed(JSON, item)
         return cast("WireValue", projected)
+
+    def _entity_document_members(
+        self, layout: TableLayout, entity: EntityMetadata
+    ) -> dict[str, AttributeMetadata | ValueObjectMetadata]:
+        view = inheritance.view(self._model).entity(entity.identity)
+        if view is None:  # pragma: no cover - every row owner has an inheritance view
+            raise ValueError(f"{entity.identity.canonical}: no inheritance position")
+        members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
+        for attribute in view.applicable_attributes:
+            placement = layout.placement(attribute.identity)
+            if isinstance(placement, storage_layout.DocumentPath):
+                members[attribute.identity.name] = attribute
+        for occurrence in view.applicable_value_objects:
+            placement = layout.placement(occurrence.identity)
+            if isinstance(placement, storage_layout.DocumentPath):
+                members[occurrence.identity.path[-1]] = occurrence
+        return members
+
+    def _table_entities(self, layout: TableLayout) -> tuple[EntityMetadata, ...]:
+        facet = storage_layout.view(self._model)
+        return tuple(
+            entity
+            for entity in self._model.entities
+            if (entity_view := facet.entity(entity.identity)) is not None
+            and entity_view.layout.table == layout.table
+        )
+
+    def _table_row_entity(self, layout: TableLayout, row: Mapping[str, object]) -> EntityMetadata:
+        facet = storage_layout.view(self._model)
+        candidates = tuple(
+            (entity, facet.entity(entity.identity)) for entity in self._table_entities(layout)
+        )
+        if len(candidates) == 1:
+            return candidates[0][0]
+        for entity, view in candidates:
+            assert view is not None
+            assignment = view.discriminator
+            if assignment is not None and row.get(assignment.slot.column.name) == assignment.value:
+                return entity
+        raise ValueError(
+            f"{layout.table.name}: row does not identify one of "
+            f"{[entity.identity.canonical for entity, _view in candidates]}"
+        )
 
     def _entity_by_name(self, name: str) -> EntityMetadata:
         entity = entity_by_name(self._model, name)

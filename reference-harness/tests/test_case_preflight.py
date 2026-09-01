@@ -107,3 +107,82 @@ def test_preflight_resolves_nested_predicate_paths() -> None:
     }
     with pytest.raises(CaseFailure, match=r"nestedEq\.value.*names no date"):
         preflight_case_literals(_case(predicate=predicate))
+
+
+def test_preflight_checks_predicate_write_assignments() -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "scenario",
+            "when": {
+                "scenario": [
+                    {
+                        "write": {
+                            "mutation": "update",
+                            "target": {
+                                "entity": "example.Reading",
+                                "predicate": {"eq": {"attr": "example.Reading.id", "value": 1}},
+                            },
+                            "assignments": [{"attr": "example.Reading.day", "value": "not-a-date"}],
+                        }
+                    }
+                ]
+            },
+            "then": {},
+        },
+        source.model,
+    )
+
+    with pytest.raises(CaseFailure, match=r"assignments\[0\]\.value"):
+        preflight_case_literals(case)
+
+
+def test_preflight_checks_predicate_write_selection_literals() -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "scenario",
+            "when": {
+                "scenario": [
+                    {
+                        "write": {
+                            "mutation": "update",
+                            "target": {
+                                "entity": "example.Reading",
+                                "predicate": {
+                                    "eq": {
+                                        "attr": "example.Reading.day",
+                                        "value": "not-a-date",
+                                    }
+                                },
+                            },
+                            "assignments": [{"attr": "example.Reading.amount", "value": "10.50"}],
+                        }
+                    }
+                ]
+            },
+            "then": {},
+        },
+        source.model,
+    )
+
+    with pytest.raises(CaseFailure, match=r"target\.predicate.*names no date"):
+        preflight_case_literals(case)
+
+
+def test_preflight_checks_retry_attempt_write_rows() -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "conflict",
+            "when": {"attempts": [{"write": {"id": 1, "day": "not-a-date", "observedVersion": 1}}]},
+            "then": {},
+        },
+        source.model,
+    )
+
+    with pytest.raises(CaseFailure, match=r"when\.attempts\[0\]\.write\.day"):
+        preflight_case_literals(case)

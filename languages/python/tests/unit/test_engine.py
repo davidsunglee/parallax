@@ -5340,6 +5340,30 @@ def test_read_table_state_projects_value_object_document_columns_last() -> None:
     assert sql == "select id, name, address from customer"
 
 
+def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> None:
+    from parallax.core import storage_layout
+
+    meta = models.load_models()["document-layout"]
+    layout = next(
+        candidate
+        for candidate in storage_layout.view(meta).tables
+        if candidate.table.name == "payment_document"
+    )
+    projection = ActualWireProjection(meta)
+
+    card = projection.table_row(
+        layout,
+        {"id": 1, "kind": "card", "payload": {"detail": "visa-4242"}},
+    )
+    cash = projection.table_row(
+        layout,
+        {"id": 2, "kind": "cash", "payload": {"detail": decimal.Decimal("12.50")}},
+    )
+
+    assert card["payload"] == {"detail": "visa-4242"}
+    assert cash["payload"] == {"detail": "12.50"}
+
+
 def test_read_table_state_normalizes_values_without_changing_the_projection() -> None:
     # Value normalization is the wire encoder's own concern; the projection is the
     # layout's slot sequence and nothing re-resolves a physical column to reach it.
