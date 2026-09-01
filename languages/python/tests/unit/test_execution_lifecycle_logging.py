@@ -545,6 +545,40 @@ def test_a_logger_below_the_level_is_told_nothing(caplog: pytest.LogCaptureFixtu
     assert caplog.records == []
 
 
+def test_a_transition_the_logger_would_drop_is_never_described() -> None:
+    # The saving, graded through the interface the test itself supplied rather
+    # than through a byte count: `retries` is read only while a record is being
+    # described, and the counters never touch it, so a Logger that would drop
+    # the record leaves the policy unread entirely.
+    class _CountingPolicy:
+        def __init__(self) -> None:
+            self.read = 0
+
+        @property
+        def retries(self) -> int:
+            self.read += 1
+            return 3
+
+        @property
+        def retry_optimistic_conflicts(self) -> bool:
+            return False
+
+    def described(level: int) -> tuple[int, int]:
+        logger = _logger(level)
+        collected = _Collecting()
+        logger.addHandler(collected)
+        policy = _CountingPolicy()
+        invocation = OuterInvocation("locking", RetryPolicy(3, False))
+        object.__setattr__(invocation, "retry_policy", policy)
+        handler = LoggingLifecycleProvider(logger).open(TRANSACTION)
+        assert handler is not None
+        handler.handle(TransactionInvocationStarted(TRANSACTION.id, 1, 1, None, invocation))
+        return policy.read, len(collected.records)
+
+    assert described(logging.CRITICAL) == (0, 0)
+    assert described(logging.DEBUG) == (1, 1)
+
+
 def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -592,34 +626,76 @@ def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
         assert not above_debug or root_activity or attempt, record.fields["transition"]
 
 
-def test_a_logger_that_answers_its_level_once_is_asked_exactly_once() -> None:
-    # How many times a Logger is consulted is part of what it observes, and this
-    # Provider adds no question of its own: `Logger.log` asks `isEnabledFor` and
-    # nothing here asks it again. A Logger whose `isEnabledFor` is stateful — a
-    # rate limiter, a sampler, a first-of-each-kind filter — answers a second
-    # call differently by design, so an extra query would decide records rather
-    # than observe them, and this Logger emits its one record because it is asked
-    # exactly once.
-    class _AnsweredOnce(logging.Logger):
+def test_a_level_between_the_rules_keeps_exactly_the_records_worth_it() -> None:
+    # The level rule graded by ABSENCE as well as by presence. A Logger set
+    # between DEBUG and ERROR keeps the one transition the rule promotes — the
+    # rollback the invocation may still survive — and nothing around it, so a
+    # rollback the rule got wrong is a record an operator never sees rather than
+    # a record carrying the wrong name for its level.
+    logger = _logger(logging.WARNING)
+    collected = _Collecting()
+    logger.addHandler(collected)
+    handler = LoggingLifecycleProvider(logger).open(TRANSACTION)
+    assert handler is not None
+    for event in [
+        TransactionAttemptStarted(TRANSACTION.id, 1, 2, 1),
+        TransactionAttemptFinished(
+            TRANSACTION.id, 2, 2, 1, AttemptRolledBack(_attempt_failure(retry_eligible=True))
+        ),
+        TransactionAttemptFinished(
+            TRANSACTION.id, 3, 3, 1, AttemptRolledBack(_attempt_failure(retry_eligible=False))
+        ),
+        TransactionAttemptFinished(TRANSACTION.id, 4, 4, 1, AttemptCommitted()),
+    ]:
+        handler.handle(event)
+
+    written = [_written(record) for record in collected.records]
+    assert [(record.level, record.fields["transition"]) for record in written] == [
+        (logging.WARNING, "transactionAttemptFinished")
+    ]
+    assert written[0].fields["retry_eligible"] is True
+
+
+def test_the_level_the_guard_asks_about_is_the_level_the_record_is_written_at() -> None:
+    # Describing nothing a Logger would drop means asking it twice per event —
+    # here, and again inside `Logger.log` — so what has to hold is that the two
+    # questions are the same question. An approximate guard, one asking whether
+    # a record COULD be worth keeping, would drop records the exact level keeps;
+    # the level asked here comes from the same match that names the transition,
+    # so every event contributes two asks at the level its record is written at.
+    class _RecordedItsQuestions(logging.Logger):
         def __init__(self, name: str) -> None:
             super().__init__(name)
-            self.asked = 0
+            self.asked: list[int] = []
 
         def isEnabledFor(self, level: int) -> bool:
-            self.asked += 1
-            return self.asked == 1
+            self.asked.append(level)
+            return super().isEnabledFor(level)
 
-    logger = _AnsweredOnce(f"parallax.test.{uuid4().hex}")
+    logger = _RecordedItsQuestions(f"parallax.test.{uuid4().hex}")
+    logger.setLevel(logging.DEBUG)
     collected = _Collecting()
     logger.addHandler(collected)
     handler = LoggingLifecycleProvider(logger).open(EXECUTION)
     assert handler is not None
-    handler.handle(ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"))
+    for event in [
+        ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED"),
+        TransactionAttemptFinished(
+            EXECUTION.id, 2, 3, 1, AttemptRolledBack(_attempt_failure(retry_eligible=True))
+        ),
+        ReadFinished(EXECUTION.id, 3, 4, None, ReadCompleted()),
+        ReadFinished(EXECUTION.id, 4, 5, None, ReadFailed(_failure())),
+    ]:
+        handler.handle(event)
 
     written = [_written(record) for record in collected.records]
-    assert logger.asked == 1
-    assert [record.level for record in written] == [logging.DEBUG]
-    assert written[0].fields["transition"] == "readStarted"
+    assert [record.level for record in written] == [
+        logging.DEBUG,
+        logging.WARNING,
+        logging.INFO,
+        logging.ERROR,
+    ]
+    assert logger.asked == [level for record in written for level in (record.level,) * 2]
 
 
 def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record() -> None:
