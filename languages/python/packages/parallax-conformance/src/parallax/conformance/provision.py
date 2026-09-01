@@ -294,10 +294,11 @@ def _fixture_occurrence(member: Occurrence, raw: object) -> object:
         if not isinstance(raw, Sequence) or isinstance(raw, str | bytes):
             return raw
         source = cast("Sequence[object]", raw)
+        if any(not isinstance(element, Mapping) for element in source):
+            raise ValueError(f"{member.name}: every many occurrence element must be a mapping")
         elements = [
             _fixture_values(member.shape, cast("Mapping[str, object]", element))
             for element in source
-            if isinstance(element, Mapping)
         ]
         return encode_many(member.shape, elements)
     if not isinstance(raw, Mapping):
