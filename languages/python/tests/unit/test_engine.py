@@ -90,6 +90,7 @@ from parallax.core.unit_work import (
     WriteEffectError,
     WriteRejectedError,
 )
+from parallax.core.wire import WireEncodingError
 from parallax.snapshot import DeferredFeatureError
 from parallax.snapshot.handle import WriteEvidenceError
 
@@ -189,6 +190,15 @@ def test_run_read_case_wire_renders_managed_row_values() -> None:
         external_id, uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
     )
     assert projected == "123e4567-e89b-12d3-a456-426614174000"
+
+
+def test_run_read_case_wire_refuses_a_wire_shaped_non_member_carrier() -> None:
+    model = models.load_models()["scalars"]
+    entity = model.entities[0]
+    external_id = entity.attribute("externalId")
+    assert external_id is not None
+    with pytest.raises(WireEncodingError):
+        ActualWireProjection(model).scalar(external_id, "123e4567-e89b-12d3-a456-426614174000")
 
 
 def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> None:

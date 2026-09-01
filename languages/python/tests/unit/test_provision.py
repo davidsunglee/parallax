@@ -696,6 +696,16 @@ def test_fixture_statements_keep_the_three_presence_states_apart() -> None:
     assert binds[1] == JsonDocument({"displayName": None, "tags": []})
 
 
+def test_fixture_statements_refuse_a_non_mapping_many_occurrence_element() -> None:
+    fixtures = {
+        "parallax.test.Person": [
+            {"id": 2, "displayName": "Ada", "tags": [{"label": "one"}, "dropped"]}
+        ]
+    }
+    with pytest.raises(ValueError, match="every many occurrence element must be a mapping"):
+        provision.fixture_statements(_DOCUMENT, fixtures)
+
+
 def test_fixture_statements_bind_the_empty_document_for_a_row_with_no_document_member() -> None:
     (statement,) = provision.fixture_statements(_DOCUMENT, {"parallax.test.Marker": [{"id": 3}]})
     sql, binds = statement

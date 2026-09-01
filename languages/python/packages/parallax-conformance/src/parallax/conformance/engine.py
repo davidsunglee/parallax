@@ -2328,9 +2328,9 @@ def _projected_row(
         if value is None:
             published[column] = None
         elif isinstance(member, AttributeMetadata):
-            published[column] = projection.scalar(member, value)
+            published[column] = projection.published_scalar(member, value)
         else:
-            published[column] = projection.value_object(member, value)
+            published[column] = projection.published_value_object(member, value)
     if not family or not node:
         return published
     variant = node.get("familyVariant")

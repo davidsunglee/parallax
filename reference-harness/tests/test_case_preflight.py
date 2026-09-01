@@ -11,7 +11,12 @@ from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_preflight import preflight_case_literals
 
 
-def _case(*, predicate_value: object = "2026-01-15", fixture_value: object = "10.50") -> Case:
+def _case(
+    *,
+    predicate: object | None = None,
+    predicate_value: object = "2026-01-15",
+    fixture_value: object = "10.50",
+) -> Case:
     descriptor = {
         "entity": {
             "name": "Reading",
@@ -22,22 +27,46 @@ def _case(*, predicate_value: object = "2026-01-15", fixture_value: object = "10
                 {"name": "amount", "type": "decimal(12,2)", "column": "amount"},
                 {"name": "day", "type": "date", "column": "day"},
             ],
+            "valueObjects": [
+                {
+                    "name": "profile",
+                    "attributes": [{"name": "expires", "type": "date"}],
+                }
+            ],
         }
     }
     model = Model(
         Path("reading.yaml"),
         descriptor,
-        {"example.Reading": [{"id": 1, "amount": fixture_value, "day": "2026-01-15"}]},
+        {
+            "example.Reading": [
+                {
+                    "id": 1,
+                    "amount": fixture_value,
+                    "day": "2026-01-15",
+                    "profile": {"expires": "2026-01-15"},
+                }
+            ]
+        },
     )
     document = {
         "shape": "read",
         "when": {
             "objectQuery": {
                 "target": "example.Reading",
-                "predicate": {"eq": {"attr": "example.Reading.day", "value": predicate_value}},
+                "predicate": predicate
+                or {"eq": {"attr": "example.Reading.day", "value": predicate_value}},
             }
         },
-        "then": {"rows": [{"id": 1, "amount": "10.50", "day": "2026-01-15"}]},
+        "then": {
+            "rows": [
+                {
+                    "id": 1,
+                    "amount": "10.50",
+                    "day": "2026-01-15",
+                }
+            ]
+        },
     }
     return Case(Path("synthetic.yaml"), document, model)
 
@@ -54,3 +83,27 @@ def test_preflight_refuses_a_predicate_literal_at_its_authored_coordinate() -> N
 def test_preflight_refuses_a_fixture_before_any_lane_can_provision_it() -> None:
     with pytest.raises(CaseFailure, match=r"fixtures\.example\.Reading\[0\]\.amount"):
         preflight_case_literals(_case(fixture_value=10.555))
+
+
+def test_preflight_descends_through_boolean_operand_wrappers() -> None:
+    predicate = {
+        "and": {
+            "operands": [
+                {"all": {}},
+                {"eq": {"attr": "example.Reading.day", "value": "15 January 2026"}},
+            ]
+        }
+    }
+    with pytest.raises(CaseFailure, match=r"and\.operands\[1\].*names no date"):
+        preflight_case_literals(_case(predicate=predicate))
+
+
+def test_preflight_resolves_nested_predicate_paths() -> None:
+    predicate = {
+        "nestedEq": {
+            "path": "example.Reading.profile.expires",
+            "value": "15 January 2026",
+        }
+    }
+    with pytest.raises(CaseFailure, match=r"nestedEq\.value.*names no date"):
+        preflight_case_literals(_case(predicate=predicate))
