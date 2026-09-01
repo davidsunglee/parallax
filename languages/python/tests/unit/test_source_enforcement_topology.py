@@ -38,6 +38,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import get_type_hints
 
 from _source_inventory_support import (
     CONFORMANCE_SRC,
@@ -58,7 +59,21 @@ from _source_inventory_support import (
 )
 
 from _support.repo import PY_ROOT
+from parallax.core import sql_gen
+from parallax.core.deep_fetch import ValidatedEntityQuery
+from parallax.core.deep_fetch import plan as plan_deep_fetch
+from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
+from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import WritePlanner
+from parallax.core.unit_work.instructions import (
+    PreparedWrite,
+    prepare_typed_write,
+    prepare_wire_write,
+)
+from parallax.core.unit_work.planned import PlannedWrite
+from parallax.snapshot.handle._preflight import preflight
 
 _PRIVATE_SQL_REACH_FENCE = "```carrier-neutral-private-reaches\n"
 _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
@@ -106,6 +121,21 @@ def test_carrier_neutral_private_sql_reaches_match_the_language_contract() -> No
     assert _documented_carrier_neutral_private_sql_reaches() == (
         _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES
     )
+
+
+def test_carrier_neutral_lowering_requires_producer_owned_semantic_products() -> None:
+    assert get_type_hints(preflight)["return"] is ValidatedObjectQuery
+    assert get_type_hints(plan_deep_fetch)["query"] is ValidatedObjectQuery
+    assert get_type_hints(compile_read)["query"] is ValidatedEntityQuery
+    assert get_type_hints(compile_write_predicate)["op"] is ValidatedPredicate
+    assert get_type_hints(prepare_typed_write)["return"] == PreparedWrite
+    assert get_type_hints(prepare_wire_write)["return"] == PreparedWrite
+    assert get_type_hints(compile_write_step)["step"] == PlannedWrite
+    assert not {
+        "compile_read",
+        "compile_write_predicate",
+        "compile_write_step",
+    }.intersection(sql_gen.__all__)
 
 
 # Snapshot's reaches into `parallax.core.entity`.
