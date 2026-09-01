@@ -29,7 +29,7 @@ from reference_harness.case_runner import (
     _table_layout,
     _write_column_order,
 )
-from reference_harness.ddl_builder import contributor_types, ddl_for
+from reference_harness.ddl_builder import ddl_for, declared_contributors
 from reference_harness.providers.mariadb import _statement_binds as mariadb_statement_binds
 from reference_harness.providers.postgres import _statement_binds as postgres_statement_binds
 from reference_harness.storage_layout import derived_primary_key_index
@@ -239,7 +239,9 @@ def test_table_observation_reads_a_shared_table_once_over_every_slot() -> None:
     case = _write_case_by_id("m-inheritance-007")
     provider = _RecordingReadProvider()
     rows = _read_table(
-        cast("Any", provider), _table_layout(case, "payment"), contributor_types(case.model)
+        cast("Any", provider),
+        _table_layout(case, "payment"),
+        declared_contributors(case.model),
     )
     assert rows == []
     assert provider.queries == [
@@ -257,7 +259,7 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
     (document_row,) = _read_table(
         cast("Any", documents),
         _table_layout(customer_case, "customer"),
-        contributor_types(customer),
+        declared_contributors(customer),
     )
     assert document_row["address"] == {"city": "Rome"}
 
@@ -267,7 +269,7 @@ def test_table_observation_normalizes_values_by_slot_provenance() -> None:
     (binary_row,) = _read_table(
         cast("Any", binaries),
         _table_layout(scalars_case, "scalar_thing"),
-        contributor_types(scalars),
+        declared_contributors(scalars),
     )
     assert binary_row["payload"] == "deadbeef"
 

@@ -21,6 +21,7 @@ from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 from testcontainers.community.postgres import PostgresContainer
 
 from .. import errors
+from .._declared_contributor import TEMPORAL_INFINITY
 from ..ddl_builder import quote_identifier
 from ..document_codec import is_document
 from ..portable_literal import AuthoredNumber
@@ -45,6 +46,8 @@ def _adapt(value: Any) -> Any:
     text (m-case-format). ``None`` (a null nullable value object) and every scalar pass
     through unchanged (binding SQL ``NULL`` / the literal).
     """
+    if value is TEMPORAL_INFINITY:
+        return "infinity"
     if is_document(value):
         return Jsonb(value)
     return value
@@ -197,7 +200,10 @@ class PostgresProvider:
         # appears literally in our SQL outside a placeholder position.
         with self._conn.cursor() as cur:
             if binds:
-                cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
+                cur.execute(
+                    _trusted_query(sql.replace("?", "%s")),
+                    tuple(_adapt(value) for value in binds),
+                )
             else:
                 # No binds: execute the SQL verbatim with NO params, so psycopg
                 # does not treat literal `%` (e.g. a `like '%a%'` pattern in a
@@ -313,7 +319,10 @@ class _PgTxSession:
         """
         with self._conn.cursor() as cur:
             if binds:
-                cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
+                cur.execute(
+                    _trusted_query(sql.replace("?", "%s")),
+                    tuple(_adapt(value) for value in binds),
+                )
             else:
                 cur.execute(_trusted_query(sql))
             description = cur.description

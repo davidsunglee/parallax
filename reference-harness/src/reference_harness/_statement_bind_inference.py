@@ -10,12 +10,6 @@ from sqlglot.expressions.core import Expr
 
 from ._sql_placeholders import parse_indexed_statement, placeholder_index
 from .case import Case
-from .ddl_builder import contributor_types
-from .portable_literal import (
-    PortableLiteralError,
-    canonicalize_observed,
-    decode_canonical,
-)
 from .storage_layout import ColumnSlot, ValueObjectContributor
 
 
@@ -48,34 +42,6 @@ def infer_statement_bind_targets(
             if target is not None:
                 targets[index] = target
     return targets
-
-
-def managed_statement_binds(
-    case: Case,
-    statement: str,
-    binds: Sequence[object],
-    dialect: str,
-) -> tuple[object, ...]:
-    """Decode modeled direct-column binds for provider execution."""
-    managed = list(binds)
-    types = contributor_types(case.model)
-    for index, target in infer_statement_bind_targets(case, statement, binds, dialect).items():
-        if not isinstance(target, ColumnSlot) or index >= len(managed):
-            continue
-        declared = types.get(target.contributor)
-        value = managed[index]
-        if (
-            declared is None
-            or value is None
-            or (declared[0] == "timestamp" and value == "infinity")
-        ):
-            continue
-        try:
-            canonical = canonicalize_observed(value, declared[0])
-            managed[index] = decode_canonical(canonical, declared[0])
-        except PortableLiteralError:
-            continue
-    return tuple(managed)
 
 
 def _insert_targets(case: Case, tree: Expr) -> dict[int, CanonicalBindTarget]:

@@ -11,11 +11,15 @@ cover the seam logic that needs no database.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from pymysql.constants import FIELD_TYPE
 
-from reference_harness.case import load_model
+from reference_harness._case_execution import CaseExecution
+from reference_harness._declared_contributor import TEMPORAL_INFINITY
+from reference_harness.case import Case, Model, load_model
 from reference_harness.ddl_builder import _column_type, ddl_for, quote_identifier
 from reference_harness.providers.mariadb import (
     _INFINITY_SENTINEL,
@@ -179,14 +183,59 @@ def test_infinity_literal_maps_to_max_sentinel_and_back() -> None:
     # The suite's `infinity` literal becomes the largest DATETIME(6) on the way
     # in, and reads back as `infinity` on the way out — so a fixture authored once
     # against native-infinity Postgres compares identically on MariaDB.
-    assert _to_db_bind("infinity") == _INFINITY_SENTINEL
+    assert _to_db_bind(TEMPORAL_INFINITY) == _INFINITY_SENTINEL
     assert _from_db_value(_INFINITY_SENTINEL) == "infinity"
 
 
-def test_iso_instant_binds_become_naive_utc_datetimes() -> None:
-    bound = _to_db_bind("2024-06-01T00:00:00+00:00")
-    assert bound == dt.datetime(2024, 6, 1, 0, 0, 0)
+def test_managed_instant_binds_become_naive_utc_datetimes() -> None:
+    bound = _to_db_bind(dt.datetime(2024, 6, 1, tzinfo=dt.timezone(dt.timedelta(hours=2))))
+    assert bound == dt.datetime(2024, 5, 31, 22, 0, 0)
     assert bound.tzinfo is None
+
+
+def test_untyped_offset_string_bind_passes_through() -> None:
+    bound = _to_db_bind("2024-06-01T00:00:00+00:00")
+    assert bound == "2024-06-01T00:00:00+00:00"
+
+
+def test_case_execution_adapts_only_the_declared_timestamp_column() -> None:
+    model = Model(
+        path=Path("models/event.yaml"),
+        descriptor={
+            "entity": {
+                "name": "Event",
+                "table": "event",
+                "attributes": [
+                    {"name": "id", "column": "id", "type": "int64", "primaryKey": True},
+                    {"name": "label", "column": "label", "type": "string"},
+                    {"name": "occurredAt", "column": "occurred_at", "type": "timestamp"},
+                ],
+            }
+        },
+    )
+    case = Case(path=Path("synthetic.yaml"), raw={}, model=model)
+
+    class MariaRecorder:
+        dialect = "mariadb"
+
+        def __init__(self) -> None:
+            self.binds: tuple[Any, ...] = ()
+
+        def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+            return []
+
+        def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+            self.binds = tuple(_to_db_bind(value) for value in binds)
+            return 1
+
+    offset_text = "2024-06-01T00:00:00+02:00"
+    provider = MariaRecorder()
+    CaseExecution(case, provider).execute(
+        "insert into event(id, label, occurred_at) values (?, ?, ?)",
+        [1, offset_text, offset_text],
+    )
+
+    assert provider.binds == (1, offset_text, dt.datetime(2024, 5, 31, 22, 0, 0))
 
 
 def test_finite_datetime_reads_back_as_iso_utc() -> None:

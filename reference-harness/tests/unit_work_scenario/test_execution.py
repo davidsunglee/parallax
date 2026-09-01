@@ -12,6 +12,7 @@ uncommitted writes, that a rollback genuinely discards them — is
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -305,11 +306,27 @@ def test_a_step_that_fails_an_observable_stops_the_scenario_where_it_stands(
 
 def _pair(case: Case, index: int, statement: int = 0) -> tuple[str, tuple[Any, ...]]:
     """The (sql, provider binds) a step's own golden produces for postgres."""
-    from reference_harness._statement_bind_inference import managed_statement_binds
+    from reference_harness._case_execution import CaseExecution
     from reference_harness.case import entry_pairs
 
+    class Capture:
+        dialect = "postgres"
+
+        def __init__(self) -> None:
+            self.call: tuple[str, tuple[Any, ...]] | None = None
+
+        def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+            return []
+
+        def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+            self.call = (sql, tuple(binds))
+            return 1
+
     sql, binds = entry_pairs(case.scenario[index].get("statements"), "postgres")[statement]
-    return sql, managed_statement_binds(case, sql, binds, "postgres")
+    capture = Capture()
+    CaseExecution(case, capture).execute(sql, binds)
+    assert capture.call is not None
+    return capture.call
 
 
 def _uncommitted_write_then_reference_sql_case() -> Case:

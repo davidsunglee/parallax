@@ -31,6 +31,7 @@ class ReadExecutor(Protocol):
     failure is never reported as a semantic mismatch.
     """
 
-    dialect: str
+    @property
+    def dialect(self) -> str: ...
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]: ...

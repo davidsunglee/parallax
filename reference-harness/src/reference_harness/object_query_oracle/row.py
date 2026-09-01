@@ -14,7 +14,14 @@ from . import materialize
 
 
 def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> bool:
-    if type(left) is type(right) and left == right:
+    if (
+        not isinstance(left, Mapping)
+        and not isinstance(right, Mapping)
+        and not _is_non_string_sequence(left)
+        and not _is_non_string_sequence(right)
+        and type(left) is type(right)
+        and left == right
+    ):
         return True
 
     def member_equal(left_member: Any, right_member: Any) -> bool:
@@ -40,8 +47,14 @@ def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> b
                 return False
         return True
 
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        return member_equal(left, right)
     if declaration.get("multiplicity", "one") == "many":
-        if not isinstance(left, list) or not isinstance(right, list) or len(left) != len(right):
+        if (
+            not _is_non_string_sequence(left)
+            or not _is_non_string_sequence(right)
+            or len(left) != len(right)
+        ):
             return False
         return all(
             member_equal(left_item, right_item)
@@ -50,6 +63,10 @@ def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> b
     if left is None or right is None:
         return left is None and right is None
     return member_equal(left, right)
+
+
+def _is_non_string_sequence(value: Any) -> bool:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
 
 
 def _attribute_for_key(model: Model, entity: Entity, key: str) -> dict[str, Any] | None:

@@ -25,9 +25,10 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
+from .._declared_contributor import DeclaredContributor
 from ..case import Case, Model
 from ..case_assertions import CaseFailure
-from ..ddl_builder import contributor_types, placeholder_cast_type
+from ..ddl_builder import declared_contributors, placeholder_cast_type
 from ..inheritance import Family
 from ..sql_canonical import NonCanonicalError, sqlglot_dialect
 from ..sql_wrapped_union import WrapFacts, WrapOrderKey, wrapped_union_source
@@ -86,7 +87,7 @@ def result_aliases(columns: list[str]) -> list[str]:
 
 def _placeholder_types(
     model: Model, columns: tuple[PositionColumn, ...]
-) -> list[tuple[str, int | None] | None]:
+) -> list[DeclaredContributor | None]:
     """Each position column's declared neutral type and length bound, in column order.
 
     The only declaration residue an abstract-read `union all` shape needs: the layout
@@ -94,8 +95,8 @@ def _placeholder_types(
     contributor must still render `cast(null as <declared type>)` in the same neutral
     type the branch that owns it was provisioned with.
     """
-    types = contributor_types(model)
-    return [types.get(column.contributor) for column in columns]
+    declarations = declared_contributors(model)
+    return [declarations.get(column.contributor) for column in columns]
 
 
 def is_instance_form(case: Case) -> bool:
@@ -182,7 +183,7 @@ def _assert_branch_projection_shape(
     name: str,
     superset: list[str],
     slots: tuple[ColumnSlot | None, ...],
-    placeholder_types: list[tuple[str, int | None] | None],
+    placeholder_types: list[DeclaredContributor | None],
     dialect: str,
 ) -> None:
     """Assert one `union all` branch's per-column projection SHAPE (m-sql).
@@ -215,7 +216,11 @@ def _assert_branch_projection_shape(
                 f"the concrete branch {name!r}"
             )
         expected = exp.DataType.build(
-            placeholder_cast_type(*placeholder_type, dialect),
+            placeholder_cast_type(
+                placeholder_type.neutral_type,
+                placeholder_type.max_length,
+                dialect,
+            ),
             dialect=engine,
         )
         if not (isinstance(node, exp.Cast) and isinstance(node.this, exp.Null)):
