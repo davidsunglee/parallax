@@ -138,8 +138,7 @@ message, key set, and values, and `extra=` is still a plain `dict`.
 **Old → new on the p50, one machine and one interpreter.** What measures this
 change is a before/after pair taken in one session on this machine and on
 CPython 3.14.7: the "after" is the table above, and the "before" was taken on the
-parent commit with the built-in still eager. Both are archived under
-`.humanlayer/tasks/cor-110-logging-lifecycle-diet/`. Dispatch per event, p50:
+parent commit with the built-in still eager. Dispatch per event, p50:
 
 | Configuration | before | after | change |
 |---|---|---|---|
@@ -176,15 +175,15 @@ skips more events, eighteen of twenty rather than fifteen, and recovers less on
 each.
 
 **This document has narrated a guard's saving once before.** The 2026-08-19
-reading recorded one (`3dbfd30a`), and the re-record later that day withdrew it
-(`26e0d1d3`). What was withdrawn could not compute an event's exact level: it
-asked whether a record could be worth more than DEBUG, and carried a detector
-deciding whether a given Logger was standard enough to be short-cut safely. Three
-Logger shapes an application can legitimately configure each lost a record, and
-each was found by narrowing the previous one. What is different now is the
-question rather than the answer to it — the level asked about is the level
-`Logger.log` is given, from the same match that names the transition, so there is
-no approximation to bound and no detector to narrow. What is the same is the
+reading recorded one, and a re-record later the same day withdrew it. What was
+withdrawn could not compute an event's exact level: it asked whether a record
+could be worth more than DEBUG, and carried a detector deciding whether a given
+Logger was standard enough to be short-cut safely. Three Logger shapes an
+application can legitimately configure each lost a record, and each was found by
+narrowing the previous one. What is different now is the question rather than the
+answer to it — the level asked about is the level `Logger.log` is given, from the
+same match that names the transition, so there is no approximation to bound and
+no detector to narrow. What is the same is the
 exposure the standard idiom carries anywhere: a Logger whose `isEnabledFor` and
 `log` disagree loses a record here as it would with any library that guards.
 `spec/python.md` states the guard and that exposure; it is not a premise these
