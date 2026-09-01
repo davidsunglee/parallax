@@ -14,12 +14,12 @@ inherits (`m-inheritance`), recursively — and this module raises
   ABSENT `many` is not a violation: absence and the empty array are one logical zero
   state, so an unnamed `many` occurrence is the empty collection (m-value-object,
   m-document-codec);
-* ``write-value-type-mismatch`` — a value's type differs from what its declared
-  position admits: a scalar leaf whose literal does not match the Attribute's
-  neutral type, a non-document at a `one` occurrence, or a non-list (or a list of
-  non-documents) at a `many` one. A value object binds **atomically as one whole
-  document** (m-value-object), so a scalar standing where a document is declared is
-  a type mismatch rather than an absence.
+* ``write-value-type-mismatch`` — a Value Object position carries the wrong
+  container shape: a non-document at a `one` occurrence, or a non-list (or a list
+  of non-documents) at a `many` one. Resolved scalar leaves use the closed
+  ``neutral-literal-*`` taxonomy instead. A value object binds **atomically as one
+  whole document** (m-value-object), so a scalar standing where a document is
+  declared is a type mismatch rather than an absence.
 
 The bare `when.write` row carries no mutation context, so it is graded as a FULL
 document: every applicable member must be present, save a `many` occurrence, whose

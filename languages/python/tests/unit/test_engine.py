@@ -5482,6 +5482,24 @@ def test_table_state_validates_direct_value_objects_as_stored_wire_documents() -
     assert projected["profile"] == {"amount": "12.50", "future": None}
 
 
+def test_table_state_preserves_malformed_direct_value_object_leaves() -> None:
+    from parallax.core import storage_layout
+
+    meta = models.load_models()["document-codec"]
+    (layout,) = storage_layout.view(meta).tables
+
+    projected = ActualWireProjection(meta).table_row(
+        layout,
+        {
+            "id": 1,
+            "label": "sample",
+            "profile": {"amount": "12.5", "future": None},
+        },
+    )
+
+    assert projected["profile"] == {"amount": "12.5", "future": None}
+
+
 def test_read_table_state_normalizes_values_without_changing_the_projection() -> None:
     # Value normalization is the wire encoder's own concern; the projection is the
     # layout's slot sequence and nothing re-resolves a physical column to reach it.

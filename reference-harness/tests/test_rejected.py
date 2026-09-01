@@ -933,9 +933,9 @@ def test_nested_string_predicate_on_a_numeric_member_reports_the_member_not_the_
 def test_nested_string_predicate_on_a_date_member_rejected_in_both_scopes(
     node: dict[str, Any],
 ) -> None:
-    # The hole the dedicated rule closes: a `date` member carries the portable string
-    # literal, so `literal_matches_type` finds '2024' perfectly well-typed for it and
-    # the typed-literal rule alone would ACCEPT a text pattern over a date.
+    # A date's Wire carrier is also a JSON string, but operator applicability follows
+    # the resolved Neutral Type. The non-string-member verdict precedes any separate
+    # verdict about the pattern as a Date literal in both path scopes.
     with pytest.raises(RejectionError) as exc:
         validate_predicate(_contact_entity(), node)
     assert exc.value.rule == NESTED_STRING_PREDICATE_NON_STRING_MEMBER

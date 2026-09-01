@@ -107,6 +107,139 @@ def test_preflight_refuses_a_fixture_before_any_lane_can_provision_it() -> None:
         preflight_case_literals(_case(fixture_value=10.555))
 
 
+def test_preflight_requires_canonical_fixture_literals() -> None:
+    with pytest.raises(CaseFailure, match=r"fixtures\.example\.Reading\[0\]\.amount.*noncanonical"):
+        preflight_case_literals(_case(fixture_value="10.5"))
+
+
+def test_preflight_requires_canonical_expected_rows() -> None:
+    case = _case()
+    case.then["rows"][0]["amount"] = "10.5"
+
+    with pytest.raises(CaseFailure, match=r"then\.rows\[0\]\.amount.*noncanonical"):
+        preflight_case_literals(case)
+
+
+def test_preflight_requires_canonical_expected_graph_pins() -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "read",
+            "when": {"objectQuery": {"target": "example.Reading", "predicate": {"all": {}}}},
+            "then": {
+                "graph": {
+                    "pin": {"transaction-time": "2026-01-15T09:30:00Z"},
+                    "Reading": [{"id": 1, "amount": "10.50", "day": "2026-01-15"}],
+                }
+            },
+        },
+        source.model,
+    )
+
+    with pytest.raises(CaseFailure, match=r"then\.graph\.pin\.transaction-time.*not canonical"):
+        preflight_case_literals(case)
+
+
+def test_preflight_requires_canonical_expected_table_state() -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "writeSequence",
+            "when": {},
+            "then": {
+                "tableState": {
+                    "reading": [
+                        {
+                            "id": 1,
+                            "amount": "10.5",
+                            "day": "2026-01-15",
+                            "profile": {"expires": "2026-01-15"},
+                        }
+                    ]
+                }
+            },
+        },
+        source.model,
+    )
+
+    with pytest.raises(CaseFailure, match=r"then\.tableState\.reading\[0\]\.amount.*noncanonical"):
+        preflight_case_literals(case)
+
+
+def test_preflight_requires_canonical_top_level_statement_binds() -> None:
+    case = _case()
+    case.then["statements"] = [
+        {
+            "sql": {"postgres": "insert into reading (amount) values (?)"},
+            "binds": ["10.5"],
+        }
+    ]
+
+    with pytest.raises(CaseFailure, match=r"then\.statements\[0\]\.binds\[0\].*noncanonical"):
+        preflight_case_literals(case)
+
+
+def test_preflight_requires_canonical_per_step_statement_binds() -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "scenario",
+            "when": {
+                "scenario": [
+                    {
+                        "statements": [
+                            {
+                                "sql": {"postgres": "update reading set amount = ? where id = ?"},
+                                "binds": ["10.5", 1],
+                            }
+                        ]
+                    }
+                ]
+            },
+            "then": {},
+        },
+        source.model,
+    )
+
+    with pytest.raises(
+        CaseFailure,
+        match=r"when\.scenario\[0\]\.statements\[0\]\.binds\[0\].*noncanonical",
+    ):
+        preflight_case_literals(case)
+
+
+def test_preflight_requires_canonical_document_leaf_statement_binds() -> None:
+    case = _case()
+    case.then["statements"] = [
+        {
+            "sql": {
+                "postgres": ("select id from reading where jsonb_extract_path_text(profile, ?) = ?")
+            },
+            "binds": ["expires", "2026-1-15"],
+        }
+    ]
+
+    with pytest.raises(CaseFailure, match=r"then\.statements\[0\]\.binds\[1\].*noncanonical"):
+        preflight_case_literals(case)
+
+
+def test_preflight_excludes_untyped_statement_control_binds() -> None:
+    case = _case()
+    case.then["statements"] = [
+        {
+            "sql": {
+                "postgres": ("select id from reading where jsonb_extract_path_text(profile, ?) = ?")
+            },
+            "binds": [7, "2026-01-15"],
+        }
+    ]
+
+    preflight_case_literals(case)
+
+
 def test_preflight_descends_through_boolean_operand_wrappers() -> None:
     predicate = {
         "and": {

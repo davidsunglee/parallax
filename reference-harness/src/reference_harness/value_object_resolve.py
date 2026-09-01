@@ -154,16 +154,11 @@ def decode_typed_literal(value: Any, neutral_type: str | None, subject: str) -> 
 
 
 def is_string_member(neutral_type: str | None) -> bool:
-    """Whether a declared member's neutral type is m-core's ``String``.
+    """Whether a declared member has exactly the ``string`` Neutral Type.
 
-    The `m-predicate` non-string-member rule, which the five nested string
-    predicates are subject to in both scopes. Deliberately STRICTER than
-    :func:`literal_matches_type`'s string grouping: that function answers whether a
-    portable literal can carry a value of the type, and `date` / `time` /
-    `timestamp` / `uuid` / `bytes` all ride a `string` literal, so reusing it would
-    accept `nestedStartsWith` against a `Date` member — the exact hole this rule
-    exists to close. Only the canonical `string` spelling is a string member, and an
-    absent or unknown type is not one.
+    String operators apply by resolved member type in both top-level and nested
+    scopes. The Wire carrier is irrelevant: several non-string Neutral Types also
+    use a JSON string literal.
     """
     return neutral_type == "string"
 

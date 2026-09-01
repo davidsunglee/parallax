@@ -287,15 +287,7 @@ class ActualWireProjection:
         for name, item in source.items():
             leaf = attributes.get(name)
             if leaf is not None:
-                if item is None:
-                    projected[name] = None
-                else:
-                    try:
-                        managed = decode_canonical_wire(leaf.type, cast("WireValue", item))
-                    except WireDecodingError:
-                        projected[name] = item
-                    else:
-                        projected[name] = encode_wire(leaf.type, managed)
+                projected[name] = self._canonical_or_original(leaf.type, item)
                 continue
             child = nested.get(name)
             if child is not None:
@@ -352,15 +344,23 @@ class ActualWireProjection:
             else:
                 member = None
             if isinstance(member, AttributeMetadata):
-                try:
-                    projected[name] = self.published_scalar(member, item)
-                except WireDecodingError:
-                    projected[name] = item
+                projected[name] = self._canonical_or_original(member.type, item)
             elif member is not None:
                 projected[name] = self.published_value_object(member, item)
             else:
                 projected[name] = item
         return cast("WireValue", projected)
+
+    @staticmethod
+    def _canonical_or_original(neutral_type: NeutralType, value: object) -> WireValue:
+        """Canonical typed Wire, preserving the observed value when it is corrupt."""
+        if value is None:
+            return None
+        try:
+            managed = decode_canonical_wire(neutral_type, cast("WireValue", value))
+        except WireDecodingError:
+            return cast("WireValue", value)
+        return encode_wire(neutral_type, managed)
 
     def _entity_document_members(
         self, layout: TableLayout, entity: EntityMetadata
