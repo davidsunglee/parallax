@@ -73,6 +73,7 @@ from reference_harness.value_object_resolve import (
     NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
     NESTED_PATH_UNKNOWN_MEMBER,
     NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
+    NEUTRAL_LITERAL_OUT_OF_SPACE,
     NEUTRAL_LITERAL_TYPE_MISMATCH,
     WRITE_REQUIRED_ATTRIBUTE_MISSING,
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
@@ -875,6 +876,29 @@ def test_nested_string_predicate_accepts_a_string_member_in_both_scopes(tag: str
         entity, {tag: {"path": "Customer.address.city", "value": "Os", "caseInsensitive": True}}
     )
     validate_predicate(entity, _element_where({tag: {"path": "number", "value": "555"}}))
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"startsWith": {"attr": "Order.name", "value": chr(0xD800)}},
+        {
+            "nestedStartsWith": {
+                "path": "Customer.address.city",
+                "value": chr(0xD800),
+            }
+        },
+        _element_where({"nestedStartsWith": {"path": "number", "value": chr(0xD800)}}),
+    ],
+    ids=["top-level", "path-scoped", "element-scoped"],
+)
+def test_string_predicate_rejects_values_outside_unicode_scalar_space(
+    node: dict[str, Any],
+) -> None:
+    entity = _order_entity() if "startsWith" in node else _customer_entity()
+    with pytest.raises(RejectionError) as exc:
+        validate_predicate(entity, node)
+    assert exc.value.rule == NEUTRAL_LITERAL_OUT_OF_SPACE
 
 
 @pytest.mark.parametrize(

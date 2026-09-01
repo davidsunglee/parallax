@@ -38,14 +38,9 @@ from typing import Any, Never
 _DATE = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})$")
 _LOOSE_DATE = re.compile(r"^([0-9]{1,4})-([0-9]{1,2})-([0-9]{1,2})$")
 _TIME = re.compile(r"^([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]{3}|[0-9]{6}))?$")
-_LOOSE_TIME = re.compile(r"^([0-9]{1,2}):([0-9]{1,2})(?::([0-9]{1,2})(?:\.([0-9]+))?)?$")
 _TIMESTAMP = re.compile(
     r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})"
     r"(?:\.([0-9]{3}|[0-9]{6}))?(Z|[+-][0-9]{2}:[0-9]{2})$"
-)
-_LOOSE_TIMESTAMP = re.compile(
-    r"^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})T([0-9]{1,2}):([0-9]{1,2}):"
-    r"([0-9]{1,2})(?:\.([0-9]+))?(Z|[+-][0-9]{2}:[0-9]{2})$"
 )
 _UUID_CANONICAL = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _UUID_HYPHENATED = re.compile(r"^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
@@ -561,9 +556,8 @@ def _decode_date_classified(value: object, neutral_type: str) -> datetime.date:
 def decode_time(literal: str) -> datetime.time | None:
     """*literal* as the wall-clock time it spells, else ``None``.
 
-    ``hh:mm:ss`` with an optional fractional second, and — the one variation
-    `m-case-format` admits — with the seconds omitted. A `time` names a wall
-    clock, so a UTC offset is no part of its spelling.
+    ``hh:mm:ss`` with no fraction or exactly three or six fractional digits. A
+    `time` names a wall clock, so a UTC offset is no part of its spelling.
     """
     match = _TIME.match(literal)
     if match is None:
@@ -581,21 +575,12 @@ def decode_time(literal: str) -> datetime.time | None:
 def _decode_time_classified(value: object, neutral_type: str) -> datetime.time:
     if not isinstance(value, str):
         _fail("type-mismatch", value, neutral_type)
-    decoded = decode_time(value)
-    if decoded is not None:
-        return decoded
-    loose = _LOOSE_TIME.fullmatch(value)
-    if loose is None:
+    if _TIME.fullmatch(value) is None:
         _fail("type-mismatch", value, neutral_type)
-    hour, minute, second, fraction = loose.groups()
-    microsecond = _microseconds(fraction)
-    if microsecond is None:
+    decoded = decode_time(value)
+    if decoded is None:
         _fail("out-of-space", value, neutral_type)
-    try:
-        datetime.time(int(hour), int(minute), int(second or 0), microsecond)
-    except ValueError:
-        _fail("out-of-space", value, neutral_type)
-    _fail("noncanonical", value, neutral_type)
+    return decoded
 
 
 def decode_timestamp(literal: str) -> datetime.datetime | None:
@@ -634,33 +619,14 @@ def decode_timestamp(literal: str) -> datetime.datetime | None:
 def _decode_timestamp_classified(value: object, neutral_type: str) -> datetime.datetime:
     if not isinstance(value, str):
         _fail("type-mismatch", value, neutral_type)
-    decoded = decode_timestamp(value)
-    if decoded is not None:
-        if not value.endswith("Z"):
-            _fail("noncanonical", value, neutral_type)
-        return decoded.astimezone(datetime.UTC)
-    loose = _LOOSE_TIMESTAMP.fullmatch(value)
-    if loose is None:
+    if _TIMESTAMP.fullmatch(value) is None:
         _fail("type-mismatch", value, neutral_type)
-    year, month, day, hour, minute, second, fraction, zone = loose.groups()
-    microsecond = _microseconds(fraction)
-    offset = _offset(zone)
-    if microsecond is None or offset is None:
+    decoded = decode_timestamp(value)
+    if decoded is None:
         _fail("out-of-space", value, neutral_type)
-    try:
-        datetime.datetime(
-            int(year),
-            int(month),
-            int(day),
-            int(hour),
-            int(minute),
-            int(second),
-            microsecond,
-            tzinfo=offset,
-        )
-    except ValueError:
-        _fail("out-of-space", value, neutral_type)
-    _fail("noncanonical", value, neutral_type)
+    if not value.endswith("Z"):
+        _fail("noncanonical", value, neutral_type)
+    return decoded.astimezone(datetime.UTC)
 
 
 def decode_uuid(literal: str) -> uuid.UUID | None:
