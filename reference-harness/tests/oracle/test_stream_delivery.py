@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable
-from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -535,7 +534,7 @@ def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
         1000,
         1000,
         1000,
-        datetime(2024, 4, 1, tzinfo=UTC),
+        "2024-04-01T00:00:00.000000Z",
         1,
     )
 

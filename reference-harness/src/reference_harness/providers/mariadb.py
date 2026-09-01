@@ -36,6 +36,7 @@ from pymysql.constants import FIELD_TYPE
 from testcontainers.community.mysql import MySqlContainer
 
 from .. import errors
+from .._declared_contributor import TEMPORAL_INFINITY
 from ..ddl_builder import quote_identifier
 from ..document_codec import is_document
 from . import register
@@ -57,23 +58,19 @@ _INFINITY_LITERAL = "infinity"
 def _to_db_bind(value: Any) -> Any:
     """Adapt a fixture / bind value for MariaDB binding.
 
-    * the suite's ``infinity`` literal -> the max-sentinel ``DATETIME`` (m-dialect);
-    * an ISO-8601 instant string -> a naive UTC ``datetime`` (MariaDB ``DATETIME``
-      is timezone-naive; every instant in the suite is UTC, so we drop the offset
-      after normalizing to UTC);
+    * the declared Timestamp infinity marker -> the max-sentinel ``DATETIME``
+      (m-dialect);
+    * a managed aware ``datetime`` -> naive UTC for MariaDB ``DATETIME``;
     * a portable document (``document_codec.is_document``) -> JSON text, because
       MariaDB's ``JSON`` is a text alias; serialization is this seam's job and sits
       below the bind, which is why a golden authors the document itself
       (m-case-format);
     * every other scalar passes through unchanged.
     """
-    if value == _INFINITY_LITERAL:
+    if value is TEMPORAL_INFINITY:
         return _INFINITY_SENTINEL
-    if isinstance(value, str):
-        instant = _parse_iso_instant(value)
-        if instant is not None:
-            return instant
-        return value
+    if isinstance(value, _dt.datetime) and value.tzinfo is not None:
+        return value.astimezone(_dt.UTC).replace(tzinfo=None)
     if is_document(value):
         return json.dumps(value)
     if isinstance(value, uuid.UUID):
@@ -84,34 +81,6 @@ def _to_db_bind(value: Any) -> Any:
 def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
     physical = adapt_document_scalar_binds(sql, binds, "mariadb")
     return tuple(_to_db_bind(value) for value in physical)
-
-
-def _parse_iso_instant(text: str) -> _dt.datetime | None:
-    """Parse a ``timestamp`` COLUMN's instant to a naive UTC ``datetime``, else ``None``.
-
-    Only strings that are full ISO-8601 timestamps (carrying a ``T`` separator)
-    are treated as instants, so a plain ``date`` / ``time`` / ordinary domain string
-    is left alone. The result is shifted to UTC and made naive to match MariaDB's
-    timezone-naive ``DATETIME`` storage.
-
-    A ``Z``-terminated instant is deliberately NOT one: that is
-    ``m-document-codec``'s document spelling for an instant stored INSIDE a document,
-    and a predicate over such a leaf binds those characters for the extraction to
-    compare as text (m-dialect's text-compared table). Coercing it to a ``DATETIME``
-    would compare a naive instant against JSON text and silently select no row. A
-    ``timestamp`` COLUMN's bind rides the offset spelling instead — the one
-    ``datetime.isoformat`` produces and the corpus authors — so the two contracts'
-    spellings never collide at this seam.
-    """
-    if "T" not in text or text.endswith("Z"):
-        return None
-    try:
-        parsed = _dt.datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(_dt.UTC).replace(tzinfo=None)
-    return parsed
 
 
 def _is_boolean_field(type_code: Any, column_length: Any) -> bool:

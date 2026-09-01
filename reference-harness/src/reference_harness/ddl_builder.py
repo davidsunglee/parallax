@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from ._declared_contributor import DeclaredContributor
 from .case import Model
 from .storage_layout import (
     AttributeContributor,
@@ -263,25 +264,27 @@ class _Declarations:
     the ordered logical components of a unique Index remain declaration facts.
     """
 
-    types: Mapping[ColumnContributor, tuple[str, int | None]]
+    contributors: Mapping[ColumnContributor, DeclaredContributor]
     primary_key_indices: tuple[tuple[str, dict[str, Any]], ...]
     unique_indices: tuple[tuple[str, dict[str, Any]], ...]
 
 
 def _declarations(model: Model) -> _Declarations:
-    types: dict[ColumnContributor, tuple[str, int | None]] = {}
+    contributors: dict[ColumnContributor, DeclaredContributor] = {}
     primary_key_indices: list[tuple[str, dict[str, Any]]] = []
     unique_indices: list[tuple[str, dict[str, Any]]] = []
     for entity in model.entities:
         owner = entity.canonical_name
         definition = entity.definition
         for attribute in definition.get("attributes", []) or []:
-            types[AttributeContributor(owner, attribute["name"])] = (
-                attribute["type"],
-                attribute.get("maxLength"),
+            contributors[AttributeContributor(owner, attribute["name"])] = DeclaredContributor(
+                neutral_type=attribute["type"],
+                max_length=attribute.get("maxLength"),
             )
         for value_object in definition.get("valueObjects", []) or []:
-            types[ValueObjectContributor(owner, value_object["name"])] = (_DOCUMENT_TYPE, None)
+            contributors[ValueObjectContributor(owner, value_object["name"])] = DeclaredContributor(
+                _DOCUMENT_TYPE
+            )
         derived = derived_primary_key_index(definition)
         if derived is not None:
             primary_key_indices.append((owner, derived))
@@ -291,14 +294,14 @@ def _declarations(model: Model) -> _Declarations:
             if index.get("unique", False)
         )
     return _Declarations(
-        types=types,
+        contributors=contributors,
         primary_key_indices=tuple(primary_key_indices),
         unique_indices=tuple(unique_indices),
     )
 
 
-def contributor_types(model: Model) -> Mapping[ColumnContributor, tuple[str, int | None]]:
-    """Each layout contributor's declared neutral type and length bound.
+def declared_contributors(model: Model) -> Mapping[ColumnContributor, DeclaredContributor]:
+    """Each layout contributor's declared scalar facts.
 
     A layout slot names its contributor and its physical answer but never a type,
     so every consumer that must spell one — a ``CREATE TABLE`` column, a read's
@@ -306,7 +309,7 @@ def contributor_types(model: Model) -> Mapping[ColumnContributor, tuple[str, int
     into one structured document column whatever its inner members declare. The
     framework-owned discriminator has no declaration and so no entry.
     """
-    return _declarations(model).types
+    return _declarations(model).contributors
 
 
 def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> str:
@@ -318,7 +321,8 @@ def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> st
         # every governed row in the same physical type a Value Object occupies.
         neutral_type, max_length = _DOCUMENT_TYPE, None
     else:
-        neutral_type, max_length = declarations.types[slot.contributor]
+        declared = declarations.contributors[slot.contributor]
+        neutral_type, max_length = declared.neutral_type, declared.max_length
     parts = [
         quote_identifier(slot.column, dialect),
         _column_type(neutral_type, max_length, dialect),

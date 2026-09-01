@@ -23,8 +23,7 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-from .._statement_bind_inference import managed_statement_binds
-from ..case import Case
+from .._case_execution import CaseExecution
 from ..providers import DatabaseProvider
 from .compile import (
     CompiledScenario,
@@ -44,7 +43,8 @@ __all__ = ["execute_scenario"]
 def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
     """Execute *scenario*'s steps and assert what each of them observes."""
     case = scenario.case
-    dialect = db.dialect
+    execution = CaseExecution(case, db)
+    dialect = execution.dialect
     states = group_states(scenario)
     reads = ScenarioReads(case)
 
@@ -57,30 +57,29 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
             session: Any = None
             if state is not None:
                 if state.session is None:
-                    state.session = stack.enter_context(db.open_session())
+                    state.session = stack.enter_context(execution.open_session())
                 session = state.session
 
             with reported_against(case, step.index):
                 match step:
                     case _GroupedWrite():
                         assert state is not None  # a grouped step always has a state
-                        _apply_grouped_write(case, step, state, session, dialect)
+                        _apply_grouped_write(step, state, session, dialect)
                     case _UngroupedWrite():
-                        _apply_ungrouped_write(scenario, step, db, dialect)
+                        _apply_ungrouped_write(scenario, step, execution, dialect)
                     case _BoundaryAction():
-                        _apply_boundary_action(case, step, db, dialect)
+                        _apply_boundary_action(step, execution, dialect)
                     case _Read():
-                        reads.assert_step(step.index, session if session is not None else db)
+                        reads.assert_step(step.index, session if session is not None else execution)
                     case _UnresolvedList():
                         pass
                 finish_group(case, step.index, step.group, states, dialect)
 
 
 def _apply_grouped_write(
-    case: Case,
     step: _GroupedWrite,
     state: UowGroupState,
-    session: Any,
+    session: CaseExecution,
     dialect: str,
 ) -> None:
     """Apply a grouped write on the group's own held session.
@@ -90,12 +89,14 @@ def _apply_grouped_write(
     contributes is the executed statements the group's fate is graded on.
     """
     for statement, binds in step.statements.pairs(dialect):
-        physical = managed_statement_binds(case, statement, binds, dialect)
-        state.executed.append((statement, session.execute(statement, physical)))
+        state.executed.append((statement, session.execute(statement, binds)))
 
 
 def _apply_ungrouped_write(
-    scenario: CompiledScenario, step: _UngroupedWrite, db: DatabaseProvider, dialect: str
+    scenario: CompiledScenario,
+    step: _UngroupedWrite,
+    execution: CaseExecution,
+    dialect: str,
 ) -> None:
     """Apply a write that is its own unit of work.
 
@@ -109,16 +110,12 @@ def _apply_ungrouped_write(
     pairs = step.statements.pairs(dialect)
     if not step.rolls_back:
         for statement, binds in pairs:
-            db.execute(
-                statement,
-                managed_statement_binds(scenario.case, statement, binds, dialect),
-            )
+            execution.execute(statement, binds)
         return
-    with db.open_session() as session:
+    with execution.open_session() as session:
         executed: list[tuple[str, int]] = []
         for statement, binds in pairs:
-            physical = managed_statement_binds(scenario.case, statement, binds, dialect)
-            executed.append((statement, session.execute(statement, physical)))
+            executed.append((statement, session.execute(statement, binds)))
         # The SAME conflict-abort reasoning a doomed group is closed under
         # (:func:`.groups.finish_group`) — the ungrouped, single-step form.
         if scenario.case.expected_affected_rows is not None:
@@ -126,9 +123,7 @@ def _apply_ungrouped_write(
         session.rollback()
 
 
-def _apply_boundary_action(
-    case: Case, step: _BoundaryAction, db: DatabaseProvider, dialect: str
-) -> None:
+def _apply_boundary_action(step: _BoundaryAction, execution: CaseExecution, dialect: str) -> None:
     """Execute a non-read-verb action step's golden DML.
 
     A `flush` / `mergeBack` / `commit` commits its buffered statements on the unit
@@ -144,4 +139,4 @@ def _apply_boundary_action(
     claims no row observable, were both decided at compile time.
     """
     for statement, binds in step.statements.pairs(dialect):
-        db.execute(statement, managed_statement_binds(case, statement, binds, dialect))
+        execution.execute(statement, binds)

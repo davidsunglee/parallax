@@ -28,7 +28,7 @@ from reference_harness.case_runner import (
     _read_table,
     _write_column_order,
 )
-from reference_harness.ddl_builder import contributor_types, ddl_for
+from reference_harness.ddl_builder import ddl_for, declared_contributors
 from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.storage_layout import derived_primary_key_index
 from reference_harness.write_plan import has_temporal_gate
@@ -683,7 +683,7 @@ def test_bitemporal_observation_projects_the_temporal_slots_last() -> None:
     layout = case.model.storage_layout.table("instrument")
     assert layout is not None
     provider = _RecordingReadProvider()
-    _read_table(cast("Any", provider), layout, contributor_types(case.model))
+    _read_table(cast("Any", provider), layout, declared_contributors(case.model))
     assert provider.queries == [
         "select t0.id, t0.kind, t0.price, t0.coupon, t0.ticker, "
         "t0.from_z, t0.thru_z, t0.in_z, t0.out_z from instrument t0"

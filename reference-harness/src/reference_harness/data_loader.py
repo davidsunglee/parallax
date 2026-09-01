@@ -11,11 +11,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from ._declared_contributor import DeclaredContributor
 from .case import Entity, Model
-from .ddl_builder import contributor_types
+from .ddl_builder import declared_contributors
 from .document_codec import encode_leaf
 from .inheritance import assert_no_abstract_fixture_rows
-from .portable_literal import decode
 from .storage_layout import (
     AttributeContributor,
     ColumnContributor,
@@ -94,7 +94,7 @@ def _load_entity(
     entity: Entity,
     view: EntityLayoutView,
     db: DatabaseProvider,
-    types: Mapping[ColumnContributor, tuple[str, int | None]],
+    declarations: Mapping[ColumnContributor, DeclaredContributor],
 ) -> None:
     rows = entity.rows
     if not rows:
@@ -116,7 +116,9 @@ def _load_entity(
             raise ValueError(
                 f"fixture row for {entity.name} references unknown member(s) {sorted(unknown)}"
             )
-        tuples.append([_cell(slot, entity, view, document_names, row, types) for slot in slots])
+        tuples.append(
+            [_cell(slot, entity, view, document_names, row, declarations) for slot in slots]
+        )
 
     db.load(view.layout.table, columns, tuples)
 
@@ -127,7 +129,7 @@ def _cell(
     view: EntityLayoutView,
     document_names: tuple[str, ...],
     row: dict[str, Any],
-    types: Mapping[ColumnContributor, tuple[str, int | None]],
+    declarations: Mapping[ColumnContributor, DeclaredContributor],
 ) -> Any:
     """One row's value for one physical column.
 
@@ -141,10 +143,8 @@ def _cell(
     if name is None:
         return _tag_value(view)
     value = row.get(name)
-    declared = types.get(slot.contributor)
-    if value is None or declared is None or (declared[0] == "timestamp" and value == "infinity"):
-        return value
-    return decode(value, declared[0])
+    declared = declarations.get(slot.contributor)
+    return value if declared is None else declared.fixture_value(value)
 
 
 def _tag_value(view: EntityLayoutView) -> str:
@@ -162,9 +162,9 @@ def load_model(model: Model, db: DatabaseProvider) -> None:
     """
     assert_no_abstract_fixture_rows(model)
     layout = model.storage_layout
-    types = contributor_types(model)
+    declarations = declared_contributors(model)
     for entity in model.entities:
         view = layout.entity(entity.canonical_name)
         if view is None:
             continue
-        _load_entity(entity, view, db, types)
+        _load_entity(entity, view, db, declarations)

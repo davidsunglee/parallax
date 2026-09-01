@@ -12,7 +12,7 @@ cycle. Nothing here is a seam — do not hang lane variation off it.
 
 from __future__ import annotations
 
-from ._statement_bind_inference import managed_statement_binds
+from ._case_execution import CaseExecution
 from .case import Case
 from .data_loader import load_model
 from .ddl_builder import ddl_for
@@ -58,7 +58,8 @@ def apply_given(case: Case, db: DatabaseProvider) -> None:
     entry's ``sql`` is naive, dialect-agnostic text run as authored; ``binds``
     defaults to empty. A case carrying none applies nothing.
     """
+    execution = CaseExecution(case, db)
     for entry in case.apply:
         statement = entry["sql"]
         binds = list(entry.get("binds", []))
-        db.execute(statement, managed_statement_binds(case, statement, binds, db.dialect))
+        execution.execute(statement, binds)

@@ -34,7 +34,7 @@ import math
 import re
 import struct
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Literal, Never
@@ -314,6 +314,8 @@ def values_equal(
     left: Any, right: Any, neutral_type: str, tolerance: decimal.Decimal | None
 ) -> bool:
     """Compare after two independent declared-type canonical projections."""
+    if _is_json_container(left) or _is_json_container(right):
+        return neutral_type == "json" and _same_json(left, right)
     if type(left) is type(right) and left == right:
         return True
     decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
@@ -436,34 +438,32 @@ def _copy_json(value: Any) -> Any:
 
 
 def _same_json(left: Any, right: Any) -> bool:
-    if isinstance(left, dict) or isinstance(right, dict):
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
         return (
-            isinstance(left, dict)
-            and isinstance(right, dict)
+            isinstance(left, Mapping)
+            and isinstance(right, Mapping)
             and left.keys() == right.keys()
             and all(_same_json(left[name], right[name]) for name in left)
         )
-    if isinstance(left, list) or isinstance(right, list):
+    if _is_non_string_sequence(left) or _is_non_string_sequence(right):
         return (
-            isinstance(left, list)
-            and isinstance(right, list)
+            _is_non_string_sequence(left)
+            and _is_non_string_sequence(right)
             and len(left) == len(right)
             and all(_same_json(one, other) for one, other in zip(left, right, strict=True))
         )
     return _same_json_scalar(left, right)
 
 
+def _is_json_container(value: Any) -> bool:
+    return isinstance(value, Mapping) or _is_non_string_sequence(value)
+
+
+def _is_non_string_sequence(value: Any) -> bool:
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+
 def _same_json_scalar(left: Any, right: Any) -> bool:
-    if isinstance(left, bool) or isinstance(right, bool):
-        return isinstance(left, bool) and isinstance(right, bool) and left is right
-    if isinstance(left, (int, float)) or isinstance(right, (int, float)):
-        return (
-            isinstance(left, (int, float))
-            and not isinstance(left, bool)
-            and isinstance(right, (int, float))
-            and not isinstance(right, bool)
-            and decimal.Decimal(str(left)) == decimal.Decimal(str(right))
-        )
     return type(left) is type(right) and left == right
 
 
@@ -698,9 +698,13 @@ def _decode_timestamp_classified(value: object, neutral_type: str) -> datetime.d
     decoded = decode_timestamp(value)
     if decoded is None:
         _fail("out-of-space", value, neutral_type)
+    try:
+        normalized = decoded.astimezone(datetime.UTC)
+    except (OverflowError, ValueError):
+        _fail("out-of-space", value, neutral_type)
     if not value.endswith("Z"):
         _fail("noncanonical", value, neutral_type)
-    return decoded.astimezone(datetime.UTC)
+    return normalized
 
 
 def _microseconds(fraction: str | None) -> int:

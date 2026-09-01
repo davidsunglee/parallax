@@ -80,6 +80,8 @@ def test_canonical_decode_refuses_an_admitted_alternative() -> None:
         ("timestamp", "2026-1-1T9:30:00Z", "type-mismatch"),
         ("timestamp", "2026-01-01T09:30:00.1234560Z", "type-mismatch"),
         ("timestamp", "2026-01-15T09:30:00+00:00", "noncanonical"),
+        ("timestamp", "0001-01-01T00:00:00+14:00", "out-of-space"),
+        ("timestamp", "9999-12-31T23:59:59-14:00", "out-of-space"),
         ("uuid", "123E4567-E89B-12D3-A456-426614174000", "noncanonical"),
     ],
 )
@@ -172,6 +174,17 @@ def test_float_encoding_refuses_authored_number_provenance(spelling: str) -> Non
 def test_declared_projection_not_host_carrier_inference_decides_equality() -> None:
     assert literal.values_equal(decimal.Decimal("10.50"), "10.50", "decimal(12,2)", None)
     assert not literal.values_equal(decimal.Decimal("10.51"), "10.50", "decimal(12,2)", None)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ({"nested": [True]}, {"nested": [1]}),
+        ({"nested": [1]}, {"nested": [1.0]}),
+    ],
+)
+def test_json_equality_recurses_with_exact_scalar_types(left: object, right: object) -> None:
+    assert not literal.values_equal(left, right, "json", None)
 
 
 @pytest.mark.parametrize("spelling", ["float32", "float64"])

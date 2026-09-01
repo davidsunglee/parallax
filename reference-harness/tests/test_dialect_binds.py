@@ -24,6 +24,8 @@ database:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -31,7 +33,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
-from reference_harness._statement_bind_inference import managed_statement_binds
+from reference_harness._case_execution import CaseExecution
 from reference_harness.case import Case, Model, discover_cases
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
@@ -164,7 +166,25 @@ def test_statement_binds_map_without_dialect_errors() -> None:
         case.statement_binds(0)
 
 
-def test_managed_statement_binds_decode_direct_update_assignments() -> None:
+class _RecordingExecutor:
+    dialect = "postgres"
+
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, tuple[Any, ...]]] = []
+
+    def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        return []
+
+    def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
+        self.executed.append((sql, tuple(binds)))
+        return 1
+
+    @contextmanager
+    def open_session(self) -> Iterator[_RecordingExecutor]:
+        yield self
+
+
+def test_case_execution_converts_autocommit_and_held_session_binds() -> None:
     case = next(
         case
         for case in discover_cases(_COMPATIBILITY_ROOT)
@@ -173,11 +193,17 @@ def test_managed_statement_binds_decode_direct_update_assignments() -> None:
     entry = case.coherence[1]["statements"][0]
     statement = entry["sql"]["postgres"]
 
-    assert managed_statement_binds(case, statement, entry["binds"], "postgres") == (
-        Decimal("999.00"),
-        2,
-        2,
-    )
+    provider = _RecordingExecutor()
+    execution = CaseExecution(case, provider)
+
+    execution.execute(statement, entry["binds"])
+    with execution.open_session() as session:
+        session.execute(statement, entry["binds"])
+
+    assert provider.executed == [
+        (statement, (Decimal("999.00"), 2, 2)),
+        (statement, (Decimal("999.00"), 2, 2)),
+    ]
 
 
 def test_reference_sql_for_string_is_dialect_neutral() -> None:

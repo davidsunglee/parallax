@@ -24,7 +24,6 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
-from .._statement_bind_inference import managed_statement_binds
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure, scalars_equal
 from ..sql_canonical import sqlglot_dialect
@@ -374,14 +373,7 @@ def query_rows(
     executable, presence_keys = _alias_document_presence_projections(
         sql, reader.dialect, case.model
     )
-    rows = (
-        reader.query(
-            executable,
-            managed_statement_binds(case, executable, binds, reader.dialect),
-        )
-        if binds
-        else reader.query(executable)
-    )
+    rows = reader.query(executable, binds) if binds else reader.query(executable)
     if not presence_keys:
         return rows
     return [{key: value for key, value in row.items() if key not in presence_keys} for row in rows]
