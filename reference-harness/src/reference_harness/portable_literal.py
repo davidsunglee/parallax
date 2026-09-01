@@ -35,7 +35,7 @@ import re
 import struct
 import uuid
 from fractions import Fraction
-from typing import Any, Never
+from typing import Any, Literal, Never
 
 _DATE = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})$")
 _LOOSE_DATE = re.compile(r"^([0-9]{1,4})-([0-9]{1,2})-([0-9]{1,2})$")
@@ -64,15 +64,18 @@ _BINARY32_OVERFLOW = Fraction(2) ** 128 - Fraction(2) ** 103
 _DECIMAL_TYPE = re.compile(r"^decimal\(([0-9]+),\s*([0-9]+)\)$")
 
 
+type PortableLiteralReason = Literal["type-mismatch", "noncanonical", "out-of-space"]
+
+
 class PortableLiteralError(ValueError):
     """A value is not an admitted or canonical literal of its declared type."""
 
-    def __init__(self, reason: str, message: str) -> None:
+    def __init__(self, reason: PortableLiteralReason, message: str) -> None:
         super().__init__(message)
         self.reason = reason
 
 
-def _fail(reason: str, value: object, neutral_type: str) -> Never:
+def _fail(reason: PortableLiteralReason, value: object, neutral_type: str) -> Never:
     raise PortableLiteralError(reason, f"{value!r} is {reason} for {neutral_type}")
 
 
@@ -195,8 +198,12 @@ def encode(value: Any, neutral_type: str) -> Any:
     elif neutral_type in ("int32", "int64") and type(value) is int:
         return decode(value, neutral_type)
     elif neutral_type in ("float32", "float64"):
+        if type(value) is not float:
+            raise PortableLiteralError(
+                "type-mismatch", f"{value!r} is not a managed {neutral_type} value"
+            )
         target = decode_number(value, binary32=neutral_type == "float32")
-        if isinstance(value, float) and target is not None and target == value:
+        if target is not None and target == value:
             return _shortest_float(target, binary32=neutral_type == "float32")
     elif neutral_type == "string" and isinstance(value, str):
         return decode(value, neutral_type)

@@ -36,7 +36,7 @@ when:
             - sql:
                 postgres: update wallet set balance = ? where id = ?
                 mariadb: update wallet set balance = ? where id = ?
-              binds: [999.00, 1]
+              binds: ["999.00", 1]
 then:
   errorClass: lockWaitTimeout
   nativeCode:

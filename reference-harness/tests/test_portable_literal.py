@@ -133,6 +133,13 @@ def test_integer_encoding_requires_a_managed_integer_carrier(value: object) -> N
     assert exc_info.value.reason == "type-mismatch"
 
 
+@pytest.mark.parametrize("spelling", ["float32", "float64"])
+def test_float_encoding_refuses_authored_number_provenance(spelling: str) -> None:
+    with pytest.raises(literal.PortableLiteralError) as exc_info:
+        literal.encode(literal.AuthoredNumber("1.5"), spelling)
+    assert exc_info.value.reason == "type-mismatch"
+
+
 def test_declared_projection_not_host_carrier_inference_decides_equality() -> None:
     assert literal.values_equal(decimal.Decimal("10.50"), "10.50", "decimal(12,2)", None)
     assert not literal.values_equal(decimal.Decimal("10.51"), "10.50", "decimal(12,2)", None)

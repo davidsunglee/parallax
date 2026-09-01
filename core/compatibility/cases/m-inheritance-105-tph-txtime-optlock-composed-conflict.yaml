@@ -43,4 +43,4 @@ then:
   tableState:
     reading:
       - { id: 1, kind: meter, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
-      - { id: 1, kind: meter, celsius: 25.00, in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+      - { id: 1, kind: meter, celsius: "25.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }

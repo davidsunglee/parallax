@@ -241,10 +241,10 @@ def _check_string_predicate(
     """A nested string predicate's two rules, in the order m-predicate fixes: the
     resolved member's own type, then the literal's.
 
-    One function for both scopes, because only the resolution of ``attribute``
-    differs. Ordering the member first is load-bearing: the literal rule reads a
-    `date`/`time`/`timestamp`/`uuid`/`bytes` member permissively as a string, so a
-    string predicate aimed at one would otherwise be accepted rather than named.
+    One function serves both scopes because only resolution of ``attribute``
+    differs. Applicability is checked first so an operator aimed at a non-string
+    member reports that stable rule before the operand's independent typed-literal
+    verdict.
     """
     declared = attribute.get("type")
     if not is_string_member(declared):
