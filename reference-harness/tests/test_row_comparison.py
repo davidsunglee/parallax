@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from reference_harness._structural import is_structural_sequence
 from reference_harness.case import FrozenDict, FrozenList
 from reference_harness.case_assertions import rows_equal, scalars_equal
 from reference_harness.portable_literal import AuthoredInteger, AuthoredNumber, values_equal
@@ -99,3 +100,12 @@ def test_nested_structural_comparison_keeps_keys_positions_and_scalar_types_exac
     assert not rows_equal([{"payload": {"values": [{"kind": "total", "value": 1}, 2]}}], frozen)
     assert not rows_equal([{"payload": {"values": [2, {"kind": "count", "value": 1}]}}], frozen)
     assert not rows_equal([{"payload": {"values": [{"kind": "count", "value": 1.0}, 2]}}], frozen)
+
+
+def test_structural_sequences_exclude_every_text_and_binary_scalar_carrier() -> None:
+    assert is_structural_sequence([1, 2])
+    assert is_structural_sequence(FrozenList([1, 2]))
+    assert not is_structural_sequence("12")
+    assert not is_structural_sequence(b"12")
+    assert not is_structural_sequence(bytearray(b"12"))
+    assert not is_structural_sequence(memoryview(b"12"))

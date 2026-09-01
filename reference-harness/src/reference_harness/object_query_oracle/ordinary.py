@@ -459,7 +459,13 @@ def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
         expected.extend(execute.expected_temporal_suffix(case, entity, selections))
     actual = case.statement_binds(0, dialect)
     if len(actual) != len(expected) or not all(
-        execute.bind_value_equal(want, got) for want, got in zip(expected, actual, strict=False)
+        execute.bind_value_equal(
+            want,
+            got,
+            "timestamp",
+            allow_temporal_infinity=True,
+        )
+        for want, got in zip(expected, actual, strict=False)
     ):
         raise CaseFailure(
             f"{case.path.name}: temporal-only table-per-concrete-subtype abstract read binds "

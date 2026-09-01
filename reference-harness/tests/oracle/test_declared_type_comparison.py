@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from reference_harness.case import Case, Model
-from reference_harness.object_query_oracle import graph, row
+from reference_harness.object_query_oracle import execute, graph, row
 
 
 def test_rows_compare_reused_sibling_members_by_family_variant(
@@ -137,3 +138,44 @@ def test_value_object_members_do_not_use_container_equality_shortcuts(
         model,
         entity,
     )
+
+
+@pytest.mark.parametrize(
+    ("managed", "canonical", "neutral_type"),
+    [
+        (Decimal("10.50"), "10.50", "decimal(12,2)"),
+        (b"\x0a\x1b", "0a1b", "bytes"),
+        (
+            dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC),
+            "2026-01-15T09:30:00.000000Z",
+            "timestamp",
+        ),
+    ],
+)
+def test_bind_comparison_projects_each_valid_side_under_its_declared_type(
+    managed: object,
+    canonical: object,
+    neutral_type: str,
+) -> None:
+    assert execute.bind_value_equal(managed, canonical, neutral_type)
+    assert execute.bind_value_equal(canonical, managed, neutral_type)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "neutral_type"),
+    [
+        (Decimal("2.0"), 2.0, "decimal(12,1)"),
+        (b"\x0a\x1b", "0A1B", "bytes"),
+        (
+            "2026-01-15T09:30:00+00:00",
+            "2026-01-15T09:30:00+00:00",
+            "timestamp",
+        ),
+    ],
+)
+def test_bind_comparison_refuses_mismatched_carriers_and_noncanonical_values(
+    left: object,
+    right: object,
+    neutral_type: str,
+) -> None:
+    assert not execute.bind_value_equal(left, right, neutral_type)

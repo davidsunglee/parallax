@@ -806,16 +806,16 @@ def test_tpcs_temporal_union_read_per_branch_temporal_selection_binds() -> None:
     [
         (
             "asOf",
-            {"coordinate": "2024-03-01T00:00:00+00:00"},
-            ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00"],
+            {"coordinate": "2024-03-01T00:00:00.000000Z"},
+            ["2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"],
         ),
         (
             "asOfRange",
             {
-                "start": "2024-03-01T00:00:00+00:00",
-                "end": "2024-04-01T00:00:00+00:00",
+                "start": "2024-03-01T00:00:00.000000Z",
+                "end": "2024-04-01T00:00:00.000000Z",
             },
-            ["2024-04-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00"],
+            ["2024-04-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z"],
         ),
         ("history", {}, []),
     ],
@@ -825,16 +825,16 @@ def test_tpcs_temporal_union_read_per_branch_temporal_selection_binds() -> None:
     [
         (
             "asOf",
-            {"coordinate": "2024-02-01T00:00:00+00:00"},
-            ["2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"],
+            {"coordinate": "2024-02-01T00:00:00.000000Z"},
+            ["2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"],
         ),
         (
             "asOfRange",
             {
-                "start": "2024-02-01T00:00:00+00:00",
-                "end": "2024-05-01T00:00:00+00:00",
+                "start": "2024-02-01T00:00:00.000000Z",
+                "end": "2024-05-01T00:00:00.000000Z",
             },
-            ["2024-05-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"],
+            ["2024-05-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"],
         ),
         ("history", {}, []),
     ],
@@ -886,6 +886,16 @@ def test_tpcs_temporal_union_read_corrupt_temporal_selection_bind_is_rejected() 
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"][3] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
+        assert_case_read(case, _NoReads())
+
+
+def test_tpcs_temporal_union_refuses_matching_noncanonical_timestamp_binds() -> None:
+    case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
+    coordinate = "2024-03-01T00:00:00+00:00"
+    case.object_query["temporal"]["valid-time"] = {"asOf": coordinate}
+    case.then["statements"][0]["binds"] = [coordinate, coordinate, "infinity"] * 2
+
+    with pytest.raises(CaseFailure, match="temporal contributions"):
         assert_case_read(case, _NoReads())
 
 

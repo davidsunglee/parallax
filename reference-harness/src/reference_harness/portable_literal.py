@@ -34,10 +34,12 @@ import math
 import re
 import struct
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Literal, Never
+
+from ._structural import is_structural_sequence
 
 _DATE = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})$")
 _LOOSE_DATE = re.compile(r"^([0-9]{1,4})-([0-9]{1,2})-([0-9]{1,2})$")
@@ -445,10 +447,10 @@ def _same_json(left: Any, right: Any) -> bool:
             and left.keys() == right.keys()
             and all(_same_json(left[name], right[name]) for name in left)
         )
-    if _is_non_string_sequence(left) or _is_non_string_sequence(right):
+    if is_structural_sequence(left) or is_structural_sequence(right):
         return (
-            _is_non_string_sequence(left)
-            and _is_non_string_sequence(right)
+            is_structural_sequence(left)
+            and is_structural_sequence(right)
             and len(left) == len(right)
             and all(_same_json(one, other) for one, other in zip(left, right, strict=True))
         )
@@ -456,11 +458,7 @@ def _same_json(left: Any, right: Any) -> bool:
 
 
 def _is_json_container(value: Any) -> bool:
-    return isinstance(value, Mapping) or _is_non_string_sequence(value)
-
-
-def _is_non_string_sequence(value: Any) -> bool:
-    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+    return isinstance(value, Mapping) or is_structural_sequence(value)
 
 
 def _same_json_scalar(left: Any, right: Any) -> bool:

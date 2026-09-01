@@ -16,7 +16,6 @@ here is how far the list is walked and what proves it is exhausted.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
 
 from ..case import Case, Entity
@@ -72,25 +71,20 @@ def _stream_page(
     return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=executed.consumed)
 
 
-def _binds_equal(authored: list[Any], derived: list[Any]) -> bool:
-    """Whether an authored bind list and a derived one name the same values.
-
-    Compared value by value rather than as two lists, because a coordinate the
-    delivery read back off a row carries its own host type while the golden
-    authors that value's portable literal — an instant most of all, which the
-    milestone edge puts in every milestone-set page's seek.
-    """
-    if len(authored) != len(derived):
+def _binds_equal(
+    authored: list[Any],
+    derived: list[Any],
+    neutral_types: list[str | None],
+) -> bool:
+    """Compare structural binds exactly and typed coordinates under their declarations."""
+    if len(authored) != len(derived) or len(derived) != len(neutral_types):
         return False
-
-    def equal(left: Any, right: Any) -> bool:
-        if isinstance(left, bool) or isinstance(right, bool):
-            return type(left) is type(right) and left is right
-        if isinstance(left, (int, float, Decimal)) and isinstance(right, (int, float, Decimal)):
-            return Decimal(str(left)) == Decimal(str(right))
-        return scalars_equal(left, right, None)
-
-    return all(equal(left, right) for left, right in zip(authored, derived, strict=True))
+    return all(
+        scalars_equal(left, right, None)
+        if neutral_type is None
+        else execute.bind_value_equal(left, right, neutral_type)
+        for left, right, neutral_type in zip(authored, derived, neutral_types, strict=True)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +181,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             first_root_sql = root_sql
             carried_binds = list(authored[:-1])
             expected_binds: list[Any] = [*carried_binds, requested]
+            expected_bind_types: list[str | None] = [None] * len(expected_binds)
         else:
             composed = seek.composed_seek(terms, cursor)
             spliced_at, _spliced_to = seek.seek_splice(first_root_sql, root_sql)
@@ -197,7 +192,12 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
                 *carried_binds[seek_bind_position:],
                 requested,
             ]
-        if not _binds_equal(authored, expected_binds):
+            expected_bind_types = [
+                *([None] * seek_bind_position),
+                *composed.neutral_types,
+                *([None] * (len(carried_binds) - seek_bind_position + 1)),
+            ]
+        if not _binds_equal(authored, expected_binds, expected_bind_types):
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) page {page + 1} root binds "
                 f"{authored!r} != {expected_binds!r}. A page binds the query's own binds "

@@ -514,6 +514,17 @@ def test_streamed_coordinate_types_share_declared_projection_across_authored_and
     assert reads.calls[1][1] == tuple(case.statement_binds(1, "postgres"))
 
 
+def test_a_streamed_coordinate_refuses_decimal_text_equivalence_for_a_float_bind(
+    damaged_case: CaseLoader,
+) -> None:
+    case = damaged_case("m-snapshot-read-044-stream-order-float32-coordinate.yaml")
+    _statements(case)[1]["binds"]["postgres"][3] = Decimal("1.5")
+    reads = ScriptedReads(results=_typed_coordinate_script("f32", 1.5))
+
+    with pytest.raises(CaseFailure, match="root binds"):
+        assert_case_read(case, reads)
+
+
 def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
     corpus_case: CaseLoader,
 ) -> None:
