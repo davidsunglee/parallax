@@ -27,6 +27,7 @@ from _second_dialect import BACKTICKED
 from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, models, sweep
+from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     execution_lifecycle_observation,
@@ -37,7 +38,6 @@ from parallax.core.base import (
     INFINITY,
     STRING,
     TIMESTAMP,
-    InstantError,
     PresentDocument,
     TemporalBound,
 )
@@ -179,10 +179,16 @@ def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
 
 
 def test_run_read_case_wire_renders_managed_row_values() -> None:
-    # The port returns managed values; run_read_case records canonical wire form.
-    port = FakeDbPort([{"id": 1, "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000")}])
-    _emissions, rows, _round_trips = engine.run_read_case(_case("m-value-object-001"), port)
-    assert rows == [{"id": 1, "external_id": "123e4567-e89b-12d3-a456-426614174000"}]
+    # Production actuals select the codec arm from accepted Metadata, never from
+    # the UUID carrier itself.
+    model = models.load_models()["scalars"]
+    entity = model.entities[0]
+    external_id = entity.attribute("externalId")
+    assert external_id is not None
+    projected = ActualWireProjection(model).scalar(
+        external_id, uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
+    )
+    assert projected == "123e4567-e89b-12d3-a456-426614174000"
 
 
 def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> None:
@@ -259,42 +265,6 @@ def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> No
     document["when"] = when
     with pytest.raises(engine.EngineError, match=case.path.name):
         engine.run_read_case(dataclasses.replace(case, document=document), FakeDbPort([]))
-
-
-def test_wire_value_covers_the_managed_type_set() -> None:
-    assert engine.wire_value(None) is None
-    assert engine.wire_value(True) is True
-    assert engine.wire_value(decimal.Decimal("12.34")) == "12.34"
-    # A `datetime` is an instant: an aware UTC value renders with the `+00:00`
-    # offset (canonical UTC), a `date`/`time` (not an instant) renders as-is.
-    assert engine.wire_value(dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.UTC)) == (
-        "2024-01-02T03:04:05+00:00"
-    )
-    assert engine.wire_value(dt.date(2024, 1, 2)) == "2024-01-02"
-    assert engine.wire_value(dt.time(3, 4, 5)) == "03:04:05"
-    assert engine.wire_value(memoryview(b"\x01\x02")) == "0102"
-    # The temporal open-upper-bound sentinel renders as the canonical `infinity`
-    # literal (a temporal read's current-row `out_z` reads back as native infinity).
-    from parallax.core.base import INFINITY
-
-    assert engine.wire_value(INFINITY) == "infinity"
-    sentinel = object()  # an unrecognized value passes through unchanged
-    assert engine.wire_value(sentinel) is sentinel
-
-
-def test_wire_value_normalizes_an_aware_non_utc_datetime_to_utc() -> None:
-    # A `timestamp` observation is normalized through the m-core UTC-instant path
-    # BEFORE ISO-rendering, so a non-UTC offset is canonicalized to UTC rather than
-    # graded verbatim (2024-01-02T03:04:05+05:00 -> 2024-01-01T22:04:05+00:00).
-    aware = dt.datetime(2024, 1, 2, 3, 4, 5, tzinfo=dt.timezone(dt.timedelta(hours=5)))
-    assert engine.wire_value(aware) == "2024-01-01T22:04:05+00:00"
-
-
-def test_wire_value_rejects_a_naive_datetime() -> None:
-    # A naive `datetime` carries no offset and cannot be an instant: the m-core
-    # boundary rejects it loudly rather than silently rendering an ambiguous form.
-    with pytest.raises(InstantError):
-        engine.wire_value(dt.datetime(2024, 1, 2, 3, 4, 5))
 
 
 def test_eligibility_reads_the_case_declaration() -> None:
@@ -555,13 +525,38 @@ def _lowered(sql: str, *binds: object) -> LoweredStatement:
             index,
             cast(
                 "Any",
-                engine.wire_value(bind.value if isinstance(bind, JsonDocument) else bind),
+                _test_wire_value(bind.value if isinstance(bind, JsonDocument) else bind),
             ),
         )
         for index, bind in enumerate(binds)
         if not isinstance(bind, dt.timedelta)
     )
     return LoweredStatement(sql, tuple(binds), _wire_bind_overrides=overrides)
+
+
+def _test_wire_value(value: object) -> object:
+    """A test-authored sparse override, not production type inference."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        source = cast("Mapping[object, object]", value)
+        return {str(name): _test_wire_value(item) for name, item in source.items()}
+    if isinstance(value, (list, tuple)):
+        source = cast("Sequence[object]", value)
+        return [_test_wire_value(item) for item in source]
+    if isinstance(value, decimal.Decimal):
+        return str(value)
+    if isinstance(value, dt.datetime):
+        return value.astimezone(dt.UTC).isoformat()
+    if isinstance(value, dt.date | dt.time):
+        return value.isoformat()
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, bytes):
+        return value.hex()
+    from parallax.core.base import TemporalBound
+
+    return "infinity" if isinstance(value, TemporalBound) else value
 
 
 def test_a_plan_the_lifecycle_confirms_is_reported_unchanged() -> None:
@@ -1483,7 +1478,7 @@ setattr(
 
 def _wire_row(row: Row) -> dict[str, object]:
     """One authored row as the Wire spelling a find step's own rows carry."""
-    return {key: engine.wire_value(value) for key, value in row.items()}
+    return {key: _test_wire_value(value) for key, value in row.items()}
 
 
 def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abort() -> None:
@@ -5343,11 +5338,13 @@ def test_read_table_state_normalizes_values_without_changing_the_projection() ->
     from parallax.conformance import models
 
     instant = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = FakeWritePort(find_rows=[{"bal_id": 1, "acct_num": "A", "val": 1, "in_z": instant}])
+    port = FakeWritePort(
+        find_rows=[{"bal_id": 1, "acct_num": "A", "val": decimal.Decimal("1.00"), "in_z": instant}]
+    )
     meta = models.load_models()["balance"]
     state = engine.read_table_state(port, meta)
     (row,) = state["balance"]
-    assert row["in_z"] == "2024-01-01T00:00:00+00:00"
+    assert row["in_z"] == "2024-01-01T00:00:00.000000Z"
     sql, _ = port.reads[0]
     assert sql == "select bal_id, acct_num, val, in_z, out_z from balance"
 
@@ -6009,8 +6006,8 @@ def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
     assert round_trips == 1
     assert len(emissions) == 1
     assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
-        "2024-01-01T00:00:00+00:00",
-        "2024-04-01T00:00:00+00:00",
+        "2024-01-01T00:00:00.000000Z",
+        "2024-04-01T00:00:00.000000Z",
     ]
     assert [_rows(_entry(g, "graph"), "InvoiceLine")[0]["amount"] for g in graphs] == [
         "50.00",
@@ -6050,8 +6047,8 @@ def test_run_streamed_graphs_case_groups_a_delivery_back_into_edge_ranked_graphs
     assert round_trips == 4
     assert len(emissions) == 4
     assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
-        "2024-01-01T00:00:00+00:00",
-        "2024-04-01T00:00:00+00:00",
+        "2024-01-01T00:00:00.000000Z",
+        "2024-04-01T00:00:00.000000Z",
     ]
     assert [
         [row["amount"] for row in _rows(_entry(g, "graph"), "InvoiceLine")] for g in graphs

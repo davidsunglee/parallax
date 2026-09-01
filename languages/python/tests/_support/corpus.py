@@ -44,11 +44,9 @@ def case_fixtures(case: Any) -> dict[str, Any]:
 
 def _wire_row(row: dict[str, Any]) -> dict[str, Any]:
     # Observed rows arrive already wire-rendered; authored expectation rows are
-    # normalized through the same m-db-port boundary so dates / uuids / bytes are
-    # compared in one canonical form.
-    from parallax.conformance import engine
-
-    return {key: engine.wire_value(value) for key, value in row.items()}
+    # normalized by this test-only adapter so dates / uuids / bytes are compared
+    # in one canonical form without restoring production carrier inference.
+    return {key: _wire_value(value) for key, value in row.items()}
 
 
 def _to_decimal(value: object) -> object:
@@ -137,12 +135,34 @@ def compare_binds(observed: Sequence[object], expected: Sequence[object]) -> Non
 
 
 def _wire_value(value: object) -> object:
-    from parallax.conformance import engine
+    import datetime as dt
+    import decimal
+    import uuid
+
+    from parallax.core.base import TemporalBound
     from parallax.core.db_port import JsonDocument
 
     if isinstance(value, JsonDocument):
-        return value.value
-    return engine.wire_value(value)
+        return wire_value_deep(value.value)
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Mapping):
+        source = cast("Mapping[object, object]", value)
+        return {str(name): _wire_value(item) for name, item in source.items()}
+    if isinstance(value, (list, tuple)):
+        source = cast("Sequence[object]", value)
+        return [_wire_value(item) for item in source]
+    if isinstance(value, decimal.Decimal):
+        return str(value)
+    if isinstance(value, dt.datetime):
+        return value.astimezone(dt.UTC).isoformat()
+    if isinstance(value, dt.date | dt.time):
+        return value.isoformat()
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, bytes):
+        return value.hex()
+    return "infinity" if isinstance(value, TemporalBound) else value
 
 
 def compare_rows(observed: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
@@ -226,15 +246,13 @@ def instance_graph_node(instance: Entity, *, family_variant: bool = False) -> di
 # exact-Decimal / wire-normalized scalar rules `compare_rows` uses.           #
 # --------------------------------------------------------------------------- #
 def wire_value_deep(value: object) -> object:
-    from parallax.conformance import engine
-
     if isinstance(value, Mapping):
         mapping = cast("Mapping[str, object]", value)
         return {key: wire_value_deep(v) for key, v in mapping.items()}
     if isinstance(value, list):
         items = cast("list[object]", value)
         return [wire_value_deep(v) for v in items]
-    return engine.wire_value(value)
+    return _wire_value(value)
 
 
 @dataclass(frozen=True, slots=True)

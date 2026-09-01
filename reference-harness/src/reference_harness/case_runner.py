@@ -63,6 +63,7 @@ from .case_assertions import (
     rows_equal,
     write_value_equal,
 )
+from .case_preflight import preflight_case_literals
 from .ddl_builder import (
     contributor_types,
     quote_identifier,
@@ -3257,6 +3258,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_rejected(case)  # the pre-SQL refusal, asserting the named rule
         return
 
+    preflight_case_literals(case)
     dialect = db.dialect
 
     if case.is_scenario:
@@ -3267,7 +3269,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_schema(case)
         _assert_serde(case)  # layer 4
         _assert_equivalent_encodings(case)  # layer 4c
-        assert_unit_work_scenario(case, db)
+        assert_unit_work_scenario(case, db, literals_preflighted=True)
         return
 
     if case.is_coherence:

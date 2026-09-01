@@ -1,0 +1,24 @@
+# A streamed page ordered by a document-resident `timestamp` adopts the root's
+# managed instant and encodes it at UTC with six fractional digits and `Z`.
+# The authored equality uses that same declared projection, and the full first
+# page forces a generated second statement. This separates canonical Wire time
+# from the driver's offset-bearing datetime carrier without re-decoding the root.
+model: models/stream-coordinates.yaml
+tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, timestamp, document-layout, graph, slice-snapshot-1]
+shape: read
+compileEligibility: { mode: run-only, reason: query-result-dependent }
+when:
+  objectQuery:
+    target: parallax.compatibility.StreamCoordinate
+    predicate: { eq: { attr: parallax.compatibility.StreamCoordinate.instant, value: "2026-01-15T09:30:00.000000Z" } }
+    orderBy: [{ attr: parallax.compatibility.StreamCoordinate.instant }]
+  stream: { batchSize: 1 }
+then:
+  statements:
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
+      binds: { postgres: [instant, "2026-01-15T09:30:00.000000Z", instant, 1] }
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? and jsonb_extract_path_text(t0.coordinates, ?) >= ? and (jsonb_extract_path_text(t0.coordinates, ?) > ? or (jsonb_extract_path_text(t0.coordinates, ?) = ? and t0.id > ?)) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
+      binds: { postgres: [instant, "2026-01-15T09:30:00.000000Z", instant, "2026-01-15T09:30:00.000000Z", instant, "2026-01-15T09:30:00.000000Z", instant, "2026-01-15T09:30:00.000000Z", 101, instant, 1] }
+  referenceSql: { postgres: "select id, coordinates ->> 'instant' as instant from stream_coordinate where coordinates ->> 'instant' = '2026-01-15T09:30:00.000000Z'" }
+  graph: { StreamCoordinate: [{ id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }] }
+  roundTrips: 2

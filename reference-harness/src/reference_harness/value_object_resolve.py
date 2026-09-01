@@ -32,7 +32,7 @@ import re
 from typing import Any
 
 from .case import Entity
-from .portable_literal import decode_decimal, decode_number, decoded_as
+from .portable_literal import PortableLiteralError, decode, decode_decimal, decode_number
 from .references import split_reference
 
 # --- rule vocabulary --------------------------------------------------------
@@ -134,24 +134,12 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     """
     if value is None:
         return True
-    kind = neutral_type or ""
-    decimal_type = _DECIMAL_TYPE.match(kind)
-    if decimal_type is not None:
-        precision, scale = (int(group) for group in decimal_type.groups())
-        return _matches_decimal(value, precision, scale)
-    if kind == "boolean":
-        return isinstance(value, bool)
-    if kind in _INT_BOUNDS:
-        low, high = _INT_BOUNDS[kind]
-        return _is_integer(value) and low <= value <= high
-    if kind in ("float32", "float64"):
-        return _matches_float(value, binary32=kind == "float32")
-    if kind == "string":
-        return isinstance(value, str) and _is_utf8_encodable(value)
-    if kind in ("bytes", "date", "time", "timestamp", "uuid"):
-        return decoded_as(value, kind) is not None
-    if kind == "json":
+    if neutral_type is None:
         return True
+    try:
+        decode(value, neutral_type)
+    except PortableLiteralError:
+        return False
     return True
 
 

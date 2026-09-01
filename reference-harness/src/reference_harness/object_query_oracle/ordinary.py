@@ -8,10 +8,10 @@ import sqlglot
 from sqlglot import exp
 
 from ..case import Case, Entity
-from ..case_assertions import CaseFailure, rows_equal
+from ..case_assertions import CaseFailure
 from ..inheritance import STRATEGY_TPCS, STRATEGY_TPH, query_position
 from ..sql_canonical import sqlglot_dialect
-from . import execute, graph, includes, materialize, stream
+from . import execute, graph, includes, materialize, row, stream
 from .executor import ReadExecutor
 
 
@@ -78,7 +78,8 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
     expected = case.expected_rows
     tolerance = case.tolerance
 
-    if not rows_equal(golden_rows, expected, tolerance):
+    entity = case.model.entity(case.object_query["target"])
+    if not row.rows_equal(golden_rows, expected, case.model, entity, tolerance):
         raise CaseFailure(
             f"{case.path.name}: then.statements ({dialect}) rows != then.rows.\n"
             f"  golden:   {golden_rows!r}\n"
@@ -90,7 +91,7 @@ def _assert_flat_equivalence(case: Case, reader: ReadExecutor) -> None:
         reference = materialize.materialize_read(
             case, execute.reference_rows(reader, reference_sql)
         )
-        if not rows_equal(reference, expected, tolerance):
+        if not row.rows_equal(reference, expected, case.model, entity, tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != then.rows.\n"
                 f"  reference: {reference!r}\n"
@@ -136,8 +137,12 @@ def _assert_stream(case: Case, reader: ReadExecutor) -> None:
         reference = materialize.materialize_read(
             case, execute.reference_rows(reader, reference_sql)
         )
-        root_projection = [execute.project_like(row, delivered.root_rows) for row in reference]
-        if not rows_equal(root_projection, delivered.root_rows, case.tolerance):
+        delivered_projection = [
+            execute.project_like(item, reference) for item in delivered.root_rows
+        ]
+        if not row.rows_equal(
+            reference, delivered_projection, case.model, root_entity, case.tolerance
+        ):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql root rows != the delivered root rows.\n"
                 f"  reference: {reference!r}\n"
@@ -195,7 +200,8 @@ def _assert_deep_fetch(case: Case, reader: ReadExecutor) -> None:
             case, execute.reference_rows(reader, reference_sql)
         )
         root_projection = [execute.project_like(row, root_rows) for row in reference]
-        if not rows_equal(root_projection, root_rows, case.tolerance):
+        root_entity = case.model.entity(query["target"])
+        if not row.rows_equal(root_projection, root_rows, case.model, root_entity, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql root rows != then.statements root rows.\n"
                 f"  reference: {reference!r}\n"
@@ -258,7 +264,7 @@ def _assert_graphs(case: Case, reader: ReadExecutor) -> None:
                 case, execute.reference_rows(reader, reference_sql)
             )
         ]
-        if not rows_equal(reference, root_rows, case.tolerance):
+        if not row.rows_equal(reference, root_rows, case.model, root_entity, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != then.statements milestone rows.\n"
                 f"  reference: {reference!r}\n"
@@ -330,7 +336,7 @@ def _assert_single_statement_graph(case: Case, reader: ReadExecutor) -> None:
         reference = materialize.materialize_read(
             case, execute.reference_rows(reader, reference_sql)
         )
-        if not rows_equal(reference, identity_rows, case.tolerance):
+        if not row.rows_equal(reference, identity_rows, case.model, entity, case.tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != golden rows (identity).\n"
                 f"  reference: {reference!r}\n"

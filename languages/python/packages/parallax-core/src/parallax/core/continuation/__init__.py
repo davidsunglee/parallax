@@ -107,9 +107,12 @@ class ContinuationPlan:
     afterwards.
     """
 
-    __slots__ = ("_query", "_terms")
+    __slots__ = ("_model", "_query", "_terms")
 
-    def __init__(self, query: ValidatedObjectQuery, terms: tuple[_Term, ...]) -> None:
+    def __init__(
+        self, model: Metamodel, query: ValidatedObjectQuery, terms: tuple[_Term, ...]
+    ) -> None:
+        self._model = model
         self._query = query
         self._terms = terms
 
@@ -222,7 +225,7 @@ def plan(query: ValidatedObjectQuery, model: Metamodel) -> ContinuationPlan:
     for identity in (_family_key(root), *_milestone_edge(root, query)):
         if all(term.identity != identity for term in terms):
             terms.append(_term(OrderKey(attr=_reference(identity), direction="asc"), model))
-    return ContinuationPlan(query, tuple(terms))
+    return ContinuationPlan(model, query, tuple(terms))
 
 
 def _milestone_edge(

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import datetime as dt
-import decimal
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
 
+from parallax.conformance._case_literal import normalize_case_bound, normalize_case_literal
 from parallax.core import inheritance, predicate
-from parallax.core.base import TIMESTAMP, ManagedValue, NeutralType, matches_neutral_type
-from parallax.core.base import Decimal as DecimalType
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -33,8 +30,6 @@ from parallax.core.unit_work.instructions import (
     WriteAssignment,
     WriteInstruction,
 )
-from parallax.core.wire import encode_wire
-from parallax.core.wire._json import authored_token
 
 __all__ = ["normalize_case_query", "prepare_case_write"]
 
@@ -77,12 +72,12 @@ def normalize_case_query(query: ObjectQueryNode, model: AcceptedMetamodel) -> Ob
 
 def _normalize_temporal_selection(selection: TemporalSelection) -> TemporalSelection:
     if isinstance(selection, AsOf) and selection.coordinate != "latest":
-        return replace(selection, coordinate=_wire_bound(selection.coordinate))
+        return replace(selection, coordinate=normalize_case_bound(selection.coordinate))
     if isinstance(selection, AsOfRange):
         return replace(
             selection,
-            start=_wire_bound(selection.start),
-            end=_wire_bound(selection.end),
+            start=normalize_case_bound(selection.start),
+            end=normalize_case_bound(selection.end),
         )
     return selection
 
@@ -96,8 +91,8 @@ def _normalize_instruction(
     entity = entity_by_name(model, target_name)
     if entity is None:
         return instruction
-    valid_from = _wire_bound(instruction.valid_from)
-    until = _wire_bound(instruction.until)
+    valid_from = normalize_case_bound(instruction.valid_from)
+    until = normalize_case_bound(instruction.until)
     if isinstance(instruction, KeyedWrite):
         members = _entity_members(model, entity)
         rows = tuple(
@@ -148,7 +143,7 @@ def _normalize_member(member: AttributeMetadata | ValueObjectMetadata, value: ob
     if value is None:
         return None
     if isinstance(member, AttributeMetadata):
-        return _wire_leaf(member.type, value)
+        return normalize_case_literal(member.type, value)
     return _normalize_occurrence(member, value)
 
 
@@ -167,7 +162,7 @@ def _normalize_document(container: _Occurrence, value: object) -> object:
     occurrences = {member.identity.path[-1]: member for member in container.value_objects}
     return {
         name: (
-            _wire_leaf(attribute.type, nested)
+            normalize_case_literal(attribute.type, nested)
             if nested is not None and (attribute := attributes.get(name)) is not None
             else _normalize_occurrence(occurrence, nested)
             if nested is not None and (occurrence := occurrences.get(name)) is not None
@@ -175,54 +170,6 @@ def _normalize_document(container: _Occurrence, value: object) -> object:
         )
         for name, nested in cast("Mapping[str, object]", value).items()
     }
-
-
-def _wire_leaf(neutral_type: NeutralType, value: object | None) -> object | None:
-    if value is None:
-        return None
-    if matches_neutral_type(value, neutral_type):
-        return encode_wire(neutral_type, cast("ManagedValue", value))
-    if neutral_type == TIMESTAMP and isinstance(value, str):
-        try:
-            instant = dt.datetime.fromisoformat(value)
-        except ValueError:
-            return value
-        if matches_neutral_type(instant, TIMESTAMP):
-            return encode_wire(TIMESTAMP, instant)
-        return value
-    if (
-        isinstance(neutral_type, DecimalType)
-        and isinstance(value, (int, float))
-        and not isinstance(value, bool)
-    ):
-        return _case_decimal(value, neutral_type)
-    return value
-
-
-def _wire_bound(value: str | dt.datetime | None) -> str | None:
-    normalized = _wire_leaf(TIMESTAMP, value)
-    return None if normalized is None else cast("str", normalized)
-
-
-def _case_decimal(value: int | float, neutral_type: DecimalType) -> object:
-    try:
-        number = decimal.Decimal(authored_token(value) or str(value))
-    except decimal.InvalidOperation:
-        return value
-    sign, digits, exponent = number.as_tuple()
-    if not isinstance(exponent, int):
-        return value
-    original_exponent = exponent
-    last = len(digits)
-    while last and digits[last - 1] == 0:
-        last -= 1
-        exponent += 1
-    if exponent < -neutral_type.scale:
-        return value
-    if number and abs(number.adjusted()) > neutral_type.precision + neutral_type.scale:
-        return value
-    normalized = decimal.Decimal((sign, digits, original_exponent))
-    return format(normalized, f".{neutral_type.scale}f")
 
 
 def _normalize_predicate(
@@ -307,7 +254,11 @@ def _predicate_leaf(model: AcceptedMetamodel, reference: str, value: object) -> 
     if entity is None:
         return value
     member = _entity_members(model, entity).get(path[0])
-    return _wire_leaf(member.type, value) if isinstance(member, AttributeMetadata) else value
+    return (
+        normalize_case_literal(member.type, value)
+        if isinstance(member, AttributeMetadata)
+        else value
+    )
 
 
 def _nested_predicate_leaf(
@@ -321,7 +272,7 @@ def _nested_predicate_leaf(
         if element_container is not None
         else _predicate_nested_leaf(model, reference)
     )
-    return _wire_leaf(leaf.type, value) if leaf is not None else value
+    return normalize_case_literal(leaf.type, value) if leaf is not None else value
 
 
 def _predicate_nested_leaf(

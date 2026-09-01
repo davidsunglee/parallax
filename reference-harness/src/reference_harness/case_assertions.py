@@ -13,13 +13,11 @@ seam can reach another through it.
 from __future__ import annotations
 
 import contextlib
-import datetime
-import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
 from typing import Any
 
-from . import multiset, portable_literal
+from . import multiset
 from .case import Case
 
 
@@ -47,58 +45,20 @@ def _to_decimal(value: Any) -> Any:
     return value
 
 
-# The host carrier each string-carried Neutral Type decodes to, and the decoder
-# that reads its portable literal.
-_LITERAL_CARRIERS: tuple[tuple[type, Callable[[str], Any]], ...] = (
-    (datetime.datetime, portable_literal.decode_timestamp),
-    (datetime.date, portable_literal.decode_date),
-    (datetime.time, portable_literal.decode_time),
-    (uuid.UUID, portable_literal.decode_uuid),
-    (bytes, portable_literal.decode_octets),
-)
-
-
-def _decoded_against(value: Any, other: Any) -> Any:
-    """*value* decoded as a portable literal of *other*'s space, else unchanged.
-
-    ``datetime`` is asked before ``date`` because it is a ``date`` subclass, so an
-    instant would otherwise be compared against a calendar-date literal.
-    """
-    if not isinstance(value, str):
-        return value
-    for carrier, decode in _LITERAL_CARRIERS:
-        if isinstance(other, carrier):
-            return decode(value) if decode(value) is not None else value
-    return value
-
-
 def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
-    """Compare two scalars exactly in Decimal space, or within ``tolerance``.
+    """Compare already-canonical scalars, except for an authored tolerance.
 
-    Numerics compare as exact Decimals (no ``float`` anywhere) so a ``decimal``
-    money column matches to the cent and a value's type never depends on whether
-    it is whole. When the case declares a ``tolerance`` — for inherently inexact
-    results (stddev / variance / repeating-decimal avg) that cannot be authored
-    exactly and differ in scale across dialects — numeric comparison becomes
-    ``abs(left - right) <= tolerance``. Non-numerics (str / bool / None) use ``==``.
-
-    A case authors a `date` / `time` / `timestamp` / `uuid` / `bytes` value as its
-    PORTABLE LITERAL — the corpus YAML schema resolves four implicit types and no
-    more (:mod:`corpus_yaml`), so such a value reaches here as the text its author
-    wrote, while the row read back carries the decoded host value. The literal is
-    decoded before comparison, so the two name the same value or they do not.
+    Declared-type projection happens before this generic grader. This seam does
+    not repair Decimal/float, instant/string, UUID/string, or bytes/string carrier
+    differences when no metadata says which value space they occupy.
     """
     if isinstance(left, bool) or isinstance(right, bool):
-        # bool is not numeric: a boolean equals only a boolean of the same value
-        # (so True != 1 and False != 0), never a number that happens to be 0/1.
         return isinstance(left, bool) and isinstance(right, bool) and left == right
-    left, right = _decoded_against(left, right), _decoded_against(right, left)
-    da, db = _to_decimal(left), _to_decimal(right)
-    if isinstance(da, Decimal) and isinstance(db, Decimal):
-        if tolerance is not None:
+    if tolerance is not None:
+        da, db = _to_decimal(left), _to_decimal(right)
+        if isinstance(da, Decimal) and isinstance(db, Decimal):
             return abs(da - db) <= tolerance
-        return da == db
-    return left == right
+    return type(left) is type(right) and left == right
 
 
 def _row_matches(left: dict[str, Any], right: dict[str, Any], tolerance: Decimal | None) -> bool:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..case import Case
+from ..case_preflight import preflight_case_literals
 from ..providers import DatabaseProvider
 from ..provisioning import apply_given, provision
 from .compile import compile_scenario
@@ -12,7 +13,9 @@ from .judge import judge_document
 __all__ = ["assert_unit_work_scenario"]
 
 
-def assert_unit_work_scenario(case: Case, db: DatabaseProvider) -> None:
+def assert_unit_work_scenario(
+    case: Case, db: DatabaseProvider, *, literals_preflighted: bool = False
+) -> None:
     """Grade *case*'s Unit Work Scenario against *db*.
 
     Compilation runs on every dialect, because everything it decides is a
@@ -21,6 +24,8 @@ def assert_unit_work_scenario(case: Case, db: DatabaseProvider) -> None:
     execute — exactly as a step's own golden is what says whether it is
     executable at all.
     """
+    if not literals_preflighted:
+        preflight_case_literals(case)
     scenario = compile_scenario(case)
     if not scenario.has_golden(db.dialect):
         return

@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Final, cast
 
-from _support.corpus import case_document
-from parallax.conformance import case_format, engine
+from _support.corpus import case_document, wire_value_deep
+from parallax.conformance import case_format
 
 # Reachable read cases whose golden projection and predicate are supported by
 # the current compiler.
@@ -594,9 +594,8 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
 
 
 def wire_binds(binds: list[object]) -> list[object]:
-    """The bind list in canonical wire form (m-db-port), reconciling an authored `date`
-    golden bind with the write-input date *string* the keyed lowering carries verbatim."""
-    return [engine.wire_value(b) for b in binds]
+    """Test-authored bind carriers in Wire-like form, outside production."""
+    return [wire_value_deep(bind) for bind in binds]
 
 
 def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[object]]]:

@@ -23,6 +23,7 @@ from collections.abc import Mapping, Sequence
 from functools import partial
 from typing import Any
 
+from .. import portable_literal
 from ..case import Case, Entity, Model
 from ..case_assertions import (
     CaseFailure,
@@ -215,9 +216,18 @@ def graphs_equal(
         if not isinstance(a, dict) or not isinstance(b, dict) or a.keys() != b.keys():
             return False
         nested_by_name = {nested["name"]: nested for nested in declaration.get("valueObjects", [])}
+        attributes_by_name = {
+            attribute["name"]: attribute for attribute in declaration.get("attributes", [])
+        }
         return all(
             equal_value_object(a[key], b[key], nested_by_name[key])
             if key in nested_by_name
+            else a[key] is None and b[key] is None
+            if a[key] is None or b[key] is None
+            else portable_literal.values_equal(
+                a[key], b[key], attributes_by_name[key]["type"], None
+            )
+            if key in attributes_by_name
             else scalars_equal(a[key], b[key], None)
             for key in a
         )
@@ -243,6 +253,13 @@ def graphs_equal(
         relationships = {
             relationship["name"]: relationship for relationship in entity.relationship_metadata
         }
+        attributes = {attribute["name"]: attribute for attribute in entity.attributes}
+        temporal_end_columns = {axis["end_column"] for axis in entity.temporal_runtime_axes}
+        temporal_end_members = {
+            attribute["name"]
+            for attribute in entity.attributes
+            if attribute["column"] in temporal_end_columns
+        }
         for key in a:
             if key in value_objects:
                 if not equal_value_object(a[key], b[key], value_objects[key]):
@@ -252,7 +269,18 @@ def graphs_equal(
             relationship_name = key.split("[", 1)[0]
             relationship = relationships.get(relationship_name)
             if relationship is None:
-                if not scalars_equal(a[key], b[key], None):
+                attribute = attributes.get(key)
+                equal = (
+                    a[key] is None and b[key] is None
+                    if a[key] is None or b[key] is None
+                    else a[key] == b[key]
+                    if key in temporal_end_members
+                    and (a[key] == "infinity" or b[key] == "infinity")
+                    else portable_literal.values_equal(a[key], b[key], attribute["type"], None)
+                    if attribute is not None
+                    else scalars_equal(a[key], b[key], None)
+                )
+                if not equal:
                     return False
                 continue
 

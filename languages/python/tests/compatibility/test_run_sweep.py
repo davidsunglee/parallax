@@ -223,7 +223,11 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
     return positions
 
 
-@pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
+@pytest.mark.parametrize(
+    "case",
+    _CASES,
+    ids=[c.path.stem if "coordinate" in c.path.stem else c.case_id for c in _CASES],
+)
 def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -> None:
     model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
@@ -918,7 +922,9 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     assert len(find_rows) == len(expected_per_find), (case.case_id, find_rows)
     for observed, expected in zip(find_rows, expected_per_find, strict=True):
         if expected is not None:
-            compare_rows([engine.wire_row(row) for row in observed], expected)
+            compare_rows(
+                [cast("dict[str, Any]", wire_value_deep(row)) for row in observed], expected
+            )
 
 
 def _reachable_error_cases() -> list[case_format.Case]:

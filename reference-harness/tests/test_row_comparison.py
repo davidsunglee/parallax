@@ -1,18 +1,11 @@
-"""Unit tests for exact-Decimal row comparison + opt-in tolerance.
-
-The harness must compare result rows WITHOUT routing numerics through ``float``:
-a ``decimal(p,s)`` money column has to compare exactly to the cent, and the
-type of a value must not depend on whether it happens to be whole. Inherently
-inexact results (stddev / variance / some avg) cannot be authored exactly, so a
-case MAY declare a ``tolerance`` and the comparison becomes ``abs(a-b) <= tol``
-in Decimal space (the only cross-dialect-robust answer for irrationals).
-"""
+"""Exact structural grading after declared-type canonical projection."""
 
 from __future__ import annotations
 
 from decimal import Decimal
 
 from reference_harness.case_assertions import rows_equal, scalars_equal
+from reference_harness.portable_literal import values_equal
 
 
 def test_distinct_high_precision_decimals_are_not_equal() -> None:
@@ -23,20 +16,15 @@ def test_distinct_high_precision_decimals_are_not_equal() -> None:
     assert not rows_equal(a, b)
 
 
-def test_decimal_int_and_float_forms_compare_equal() -> None:
-    # A whole-valued Decimal, an int, and a float spelling of the same number
-    # are equal — without the value-dependent int/float type flip.
-    assert rows_equal([{"n": Decimal("2.0")}], [{"n": 2}])
-    assert rows_equal([{"n": 2}], [{"n": 2.0}])
-    assert rows_equal([{"p": Decimal("10.50")}], [{"p": 10.5}])
+def test_untyped_carrier_differences_are_not_repaired() -> None:
+    assert not rows_equal([{"n": Decimal("2.0")}], [{"n": 2}])
+    assert not rows_equal([{"n": 2}], [{"n": 2.0}])
+    assert not rows_equal([{"p": Decimal("10.50")}], [{"p": 10.5}])
 
 
-def test_yaml_float_normalizes_without_float_noise() -> None:
-    # A DB-exact Decimal('0.1') must match a YAML float 0.1 (normalize via
-    # Decimal(str(x)), not Decimal(float) which would inject float noise) ...
-    assert scalars_equal(Decimal("0.1"), 0.1, None)
-    # ... but a genuinely different decimal must NOT match exactly.
-    assert not scalars_equal(Decimal("0.10000001"), 0.1, None)
+def test_declared_type_projection_is_the_only_cross_carrier_equivalence() -> None:
+    assert values_equal(Decimal("10.50"), "10.50", "decimal(12,2)", None)
+    assert not scalars_equal(Decimal("10.50"), "10.50", None)
 
 
 def test_bool_and_none_stay_out_of_numeric_space() -> None:
