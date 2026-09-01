@@ -95,10 +95,16 @@ class _Projected[T](NamedTuple):
 
     ``summarizes`` is answered by the same exhaustive match that answers the
     rest, rather than by a second list of Finished types that could silently
-    fall behind the event union. ``subject`` is the value that match already
-    narrowed and ``render`` is the renderer chosen for it, so the pairing is
-    checked where the arm creates it and describing the event later needs no
-    second match over the algebra.
+    fall behind the event union. ``subject`` is the value that match settled on
+    and ``render`` is the renderer chosen for it, so describing the event later
+    needs no second match over the algebra. Where ``subject`` is the narrowed
+    value itself, the type binds it to the renderer's parameter and the pairing
+    is checked where the arm creates it.
+
+    The database call is the exception: ``duration_ns`` lives outside the
+    outcome, so the subject is the whole event and its three renderers share
+    that one parameter type. There the arm alone — not the type — keeps each
+    renderer with the ending it recovers.
     """
 
     level: int
