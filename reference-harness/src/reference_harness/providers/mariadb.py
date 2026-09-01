@@ -38,6 +38,7 @@ from .. import errors
 from ..ddl_builder import quote_identifier
 from ..document_codec import is_document
 from . import register
+from ._binds import adapt_document_scalar_binds
 
 if TYPE_CHECKING:
     from . import Node
@@ -75,6 +76,11 @@ def _to_db_bind(value: Any) -> Any:
     if is_document(value):
         return json.dumps(value)
     return value
+
+
+def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
+    physical = adapt_document_scalar_binds(sql, binds, "mariadb")
+    return tuple(_to_db_bind(value) for value in physical)
 
 
 def _parse_iso_instant(text: str) -> _dt.datetime | None:
@@ -243,7 +249,7 @@ class MariaDbProvider:
             if binds:
                 affected = cur.execute(
                     _to_pymysql(sql, escape_percent=True),
-                    tuple(_to_db_bind(value) for value in binds),
+                    _statement_binds(sql, binds),
                 )
             else:
                 affected = cur.execute(_to_pymysql(sql))
@@ -336,7 +342,7 @@ class _MariaTxSession:
             if binds:
                 cur.execute(
                     _to_pymysql(sql, escape_percent=True),
-                    tuple(_to_db_bind(value) for value in binds),
+                    _statement_binds(sql, binds),
                 )
             else:
                 cur.execute(_to_pymysql(sql))

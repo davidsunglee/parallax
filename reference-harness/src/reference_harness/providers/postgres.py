@@ -25,6 +25,7 @@ from ..ddl_builder import quote_identifier
 from ..document_codec import is_document
 from ..portable_literal import AuthoredNumber
 from . import register
+from ._binds import adapt_document_scalar_binds
 
 if TYPE_CHECKING:
     from . import Node
@@ -47,6 +48,11 @@ def _adapt(value: Any) -> Any:
     if is_document(value):
         return Jsonb(value)
     return value
+
+
+def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
+    physical = adapt_document_scalar_binds(sql, binds, "postgres")
+    return tuple(_adapt(value) for value in physical)
 
 
 def _trusted_query(sql: str) -> QueryNoTemplate:
@@ -207,12 +213,12 @@ class PostgresProvider:
         # Golden DML stores `?` placeholders (m-sql); psycopg uses `%s`. Translate
         # positional placeholders for execution, mirroring `query`. A value-object
         # document bind (dict/list) is wrapped in `Jsonb` via `_adapt` so a
-        # whole-document write binds correctly (m-value-object); scalars pass through.
+        # whole-document write binds correctly (m-value-object). Canonical logical
+        # scalar values remain in the golden and render as JSON text only when the
+        # surrounding document-mutation expression requires that physical form.
         with self._conn.cursor() as cur:
             if binds:
-                cur.execute(
-                    _trusted_query(sql.replace("?", "%s")), tuple(_adapt(value) for value in binds)
-                )
+                cur.execute(_trusted_query(sql.replace("?", "%s")), _statement_binds(sql, binds))
             else:
                 cur.execute(_trusted_query(sql))
             return cur.rowcount
@@ -291,7 +297,7 @@ class _PgTxSession:
         """
         with self._conn.cursor() as cur:
             if binds:
-                cur.execute(_trusted_query(sql.replace("?", "%s")), tuple(binds))
+                cur.execute(_trusted_query(sql.replace("?", "%s")), _statement_binds(sql, binds))
             else:
                 cur.execute(_trusted_query(sql))
             return cur.rowcount

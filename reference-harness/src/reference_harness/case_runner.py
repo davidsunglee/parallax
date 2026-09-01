@@ -1011,6 +1011,7 @@ def _document_assignments(
 def _document_assignment_binds(
     assignments: tuple[_DocumentAssignment, ...], dialect: str
 ) -> list[Any]:
+    """Canonical logical path/value binds before provider-specific adaptation."""
     binds: list[Any] = []
     for assignment in assignments:
         binds.extend(

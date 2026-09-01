@@ -91,6 +91,35 @@ def test_public_decode_classifies_rejected_literals(
     assert exc_info.value.reason == reason
 
 
+@pytest.mark.parametrize("width", [1, 2, 4, 5, 7])
+@pytest.mark.parametrize(
+    ("spelling", "prefix", "suffix"),
+    [
+        ("time", "09:30:00.", ""),
+        ("timestamp", "2026-01-01T09:30:00.", "Z"),
+    ],
+)
+def test_temporal_fraction_widths_outside_three_or_six_are_type_mismatches(
+    spelling: str, prefix: str, suffix: str, width: int
+) -> None:
+    with pytest.raises(literal.PortableLiteralError) as exc_info:
+        literal.decode(f"{prefix}{'1' * width}{suffix}", spelling)
+    assert exc_info.value.reason == "type-mismatch"
+
+
+@pytest.mark.parametrize(
+    ("spelling", "value"),
+    [
+        ("time", "09:30:00.123"),
+        ("time", "09:30:00.123456"),
+        ("timestamp", "2026-01-01T09:30:00.123Z"),
+        ("timestamp", "2026-01-01T09:30:00.123456Z"),
+    ],
+)
+def test_temporal_fraction_widths_three_and_six_are_admitted(spelling: str, value: str) -> None:
+    literal.decode(value, spelling)
+
+
 @pytest.mark.parametrize(
     "value",
     [

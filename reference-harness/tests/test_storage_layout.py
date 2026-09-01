@@ -13,6 +13,8 @@ from typing import Any, NamedTuple, cast
 
 import pytest
 
+import reference_harness._statement_bind_inference as statement_bind_inference
+import reference_harness.case_preflight as case_preflight
 import reference_harness.case_runner as case_runner
 import reference_harness.ddl_builder as ddl_builder
 import reference_harness.object_query_oracle as object_query_oracle
@@ -1420,7 +1422,9 @@ def _storage_layout_importers() -> list[Path]:
     and a change to which names they draw is not.
     """
     return [
+        Path(case_preflight.__file__),
         Path(case_runner.__file__),
+        Path(statement_bind_inference.__file__),
         Path(write_plan.__file__),
         *_package_modules(object_query_oracle),
         *_package_modules(unit_work_scenario),
@@ -1496,6 +1500,7 @@ def test_the_harness_consumes_storage_layout_for_validation_reads_and_observatio
         if edge.target.startswith(facts)
     }
     assert imported == {
+        "AttributeContributor",
         "ColumnContributor",
         "ColumnSlot",
         "ColumnTier",

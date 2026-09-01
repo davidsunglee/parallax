@@ -55,10 +55,6 @@ _UUID_BARE = re.compile(r"^[0-9a-fA-F]{32}$")
 _DECIMAL_NUMBER = re.compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
-# A value beyond this many fractional digits is only in space when the extra
-# digits are zeros: the temporal spaces are microsecond-precision (`m-core`).
-_MICROSECOND_DIGITS = 6
-
 # The bit pattern of the largest finite binary32, and the magnitude at which a
 # number rounds past it to an infinity: half an ulp above it, `2**128 - 2**103`.
 _BINARY32_MAX_BITS = 0x7F7FFFFF
@@ -646,8 +642,6 @@ def decode_time(literal: str) -> datetime.time | None:
         return None
     hour, minute, second, fraction = match.groups()
     microsecond = _microseconds(fraction)
-    if microsecond is None:
-        return None
     try:
         return datetime.time(int(hour), int(minute), int(second or 0), microsecond)
     except ValueError:
@@ -678,8 +672,6 @@ def decode_timestamp(literal: str) -> datetime.datetime | None:
         return None
     year, month, day, hour, minute, second, fraction, zone = match.groups()
     microsecond = _microseconds(fraction)
-    if microsecond is None:
-        return None
     offset = _offset(zone)
     if offset is None:
         return None
@@ -711,18 +703,11 @@ def _decode_timestamp_classified(value: object, neutral_type: str) -> datetime.d
     return decoded.astimezone(datetime.UTC)
 
 
-def _microseconds(fraction: str | None) -> int | None:
-    """A fractional-second field as whole microseconds, or ``None``.
-
-    A digit past the sixth may only be zero: the temporal spaces hold microseconds,
-    so a literal carrying finer precision names a value they have no member for and
-    truncating it would answer a different instant than the one written.
-    """
+def _microseconds(fraction: str | None) -> int:
+    """Convert the strict grammar's absent, three-digit, or six-digit fraction."""
     if fraction is None:
         return 0
-    if any(digit != "0" for digit in fraction[_MICROSECOND_DIGITS:]):
-        return None
-    return int(fraction[:_MICROSECOND_DIGITS].ljust(_MICROSECOND_DIGITS, "0"))
+    return int(fraction.ljust(6, "0"))
 
 
 def _offset(zone: str) -> datetime.timezone | None:
