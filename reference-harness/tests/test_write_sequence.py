@@ -11,7 +11,7 @@ exercised end-to-end against real Postgres by the compatibility suite.
 from __future__ import annotations
 
 import copy
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,6 +30,8 @@ from reference_harness.case_runner import (
     _write_column_order,
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
+from reference_harness.providers.mariadb import _statement_binds as mariadb_statement_binds
+from reference_harness.providers.postgres import _statement_binds as postgres_statement_binds
 from reference_harness.storage_layout import derived_primary_key_index
 from reference_harness.unit_work_scenario import assert_unit_work_scenario
 from reference_harness.write_plan import classify_write_row, tag, unit_resolving_reads
@@ -829,6 +831,41 @@ def test_balance_entity_is_unitemporal_transaction_time() -> None:
 # A chained milestone's document is its predecessor's, patched, so ① fixes only the
 # positions it names and every other key rode forward from the row the successor
 # supersedes. These pin what that admits and what it still refuses.
+
+
+@pytest.mark.parametrize(
+    ("dialect", "adapt", "logical", "physical"),
+    [
+        (
+            "postgres",
+            postgres_statement_binds,
+            ["{displayName}", "Dagny", "{score}", 21, 6],
+            ("{displayName}", '"Dagny"', "{score}", "21", 6),
+        ),
+        (
+            "mariadb",
+            mariadb_statement_binds,
+            ["$.displayName", "Dagny", "$.score", 21, 6],
+            ("$.displayName", '"Dagny"', "$.score", "21", 6),
+        ),
+    ],
+)
+def test_document_scalar_mutation_binds_render_only_at_the_provider_boundary(
+    dialect: str,
+    adapt: Callable[[str, Sequence[Any]], tuple[Any, ...]],
+    logical: list[object],
+    physical: tuple[object, ...],
+) -> None:
+    case = _write_case_by_id("m-storage-layout-023")
+    statement = case.golden_statements(dialect)[1]
+
+    assert case.statement_binds(1, dialect) == logical
+    assert adapt(statement, logical) == physical
+
+
+def test_json_casts_outside_document_mutation_do_not_reinterpret_logical_binds() -> None:
+    assert postgres_statement_binds("select cast(? as jsonb)", ["[]"]) == ("[]",)
+    assert mariadb_statement_binds("select json_extract(?, '$')", ["[]"]) == ("[]",)
 
 
 def test_a_carried_document_admits_a_key_the_write_input_names_nowhere() -> None:
