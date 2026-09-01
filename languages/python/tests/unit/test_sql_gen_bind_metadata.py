@@ -69,6 +69,14 @@ def test_statement_metadata_preserves_ranges_gaps_forms_offsets_and_overrides() 
         "2024-01-02",
         "infinity",
     )
+    assert lowered.binds == (
+        Decimal("1.20"),
+        Decimal("2.30"),
+        "framework",
+        "alpha",
+        dt.date(2024, 1, 2),
+        "driver-infinity",
+    )
     assert isinstance(lowered.binds[0], Decimal)
     assert isinstance(lowered.binds[4], dt.date)
 
