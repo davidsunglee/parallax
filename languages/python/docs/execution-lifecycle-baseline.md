@@ -19,7 +19,7 @@ definite answer and a wall clock does not.
 | | |
 |---|---|
 | Recorded | 2026-09-01 |
-| Machine | darwin/arm64 (macOS 26.5.2), 10 cores, no competing load started for the run |
+| Machine | darwin/arm64 (macOS 26.5.2) |
 | Interpreter | CPython 3.14.7 |
 | Command | `just python-report-lifecycle-overhead` |
 | Samples | 3000 timed pairs per configuration, 200 discarded first |
@@ -187,8 +187,8 @@ question rather than the answer to it — the level asked about is the level
 no approximation to bound and no detector to narrow. What is the same is the
 exposure the standard idiom carries anywhere: a Logger whose `isEnabledFor` and
 `log` disagree loses a record here as it would with any library that guards.
-That is accepted deliberately, and `_logging.py` says so; it is not a premise
-these numbers rest on.
+`spec/python.md` states the guard and that exposure; it is not a premise these
+numbers rest on.
 
 ## Rerunning it
 
@@ -198,6 +198,5 @@ just python-report-lifecycle-overhead
 
 Read the p50 columns and the decomposition; read a p95 difference as the two
 arms disagreeing rather than as dispatch. Comparing against the table above needs
-the same conditions — the same machine class, no competing load, the same
-interpreter — because the absolute numbers are machine-relative even where the
-ratios are not.
+the same machine class and the same interpreter, on a machine doing nothing else,
+because the absolute numbers are machine-relative even where the ratios are not.
