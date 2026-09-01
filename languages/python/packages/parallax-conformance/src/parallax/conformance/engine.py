@@ -50,7 +50,10 @@ from parallax.core import (
 )
 from parallax.core.base import (
     INFINITY_LITERAL,
+    TIMESTAMP,
+    ManagedValue,
     TemporalBound,
+    matches_neutral_type,
     normalize_instant,
 )
 from parallax.core.continuation import ContinuationError
@@ -132,6 +135,7 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.unit_work.write_planner import reject_readless_document_many
+from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.descriptor import (
     DescriptorError,
     domain_model_from_document,
@@ -3846,8 +3850,8 @@ def _is_materializing_write_step(
     """If ``step`` is a write step whose ``write`` field is a structured
     predicate instruction targeting a VERSIONED or TEMPORAL entity
     (MATERIALIZES, `m-opt-lock` "Predicate-selected writes materialize when
-    observations are needed", ADR 0014), its deserialized + validated
-    :class:`~parallax.core.unit_work.PredicateWrite` — ``None`` for a keyed
+    observations are needed", ADR 0014), its core-produced
+    :class:`~parallax.core.unit_work.PreparedPredicateWrite` — ``None`` for a keyed
     write step, a READLESS predicate write, a find step, or ``None`` itself
     (no such step, e.g. the scenario's last step).
 
@@ -6228,22 +6232,48 @@ def _run_conflict_close(
     ``affectedRows`` observation can never absorb a misclassified failure.
     """
     row, _authored_none = _durable_row(model, target, _CLOSE_MUTATION, write_row)
-    observed_valid_end = cast("str | None", row.pop("validEnd", None))
-    if observed_valid_start is not None:
-        observed_valid_end, observed_tx_start = _observed_milestone_coordinates(
-            model, target, row, observed_valid_end, observed_valid_start, observed_tx_start, shadow
+    authored_valid_end = row.pop("validEnd", None)
+    inputs = _conflict_close_inputs(
+        model,
+        target,
+        row,
+        at,
+        observed_tx_start,
+        observed_valid_start,
+        authored_valid_end,
+    )
+    observed_valid_end = inputs.authored_valid_end
+    managed_observed_tx_start = inputs.observed_tx_start
+    if inputs.observed_valid_start is not None:
+        observed_valid_end, managed_observed_tx_start = _observed_milestone_coordinates(
+            model,
+            target,
+            dict(inputs.identity),
+            observed_valid_end,
+            inputs.observed_valid_start,
+            managed_observed_tx_start,
+            shadow,
+        )
+        metadata = _conflict_close_metadata(model, target)
+        observed_valid_end = _decode_observed_conflict_bound(
+            metadata.valid_end, observed_valid_end, position="observed valid end"
+        )
+        managed_observed_tx_start = _decode_conflict_optional_instant(
+            metadata.tx_start,
+            managed_observed_tx_start,
+            position="observed transaction start",
         )
     # The standalone close is settled outside any unit of work, so it is handed
     # its own Transaction Instant over the SAME clock the transaction below runs
     # on — the two can never derive different instants from one `at`.
-    clock = FixedClock(normalize_instant(dt.datetime.fromisoformat(at)))
+    clock = FixedClock(inputs.instant)
     step = handle.plan_temporal_close(
-        row,
+        dict(inputs.identity),
         target,
         model,
         concurrency,
         TransactionInstant(clock),
-        observed_tx_start,
+        managed_observed_tx_start,
         observed_valid_end,
     )
     statement = compile_write_step(step, model, port.dialect)
@@ -6278,15 +6308,209 @@ def _run_conflict_close(
     return (statement,), affected, 1
 
 
+@dataclass(frozen=True, slots=True)
+class _ConflictCloseMetadata:
+    primary_key: tuple[AttributeMetadata, ...]
+    tx_start: AttributeMetadata
+    valid_start: AttributeMetadata | None
+    valid_end: AttributeMetadata | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ConflictCloseInputs:
+    """Managed inputs for compatibility's standalone temporal-close probe."""
+
+    identity: tuple[tuple[str, ManagedValue], ...]
+    instant: dt.datetime
+    observed_tx_start: dt.datetime | None
+    observed_valid_start: dt.datetime | None
+    authored_valid_end: dt.datetime | TemporalBound | None
+
+
+def _conflict_close_inputs(
+    model: AcceptedMetamodel,
+    target: str,
+    row: Mapping[str, object],
+    at: object,
+    observed_tx_start: object | None,
+    observed_valid_start: object | None,
+    authored_valid_end: object | None,
+) -> _ConflictCloseInputs:
+    metadata = _conflict_close_metadata(model, target)
+    primary_key_names = tuple(attribute.identity.name for attribute in metadata.primary_key)
+    if set(row) != set(primary_key_names):
+        raise EngineError(
+            f"{target!r}: a standalone temporal close must carry exactly its primary-key "
+            f"members; expected {list(primary_key_names)!r}, got {list(row)!r}"
+        )
+    return _ConflictCloseInputs(
+        identity=tuple(
+            (
+                attribute.identity.name,
+                _decode_conflict_literal(
+                    attribute,
+                    row[attribute.identity.name],
+                    position=f"primary key `{attribute.identity.name}`",
+                ),
+            )
+            for attribute in metadata.primary_key
+        ),
+        instant=_decode_conflict_instant(metadata.tx_start, at, position="at"),
+        observed_tx_start=_decode_conflict_optional_instant(
+            metadata.tx_start,
+            observed_tx_start,
+            position="observedTxStart",
+        ),
+        observed_valid_start=_decode_conflict_optional_instant(
+            metadata.valid_start,
+            observed_valid_start,
+            position="observedValidStart",
+        ),
+        authored_valid_end=_decode_conflict_bound(
+            metadata.valid_end,
+            authored_valid_end,
+            position="validEnd",
+        ),
+    )
+
+
+def _conflict_close_metadata(model: AcceptedMetamodel, target: str) -> _ConflictCloseMetadata:
+    entity = case_entity(model, target)
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - every accepted Entity has a facet position
+        raise EngineError(f"{entity.identity.canonical}: target is absent from inheritance view")
+    primary_key = tuple(
+        attribute
+        for attribute in position.applicable_attributes
+        if isinstance(attribute.primary_key, PrimaryKey)
+    )
+    declarer = _family_declarer(model, entity)
+    tx_start, _tx_end = _axis_attributes(declarer, TemporalDimension.TRANSACTION_TIME)
+    valid_axis = (
+        _axis_attributes(declarer, TemporalDimension.VALID_TIME)
+        if declarer.as_of_axis(TemporalDimension.VALID_TIME) is not None
+        else None
+    )
+    return _ConflictCloseMetadata(
+        primary_key,
+        tx_start,
+        None if valid_axis is None else valid_axis[0],
+        None if valid_axis is None else valid_axis[1],
+    )
+
+
+def _axis_attributes(
+    declarer: EntityMetadata,
+    dimension: TemporalDimension,
+) -> tuple[AttributeMetadata, AttributeMetadata]:
+    axis = declarer.as_of_axis(dimension)
+    if axis is None:  # pragma: no cover - the caller establishes the accepted temporal shape
+        raise EngineError(
+            f"{declarer.identity.canonical}: temporal close has no {dimension.value} axis"
+        )
+    start = declarer.attribute(axis.start_attribute.name)
+    end = declarer.attribute(axis.end_attribute.name)
+    if start is None or end is None:  # pragma: no cover - accepted axes resolve both endpoints
+        raise EngineError(
+            f"{declarer.identity.canonical}: {dimension.value} axis endpoints are unresolved"
+        )
+    return start, end
+
+
+def _decode_conflict_optional_instant(
+    attribute: AttributeMetadata | None,
+    value: object | None,
+    *,
+    position: str,
+) -> dt.datetime | None:
+    if value is None:
+        return None
+    if attribute is None:
+        raise EngineError(f"a temporal close {position} names an axis the target does not declare")
+    return _decode_conflict_instant(attribute, value, position=position)
+
+
+def _decode_conflict_bound(
+    attribute: AttributeMetadata | None,
+    value: object | None,
+    *,
+    position: str,
+) -> dt.datetime | TemporalBound | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and str.__str__(value) == INFINITY_LITERAL:
+        if attribute is None:
+            raise EngineError(
+                f"a temporal close {position} names an axis the target does not declare"
+            )
+        return TemporalBound.INFINITY
+    if attribute is None:
+        raise EngineError(f"a temporal close {position} names an axis the target does not declare")
+    return _decode_conflict_instant(attribute, value, position=position)
+
+
+def _decode_observed_conflict_bound(
+    attribute: AttributeMetadata | None,
+    value: object | None,
+    *,
+    position: str,
+) -> dt.datetime | TemporalBound | None:
+    if isinstance(value, TemporalBound):
+        return value
+    return _decode_conflict_bound(attribute, value, position=position)
+
+
+def _decode_conflict_instant(
+    attribute: AttributeMetadata,
+    value: object,
+    *,
+    position: str,
+) -> dt.datetime:
+    normalized = value
+    if isinstance(value, str):
+        try:
+            candidate = dt.datetime.fromisoformat(value)
+        except ValueError:
+            pass
+        else:
+            if matches_neutral_type(candidate, TIMESTAMP):
+                normalized = encode_wire(TIMESTAMP, candidate)
+    elif isinstance(value, dt.datetime) and matches_neutral_type(value, TIMESTAMP):
+        normalized = encode_wire(TIMESTAMP, value)
+    decoded = _decode_conflict_literal(attribute, normalized, position=position)
+    if not isinstance(decoded, dt.datetime):  # pragma: no cover - accepted axes are Timestamp
+        raise EngineError(
+            f"{attribute.identity.entity.canonical}.{attribute.identity.name}: "
+            f"temporal close {position} did not decode to an instant"
+        )
+    return decoded
+
+
+def _decode_conflict_literal(
+    attribute: AttributeMetadata,
+    value: object,
+    *,
+    position: str,
+) -> ManagedValue:
+    try:
+        return decode_wire(attribute.type, cast("WireValue", value))
+    except WireDecodingError as exc:
+        raise EngineError(
+            f"{attribute.identity.entity.canonical}.{attribute.identity.name}: "
+            f"temporal close {position} is "
+            f"neutral-literal-{exc.reason}: {exc}"
+        ) from exc
+
+
 def _observed_milestone_coordinates(
     model: AcceptedMetamodel,
     target: str,
     row: Mapping[str, object],
-    authored_valid_end: str | None,
-    observed_valid_start: str,
-    observed_tx_start: str | None,
+    authored_valid_end: dt.datetime | TemporalBound | None,
+    observed_valid_start: dt.datetime,
+    observed_tx_start: dt.datetime | None,
     shadow: TemporalShadow,
-) -> tuple[str | None, str | None]:
+) -> tuple[object | None, object]:
     """The close coordinates the ONE milestone a case named the edge of supplies:
     that milestone's own Valid-Time end (the address's exclusive upper bound) and
     its own Transaction-Time start (the gate candidate).
@@ -6320,7 +6544,7 @@ def _observed_milestone_coordinates(
     valid_end, tx_start = temporal_state.observed_close_coordinates(
         model, entity_metadata, observation
     )
-    return cast("str | None", valid_end), cast("str | None", tx_start)
+    return valid_end, tx_start
 
 
 def _conflict_write_rows(attempt: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:

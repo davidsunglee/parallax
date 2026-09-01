@@ -297,6 +297,27 @@ class PreparedPredicateWrite:
 PreparedWrite = PreparedKeyedWrite | PreparedPredicateWrite
 
 
+@dataclass(frozen=True, slots=True)
+class _TransformedMember:
+    value: object
+    vo_violation: VoDocumentViolation | None
+    value_valid: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _TransformedRow:
+    row: Mapping[str, object]
+    vo_violations: Mapping[str, VoDocumentViolation | None]
+    attribute_validity: Mapping[str, bool]
+
+
+@dataclass(frozen=True, slots=True)
+class _TransformedAssignment:
+    assignment: WriteAssignment
+    vo_violation: VoDocumentViolation | None
+    value_valid: bool
+
+
 def derive_keyed_write(
     prepared: PreparedKeyedWrite, rows: tuple[Mapping[str, object], ...]
 ) -> PreparedKeyedWrite:
@@ -700,12 +721,10 @@ def _prepare_write(
     assigned_members: Set[str] | None,
 ) -> PreparedWrite:
     entity = _preflight_write_shape(instruction, model)
-    row_vo_violations: tuple[Mapping[str, VoDocumentViolation | None], ...] = ()
-    row_attribute_validity: tuple[Mapping[str, bool], ...] = ()
-    assignment_vo_violations: list[VoDocumentViolation | None] = []
-    assignment_value_validity: list[bool] = []
+    transformed_rows: tuple[_TransformedRow, ...] = ()
+    transformed_assignments: tuple[_TransformedAssignment, ...] = ()
     if isinstance(instruction, KeyedWrite):
-        transformed_results = tuple(
+        transformed_rows = tuple(
             _transform_row(
                 model,
                 entity,
@@ -715,9 +734,6 @@ def _prepare_write(
             )
             for row in instruction.rows
         )
-        transformed_rows = tuple(result[0] for result in transformed_results)
-        row_vo_violations = tuple(result[1] for result in transformed_results)
-        row_attribute_validity = tuple(result[2] for result in transformed_results)
         if assigned_members is not None:
             if len(transformed_rows) != 1:
                 raise WriteInstructionError(
@@ -729,49 +745,47 @@ def _prepare_write(
                         model,
                         entity,
                         name,
-                        transformed_rows[0][name],
-                        known_vo_violation=row_vo_violations[0].get(name, False),
-                        known_value_valid=row_attribute_validity[0].get(name),
+                        transformed_rows[0].row[name],
+                        known_vo_violation=transformed_rows[0].vo_violations.get(name, False),
+                        known_value_valid=transformed_rows[0].attribute_validity.get(name),
                     )
                 except inheritance.WriteAssignmentError as error:
                     raise WriteInstructionError(str(error)) from error
         prepared_input: WriteInstruction = KeyedWrite(
             mutation=instruction.mutation,
             entity=instruction.entity,
-            rows=transformed_rows,
+            rows=tuple(result.row for result in transformed_rows),
             valid_from=instruction.valid_from,
             until=instruction.until,
         )
     else:
         members = _declared_member_map(model, entity)
-        managed_assignments: list[WriteAssignment] = []
+        assignment_results: list[_TransformedAssignment] = []
         for assignment in instruction.assignments:
             _owner, _separator, name = assignment.attr.rpartition(".")
             member = members.get(name)
             if member is None:
-                managed_value = assignment.value
-                violation = None
-                valid = False
+                transformed = _TransformedMember(assignment.value, None, False)
             else:
-                managed_value, violation, valid = _transform_member(
+                transformed = _transform_member(
                     member,
                     assignment.value,
                     converter=converter,
                     fill_missing_many=False,
                     path=assignment.attr,
                 )
-            managed_assignments.append(
-                WriteAssignment(
-                    assignment.attr,
-                    managed_value,
+            assignment_results.append(
+                _TransformedAssignment(
+                    WriteAssignment(assignment.attr, transformed.value),
+                    transformed.vo_violation,
+                    transformed.value_valid,
                 )
             )
-            assignment_vo_violations.append(violation)
-            assignment_value_validity.append(valid if member is not None else False)
+        transformed_assignments = tuple(assignment_results)
         prepared_input = PredicateWrite(
             mutation=instruction.mutation,
             target=instruction.target,
-            assignments=tuple(managed_assignments),
+            assignments=tuple(result.assignment for result in transformed_assignments),
             valid_from=instruction.valid_from,
             until=instruction.until,
         )
@@ -780,10 +794,8 @@ def _prepare_write(
         model,
         entity=entity,
         bound_decoder=bound_decoder,
-        row_vo_violations=row_vo_violations,
-        row_attribute_validity=row_attribute_validity,
-        assignment_vo_violations=tuple(assignment_vo_violations),
-        assignment_value_validity=tuple(assignment_value_validity),
+        transformed_rows=transformed_rows,
+        transformed_assignments=transformed_assignments,
     )
 
 
@@ -793,10 +805,8 @@ def _prepare_managed_write(
     *,
     entity: EntityMetadata,
     bound_decoder: _BoundDecoder,
-    row_vo_violations: tuple[Mapping[str, VoDocumentViolation | None], ...],
-    row_attribute_validity: tuple[Mapping[str, bool], ...],
-    assignment_vo_violations: tuple[VoDocumentViolation | None, ...],
-    assignment_value_validity: tuple[bool, ...],
+    transformed_rows: tuple[_TransformedRow, ...],
+    transformed_assignments: tuple[_TransformedAssignment, ...],
 ) -> PreparedWrite:
     """Validate an instruction against the metamodel: its selecting predicate,
     then its member names.
@@ -888,12 +898,8 @@ def _prepare_managed_write(
         inheritance.reject_predicate_write(entity)
         members = _declared_members(model, entity)
         seen: set[str] = set()
-        for assignment, violation, valid in zip(
-            instruction.assignments,
-            assignment_vo_violations,
-            assignment_value_validity,
-            strict=True,
-        ):
+        for transformed in transformed_assignments:
+            assignment = transformed.assignment
             # The owner segment is RESOLVED rather than compared as text, so a
             # canonical spelling names the target it denotes while an ambiguous
             # bare one — which resolves nowhere — stays refused.
@@ -916,25 +922,20 @@ def _prepare_managed_write(
                     entity,
                     member,
                     assignment.value,
-                    known_vo_violation=violation,
-                    known_value_valid=valid,
+                    known_vo_violation=transformed.vo_violation,
+                    known_value_valid=transformed.value_valid,
                 )
             except inheritance.WriteAssignmentError as exc:
                 raise WriteInstructionError(str(exc)) from exc
     if isinstance(instruction, KeyedWrite):
-        for row, violations, attribute_validity in zip(
-            instruction.rows,
-            row_vo_violations,
-            row_attribute_validity,
-            strict=True,
-        ):
+        for transformed in transformed_rows:
             validate_write(
                 entity,
-                row,
+                transformed.row,
                 model,
                 mutation=instruction.mutation,
-                known_vo_violations=violations,
-                known_attribute_validity=attribute_validity,
+                known_vo_violations=transformed.vo_violations,
+                known_attribute_validity=transformed.attribute_validity,
                 subtype_validated=True,
             )
     managed_valid_from = bound_decoder(instruction.valid_from, "validFrom")
@@ -1023,11 +1024,7 @@ def _transform_row(
     *,
     converter: _LeafConverter,
     fill_missing_many: bool,
-) -> tuple[
-    Mapping[str, object],
-    Mapping[str, VoDocumentViolation | None],
-    Mapping[str, bool],
-]:
+) -> _TransformedRow:
     members = _declared_member_map(model, entity)
     transformed: dict[str, object] = {}
     violations: dict[str, VoDocumentViolation | None] = {}
@@ -1037,18 +1034,18 @@ def _transform_row(
         if member is None:
             transformed[name] = value
             continue
-        managed, violation, valid = _transform_member(
+        result = _transform_member(
             member,
             value,
             converter=converter,
             fill_missing_many=fill_missing_many,
             path=f"{entity.identity.canonical}.{name}",
         )
-        transformed[name] = managed
+        transformed[name] = result.value
         if isinstance(member, AttributeMetadata):
-            attribute_validity[name] = valid
+            attribute_validity[name] = result.value_valid
         else:
-            violations[name] = violation
+            violations[name] = result.vo_violation
     if fill_missing_many:
         for member in members.values():
             if not isinstance(member, AttributeMetadata):
@@ -1058,10 +1055,10 @@ def _transform_row(
     for member in members.values():
         if not isinstance(member, AttributeMetadata):
             violations.setdefault(member.identity.path[-1], None)
-    return (
-        MappingProxyType(transformed),
-        MappingProxyType(violations),
-        MappingProxyType(attribute_validity),
+    return _TransformedRow(
+        row=MappingProxyType(transformed),
+        vo_violations=MappingProxyType(violations),
+        attribute_validity=MappingProxyType(attribute_validity),
     )
 
 
@@ -1072,16 +1069,16 @@ def _transform_member(
     converter: _LeafConverter,
     fill_missing_many: bool,
     path: str,
-) -> tuple[object, VoDocumentViolation | None, bool]:
+) -> _TransformedMember:
     if value is None:
-        return None, None, True
+        return _TransformedMember(None, None, True)
     if isinstance(member, AttributeMetadata):
         if isinstance(value, Mapping):
             marker = cast("Mapping[object, object]", value)
             if frozenset(marker) in (frozenset({"computed"}), frozenset({"increment"})):
-                return MappingProxyType(dict(marker)), None, True
+                return _TransformedMember(MappingProxyType(dict(marker)), None, True)
         managed, valid = converter(member.type, cast("object", value), path)
-        return managed, None, valid
+        return _TransformedMember(managed, None, valid)
     managed, violation = _transform_occurrence(
         member,
         value,
@@ -1089,7 +1086,7 @@ def _transform_member(
         fill_missing_many=True,
         path=path,
     )
-    return managed, violation, True
+    return _TransformedMember(managed, violation, True)
 
 
 def _transform_occurrence(

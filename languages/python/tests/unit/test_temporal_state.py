@@ -13,6 +13,7 @@ witnesses.
 from __future__ import annotations
 
 import datetime as dt
+import decimal
 
 import pytest
 
@@ -362,8 +363,8 @@ def test_track_opened_tracks_the_milestones_the_plan_actually_opens() -> None:
         POSITION,
         _planned(
             "Position",
-            {"id": 1, "acctNum": "A", "value": 100.00},
-            valid_from="2024-01-01T00:00:00+00:00",
+            {"id": 1, "acctNum": "A", "value": "100.00"},
+            valid_from="2024-01-01T00:00:00Z",
             at="2024-01-01T00:00:00+00:00",
         ),
     )
@@ -372,10 +373,10 @@ def test_track_opened_tracks_the_milestones_the_plan_actually_opens() -> None:
     assert dict(observation.predecessor.members) == {
         "id": 1,
         "acctNum": "A",
-        "value": 100.00,
-        "validStart": "2024-01-01T00:00:00+00:00",
+        "value": decimal.Decimal("100.00"),
+        "validStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "validEnd": "infinity",
-        "txStart": "2024-01-01T00:00:00+00:00",
+        "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "txEnd": "infinity",
     }
 
@@ -385,7 +386,11 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
     # answer no question a later step can ask.
     shadow = TemporalShadow()
     instruction = instructions.deserialize(
-        {"mutation": "insert", "entity": "Account", "rows": [{"id": 1, "owner": "Ada"}]}
+        {
+            "mutation": "insert",
+            "entity": "Account",
+            "rows": [{"id": 1, "owner": "Ada", "balance": "0.00"}],
+        }
     )
     account = models.load_models()["account"]
     prepared = instructions.prepare_wire_write(instruction, account)

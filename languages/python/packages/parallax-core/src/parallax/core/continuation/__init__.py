@@ -80,15 +80,11 @@ class ContinuationError(ValueError):
 class _Term:
     """One Continuation Order term, resolved to everything a seek needs of it.
 
-    ``key`` is the Sort Key exactly as the page node carries it — an authored one
-    verbatim, absent direction and placement included, so a page orders by what
-    the caller asked for and not by a respelling of it. The three resolved fields
-    beside it are what the seek is composed from: the member the cursor
-    coordinate is read under, the effective direction, and whether the ordering
-    can put a null anywhere at all.
+    The resolved fields are what the page order and seek are composed from: the
+    member the cursor coordinate is read under, the effective direction and null
+    placement, and whether the ordering can put a null anywhere at all.
     """
 
-    key: OrderKey
     identity: AttributeIdentity
     direction: Literal["asc", "desc"]
     nulls: Literal["first", "last"]
@@ -98,7 +94,7 @@ class _Term:
 
     @property
     def attr(self) -> str:
-        return self.key.attr
+        return _reference(self.identity)
 
 
 class ContinuationPlan:
@@ -111,12 +107,11 @@ class ContinuationPlan:
     afterwards.
     """
 
-    __slots__ = ("_order", "_query", "_terms")
+    __slots__ = ("_query", "_terms")
 
     def __init__(self, query: ValidatedObjectQuery, terms: tuple[_Term, ...]) -> None:
         self._query = query
         self._terms = terms
-        self._order = tuple(term.key for term in terms)
 
     def first(self, *, limit: int) -> ValidatedObjectQuery:
         """The first page: the caller's query, ordered and capped at ``limit``."""
@@ -345,7 +340,6 @@ def _term(key: OrderKey, model: Metamodel) -> _Term:
     direction = key.direction or "asc"
     nulls = key.nulls or "last"
     return _Term(
-        key=key,
         identity=attribute.identity,
         direction=direction,
         nulls=nulls,
@@ -357,13 +351,7 @@ def _term(key: OrderKey, model: Metamodel) -> _Term:
 
 def _term_from_resolved(term: ValidatedOrderTerm) -> _Term:
     member = term.member
-    key = OrderKey(
-        attr=f"{member.identity.entity.canonical}.{member.identity.name}",
-        direction=term.direction,
-        nulls=term.nulls,
-    )
     return _Term(
-        key=key,
         identity=member.identity,
         direction=term.direction,
         nulls=term.nulls,

@@ -1,9 +1,10 @@
 """``parallax.core.batch_write`` enforcement scope (m-batch-write).
 
 The set-based / batched-write COLLAPSE VOCABULARY: pure functions over the
-``m-unit-work`` write-instruction IR that decide whether a run of buffered,
-same-entity, same-mutation single-row :class:`~parallax.core.unit_work.KeyedWrite`
-instructions **collapses** into one multi-row instruction, or stays decomposed
+managed rows retained by ``m-unit-work`` prepared writes that decide whether a
+run of buffered, same-entity, same-mutation single-row
+:class:`~parallax.core.unit_work.PreparedKeyedWrite` products **collapses** into
+one multi-row planned write, or stays decomposed
 (``m-batch-write.md`` "Set-based flush"). This module **renders no SQL** — the
 module DAG pins it to ``base`` / ``db_port`` / ``metamodel`` / ``inheritance`` /
 ``predicate`` / ``unit_work`` only (``modules.md`` §7's sole declared edge is
@@ -76,7 +77,7 @@ Reladomo's own readless surface, owned by this module's sibling concern (the
 predicate-write vocabulary, `m-batch-write.md` "Predicate-selected readless
 forms") — rendered by :mod:`parallax.snapshot.handle`, decided nowhere in this
 module (a readless predicate write is not a *buffered* collapse at all: there
-is nothing tracked to combine, only one instruction to render).
+is nothing tracked to combine, only one prepared product to render).
 """
 
 from __future__ import annotations

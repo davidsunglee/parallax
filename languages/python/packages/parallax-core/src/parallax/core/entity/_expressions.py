@@ -169,6 +169,40 @@ def _invalid_operand(
     )
 
 
+def _native_literal(path: str, neutral_type: NeutralType | None, value: object) -> Scalar:
+    if neutral_type is None:
+        raise _invalid_operand(
+            path,
+            None,
+            value,
+            "typed literal operations require resolved scalar metadata",
+        )
+    if value is None:
+        raise _invalid_operand(
+            path,
+            neutral_type,
+            value,
+            "None is not a typed literal; use .is_null() or .is_not_null()",
+        )
+    managed = coerce_neutral_input(value, neutral_type)
+    if not matches_neutral_type(managed, neutral_type):
+        raise _invalid_operand(
+            path,
+            neutral_type,
+            value,
+            "the developer input policy does not admit this carrier for the declared type",
+        )
+    try:
+        return cast("Scalar", encode_wire(neutral_type, cast("ManagedValue", managed)))
+    except WireEncodingError as error:  # pragma: no cover - membership above proves encoding
+        raise _invalid_operand(
+            path,
+            neutral_type,
+            value,
+            f"the managed value is not Wire-encodable: {error}",
+        ) from error
+
+
 def snake_to_camel(name: str) -> str:
     """The canonical member name a snake_case Python spelling denotes.
 
@@ -527,37 +561,7 @@ class AttributeExpr[E, T]:
 
     def _literal(self, value: object) -> Scalar:
         member = self._resolved_scalar_member()
-        if member is None:
-            raise _invalid_operand(
-                self._dotted(),
-                None,
-                value,
-                "typed literal operations require resolved scalar metadata",
-            )
-        if value is None:
-            raise _invalid_operand(
-                self._dotted(),
-                member.type,
-                value,
-                "None is not a typed literal; use .is_null() or .is_not_null()",
-            )
-        managed = coerce_neutral_input(value, member.type)
-        if not matches_neutral_type(managed, member.type):
-            raise _invalid_operand(
-                self._dotted(),
-                member.type,
-                value,
-                "the developer input policy does not admit this carrier for the declared type",
-            )
-        try:
-            return cast("Scalar", encode_wire(member.type, cast("ManagedValue", managed)))
-        except WireEncodingError as error:  # pragma: no cover - membership above proves encoding
-            raise _invalid_operand(
-                self._dotted(),
-                member.type,
-                value,
-                f"the managed value is not Wire-encodable: {error}",
-            ) from error
+        return _native_literal(self._dotted(), None if member is None else member.type, value)
 
     def _require_scalar_member(self) -> AttributeMetadata | ValueObjectAttributeMetadata:
         member = self._resolved_scalar_member()
@@ -878,38 +882,8 @@ class ElementAttributeExpr[V, T]:
         return leaf
 
     def _literal(self, value: object) -> Scalar:
-        if self._shape is None:
-            raise _invalid_operand(
-                self._dotted(),
-                None,
-                value,
-                "typed literal operations require resolved scalar metadata",
-            )
-        leaf = self._leaf()
-        if value is None:
-            raise _invalid_operand(
-                self._dotted(),
-                leaf.type,
-                value,
-                "None is not a typed literal; use .is_null() or .is_not_null()",
-            )
-        managed = coerce_neutral_input(value, leaf.type)
-        if not matches_neutral_type(managed, leaf.type):
-            raise _invalid_operand(
-                self._dotted(),
-                leaf.type,
-                value,
-                "the developer input policy does not admit this carrier for the declared type",
-            )
-        try:
-            return cast("Scalar", encode_wire(leaf.type, cast("ManagedValue", managed)))
-        except WireEncodingError as error:
-            raise _invalid_operand(
-                self._dotted(),
-                leaf.type,
-                value,
-                f"the managed value is not Wire-encodable: {error}",
-            ) from error
+        neutral_type = None if self._shape is None else self._leaf().type
+        return _native_literal(self._dotted(), neutral_type, value)
 
     def _cmp(self, kind: str, value: object) -> Predicate[V]:
         return Predicate(

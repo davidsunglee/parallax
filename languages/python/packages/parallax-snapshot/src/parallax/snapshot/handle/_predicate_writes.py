@@ -286,14 +286,15 @@ def buffer_predicate_instruction(
     conformance engine's own predicate-write translation (`m-case-format`
     "predicate-shaped case entries deserialize
     to PredicateWrite through the existing serde and buffer through
-    Transaction's own seam"): given an ALREADY-BUILT
-    :class:`~parallax.core.unit_work.PredicateWrite` instruction, reject an
+    Transaction's own seam"): given an ALREADY-PREPARED
+    :class:`~parallax.core.unit_work.PreparedPredicateWrite` product, reject an
     inheritance-family target (`m-inheritance`), then dispatch it READLESS
     (`m-batch-write`) or MATERIALIZE it (`m-opt-lock`, ADR 0014). The typed
-    ``_where`` verbs (:func:`buffer_predicate`) build ``instruction`` from
+    ``_where`` verbs (:func:`buffer_predicate`) build an authored instruction from
     a mutation-compatible :class:`~parallax.core.object_query.ObjectQuery` plus typed
-    ``Attr.set(...)`` assignments first; the engine builds it directly
-    from the case's own canonical write-instruction document.
+    ``Attr.set(...)`` assignments first; the engine deserializes one from the
+    case document. Both pass that authored value through the producer before this
+    seam receives it.
 
     **Every caller passes its authored instruction through the corresponding
     prepared-write producer against ``meta`` first** —

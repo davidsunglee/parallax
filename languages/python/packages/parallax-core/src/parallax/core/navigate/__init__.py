@@ -26,13 +26,11 @@ module exists at all, since the DAG forbids ``m-sql`` from importing
 ``m-temporal-read``), and ``m-inheritance`` (a relationship target may be a
 polymorphic position; its temporal declaration lives on the family root).
 
-:func:`resolve_relationship` and :func:`hop_as_of_terms` are exported so
-``parallax.core.deep_fetch`` — the sole downstream ``m-navigate``
-dependent — resolves each deep-fetch path segment's
-relationship and composes each per-level child query's own propagated as-of
-predicate through the SAME primitives this module's own hop canonicalization uses,
-rather than re-deriving temporal/relationship knowledge the DAG already lets it reach
-only through this module.
+The raw-node :func:`canonicalize` path uses :func:`resolve_relationship` and
+:func:`hop_as_of_terms` to resolve and author each hop. Validated planning does
+not return to those authored helpers: predicate elaboration has already retained
+the resolved relationship direction, and :func:`canonicalize_validated` composes
+managed terms through :func:`validated_hop_as_of_terms`.
 
 A hop resolves to the navigable **direction** the Relationship Facet already
 compiled, so this module never pairs a reverse declaration with its peer nor
@@ -289,10 +287,9 @@ def resolve_relationship(
     inverted cardinality and swapped join exist — so a caller reads a compiled
     direction rather than re-pairing declarations.
 
-    Exported so `parallax.core.deep_fetch` (the sole downstream `m-navigate`
-    dependent) resolves each Include Path segment's relationship through the SAME
-    lookup this module's own hop canonicalization uses, rather than re-deriving
-    it.
+    This is the relationship-resolution primitive for raw-node canonicalization.
+    Validated consumers retain the direction predicate elaboration already
+    resolved instead of resolving the authored reference again.
     """
     class_name, dot, member_name = rel_ref.rpartition(".")
     if not dot:  # pragma: no cover - guards an unvalidated query
@@ -340,11 +337,10 @@ def hop_as_of_terms(
     root's pinned instant for that dimension (``root_pins``) when the root itself
     pinned a specific past moment, else **latest**.
 
-    Exported (alongside :func:`resolve_relationship`) so `parallax.core.deep_fetch`
-    composes the IDENTICAL per-hop as-of predicate for each deep-fetch child
-    level, matched by axis exactly as a `navigate` / `exists` / `notExists` hop's
-    own interior is rewritten by :func:`_inject_hop_as_of` below (which now
-    builds on this same term derivation).
+    This is the raw-node counterpart of
+    :func:`parallax.core.temporal_read.validated_hop_as_of_terms`. The validated
+    path adopts managed temporal terms directly rather than authoring and
+    decoding them again.
     """
     declarer = _temporal_declarer(model, target)
     axes = declarer.declared_as_of_axes
