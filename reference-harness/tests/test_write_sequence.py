@@ -868,6 +868,14 @@ def test_json_casts_outside_document_mutation_do_not_reinterpret_logical_binds()
     assert mariadb_statement_binds("select json_extract(?, '$')", ["[]"]) == ("[]",)
 
 
+def test_document_null_mutation_renders_from_the_neutral_null() -> None:
+    postgres = "update t set payload = jsonb_set(payload, ?, cast(? as jsonb))"
+    mariadb = "update t set payload = json_set(payload, ?, json_extract(?, '$'))"
+
+    assert postgres_statement_binds(postgres, ["{label}", None]) == ("{label}", "null")
+    assert mariadb_statement_binds(mariadb, ["$.label", None]) == ("$.label", "null")
+
+
 def test_a_carried_document_admits_a_key_the_write_input_names_nowhere() -> None:
     case = _write_case_by_id("m-txtime-write-010")
     _assert_carried_document(

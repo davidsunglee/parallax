@@ -33,6 +33,7 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
 )
 from parallax.conformance.temporal_state import TemporalShadow
+from parallax.core import inheritance, predicate, storage_layout
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
     INFINITY,
@@ -90,6 +91,7 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteEffectError,
     WriteRejectedError,
+    instructions,
 )
 from parallax.core.wire import WireEncodingError
 from parallax.snapshot import DeferredFeatureError
@@ -259,6 +261,189 @@ def test_read_row_projects_reused_tph_columns_from_each_row_variant() -> None:
 
     assert card["detail"] == "visa-4242"
     assert cash["detail"] == "12.50"
+
+
+def test_read_row_requires_variant_provenance_for_reused_columns() -> None:
+    case = _case("m-inheritance-124")
+    model = models.load_models()["document-layout"]
+    when = cast("Mapping[str, object]", case.document["when"])
+    query = deserialize_query(when["objectQuery"])
+
+    with pytest.raises(ValueError, match="requires familyVariant"):
+        ActualWireProjection(model).published_row(query, {"id": 1, "detail": "ambiguous"})
+
+
+def test_actual_wire_projection_rejects_unowned_members_and_malformed_value_objects() -> None:
+    model = models.load_models()["document-codec"]
+    entity = model.entities[0]
+    position = inheritance.view(model).entity(entity.identity)
+    assert position is not None
+    profile = position.applicable_value_object("profile")
+    assert profile is not None
+    entries = profile.value_object("entries")
+    assert entries is not None
+    projection = ActualWireProjection(model)
+    query = deserialize_query({"target": entity.identity.canonical, "predicate": {"all": {}}})
+
+    with pytest.raises(ValueError, match="no projected member owns"):
+        projection.published_row(query, {"unknown": 1})
+    with pytest.raises(ValueError, match="no applicable member"):
+        projection.entity_values(entity, {"unknown": 1})
+    with pytest.raises(ValueError, match="many occurrence requires a sequence"):
+        projection.value_object(entries, "not-a-sequence")
+    with pytest.raises(ValueError, match="element requires a mapping"):
+        projection.value_object(profile, "not-a-document")
+
+    assert projection.published_row(query, {"profile": {"amount": decimal.Decimal("12.50")}}) == {
+        "profile": {"amount": "12.50"}
+    }
+    assert projection.value_object(profile, None) is None
+    label = entity.attribute("label")
+    assert label is not None
+    assert projection.published_scalar(label, None) is None
+    assert projection.value_object(profile, {"future": {"opaque": True}}) == {
+        "future": {"opaque": True},
+    }
+    assert projection.value_object(profile, {"entries": [{"value": "nested"}]}) == {
+        "entries": [{"value": "nested"}]
+    }
+    assert projection.published_value_object(entries, "corrupt") == "corrupt"
+    assert projection.published_value_object(profile, "corrupt") == "corrupt"
+    with pytest.raises(ValueError, match="element requires a mapping"):
+        projection.published_value_object(entries, ["corrupt"])
+
+    unknown_query = deserialize_query(
+        {"target": "parallax.compatibility.Missing", "predicate": {"all": {}}}
+    )
+    with pytest.raises(ValueError, match="no such Entity"):
+        projection.published_row(unknown_query, {})
+    with pytest.raises(ValueError, match="no such Entity"):
+        projection.object_key(ObjectKey(EntityIdentity(None, "Missing"), (("id", 1),)))
+    with pytest.raises(ValueError, match="no applicable Attribute"):
+        projection.object_key(ObjectKey(entity.identity, (("missing", 1),)))
+
+    narrowed_query = deserialize_query(
+        {
+            "target": entity.identity.canonical,
+            "predicate": {"all": {}},
+            "narrowTo": [entity.identity.canonical],
+        }
+    )
+    assert projection.published_row(narrowed_query, {}) == {}
+
+    orders = models.load_models()["orders"]
+    order = next(item for item in orders.entities if item.identity.name == "Order")
+    order_item = next(item for item in orders.entities if item.identity.name == "OrderItem")
+    invalid_narrow = deserialize_query(
+        {
+            "target": order.identity.canonical,
+            "predicate": {"all": {}},
+            "narrowTo": [order_item.identity.canonical],
+        }
+    )
+    assert ActualWireProjection(orders).published_row(invalid_narrow, {}) == {}
+
+
+def test_actual_wire_projection_rejects_unresolved_physical_contributors() -> None:
+    model = models.load_models()["document-codec"]
+    layout = storage_layout.view(model).tables[0]
+    slot = layout.columns[0]
+
+    missing_attribute = cast(
+        "storage_layout.TableLayout",
+        dataclasses.replace(
+            cast("Any", layout),
+            columns=(
+                dataclasses.replace(
+                    slot,
+                    contributor=AttributeIdentity(EntityIdentity(None, "Missing"), "id"),
+                ),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="no such Entity"):
+        ActualWireProjection(model).table_row(missing_attribute, {slot.column.name: 1})
+
+    missing_value_object = cast(
+        "storage_layout.TableLayout",
+        dataclasses.replace(
+            cast("Any", layout),
+            columns=(
+                dataclasses.replace(
+                    slot,
+                    contributor=ValueObjectIdentity(EntityIdentity(None, "Missing"), ("payload",)),
+                ),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="no such Entity"):
+        ActualWireProjection(model).table_row(missing_value_object, {slot.column.name: {}})
+
+    entity = model.entities[0]
+    missing_attribute = cast(
+        "storage_layout.TableLayout",
+        dataclasses.replace(
+            cast("Any", layout),
+            columns=(
+                dataclasses.replace(
+                    slot,
+                    contributor=AttributeIdentity(entity.identity, "missing"),
+                ),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="no Attribute"):
+        ActualWireProjection(model).table_row(missing_attribute, {slot.column.name: 1})
+
+    missing_value_object = cast(
+        "storage_layout.TableLayout",
+        dataclasses.replace(
+            cast("Any", layout),
+            columns=(
+                dataclasses.replace(
+                    slot,
+                    contributor=ValueObjectIdentity(entity.identity, ("missing",)),
+                ),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="no Value Object"):
+        ActualWireProjection(model).table_row(missing_value_object, {slot.column.name: {}})
+
+    assert ActualWireProjection(model)._table_row_entity(layout, {}) is entity  # pyright: ignore[reportPrivateUsage]
+
+
+def test_actual_wire_projection_rejects_a_narrowing_product_with_no_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = models.load_models()["document-codec"]
+    entity = model.entities[0]
+    real = inheritance.view(model).entity(entity.identity)
+    assert real is not None
+
+    class MissingNarrow:
+        @staticmethod
+        def entity(_identity: object) -> object:
+            return real
+
+        @staticmethod
+        def position(_identities: object) -> None:
+            return None
+
+    def missing_view(_model: object) -> MissingNarrow:
+        return MissingNarrow()
+
+    monkeypatch.setattr(inheritance, "view", missing_view)
+    query = deserialize_query(
+        {
+            "target": entity.identity.canonical,
+            "predicate": {"all": {}},
+            "narrowTo": [entity.identity.canonical],
+        }
+    )
+
+    with pytest.raises(ValueError, match="narrowing resolves no position"):
+        ActualWireProjection(model).published_row(query, {})
 
 
 def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column() -> None:
@@ -4505,6 +4690,81 @@ def test_a_decimal_temporal_key_requires_its_canonical_wire_string() -> None:
         )
 
 
+def test_conflict_close_rejects_axis_specific_inputs_on_a_transaction_time_target() -> None:
+    model = models.load_models()["balance"]
+    target_name = "parallax.compatibility.Balance"
+    common = (model, target_name, {"id": 2}, "2024-10-01T00:00:00+00:00")
+
+    with pytest.raises(engine.EngineError, match="exactly its primary-key members"):
+        engine._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+            model,
+            target_name,
+            {"id": 2, "extra": 3},
+            "2024-10-01T00:00:00+00:00",
+            None,
+            None,
+            None,
+        )
+    with pytest.raises(engine.EngineError, match="axis the target does not declare"):
+        engine._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+            *common, None, "2024-01-01T00:00:00+00:00", None
+        )
+    for bound in ("infinity", "2024-06-01T00:00:00+00:00"):
+        with pytest.raises(engine.EngineError, match="axis the target does not declare"):
+            engine._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+                *common, None, None, bound
+            )
+    assert (
+        engine._decode_observed_conflict_bound(  # pyright: ignore[reportPrivateUsage]
+            None, TemporalBound.INFINITY, position="validEnd"
+        )
+        is TemporalBound.INFINITY
+    )
+
+
+def test_predicate_writes_require_no_keyed_unit_source_read_or_framework_classification() -> None:
+    model = models.load_models()["account"]
+    instruction = instructions.PredicateWrite(
+        "update",
+        instructions.PredicateSelection("parallax.compatibility.Account", predicate.All()),
+        (instructions.WriteAssignment("parallax.compatibility.Account.owner", "Ada"),),
+    )
+    prepared = instructions.prepare_typed_write(instruction, model)
+    assert isinstance(prepared, instructions.PreparedPredicateWrite)
+    resolved = engine._ResolvedWrite(prepared, None)  # pyright: ignore[reportPrivateUsage]
+
+    assert engine._unit_source_reads(model, (resolved,)) == []  # pyright: ignore[reportPrivateUsage]
+    assert engine._is_framework_write(prepared, model) is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_projection_and_mutation_products_reject_ambiguous_or_invalid_members() -> None:
+    model = models.load_models()["document-codec"]
+    entity = model.entities[0]
+    first, second = entity.declared_attributes[:2]
+    columns = {"ambiguous": (("first", first), ("second", second))}
+
+    with pytest.raises(engine.EngineError, match="does not select one declaration"):
+        engine._projected_row(  # pyright: ignore[reportPrivateUsage]
+            model,
+            ActualWireProjection(model),
+            columns,
+            False,
+            {"ambiguous": 1},
+        )
+
+    account = models.load_models()["account"]
+    account_entity = next(item for item in account.entities if item.identity.name == "Account")
+    case = _synthetic_write("scenario", {"model": "models/account.yaml"})
+    with pytest.raises(engine.EngineError, match="invalid assignment"):
+        engine._judged_assignments(  # pyright: ignore[reportPrivateUsage]
+            case,
+            account,
+            account_entity.identity,
+            {"missing": 1},
+            {"id": 1},
+        )
+
+
 @pytest.mark.parametrize("bad_key", ["2", True, 2.5])
 def test_a_temporal_close_rejects_a_malformed_primary_key_before_planning(
     bad_key: object,
@@ -5440,6 +5700,52 @@ def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> N
 
     assert card["payload"] == {"detail": "visa-4242"}
     assert cash["payload"] == {"detail": "12.50", "future": None}
+
+
+def test_table_state_preserves_non_document_relational_payloads() -> None:
+    from parallax.core import storage_layout
+
+    meta = models.load_models()["document-layout"]
+    layout = next(
+        candidate
+        for candidate in storage_layout.view(meta).tables
+        if candidate.table.name == "payment_document"
+    )
+
+    projected = ActualWireProjection(meta).table_row(
+        layout, {"id": 1, "kind": "card", "payload": "corrupt"}
+    )
+
+    assert projected["payload"] == "corrupt"
+    assert (
+        ActualWireProjection(meta).table_row(layout, {"id": 1, "kind": "card", "payload": None})[
+            "payload"
+        ]
+        is None
+    )
+
+
+def test_table_state_requires_a_known_variant_for_ambiguous_document_members() -> None:
+    from parallax.core import storage_layout
+
+    meta = models.load_models()["document-layout"]
+    layout = next(
+        candidate
+        for candidate in storage_layout.view(meta).tables
+        if candidate.table.name == "payment_document"
+    )
+
+    with pytest.raises(ValueError, match="row does not identify"):
+        ActualWireProjection(meta).table_row(
+            layout,
+            {"id": 1, "kind": "unknown", "payload": {"detail": "ambiguous"}},
+        )
+
+    projected = ActualWireProjection(meta).table_row(
+        layout,
+        {"id": 2, "kind": "cash", "payload": {"detail": None}},
+    )
+    assert projected["payload"] == {"detail": None}
 
 
 def test_table_state_preserves_malformed_declared_relational_document_leaves() -> None:

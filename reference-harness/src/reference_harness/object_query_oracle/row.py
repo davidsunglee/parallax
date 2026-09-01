@@ -14,6 +14,9 @@ from . import materialize
 
 
 def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> bool:
+    if type(left) is type(right) and left == right:
+        return True
+
     def member_equal(left_member: Any, right_member: Any) -> bool:
         if not isinstance(left_member, Mapping) or not isinstance(right_member, Mapping):
             return False

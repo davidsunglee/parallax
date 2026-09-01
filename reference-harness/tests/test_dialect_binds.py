@@ -24,12 +24,14 @@ database:
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
 
+from reference_harness._statement_bind_inference import managed_statement_binds
 from reference_harness.case import Case, Model, discover_cases
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import (
@@ -160,6 +162,22 @@ def test_statement_binds_map_without_dialect_errors() -> None:
     )
     with pytest.raises(KeyError):
         case.statement_binds(0)
+
+
+def test_managed_statement_binds_decode_direct_update_assignments() -> None:
+    case = next(
+        case
+        for case in discover_cases(_COMPATIBILITY_ROOT)
+        if case.path.name == "m-coherence-001-refetch.yaml"
+    )
+    entry = case.coherence[1]["statements"][0]
+    statement = entry["sql"]["postgres"]
+
+    assert managed_statement_binds(case, statement, entry["binds"], "postgres") == (
+        Decimal("999.00"),
+        2,
+        2,
+    )
 
 
 def test_reference_sql_for_string_is_dialect_neutral() -> None:

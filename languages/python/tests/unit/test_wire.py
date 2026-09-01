@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import decimal
 import json
@@ -14,6 +15,7 @@ from typing import cast
 import pytest
 
 import parallax.core.wire as wire
+import parallax.core.wire._codec as wire_codec
 from parallax.core.base import (
     BOOLEAN,
     BYTES,
@@ -32,10 +34,121 @@ from parallax.core.base import (
     NeutralType,
     matches_neutral_type,
 )
+from parallax.core.base import _neutral as neutral_carriers
 from parallax.core.base._neutral import ManagedValueExclusion
 
 _TOKEN = uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
 _INSTANT = dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
+
+
+def test_authored_numbers_are_immutable_under_shallow_copy() -> None:
+    authored = wire.loads("1")
+
+    assert copy.copy(authored) is authored
+
+
+def test_wire_public_seams_bound_defensive_codec_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def invalid_json(_value: object, *, top_level: bool = False) -> wire.WireValue:
+        del top_level
+        raise wire_codec._JsonFailure("type-mismatch", "changed during normalization")  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(wire_codec, "_normalize_json", invalid_json)
+    with pytest.raises(wire.WireEncodingError, match="changed during normalization"):
+        wire.encode_wire(JSON, cast("ManagedValue", {"stable": True}))
+
+
+def test_wire_public_seams_reject_malformed_internal_products(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_type = cast("NeutralType", object())
+    monkeypatch.setattr(
+        wire_codec,
+        "matches_neutral_type",
+        lambda _value, _type: True,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+    with pytest.raises(AssertionError):
+        wire.encode_wire(fake_type, cast("ManagedValue", 1))
+
+    decoded = wire_codec._DecodedWireLiteral(1)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(
+        wire_codec,
+        "_decode_admitted",
+        lambda _type, _value: decoded,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+    monkeypatch.setattr(
+        wire_codec,
+        "encode_wire",
+        lambda _type, value: cast("wire.WireValue", value),  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+    with pytest.raises(AssertionError):
+        wire.decode_canonical_wire(fake_type, 1)
+
+
+def test_canonical_integer_check_rejects_a_malformed_non_numeric_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decoded = wire_codec._DecodedWireLiteral(1)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(
+        wire_codec,
+        "_decode_admitted",
+        lambda _type, _value: decoded,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+
+    with pytest.raises(wire.WireDecodingError) as caught:
+        wire.decode_canonical_wire(INT64, cast("wire.WireValue", "not-a-number"))
+
+    assert caught.value.reason == "noncanonical"
+
+
+def test_float_encoding_falls_back_when_no_shorter_spelling_round_trips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wire_codec,
+        "nearest_float_at_width",
+        lambda _value, _type: None,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+
+    assert wire.encode_wire(FLOAT64, 1.25) == 1.25
+
+
+def test_wire_diagnostics_bound_an_unrenderable_runtime_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wire_codec,
+        "type",
+        lambda _value: (_ for _ in ()).throw(RuntimeError("unrenderable")),  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+        raising=False,
+    )
+
+    with pytest.raises(wire.WireDecodingError, match="unrenderable value"):
+        wire.decode_wire(INT64, cast("wire.WireValue", object()))
+
+
+def test_decimal_encoding_bounds_a_nonfinite_product_after_membership_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wire_codec,
+        "matches_neutral_type",
+        lambda _value, _type: True,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+
+    assert wire.encode_wire(Decimal(3, 1), decimal.Decimal("NaN")) == "0.0"
+
+
+def test_instance_namespace_probe_skips_an_inapplicable_getset_descriptor() -> None:
+    hostile_type = type(
+        "HostileNamespace",
+        (),
+        {"__dict__": vars(dt.datetime)["fold"]},
+    )
+
+    assert neutral_carriers._base_instance_namespace(hostile_type()) is None  # pyright: ignore[reportPrivateUsage]
+
 
 _CANONICAL: tuple[tuple[NeutralType, ManagedValue, wire.WireValue], ...] = (
     (BOOLEAN, True, True),
@@ -126,10 +239,14 @@ def test_admitted_alternatives_normalize_to_canonical_output(
         (Decimal(4, 2), '"10.2"', "noncanonical"),
         (Decimal(4, 2), '"123.45"', "out-of-space"),
         (STRING, "42", "type-mismatch"),
+        (STRING, '"\\ud800"', "out-of-space"),
+        (BYTES, "42", "type-mismatch"),
         (BYTES, '"abc"', "type-mismatch"),
         (BYTES, '"0A1B"', "noncanonical"),
+        (DATE, "42", "type-mismatch"),
         (DATE, '"20260115"', "type-mismatch"),
         (DATE, '"2026-1-15"', "noncanonical"),
+        (DATE, '"2026-2-30"', "out-of-space"),
         (DATE, '"2026-02-30"', "out-of-space"),
         (TIME, "42", "type-mismatch"),
         (TIME, '"09:30"', "type-mismatch"),
@@ -139,9 +256,12 @@ def test_admitted_alternatives_normalize_to_canonical_output(
         (TIMESTAMP, '"2026-1-1T9:30:00Z"', "type-mismatch"),
         (TIMESTAMP, '"2026-01-01T09:30:00.1234560Z"', "type-mismatch"),
         (TIMESTAMP, '"2026-01-15T09:30:00+00:00"', "noncanonical"),
+        (TIMESTAMP, '"2026-01-15T09:30:00+99:00"', "out-of-space"),
+        (TIMESTAMP, '"0001-01-01T00:00:00+14:00"', "out-of-space"),
         (TIMESTAMP, '"2026-02-30T09:30:00Z"', "out-of-space"),
         (UUID, "42", "type-mismatch"),
         (UUID, '"123E4567-E89B-12D3-A456-426614174000"', "noncanonical"),
+        (UUID, '"not-a-uuid"', "type-mismatch"),
         (JSON, "null", "type-mismatch"),
         (JSON, "1e309", "out-of-space"),
     ],
@@ -443,6 +563,16 @@ def test_uuid_subclass_data_descriptor_cannot_forge_fallback_storage() -> None:
     assert wire.encode_wire(UUID, value) == "00000000-0000-0000-0000-000000000000"
 
 
+@pytest.mark.parametrize("fallback", [None, True, -1, 1 << 128])
+def test_uuid_subclass_invalid_fallback_storage_is_not_managed(fallback: object) -> None:
+    token_type = cast("type[uuid.UUID]", type("Token", (uuid.UUID,), {}))
+    value = token_type.__new__(token_type)
+    if fallback is not None:
+        vars(value)["int"] = fallback
+
+    assert matches_neutral_type(value, UUID) is False
+
+
 def test_json_normalization_reads_builtin_container_payloads_without_subclass_hooks() -> None:
     class Text(str):
         def __str__(self) -> str:
@@ -631,6 +761,32 @@ def test_encoding_refuses_nonmembers_without_developer_coercion() -> None:
         wire.encode_wire(FLOAT32, 1)
     with pytest.raises(wire.WireEncodingError):
         wire.encode_wire(Decimal(4, 2), 1)
+
+
+def test_codec_rejects_unknown_neutral_type_variants_exhaustively() -> None:
+    unknown = cast("NeutralType", object())
+    with pytest.raises(AssertionError):
+        wire.decode_wire(unknown, 1)
+    with pytest.raises(wire.WireEncodingError):
+        wire.encode_wire(unknown, cast("ManagedValue", 1))
+
+
+def test_programmatic_nonfinite_numbers_are_not_admitted_wire_numbers() -> None:
+    for value in (math.nan, math.inf, -math.inf):
+        with pytest.raises(wire.WireDecodingError) as decoding:
+            wire.decode_wire(FLOAT64, cast("wire.WireValue", value))
+        assert decoding.value.reason == "type-mismatch"
+
+
+def test_codec_diagnostics_remain_bounded_for_hostile_carriers() -> None:
+    class Unrenderable:
+        def __repr__(self) -> str:
+            raise RuntimeError("boom")
+
+    for value in ("x" * 300, b"x" * 300, Unrenderable()):
+        with pytest.raises(wire.WireDecodingError) as decoding:
+            wire.decode_wire(INT32, cast("wire.WireValue", value))
+        assert len(str(decoding.value)) < 400
 
 
 def test_the_public_facade_contains_only_the_contractual_codec_surface() -> None:

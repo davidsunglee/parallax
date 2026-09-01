@@ -13,6 +13,7 @@ first.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -21,7 +22,8 @@ import pytest
 from _corpus_model_support import formed, records
 
 from parallax.conformance import _case_ingress, case_format
-from parallax.core.metamodel import EntityIdentity
+from parallax.core import inheritance
+from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import (
     AsOf,
     History,
@@ -35,6 +37,7 @@ from parallax.core.object_query import (
     validate_object_query,
 )
 from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.object_query import validate as query_validation
 from parallax.core.predicate import (
     All,
     And,
@@ -63,6 +66,13 @@ from parallax.core.predicate import (
     Scalar,
     StringMatch,
     validate_predicate,
+)
+from parallax.core.predicate import validate as predicate_validation
+from parallax.core.predicate._validated import (
+    ValidatedPredicate,
+    conjunction,
+    managed_comparison,
+    managed_membership,
 )
 from parallax.descriptor._records import (
     Attribute,
@@ -252,6 +262,85 @@ def test_temporal_read_accepts_complete_explicit_selections() -> None:
         "valid-time": AsOf("latest"),
     }
     _validate_query("Position", _POSITION, temporal=both)
+
+
+def test_object_query_validation_rejects_incomplete_resolved_metadata_products(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = formed(_POSITION)
+    root = _root(model, "Position")
+    axis = root.declared_as_of_axes[0]
+    malformed = dataclasses.replace(
+        root,
+        declared_attributes=tuple(
+            member
+            for member in root.declared_attributes
+            if member.identity.name != axis.start_attribute.name
+        ),
+    )
+
+    class Family:
+        @staticmethod
+        def entity(_identity: object) -> Any:
+            return type("Position", (), {"root": malformed.identity})()
+
+    class Model:
+        @staticmethod
+        def entity(_identity: object) -> Any:
+            return malformed
+
+    def family_view(_model: object) -> Family:
+        return Family()
+
+    monkeypatch.setattr(inheritance, "view", family_view)
+    query = object_query(
+        malformed.identity,
+        All(),
+        temporal={
+            "transaction-time": AsOf("latest"),
+            "valid-time": AsOf("latest"),
+        },
+    )
+
+    with pytest.raises(ValueError, match="no declared temporal Attribute"):
+        query_validation._validate_temporal_selections(  # pyright: ignore[reportPrivateUsage]
+            malformed, query, cast("Any", Model())
+        )
+
+    class MissingFamily:
+        @staticmethod
+        def entity(_identity: object) -> None:
+            return None
+
+    def missing_family_view(_model: object) -> MissingFamily:
+        return MissingFamily()
+
+    monkeypatch.setattr(inheritance, "view", missing_family_view)
+    assert (
+        query_validation._validate_temporal_selections(  # pyright: ignore[reportPrivateUsage]
+            malformed, query, cast("Any", Model())
+        )
+        == ()
+    )
+
+
+def test_include_validation_rejects_a_relationship_with_no_declaring_entity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = formed(_ORDERS)
+    root = _root(model, "Order")
+    monkeypatch.setattr(
+        query_validation,
+        "relationship_target",
+        lambda *_args, **_kwargs: root,  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+
+    with pytest.raises(ValueError, match="no resolved relationship direction"):
+        query_validation._validate_include_path(  # pyright: ignore[reportPrivateUsage]
+            IncludePath(segments=(IncludeSegment(rel="Missing.items"),)),
+            model,
+            predicate_validation.root_position(model, root),
+        )
 
 
 def test_temporal_read_rejects_an_undeclared_dimension() -> None:
@@ -847,6 +936,47 @@ def test_string_patterns_retain_non_codec_operands_in_every_scope() -> None:
     for product in (scalar, nested, elements.only_child()):
         assert product.operands is not None
         assert product.operands.neutral_type is None
+
+
+def test_generated_predicate_products_reject_missing_or_mistyped_semantics() -> None:
+    model = formed(_ORDERS)
+    root = _root(model, "Order")
+    member = root.attribute("id")
+    assert member is not None
+
+    with pytest.raises(ValueError, match="exactly one child"):
+        ValidatedPredicate(All()).only_child()
+    with pytest.raises(ValueError, match="outside"):
+        managed_comparison(op="eq", attr="Order.id", member=member, value=cast("Any", "1"))
+    with pytest.raises(ValueError, match="outside"):
+        managed_membership(attr="Order.id", member=member, values=(cast("Any", "1"),))
+    with pytest.raises(ValueError, match="at least one term"):
+        conjunction(ValidatedPredicate(All()))
+
+    with pytest.raises(ValueError, match="no resolved relationship direction"):
+        predicate_validation._resolved_relationship("Missing.items", model)  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match="no resolved relationship direction"):
+        predicate_validation._direction_join(  # pyright: ignore[reportPrivateUsage]
+            RelationshipIdentity(root.identity, "missing"), model
+        )
+    with pytest.raises(AssertionError, match="managed bounds"):
+        predicate_validation._check_managed_bound_ordering(  # pyright: ignore[reportPrivateUsage]
+            "Order.price", None
+        )
+
+
+def test_string_predicate_rejects_a_non_string_member() -> None:
+    model = formed(_ORDERS)
+    root = _root(model, "Order")
+
+    with pytest.raises(ModelRejectedError) as caught:
+        validate_predicate(
+            root,
+            StringMatch(op="like", attr="Order.qty", value="1%"),
+            model,
+        )
+
+    assert caught.value.rule == "string-predicate-non-string-member"
 
 
 @pytest.mark.parametrize("tag", _STRING_TAGS)

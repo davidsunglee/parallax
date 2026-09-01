@@ -71,8 +71,8 @@ when:
             postgres: update ledger set payload = jsonb_set(payload, ?, cast(? as jsonb)), version = ? where id = ? and version = ?
             mariadb: update ledger set payload = json_set(payload, ?, json_extract(?, '$')), version = ? where id = ? and version = ?
           binds:
-            postgres: ['{label}', 'null', 2, 100, 1]
-            mariadb: ['$.label', 'null', 2, 100, 1]
+            postgres: ['{label}', null, 2, 100, 1]
+            mariadb: ['$.label', null, 2, 100, 1]
     - objectQuery:
         target: parallax.compatibility.Ledger
         predicate:

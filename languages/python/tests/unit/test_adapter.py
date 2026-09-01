@@ -7,7 +7,7 @@ import datetime as dt
 import decimal
 import json
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -24,13 +24,20 @@ from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
+from parallax.core import inheritance
 from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.object_query import AsOfRange, validate_object_query
+from parallax.core.object_query import AsOfRange, object_query, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
-from parallax.core.predicate import ModelRejectedError
+from parallax.core.predicate import (
+    And,
+    Comparison,
+    ModelRejectedError,
+    NestedComparison,
+    NestedExists,
+)
 from parallax.core.predicate import serialize as serialize_predicate
 from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
@@ -162,6 +169,42 @@ def test_case_write_adapter_leaves_malformed_values_for_core_classification() ->
     assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
+def test_case_write_adapter_leaves_unknown_entities_for_core_classification() -> None:
+    instruction = instructions.KeyedWrite("insert", "Missing", ({"id": 1},))
+    with pytest.raises(instructions.WriteInstructionError, match="unknown entity"):
+        _case_ingress.prepare_case_write(instruction, models.load_models()["account"])
+
+
+def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
+    instruction = instructions.KeyedWrite(
+        "insert",
+        "parallax.compatibility.Sample",
+        (
+            {
+                "id": 1,
+                "label": "sample",
+                "profile": {
+                    "amount": "12.50",
+                    "origin": {"city": "Oslo", "since": "2026-01-01"},
+                    "entries": [{"kind": "opening", "price": "2.25", "future": None}],
+                    "future": {"opaque": True},
+                },
+            },
+        ),
+    )
+
+    prepared = _case_ingress.prepare_case_write(instruction, models.load_models()["document-codec"])
+
+    assert isinstance(prepared, PreparedKeyedWrite)
+    profile = cast("Mapping[str, object]", prepared.rows[0]["profile"])
+    assert profile["amount"] == decimal.Decimal("12.50")
+    assert cast("Mapping[str, object]", profile["origin"])["since"] == dt.date(2026, 1, 1)
+    entries = cast("Sequence[Mapping[str, object]]", profile["entries"])
+    assert entries[0]["price"] == decimal.Decimal("2.25")
+    assert entries[0]["future"] is None
+    assert profile["future"] == {"opaque": True}
+
+
 def test_case_query_adapter_preserves_canonical_carriers_before_core_validation() -> None:
     model = models.load_models()["position"]
     query = deserialize_query(
@@ -222,6 +265,57 @@ def test_case_query_adapter_does_not_widen_the_timestamp_string_grammar() -> Non
     with pytest.raises(ModelRejectedError) as caught:
         validate_object_query(root, normalized, model)
     assert caught.value.rule == "neutral-literal-type-mismatch"
+
+
+def test_case_query_adapter_preserves_unresolved_predicate_values_for_core_validation() -> None:
+    model = models.load_models()["document-codec"]
+    query = object_query(
+        model.entities[0].identity,
+        And(
+            operands=(
+                Comparison(op="eq", attr="unqualified", value="plain"),
+                Comparison(op="eq", attr="Missing.value", value="unknown"),
+                NestedComparison(op="nestedEq", path="shallow", value="plain"),
+                NestedComparison(op="nestedEq", path="Missing.doc.value", value="unknown"),
+                NestedExists(
+                    path="parallax.compatibility.Sample.profile.entries",
+                    where=NestedComparison(op="nestedEq", path="missing.value", value="unknown"),
+                ),
+                NestedExists(
+                    path="parallax.compatibility.Sample.profile.entries",
+                    where=NestedComparison(op="nestedEq", path="", value="unknown"),
+                ),
+                NestedExists(path="unqualified"),
+                NestedExists(
+                    path="Missing.doc.child",
+                    where=NestedComparison(op="nestedEq", path="value", value="unknown"),
+                ),
+            )
+        ),
+    )
+
+    normalized = _case_ingress.normalize_case_query(query, model)
+
+    assert serialize_predicate(normalized.predicate) == serialize_predicate(query.predicate)
+
+
+def test_case_ingress_bounds_missing_inheritance_positions_and_empty_relative_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = models.load_models()["document-codec"]
+    entity = model.entities[0]
+
+    class MissingPosition:
+        @staticmethod
+        def entity(_identity: object) -> None:
+            return None
+
+    def missing_view(_model: object) -> MissingPosition:
+        return MissingPosition()
+
+    monkeypatch.setattr(inheritance, "view", missing_view)
+    assert _case_ingress._entity_members(model, entity) == {}  # pyright: ignore[reportPrivateUsage]
+    assert _case_ingress._relative_leaf(None, ()) is None  # pyright: ignore[reportPrivateUsage]
 
 
 class _FakePort:

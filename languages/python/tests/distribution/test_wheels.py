@@ -71,20 +71,26 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # they cannot tell a handle.py from a handle/ directory. Hatch discovers the
     # tree rather than enumerating modules, which makes the absent old path the
     # load-bearing half: it is what would catch a stale build or a half-applied
-    # split. This is the complete package — the ten private
+    # split. This is the complete package — the seventeen private
     # modules plus the re-exporting interface.
     names = _names(wheelhouse, "parallax-snapshot")
     assert "parallax/snapshot/handle/__init__.py" in names
     assert "parallax/snapshot/handle/_database.py" in names
+    assert "parallax/snapshot/handle/_errors.py" in names
     assert "parallax/snapshot/handle/_family.py" in names
+    assert "parallax/snapshot/handle/_features.py" in names
     assert "parallax/snapshot/handle/_keyed_sql.py" in names
     assert "parallax/snapshot/handle/_materializer.py" in names
+    assert "parallax/snapshot/handle/_planning.py" in names
     assert "parallax/snapshot/handle/_predicate_writes.py" in names
+    assert "parallax/snapshot/handle/_preflight.py" in names
     assert "parallax/snapshot/handle/_read.py" in names
+    assert "parallax/snapshot/handle/_stream.py" in names
     assert "parallax/snapshot/handle/_transaction.py" in names
+    assert "parallax/snapshot/handle/_wire.py" in names
+    assert "parallax/snapshot/handle/_wire_writes.py" in names
     assert "parallax/snapshot/handle/_write_inputs.py" in names
     assert "parallax/snapshot/handle/_write_lowering.py" in names
-    assert "parallax/snapshot/handle/_write_types.py" in names
     assert "parallax/snapshot/handle.py" not in names
 
 

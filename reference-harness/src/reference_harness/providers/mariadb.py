@@ -25,6 +25,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import time
+import uuid
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from types import TracebackType
@@ -75,6 +76,8 @@ def _to_db_bind(value: Any) -> Any:
         return value
     if is_document(value):
         return json.dumps(value)
+    if isinstance(value, uuid.UUID):
+        return str(value)
     return value
 
 

@@ -5,11 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-import sqlglot
 from sqlglot import exp
 from sqlglot.expressions.core import Expr
 
+from ._sql_placeholders import parse_indexed_statement, placeholder_index
 from .case import Case
+from .ddl_builder import contributor_types
+from .portable_literal import (
+    PortableLiteralError,
+    canonicalize_observed,
+    decode_canonical,
+)
 from .storage_layout import ColumnSlot, ValueObjectContributor
 
 
@@ -27,13 +33,13 @@ def infer_statement_bind_targets(
     binds: Sequence[object],
     dialect: str,
 ) -> dict[int, CanonicalBindTarget]:
-    try:
-        tree = sqlglot.parse_one(_indexed_placeholders(statement), read=_sqlglot_dialect(dialect))
-    except sqlglot.ParseError:
+    tree = parse_indexed_statement(statement, dialect)
+    if tree is None:
         return {}
     targets = _insert_targets(case, tree)
+    targets.update(_update_targets(case, tree))
     for placeholder in tree.find_all(exp.Placeholder):
-        index = _placeholder_index(placeholder)
+        index = placeholder_index(placeholder)
         if index is None or index in targets:
             continue
         operand = _compared_operand(placeholder)
@@ -44,46 +50,32 @@ def infer_statement_bind_targets(
     return targets
 
 
-def _indexed_placeholders(statement: str) -> str:
-    parts: list[str] = []
-    quote = ""
-    index = 0
-    cursor = 0
-    while cursor < len(statement):
-        character = statement[cursor]
-        if quote:
-            parts.append(character)
-            if character == quote:
-                if cursor + 1 < len(statement) and statement[cursor + 1] == quote:
-                    parts.append(statement[cursor + 1])
-                    cursor += 1
-                else:
-                    quote = ""
-        elif character in "\"'`":
-            quote = character
-            parts.append(character)
-        elif character == "?":
-            parts.append(f":__parallax_bind_{index}")
-            index += 1
-        else:
-            parts.append(character)
-        cursor += 1
-    return "".join(parts)
-
-
-def _sqlglot_dialect(dialect: str) -> str:
-    return "mysql" if dialect == "mariadb" else dialect
-
-
-def _placeholder_index(placeholder: exp.Placeholder) -> int | None:
-    name = placeholder.this
-    prefix = "__parallax_bind_"
-    if not isinstance(name, str) or not name.startswith(prefix):
-        return None
-    try:
-        return int(name.removeprefix(prefix))
-    except ValueError:
-        return None
+def managed_statement_binds(
+    case: Case,
+    statement: str,
+    binds: Sequence[object],
+    dialect: str,
+) -> tuple[object, ...]:
+    """Decode modeled direct-column binds for provider execution."""
+    managed = list(binds)
+    types = contributor_types(case.model)
+    for index, target in infer_statement_bind_targets(case, statement, binds, dialect).items():
+        if not isinstance(target, ColumnSlot) or index >= len(managed):
+            continue
+        declared = types.get(target.contributor)
+        value = managed[index]
+        if (
+            declared is None
+            or value is None
+            or (declared[0] == "timestamp" and value == "infinity")
+        ):
+            continue
+        try:
+            canonical = canonicalize_observed(value, declared[0])
+            managed[index] = decode_canonical(canonical, declared[0])
+        except PortableLiteralError:
+            continue
+    return tuple(managed)
 
 
 def _insert_targets(case: Case, tree: Expr) -> dict[int, CanonicalBindTarget]:
@@ -111,10 +103,31 @@ def _insert_targets(case: Case, tree: Expr) -> dict[int, CanonicalBindTarget]:
                 placeholders = (expression,)
             if len(placeholders) != 1 or not _transparent_placeholder(expression, placeholders[0]):
                 continue
-            index = _placeholder_index(placeholders[0])
+            index = placeholder_index(placeholders[0])
             slot = layout.column(column_name)
             if index is not None and slot is not None:
                 targets[index] = slot
+    return targets
+
+
+def _update_targets(case: Case, tree: Expr) -> dict[int, CanonicalBindTarget]:
+    if not isinstance(tree, exp.Update):
+        return {}
+    targets: dict[int, CanonicalBindTarget] = {}
+    for assignment in tree.expressions:
+        if not isinstance(assignment, exp.EQ) or not isinstance(assignment.this, exp.Column):
+            continue
+        placeholders = tuple(assignment.expression.find_all(exp.Placeholder))
+        if isinstance(assignment.expression, exp.Placeholder):
+            placeholders = (assignment.expression,)
+        if len(placeholders) != 1 or not _transparent_placeholder(
+            assignment.expression, placeholders[0]
+        ):
+            continue
+        index = placeholder_index(placeholders[0])
+        slot = _column_slot(case, tree, assignment.this)
+        if index is not None and slot is not None:
+            targets[index] = slot
     return targets
 
 
@@ -202,7 +215,7 @@ def _extraction_path(expression: Expr, binds: Sequence[object]) -> tuple[str, ..
         (
             (index, binds[index])
             for placeholder in expression.find_all(exp.Placeholder)
-            if (index := _placeholder_index(placeholder)) is not None and index < len(binds)
+            if (index := placeholder_index(placeholder)) is not None and index < len(binds)
         ),
         key=lambda item: item[0],
     )
