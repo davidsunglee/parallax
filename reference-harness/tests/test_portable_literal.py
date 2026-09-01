@@ -98,6 +98,7 @@ def test_public_decode_classifies_rejected_literals(
         "20260101T093000Z",
         "2026-01-01X09:30:00Z",
         "2026-01-01T09:30:00.1234560Z",
+        pytest.param("2026-01-15T11:30:00.000000+02:00\n", id="trailing-newline"),
     ],
 )
 def test_observed_timestamp_refuses_host_parser_extensions(value: str) -> None:

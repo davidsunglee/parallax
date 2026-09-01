@@ -588,7 +588,7 @@ def decode_timestamp(literal: str) -> datetime.datetime | None:
     so an offset is required. The ``T`` is the separator: a space, or any other
     character, spells no instant.
     """
-    match = _TIMESTAMP.match(literal)
+    match = _TIMESTAMP.fullmatch(literal)
     if match is None:
         return None
     year, month, day, hour, minute, second, fraction, zone = match.groups()
