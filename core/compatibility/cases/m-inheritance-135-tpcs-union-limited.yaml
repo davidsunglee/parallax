@@ -34,5 +34,5 @@ then:
   referenceSql: select * from (select id, title, folder_id, currency, amount_due, null as body, null as paid_amount, 'Invoice' as family_variant from invoice union all select id, title, folder_id, currency, null as amount_due, null as body, paid_amount, 'Receipt' as family_variant from receipt union all select id, title, folder_id, null as currency, null as amount_due, body, null as paid_amount, 'Memo' as family_variant from memo) every_document order by title desc limit 2
   rows:
     - { id: 1, title: Memo-A, folder_id: 102, currency: null, amount_due: null, body: Reminder, paid_amount: null, familyVariant: Memo }
-    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, amount_due: null, body: null, paid_amount: 120.00, familyVariant: Receipt }
+    - { id: 1, title: Receipt-A, folder_id: 100, currency: USD, amount_due: null, body: null, paid_amount: "120.00", familyVariant: Receipt }
   roundTrips: 1

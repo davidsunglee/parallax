@@ -33,7 +33,7 @@ when:
       note: open a milestone [txInstant, infinity) carrying the reserved id 1
       rows:
         - { id: 1, note: opened }
-      at: "2024-05-01T00:00:00+00:00"
+      at: "2024-05-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
@@ -41,10 +41,10 @@ then:
       binds: [1, entry_seq]
     - sql:
         postgres: insert into audit_entry(id, note, in_z, out_z) values (?, ?, ?, ?)
-      binds: [1, opened, "2024-05-01T00:00:00+00:00", infinity]
+      binds: [1, opened, "2024-05-01T00:00:00.000000Z", infinity]
   tableState:
     audit_seq:
       - { name: entry_seq, next_val: 2 }
     audit_entry:
-      - { id: 1, note: opened, in_z: "2024-05-01T00:00:00+00:00", out_z: infinity }
+      - { id: 1, note: opened, in_z: "2024-05-01T00:00:00.000000Z", out_z: infinity }
   roundTrips: 2

@@ -6,9 +6,8 @@
 # The fields are zero-padded most significant first, so text order is clock order and
 # the extraction compares directly with no cast.
 #
-# The literal is the abbreviated `09:30`, which names the same time of day Ada stores
-# as `09:30:00`: it decodes to the time and re-spells through the codec, so the bind
-# carries the stored characters. This closes the last of the six text-compared types.
+# The literal is the canonical `09:30:00`, so decoding and encoding preserve the
+# stored comparison text. This closes the last of the six text-compared types.
 # Bo stores `23:59:59.500000` — the sub-second form — and the not-present rows (3/4/5)
 # extract SQL NULL.
 model: models/document-codec.yaml
@@ -20,7 +19,7 @@ when:
     predicate:
       nestedEq:
         path: parallax.compatibility.Sample.profile.clock
-        value: 09:30
+        value: "09:30:00"
 then:
   statements:
     - sql:

@@ -31,7 +31,7 @@ when:
       transaction-time:
         asOf: latest
       valid-time:
-        asOf: '2024-03-01T00:00:00+00:00'
+        asOf: "2024-03-01T00:00:00.000000Z"
     orderBy:
       - attr: parallax.compatibility.Policy.id
         direction: asc
@@ -44,19 +44,19 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ? order by t0.id asc limit ?
-      binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity, 1]
+      binds: ["2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity, 1]
     - sql:
         postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id in (?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
         mariadb: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id in (?) and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-      binds: [1, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+      binds: [1, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
   graph:
     Policy:
       - id: 1
         name: Auto
-        validStart: "2024-01-01T00:00:00+00:00"
+        validStart: "2024-01-01T00:00:00.000000Z"
         validEnd: infinity
-        txStart: "2024-01-01T00:00:00+00:00"
+        txStart: "2024-01-01T00:00:00.000000Z"
         txEnd: infinity
         coverages:
-          - { id: 10, policyId: 1, amount: 600.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: "2024-06-01T00:00:00+00:00", txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
+          - { id: 10, policyId: 1, amount: "600.00", validStart: "2024-01-01T00:00:00.000000Z", validEnd: "2024-06-01T00:00:00.000000Z", txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
   roundTrips: 2

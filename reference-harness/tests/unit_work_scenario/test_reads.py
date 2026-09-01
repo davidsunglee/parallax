@@ -368,7 +368,11 @@ def _as_published(row: dict[str, Any]) -> dict[str, Any]:
     execution-only presence cell gone, the branch literal materialized, and the
     instance-form `Document` slot carried through as the composite `Memo` declares
     — the stored document's unknown key is carrier state, never a result member."""
-    kept = {key: value for key, value in row.items() if key not in _UNPUBLISHED_COLUMNS}
+    kept = {
+        key: format(value, "f") if isinstance(value, Decimal) else value
+        for key, value in row.items()
+        if key not in _UNPUBLISHED_COLUMNS
+    }
     published = kept | {"familyVariant": row["family_variant"]}
     if published["familyVariant"] == "Memo":
         published["annotation"] = _DECLARED_ANNOTATION
@@ -985,7 +989,7 @@ _PAYMENT_FAMILY_ROWS: list[dict[str, Any]] = [
         "detail": "visa-4242",
         "authorization_code": "AUTH-7",
     },
-    {"id": 2, "familyVariant": "CashPayment", "detail": Decimal("12.50")},
+    {"id": 2, "familyVariant": "CashPayment", "detail": "12.50"},
 ]
 
 
@@ -1061,7 +1065,7 @@ def test_two_finds_reaching_different_rows_break_the_one_object_rule(
     identity claim against step 0 refuses it.
     """
     case = damaged_case(_ONE_OBJECT_TWO_FINDS)
-    _steps(case)[1]["expectRows"] = [{"id": 3, "owner": "Linus", "balance": 10.00, "version": 1}]
+    _steps(case)[1]["expectRows"] = [{"id": 3, "owner": "Linus", "balance": "10.00", "version": 1}]
     script = _rows(_LINUS, [_account(3, "Linus", "10.00", 1)])
 
     with pytest.raises(CaseFailure, match="primary-key identities differ"):

@@ -3,8 +3,8 @@
 parallax.compatibility.Tenant:
   - { id: 1, name: Acme }
 parallax.compatibility.Lease:
-  - { id: 10, tenantId: 1, term: "12mo", txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
-  - { id: 10, tenantId: 1, term: "24mo", txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
+  - { id: 10, tenantId: 1, term: "12mo", txStart: "2024-01-01T00:00:00.000000Z", txEnd: "2024-04-01T00:00:00.000000Z" }
+  - { id: 10, tenantId: 1, term: "24mo", txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
 parallax.compatibility.LeaseNote:
   - { id: 100, leaseId: 10, text: signed }
   - { id: 101, leaseId: 10, text: renewed }

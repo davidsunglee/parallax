@@ -43,7 +43,7 @@ when:
             postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
           binds: [3]
       expectRows:
-        - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
+        - { id: 3, name: ada, sku: A-300, qty: 15, price: "30.25", active: false, ordered_on: 2024-03-15 }
     - write:
         - mutation: insert
           entity: parallax.compatibility.OrderItem

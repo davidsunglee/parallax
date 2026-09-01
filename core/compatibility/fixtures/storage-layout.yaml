@@ -30,12 +30,12 @@ parallax.compatibility.LayoutProfile:
       email: kari@example.test
 parallax.compatibility.LayoutCardPayment:
   - id: 1
-    amount: 100.00
+    amount: "100.00"
     cardNetwork: Visa
 parallax.compatibility.LayoutCashPayment:
   - id: 2
-    amount: 20.00
-    tendered: 25.00
+    amount: "20.00"
+    tendered: "25.00"
 parallax.compatibility.LayoutAudit:
   - id: 1
     title: Quarterly audit
@@ -47,15 +47,15 @@ parallax.compatibility.LayoutSurvey:
 parallax.compatibility.LayoutMeterReading:
   - id: 1
     sensor: north
-    celsius: 20.00
-    txStart: "2024-01-01T00:00:00+00:00"
-    txEnd: "2024-02-01T00:00:00+00:00"
+    celsius: "20.00"
+    txStart: "2024-01-01T00:00:00.000000Z"
+    txEnd: "2024-02-01T00:00:00.000000Z"
     probe:
       model: TH-1
   - id: 1
     sensor: north
-    celsius: 21.50
-    txStart: "2024-02-01T00:00:00+00:00"
+    celsius: "21.50"
+    txStart: "2024-02-01T00:00:00.000000Z"
     txEnd: infinity
     probe:
       model: TH-2

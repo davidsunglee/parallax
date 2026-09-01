@@ -45,6 +45,7 @@ from _support import mirrored_models as mm
 from _support.clock_probes import instant_at
 from _support.lowering_probes import lower_instruction
 from parallax.conformance import models
+from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import EditError, row_codec_of
 from parallax.core.unit_work import (
@@ -82,7 +83,7 @@ def test_edited_row_non_temporal_update_binds_the_observed_version() -> None:
     assert statement.sql == "update account set balance = ?, version = ? where id = ?"
     # 8 = the OBSERVED version (7) + 1 -- never the copy's own carried version
     # (1) + 1 = 2, even though the copy itself still holds `version=1`.
-    assert statement.binds == (175.00, 8, 1)
+    assert statement.binds == (Decimal("175.00"), 8, 1)
 
 
 def test_edited_row_non_temporal_update_tracks_a_different_observation() -> None:
@@ -98,7 +99,7 @@ def test_edited_row_non_temporal_update_tracks_a_different_observation() -> None
         "locking",
         observation=VersionObservation(observed_version=41),
     )[0]
-    assert statement.binds == (175.00, 42, 1)
+    assert statement.binds == (Decimal("175.00"), 42, 1)
 
 
 def test_edited_row_never_reaches_a_caller_authored_version() -> None:
@@ -144,8 +145,8 @@ def _observed_balance(tx_start: str) -> TemporalObservation:
                 "id": 1,
                 "acctNum": "A",
                 "value": Decimal("100.00"),
-                "txStart": tx_start,
-                "txEnd": "infinity",
+                "txStart": dt.datetime.fromisoformat(tx_start),
+                "txEnd": INFINITY,
             }
         )
     )
@@ -171,10 +172,10 @@ def test_edited_row_temporal_update_gates_the_close_on_observed_tx_start() -> No
     )[0]
     assert close.sql == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     assert close.binds == (
-        "2024-09-01T00:00:00+00:00",
+        dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         1,
         "infinity",
-        "2024-01-01T00:00:00+00:00",
+        dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     )
 
 
@@ -193,8 +194,8 @@ def test_edited_row_temporal_update_tracks_a_different_observed_tx_start() -> No
         observation=observed,
     )[0]
     assert close.binds == (
-        "2024-09-01T00:00:00+00:00",
+        dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         1,
         "infinity",
-        "2024-06-01T00:00:00+00:00",
+        dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
     )

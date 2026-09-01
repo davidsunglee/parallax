@@ -19,15 +19,15 @@ when:
       statements: 1
       note: open a current milestone [txInstant, infinity)
       rows:
-        - { id: 1, acctNum: A, value: 100.00 }
-      at: "2024-01-01T00:00:00+00:00"
+        - { id: 1, acctNum: A, value: "100.00" }
+      at: "2024-01-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
         mariadb: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-      binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", infinity]
+      binds: [1, A, "100.00", "2024-01-01T00:00:00.000000Z", infinity]
   tableState:
     balance:
-      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
+      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
   roundTrips: 1

@@ -71,15 +71,15 @@ when:
           transaction-time:
             asOf: latest
           valid-time:
-            asOf: '2024-03-01T00:00:00+00:00'
+            asOf: "2024-03-01T00:00:00.000000Z"
       roundTrips: 1
       note: pin id 1 at the finite Valid-Time instant 2024-03-01 with Transaction-Time Latest — the rectangle-split head (100.00), a WRITABLE view
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
-          binds: [1, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+          binds: [1, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", infinity]
       expectRows:
-        - { pos_id: 1, acct_num: A, val: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-06-01T00:00:00+00:00", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+        - { pos_id: 1, acct_num: A, val: "100.00", from_z: "2024-01-01T00:00:00.000000Z", thru_z: "2024-06-01T00:00:00.000000Z", in_z: "2024-04-01T00:00:00.000000Z", out_z: infinity }
     - objectQuery:
         target: parallax.compatibility.Position
         predicate:
@@ -88,7 +88,7 @@ when:
             value: 1
         temporal:
           transaction-time:
-            asOf: '2024-02-01T00:00:00+00:00'
+            asOf: "2024-02-01T00:00:00.000000Z"
           valid-time:
             asOf: latest
       roundTrips: 1
@@ -96,19 +96,19 @@ when:
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?
-          binds: [1, infinity, "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+          binds: [1, infinity, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
       expectRows:
-        - { pos_id: 1, acct_num: A, val: 90.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
+        - { pos_id: 1, acct_num: A, val: "90.00", from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-04-01T00:00:00.000000Z" }
     - action: mutate
       "on": 0
       set:
-        value: 250.00
+        value: "250.00"
       roundTrips: 0
       note: the Valid-Time-pinned view stays WRITABLE — step 1's read of the same primary key observed another milestone and took nothing away from this one
     - action: mutate
       "on": 1
       set:
-        value: 999.00
+        value: "999.00"
       roundTrips: 0
       expectError: transaction-time-pin-read-only
       note: the Transaction-Time-pinned view stays READ-ONLY — step 0's read of the same primary key licensed nothing here either

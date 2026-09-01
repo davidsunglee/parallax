@@ -286,7 +286,7 @@ def test_a_write_resolves_the_observed_row_of_its_own_variant() -> None:
     assert_judged(_polymorphic_settled_case())
 
     sibling_rectangle = _polymorphic_settled_case(
-        valid_end="infinity", tx_start="2024-03-01T00:00:00+00:00"
+        valid_end="infinity", tx_start="2024-03-01T00:00:00.000000Z"
     )
     with pytest.raises(CaseFailure):
         assert_unit_work_scenario(sibling_rectangle, RefusingProvider())
@@ -590,9 +590,9 @@ def _physical_variant_column_settled_case(*, target: str, discriminators: dict[s
         "id": 1,
         "amount": "2.50",
         "grade": "A",
-        "from_z": "2024-01-01T00:00:00+00:00",
-        "thru_z": "2024-06-01T00:00:00+00:00",
-        "in_z": "2024-02-01T00:00:00+00:00",
+        "from_z": "2024-01-01T00:00:00.000000Z",
+        "thru_z": "2024-06-01T00:00:00.000000Z",
+        "in_z": "2024-02-01T00:00:00.000000Z",
         "out_z": "infinity",
         **discriminators,
     }
@@ -601,8 +601,8 @@ def _physical_variant_column_settled_case(*, target: str, discriminators: dict[s
 
 def _polymorphic_settled_case(
     *,
-    valid_end: str = "2024-06-01T00:00:00+00:00",
-    tx_start: str = "2024-02-01T00:00:00+00:00",
+    valid_end: str = "2024-06-01T00:00:00.000000Z",
+    tx_start: str = "2024-02-01T00:00:00.000000Z",
     observed_variants: tuple[str, ...] = ("DepositRate", "LoanRate"),
 ) -> Case:
     """A `uow` group whose abstract-root find over the table-per-concrete-subtype Rate
@@ -613,9 +613,9 @@ def _polymorphic_settled_case(
             "id": 1,
             "amount": "2.50",
             "grade": "A",
-            "from_z": "2024-01-01T00:00:00+00:00",
-            "thru_z": "2024-06-01T00:00:00+00:00",
-            "in_z": "2024-02-01T00:00:00+00:00",
+            "from_z": "2024-01-01T00:00:00.000000Z",
+            "thru_z": "2024-06-01T00:00:00.000000Z",
+            "in_z": "2024-02-01T00:00:00.000000Z",
             "out_z": "infinity",
             "family_variant": "DepositRate",
         },
@@ -623,9 +623,9 @@ def _polymorphic_settled_case(
             "id": 1,
             "amount": "6.75",
             "spread": "1.25",
-            "from_z": "2024-01-01T00:00:00+00:00",
+            "from_z": "2024-01-01T00:00:00.000000Z",
             "thru_z": "infinity",
-            "in_z": "2024-03-01T00:00:00+00:00",
+            "in_z": "2024-03-01T00:00:00.000000Z",
             "out_z": "infinity",
             "family_variant": "LoanRate",
         },
@@ -642,16 +642,16 @@ def _settled_close_case(
     *,
     target: str,
     expect_rows: list[dict[str, Any]],
-    valid_end: str = "2024-06-01T00:00:00+00:00",
-    tx_start: str = "2024-02-01T00:00:00+00:00",
+    valid_end: str = "2024-06-01T00:00:00.000000Z",
+    tx_start: str = "2024-02-01T00:00:00.000000Z",
     model: Model | None = None,
 ) -> Case:
     """A `uow` group whose find at the queried position *target* observes *expect_rows*
     and whose write settles a bitemporal close of DepositRate 1 against it."""
-    at = "2024-10-01T00:00:00+00:00"
+    at = "2024-10-01T00:00:00.000000Z"
     abstract = target.endswith(".Rate")
     find = _RATE_UNION_FIND if abstract else _DEPOSIT_RATE_FIND
-    as_of = ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "infinity"]
+    as_of = ["2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "infinity"]
     raw: dict[str, Any] = {
         "model": "models/rate.yaml",
         "tags": ["m-unit-work"],
@@ -676,7 +676,7 @@ def _settled_close_case(
                             "mutation": "update",
                             "entity": "parallax.compatibility.DepositRate",
                             "rows": [{"id": 1, "amount": "3.00"}],
-                            "validFrom": "2024-03-01T00:00:00+00:00",
+                            "validFrom": "2024-03-01T00:00:00.000000Z",
                             "at": at,
                         }
                     ],
@@ -720,8 +720,13 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
         "when": {
             "uow": {"concurrency": "optimistic"},
             "scenario": [
-                _balance_find(1, "2024-04-01T00:00:00+00:00", "infinity", 100.00),
-                _balance_find(1, "2024-01-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00", 90.00),
+                _balance_find(1, "2024-04-01T00:00:00.000000Z", "infinity", "100.00"),
+                _balance_find(
+                    1,
+                    "2024-01-01T00:00:00.000000Z",
+                    "2024-04-01T00:00:00.000000Z",
+                    "90.00",
+                ),
                 {
                     "uow": "observe-then-close",
                     "on": on,
@@ -729,8 +734,8 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
                         {
                             "mutation": "update",
                             "entity": "Balance",
-                            "rows": [{"id": 1, "value": 150.00}],
-                            "at": "2024-10-01T00:00:00+00:00",
+                            "rows": [{"id": 1, "value": "150.00"}],
+                            "at": "2024-10-01T00:00:00.000000Z",
                         }
                     ],
                     "roundTrips": 1,
@@ -741,10 +746,10 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
                                 "and out_z = ? and in_z = ?"
                             },
                             "binds": [
-                                "2024-10-01T00:00:00+00:00",
+                                "2024-10-01T00:00:00.000000Z",
                                 1,
                                 "infinity",
-                                "2024-04-01T00:00:00+00:00",
+                                "2024-04-01T00:00:00.000000Z",
                             ],
                         }
                     ],
@@ -758,7 +763,7 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
     )
 
 
-def _balance_find(pk: int, tx_start: str, tx_end: Any, value: float) -> dict[str, Any]:
+def _balance_find(pk: int, tx_start: str, tx_end: Any, value: str) -> dict[str, Any]:
     return {
         "uow": "observe-then-close",
         "objectQuery": {

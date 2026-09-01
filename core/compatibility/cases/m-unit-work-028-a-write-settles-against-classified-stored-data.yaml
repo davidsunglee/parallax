@@ -17,13 +17,24 @@
 # repair the document would emit a second statement or a different one.
 #
 # `roundTrips: 2` is the entry's whole cost: one resolving read publishing the
-# classified row, then the UPDATE it licenses. `given.fixtures` loads the model's
-# rows so the malformed document is the state the entry writes against.
+# classified row, then the UPDATE it licenses. Fixture provisioning uses the
+# document writer's canonical absence collapse, so `given.apply` restores the five
+# deliberately physical missing/wrong-kind states before the behavior under test.
 model: models/customer.yaml
 tags: [m-unit-work, m-value-object, write-sequence, update, json, invalid-stored-data, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: out-of-band corruption restores physical invalid-storage witnesses
 given:
   fixtures: true
+  apply:
+    - sql: update customer set address = '{"street":"5 Harbour Rd","geo":{"zip":"3000"}}' where id = 5
+    - sql: update customer set address = '{"street":"6 Kastanien Allee","city":"Berlin","geo":"unknown"}' where id = 6
+    - sql: update customer set address = '{"street":"8 Null Way","phones":null}' where id = 8
+    - sql: update customer set address = '{"street":"9 Scalar Rd","phones":"555-0000"}' where id = 9
+    - sql: update customer set address = '{"street":"10 Object Ct","phones":{"type":"home","number":"555-9999"}}' where id = 10
 when:
   writeSequence:
     - mutation: update

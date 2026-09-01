@@ -26,6 +26,6 @@ then:
         postgres: select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0
   referenceSql: select id, title, folder_id, currency, amount_due from invoice
   rows:
-    - { id: 1, title: Invoice-A, folder_id: 100, currency: USD, amount_due: 120.00 }
-    - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: 80.00 }
+    - { id: 1, title: Invoice-A, folder_id: 100, currency: USD, amount_due: "120.00" }
+    - { id: 2, title: Invoice-B, folder_id: 101, currency: EUR, amount_due: "80.00" }
   roundTrips: 1

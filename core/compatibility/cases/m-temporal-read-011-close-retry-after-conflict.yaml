@@ -25,36 +25,36 @@ compileEligibility:
   note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
 given:
   apply:
-    - sql: update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'
-    - sql: insert into balance(bal_id, acct_num, val, in_z, out_z) values (2, 'B', 999.00, '2024-09-01T00:00:00+00:00', 'infinity')
+    - sql: "update balance set out_z = '2024-09-01T00:00:00+00:00' where bal_id = 2 and out_z = 'infinity'"
+    - sql: "insert into balance(bal_id, acct_num, val, in_z, out_z) values (2, 'B', 999.00, '2024-09-01T00:00:00+00:00', 'infinity')"
 when:
   uow:
     concurrency: optimistic
   attempts:
     - note: stale close — gates on the observed in_z 2024-02-01, which no longer matches ⇒ 0 rows
       write: { id: 2 }
-      at: "2024-10-01T00:00:00+00:00"
-      observedTxStart: "2024-02-01T00:00:00+00:00"
+      at: "2024-10-01T00:00:00.000000Z"
+      observedTxStart: "2024-02-01T00:00:00.000000Z"
       statements:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 2, infinity, "2024-02-01T00:00:00+00:00"]
+          binds: ["2024-10-01T00:00:00.000000Z", 2, infinity, "2024-02-01T00:00:00.000000Z"]
       affectedRows: 0
     - note: retry — re-read the fresh current in_z (2024-09-01) and re-apply ⇒ 1 row closed
       write: { id: 2 }
-      at: "2024-10-01T00:00:00+00:00"
-      observedTxStart: "2024-09-01T00:00:00+00:00"
+      at: "2024-10-01T00:00:00.000000Z"
+      observedTxStart: "2024-09-01T00:00:00.000000Z"
       statements:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?
-          binds: ["2024-10-01T00:00:00+00:00", 2, infinity, "2024-09-01T00:00:00+00:00"]
+          binds: ["2024-10-01T00:00:00.000000Z", 2, infinity, "2024-09-01T00:00:00.000000Z"]
       affectedRows: 1
 then:
   roundTrips: 2
   tableState:
     balance:
-      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
-      - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
-      - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: "2024-09-01T00:00:00+00:00" }
-      - { bal_id: 2, acct_num: B, val: 999.00, in_z: "2024-09-01T00:00:00+00:00", out_z: "2024-10-01T00:00:00+00:00" }
-      - { bal_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+      - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+      - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: "2024-09-01T00:00:00.000000Z" }
+      - { bal_id: 2, acct_num: B, val: 999.00, in_z: "2024-09-01T00:00:00.000000Z", out_z: "2024-10-01T00:00:00.000000Z" }
+      - { bal_id: 3, acct_num: C, val: "50.00", in_z: "2024-03-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }

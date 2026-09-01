@@ -40,49 +40,49 @@ when:
         predicate:
           lessThan:
             attr: parallax.compatibility.Account.balance
-            value: 200.00
+            value: "200.00"
       roundTrips: 1
       note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1); this optimistic resolving read omits the shared lock
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
-          binds: [200.00]
+          binds: ["200.00"]
       referenceSql: select id, owner, balance, version from account where balance < 200.00
       expectRows:
-        - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-        - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
     - write:
         mutation: update
         target:
           entity: parallax.compatibility.Account
           predicate:
-            lessThan: { attr: parallax.compatibility.Account.balance, value: 200.00 }
+            lessThan: { attr: parallax.compatibility.Account.balance, value: "200.00" }
         assignments:
-          - { attr: parallax.compatibility.Account.balance, value: 0.00 }
+          - { attr: parallax.compatibility.Account.balance, value: "0.00" }
       roundTrips: 2
       note: one per-object GATED UPDATE per materialized row (`and version = ?` binds the observed version 1)
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [0.00, 2, 1, 1]
+          binds: ["0.00", 2, 1, 1]
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [0.00, 2, 3, 1]
+          binds: ["0.00", 2, 3, 1]
     - objectQuery:
         target: parallax.compatibility.Account
         predicate:
           lessThan:
             attr: parallax.compatibility.Account.balance
-            value: 200.00
+            value: "200.00"
       roundTrips: 1
       note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.balance < ?
-          binds: [200.00]
+          binds: ["200.00"]
       referenceSql: select id, owner, balance, version from account where balance < 200.00
       expectRows:
-        - { id: 1, owner: Ada, balance: 0.00, version: 2 }
-        - { id: 3, owner: Grace, balance: 0.00, version: 2 }
+        - { id: 1, owner: Ada, balance: "0.00", version: 2 }
+        - { id: 3, owner: Grace, balance: "0.00", version: 2 }
 then:
   roundTrips: 4

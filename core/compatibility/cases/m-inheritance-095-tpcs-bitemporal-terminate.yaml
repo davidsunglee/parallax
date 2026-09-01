@@ -31,42 +31,42 @@ when:
       statements: 1
       note: open the original Latest rectangle in the concrete deposit_rate table
       rows:
-        - { id: 1, amount: 2.50, grade: A }
-      validFrom: "2024-01-01T00:00:00+00:00"
-      at: "2024-01-01T00:00:00+00:00"
+        - { id: 1, amount: "2.50", grade: A }
+      validFrom: "2024-01-01T00:00:00.000000Z"
+      at: "2024-01-01T00:00:00.000000Z"
     - mutation: terminate
       entity: parallax.compatibility.DepositRate
       statements: 2
       note: inactivate the original in the concrete table (no tag guard), then chain head only
       rows:
         - { id: 1 }
-      validFrom: "2024-06-01T00:00:00+00:00"
-      at: "2024-07-01T00:00:00+00:00"
+      validFrom: "2024-06-01T00:00:00.000000Z"
+      at: "2024-07-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: insert into deposit_rate(id, amount, grade, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-      binds: [1, 2.50, A, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+      binds: [1, "2.50", A, "2024-01-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
         postgres: update deposit_rate set out_z = ? where id = ? and thru_z = ? and out_z = ?
-      binds: ["2024-07-01T00:00:00+00:00", 1, infinity, infinity]
+      binds: ["2024-07-01T00:00:00.000000Z", 1, infinity, infinity]
     - sql:
         postgres: insert into deposit_rate(id, amount, grade, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-      binds: [1, 2.50, A, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]
+      binds: [1, "2.50", A, "2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity]
   tableState:
     deposit_rate:
       - id: 1
-        amount: 2.50
+        amount: "2.50"
         grade: A
-        from_z: "2024-01-01T00:00:00+00:00"
+        from_z: "2024-01-01T00:00:00.000000Z"
         thru_z: infinity
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: "2024-07-01T00:00:00+00:00"
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-07-01T00:00:00.000000Z"
       - id: 1
-        amount: 2.50
+        amount: "2.50"
         grade: A
-        from_z: "2024-01-01T00:00:00+00:00"
-        thru_z: "2024-06-01T00:00:00+00:00"
-        in_z: "2024-07-01T00:00:00+00:00"
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2024-07-01T00:00:00.000000Z"
         out_z: infinity
   roundTrips: 4

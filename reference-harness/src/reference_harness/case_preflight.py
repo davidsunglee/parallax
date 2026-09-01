@@ -263,23 +263,23 @@ def _write_carrier(
     if isinstance(target, Mapping):
         target_name = target.get("entity")
         if isinstance(target_name, str):
-            target_entity = case.model.entity(target_name)
+            selection_entity = case.model.entity(target_name)
             predicate = target.get("predicate")
             if isinstance(predicate, Mapping):
-                _predicate(case, target_entity, predicate, f"{where}.target.predicate")
+                _predicate(case, selection_entity, predicate, f"{where}.target.predicate")
             assignments = carrier.get("assignments")
             if isinstance(assignments, Sequence) and not isinstance(assignments, (str, bytes)):
                 for index, assignment in enumerate(assignments):
                     if not isinstance(assignment, Mapping):
                         continue
-                    member = _predicate_member(case, target_entity, assignment)
+                    member = _predicate_member(case, selection_entity, assignment)
                     value = assignment.get("value")
                     if member is not None and "value" in assignment:
                         _attribute_literal(
                             case,
                             _reference_entity(
                                 case,
-                                target_entity,
+                                selection_entity,
                                 str(assignment.get("attr", target_name)),
                             ),
                             member,

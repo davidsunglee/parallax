@@ -41,7 +41,7 @@ then:
         name: Ada
         sku: A-100
         qty: 5
-        price: 10.50
+        price: "10.50"
         active: true
         orderedOn: 2024-01-05
         itemsByShipDate:
@@ -51,7 +51,7 @@ then:
         name: Grace
         sku: A-999
         qty: 30
-        price: 99.99
+        price: "99.99"
         active: true
         orderedOn: 2024-06-30
         itemsByShipDate:

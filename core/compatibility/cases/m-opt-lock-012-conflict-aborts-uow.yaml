@@ -72,7 +72,7 @@ when:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [2]
       expectRows:
-        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
     - uow: concurrent
       objectQuery:
         target: parallax.compatibility.Account
@@ -87,39 +87,39 @@ when:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
           binds: [2]
       expectRows:
-        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
     - uow: concurrent
       write:
         - mutation: update
           entity: parallax.compatibility.Account
           rows:
-            - { id: 2, balance: 999.00 }
+            - { id: 2, balance: "999.00" }
       roundTrips: 1
       note: the concurrent unit of work commits FIRST — a gated update of account 2, advancing its OWN observed version 1 -> 2; the group COMMITS after this, its last step
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [999.00, 2, 2, 1]
+          binds: ["999.00", 2, 2, 1]
     - uow: ours
       write:
         - mutation: insert
           entity: parallax.compatibility.Account
           rows:
-            - { id: 9, owner: Noether, balance: 5.00, version: 1 }
+            - { id: 9, owner: Noether, balance: "5.00", version: 1 }
         - mutation: update
           entity: parallax.compatibility.Account
           rows:
-            - { id: 2, balance: 300.00 }
+            - { id: 2, balance: "300.00" }
       rollback: true
       roundTrips: 2
       note: "our UoW inserts account 9 then hits a stale-version conflict on account 2 (gated on OUR OWN observed version 1, now stale) — 0 rows; dooms the group (rollback: true), which ROLLS BACK after this, its last step"
       statements:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-          binds: [9, Noether, 5.00, 1]
+          binds: [9, Noether, "5.00", 1]
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [300.00, 2, 2, 1]
+          binds: ["300.00", 2, 2, 1]
     - objectQuery:
         target: parallax.compatibility.Account
         predicate:

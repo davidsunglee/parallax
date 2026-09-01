@@ -9,10 +9,10 @@
 parallax.compatibility.Wallet:
   - id: 1
     owner: Ada
-    balance: 100.00
+    balance: "100.00"
   - id: 2
     owner: Linus
-    balance: 250.00
+    balance: "250.00"
   - id: 3
     owner: Grace
-    balance: 10.00
+    balance: "10.00"

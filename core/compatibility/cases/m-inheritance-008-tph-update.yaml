@@ -22,15 +22,15 @@ when:
       statements: 1
       note: correct CardPayment 1's amount; keyed by pk and tag-guarded on the shared table
       rows:
-        - { id: 1, amount: 130.00 }
+        - { id: 1, amount: "130.00" }
 then:
   statements:
     - sql:
         postgres: update payment set amount = ? where id = ? and kind = ?
-      binds: [130.00, 1, card]
+      binds: ["130.00", 1, card]
   tableState:
     payment:
-      - { id: 1, kind: card, amount: 130.00, card_network: Visa, tendered: null }
-      - { id: 2, kind: card, amount: 50.00, card_network: Amex, tendered: null }
-      - { id: 3, kind: cash, amount: 20.00, card_network: null, tendered: 25.00 }
+      - { id: 1, kind: card, amount: "130.00", card_network: Visa, tendered: null }
+      - { id: 2, kind: card, amount: "50.00", card_network: Amex, tendered: null }
+      - { id: 3, kind: cash, amount: "20.00", card_network: null, tendered: "25.00" }
   roundTrips: 2

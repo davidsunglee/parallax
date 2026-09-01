@@ -98,7 +98,7 @@ def test_preflight_accepts_canonical_fixture_predicate_and_expected_literals() -
 
 
 def test_preflight_refuses_a_predicate_literal_at_its_authored_coordinate() -> None:
-    with pytest.raises(CaseFailure, match=r"when\.objectQuery\.predicate.*names no date"):
+    with pytest.raises(CaseFailure, match=r"when\.objectQuery\.predicate.*type-mismatch for date"):
         preflight_case_literals(_case(predicate_value="15 January 2026"))
 
 
@@ -116,7 +116,7 @@ def test_preflight_descends_through_boolean_operand_wrappers() -> None:
             ]
         }
     }
-    with pytest.raises(CaseFailure, match=r"and\.operands\[1\].*names no date"):
+    with pytest.raises(CaseFailure, match=r"and\.operands\[1\].*type-mismatch for date"):
         preflight_case_literals(_case(predicate=predicate))
 
 
@@ -127,7 +127,7 @@ def test_preflight_resolves_nested_predicate_paths() -> None:
             "value": "15 January 2026",
         }
     }
-    with pytest.raises(CaseFailure, match=r"nestedEq\.value.*names no date"):
+    with pytest.raises(CaseFailure, match=r"nestedEq\.value.*type-mismatch for date"):
         preflight_case_literals(_case(predicate=predicate))
 
 
@@ -190,7 +190,7 @@ def test_preflight_checks_predicate_write_selection_literals() -> None:
         source.model,
     )
 
-    with pytest.raises(CaseFailure, match=r"target\.predicate.*names no date"):
+    with pytest.raises(CaseFailure, match=r"target\.predicate.*type-mismatch for date"):
         preflight_case_literals(case)
 
 
@@ -236,7 +236,7 @@ def test_preflight_checks_expected_graph_relationship_children() -> None:
         source.model,
     )
 
-    with pytest.raises(CaseFailure, match=r"samples\[0\]\.quantity.*names no int32"):
+    with pytest.raises(CaseFailure, match=r"samples\[0\]\.quantity.*type-mismatch for int32"):
         preflight_case_literals(case)
 
 
@@ -297,10 +297,10 @@ def _polymorphic_case(*, scenario: bool) -> Case:
 
 
 def test_preflight_checks_top_level_expected_rows_against_their_family_variant() -> None:
-    with pytest.raises(CaseFailure, match=r"then\.rows\[0\]\.detail.*names no decimal"):
+    with pytest.raises(CaseFailure, match=r"then\.rows\[0\]\.detail.*type-mismatch for decimal"):
         preflight_case_literals(_polymorphic_case(scenario=False))
 
 
 def test_preflight_checks_scenario_expected_rows_against_their_family_variant() -> None:
-    with pytest.raises(CaseFailure, match=r"expectRows\[0\]\.detail.*names no decimal"):
+    with pytest.raises(CaseFailure, match=r"expectRows\[0\]\.detail.*type-mismatch for decimal"):
         preflight_case_literals(_polymorphic_case(scenario=True))

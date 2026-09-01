@@ -82,19 +82,19 @@ when:
             postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id in (?) and t0.out_z = ?
           binds: [100, infinity]
       expectRows:
-        - { id: 100, name: INV-100, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
+        - { id: 100, name: INV-100, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
     - write:
         - mutation: terminate
           entity: parallax.compatibility.InvoiceLine
           rows:
             - { id: 1001 }
-          at: "2024-08-01T00:00:00+00:00"
+          at: "2024-08-01T00:00:00.000000Z"
       roundTrips: 2
       note: close the current milestone of the very line the loaded `lines` view holds - one close statement plus the resolving read the keyed terminate owes
       statements:
         - sql:
             postgres: update invoice_line set out_z = ? where id = ? and out_z = ? and in_z = ?
-          binds: ["2024-08-01T00:00:00+00:00", 1001, infinity, "2024-01-01T00:00:00+00:00"]
+          binds: ["2024-08-01T00:00:00.000000Z", 1001, infinity, "2024-01-01T00:00:00.000000Z"]
     - action: access
       "on": 0
       path: lines
@@ -103,8 +103,8 @@ when:
       note: access the ALREADY-MATERIALIZED lines after the terminate -> ZERO SQL and the closed milestone still open in the view
       expectGraph:
         InvoiceLine:
-          - { id: 1000, invoiceId: 100, amount: 75.00, txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
-          - { id: 1001, invoiceId: 100, amount: 25.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
+          - { id: 1000, invoiceId: 100, amount: "75.00", txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
+          - { id: 1001, invoiceId: 100, amount: "25.00", txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity }
     - objectQuery:
         target: parallax.compatibility.InvoiceLine
         predicate:
@@ -121,6 +121,6 @@ when:
             postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = ? and t0.out_z = ?
           binds: [100, infinity]
       expectRows:
-        - { id: 1000, invoice_id: 100, amount: 75.00, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+        - { id: 1000, invoice_id: 100, amount: "75.00", in_z: "2024-04-01T00:00:00.000000Z", out_z: infinity }
 then:
   roundTrips: 5

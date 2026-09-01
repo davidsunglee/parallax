@@ -74,7 +74,7 @@ def test_materialization_constructs_no_keyed_write_regardless_of_row_count(
 
         def fn(tx: Transaction, row_count: int = row_count) -> None:
             tx.update_where(
-                mm.Account.where(mm.Account.balance < 1_000_000.00),
+                mm.Account.where(mm.Account.balance < Decimal("1000000.00")),
                 mm.Account.balance.set(Decimal("0.00")),
             )
             # `update_where` resolves and buffers synchronously; the flush

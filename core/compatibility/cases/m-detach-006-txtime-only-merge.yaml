@@ -27,21 +27,21 @@ when:
       statements: 2
       note: merge-back of a mutated audit-only copy closes id 2's current row and chains the new value
       rows:
-        - { id: 2, acctNum: B, value: 250.00 }
-      at: "2024-09-01T00:00:00+00:00"
+        - { id: 2, acctNum: B, value: "250.00" }
+      at: "2024-09-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
-      binds: ["2024-09-01T00:00:00+00:00", 2, infinity]
+      binds: ["2024-09-01T00:00:00.000000Z", 2, infinity]
     - sql:
         postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
-      binds: [2, B, 250.00, "2024-09-01T00:00:00+00:00", infinity]
+      binds: [2, B, "250.00", "2024-09-01T00:00:00.000000Z", infinity]
   tableState:
     balance:
-      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
-      - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
-      - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: "2024-09-01T00:00:00+00:00" }
-      - { bal_id: 2, acct_num: B, val: 250.00, in_z: "2024-09-01T00:00:00+00:00", out_z: infinity }
-      - { bal_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: "100.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+      - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+      - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: "2024-09-01T00:00:00.000000Z" }
+      - { bal_id: 2, acct_num: B, val: "250.00", in_z: "2024-09-01T00:00:00.000000Z", out_z: infinity }
+      - { bal_id: 3, acct_num: C, val: "50.00", in_z: "2024-03-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
   roundTrips: 3

@@ -22,21 +22,21 @@ when:
     temporal:
       transaction-time:
         asOfRange:
-          start: '2024-02-01T00:00:00+00:00'
-          end: '2024-05-01T00:00:00+00:00'
+          start: "2024-02-01T00:00:00.000000Z"
+          end: "2024-05-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.id = ? and t0.in_z < ? and t0.out_z > ?
-      binds: [1000, "2024-05-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
-  referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000 and in_z < '2024-05-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz
+      binds: [1000, "2024-05-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
+  referenceSql: "select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000 and in_z < '2024-05-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz"
   graphs:
-    - pin: { transaction-time: "2024-01-01T00:00:00+00:00" }
+    - pin: { transaction-time: "2024-01-01T00:00:00.000000Z" }
       graph:
         InvoiceLine:
-          - { id: 1000, invoiceId: 100, amount: 50.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
-    - pin: { transaction-time: "2024-04-01T00:00:00+00:00" }
+          - { id: 1000, invoiceId: 100, amount: "50.00", txStart: "2024-01-01T00:00:00.000000Z", txEnd: "2024-04-01T00:00:00.000000Z" }
+    - pin: { transaction-time: "2024-04-01T00:00:00.000000Z" }
       graph:
         InvoiceLine:
-          - { id: 1000, invoiceId: 100, amount: 75.00, txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
+          - { id: 1000, invoiceId: 100, amount: "75.00", txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
   roundTrips: 1

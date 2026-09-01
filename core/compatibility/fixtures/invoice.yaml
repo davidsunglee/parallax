@@ -2,8 +2,8 @@
 # (out_z finite on the superseded row). At Transaction-Time latest -> 75/25; at
 # Transaction-Time instant 2024-02-01 -> 50/25.
 parallax.compatibility.Invoice:
-  - { id: 100, name: INV-100, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
+  - { id: 100, name: INV-100, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity }
 parallax.compatibility.InvoiceLine:
-  - { id: 1000, invoiceId: 100, amount: 50.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
-  - { id: 1000, invoiceId: 100, amount: 75.00, txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
-  - { id: 1001, invoiceId: 100, amount: 25.00, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
+  - { id: 1000, invoiceId: 100, amount: "50.00", txStart: "2024-01-01T00:00:00.000000Z", txEnd: "2024-04-01T00:00:00.000000Z" }
+  - { id: 1000, invoiceId: 100, amount: "75.00", txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
+  - { id: 1001, invoiceId: 100, amount: "25.00", txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity }

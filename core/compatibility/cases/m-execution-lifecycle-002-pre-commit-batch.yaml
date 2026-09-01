@@ -42,13 +42,13 @@ when:
         - mutation: insert
           entity: parallax.compatibility.Order
           rows:
-            - { id: 300, name: Lovelace, sku: E-1, qty: 2, price: 12.50, active: true, orderedOn: "2024-08-01" }
+            - { id: 300, name: Lovelace, sku: E-1, qty: 2, price: "12.50", active: true, orderedOn: "2024-08-01" }
       roundTrips: 1
       note: buffer the parent Order; nothing reads it back, so nothing flushes yet
       statements:
         - sql:
             postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [300, Lovelace, E-1, 2, 12.50, true, 2024-08-01]
+          binds: [300, Lovelace, E-1, 2, "12.50", true, 2024-08-01]
     - uow: batch
       write:
         - mutation: insert

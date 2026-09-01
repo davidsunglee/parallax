@@ -34,46 +34,46 @@ when:
       statements: 1
       note: open the original Latest rectangle; kind=bond derived from tagValue
       rows:
-        - { id: 1, price: 100.00, coupon: 5.00 }
-      validFrom: "2024-01-01T00:00:00+00:00"
-      at: "2024-01-01T00:00:00+00:00"
+        - { id: 1, price: "100.00", coupon: "5.00" }
+      validFrom: "2024-01-01T00:00:00.000000Z"
+      at: "2024-01-01T00:00:00.000000Z"
     - mutation: terminate
       entity: parallax.compatibility.Bond
       statements: 2
       note: inactivate the original on the Transaction-Time dimension (tag-guarded on kind='bond'), then chain head only
       rows:
         - { id: 1 }
-      validFrom: "2024-06-01T00:00:00+00:00"
-      at: "2024-07-01T00:00:00+00:00"
+      validFrom: "2024-06-01T00:00:00.000000Z"
+      at: "2024-07-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: insert into instrument(id, kind, price, coupon, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
-      binds: [1, bond, 100.00, 5.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+      binds: [1, bond, "100.00", "5.00", "2024-01-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
     - sql:
         postgres: update instrument set out_z = ? where id = ? and kind = ? and thru_z = ? and out_z = ?
-      binds: ["2024-07-01T00:00:00+00:00", 1, bond, infinity, infinity]
+      binds: ["2024-07-01T00:00:00.000000Z", 1, bond, infinity, infinity]
     - sql:
         postgres: insert into instrument(id, kind, price, coupon, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?, ?)
-      binds: [1, bond, 100.00, 5.00, "2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", infinity]
+      binds: [1, bond, "100.00", "5.00", "2024-01-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z", "2024-07-01T00:00:00.000000Z", infinity]
   tableState:
     instrument:
       - id: 1
         kind: bond
-        price: 100.00
-        coupon: 5.00
+        price: "100.00"
+        coupon: "5.00"
         ticker: null
-        from_z: "2024-01-01T00:00:00+00:00"
+        from_z: "2024-01-01T00:00:00.000000Z"
         thru_z: infinity
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: "2024-07-01T00:00:00+00:00"
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-07-01T00:00:00.000000Z"
       - id: 1
         kind: bond
-        price: 100.00
-        coupon: 5.00
+        price: "100.00"
+        coupon: "5.00"
         ticker: null
-        from_z: "2024-01-01T00:00:00+00:00"
-        thru_z: "2024-06-01T00:00:00+00:00"
-        in_z: "2024-07-01T00:00:00+00:00"
+        from_z: "2024-01-01T00:00:00.000000Z"
+        thru_z: "2024-06-01T00:00:00.000000Z"
+        in_z: "2024-07-01T00:00:00.000000Z"
         out_z: infinity
   roundTrips: 4

@@ -44,7 +44,7 @@ when:
               country: "NO"
             phones:
               - { type: home, number: '555-0100' }
-      at: "2024-01-01T00:00:00+00:00"
+      at: "2024-01-01T00:00:00.000000Z"
     - mutation: update
       entity: parallax.compatibility.Supplier
       statements: 2
@@ -60,7 +60,7 @@ when:
             phones:
               - { type: work, number: '555-0200' }
               - { type: home, number: '555-0201' }
-      at: "2024-06-01T00:00:00+00:00"
+      at: "2024-06-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
@@ -69,7 +69,7 @@ then:
       binds:
         - 1
         - Nordic Foods
-        - "2024-01-01T00:00:00+00:00"
+        - "2024-01-01T00:00:00.000000Z"
         - infinity
         - street: 1 Old Street
           city: Oslo
@@ -80,14 +80,14 @@ then:
     - sql:
         postgres: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
         mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
-      binds: ["2024-06-01T00:00:00+00:00", 1, infinity, "2024-01-01T00:00:00+00:00"]
+      binds: ["2024-06-01T00:00:00.000000Z", 1, infinity, "2024-01-01T00:00:00.000000Z"]
     - sql:
         postgres: insert into supplier(sup_id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)
         mariadb: insert into supplier(sup_id, name, in_z, out_z, address) values (?, ?, ?, ?, ?)
       binds:
         - 1
         - Nordic Foods
-        - "2024-06-01T00:00:00+00:00"
+        - "2024-06-01T00:00:00.000000Z"
         - infinity
         - street: 2 New Avenue
           city: Bergen
@@ -100,8 +100,8 @@ then:
     supplier:
       - sup_id: 1
         name: Nordic Foods
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-06-01T00:00:00.000000Z"
         address:
           street: 1 Old Street
           city: Oslo
@@ -111,7 +111,7 @@ then:
             - { type: home, number: '555-0100' }
       - sup_id: 1
         name: Nordic Foods
-        in_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-06-01T00:00:00.000000Z"
         out_z: infinity
         address:
           street: 2 New Avenue

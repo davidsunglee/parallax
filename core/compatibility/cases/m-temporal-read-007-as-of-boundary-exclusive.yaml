@@ -11,15 +11,15 @@ when:
       all: {}
     temporal:
       transaction-time:
-        asOf: '2024-06-01T00:00:00+00:00'
+        asOf: "2024-06-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.in_z <= ? and t0.out_z > ?
-      binds: ["2024-06-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"]
-  referenceSql: select bal_id, acct_num, val, in_z, out_z from balance where in_z <= '2024-06-01T00:00:00+00:00'::timestamptz and out_z > '2024-06-01T00:00:00+00:00'::timestamptz
+      binds: ["2024-06-01T00:00:00.000000Z", "2024-06-01T00:00:00.000000Z"]
+  referenceSql: "select bal_id, acct_num, val, in_z, out_z from balance where in_z <= '2024-06-01T00:00:00+00:00'::timestamptz and out_z > '2024-06-01T00:00:00+00:00'::timestamptz"
   rows:
-    - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
-    - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
-    - { bal_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }
+    - { bal_id: 1, acct_num: A, val: "150.00", in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }
+    - { bal_id: 2, acct_num: B, val: "200.00", in_z: "2024-02-01T00:00:00.000000Z", out_z: infinity }
+    - { bal_id: 3, acct_num: C, val: "50.00", in_z: "2024-03-01T00:00:00.000000Z", out_z: "2024-08-01T00:00:00.000000Z" }
   roundTrips: 1

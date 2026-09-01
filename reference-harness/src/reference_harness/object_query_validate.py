@@ -67,14 +67,13 @@ from .value_object_resolve import (
     DEEP_FETCH_VALUE_OBJECT_SEGMENT,
     FIND_ROOT_VALUE_OBJECT,
     NAVIGATE_VALUE_OBJECT_TARGET,
-    NESTED_LITERAL_TYPE_MISMATCH,
     NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
     NULL_CHECK_NON_NULLABLE_MEMBER,
     RejectionError,
     bounds_inverted,
+    decode_typed_literal,
     find_top_value_object,
     is_string_member,
-    literal_matches_type,
     resolve_element_ref,
     resolve_nested_ref,
     resolve_value_object_ref,
@@ -93,6 +92,7 @@ _NESTED_MEMBERSHIP_TAGS = frozenset({"nestedIn", "nestedNotIn"})
 _NESTED_STRING_TAGS = frozenset(
     {"nestedLike", "nestedNotLike", "nestedStartsWith", "nestedEndsWith", "nestedContains"}
 )
+_STRING_TAGS = frozenset({"like", "notLike", "startsWith", "endsWith", "contains"})
 
 
 def validate_object_query(entity: Entity, query: Any) -> None:
@@ -156,11 +156,20 @@ def _walk(entity: Entity, node: Any) -> None:
     elif tag in ("navigate", "exists", "notExists"):
         _check_navigation(entity, body)
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
-        _check_find_root(entity, body.get("attr"))
+        subject = body.get("attr")
+        _check_find_root(entity, subject)
+        if not isinstance(subject, str):
+            return
+        attribute = entity.attribute_by_name(subject.rpartition(".")[2])
         if tag in ("isNull", "isNotNull"):
-            attr = body.get("attr", "")
-            _class, _, member = attr.rpartition(".")
-            _check_null_check(entity.attribute_by_name(member), attr)
+            _check_null_check(attribute, subject)
+        elif tag in _STRING_TAGS:
+            _check_string_predicate(attribute, body, subject=subject)
+        elif tag in ("in", "notIn"):
+            for value in body.get("values", []):
+                decode_typed_literal(value, attribute.get("type"), repr(subject))
+        else:
+            decode_typed_literal(body.get("value"), attribute.get("type"), repr(subject))
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
             _walk(entity, operand)
@@ -170,8 +179,12 @@ def _walk(entity: Entity, node: Any) -> None:
 
 def _check_between(entity: Entity, body: dict[str, Any]) -> None:
     """A range predicate's own two checks: its subject, then its bound ordering."""
-    _check_find_root(entity, body.get("attr"))
-    _check_bound_ordering(body.get("attr"), body.get("lower"), body.get("upper"))
+    subject = body.get("attr")
+    _check_find_root(entity, subject)
+    if not isinstance(subject, str):
+        return
+    attribute = entity.attribute_by_name(subject.rpartition(".")[2])
+    _check_range_predicate(attribute, body, subject=subject)
 
 
 def _check_bound_ordering(subject: Any, lower: Any, upper: Any) -> None:
@@ -186,13 +199,7 @@ def _check_bound_ordering(subject: Any, lower: Any, upper: Any) -> None:
 
 def _check_nested_comparison(entity: Entity, body: dict[str, Any]) -> None:
     attribute = resolve_nested_ref(entity, body["path"])
-    value = body.get("value")
-    if not literal_matches_type(value, attribute.get("type")):
-        raise RejectionError(
-            NESTED_LITERAL_TYPE_MISMATCH,
-            f"{body['path']!r}: literal {value!r} does not match declared type "
-            f"{attribute.get('type')!r}",
-        )
+    decode_typed_literal(body.get("value"), attribute.get("type"), repr(body["path"]))
 
 
 def _check_null_check(attribute: dict[str, Any], subject: str) -> None:
@@ -213,26 +220,19 @@ def _check_range_predicate(
     differs. Ordering the bounds last is load-bearing: a mistyped bound is named as a
     type mismatch rather than ordered as a raw literal of some unrelated kind.
     """
-    lower, upper = body.get("lower"), body.get("upper")
-    for bound_name, value in (("lower", lower), ("upper", upper)):
-        if not literal_matches_type(value, attribute.get("type")):
-            raise RejectionError(
-                NESTED_LITERAL_TYPE_MISMATCH,
-                f"{subject!r}: {bound_name} bound {value!r} does not match declared type "
-                f"{attribute.get('type')!r}",
-            )
+    lower = decode_typed_literal(
+        body.get("lower"), attribute.get("type"), f"{subject!r} lower bound"
+    )
+    upper = decode_typed_literal(
+        body.get("upper"), attribute.get("type"), f"{subject!r} upper bound"
+    )
     _check_bound_ordering(subject, lower, upper)
 
 
 def _check_nested_membership(entity: Entity, body: dict[str, Any]) -> None:
     attribute = resolve_nested_ref(entity, body["path"])
     for value in body.get("values", []):
-        if not literal_matches_type(value, attribute.get("type")):
-            raise RejectionError(
-                NESTED_LITERAL_TYPE_MISMATCH,
-                f"{body['path']!r}: list literal {value!r} does not match declared type "
-                f"{attribute.get('type')!r}",
-            )
+        decode_typed_literal(value, attribute.get("type"), repr(body["path"]))
 
 
 def _check_string_predicate(
@@ -253,12 +253,6 @@ def _check_string_predicate(
             f"{subject!r}: a string predicate reads text, but the member's declared type "
             f"is {declared!r}, not 'string'",
         )
-    value = body.get("value")
-    if not literal_matches_type(value, declared):
-        raise RejectionError(
-            NESTED_LITERAL_TYPE_MISMATCH,
-            f"{subject!r}: literal {value!r} does not match declared type {declared!r}",
-        )
 
 
 def _check_nested_exists(entity: Entity, body: dict[str, Any]) -> None:
@@ -275,12 +269,7 @@ def _walk_element(value_object: dict[str, Any], node: Any) -> None:
     tag, body = next(iter(node.items()))
     if tag in _NESTED_COMPARISON_TAGS:
         attribute = resolve_element_ref(value_object, body["path"])
-        if not literal_matches_type(body.get("value"), attribute.get("type")):
-            raise RejectionError(
-                NESTED_LITERAL_TYPE_MISMATCH,
-                f"element {body['path']!r}: literal {body.get('value')!r} does not match "
-                f"declared type {attribute.get('type')!r}",
-            )
+        decode_typed_literal(body.get("value"), attribute.get("type"), f"element {body['path']!r}")
     elif tag == "nestedBetween":
         _check_range_predicate(
             resolve_element_ref(value_object, body["path"]),
@@ -290,12 +279,7 @@ def _walk_element(value_object: dict[str, Any], node: Any) -> None:
     elif tag in _NESTED_MEMBERSHIP_TAGS:
         attribute = resolve_element_ref(value_object, body["path"])
         for value in body.get("values", []):
-            if not literal_matches_type(value, attribute.get("type")):
-                raise RejectionError(
-                    NESTED_LITERAL_TYPE_MISMATCH,
-                    f"element {body['path']!r}: list literal {value!r} does not match "
-                    f"declared type {attribute.get('type')!r}",
-                )
+            decode_typed_literal(value, attribute.get("type"), f"element {body['path']!r}")
     elif tag in _NESTED_STRING_TAGS:
         _check_string_predicate(
             resolve_element_ref(value_object, body["path"]),

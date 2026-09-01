@@ -70,10 +70,10 @@ from reference_harness.temporality import derive_temporal_structure
 from reference_harness.value_object_resolve import (
     BETWEEN_BOUNDS_INVERTED,
     FIND_ROOT_VALUE_OBJECT,
-    NESTED_LITERAL_TYPE_MISMATCH,
     NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
     NESTED_PATH_UNKNOWN_MEMBER,
     NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
+    NEUTRAL_LITERAL_TYPE_MISMATCH,
     WRITE_REQUIRED_ATTRIBUTE_MISSING,
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
     WRITE_VALUE_TYPE_MISMATCH,
@@ -485,7 +485,7 @@ def test_the_authored_corpus_covers_both_query_and_write_negatives() -> None:
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
         "deep-fetch-value-object-segment",
         "navigate-value-object-target",
-        NESTED_LITERAL_TYPE_MISMATCH,
+        NEUTRAL_LITERAL_TYPE_MISMATCH,
         BETWEEN_BOUNDS_INVERTED,
     } <= used
     # Write negatives (required attribute / nested VO / type mismatch).
@@ -810,7 +810,7 @@ def test_membership_literal_type_mismatch_rejected() -> None:
         validate_predicate(
             _customer_entity(), {"nestedIn": {"path": "Customer.address.city", "values": [1, 2]}}
         )
-    assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 def test_negated_membership_literal_type_mismatch_rejected() -> None:
@@ -820,7 +820,7 @@ def test_negated_membership_literal_type_mismatch_rejected() -> None:
         validate_predicate(
             _customer_entity(), {"nestedNotIn": {"path": "Customer.address.city", "values": [42]}}
         )
-    assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 def _element_where(where: dict[str, Any]) -> dict[str, Any]:
@@ -843,7 +843,7 @@ def test_nested_range_bound_type_mismatch_is_reported_before_the_ordering(
     # resolving the subject would report the inversion and blame the wrong thing.
     with pytest.raises(RejectionError) as exc:
         validate_predicate(_customer_entity(), node)
-    assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 @pytest.mark.parametrize(
@@ -919,9 +919,8 @@ def test_nested_string_predicate_on_a_date_member_rejected_in_both_scopes(
 
 # --- range bound ordering (m-predicate) -------------------------------------
 #
-# The bounds are compared by LITERAL KIND, so the rule fires on two numbers or two
-# strings and stands aside for every other pairing. It is the one predicate rule that
-# consults no declared structure: both operands are authored on the node itself.
+# Bounds decode under the resolved declared type before ordering, so Decimal text
+# compares by Decimal value rather than lexically.
 
 
 def _between(lower: Any, upper: Any) -> dict[str, Any]:
@@ -930,7 +929,7 @@ def _between(lower: Any, upper: Any) -> dict[str, Any]:
 
 @pytest.mark.parametrize(
     ("lower", "upper"),
-    [(50.75, 20.00), (5, 1), ("2024-05-01", "2024-02-01"), ("b", "a")],
+    [("50.75", "20.00"), ("5.00", "1.00")],
 )
 def test_between_with_inverted_same_kind_bounds_rejected(lower: Any, upper: Any) -> None:
     with pytest.raises(RejectionError) as exc:
@@ -941,28 +940,27 @@ def test_between_with_inverted_same_kind_bounds_rejected(lower: Any, upper: Any)
 @pytest.mark.parametrize(
     ("lower", "upper"),
     [
-        (20.00, 50.75),
-        (5, 5),
-        ("a", "a"),
-        ("2024-02-01", "2024-05-01"),
-        (5, "1"),
-        ("5", 1),
-        (None, 1),
-        (5, None),
-        (True, False),
+        ("20.00", "50.75"),
+        ("5.00", "5.00"),
     ],
 )
 def test_between_bounds_the_rule_stands_aside_for_are_accepted(lower: Any, upper: Any) -> None:
-    # Ordered and equal same-kind bounds are legal ranges; a mixed-kind pair, a null
-    # bound, and a boolean pair are all skipped rather than guessed.
+    # Ordered and equal decoded Decimal bounds are legal ranges.
     validate_predicate(_order_entity(), _between(lower, upper))
+
+
+@pytest.mark.parametrize("bounds", [(5, "1.00"), ("5.00", 1), (None, "1.00")])
+def test_between_refuses_a_bound_outside_the_resolved_type(bounds: tuple[Any, Any]) -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_predicate(_order_entity(), _between(*bounds))
+    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 def test_between_bound_ordering_is_checked_at_any_depth() -> None:
     with pytest.raises(RejectionError) as exc:
         validate_predicate(
             _order_entity(),
-            {"and": {"operands": [{"all": {}}, _between(50.75, 20.00)]}},
+            {"and": {"operands": [{"all": {}}, _between("50.75", "20.00")]}},
         )
     assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
 
@@ -1076,7 +1074,7 @@ def test_nested_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -
     }
     with pytest.raises(RejectionError) as exc:
         validate_predicate(entity, predicate)
-    assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
+    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 def test_write_present_but_null_required_value_object_rejected() -> None:
@@ -1092,7 +1090,7 @@ def test_write_deep_type_mismatch_rejected() -> None:
     row["address"]["geo"]["point"]["lat"] = "not-a-number"
     with pytest.raises(RejectionError) as exc:
         validate_write(_contact_entity(), row)
-    assert exc.value.rule == WRITE_VALUE_TYPE_MISMATCH
+    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 # --- the bare write row's complete cell table (m-case-format "What decides a bare
@@ -1140,14 +1138,14 @@ def _contact_row_at(path: str, value: Any) -> dict[str, Any]:
         ("name", None, WRITE_REQUIRED_ATTRIBUTE_MISSING),
         ("name", "Acme", None),
         ("id", 7, None),
-        ("id", "seven", WRITE_VALUE_TYPE_MISMATCH),
-        ("id", True, WRITE_VALUE_TYPE_MISMATCH),
-        ("id", {"street": "x"}, WRITE_VALUE_TYPE_MISMATCH),
-        ("id", [1], WRITE_VALUE_TYPE_MISMATCH),
+        ("id", "seven", NEUTRAL_LITERAL_TYPE_MISMATCH),
+        ("id", True, NEUTRAL_LITERAL_TYPE_MISMATCH),
+        ("id", {"street": "x"}, NEUTRAL_LITERAL_TYPE_MISMATCH),
+        ("id", [1], NEUTRAL_LITERAL_TYPE_MISMATCH),
         # Attribute, nullable: true — absence and null are both licensed.
         ("address.phones.0.number", _ABSENT, None),
         ("address.phones.0.number", None, None),
-        ("address.phones.0.number", 555, WRITE_VALUE_TYPE_MISMATCH),
+        ("address.phones.0.number", 555, NEUTRAL_LITERAL_TYPE_MISMATCH),
         # Value Object `one`, nullable: true — a null document binds SQL NULL.
         ("address", _ABSENT, None),
         ("address", None, None),
@@ -1217,15 +1215,14 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
     row["address"]["geo"]["point"]["lat"] = {"computed": "maxPlusOne"}
     with pytest.raises(RejectionError) as exc:
         validate_write(_contact_entity(), row)
-    assert exc.value.rule == WRITE_VALUE_TYPE_MISMATCH
+    assert exc.value.rule == NEUTRAL_LITERAL_TYPE_MISMATCH
 
 
 # The neutral type vocabulary is CLOSED, and membership asks whether the authored
-# PORTABLE literal decodes to a value of the space. Decoding is many-to-one where the
-# document encoding is one-to-one, so the two directions are pinned together: a
-# non-canonical spelling the portable grammar admits is a member (uppercase hex, a
-# hyphenless UUID, an unpadded time, a non-UTC offset), while a literal that names no
-# value is not (an integer beyond its width, a number whose magnitude the declared
+# WIRE literal decodes through the strict admitted grammar. Representation defects
+# such as uppercase hex, a hyphenless UUID, an unpadded time, or a non-UTC offset are
+# rejected as noncanonical, while a literal that names no
+# value is also rejected (an integer beyond its width, a number whose magnitude the declared
 # float width cannot hold, a decimal the scale cannot hold, text with no UTF-8
 # encoding, a separator inside a hex spelling, a malformed spelling, a
 # sub-microsecond instant).
@@ -1292,7 +1289,7 @@ def _unicode_digits(text: str) -> str:
         ("decimal(4,2)", "12.34", True),
         ("decimal(4,2)", "-12.34", True),
         ("decimal(4,2)", "0.50", True),
-        ("decimal(4,2)", 12, True),
+        ("decimal(4,2)", 12, False),
         ("decimal(4,2)", "12.345", False),
         ("decimal(4,2)", "123.45", False),
         ("decimal(4,2)", "not-a-decimal", False),
@@ -1310,8 +1307,8 @@ def _unicode_digits(text: str) -> str:
         ("decimal(4,2)", "1." + _unicode_digits("2"), False),
         ("decimal(4,2)", _unicode_digits("12") + ".34", False),
         ("bytes", "00ff", True),
-        ("bytes", "00FF", True),
-        ("bytes", "0a1B", True),
+        ("bytes", "00FF", False),
+        ("bytes", "0a1B", False),
         ("bytes", "", True),
         ("bytes", "0f0", False),
         ("bytes", "00 ff", False),
@@ -1324,28 +1321,28 @@ def _unicode_digits(text: str) -> str:
         ("date", "2024-1-1", False),
         ("date", _unicode_digits("2024-01-01"), False),
         ("time", "12:00:00", True),
-        ("time", "12:00", True),
+        ("time", "12:00", False),
         ("time", "12:00:00+00:00", False),
         ("time", "T12:00:00", False),
         ("time", "1200", False),
         ("timestamp", "2024-01-01T00:00:00Z", True),
-        ("timestamp", "2024-01-01T00:00:00+00:00", True),
-        ("timestamp", "2024-01-01T00:00:00+02:00", True),
+        ("timestamp", "2024-01-01T00:00:00+00:00", False),
+        ("timestamp", "2024-01-01T00:00:00+02:00", False),
         ("timestamp", "2024-01-01T00:00:00", False),
         ("timestamp", "2024-01-01 00:00:00+00:00", False),
         ("timestamp", "2024-01-01X00:00:00+00:00", False),
         ("timestamp", "20240101T000000Z", False),
         ("timestamp", "2024-W01-1T00:00:00Z", False),
         ("timestamp", "2024-01-01T00:00:00.1234567+00:00", False),
-        ("timestamp", "2024-01-01T00:00:00.1234560+00:00", True),
+        ("timestamp", "2024-01-01T00:00:00.1234560+00:00", False),
         (
             "timestamp",
             _unicode_digits("2024-01-01") + "T" + _unicode_digits("00:00:00") + "Z",
             False,
         ),
         ("uuid", "123e4567-e89b-12d3-a456-426614174000", True),
-        ("uuid", "123E4567-E89B-12D3-A456-426614174000", True),
-        ("uuid", "123e4567e89b12d3a456426614174000", True),
+        ("uuid", "123E4567-E89B-12D3-A456-426614174000", False),
+        ("uuid", "123e4567e89b12d3a456426614174000", False),
         ("uuid", "{123e4567-e89b-12d3-a456-426614174000}", False),
         ("uuid", "urn:uuid:123e4567-e89b-12d3-a456-426614174000", False),
         ("uuid", "123e4567-e89b12d3-a456-426614174000", False),
@@ -1357,17 +1354,13 @@ def test_portable_literal_membership(neutral_type: str, value: Any, matches: boo
     assert literal_matches_type(value, neutral_type) is matches
 
 
-def test_the_case_format_leaf_encoding_witness_authors_decodable_spellings() -> None:
-    # Every spelling `m-document-codec-001` authors is a member of its declared type
-    # even though the document stores a different, canonical spelling for four of
-    # them. Grading membership against the STORED form instead would refuse the one
-    # case whose whole subject is that the two differ.
+def test_the_case_format_leaf_encoding_witness_authors_canonical_spellings() -> None:
     authored = {
-        "bytes": "0A1B",
-        "uuid": "123E4567-E89B-12D3-A456-426614174000",
-        "time": "09:30",
-        "timestamp": "2026-01-15T11:30:00+02:00",
-        "decimal(6,2)": 5,
+        "bytes": "0a1b",
+        "uuid": "123e4567-e89b-12d3-a456-426614174000",
+        "time": "09:30:00",
+        "timestamp": "2026-01-15T09:30:00.000000Z",
+        "decimal(6,2)": "5.00",
     }
     assert all(
         literal_matches_type(value, neutral_type) for neutral_type, value in authored.items()
@@ -1410,7 +1403,7 @@ def test_runner_fails_when_the_named_rule_is_wrong() -> None:
     # the failure names BOTH rules — the one raised and the one authored.
     case = _rejected_doc(
         {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},
-        NESTED_LITERAL_TYPE_MISMATCH,  # actual rule: first-segment-not-value-object
+        NEUTRAL_LITERAL_TYPE_MISMATCH,  # actual rule: first-segment-not-value-object
     )
     with pytest.raises(CaseFailure, match="but the case expects then.rejectedRule") as exc:
         run_case(case, None)  # type: ignore[arg-type]

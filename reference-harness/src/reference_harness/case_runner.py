@@ -41,7 +41,6 @@ real implementation, graded against the golden SQL.
 from __future__ import annotations
 
 import contextlib
-import json
 import re
 import threading
 from collections.abc import Iterator, Mapping
@@ -68,7 +67,7 @@ from .ddl_builder import (
     contributor_types,
     quote_identifier,
 )
-from .document_codec import decode_stored, encode_document, encode_leaf, is_document
+from .document_codec import decode_stored, encode_document, encode_leaf
 from .inheritance import (
     MODEL_REJECTED_RULES,
     PREDICATE_REJECTED_RULES,
@@ -611,11 +610,10 @@ def _assert_rejected(case: Case) -> None:
     try:
         if "objectQuery" in case.when:
             query = case.when["objectQuery"]
-            validate_object_query(case.model.entity(query["target"]), query)
             # Inheritance selection / subtype-scope validation (m-object-query x
-            # m-inheritance): a no-op on a non-inheritance model, so it runs after
-            # the value-object validation without disturbing the existing cases.
+            # m-inheritance) decides the resolved position before typed literals.
             validate_query_inheritance(case.model.entity_defs, query)
+            validate_object_query(case.model.entity(query["target"]), query)
         elif "write" in case.when:
             write = _rejected_write_input(case)
             if "target" in write:
@@ -981,17 +979,6 @@ def _document_path_bind(path: tuple[str, ...], dialect: str) -> str:
     return "{" + ",".join(path) + "}"
 
 
-def _document_value_bind(value: Any) -> Any:
-    """One assigned document value as the mutation expression's hole takes it.
-
-    A composite crosses the seam as the portable document it is and each provider
-    adapts it; a JSON scalar, which no structural authoring form distinguishes from
-    an ordinary scalar bind, crosses as the JSON text both dialects' value
-    expressions parse (m-case-format).
-    """
-    return value if is_document(value) else json.dumps(value)
-
-
 def _document_assignments(
     case: Case, entity: Entity, row: dict[str, Any]
 ) -> tuple[_DocumentAssignment, ...]:
@@ -1029,7 +1016,7 @@ def _document_assignment_binds(
         binds.extend(
             [
                 _document_path_bind(assignment.path, dialect),
-                _document_value_bind(assignment.value),
+                assignment.value,
             ]
         )
     return binds

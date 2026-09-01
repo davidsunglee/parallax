@@ -25,15 +25,15 @@ compileEligibility:
 when:
   uow:
     concurrency: optimistic
-  write: { id: 2, owner: Ling, balance: 300.00, observedVersion: 1 }
+  write: { id: 2, owner: Ling, balance: "300.00", observedVersion: 1 }
 then:
   statements:
     - sql:
         postgres: update account set owner = ?, balance = ?, version = ? where id = ? and version = ?
-      binds: [Ling, 300.00, 2, 2, 1]
+      binds: [Ling, "300.00", 2, 2, 1]
   affectedRows: 1
   tableState:
     account:
-      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-      - { id: 2, owner: Ling, balance: 300.00, version: 2 }
-      - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+      - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+      - { id: 2, owner: Ling, balance: "300.00", version: 2 }
+      - { id: 3, owner: Grace, balance: "10.00", version: 1 }

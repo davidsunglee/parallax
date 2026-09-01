@@ -500,7 +500,7 @@ def test_bitemporal_conflict_close_addresses_a_finite_valid_end() -> None:
     # -004 and miss R2 entirely.
     bounded = _conflict_close_case("m-bitemp-write-017")
     unbounded = _conflict_close_case("m-bitemp-write-004")
-    assert bounded.when["write"]["validEnd"] == "2024-06-01T00:00:00+00:00"
+    assert bounded.when["write"]["validEnd"] == "2024-06-01T00:00:00.000000Z"
     assert unbounded.when["write"]["validEnd"] == "infinity"
     assert bounded.golden_statements("postgres") == unbounded.golden_statements("postgres")
     differing = [

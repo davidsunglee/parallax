@@ -15,17 +15,17 @@
 # stock -> Stock). Inner subtype columns not applicable to a row load as null.
 parallax.compatibility.Bond:
   - id: 1
-    price: 100.00
-    coupon: 5.00
-    validStart: "2024-01-01T00:00:00+00:00"
+    price: "100.00"
+    coupon: "5.00"
+    validStart: "2024-01-01T00:00:00.000000Z"
     validEnd: infinity
-    txStart: "2024-01-01T00:00:00+00:00"
+    txStart: "2024-01-01T00:00:00.000000Z"
     txEnd: infinity
 parallax.compatibility.Stock:
   - id: 2
-    price: 200.00
+    price: "200.00"
     ticker: ACME
-    validStart: "2024-01-01T00:00:00+00:00"
+    validStart: "2024-01-01T00:00:00.000000Z"
     validEnd: infinity
-    txStart: "2024-01-01T00:00:00+00:00"
+    txStart: "2024-01-01T00:00:00.000000Z"
     txEnd: infinity

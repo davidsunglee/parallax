@@ -39,7 +39,7 @@ parallax.compatibility.WriteTwinItem:
 parallax.compatibility.WriteTwinLog:
   - id: 5
     label: voyager
-    txStart: "2026-01-01T00:00:00+00:00"
+    txStart: "2026-01-01T00:00:00.000000Z"
     txEnd: infinity
     spec:
       title: Ore Run

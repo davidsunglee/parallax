@@ -17,9 +17,9 @@ when:
       all: {}
     temporal:
       transaction-time:
-        asOf: '2024-02-01T00:00:00+00:00'
+        asOf: "2024-02-01T00:00:00.000000Z"
       valid-time:
-        asOf: '2024-03-01T00:00:00+00:00'
+        asOf: "2024-03-01T00:00:00.000000Z"
     includes:
       - segments:
           - rel: parallax.compatibility.Policy.coverages
@@ -28,27 +28,27 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
         mariadb: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
-      binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+      binds: ["2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
     - sql:
         postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
         mariadb: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id in (?, ?) and t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
-      binds: [1, 2, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+      binds: [1, 2, "2024-03-01T00:00:00.000000Z", "2024-03-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
   graph:
     Policy:
       - id: 1
         name: Auto
-        validStart: "2024-01-01T00:00:00+00:00"
+        validStart: "2024-01-01T00:00:00.000000Z"
         validEnd: infinity
-        txStart: "2024-01-01T00:00:00+00:00"
+        txStart: "2024-01-01T00:00:00.000000Z"
         txEnd: infinity
         coverages:
-          - { id: 10, policyId: 1, amount: 500.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
+          - { id: 10, policyId: 1, amount: "500.00", validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: "2024-04-01T00:00:00.000000Z" }
       - id: 2
         name: Home
-        validStart: "2024-01-01T00:00:00+00:00"
+        validStart: "2024-01-01T00:00:00.000000Z"
         validEnd: infinity
-        txStart: "2024-01-01T00:00:00+00:00"
+        txStart: "2024-01-01T00:00:00.000000Z"
         txEnd: infinity
         coverages:
-          - { id: 20, policyId: 2, amount: 300.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
+          - { id: 20, policyId: 2, amount: "300.00", validStart: "2024-01-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-01-01T00:00:00.000000Z", txEnd: infinity }
   roundTrips: 2

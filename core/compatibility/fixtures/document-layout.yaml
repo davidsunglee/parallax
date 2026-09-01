@@ -82,11 +82,11 @@ parallax.compatibility.Ledger:
   - id: 100
     version: 1
     label: opening
-    balance: 250.00
+    balance: "250.00"
     details: { code: opening }
   - id: 200
     version: 1
-    balance: 40.00
+    balance: "40.00"
     details: { code: settled }
 # Beacon rows carry no document-resident member at all, so each row's Structured
 # Column is the empty object — present and `NOT NULL`, extracted from by nothing.
@@ -99,9 +99,9 @@ parallax.compatibility.Beacon:
 # here, which is the point; the case that needs a key inside it writes one out of band.
 parallax.compatibility.Mooring:
   - id: 1
-    validStart: "2026-01-01T00:00:00+00:00"
+    validStart: "2026-01-01T00:00:00.000000Z"
     validEnd: infinity
-    txStart: "2026-01-01T00:00:00+00:00"
+    txStart: "2026-01-01T00:00:00.000000Z"
     txEnd: infinity
 # The sibling Payment rows use one physical path for two distinct declared types.
 # `authorizationCode` applies only to CardPayment and is absent from the cash
@@ -112,7 +112,7 @@ parallax.compatibility.CardPayment:
     authorizationCode: AUTH-7
 parallax.compatibility.CashPayment:
   - id: 2
-    detail: 12.50
+    detail: "12.50"
 parallax.compatibility.Book:
   - { id: 10, title: Systems, detail: ISBN-10, pages: 320 }
 parallax.compatibility.Film:

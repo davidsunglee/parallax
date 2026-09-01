@@ -372,7 +372,9 @@ def assert_milestone_partition(
             index
             for index, row in enumerate(root_rows)
             if all(
-                scalars_equal(row.get(from_column_by_attr[name]), coordinate, None)
+                portable_literal.values_equal(
+                    row.get(from_column_by_attr[name]), coordinate, "timestamp", None
+                )
                 for name, coordinate in pin.items()
             )
         ]

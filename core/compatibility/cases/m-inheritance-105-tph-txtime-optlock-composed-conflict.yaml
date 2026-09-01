@@ -26,21 +26,21 @@ compileEligibility:
   note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
 given:
   apply:
-    - sql: update reading set out_z = '2024-06-01T00:00:00+00:00' where id = 1 and kind = 'meter' and out_z = 'infinity'
-    - sql: insert into reading(id, kind, celsius, in_z, out_z) values (1, 'meter', 25.00, '2024-06-01T00:00:00+00:00', 'infinity')
+    - sql: "update reading set out_z = '2024-06-01T00:00:00+00:00' where id = 1 and kind = 'meter' and out_z = 'infinity'"
+    - sql: "insert into reading(id, kind, celsius, in_z, out_z) values (1, 'meter', 25.00, '2024-06-01T00:00:00+00:00', 'infinity')"
 when:
   uow:
     concurrency: optimistic
   write: { id: 1 }
-  at: "2024-09-01T00:00:00+00:00"
-  observedTxStart: "2024-01-01T00:00:00+00:00"
+  at: "2024-09-01T00:00:00.000000Z"
+  observedTxStart: "2024-01-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
         postgres: update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?
-      binds: ["2024-09-01T00:00:00+00:00", 1, meter, infinity, "2024-01-01T00:00:00+00:00"]
+      binds: ["2024-09-01T00:00:00.000000Z", 1, meter, infinity, "2024-01-01T00:00:00.000000Z"]
   affectedRows: 0
   tableState:
     reading:
-      - { id: 1, kind: meter, celsius: 20.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
-      - { id: 1, kind: meter, celsius: 25.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+      - { id: 1, kind: meter, celsius: "20.00", in_z: "2024-01-01T00:00:00.000000Z", out_z: "2024-06-01T00:00:00.000000Z" }
+      - { id: 1, kind: meter, celsius: 25.00, in_z: "2024-06-01T00:00:00.000000Z", out_z: infinity }

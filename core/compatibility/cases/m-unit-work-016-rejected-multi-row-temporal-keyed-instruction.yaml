@@ -36,8 +36,8 @@ when:
     mutation: update
     entity: parallax.compatibility.Position
     rows:
-      - { id: 1, value: 150.00 }
-      - { id: 2, value: 250.00 }
-    validFrom: "2024-03-01T00:00:00+00:00"
+      - { id: 1, value: "150.00" }
+      - { id: 2, value: "250.00" }
+    validFrom: "2024-03-01T00:00:00.000000Z"
 then:
   rejectedRule: temporal-keyed-write-multi-row

@@ -390,12 +390,12 @@ class _Namespace(NamedTuple):
         )
 
 
-_TYPED: Final = _Namespace("typed", _typed_stream, fixed=43, per_page_node=2, per_published_node=2)
+_TYPED: Final = _Namespace("typed", _typed_stream, fixed=46, per_page_node=2, per_published_node=2)
 """The Typed lane. Two objects per page node — the Source Hint a page retains for
 it and the Object Key that hint is filed under — and two per published node, the
 frozen Entity instance and the node state naming what it was read from."""
 
-_WIRE: Final = _Namespace("wire", _wire_stream, fixed=44, per_page_node=2, per_published_node=1)
+_WIRE: Final = _Namespace("wire", _wire_stream, fixed=47, per_page_node=2, per_published_node=1)
 """The Wire lane. The same page term, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
 value tree carries its own state in the tree rather than beside it. One MORE
@@ -618,6 +618,7 @@ _SOURCES: Final = frozenset(
     {
         "parallax.conformance.story_models",
         "parallax.core.continuation",
+        "parallax.core.metamodel._identities",
         "parallax.core.object_query._validated",
         "parallax.core.object_query._nodes",
         "parallax.core.predicate._validated",
@@ -647,11 +648,13 @@ anywhere else does. A merge kept past the root it published, a whole-result
 this set however few of them there are, and the counts alone would price it as
 part of a coefficient.
 
-The frontier is the interesting half. There is no entry for the merge module, the
-read result's own snapshot, or anything under ``parallax.core.sql_gen`` — a page
-is planned and compiled and the products of both are gone by the time it is
-published — and none for the Wire view a Wire delivery was opened through, which
-is answered fresh per access and released as soon as the stream exists.
+The frontier is the interesting half. The metamodel entry is the canonical
+relationship identity shared by the validated include and its view keys. There
+is no entry for the merge module, the read result's own snapshot, or anything
+under ``parallax.core.sql_gen`` — a page is planned and compiled and the products
+of both are gone by the time it is published — and none for the Wire view a Wire
+delivery was opened through, which is answered fresh per access and released as
+soon as the stream exists.
 """
 
 

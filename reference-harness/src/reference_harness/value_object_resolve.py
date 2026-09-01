@@ -26,13 +26,10 @@ each language implementation must.
 
 from __future__ import annotations
 
-import decimal
-import math
-import re
 from typing import Any
 
 from .case import Entity
-from .portable_literal import PortableLiteralError, decode, decode_decimal, decode_number
+from .portable_literal import PortableLiteralError, decode
 from .references import split_reference
 
 # --- rule vocabulary --------------------------------------------------------
@@ -46,7 +43,9 @@ BETWEEN_BOUNDS_INVERTED = "between-bounds-inverted"
 NULL_CHECK_NON_NULLABLE_MEMBER = "null-check-non-nullable-member"
 NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT = "nested-path-first-segment-not-value-object"
 NESTED_PATH_UNKNOWN_MEMBER = "nested-path-unknown-member"
-NESTED_LITERAL_TYPE_MISMATCH = "nested-literal-type-mismatch"
+NEUTRAL_LITERAL_TYPE_MISMATCH = "neutral-literal-type-mismatch"
+NEUTRAL_LITERAL_NONCANONICAL = "neutral-literal-noncanonical"
+NEUTRAL_LITERAL_OUT_OF_SPACE = "neutral-literal-out-of-space"
 NESTED_STRING_PREDICATE_NON_STRING_MEMBER = "nested-string-predicate-non-string-member"
 DEEP_FETCH_VALUE_OBJECT_SEGMENT = "deep-fetch-value-object-segment"
 NAVIGATE_VALUE_OBJECT_TARGET = "navigate-value-object-target"
@@ -63,7 +62,9 @@ REJECTED_RULES: frozenset[str] = frozenset(
         NULL_CHECK_NON_NULLABLE_MEMBER,
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
         NESTED_PATH_UNKNOWN_MEMBER,
-        NESTED_LITERAL_TYPE_MISMATCH,
+        NEUTRAL_LITERAL_TYPE_MISMATCH,
+        NEUTRAL_LITERAL_NONCANONICAL,
+        NEUTRAL_LITERAL_OUT_OF_SPACE,
         NESTED_STRING_PREDICATE_NON_STRING_MEMBER,
         DEEP_FETCH_VALUE_OBJECT_SEGMENT,
         NAVIGATE_VALUE_OBJECT_TARGET,
@@ -97,13 +98,6 @@ class RejectionError(Exception):
 # category guess leaves the vocabulary open, so a `decimal(12,2)` position admits a
 # truth value and a `bytes` position an array — spellings the space holds no value
 # for.
-
-_INT_BOUNDS: dict[str, tuple[int, int]] = {
-    "int32": (-(2**31), 2**31 - 1),
-    "int64": (-(2**63), 2**63 - 1),
-}
-
-_DECIMAL_TYPE = re.compile(r"^decimal\((\d+),(\d+)\)$")
 
 
 def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
@@ -143,71 +137,20 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     return True
 
 
-def _is_integer(value: Any) -> bool:
-    """Whether *value* is an integer rather than a truth value."""
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _matches_float(value: Any, *, binary32: bool) -> bool:
-    """Whether a JSON number spells a member of a float space of the given width.
-
-    Every number names the float of the width nearest it — the inverse of the
-    shortest-round-tripping encoding (`m-document-codec`) — so only a magnitude the
-    width cannot hold, such as ``1e39`` at a `float32`, spells no member. The host
-    carrier the loader put the number in decides nothing, because ``20`` and
-    ``20.0`` are one JSON number and so are ``16777217`` and ``16777217.0``.
-
-    Nearest is not exact, and that is the stated trade rather than an oversight: a
-    number no float of the width represents exactly is admitted and NARROWED, so a
-    case authoring ``16777217`` at a `float32` stores ``16777216``. Refusing it is
-    not "the number must be exact" — a canonical `float32` spelling is routinely
-    inexact, ``1e30`` being the one the codec gives ``1.0000000150474662e30`` — but
-    "exact or already canonical", which narrows the value space itself.
-    """
-    return decode_number(value, binary32=binary32) is not None
-
-
-def _is_utf8_encodable(value: str) -> bool:
-    """Whether text has a UTF-8 encoding; an unpaired surrogate has none."""
+def decode_typed_literal(value: Any, neutral_type: str | None, subject: str) -> Any:
+    """Decode a resolved typed literal or raise its stable surface rule."""
+    if neutral_type is None:
+        return value
     try:
-        value.encode("utf-8")
-    except UnicodeEncodeError:
-        return False
-    return True
-
-
-def _matches_decimal(value: Any, precision: int, scale: int) -> bool:
-    """Whether *value* spells a decimal the declared precision and scale hold exactly.
-
-    A JSON number spells one through its shortest round-tripping text, so the digits
-    tested are the digits written rather than a float's binary expansion; a string
-    spells one directly, which is the form a structured document stores.
-    """
-    if _is_integer(value):
-        decimal_value = decimal.Decimal(value)
-    elif isinstance(value, float):
-        if not math.isfinite(value):
-            return False
-        decimal_value = decimal.Decimal(repr(value))
-    elif isinstance(value, str):
-        decoded = decode_decimal(value)
-        if decoded is None:
-            return False
-        decimal_value = decoded
-    else:
-        return False
-    _sign, digits, exponent = decimal_value.as_tuple()
-    if not isinstance(exponent, int):
-        return False
-    coefficient = int("".join(str(digit) for digit in digits))
-    if coefficient == 0:
-        return True
-    while coefficient % 10 == 0:
-        coefficient //= 10
-        exponent += 1
-    if exponent < -scale:
-        return False
-    return len(str(coefficient)) + exponent + scale <= precision
+        return decode(value, neutral_type)
+    except PortableLiteralError as exc:
+        rule = f"neutral-literal-{exc.reason}"
+        if rule not in REJECTED_RULES:
+            raise AssertionError(f"unknown portable literal reason {exc.reason!r}") from exc
+        raise RejectionError(
+            rule,
+            f"{subject}: literal {value!r} is {exc.reason} for declared type {neutral_type!r}",
+        ) from exc
 
 
 def is_string_member(neutral_type: str | None) -> bool:
@@ -233,17 +176,13 @@ def _is_number(value: Any) -> bool:
 def bounds_inverted(lower: Any, upper: Any) -> bool:
     """Whether a range's ``lower`` bound is strictly greater than its ``upper``.
 
-    The `m-predicate` bound-ordering MUST, shared by every range predicate. Bounds
-    are compared by LITERAL KIND rather than by resolved attribute type: only two
-    numbers or two strings are ordered against each other, and a differing pair or a
-    ``null`` bound is skipped rather than guessed. Equal bounds name the single-value
-    range and are never inverted.
+    The operands have already decoded under one resolved declared type. Equal
+    bounds name the single-value range and are never inverted.
     """
-    if _is_number(lower) and _is_number(upper):
+    try:
         return lower > upper
-    if isinstance(lower, str) and isinstance(upper, str):
-        return lower > upper
-    return False
+    except TypeError:
+        return False
 
 
 # --- declared-structure lookups --------------------------------------------

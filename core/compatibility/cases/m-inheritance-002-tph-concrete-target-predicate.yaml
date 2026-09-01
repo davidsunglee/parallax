@@ -19,13 +19,13 @@ when:
     predicate:
       greaterThan:
         attr: parallax.compatibility.CardPayment.amount
-        value: 60.00
+        value: "60.00"
 then:
   statements:
     - sql:
         postgres: select t0.id, t0.amount, t0.card_network from payment t0 where t0.amount > ? and t0.kind = ?
-      binds: [60.00, card]
+      binds: ["60.00", card]
   referenceSql: select id, amount, card_network from payment where amount > 60.00 and kind = 'card'
   rows:
-    - { id: 1, amount: 100.00, card_network: Visa }
+    - { id: 1, amount: "100.00", card_network: Visa }
   roundTrips: 1

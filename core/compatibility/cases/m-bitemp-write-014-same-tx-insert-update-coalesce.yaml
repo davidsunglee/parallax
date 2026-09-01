@@ -28,21 +28,21 @@ when:
         - mutation: insert
           entity: parallax.compatibility.Position
           rows:
-            - { id: 9, acctNum: D, value: 100.00 }
-          validFrom: "2024-01-01T00:00:00+00:00"
-          at: "2024-01-01T00:00:00+00:00"
+            - { id: 9, acctNum: D, value: "100.00" }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-01-01T00:00:00.000000Z"
         - mutation: update
           entity: parallax.compatibility.Position
           rows:
-            - { id: 9, value: 150.00 }
-          validFrom: "2024-01-01T00:00:00+00:00"
-          at: "2024-01-01T00:00:00+00:00"
+            - { id: 9, value: "150.00" }
+          validFrom: "2024-01-01T00:00:00.000000Z"
+          at: "2024-01-01T00:00:00.000000Z"
       roundTrips: 1
       note: the buffered plain INSERT (value 100) then the buffered UPDATE (value 150) of the SAME new position 9 coalesce IN PLACE to ONE fully-Latest rectangle INSERT carrying the final value 150 — no inactivation, no head/tail split
       statements:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [9, D, 150.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+          binds: [9, D, "150.00", "2024-01-01T00:00:00.000000Z", infinity, "2024-01-01T00:00:00.000000Z", infinity]
     - objectQuery:
         target: parallax.compatibility.Position
         predicate:
@@ -62,6 +62,6 @@ when:
           binds: [9, infinity, infinity]
       referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 9 and thru_z = 'infinity'::timestamptz and out_z = 'infinity'::timestamptz
       expectRows:
-        - { pos_id: 9, acct_num: D, val: 150.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
+        - { pos_id: 9, acct_num: D, val: "150.00", from_z: "2024-01-01T00:00:00.000000Z", thru_z: infinity, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
 then:
   roundTrips: 2

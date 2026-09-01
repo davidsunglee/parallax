@@ -27,15 +27,15 @@ when:
     predicate:
       nestedGt:
         path: parallax.compatibility.Sample.profile.amount
-        value: 9.50
+        value: "9.50"
 then:
   statements:
     - sql:
         postgres: select t0.id, t0.label from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as decimal(12, 2)) > ?
         mariadb: select t0.id, t0.label from sample t0 where cast(json_value(t0.profile, ?) as decimal(12, 2)) > ?
       binds:
-        postgres: [amount, '9.5']
-        mariadb: ['$.amount', '9.5']
+        postgres: [amount, '9.50']
+        mariadb: ['$.amount', '9.50']
   referenceSql:
     postgres: select id, label from sample where (profile ->> 'amount')::decimal(12, 2) > 9.50
     mariadb: select id, label from sample where cast(nullif(json_unquote(json_extract(profile, '$.amount')), 'null') as decimal(12, 2)) > 9.50

@@ -17,12 +17,12 @@ when:
       statements: 1
       note: write a decimal(18,4) value using all four fractional digits
       rows:
-        - { id: 3, amount: 9999.9999 }
+        - { id: 3, amount: "9999.9999" }
 then:
   statements:
     - sql:
         postgres: insert into writable_scalars(id, amount) values (?, ?)
-      binds: [3, 9999.9999]
+      binds: [3, "9999.9999"]
   tableState:
     writable_scalars:
       - id: 3
@@ -31,6 +31,6 @@ then:
         payload: null
         local_time: null
         external_id: null
-        amount: 9999.9999
+        amount: "9999.9999"
         label: null
   roundTrips: 1

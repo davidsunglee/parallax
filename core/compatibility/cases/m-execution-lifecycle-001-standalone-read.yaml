@@ -42,7 +42,7 @@ then:
       binds: [3]
   referenceSql: select id, owner, balance, version from account where id = 3
   rows:
-    - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+    - { id: 3, owner: Grace, balance: "10.00", version: 1 }
   roundTrips: 1
   executionLifecycle:
     roots:

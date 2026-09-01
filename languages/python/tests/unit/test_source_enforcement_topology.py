@@ -273,9 +273,6 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.case_format", "parallax.core.wire._json"): frozenset(
         {"authored_number"}
     ),
-    ("parallax.conformance._case_literal", "parallax.core.wire._json"): frozenset(
-        {"authored_token"}
-    ),
     ("parallax.conformance.engine", "parallax.core.sql_gen._compile"): frozenset(
         {"CompiledRead", "compile_read"}
     ),

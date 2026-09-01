@@ -39,7 +39,7 @@ parallax.compatibility.Cat:
 parallax.compatibility.WildBoar:
   - id: 4
     name: Tusker
-    tuskLength: 12.50
+    tuskLength: "12.50"
     ownerId: 12
 parallax.compatibility.Person:
   - id: 10

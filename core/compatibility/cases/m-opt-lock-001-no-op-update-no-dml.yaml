@@ -63,7 +63,7 @@ when:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [2]
       expectRows:
-        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
     - uow: observe-noop-verify
       write:
         - mutation: update
@@ -86,6 +86,6 @@ when:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [2]
       expectRows:
-        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
 then:
   roundTrips: 2

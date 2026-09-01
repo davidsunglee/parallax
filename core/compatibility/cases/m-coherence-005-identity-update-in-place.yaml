@@ -36,14 +36,14 @@ when:
           binds: [2]
       note: seed read on node B — interns Linus (PK 2) at balance 250.00
       observeRows:
-        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
     - node: A
       kind: write
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
             mariadb: update account set balance = ?, version = ? where id = ?
-          binds: [777.00, 2, 2]
+          binds: ["777.00", 2, 2]
       note: node A commits an in-place update (version advances 1 -> 2) on a separate connection
     - node: B
       kind: read
@@ -62,4 +62,4 @@ when:
       identityAttr: id
       note: node B re-fetches PK 2 — observes 777.00 / version 2 at the SAME identity (in place)
       observeRows:
-        - { id: 2, owner: Linus, balance: 777.00, version: 2 }
+        - { id: 2, owner: Linus, balance: "777.00", version: 2 }

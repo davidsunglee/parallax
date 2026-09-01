@@ -60,7 +60,7 @@ from .value_object_resolve import (
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
     WRITE_VALUE_TYPE_MISMATCH,
     RejectionError,
-    literal_matches_type,
+    decode_typed_literal,
 )
 
 # A single-key mapping shaped like one of these is a DB-computed write marker
@@ -217,11 +217,7 @@ def _validate_attribute(
         return
     if marker_exempt and _is_marker(value):
         return
-    if not literal_matches_type(value, attribute.get("type")):
-        raise RejectionError(
-            WRITE_VALUE_TYPE_MISMATCH,
-            f"{path}: value {value!r} does not match the declared type {attribute.get('type')!r}",
-        )
+    decode_typed_literal(value, attribute.get("type"), path)
 
 
 def _validate_occurrence(

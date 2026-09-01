@@ -11,12 +11,12 @@
 #   id 3 CashPayment  amount  20.00  tendered 25.00 (kind=cash, derived)
 parallax.compatibility.CardPayment:
   - id: 1
-    amount: 100.00
+    amount: "100.00"
     cardNetwork: Visa
   - id: 2
-    amount: 50.00
+    amount: "50.00"
     cardNetwork: Amex
 parallax.compatibility.CashPayment:
   - id: 3
-    amount: 20.00
-    tendered: 25.00
+    amount: "20.00"
+    tendered: "25.00"

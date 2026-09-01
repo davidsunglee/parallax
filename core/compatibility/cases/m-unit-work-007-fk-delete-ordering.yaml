@@ -24,7 +24,7 @@ when:
       statements: 1
       note: insert the parent Order first (the referenced row)
       rows:
-        - { id: 100, name: Hopper, sku: X-1, qty: 1, price: 9.99, active: true, orderedOn: "2024-07-01" }
+        - { id: 100, name: Hopper, sku: X-1, qty: 1, price: "9.99", active: true, orderedOn: "2024-07-01" }
     - mutation: insert
       entity: parallax.compatibility.OrderItem
       statements: 1
@@ -47,7 +47,7 @@ then:
   statements:
     - sql:
         postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
-      binds: [100, Hopper, X-1, 1, 9.99, true, 2024-07-01]
+      binds: [100, Hopper, X-1, 1, "9.99", true, 2024-07-01]
     - sql:
         postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
       binds: [200, 100, X-1, 3]

@@ -82,6 +82,6 @@ when:
       note: access the ALREADY-MATERIALIZED order after the write -> ZERO SQL and the contents the read paid for
       expectGraph:
         Order:
-          - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, orderedOn: 2024-01-05 }
+          - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05 }
 then:
   roundTrips: 4

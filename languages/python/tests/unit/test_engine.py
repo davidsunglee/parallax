@@ -527,7 +527,7 @@ def _ledger_update(
             {
                 "mutation": "update",
                 "entity": "parallax.compatibility.Ledger",
-                "rows": [{"id": 2, "value": decimal.Decimal(value)}],
+                "rows": [{"id": 2, "value": value}],
                 "at": at,
             }
         ],
@@ -1286,9 +1286,7 @@ def _ledger_chain_update(
 ) -> dict[str, object]:
     """The sibling of :func:`_ledger_update` retargeted at the inserted id 9."""
     step = _ledger_update(value, at, uow=uow, rollback=rollback)
-    cast("list[dict[str, object]]", step["write"])[0]["rows"] = [
-        {"id": 9, "value": decimal.Decimal(value)}
-    ]
+    cast("list[dict[str, object]]", step["write"])[0]["rows"] = [{"id": 9, "value": value}]
     return step
 
 
@@ -1688,7 +1686,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                             {
                                 "mutation": "update",
                                 "entity": "Account",
-                                "rows": [{"id": 2, "balance": 260.00}],
+                                "rows": [{"id": 2, "balance": "260.00"}],
                             }
                         ],
                     },
@@ -1705,7 +1703,7 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                             {
                                 "mutation": "update",
                                 "entity": "Account",
-                                "rows": [{"id": 2, "balance": 270.00}],
+                                "rows": [{"id": 2, "balance": "270.00"}],
                             }
                         ],
                     },
@@ -1756,7 +1754,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
                                 "mutation": "insert",
                                 "entity": "Account",
                                 "rows": [
-                                    {"id": 90, "owner": "Noether", "balance": 5.00, "version": 1}
+                                    {"id": 90, "owner": "Noether", "balance": "5.00", "version": 1}
                                 ],
                             }
                         ],
@@ -1767,7 +1765,7 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
                             {
                                 "mutation": "update",
                                 "entity": "Account",
-                                "rows": [{"id": 2, "balance": 260.00}],
+                                "rows": [{"id": 2, "balance": "260.00"}],
                             }
                         ],
                     },
@@ -2728,7 +2726,7 @@ def test_a_settled_write_names_a_versioned_targets_own_read_generation() -> None
 
     def settle(node: Any) -> object:
         write = engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 5.00}]},
+            {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
             TemporalShadow(),
             set(),
@@ -2747,7 +2745,7 @@ def test_a_settled_write_is_refused_when_its_named_find_observed_no_such_row() -
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
     with pytest.raises(engine.EngineError, match="observed 0 rows"):
         engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 5.00}]},
+            {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": "5.00"}]},
             meta,
             TemporalShadow(),
             set(),
@@ -2789,7 +2787,11 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
 
     def settle(node: Any) -> object:
         write = engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            {"mutation": "update", "entity": "Balance", "rows": [{"id": 1, "value": 5.00}]},
+            {
+                "mutation": "update",
+                "entity": "Balance",
+                "rows": [{"id": 1, "value": "5.00"}],
+            },
             meta,
             TemporalShadow(),
             set(),
@@ -3204,7 +3206,7 @@ def test_a_write_row_authoring_an_observed_tx_start_is_refused_even_when_version
                         "rows": [
                             {
                                 "id": 1,
-                                "balance": 10.00,
+                                "balance": "10.00",
                                 "observedVersion": 7,
                                 "observedTxStart": "2024-01-01T00:00:00+00:00",
                             }
@@ -3237,8 +3239,8 @@ def test_an_unversioned_row_authoring_an_observation_control_key_is_refused() ->
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
-                            {"id": 1, "balance": 500.00, "observedVersion": 1},
-                            {"id": 2, "balance": 500.00, "observedVersion": 1},
+                            {"id": 1, "balance": "500.00", "observedVersion": 1},
+                            {"id": 2, "balance": "500.00", "observedVersion": 1},
                         ],
                     }
                 ]
@@ -3264,8 +3266,8 @@ def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
                         "entity": "Wallet",
                         "statements": 1,
                         "rows": [
-                            {"id": 10, "balance": 500.00},
-                            {"id": 11, "balance": 500.00},
+                            {"id": 10, "balance": "500.00"},
+                            {"id": 11, "balance": "500.00"},
                         ],
                     }
                 ]
@@ -3275,7 +3277,7 @@ def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
     emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
     assert round_trips == 1
     assert [e.sql for e in emissions] == ["update wallet set balance = ? where id in (?, ?)"]
-    assert emissions[0].binds == (500.00, 10, 11)
+    assert emissions[0].binds == (decimal.Decimal("500.00"), 10, 11)
 
 
 def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execution() -> None:
@@ -3296,8 +3298,8 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
                         "entity": "Wallet",
                         "statements": 1,
                         "rows": [
-                            {"id": 10, "owner": "Mira", "balance": 100.00},
-                            {"id": 11, "owner": "Omar", "balance": 20.00},
+                            {"id": 10, "owner": "Mira", "balance": "100.00"},
+                            {"id": 11, "owner": "Omar", "balance": "20.00"},
                         ],
                     }
                 ]
@@ -3329,7 +3331,7 @@ def test_insert_entry_refuses_a_row_missing_a_required_attribute() -> None:
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
-                            {"id": 10, "owner": "Mira", "balance": 100.00},
+                            {"id": 10, "owner": "Mira", "balance": "100.00"},
                             {"id": 11, "owner": "Omar"},
                         ],
                     }
@@ -3360,8 +3362,8 @@ def test_update_entry_uniform_within_each_physical_group_collapses_per_group() -
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
-                            {"id": 1, "balance": 500.00},
-                            {"id": 2, "balance": 500.00},
+                            {"id": 1, "balance": "500.00"},
+                            {"id": 2, "balance": "500.00"},
                             {"id": 3, "owner": "Zed"},
                             {"id": 4, "owner": "Zed"},
                         ],
@@ -3396,8 +3398,8 @@ def test_update_entry_non_uniform_within_a_physical_group_rejects_a_grouped_coun
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
-                            {"id": 1, "balance": 111.00},
-                            {"id": 2, "balance": 222.00},
+                            {"id": 1, "balance": "111.00"},
+                            {"id": 2, "balance": "222.00"},
                             {"id": 3, "owner": "Zed"},
                             {"id": 4, "owner": "Ada"},
                         ],
@@ -3425,8 +3427,8 @@ def test_non_uniform_multi_row_update_decomposes_per_distinct_key() -> None:
                         "entity": "Wallet",
                         "statements": 2,
                         "rows": [
-                            {"id": 1, "balance": 111.00},
-                            {"id": 2, "balance": 222.00},
+                            {"id": 1, "balance": "111.00"},
+                            {"id": 2, "balance": "222.00"},
                         ],
                     }
                 ]
@@ -3492,7 +3494,7 @@ def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
                         "statements": 1,
                         "rows": [
                             {"id": 1, "observedVersion": 1},
-                            {"id": 2, "balance": 5.00, "observedVersion": 1},
+                            {"id": 2, "balance": "5.00", "observedVersion": 1},
                         ],
                     }
                 ]
@@ -3504,7 +3506,7 @@ def test_elided_no_op_row_is_not_counted_as_a_statement() -> None:
     assert [e.sql for e in emissions] == [
         "update account set balance = ?, version = ? where id = ? and version = ?"
     ]
-    assert emissions[0].binds == (5.00, 2, 2, 1)
+    assert emissions[0].binds == (decimal.Decimal("5.00"), 2, 2, 1)
 
 
 def test_an_entry_whose_every_row_elides_emits_no_statement() -> None:
@@ -3579,7 +3581,7 @@ def test_predicate_shaped_scenario_write_lowers_readless_not_a_keyerror() -> Non
                             "target": {
                                 "entity": "Wallet",
                                 "predicate": {
-                                    "lessThan": {"attr": "Wallet.balance", "value": 200.00}
+                                    "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -3591,7 +3593,7 @@ def test_predicate_shaped_scenario_write_lowers_readless_not_a_keyerror() -> Non
     emissions, round_trips = engine.compile_scenario_case(case, "postgres")
     assert round_trips == 1
     assert [e.sql for e in emissions] == ["delete from wallet where balance < ?"]
-    assert emissions[0].binds == (200.00,)
+    assert emissions[0].binds == (decimal.Decimal("200.00"),)
 
 
 def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
@@ -3609,7 +3611,9 @@ def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
                         "mutation": "delete",
                         "target": {
                             "entity": "Wallet",
-                            "predicate": {"lessThan": {"attr": "Wallet.balance", "value": 200.00}},
+                            "predicate": {
+                                "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
+                            },
                         },
                     }
                 ]
@@ -3657,7 +3661,7 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
                             "target": {
                                 "entity": "Wallet",
                                 "predicate": {
-                                    "lessThan": {"attr": "Wallet.balance", "value": 200.00}
+                                    "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -3690,7 +3694,9 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
                     {
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                            "predicate": {
+                                "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                            },
                         },
                     },
                     {
@@ -3699,7 +3705,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
                             "target": {
                                 "entity": "Account",
                                 "predicate": {
-                                    "lessThan": {"attr": "Account.balance", "value": 200.00}
+                                    "lessThan": {"attr": "Account.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -3740,7 +3746,7 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
                             "target": {
                                 "entity": "Wallet",
                                 "predicate": {
-                                    "lessThan": {"attr": "Wallet.balance", "value": 200.00}
+                                    "lessThan": {"attr": "Wallet.balance", "value": "200.00"}
                                 },
                             },
                         },
@@ -3772,7 +3778,9 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
                     {
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                            "predicate": {
+                                "lessThan": {"attr": "Account.balance", "value": "200.00"}
+                            },
                         },
                     },
                     {
@@ -3781,7 +3789,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
                             "target": {
                                 "entity": "Account",
                                 "predicate": {
-                                    "lessThan": {"attr": "Account.balance", "value": 200.00}
+                                    "lessThan": {"attr": "Account.balance", "value": "200.00"}
                                 },
                             },
                         },
@@ -3821,7 +3829,7 @@ def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[
                 "entity": "parallax.compatibility.Ledger",
                 "predicate": _ledger_predicate(),
             },
-            "assignments": [{"attr": "parallax.compatibility.Ledger.value", "value": 777.00}],
+            "assignments": [{"attr": "parallax.compatibility.Ledger.value", "value": "777.00"}],
             "at": at,
         },
         "roundTrips": 3,
@@ -3968,7 +3976,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
                 "mutation": "delete",
                 "target": {
                     "entity": "Account",
-                    "predicate": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                    "predicate": {"lessThan": {"attr": "Account.balance", "value": "200.00"}},
                 },
             }
         },
@@ -4004,7 +4012,7 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
                     {
                         "objectQuery": {
                             "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.balance", "value": 100.00}},
+                            "predicate": {"eq": {"attr": "Account.balance", "value": "100.00"}},
                         },
                     },
                     {
@@ -4013,7 +4021,7 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
                             "target": {
                                 "entity": "Account",
                                 "predicate": {
-                                    "lessThan": {"attr": "Account.balance", "value": 200.00}
+                                    "lessThan": {"attr": "Account.balance", "value": "200.00"}
                                 },
                             },
                         }
@@ -4197,8 +4205,8 @@ def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_re
     # version is the same one, and it is refused before any read runs.
     case = _unversioned_conflict_case(
         [
-            {"id": 1, "balance": 500.00, "observedVersion": 1},
-            {"id": 2, "balance": 500.00, "observedVersion": 1},
+            {"id": 1, "balance": "500.00", "observedVersion": 1},
+            {"id": 2, "balance": "500.00", "observedVersion": 1},
         ]
     )
     with pytest.raises(engine.EngineError, match="an unversioned row authors no `observedVersion`"):
@@ -4215,7 +4223,7 @@ def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_r
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}]
     )
     with pytest.raises(WriteEvidenceError, match="write-evidence-unavailable"):
-        engine.run_conflict_case(_unversioned_conflict_case([{"id": 1, "balance": 500.00}]), port)
+        engine.run_conflict_case(_unversioned_conflict_case([{"id": 1, "balance": "500.00"}]), port)
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
@@ -6636,7 +6644,7 @@ def test_a_named_find_publishing_no_row_of_a_writes_key_settles_nothing() -> Non
                             {
                                 "mutation": "update",
                                 "entity": "Account",
-                                "rows": [{"id": 1, "balance": 5.00, "observedVersion": 1}],
+                                "rows": [{"id": 1, "balance": "5.00", "observedVersion": 1}],
                             }
                         ],
                         "on": 0,
@@ -7361,9 +7369,9 @@ def test_run_scenario_case_refuses_a_materializing_predicate_write_on_the_snapsh
         "mutation": "update",
         "target": {
             "entity": "parallax.compatibility.Ledger",
-            "predicate": {"lessThan": {"attr": value, "value": 500.00}},
+            "predicate": {"lessThan": {"attr": value, "value": "500.00"}},
         },
-        "assignments": [{"attr": value, "value": 5.00}],
+        "assignments": [{"attr": value, "value": "5.00"}],
         "at": "2024-05-01T00:00:00+00:00",
     }
     port = _QueueWritePort([[dict(_LEDGER_2_ROW)]])

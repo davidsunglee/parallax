@@ -35,14 +35,14 @@ when:
           binds: [Linus]
       note: seed read by owner — surfaces and interns PK 2 (Linus) at 250.00
       observeRows:
-        - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
     - node: A
       kind: write
       statements:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
             mariadb: update account set balance = ?, version = ? where id = ?
-          binds: [888.00, 2, 2]
+          binds: ["888.00", 2, 2]
       note: node A commits an in-place update (version advances 1 -> 2) on a separate connection
     - node: B
       kind: read
@@ -61,4 +61,4 @@ when:
       identityAttr: id
       note: re-fetch by PK 2 — SAME object the owner predicate surfaced, now 888.00 / version 2
       observeRows:
-        - { id: 2, owner: Linus, balance: 888.00, version: 2 }
+        - { id: 2, owner: Linus, balance: "888.00", version: 2 }

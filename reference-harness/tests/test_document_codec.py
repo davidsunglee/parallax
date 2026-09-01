@@ -26,9 +26,8 @@ from reference_harness.document_codec import (
     is_text_compared,
 )
 
-# One wire literal per row of the encoding table, paired with the document spelling
-# it encodes to. Four rows carry a literal that is NOT already its own spelling, and
-# they are the rows an implementation gets wrong silently.
+# One canonical Wire literal per row of the encoding table, paired with the
+# document spelling it preserves.
 _TABLE: list[tuple[str, Any, Any]] = [
     ("boolean", True, True),
     ("int32", -7, -7),
@@ -36,14 +35,14 @@ _TABLE: list[tuple[str, Any, Any]] = [
     ("float32", 1.5, 1.5),
     ("float64", 2.25, 2.25),
     ("string", "alpha", "alpha"),
-    ("decimal(12,2)", 10.25, "10.25"),
-    ("decimal(12,2)", 5, "5.00"),
-    ("bytes", "0A1B", "0a1b"),
+    ("decimal(12,2)", "10.25", "10.25"),
+    ("decimal(12,2)", "5.00", "5.00"),
+    ("bytes", "0a1b", "0a1b"),
     ("bytes", b"\x0a\x1b", "0a1b"),
     ("date", "2026-01-15", "2026-01-15"),
-    ("time", "09:30", "09:30:00"),
-    ("timestamp", "2026-01-15T11:30:00+02:00", "2026-01-15T09:30:00.000000Z"),
-    ("uuid", "123E4567-E89B-12D3-A456-426614174000", "123e4567-e89b-12d3-a456-426614174000"),
+    ("time", "09:30:00", "09:30:00"),
+    ("timestamp", "2026-01-15T09:30:00.000000Z", "2026-01-15T09:30:00.000000Z"),
+    ("uuid", "123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456-426614174000"),
 ]
 
 
@@ -58,9 +57,9 @@ def test_every_neutral_type_has_exactly_one_document_spelling(
     assert encode_leaf(type_spelling, literal) == document
 
 
-def test_a_decimal_pads_to_its_declared_scale_and_signs_only_below_zero() -> None:
-    assert encode_leaf("decimal(12,2)", -0.5) == "-0.50"
-    assert encode_leaf("decimal(12,0)", 7) == "7"
+def test_a_decimal_preserves_its_declared_scale_and_signs_only_below_zero() -> None:
+    assert encode_leaf("decimal(12,2)", "-0.50") == "-0.50"
+    assert encode_leaf("decimal(12,0)", "7") == "7"
     assert encode_leaf("decimal(38,20)", "0.12345678901234567890") == "0.12345678901234567890"
 
 
@@ -91,7 +90,7 @@ def test_an_authored_number_names_the_float_of_the_width_nearest_it() -> None:
         ("float32", "1.5"),
         ("float64", 10**400),
     ):
-        with pytest.raises(DocumentEncodingError, match="names no"):
+        with pytest.raises(DocumentEncodingError, match="type-mismatch|out-of-space"):
             encode_leaf(spelling, authored)
     assert encode_leaf("float32", 1048576.2) == 1048576.2
     assert encode_leaf("float32", 1048576.3) == 1048576.2
@@ -109,7 +108,7 @@ def test_an_authored_number_names_the_float_of_the_width_nearest_it() -> None:
 def test_only_the_six_text_compared_types_have_a_comparison_text() -> None:
     for text_compared in ("string", "bytes", "date", "time", "timestamp", "uuid"):
         assert is_text_compared(text_compared)
-    assert comparison_text("uuid", "123E4567-E89B-12D3-A456-426614174000") == (
+    assert comparison_text("uuid", "123e4567-e89b-12d3-a456-426614174000") == (
         "123e4567-e89b-12d3-a456-426614174000"
     )
     # `decimal(p, s)`'s document form is a JSON string too and is deliberately absent:
@@ -155,7 +154,7 @@ def test_nesting_and_arrays_compose_element_by_element() -> None:
         _PROFILE,
         {
             "origin": {"city": "Oslo"},
-            "entries": [{"kind": "home", "active": True, "price": 19.99}, {"kind": "work"}],
+            "entries": [{"kind": "home", "active": True, "price": "19.99"}, {"kind": "work"}],
         },
     ) == {
         "origin": {"city": "Oslo"},
@@ -179,7 +178,7 @@ def test_a_candidate_carries_encodings_rather_than_either_comparison_form() -> N
     # (MariaDB's `1`) and the decimal's managed value (a JSON number) each match no
     # element — silently, with the statement planning and executing.
     assert encode_candidate(
-        _ENTRIES, {("kind",): "home", ("active",): True, ("price",): 19.99}
+        _ENTRIES, {("kind",): "home", ("active",): True, ("price",): "19.99"}
     ) == {"kind": "home", "active": True, "price": "19.99"}
 
 
@@ -367,15 +366,19 @@ def test_every_admitted_leaf_is_exactly_what_the_encoder_produces() -> None:
         ("float32", 1.5),
         ("float64", 2.25),
         ("string", "alpha"),
-        ("decimal(12,2)", 10.25),
-        ("bytes", "0A1B"),
+        ("decimal(12,2)", "10.25"),
+        ("bytes", "0a1b"),
         ("date", "2026-01-15"),
-        ("time", "09:30"),
-        ("timestamp", "2026-01-15T11:30:00+02:00"),
-        ("uuid", "123E4567-E89B-12D3-A456-426614174000"),
+        ("time", "09:30:00"),
+        ("timestamp", "2026-01-15T09:30:00.000000Z"),
+        ("uuid", "123e4567-e89b-12d3-a456-426614174000"),
     ):
         document = encode_leaf(spelling, literal)
-        assert encode_leaf(spelling, decode_leaf(spelling, document)) == document
+        decoded = decode_leaf(spelling, document)
+        if spelling == "timestamp":
+            assert decoded == "2026-01-15T09:30:00+00:00"
+        else:
+            assert encode_leaf(spelling, decoded) == document
 
 
 @pytest.mark.parametrize(
@@ -385,7 +388,7 @@ def test_every_admitted_leaf_is_exactly_what_the_encoder_produces() -> None:
 def test_identity_encoded_leaf_must_belong_to_its_declared_type(
     spelling: str, value: object
 ) -> None:
-    with pytest.raises(DocumentEncodingError, match=f"names no {spelling} value"):
+    with pytest.raises(DocumentEncodingError, match="type-mismatch|out-of-space"):
         encode_leaf(spelling, value)
 
 

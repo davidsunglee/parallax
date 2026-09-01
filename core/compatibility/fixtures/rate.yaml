@@ -26,24 +26,24 @@
 # familyVariant literal (DepositRate / LoanRate).
 parallax.compatibility.DepositRate:
   - id: 1
-    amount: 2.25
+    amount: "2.25"
     grade: B
-    validStart: "2024-01-01T00:00:00+00:00"
+    validStart: "2024-01-01T00:00:00.000000Z"
     validEnd: infinity
-    txStart: "2024-01-01T00:00:00+00:00"
-    txEnd: "2024-02-01T00:00:00+00:00"
+    txStart: "2024-01-01T00:00:00.000000Z"
+    txEnd: "2024-02-01T00:00:00.000000Z"
   - id: 1
-    amount: 2.50
+    amount: "2.50"
     grade: A
-    validStart: "2024-01-01T00:00:00+00:00"
+    validStart: "2024-01-01T00:00:00.000000Z"
     validEnd: infinity
-    txStart: "2024-02-01T00:00:00+00:00"
+    txStart: "2024-02-01T00:00:00.000000Z"
     txEnd: infinity
 parallax.compatibility.LoanRate:
   - id: 2
-    amount: 6.75
-    spread: 1.25
-    validStart: "2024-01-01T00:00:00+00:00"
+    amount: "6.75"
+    spread: "1.25"
+    validStart: "2024-01-01T00:00:00.000000Z"
     validEnd: infinity
-    txStart: "2024-01-01T00:00:00+00:00"
+    txStart: "2024-01-01T00:00:00.000000Z"
     txEnd: infinity

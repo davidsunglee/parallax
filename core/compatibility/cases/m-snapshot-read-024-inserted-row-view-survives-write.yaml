@@ -54,7 +54,7 @@ when:
         - mutation: insert
           entity: parallax.compatibility.Order
           rows:
-            - { id: 6, name: Hopper, sku: F-600, qty: 2, price: 60.00, active: true, orderedOn: 2024-07-07 }
+            - { id: 6, name: Hopper, sku: F-600, qty: 2, price: "60.00", active: true, orderedOn: 2024-07-07 }
         - mutation: insert
           entity: parallax.compatibility.OrderItem
           rows:
@@ -64,7 +64,7 @@ when:
       statements:
         - sql:
             postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
-          binds: [6, Hopper, F-600, 2, 60.00, true, 2024-07-07]
+          binds: [6, Hopper, F-600, 2, "60.00", true, 2024-07-07]
         - sql:
             postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
           binds: [61, 6, C-610, 4]
@@ -87,7 +87,7 @@ when:
             postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
           binds: [6]
       expectRows:
-        - { id: 6, name: Hopper, sku: F-600, qty: 2, price: 60.00, active: true, ordered_on: 2024-07-07 }
+        - { id: 6, name: Hopper, sku: F-600, qty: 2, price: "60.00", active: true, ordered_on: 2024-07-07 }
     - write:
         - mutation: update
           entity: parallax.compatibility.OrderItem

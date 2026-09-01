@@ -80,6 +80,6 @@ then:
         licenseId: null
         barkVolume: null
         indoor: null
-        tuskLength: 12.50
+        tuskLength: "12.50"
         familyVariant: WildBoar
   roundTrips: 3

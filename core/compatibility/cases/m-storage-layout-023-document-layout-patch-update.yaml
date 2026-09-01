@@ -22,9 +22,9 @@
 #     bare parameter there to `jsonb_set`'s declared `jsonb` and rejects every scalar
 #     bind outright; MariaDB accepts one but silently ESCAPES a composite into a
 #     string. `cast(? as jsonb)` and `json_extract(?, '$')` are the two expressions
-#     that take one authored bind form on both engines, and a JSON scalar rides as
-#     its JSON text (`"Dagny"`, `21`) because no structural authoring form
-#     distinguishes it from an ordinary scalar bind (m-case-format).
+#     that take one authored bind form on both engines. The portable golden carries
+#     each assigned leaf in its canonical Wire carrier; physical execution adapts
+#     that carrier to the dialect expression without changing the portable value.
 #
 # Pair ORDER is canonical logical placement order — `displayName` precedes `score`
 # because the layout places them in that order, not because the ① row lists them so —
@@ -80,8 +80,8 @@ then:
         postgres: update traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
         mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
       binds:
-        postgres: ['{displayName}', '"Dagny"', '{score}', '21', 6]
-        mariadb: ['$.displayName', '"Dagny"', '$.score', '21', 6]
+        postgres: ['{displayName}', Dagny, '{score}', 21, 6]
+        mariadb: ['$.displayName', Dagny, '$.score', 21, 6]
   tableState:
     traveler:
       - id: 6

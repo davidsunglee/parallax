@@ -39,8 +39,8 @@ when:
           route: Oslo-Bergen
           terms:
             clause: standard
-      validFrom: "2026-01-01T00:00:00+00:00"
-      at: "2026-01-01T00:00:00+00:00"
+      validFrom: "2026-01-01T00:00:00.000000Z"
+      at: "2026-01-01T00:00:00.000000Z"
     - mutation: updateUntil
       entity: parallax.compatibility.Charter
       statements: 4
@@ -50,9 +50,9 @@ when:
           route: Oslo-Tromso
           terms:
             clause: winter
-      validFrom: "2026-03-01T00:00:00+00:00"
-      at: "2026-02-15T00:00:00+00:00"
-      until: "2026-09-01T00:00:00+00:00"
+      validFrom: "2026-03-01T00:00:00.000000Z"
+      at: "2026-02-15T00:00:00.000000Z"
+      until: "2026-09-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
@@ -60,9 +60,9 @@ then:
         mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
       binds:
         - 1
-        - "2026-01-01T00:00:00+00:00"
+        - "2026-01-01T00:00:00.000000Z"
         - infinity
-        - "2026-01-01T00:00:00+00:00"
+        - "2026-01-01T00:00:00.000000Z"
         - infinity
         - route: Oslo-Bergen
           terms:
@@ -70,15 +70,15 @@ then:
     - sql:
         postgres: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
         mariadb: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
-      binds: ["2026-02-15T00:00:00+00:00", 1, infinity, infinity]
+      binds: ["2026-02-15T00:00:00.000000Z", 1, infinity, infinity]
     - sql:
         postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
         mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
       binds:
         - 1
-        - "2026-01-01T00:00:00+00:00"
-        - "2026-03-01T00:00:00+00:00"
-        - "2026-02-15T00:00:00+00:00"
+        - "2026-01-01T00:00:00.000000Z"
+        - "2026-03-01T00:00:00.000000Z"
+        - "2026-02-15T00:00:00.000000Z"
         - infinity
         - route: Oslo-Bergen
           terms:
@@ -88,9 +88,9 @@ then:
         mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
       binds:
         - 1
-        - "2026-03-01T00:00:00+00:00"
-        - "2026-09-01T00:00:00+00:00"
-        - "2026-02-15T00:00:00+00:00"
+        - "2026-03-01T00:00:00.000000Z"
+        - "2026-09-01T00:00:00.000000Z"
+        - "2026-02-15T00:00:00.000000Z"
         - infinity
         - route: Oslo-Tromso
           terms:
@@ -100,9 +100,9 @@ then:
         mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
       binds:
         - 1
-        - "2026-09-01T00:00:00+00:00"
+        - "2026-09-01T00:00:00.000000Z"
         - infinity
-        - "2026-02-15T00:00:00+00:00"
+        - "2026-02-15T00:00:00.000000Z"
         - infinity
         - route: Oslo-Bergen
           terms:
@@ -110,36 +110,36 @@ then:
   tableState:
     charter:
       - id: 1
-        from_z: "2026-01-01T00:00:00+00:00"
+        from_z: "2026-01-01T00:00:00.000000Z"
         thru_z: infinity
-        in_z: "2026-01-01T00:00:00+00:00"
-        out_z: "2026-02-15T00:00:00+00:00"
+        in_z: "2026-01-01T00:00:00.000000Z"
+        out_z: "2026-02-15T00:00:00.000000Z"
         payload:
           route: Oslo-Bergen
           terms:
             clause: standard
       - id: 1
-        from_z: "2026-01-01T00:00:00+00:00"
-        thru_z: "2026-03-01T00:00:00+00:00"
-        in_z: "2026-02-15T00:00:00+00:00"
+        from_z: "2026-01-01T00:00:00.000000Z"
+        thru_z: "2026-03-01T00:00:00.000000Z"
+        in_z: "2026-02-15T00:00:00.000000Z"
         out_z: infinity
         payload:
           route: Oslo-Bergen
           terms:
             clause: standard
       - id: 1
-        from_z: "2026-03-01T00:00:00+00:00"
-        thru_z: "2026-09-01T00:00:00+00:00"
-        in_z: "2026-02-15T00:00:00+00:00"
+        from_z: "2026-03-01T00:00:00.000000Z"
+        thru_z: "2026-09-01T00:00:00.000000Z"
+        in_z: "2026-02-15T00:00:00.000000Z"
         out_z: infinity
         payload:
           route: Oslo-Tromso
           terms:
             clause: winter
       - id: 1
-        from_z: "2026-09-01T00:00:00+00:00"
+        from_z: "2026-09-01T00:00:00.000000Z"
         thru_z: infinity
-        in_z: "2026-02-15T00:00:00+00:00"
+        in_z: "2026-02-15T00:00:00.000000Z"
         out_z: infinity
         payload:
           route: Oslo-Bergen

@@ -91,7 +91,7 @@ then:
         licenseId: null
         barkVolume: null
         indoor: null
-        tuskLength: 12.50
+        tuskLength: "12.50"
         familyVariant: WildBoar
         owner: { id: 12, name: Carol }
   roundTrips: 4

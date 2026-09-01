@@ -38,9 +38,9 @@ def _update_instruction() -> dict[str, object]:
         "mutation": "update",
         "target": {
             "entity": "Account",
-            "predicate": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+            "predicate": {"lessThan": {"attr": "Account.balance", "value": "200.00"}},
         },
-        "assignments": [{"attr": "Account.balance", "value": 0.00}],
+        "assignments": [{"attr": "Account.balance", "value": "0.00"}],
     }
 
 
@@ -57,7 +57,7 @@ def _scenario_case(instruction: dict[str, object]) -> dict[str, object]:
                     "statements": [
                         {
                             "sql": {"postgres": "update account set balance = ? where id = ?"},
-                            "binds": [0.00, 1],
+                            "binds": ["0.00", 1],
                         }
                     ],
                 }
@@ -169,8 +169,8 @@ def test_materialization_validator_accepts_a_matching_versioned_find() -> None:
         [
             _materializing_find(
                 entity,
-                {"lessThan": {"value": 200.00, "attr": "Account.balance"}},
-                [{"id": 1, "balance": 100.00, "version": 1}],
+                {"lessThan": {"value": "200.00", "attr": "Account.balance"}},
+                [{"id": 1, "balance": "100.00", "version": 1}],
             )
         ],
         instruction,
@@ -682,9 +682,9 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
                 "mutation": "update",
                 "target": {
                     "entity": "Account",
-                    "predicate": {"lessThan": {"attr": "Wallet.balance", "value": 200.00}},
+                    "predicate": {"lessThan": {"attr": "Wallet.balance", "value": "200.00"}},
                 },
-                "assignments": [{"attr": "Account.balance", "value": 0.00}],
+                "assignments": [{"attr": "Account.balance", "value": "0.00"}],
             },
             "inconsistent",
         ),
@@ -696,8 +696,8 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
                     "predicate": {"all": {}},
                 },
                 "assignments": [
-                    {"attr": "Account.balance", "value": 0.00},
-                    {"attr": "Account.balance", "value": 1.00},
+                    {"attr": "Account.balance", "value": "0.00"},
+                    {"attr": "Account.balance", "value": "1.00"},
                 ],
             },
             "duplicate",

@@ -1,12 +1,9 @@
-# Timestamp UTC normalization at the boundary (m-core timezone rule).
+# Timestamp UTC preservation at the boundary (m-core timezone rule).
 #
-# m-core mandates that a `timestamp` is stored as an instant normalized to UTC at the
-# boundary. This inserts an offset-bearing instant — 2024-03-01T05:30:00 at
-# +05:30 — and asserts it is stored and read back as the SAME instant in UTC:
-# 2024-03-01T00:00:00+00:00. Postgres normalizes natively (timestamptz); the
-# MariaDB seam converts the offset to a naive-UTC datetime(6) on the way in and
-# re-stamps +00:00 on the way out — so the one authored expected value holds on
-# both dialects. The bind carries the offset form; the stored form is UTC.
+# m-wire requires a canonical UTC instant before this write reaches m-core. This
+# inserts that instant and asserts both dialects preserve it through timestamp
+# storage. Postgres uses timestamptz; the MariaDB seam converts to and from its
+# naive-UTC datetime(6) representation.
 model: models/event.yaml
 tags: [m-core, m-sql, m-dialect, timestamp, timezone, utc, write-sequence, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -15,16 +12,16 @@ when:
     - mutation: insert
       entity: parallax.compatibility.Event
       statements: 1
-      note: insert an instant authored at +05:30; it must store as UTC
+      note: insert a canonical UTC instant and preserve it through storage
       rows:
-        - { id: 1, occurredAt: "2024-03-01T05:30:00+05:30" }
+        - { id: 1, occurredAt: "2024-03-01T00:00:00.000000Z" }
 then:
   statements:
     - sql:
         postgres: insert into event(id, occurred_at) values (?, ?)
         mariadb: insert into event(id, occurred_at) values (?, ?)
-      binds: [1, "2024-03-01T05:30:00+05:30"]
+      binds: [1, "2024-03-01T00:00:00.000000Z"]
   tableState:
     event:
-      - { id: 1, occurred_at: "2024-03-01T00:00:00+00:00" }
+      - { id: 1, occurred_at: "2024-03-01T00:00:00.000000Z" }
   roundTrips: 1

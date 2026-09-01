@@ -46,10 +46,10 @@ when:
       rows:
         - id: 1
           sensor: north
-          celsius: 20.00
+          celsius: "20.00"
           probe:
             model: TH-1
-      at: "2024-01-01T00:00:00+00:00"
+      at: "2024-01-01T00:00:00.000000Z"
     - mutation: update
       entity: parallax.compatibility.LayoutMeterReading
       statements: 2
@@ -57,10 +57,10 @@ when:
       rows:
         - id: 1
           sensor: north
-          celsius: 21.50
+          celsius: "21.50"
           probe:
             model: TH-2
-      at: "2024-02-01T00:00:00+00:00"
+      at: "2024-02-01T00:00:00.000000Z"
 then:
   statements:
     - sql:
@@ -69,21 +69,21 @@ then:
         - 1
         - meter
         - north
-        - 20.00
-        - "2024-01-01T00:00:00+00:00"
+        - "20.00"
+        - "2024-01-01T00:00:00.000000Z"
         - infinity
         - model: TH-1
     - sql:
         postgres: update layout_reading set out_z = ? where id = ? and kind = ? and out_z = ?
-      binds: ["2024-02-01T00:00:00+00:00", 1, meter, infinity]
+      binds: ["2024-02-01T00:00:00.000000Z", 1, meter, infinity]
     - sql:
         postgres: insert into layout_reading(id, kind, sensor, celsius, in_z, out_z, probe) values (?, ?, ?, ?, ?, ?, ?)
       binds:
         - 1
         - meter
         - north
-        - 21.50
-        - "2024-02-01T00:00:00+00:00"
+        - "21.50"
+        - "2024-02-01T00:00:00.000000Z"
         - infinity
         - model: TH-2
   tableState:
@@ -91,16 +91,16 @@ then:
       - id: 1
         kind: meter
         sensor: north
-        celsius: 20.00
-        in_z: "2024-01-01T00:00:00+00:00"
-        out_z: "2024-02-01T00:00:00+00:00"
+        celsius: "20.00"
+        in_z: "2024-01-01T00:00:00.000000Z"
+        out_z: "2024-02-01T00:00:00.000000Z"
         probe:
           model: TH-1
       - id: 1
         kind: meter
         sensor: north
-        celsius: 21.50
-        in_z: "2024-02-01T00:00:00+00:00"
+        celsius: "21.50"
+        in_z: "2024-02-01T00:00:00.000000Z"
         out_z: infinity
         probe:
           model: TH-2

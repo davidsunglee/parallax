@@ -43,7 +43,7 @@ when:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
             mariadb: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
-          binds: [9, Mallory, 42.00, 1]
+          binds: [9, Mallory, "42.00", 1]
       note: node A commits an INSERT of the new account on a separate connection
     - node: B
       kind: read
@@ -60,4 +60,4 @@ when:
           binds: [Mallory]
       note: node B re-resolves after mark-dirty and MUST observe A's committed insert
       observeRows:
-        - { id: 9, owner: Mallory, balance: 42.00, version: 1 }
+        - { id: 9, owner: Mallory, balance: "42.00", version: 1 }

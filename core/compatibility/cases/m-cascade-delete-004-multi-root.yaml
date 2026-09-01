@@ -51,10 +51,10 @@ then:
       binds: [42]
   tableState:
     orders:
-      - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
-      - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15 }
-      - { id: 4, name: Margaret, sku: null, qty: 20, price: 40.00, active: true, ordered_on: 2024-04-20 }
-      - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: 50.75, active: false, ordered_on: 2024-05-25 }
+      - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }
+      - { id: 3, name: ada, sku: A-300, qty: 15, price: "30.25", active: false, ordered_on: 2024-03-15 }
+      - { id: 4, name: Margaret, sku: null, qty: 20, price: "40.00", active: true, ordered_on: 2024-04-20 }
+      - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: "50.75", active: false, ordered_on: 2024-05-25 }
     order_item:
       - { id: 11, order_id: 1, sku: A-100, quantity: 2, shipped_on: null }
       - { id: 12, order_id: 1, sku: B-200, quantity: 1, shipped_on: 2024-02-15 }

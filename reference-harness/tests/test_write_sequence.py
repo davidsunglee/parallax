@@ -286,7 +286,7 @@ def test_multi_attribute_audit_update_chains_all_new_values() -> None:
     assert close == "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     assert chain.startswith("insert into balance(bal_id, acct_num, val, in_z, out_z)")
     # The chained INSERT binds carry BOTH corrected attributes (acct B, value 250.00).
-    assert case.statement_binds(2)[:3] == [1, "B", 250.00]
+    assert case.statement_binds(2)[:3] == [1, "B", "250.00"]
     # Must not raise: ① (the update row carrying both new attributes) cross-checks ②.
     _assert_write_input_columns(case, "postgres")
 
@@ -300,7 +300,7 @@ def test_plural_temporal_step_is_rejected() -> None:
     # against a golden statement it has no counterpart for.
     case = copy.deepcopy(_write_case_by_id("m-txtime-write-005"))
     step = case.write_sequence[0]
-    step["rows"].append({"id": 2, "acctNum": "B", "value": 999.00})
+    step["rows"].append({"id": 2, "acctNum": "B", "value": "999.00"})
     with pytest.raises(CaseFailure, match="carries 2 rows"):
         _assert_write_input_columns(case, "postgres")
 
@@ -350,7 +350,7 @@ def test_a_collapsed_update_requires_uniform_assigned_values() -> None:
     # would pass on a statement that never writes it.
     case = copy.deepcopy(_write_case_by_id("m-batch-write-001"))
     _assert_write_input_columns(case, "postgres")
-    case.write_sequence[1]["rows"][1]["balance"] = 999.00
+    case.write_sequence[1]["rows"][1]["balance"] = "999.00"
     with pytest.raises(CaseFailure, match="identical non-key values"):
         _assert_write_input_columns(case, "postgres")
 
@@ -415,7 +415,7 @@ def test_tph_insert_writes_tag_from_tag_value() -> None:
     case = _write_case_by_id("m-inheritance-007")
     (insert,) = case.golden_statements("postgres")
     assert insert == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
-    assert case.statement_binds(0) == [10, "card", 200.00, "Mastercard"]
+    assert case.statement_binds(0) == [10, "card", "200.00", "Mastercard"]
     assert "kind" not in case.write_sequence[0]["rows"][0]  # kind is derived, not authored
     _assert_write_input_columns(case, "postgres")
 
@@ -474,7 +474,7 @@ def test_tph_update_carries_tag_guard_after_pk() -> None:
     case = _write_case_by_id("m-inheritance-008")
     (update,) = case.golden_statements("postgres")
     assert update == "update payment set amount = ? where id = ? and kind = ?"
-    assert case.statement_binds(0) == [130.00, 1, "card"]
+    assert case.statement_binds(0) == ["130.00", 1, "card"]
     _assert_write_input_columns(case, "postgres")
 
 
@@ -506,7 +506,7 @@ def test_tph_update_missing_tag_guard_is_rejected() -> None:
     # shared table without it.
     case = copy.deepcopy(_write_case_by_id("m-inheritance-008"))
     case.then["statements"][0]["sql"]["postgres"] = "update payment set amount = ? where id = ?"
-    case.then["statements"][0]["binds"] = [130.00, 1]
+    case.then["statements"][0]["binds"] = ["130.00", 1]
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")
 

@@ -63,7 +63,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.wire import WireValue, decode_canonical_wire
+from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
 from parallax.snapshot.materialize._graph import (
     ABSENT,
     GraphBuilder,
@@ -193,11 +193,14 @@ def convert_row(
             members.append(ABSENT)
             continue
         raw = row[result_key]
-        value = (
-            decode_canonical_wire(attribute.type, cast("WireValue", raw))
-            if contract is not None and contract.encoded
-            else raw
-        )
+        try:
+            value = (
+                decode_canonical_wire(attribute.type, cast("WireValue", raw))
+                if contract is not None and contract.encoded
+                else raw
+            )
+        except WireDecodingError:
+            value = raw
         admitted = admits_stored_scalar(
             value,
             attribute.type,

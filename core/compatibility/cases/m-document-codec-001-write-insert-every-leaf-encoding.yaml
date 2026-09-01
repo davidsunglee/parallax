@@ -3,21 +3,17 @@
 # Postgres AND MariaDB. `m-wire` owns the spellings and `m-document-codec` stores
 # them, so this case is the storage half of the one table both consumers share.
 #
-# The neutral write input (①) names members and carries each value in its portable
-# wire spelling; the golden bind (②) is the DOCUMENT that input encodes to. The two
-# differ on exactly the rows where the encoding is a decision rather than an identity,
-# and each difference is a spelling some other implementation would plausibly have
-# produced:
+# The neutral write input names members and carries each value in its canonical Wire
+# spelling; the golden bind is the document that input encodes to. The five
+# text-carried scalar families make the canonical decisions directly observable:
 #
-#   amount   10.25                              -> "10.25"   an exact decimal STRING,
+#   amount   "10.25"                            exact decimal string,
 #                                                            because no JSON number
 #                                                            carries a declared scale
-#   blob     '0A1B'                             -> "0a1b"    lowercase hexadecimal
-#   clock    '09:30'                            -> "09:30:00" zero-padded ISO-8601
-#   instant  '2026-01-15T11:30:00+02:00'        -> "2026-01-15T09:30:00.000000Z"
-#                                                            UTC at microsecond
-#                                                            precision
-#   token    '123E4567-…-426614174000'          -> "123e4567-…" canonical lowercase
+#   blob     "0a1b"                             lowercase hexadecimal
+#   clock    "09:30:00"                         zero-padded ISO-8601
+#   instant  "2026-01-15T09:30:00.000000Z"      UTC at microsecond precision
+#   token    "123e4567-…-426614174000"          canonical lowercase
 #
 # The remaining leaves encode as themselves — a JSON boolean, two JSON integers, two
 # JSON numbers, and a JSON string — which is why an implementation can pass every
@@ -53,16 +49,16 @@ when:
             ratio: 1.5
             measure: 2.25
             text: alpha
-            amount: 10.25
-            blob: '0A1B'
+            amount: "10.25"
+            blob: "0a1b"
             day: '2026-01-15'
-            clock: '09:30'
-            instant: '2026-01-15T11:30:00+02:00'
-            token: '123E4567-E89B-12D3-A456-426614174000'
+            clock: "09:30:00"
+            instant: "2026-01-15T09:30:00.000000Z"
+            token: "123e4567-e89b-12d3-a456-426614174000"
             origin: { city: Oslo, since: '2020-03-01' }
             entries:
-              - { kind: home, active: true, price: 19.99, issued: '2026-02-01' }
-              - { kind: work, active: false, price: 5, issued: '2026-03-01' }
+              - { kind: home, active: true, price: "19.99", issued: '2026-02-01' }
+              - { kind: work, active: false, price: "5.00", issued: '2026-03-01' }
 then:
   statements:
     - sql:

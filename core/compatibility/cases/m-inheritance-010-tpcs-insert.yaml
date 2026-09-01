@@ -22,13 +22,13 @@ when:
       statements: 1
       note: insert an Invoice into its own concrete-subtype table; no tag column
       rows:
-        - { id: 10, title: Invoice-C, currency: USD, amountDue: 300.00 }
+        - { id: 10, title: Invoice-C, currency: USD, amountDue: "300.00" }
 then:
   statements:
     - sql:
         postgres: insert into invoice(id, title, currency, amount_due) values (?, ?, ?, ?)
-      binds: [10, Invoice-C, USD, 300.00]
+      binds: [10, Invoice-C, USD, "300.00"]
   tableState:
     invoice:
-      - { id: 10, title: Invoice-C, folder_id: null, currency: USD, amount_due: 300.00 }
+      - { id: 10, title: Invoice-C, folder_id: null, currency: USD, amount_due: "300.00" }
   roundTrips: 1

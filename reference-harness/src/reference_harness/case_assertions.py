@@ -58,6 +58,10 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
         da, db = _to_decimal(left), _to_decimal(right)
         if isinstance(da, Decimal) and isinstance(db, Decimal):
             return abs(da - db) <= tolerance
+    if isinstance(left, int) and not isinstance(left, bool):
+        return isinstance(right, int) and not isinstance(right, bool) and left == right
+    if isinstance(left, float):
+        return isinstance(right, float) and left == right
     return type(left) is type(right) and left == right
 
 
@@ -92,34 +96,23 @@ def rows_equal(
     )
 
 
-def _bytes_to_hex(value: Any) -> Any:
-    """Render a ``bytes`` / ``memoryview`` value as lowercase hex text, else unchanged.
-
-    The neutral write input (①) authors a ``bytes`` column as its wire form — a
-    lowercase hex STRING (a ``bytes`` object is not a JSON type the write-row schema
-    admits), while the golden bind carries the raw bytes (a ``!!binary`` tag). Both
-    collapse to the same lowercase hex text here so ① ↔ golden cross-checking and
-    table-state read-back compare a ``bytes`` column dialect-agnostically.
-    """
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return bytes(value).hex()
-    return value
-
-
 def write_value_equal(left: Any, right: Any) -> bool:
-    """Scalar equality for an ① value vs a golden bind, tolerant of date/bytes encoding.
-
-    A date/timestamp authored QUOTED in ① (a string) must match the golden bind
-    that PyYAML parsed from an UNQUOTED token into a ``date`` / ``datetime`` object;
-    compare their ISO string forms once the exact-Decimal comparison declines. A
-    ``bytes`` column is authored as a hex STRING in ① but as raw ``!!binary`` bytes
-    in the golden bind, so both are normalized to lowercase hex first.
-    """
-    left = _bytes_to_hex(left)
-    right = _bytes_to_hex(right)
-    if scalars_equal(left, right, None):
-        return True
-    return str(left) == str(right)
+    """Exact structural equality for canonical Wire write values and binds."""
+    if isinstance(left, dict) or isinstance(right, dict):
+        return (
+            isinstance(left, dict)
+            and isinstance(right, dict)
+            and left.keys() == right.keys()
+            and all(write_value_equal(left[key], right[key]) for key in left)
+        )
+    if isinstance(left, list) or isinstance(right, list):
+        return (
+            isinstance(left, list)
+            and isinstance(right, list)
+            and len(left) == len(right)
+            and all(write_value_equal(one, other) for one, other in zip(left, right, strict=True))
+        )
+    return scalars_equal(left, right, None)
 
 
 def coerce_identity_key(value: Any) -> Any:

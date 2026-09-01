@@ -26,7 +26,7 @@ when:
         - mutation: insert
           entity: parallax.compatibility.Account
           rows:
-            - { id: 9, owner: Noether, balance: 5.00 }
+            - { id: 9, owner: Noether, balance: "5.00" }
         - mutation: delete
           entity: parallax.compatibility.Account
           rows:

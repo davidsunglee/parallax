@@ -30,7 +30,7 @@ when:
                 mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
               binds: [2]
           expectRows:
-            - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+            - { id: 2, owner: Linus, balance: "250.00", version: 1 }
       - B:
           kind: read
           statements:
@@ -39,4 +39,4 @@ when:
                 mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
               binds: [2]
           expectRows:
-            - { id: 2, owner: Linus, balance: 250.00, version: 1 }
+            - { id: 2, owner: Linus, balance: "250.00", version: 1 }

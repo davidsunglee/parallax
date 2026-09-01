@@ -25,23 +25,23 @@ when:
         target:
           entity: parallax.compatibility.Wallet
           predicate:
-            lessThan: { attr: parallax.compatibility.Wallet.balance, value: 200.00 }
+            lessThan: { attr: parallax.compatibility.Wallet.balance, value: "200.00" }
       roundTrips: 1
       statements:
         - sql:
             postgres: delete from wallet where balance < ?
-          binds: [200.00]
+          binds: ["200.00"]
     - objectQuery:
         target: parallax.compatibility.Wallet
         predicate:
           lessThan:
             attr: parallax.compatibility.Wallet.balance
-            value: 200.00
+            value: "200.00"
       roundTrips: 1
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance from wallet t0 where t0.balance < ? for share of t0
-          binds: [200.00]
+          binds: ["200.00"]
       referenceSql: select id, owner, balance from wallet where balance < 200.00
       expectRows: []
 then:

@@ -23,5 +23,5 @@ then:
   graph:
     Payment:
       - { id: 1, detail: visa-4242, authorizationCode: AUTH-7, familyVariant: CardPayment }
-      - { id: 2, detail: 12.50, familyVariant: CashPayment }
+      - { id: 2, detail: "12.50", familyVariant: CashPayment }
   roundTrips: 1
