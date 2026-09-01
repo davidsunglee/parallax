@@ -429,12 +429,18 @@ class ComposedSeek:
 
     node: _SeekNode
     binds: tuple[Any, ...]
+    neutral_types: tuple[str | None, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.binds) != len(self.neutral_types):
+            raise ValueError("composed seek bind metadata must align with its binds")
 
 
 def _composed(operator: Literal["and", "or"], parts: Sequence[ComposedSeek]) -> ComposedSeek:
     return ComposedSeek(
         _joined(operator, [part.node for part in parts]),
         tuple(bind for part in parts for bind in part.binds),
+        tuple(neutral_type for part in parts for neutral_type in part.neutral_types),
     )
 
 
@@ -486,6 +492,7 @@ def _strictly_after(term: ContinuationTerm, coordinate: Any) -> ComposedSeek | N
         return ComposedSeek(
             _SeekJunction("or", (strict.node, _null_leaf(term).node)),
             (*strict.binds, *term.path_binds),
+            (*strict.neutral_types, *(None for _ in term.path_binds)),
         )
     return strict
 
@@ -502,11 +509,19 @@ def _hoisted_range(term: ContinuationTerm, coordinate: Any) -> ComposedSeek:
 
 def _comparison_leaf(term: ContinuationTerm, comparator: str, coordinate: Any) -> ComposedSeek:
     canonical = portable_literal.canonicalize_observed(coordinate, term.neutral_type)
-    return ComposedSeek(f"{term.compared} {comparator} ?", (*term.path_binds, canonical))
+    return ComposedSeek(
+        f"{term.compared} {comparator} ?",
+        (*term.path_binds, canonical),
+        (*(None for _ in term.path_binds), term.neutral_type),
+    )
 
 
 def _null_leaf(term: ContinuationTerm, *, negated: bool = False) -> ComposedSeek:
-    return ComposedSeek(f"{term.tested} is {'not ' if negated else ''}null", tuple(term.path_binds))
+    return ComposedSeek(
+        f"{term.tested} is {'not ' if negated else ''}null",
+        tuple(term.path_binds),
+        tuple(None for _ in term.path_binds),
+    )
 
 
 # --- grading one page's own text ---------------------------------------------

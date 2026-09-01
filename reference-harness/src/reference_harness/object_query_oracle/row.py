@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 from .. import portable_literal
+from .._structural import is_structural_sequence
 from ..case import Entity, Model
 from ..case_assertions import scalars_equal
 from ..multiset import multiset_matches
@@ -17,8 +18,8 @@ def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> b
     if (
         not isinstance(left, Mapping)
         and not isinstance(right, Mapping)
-        and not _is_non_string_sequence(left)
-        and not _is_non_string_sequence(right)
+        and not is_structural_sequence(left)
+        and not is_structural_sequence(right)
         and type(left) is type(right)
         and left == right
     ):
@@ -51,8 +52,8 @@ def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> b
         return member_equal(left, right)
     if declaration.get("multiplicity", "one") == "many":
         if (
-            not _is_non_string_sequence(left)
-            or not _is_non_string_sequence(right)
+            not is_structural_sequence(left)
+            or not is_structural_sequence(right)
             or len(left) != len(right)
         ):
             return False
@@ -63,10 +64,6 @@ def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> b
     if left is None or right is None:
         return left is None and right is None
     return member_equal(left, right)
-
-
-def _is_non_string_sequence(value: Any) -> bool:
-    return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
 
 
 def _attribute_for_key(model: Model, entity: Entity, key: str) -> dict[str, Any] | None:

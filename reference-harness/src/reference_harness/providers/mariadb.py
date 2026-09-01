@@ -11,7 +11,7 @@ not:
 * **No native timestamp infinity.** MariaDB's ``DATETIME`` has no ``'infinity'``,
   so the open temporal upper bound (m-core/m-dialect) maps to a documented **max-sentinel**
   — ``9999-12-31 23:59:59.999999`` (the largest ``DATETIME(6)``). This provider
-  translates the suite's ``infinity`` literal to that sentinel on the way in
+  translates the declared temporal-infinity marker to that sentinel on the way in
   (fixture loads, binds) and back to ``"infinity"`` on the way out (reads), so a
   fixture authored once against native-infinity Postgres compares identically
   here — the only place the difference is allowed to surface.
@@ -204,8 +204,9 @@ class MariaDbProvider:
 
     def query(self, sql: str, binds: Sequence[Any] = ()) -> list[dict[str, Any]]:
         # The harness stores golden SQL with `?` placeholders (m-sql); pymysql uses
-        # `%s`. Translate positional placeholders for execution, and translate the
-        # `infinity` literal / ISO instants in the binds to MariaDB forms.
+        # `%s`. Translate positional placeholders for execution, then adapt already-managed
+        # declared values and temporal-infinity markers to MariaDB forms. No raw string
+        # carrier is interpreted here.
         with self._conn.cursor() as cur:
             if binds:
                 cur.execute(

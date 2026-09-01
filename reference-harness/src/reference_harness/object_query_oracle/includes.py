@@ -615,7 +615,15 @@ def execute_fetch_levels(
             if step.child_entity.is_temporal
             else []
         )
-        if list(asof_suffix) != expected_suffix:
+        if len(asof_suffix) != len(expected_suffix) or not all(
+            execute.bind_value_equal(
+                authored,
+                expected,
+                "timestamp",
+                allow_temporal_infinity=True,
+            )
+            for authored, expected in zip(asof_suffix, expected_suffix, strict=True)
+        ):
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
                 f"({step.view_key}) as-of suffix {asof_suffix!r} != the propagated "

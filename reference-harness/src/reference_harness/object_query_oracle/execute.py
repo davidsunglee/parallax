@@ -24,6 +24,7 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
+from .. import portable_literal
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure, scalars_equal
 from ..sql_canonical import sqlglot_dialect
@@ -535,23 +536,42 @@ def expected_temporal_suffix(
 # --- bind comparison --------------------------------------------------------
 
 
-def _bytes_to_hex(value: Any) -> Any:
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return bytes(value).hex()
-    return value
+def _canonical_declared_bind(
+    value: Any,
+    neutral_type: str,
+    *,
+    allow_temporal_infinity: bool,
+) -> Any:
+    if allow_temporal_infinity and neutral_type == "timestamp" and value == "infinity":
+        return "infinity"
+    try:
+        return portable_literal.encode(value, neutral_type)
+    except portable_literal.PortableLiteralError:
+        if not isinstance(value, (str, int, float, bool)):
+            raise
+        managed = portable_literal.decode_canonical(value, neutral_type)
+        return portable_literal.encode(managed, neutral_type)
 
 
-def bind_value_equal(left: Any, right: Any) -> bool:
-    """Scalar equality for a derived bind vs an authored golden bind.
-
-    A date / timestamp the corpus YAML resolved into a ``date`` / ``datetime``
-    object must still match the same instant authored as text, so the two are
-    compared by ISO string form once the exact-Decimal comparison declines. A
-    ``bytes`` bind is normalized to lowercase hex first, so its wire form and its
-    raw form name the same value.
-    """
-    left = _bytes_to_hex(left)
-    right = _bytes_to_hex(right)
-    if scalars_equal(left, right, None):
-        return True
-    return str(left) == str(right)
+def bind_value_equal(
+    left: Any,
+    right: Any,
+    neutral_type: str,
+    *,
+    allow_temporal_infinity: bool = False,
+) -> bool:
+    """Compare two binds after independent canonical projection under one declaration."""
+    try:
+        left_wire = _canonical_declared_bind(
+            left,
+            neutral_type,
+            allow_temporal_infinity=allow_temporal_infinity,
+        )
+        right_wire = _canonical_declared_bind(
+            right,
+            neutral_type,
+            allow_temporal_infinity=allow_temporal_infinity,
+        )
+    except portable_literal.PortableLiteralError:
+        return False
+    return scalars_equal(left_wire, right_wire, None)

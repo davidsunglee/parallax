@@ -18,6 +18,7 @@ from decimal import Decimal
 from typing import Any
 
 from . import multiset
+from ._structural import is_structural_sequence
 from .case import Case
 
 
@@ -58,10 +59,10 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
             and isinstance(right, Mapping)
             and _mappings_equal(left, right, tolerance)
         )
-    if _is_structural_sequence(left) or _is_structural_sequence(right):
+    if is_structural_sequence(left) or is_structural_sequence(right):
         return (
-            _is_structural_sequence(left)
-            and _is_structural_sequence(right)
+            is_structural_sequence(left)
+            and is_structural_sequence(right)
             and len(left) == len(right)
             and all(
                 scalars_equal(one, other, tolerance) for one, other in zip(left, right, strict=True)
@@ -103,12 +104,6 @@ def _mappings_equal(
         if not scalars_equal(left_value, right[right_key], tolerance):
             return False
     return not unmatched
-
-
-def _is_structural_sequence(value: Any) -> bool:
-    return isinstance(value, Sequence) and not isinstance(
-        value, (str, bytes, bytearray, memoryview)
-    )
 
 
 def _row_matches(
