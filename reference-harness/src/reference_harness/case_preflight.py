@@ -41,8 +41,18 @@ def preflight_case_literals(case: Case) -> None:
             if isinstance(nested, Mapping):
                 _query(case, nested, f"when.{sequence_name}[{index}].objectQuery")
             _write_carrier(case, step.get("write"), f"when.{sequence_name}[{index}].write")
-    _write_carrier(case, when.get("write"), "when.write")
+    _write_carrier(case, when.get("write"), "when.write", fallback=case.model.root_entity)
     _write_carrier(case, when.get("writeSequence"), "when.writeSequence")
+    attempts = when.get("attempts")
+    if isinstance(attempts, Sequence) and not isinstance(attempts, (str, bytes)):
+        for index, attempt in enumerate(attempts):
+            if isinstance(attempt, Mapping):
+                _write_carrier(
+                    case,
+                    attempt.get("write"),
+                    f"when.attempts[{index}].write",
+                    fallback=case.model.root_entity,
+                )
     _preflight_expected(case)
 
 
@@ -236,13 +246,46 @@ def _element_predicate(
                 )
 
 
-def _write_carrier(case: Case, carrier: object, where: str) -> None:
+def _write_carrier(
+    case: Case,
+    carrier: object,
+    where: str,
+    *,
+    fallback: Entity | None = None,
+) -> None:
     if isinstance(carrier, Sequence) and not isinstance(carrier, (str, bytes)):
         for index, item in enumerate(carrier):
-            _write_carrier(case, item, f"{where}[{index}]")
+            _write_carrier(case, item, f"{where}[{index}]", fallback=fallback)
         return
     if not isinstance(carrier, Mapping):
         return
+    target = carrier.get("target")
+    if isinstance(target, Mapping):
+        target_name = target.get("entity")
+        if isinstance(target_name, str):
+            target_entity = case.model.entity(target_name)
+            predicate = target.get("predicate")
+            if isinstance(predicate, Mapping):
+                _predicate(case, target_entity, predicate, f"{where}.target.predicate")
+            assignments = carrier.get("assignments")
+            if isinstance(assignments, Sequence) and not isinstance(assignments, (str, bytes)):
+                for index, assignment in enumerate(assignments):
+                    if not isinstance(assignment, Mapping):
+                        continue
+                    member = _predicate_member(case, target_entity, assignment)
+                    value = assignment.get("value")
+                    if member is not None and "value" in assignment:
+                        _attribute_literal(
+                            case,
+                            _reference_entity(
+                                case,
+                                target_entity,
+                                str(assignment.get("attr", target_name)),
+                            ),
+                            member,
+                            value,
+                            f"{where}.assignments[{index}].value",
+                        )
     entity_name = carrier.get("entity")
     rows = carrier.get("rows")
     if isinstance(entity_name, str) and isinstance(rows, Sequence):
@@ -250,6 +293,8 @@ def _write_carrier(case: Case, carrier: object, where: str) -> None:
         for index, row in enumerate(rows):
             if isinstance(row, Mapping):
                 _entity_row(case, entity, row, f"{where}.rows[{index}]")
+    elif fallback is not None and "mutation" not in carrier and "target" not in carrier:
+        _entity_row(case, fallback, carrier, where)
     for name in ("at", "validFrom", "until", "observedTxStart", "observedValidStart"):
         value = carrier.get(name)
         if value is not None and value != "infinity":
