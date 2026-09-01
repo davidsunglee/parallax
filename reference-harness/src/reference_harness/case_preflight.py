@@ -440,10 +440,39 @@ def _expected_graph(case: Case, value: object, where: str) -> None:
                 continue
             for index, row in enumerate(nested):
                 if isinstance(row, Mapping):
-                    _entity_row(case, entity, row, f"{where}.{name}[{index}]")
+                    _expected_entity_row(case, entity, row, f"{where}.{name}[{index}]")
     elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         for index, nested in enumerate(value):
             _expected_graph(case, nested, f"{where}[{index}]")
+
+
+def _expected_entity_row(
+    case: Case,
+    entity: Entity,
+    row: Mapping[str, object],
+    where: str,
+) -> None:
+    variant = row.get("familyVariant")
+    if isinstance(variant, str):
+        try:
+            entity = case.model.entity(variant)
+        except KeyError:
+            pass
+    _entity_row(case, entity, row, where)
+    relationships = {
+        relationship["name"]: relationship for relationship in entity.relationship_metadata
+    }
+    for key, value in row.items():
+        relationship = relationships.get(key.split("[", 1)[0])
+        if relationship is None:
+            continue
+        target = case.model.entity(relationship["join"]["target"]["entity"])
+        if isinstance(value, Mapping):
+            _expected_entity_row(case, target, value, f"{where}.{key}")
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for index, child in enumerate(value):
+                if isinstance(child, Mapping):
+                    _expected_entity_row(case, target, child, f"{where}.{key}[{index}]")
 
 
 def _nullable_literal(

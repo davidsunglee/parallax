@@ -18,22 +18,44 @@ def _case(
     fixture_value: object = "10.50",
 ) -> Case:
     descriptor = {
-        "entity": {
-            "name": "Reading",
-            "namespace": "example",
-            "table": "reading",
-            "attributes": [
-                {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                {"name": "amount", "type": "decimal(12,2)", "column": "amount"},
-                {"name": "day", "type": "date", "column": "day"},
-            ],
-            "valueObjects": [
-                {
-                    "name": "profile",
-                    "attributes": [{"name": "expires", "type": "date"}],
-                }
-            ],
-        }
+        "entities": [
+            {
+                "name": "Reading",
+                "namespace": "example",
+                "table": "reading",
+                "attributes": [
+                    {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                    {"name": "amount", "type": "decimal(12,2)", "column": "amount"},
+                    {"name": "day", "type": "date", "column": "day"},
+                ],
+                "valueObjects": [
+                    {
+                        "name": "profile",
+                        "attributes": [{"name": "expires", "type": "date"}],
+                    }
+                ],
+                "relationships": [
+                    {
+                        "name": "samples",
+                        "cardinality": "one-to-many",
+                        "join": {
+                            "source": "id",
+                            "target": {"entity": "example.Sample", "attribute": "readingId"},
+                        },
+                    }
+                ],
+            },
+            {
+                "name": "Sample",
+                "namespace": "example",
+                "table": "sample",
+                "attributes": [
+                    {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                    {"name": "readingId", "type": "int64", "column": "reading_id"},
+                    {"name": "quantity", "type": "int32", "column": "quantity"},
+                ],
+            },
+        ]
     }
     model = Model(
         Path("reading.yaml"),
@@ -185,4 +207,34 @@ def test_preflight_checks_retry_attempt_write_rows() -> None:
     )
 
     with pytest.raises(CaseFailure, match=r"when\.attempts\[0\]\.write\.day"):
+        preflight_case_literals(case)
+
+
+def test_preflight_checks_expected_graph_relationship_children() -> None:
+    source = _case()
+    case = Case(
+        source.path,
+        {
+            "shape": "read",
+            "when": {
+                "objectQuery": {
+                    "target": "example.Reading",
+                    "predicate": {"all": {}},
+                }
+            },
+            "then": {
+                "graph": {
+                    "Reading": [
+                        {
+                            "id": 1,
+                            "samples": [{"id": 2, "readingId": 1, "quantity": "not-an-int"}],
+                        }
+                    ]
+                }
+            },
+        },
+        source.model,
+    )
+
+    with pytest.raises(CaseFailure, match=r"samples\[0\]\.quantity.*names no int32"):
         preflight_case_literals(case)

@@ -10,6 +10,7 @@ from .. import portable_literal
 from ..case import Entity, Model
 from ..case_assertions import scalars_equal
 from ..multiset import multiset_matches
+from . import materialize
 
 
 def _value_object_equal(left: Any, right: Any, declaration: dict[str, Any]) -> bool:
@@ -74,13 +75,14 @@ def _row_matches(
 ) -> bool:
     if left.keys() != right.keys():
         return False
+    concrete = materialize.variant_entity(model, entity, left)
     value_objects = {
         key: declaration
-        for declaration in entity.value_objects
+        for declaration in concrete.value_objects
         for key in (declaration["name"], declaration.get("column"))
         if key is not None
     }
-    temporal_end_columns = {axis["end_column"] for axis in entity.temporal_runtime_axes}
+    temporal_end_columns = {axis["end_column"] for axis in concrete.temporal_runtime_axes}
     for key in left:
         if key in value_objects:
             if not _value_object_equal(left[key], right[key], value_objects[key]):
@@ -90,7 +92,7 @@ def _row_matches(
             if left[key] is not None or right[key] is not None:
                 return False
             continue
-        attribute = _attribute_for_key(model, entity, key)
+        attribute = _attribute_for_key(model, concrete, key)
         if attribute is None:
             if not scalars_equal(left[key], right[key], tolerance):
                 return False

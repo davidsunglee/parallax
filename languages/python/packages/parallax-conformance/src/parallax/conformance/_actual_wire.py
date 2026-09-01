@@ -71,15 +71,33 @@ class ActualWireProjection:
     def published_row(self, query: ObjectQueryNode, row: Mapping[str, object]) -> Row:
         """A row-form query result, resolved from its projected physical columns."""
         attributes, value_objects = self._query_members(query)
-        by_column: dict[str, AttributeMetadata | ValueObjectMetadata] = {
-            member.storage.name: member for member in (*attributes, *value_objects)
-        }
+        by_column: dict[
+            str,
+            dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata | ValueObjectMetadata],
+        ] = {}
+        for member in (*attributes, *value_objects):
+            by_column.setdefault(member.storage.name, {})[member.identity] = member
+        selected: dict[str, AttributeMetadata | ValueObjectMetadata] | None = None
         projected: Row = {}
         for name, value in row.items():
             if name == "familyVariant":
                 projected[name] = value
                 continue
-            member = by_column.get(name)
+            options = tuple(by_column.get(name, {}).values())
+            if len(options) == 1:
+                member = options[0]
+            elif options:
+                if selected is None:
+                    concrete_attributes, concrete_value_objects = self._published_row_members(
+                        query, row
+                    )
+                    selected = {
+                        item.storage.name: item
+                        for item in (*concrete_attributes, *concrete_value_objects)
+                    }
+                member = selected.get(name)
+            else:
+                member = None
             if isinstance(member, AttributeMetadata):
                 projected[name] = self.scalar(member, value)
             elif member is not None:
@@ -89,6 +107,20 @@ class ActualWireProjection:
                     f"{query.target.canonical}: no projected member owns column {name!r}"
                 )
         return projected
+
+    def _published_row_members(
+        self, query: ObjectQueryNode, row: Mapping[str, object]
+    ) -> tuple[tuple[AttributeMetadata, ...], tuple[ValueObjectMetadata, ...]]:
+        variant = row.get("familyVariant")
+        if not isinstance(variant, str):
+            raise ValueError(
+                f"{query.target.canonical}: an ambiguous projected column requires familyVariant"
+            )
+        entity = self._entity_by_name(variant)
+        view = inheritance.view(self._model).entity(entity.identity)
+        if view is None:  # pragma: no cover - every accepted Entity has a view
+            raise ValueError(f"{entity.identity.canonical}: no inheritance position")
+        return tuple(view.applicable_attributes), tuple(view.applicable_value_objects)
 
     def entity_values(
         self, entity: EntityMetadata, values: Mapping[str, object], *, omit_framework: bool = False
