@@ -14,22 +14,31 @@ have their own suite.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import inspect
 import pickle
 from collections.abc import Callable
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import pytest
 from _corpus_model_support import model, target
 
 from _support import fake_metamodel
 from _support.sql import compile_read
-from parallax.core import inheritance, relationship, storage_layout
+from parallax.core import deep_fetch, inheritance, relationship, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import (
+    Metamodel,
+    NestedValueObjectMetadata,
+    ValueObjectAttributeIdentity,
+    ValueObjectAttributeMetadata,
+    ValueObjectIdentity,
+)
+from parallax.core.predicate._validated import ValidatedOperands, ValidatedPredicate
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
+from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import (
     AttributeReadContract,
     CompiledPredicate,
@@ -42,6 +51,179 @@ CUSTOMER = model("customer")
 ACCOUNT = model("account")
 SCALARS = model("scalars")
 PAYMENT = model("payment")
+
+
+def _compile_validated_product(
+    product: ValidatedPredicate, meta: Metamodel = ACCOUNT
+) -> CompiledRead:
+    entity = target(meta, "Account") if meta is ACCOUNT else target(meta, "Customer")
+    query = deep_fetch.ValidatedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        validated_predicate=product,
+        projection=deep_fetch.ResolvedReadProjection((), False),
+    )
+    return compile_entity_query(query, meta, POSTGRES)
+
+
+def test_sql_lowering_rejects_incomplete_validated_scalar_products() -> None:
+    balance = target(ACCOUNT, "Account").attribute("balance")
+    assert balance is not None
+
+    with pytest.raises(SqlGenError, match="carries no resolved Attribute"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.Comparison(op="eq", attr="Account.balance", value="1.00"),
+                operands=ValidatedOperands((1,), balance.type),
+            )
+        )
+    with pytest.raises(SqlGenError, match="carries no validated operands"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.Comparison(op="eq", attr="Account.balance", value="1.00"),
+                member=balance,
+            )
+        )
+    with pytest.raises(SqlGenError, match="carries no validated operands"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.Membership(op="in", attr="Account.balance", values=("1.00",)),
+                member=balance,
+            )
+        )
+    with pytest.raises(SqlGenError, match="has no declared neutral type"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.Comparison(op="eq", attr="Account.balance", value="1.00"),
+                operands=ValidatedOperands((1,), None),
+                member=balance,
+            )
+        )
+
+
+def test_sql_lowering_rejects_incomplete_validated_structural_products() -> None:
+    with pytest.raises(SqlGenError, match="no resolved effective position"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.Narrow(to=("Account",), operand=oa.All()),
+                children=(ValidatedPredicate(oa.All()),),
+            )
+        )
+    with pytest.raises(SqlGenError, match="no resolved relationship join"):
+        _compile_validated_product(ValidatedPredicate(oa.Exists(rel="Account.missing")))
+    with pytest.raises(SqlGenError, match="no resolved nested leaf"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.NestedComparison(op="nestedEq", path="Customer.address.city", value="Berlin")
+            ),
+            CUSTOMER,
+        )
+    with pytest.raises(SqlGenError, match="no resolved container"):
+        _compile_validated_product(
+            ValidatedPredicate(oa.NestedExists(path="Customer.address.phones")), CUSTOMER
+        )
+
+
+def test_inheritance_plan_may_select_but_never_replace_a_validated_occurrence() -> None:
+    operand = oa.All()
+    product = ValidatedPredicate(
+        oa.Narrow(to=("Account",), operand=operand),
+        children=(ValidatedPredicate(operand),),
+    )
+
+    assert sql_compile._planned_inner(product, operand) is product.children[0]  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(SqlGenError, match="replaced rather than selected"):
+        sql_compile._planned_inner(product, object())  # pyright: ignore[reportPrivateUsage]
+
+
+def test_sql_lowering_rejects_inconsistent_validated_value_object_products() -> None:
+    customer = target(CUSTOMER, "Customer")
+    position = inheritance.view(CUSTOMER).entity(customer.identity)
+    assert position is not None
+    address = position.applicable_value_object("address")
+    assert address is not None
+    city = address.attribute("city")
+    phones = address.value_object("phones")
+    assert city is not None
+    assert phones is not None
+
+    outside_leaf = cast(
+        "ValueObjectAttributeMetadata",
+        dataclasses.replace(
+            cast("Any", city),
+            identity=ValueObjectAttributeIdentity(
+                ValueObjectIdentity(customer.identity, ("address", "other")), "city"
+            ),
+        ),
+    )
+    child = ValidatedPredicate(
+        oa.NestedComparison(op="nestedEq", path="other.city", value="Berlin"),
+        operands=ValidatedOperands(("Berlin",), city.type),
+        member=outside_leaf,
+    )
+    with pytest.raises(SqlGenError, match="outside its resolved container"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.NestedExists(path="Customer.address.phones", where=child.authored),
+                children=(child,),
+                container=phones,
+            ),
+            CUSTOMER,
+        )
+
+    absent_leaf = cast(
+        "ValueObjectAttributeMetadata",
+        dataclasses.replace(
+            cast("Any", city),
+            identity=ValueObjectAttributeIdentity(
+                ValueObjectIdentity(customer.identity, ("missing",)), "city"
+            ),
+        ),
+    )
+    with pytest.raises(SqlGenError, match="is absent from the active position"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.NestedComparison(op="nestedEq", path="Customer.missing.city", value="Berlin"),
+                operands=ValidatedOperands(("Berlin",), city.type),
+                member=absent_leaf,
+            ),
+            CUSTOMER,
+        )
+
+    array_leaf = cast(
+        "ValueObjectAttributeMetadata",
+        dataclasses.replace(
+            cast("Any", city),
+            identity=ValueObjectAttributeIdentity(
+                ValueObjectIdentity(customer.identity, ("address",)), "phones"
+            ),
+        ),
+    )
+    with pytest.raises(SqlGenError, match="ends on the `many` array itself"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.NestedComparison(op="nestedEq", path="Customer.address.phones", value="Berlin"),
+                operands=ValidatedOperands(("Berlin",), city.type),
+                member=array_leaf,
+            ),
+            CUSTOMER,
+        )
+
+    absent_container = cast(
+        "NestedValueObjectMetadata",
+        dataclasses.replace(
+            cast("Any", phones),
+            identity=ValueObjectIdentity(customer.identity, ("missing", "phones")),
+        ),
+    )
+    with pytest.raises(SqlGenError, match="is absent from the active position"):
+        _compile_validated_product(
+            ValidatedPredicate(
+                oa.NestedExists(path="Customer.missing.phones"),
+                container=absent_container,
+            ),
+            CUSTOMER,
+        )
 
 
 def test_all_projects_scalar_columns() -> None:

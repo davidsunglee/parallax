@@ -43,9 +43,10 @@ from _support.db_port import (
     Write,
     WriteCall,
 )
+from parallax.conformance import models
 from parallax.conformance import vo_models as vo
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
-from parallax.core.base import InstantError, PresentDocument
+from parallax.core.base import INT64, InstantError, PresentDocument
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
@@ -58,6 +59,7 @@ from parallax.snapshot.handle import (
     WireEntity,
     WriteEvidenceError,
 )
+from parallax.snapshot.handle import _wire_writes as wire_writes
 
 _ACCOUNT_ROW: Row = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4}
 _PERSON_ROW: Row = {"id": 1, "name": "Ada"}
@@ -869,6 +871,33 @@ def test_a_malformed_predicate_is_judged_before_anything_the_model_decides() -> 
 
     db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
+
+
+def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_members() -> None:
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="undeclared members"):
+            tx.wire.update_where(_PERSON_TARGET, {"undeclared": 1})
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_wire_write_decoding_bounds_invalid_leaves_and_preserves_unknown_document_fields() -> None:
+    with pytest.raises(instructions.InstructionRejectedError, match="type-mismatch"):
+        wire_writes._decoded_leaf(INT64, "invalid", "Person.id")  # pyright: ignore[reportPrivateUsage]
+
+    meta = models.load_models()["contact"]
+    contact = next(entity for entity in meta.entities if entity.identity.name == "Contact")
+    address = next(
+        member
+        for member in wire_writes._declared_row_members(meta, contact)  # pyright: ignore[reportPrivateUsage]
+        if getattr(member.identity, "path", ()) == ("address",)
+    )
+    assert wire_writes._decoded_document(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", address), {"future": {"opaque": True}}, "Contact.address"
+    ) == {"future": {"opaque": True}, "phones": []}
 
 
 def test_an_empty_change_document_is_a_keyed_no_op_and_a_predicate_refusal() -> None:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -529,7 +530,14 @@ def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
 
     assert_case_read(case, reads)
 
-    assert reads.calls[2][1] == (100, 1000, 1000, 1000, "2024-04-01T00:00:00.000000Z", 1)
+    assert reads.calls[2][1] == (
+        100,
+        1000,
+        1000,
+        1000,
+        datetime(2024, 4, 1, tzinfo=UTC),
+        1,
+    )
 
 
 # --- a delivery that reached the right rows the wrong way --------------------

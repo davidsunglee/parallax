@@ -38,6 +38,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeDeclaration,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
 )
 from parallax.core.predicate import QueryDefinitionError, serialize
 
@@ -201,6 +202,25 @@ def test_an_element_expression_answers_no_private_name_and_has_no_truth_value() 
         _ = element._missing
     with pytest.raises(TypeError, match="has no truth value"):
         bool(element)
+    assert hash(element) == hash((("number",), shape_of(vm.Phone).shape))
+
+
+def test_element_operations_reject_missing_shape_members_and_nonnullable_null_checks() -> None:
+    with pytest.raises(QueryDefinitionError, match="resolved scalar metadata"):
+        ElementAttributeExpr(("leaf",)).like("x")
+
+    empty = ValueObjectShapeDeclaration(key=ValueObjectShapeKey(), attributes=(), value_objects=())
+    with pytest.raises(QueryDefinitionError, match="not a nested Value Object"):
+        ElementAttributeExpr(("missing", "leaf"), empty).like("x")
+    with pytest.raises(QueryDefinitionError, match="not a scalar leaf"):
+        ElementAttributeExpr(("leaf",), empty).like("x")
+    with pytest.raises(QueryDefinitionError, match="nullable scalar leaf"):
+        _element(vm.Address.city).is_null()
+
+
+def test_entity_rooted_nested_operation_rejects_an_unknown_intermediate_occurrence() -> None:
+    with pytest.raises(QueryDefinitionError, match="resolved scalar metadata"):
+        vm.Customer.address.missing.leaf.like("x")
 
 
 def test_an_entity_rooted_nested_predicate_carries_the_dotted_canonical_path() -> None:

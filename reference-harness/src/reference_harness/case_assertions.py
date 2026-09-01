@@ -13,7 +13,7 @@ seam can reach another through it.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -52,6 +52,21 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
     not repair Decimal/float, instant/string, UUID/string, or bytes/string carrier
     differences when no metadata says which value space they occupy.
     """
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        return (
+            isinstance(left, Mapping)
+            and isinstance(right, Mapping)
+            and _mappings_equal(left, right, tolerance)
+        )
+    if _is_structural_sequence(left) or _is_structural_sequence(right):
+        return (
+            _is_structural_sequence(left)
+            and _is_structural_sequence(right)
+            and len(left) == len(right)
+            and all(
+                scalars_equal(one, other, tolerance) for one, other in zip(left, right, strict=True)
+            )
+        )
     if isinstance(left, bool) or isinstance(right, bool):
         return isinstance(left, bool) and isinstance(right, bool) and left == right
     if tolerance is not None:
@@ -65,15 +80,48 @@ def scalars_equal(left: Any, right: Any, tolerance: Decimal | None) -> bool:
     return type(left) is type(right) and left == right
 
 
-def _row_matches(left: dict[str, Any], right: dict[str, Any], tolerance: Decimal | None) -> bool:
-    if left.keys() != right.keys():
+def _mappings_equal(
+    left: Mapping[Any, Any],
+    right: Mapping[Any, Any],
+    tolerance: Decimal | None,
+) -> bool:
+    if len(left) != len(right):
         return False
-    return all(scalars_equal(left[key], right[key], tolerance) for key in left)
+    unmatched = list(right)
+    for left_key, left_value in left.items():
+        right_index = next(
+            (
+                index
+                for index, candidate in enumerate(unmatched)
+                if type(left_key) is type(candidate) and left_key == candidate
+            ),
+            None,
+        )
+        if right_index is None:
+            return False
+        right_key = unmatched.pop(right_index)
+        if not scalars_equal(left_value, right[right_key], tolerance):
+            return False
+    return not unmatched
+
+
+def _is_structural_sequence(value: Any) -> bool:
+    return isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray, memoryview)
+    )
+
+
+def _row_matches(
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
+    tolerance: Decimal | None,
+) -> bool:
+    return scalars_equal(left, right, tolerance)
 
 
 def rows_equal(
-    left: Sequence[dict[str, Any]],
-    right: Sequence[dict[str, Any]],
+    left: Sequence[Mapping[str, Any]],
+    right: Sequence[Mapping[str, Any]],
     tolerance: Decimal | None = None,
     *,
     ordered: bool = False,
@@ -98,20 +146,6 @@ def rows_equal(
 
 def write_value_equal(left: Any, right: Any) -> bool:
     """Exact structural equality for canonical Wire write values and binds."""
-    if isinstance(left, dict) or isinstance(right, dict):
-        return (
-            isinstance(left, dict)
-            and isinstance(right, dict)
-            and left.keys() == right.keys()
-            and all(write_value_equal(left[key], right[key]) for key in left)
-        )
-    if isinstance(left, list) or isinstance(right, list):
-        return (
-            isinstance(left, list)
-            and isinstance(right, list)
-            and len(left) == len(right)
-            and all(write_value_equal(one, other) for one, other in zip(left, right, strict=True))
-        )
     return scalars_equal(left, right, None)
 
 

@@ -12,6 +12,7 @@ cycle. Nothing here is a seam — do not hang lane variation off it.
 
 from __future__ import annotations
 
+from ._statement_bind_inference import managed_statement_binds
 from .case import Case
 from .data_loader import load_model
 from .ddl_builder import ddl_for
@@ -58,4 +59,6 @@ def apply_given(case: Case, db: DatabaseProvider) -> None:
     defaults to empty. A case carrying none applies nothing.
     """
     for entry in case.apply:
-        db.execute(entry["sql"], list(entry.get("binds", [])))
+        statement = entry["sql"]
+        binds = list(entry.get("binds", []))
+        db.execute(statement, managed_statement_binds(case, statement, binds, db.dialect))

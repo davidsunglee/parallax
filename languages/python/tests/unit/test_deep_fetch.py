@@ -12,6 +12,7 @@ here is over the returned `ObjectQueryPlan` / `FetchLevel` shape alone.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import cast
 
 import pytest
@@ -19,7 +20,7 @@ from _corpus_model_support import formed
 from _corpus_model_support import model as accepted_model
 from _corpus_model_support import target as entity_of
 
-from parallax.core import deep_fetch
+from parallax.core import deep_fetch, inheritance, relationship
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -46,6 +47,8 @@ from parallax.core.predicate import (
     Narrow,
     PredicateNode,
 )
+from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
+from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
@@ -98,6 +101,86 @@ def _plan(
         model,
         projection=deep_fetch.ReadProjectionRequest("all", True),
     )
+
+
+def test_fetch_level_refuses_a_queryable_product_without_its_child_member() -> None:
+    level = _plan(ORDERS, "Order", (_path(_seg("Order.items")),)).levels[0]
+
+    with pytest.raises(deep_fetch.DeepFetchError, match="no resolved child member"):
+        dataclasses.replace(level, related_member=None).query_for((1,))
+
+
+def test_relationship_ordering_rejects_a_resolved_member_that_disappeared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direction = relationship.view(ORDERS).relationship(
+        RelationshipIdentity(entity_of(ORDERS, "Order").identity, "itemsByShipDate")
+    )
+    assert direction is not None
+    child = entity_of(ORDERS, "OrderItem")
+
+    class MissingMemberView:
+        @staticmethod
+        def applicable_attribute(_name: str) -> None:
+            return None
+
+    monkeypatch.setattr(
+        deep_fetch,
+        "_entity_view",
+        lambda *_args: MissingMemberView(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+
+    with pytest.raises(deep_fetch.DeepFetchError, match=r"order member.*is absent"):
+        deep_fetch._resolved_order_terms(  # pyright: ignore[reportPrivateUsage]
+            direction, child, inheritance.view(ORDERS)
+        )
+
+
+def test_deep_fetch_rejects_a_validated_path_whose_relationship_disappeared() -> None:
+    entity = entity_of(ORDERS, "Order")
+    authored = object_query(
+        entity.identity,
+        All(),
+        includes=(_path(_seg("Order.items")),),
+    )
+    validated = validate_object_query(entity, authored, ORDERS)
+    path = validated.includes[0]
+    segment = dataclasses.replace(
+        path.segments[0],
+        relationship=RelationshipIdentity(EntityIdentity(None, "Missing"), "items"),
+    )
+    malformed = dataclasses.replace(
+        validated, includes=(dataclasses.replace(path, segments=(segment,)),)
+    )
+
+    with pytest.raises(deep_fetch.DeepFetchError, match=r"resolved relationship.*is absent"):
+        deep_fetch.plan(
+            malformed,
+            ORDERS,
+            projection=deep_fetch.ReadProjectionRequest("all", True),
+        )
+
+
+def test_mutation_read_unions_an_explicit_projection_with_assigned_value_objects() -> None:
+    account = entity_of(ORDERS, "Order")
+    prepared = prepare_typed_write(
+        PredicateWrite(
+            "update",
+            PredicateSelection(account.identity.canonical, All()),
+            (WriteAssignment(f"{account.identity.canonical}.name", "updated"),),
+        ),
+        ORDERS,
+    )
+    assert isinstance(prepared, PreparedPredicateWrite)
+
+    query = deep_fetch.plan_mutation_read(
+        prepared,
+        model=ORDERS,
+        temporal=(),
+        projection=deep_fetch.ReadProjectionRequest(frozenset({"unavailable"}), False),
+    )
+
+    assert query.projection.value_objects == ()
 
 
 # --------------------------------------------------------------------------- #

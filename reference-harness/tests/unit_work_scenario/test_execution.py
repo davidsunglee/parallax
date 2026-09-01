@@ -253,7 +253,7 @@ def test_an_abort_with_no_gated_write_detected_no_conflict(damaged_case) -> None
     case = damaged_case("m-opt-lock-012-conflict-aborts-uow.yaml")
     gated = case.when["scenario"][3]["statements"][1]
     gated["sql"]["postgres"] = "update account set balance = ?, version = ? where id = ?"
-    gated["binds"] = [300.00, 2, 2]
+    gated["binds"] = ["300.00", 2, 2]
     with pytest.raises(CaseFailure, match="exactly one version-gated write"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_conflict_abort_script(case, 0)))
 
@@ -304,11 +304,12 @@ def test_a_step_that_fails_an_observable_stops_the_scenario_where_it_stands(
 
 
 def _pair(case: Case, index: int, statement: int = 0) -> tuple[str, tuple[Any, ...]]:
-    """The (sql, binds) a step's own golden authors for postgres."""
+    """The (sql, provider binds) a step's own golden produces for postgres."""
+    from reference_harness._statement_bind_inference import managed_statement_binds
     from reference_harness.case import entry_pairs
 
     sql, binds = entry_pairs(case.scenario[index].get("statements"), "postgres")[statement]
-    return sql, tuple(binds)
+    return sql, managed_statement_binds(case, sql, binds, "postgres")
 
 
 def _uncommitted_write_then_reference_sql_case() -> Case:

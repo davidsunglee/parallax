@@ -23,7 +23,7 @@ from _support.sql import compile_read
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, TemporalDimension
-from parallax.core.navigate import canonicalize, resolve_relationship
+from parallax.core.navigate import canonicalize, canonicalize_validated, resolve_relationship
 from parallax.core.object_query import AsOf, TemporalSelection
 from parallax.core.object_query import TemporalDimension as QueryTemporalDimension
 from parallax.descriptor._serde import deserialize
@@ -116,6 +116,18 @@ def test_walk_recurses_through_predicate_combinators_only() -> None:
         canonical = canonicalize(op, ORDERS, ORDER)
         assert canonical is not op
         assert type(canonical) is type(op), op
+
+
+def test_validated_walk_rebuilds_not_and_group_wrappers_around_navigation() -> None:
+    for authored in (
+        oa.Not(operand=oa.Exists(rel="Order.items")),
+        oa.Group(operand=oa.Exists(rel="Order.items")),
+    ):
+        product = oa.validate_predicate(ORDER, authored, ORDERS)
+
+        canonical = canonicalize_validated(product, ORDERS, ORDER, {})
+
+        assert type(canonical.authored) is type(authored)
 
 
 # --------------------------------------------------------------------------- #

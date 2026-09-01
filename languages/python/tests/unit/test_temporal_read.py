@@ -10,7 +10,9 @@ are checked against the same canonical form the corpus goldens fix.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
+from typing import Any, cast
 
 import pytest
 from _corpus_model_support import model as accepted_model
@@ -23,16 +25,24 @@ from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, TemporalDimension
 from parallax.core.object_query import LATEST
+from parallax.core.object_query._validated import (
+    ValidatedAsOfSelection,
+    ValidatedLatestSelection,
+)
 from parallax.core.predicate import ModelRejectedError
+from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import (
     TemporalReadError,
     inject_as_of,
+    inject_resolved_as_of,
     milestone_edge,
     milestone_edge_from_members,
     milestone_edge_of,
     query_pin,
     scans_an_axis,
+    validated_hop_as_of_terms,
+    validated_query_pin,
 )
 
 _MODELS = models.load_models()
@@ -84,6 +94,103 @@ def _where(
     statement = compile_read(root, model, POSTGRES).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
+
+
+def test_temporal_injection_rejects_incomplete_resolved_products() -> None:
+    axis = POSITION.declared_as_of_axes[0]
+    without_end = cast(
+        "EntityMetadata",
+        dataclasses.replace(
+            cast("Any", POSITION),
+            declared_attributes=tuple(
+                member
+                for member in POSITION.declared_attributes
+                if member.identity.name != axis.end_attribute.name
+            ),
+        ),
+    )
+
+    with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
+        inject_resolved_as_of(
+            ValidatedPredicate(oa.All()),
+            (ValidatedLatestSelection(axis),),
+            without_end,
+        )
+    with pytest.raises(TemporalReadError, match="not a managed datetime"):
+        validated_query_pin((ValidatedAsOfSelection(axis, 1),))
+    with pytest.raises(AssertionError):
+        inject_resolved_as_of(
+            ValidatedPredicate(oa.All()),
+            (cast("Any", type("UnknownSelection", (), {"axis": axis})()),),
+            POSITION,
+        )
+
+
+def test_hop_temporal_injection_rejects_axes_with_missing_members(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    axis = POSITION.declared_as_of_axes[0]
+    without_end = cast(
+        "EntityMetadata",
+        dataclasses.replace(
+            cast("Any", POSITION),
+            declared_attributes=tuple(
+                member
+                for member in POSITION.declared_attributes
+                if member.identity.name != axis.end_attribute.name
+            ),
+        ),
+    )
+
+    class Family:
+        @staticmethod
+        def entity(_identity: object) -> Any:
+            return type("Position", (), {"root": without_end.identity})()
+
+    class Model:
+        @staticmethod
+        def entity(_identity: object) -> EntityMetadata:
+            return without_end
+
+    import parallax.core.inheritance as inheritance_module
+
+    monkeypatch.setattr(
+        inheritance_module,
+        "view",
+        lambda _model: Family(),  # pyright: ignore[reportUnknownArgumentType,reportUnknownLambdaType]
+    )
+    malformed_model = cast("Any", Model())
+
+    with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
+        validated_hop_as_of_terms(without_end, malformed_model, {})
+    with pytest.raises(TemporalReadError, match="temporal axis member is undeclared"):
+        validated_hop_as_of_terms(
+            without_end,
+            malformed_model,
+            {axis.dimension: dt.datetime(2024, 1, 1, tzinfo=dt.UTC)},
+        )
+
+
+def test_authored_temporal_injection_requires_one_mode_for_every_declared_axis() -> None:
+    with pytest.raises(TemporalReadError, match="received no selection"):
+        inject_as_of(oa.All(), {}, POSITION)
+
+
+def test_temporal_query_validation_reports_an_invalid_wire_coordinate() -> None:
+    with pytest.raises(ModelRejectedError) as caught:
+        oq.validate_object_query(
+            POSITION,
+            _query(
+                POSITION,
+                {
+                    "transaction-time": oq.AsOf("not-an-instant"),
+                    "valid-time": oq.AsOf("latest"),
+                },
+            ),
+            _ACCEPTED["Position"],
+        )
+
+    assert caught.value.rule == "neutral-literal-type-mismatch"
 
 
 # --------------------------------------------------------------------------- #

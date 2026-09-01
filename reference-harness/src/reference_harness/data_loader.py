@@ -8,13 +8,17 @@ Every row-owning entity in a (possibly multi-entity) descriptor is loaded.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from .case import Entity, Model
+from .ddl_builder import contributor_types
 from .document_codec import encode_leaf
 from .inheritance import assert_no_abstract_fixture_rows
+from .portable_literal import decode
 from .storage_layout import (
     AttributeContributor,
+    ColumnContributor,
     ColumnSlot,
     DocumentPath,
     EntityLayoutView,
@@ -86,7 +90,12 @@ def _fixture_document(
     return document
 
 
-def _load_entity(entity: Entity, view: EntityLayoutView, db: DatabaseProvider) -> None:
+def _load_entity(
+    entity: Entity,
+    view: EntityLayoutView,
+    db: DatabaseProvider,
+    types: Mapping[ColumnContributor, tuple[str, int | None]],
+) -> None:
     rows = entity.rows
     if not rows:
         return
@@ -107,7 +116,7 @@ def _load_entity(entity: Entity, view: EntityLayoutView, db: DatabaseProvider) -
             raise ValueError(
                 f"fixture row for {entity.name} references unknown member(s) {sorted(unknown)}"
             )
-        tuples.append([_cell(slot, entity, view, document_names, row) for slot in slots])
+        tuples.append([_cell(slot, entity, view, document_names, row, types) for slot in slots])
 
     db.load(view.layout.table, columns, tuples)
 
@@ -118,6 +127,7 @@ def _cell(
     view: EntityLayoutView,
     document_names: tuple[str, ...],
     row: dict[str, Any],
+    types: Mapping[ColumnContributor, tuple[str, int | None]],
 ) -> Any:
     """One row's value for one physical column.
 
@@ -128,7 +138,13 @@ def _cell(
     if isinstance(slot.contributor, RelationalDocument):
         return _fixture_document(entity, document_names, row)
     name = _member_name(slot)
-    return _tag_value(view) if name is None else row.get(name)
+    if name is None:
+        return _tag_value(view)
+    value = row.get(name)
+    declared = types.get(slot.contributor)
+    if value is None or declared is None or (declared[0] == "timestamp" and value == "infinity"):
+        return value
+    return decode(value, declared[0])
 
 
 def _tag_value(view: EntityLayoutView) -> str:
@@ -146,8 +162,9 @@ def load_model(model: Model, db: DatabaseProvider) -> None:
     """
     assert_no_abstract_fixture_rows(model)
     layout = model.storage_layout
+    types = contributor_types(model)
     for entity in model.entities:
         view = layout.entity(entity.canonical_name)
         if view is None:
             continue
-        _load_entity(entity, view, db)
+        _load_entity(entity, view, db, types)

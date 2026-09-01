@@ -67,10 +67,12 @@ from parallax.core.unit_work import (
     VersionColumns,
     WriteAssignment,
     WritePlanner,
+    instant_literal,
     whole,
 )
 from parallax.core.unit_work.columns import (
     _CHUNK_SIZE,  # pyright: ignore[reportPrivateUsage] - bounded-chunking regression only
+    freeze_retained_value,
 )
 from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
@@ -88,6 +90,21 @@ _BRANCH = _MODELS["branch"]
 # --------------------------------------------------------------------------- #
 # Chunked Column / Column Slice: bounded construction and structural sharing. #
 # --------------------------------------------------------------------------- #
+def test_retained_tuple_freezes_nested_mutable_values_without_copying_immutable_peers() -> None:
+    immutable = ("stable",)
+
+    frozen = freeze_retained_value((immutable, [1, {"nested": [2]}]))
+
+    assert frozen == (immutable, (1, MappingProxyType({"nested": (2,)})))
+    assert cast("tuple[object, ...]", frozen)[0] is immutable
+
+
+def test_transaction_instant_literal_uses_canonical_utc_wire_spelling() -> None:
+    assert instant_literal(
+        dt.datetime(2024, 1, 1, 1, tzinfo=dt.timezone(dt.timedelta(hours=1)))
+    ) == ("2024-01-01T00:00:00.000000Z")
+
+
 def test_a_chunked_column_seals_bounded_chunks_as_it_builds() -> None:
     builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
     count = _CHUNK_SIZE * 2 + 7

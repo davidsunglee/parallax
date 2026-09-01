@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from reference_harness.case import FrozenDict, FrozenList
 from reference_harness.case_assertions import rows_equal, scalars_equal
 from reference_harness.portable_literal import AuthoredInteger, AuthoredNumber, values_equal
 
@@ -57,3 +58,44 @@ def test_tolerance_still_catches_real_differences() -> None:
 def test_order_insensitive_multiset() -> None:
     assert rows_equal([{"id": 1}, {"id": 2}], [{"id": 2}, {"id": 1}])
     assert not rows_equal([{"id": 1}], [{"id": 1}, {"id": 2}])
+
+
+def test_ordinary_and_frozen_nested_wire_containers_compare_by_structure() -> None:
+    ordinary = [
+        {
+            "id": 1,
+            "payload": {"labels": ["alpha", {"rank": 2}], "active": True},
+        }
+    ]
+    frozen = [
+        FrozenDict(
+            {
+                "id": 1,
+                "payload": FrozenDict(
+                    {
+                        "labels": FrozenList(["alpha", FrozenDict({"rank": 2})]),
+                        "active": True,
+                    }
+                ),
+            }
+        )
+    ]
+
+    assert rows_equal(ordinary, frozen)
+    assert rows_equal(frozen, ordinary)
+
+
+def test_nested_structural_comparison_keeps_keys_positions_and_scalar_types_exact() -> None:
+    frozen = [
+        FrozenDict(
+            {
+                "payload": FrozenDict(
+                    {"values": FrozenList([FrozenDict({"kind": "count", "value": 1}), 2])}
+                )
+            }
+        )
+    ]
+
+    assert not rows_equal([{"payload": {"values": [{"kind": "total", "value": 1}, 2]}}], frozen)
+    assert not rows_equal([{"payload": {"values": [2, {"kind": "count", "value": 1}]}}], frozen)
+    assert not rows_equal([{"payload": {"values": [{"kind": "count", "value": 1.0}, 2]}}], frozen)

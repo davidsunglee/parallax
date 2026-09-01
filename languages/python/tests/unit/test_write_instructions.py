@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import Iterator, Mapping
+from decimal import Decimal
 from typing import Any, cast
 
 import jsonschema
@@ -326,6 +327,11 @@ def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
         )
 
 
+def test_programmatic_keyed_write_rejects_observation_control_keys_too() -> None:
+    with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
+        wi.KeyedWrite("update", "Account", ({"id": 1, "observedVersion": 2},))
+
+
 def test_ambiguous_and_shapeless_instructions_are_rejected() -> None:
     with pytest.raises(wi.WriteInstructionError, match="ambiguous"):
         wi.deserialize(
@@ -597,6 +603,78 @@ def test_typed_temporal_bounds_stay_native_until_wire_serialization() -> None:
         _POSITION,
     )
     assert wire_prepared.bounds == prepared.bounds
+
+
+def test_typed_preparation_rejects_a_non_instant_temporal_bound() -> None:
+    instruction = wi.KeyedWrite(
+        "update",
+        "Position",
+        ({"id": 1, "value": Decimal("5.00")},),
+        valid_from="2024-01-01T00:00:00.000000Z",
+    )
+
+    with pytest.raises(wi.WriteInstructionError, match="invalid typed temporal bound"):
+        wi.prepare_typed_write(instruction, _POSITION)
+
+
+def test_assigned_member_validation_rejects_a_plural_keyed_write() -> None:
+    instruction = wi.KeyedWrite(
+        "update",
+        "Account",
+        (
+            {"id": 1, "balance": "1.00"},
+            {"id": 2, "balance": "2.00"},
+        ),
+    )
+
+    with pytest.raises(wi.WriteInstructionError, match="applies only to one addressed write row"):
+        wi.prepare_wire_write(instruction, _ACCOUNT, assigned_members={"balance"})
+
+
+def test_preparation_rejects_a_model_whose_inheritance_view_lost_the_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class MissingPosition:
+        @staticmethod
+        def entity(_identity: object) -> None:
+            return None
+
+    def missing_view(_model: object) -> MissingPosition:
+        return MissingPosition()
+
+    monkeypatch.setattr(inheritance, "view", missing_view)
+
+    with pytest.raises(wi.WriteInstructionError, match="undeclared member"):
+        wi.prepare_typed_write(
+            wi.KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("1.00")},)),
+            _ACCOUNT,
+        )
+
+
+def test_member_transformation_preserves_unknown_values_when_position_metadata_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entity = next(item for item in _ACCOUNT.entities if item.identity.name == "Account")
+
+    class MissingPosition:
+        @staticmethod
+        def entity(_identity: object) -> None:
+            return None
+
+    def missing_view(_model: object) -> MissingPosition:
+        return MissingPosition()
+
+    monkeypatch.setattr(inheritance, "view", missing_view)
+    assert wi._declared_member_map(_ACCOUNT, entity) == {}  # pyright: ignore[reportPrivateUsage]
+
+    transformed = wi._transform_row(  # pyright: ignore[reportPrivateUsage]
+        _ACCOUNT,
+        entity,
+        {"future": {"opaque": True}},
+        converter=lambda _type, value, _path: (value, True),
+        fill_missing_many=False,
+    )
+    assert transformed.row == {"future": {"opaque": True}}
 
 
 def test_member_name_honesty_rejects_undeclared_row_member() -> None:

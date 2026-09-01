@@ -46,7 +46,8 @@ import threading
 from collections.abc import Iterator, Mapping
 from typing import Any, NamedTuple
 
-from . import errors, serde
+from . import errors, portable_literal, serde
+from ._statement_bind_inference import managed_statement_binds
 from .case import (
     Case,
     Entity,
@@ -88,6 +89,7 @@ from .metamodel import (
     validate_index_identities,
 )
 from .object_query_oracle import assert_case_read
+from .object_query_oracle import row as object_query_row
 from .object_query_validate import validate_object_query
 from .predicate_write_validate import (
     requires_predicate_write_materialization,
@@ -2520,19 +2522,25 @@ def _read_table(
         f"t0.{quote_identifier(slot.column, db.dialect)}" for slot in layout.columns
     )
     rows = db.query(f"select {projection} from {quote_identifier(layout.table, db.dialect)} t0")
-    document_columns = {slot.column for slot in layout.columns if slot.tier is ColumnTier.DOCUMENT}
-    bytes_columns = {
-        slot.column
-        for slot in layout.columns
-        if types.get(slot.contributor, ("", None))[0] == "bytes"
-    }
     for row in rows:
-        for column in document_columns:
-            if column in row:
-                row[column] = decode_stored(row[column])
-        for column in bytes_columns:
-            if isinstance(row.get(column), (bytes, bytearray, memoryview)):
-                row[column] = bytes(row[column]).hex()
+        for slot in layout.columns:
+            value = row.get(slot.column)
+            if slot.tier is ColumnTier.DOCUMENT:
+                row[slot.column] = decode_stored(value)
+                continue
+            declared = types.get(slot.contributor)
+            if (
+                value is None
+                or declared is None
+                or (declared[0] == "timestamp" and value == "infinity")
+            ):
+                continue
+            if declared[0] == "bytes" and isinstance(value, (bytes, bytearray, memoryview)):
+                value = bytes(value)
+            try:
+                row[slot.column] = portable_literal.canonicalize_observed(value, declared[0])
+            except portable_literal.PortableLiteralError:
+                pass
     return rows
 
 
@@ -2549,7 +2557,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
 
     for index, statement in enumerate(statements):
         binds = case.statement_binds(index, dialect)
-        db.execute(statement, binds)
+        db.execute(statement, managed_statement_binds(case, statement, binds, dialect))
 
     expected = case.expected_table_state
     types = contributor_types(case.model)
@@ -2598,7 +2606,10 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
     # Here the out-of-band setup is a concurrent transaction's own mutation.
     apply_given(case, db)
 
-    affected = db.execute(statements[0], case.statement_binds(0))
+    binds = case.statement_binds(0, dialect)
+    affected = db.execute(
+        statements[0], managed_statement_binds(case, statements[0], binds, dialect)
+    )
     expected = case.expected_affected_rows
     if affected != expected:
         raise CaseFailure(
@@ -2673,7 +2684,10 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
                 f"{case.path.name}: attempts[{index}] must list exactly one golden "
                 f"UPDATE for {dialect}, found {len(statements)}."
             )
-        affected = db.execute(statements[0], _entry_binds(attempt.get("statements"), 0, dialect))
+        binds = _entry_binds(attempt.get("statements"), 0, dialect)
+        affected = db.execute(
+            statements[0], managed_statement_binds(case, statements[0], binds, dialect)
+        )
         expected = attempt["affectedRows"]
         if affected != expected:
             raise CaseFailure(
@@ -2751,9 +2765,9 @@ def _assert_error_single_connection(case: Case, db: DatabaseProvider) -> None:
     last = len(statements) - 1
     raised: Exception | None = None
     for index, statement in enumerate(statements):
-        binds = case.statement_binds(index)
+        binds = case.statement_binds(index, db.dialect)
         try:
-            db.execute(statement, binds)
+            db.execute(statement, managed_statement_binds(case, statement, binds, db.dialect))
         except Exception as exc:  # noqa: BLE001 -- any driver error is the signal
             if index != last:
                 raise CaseFailure(
@@ -2856,7 +2870,7 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
             if pairs:
                 try:
                     for sql, binds in pairs:
-                        session.execute(sql, binds)
+                        session.execute(sql, managed_statement_binds(case, sql, binds, dialect))
                 except Exception as exc:  # noqa: BLE001 -- the contention signal
                     raised[node] = exc
                     errored = True
@@ -3010,9 +3024,17 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
                         # takes its lock here) and compare the observed rows.
                         rows: list[dict[str, Any]] = []
                         for sql, binds in pairs:
-                            rows = session.query(sql, binds)
+                            rows = session.query(
+                                sql, managed_statement_binds(case, sql, binds, dialect)
+                            )
                         expect = step.get("expectRows") or []
-                        if not rows_equal(rows, expect, tolerance):
+                        if not object_query_row.rows_equal(
+                            rows,
+                            expect,
+                            case.model,
+                            case.model.root_entity,
+                            tolerance,
+                        ):
                             row_failures.append(
                                 f"node {node} observed rows != expectRows.\n"
                                 f"  observed: {rows!r}\n"
@@ -3022,7 +3044,7 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
                         # A write step (kind: write) succeeds iff no lock blocks it;
                         # it holds until the finally rolls it back.
                         for sql, binds in pairs:
-                            session.execute(sql, binds)
+                            session.execute(sql, managed_statement_binds(case, sql, binds, dialect))
                 except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
                     raised[node] = exc
                     with contextlib.suppress(Exception):
@@ -3116,7 +3138,10 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
             pairs = entry_pairs(step.get("statements"), dialect)
             if step["kind"] == "write":
                 for statement, binds in pairs:
-                    node.execute(statement, binds)
+                    node.execute(
+                        statement,
+                        managed_statement_binds(case, statement, binds, dialect),
+                    )
                 results.append([])  # keep indices aligned for sameObjectAs
                 continue
 
@@ -3129,11 +3154,20 @@ def _assert_coherence(case: Case, db: DatabaseProvider) -> None:
                 )
             rows: list[dict[str, Any]] = []
             for statement, binds in pairs:
-                rows = node.query(statement, binds)
+                rows = node.query(
+                    statement,
+                    managed_statement_binds(case, statement, binds, dialect),
+                )
             results.append(rows)
 
             observe = step.get("observeRows")
-            if observe is not None and not rows_equal(rows, observe, tolerance):
+            target = step.get("objectQuery", {}).get("target")
+            entity = (
+                case.model.entity(target) if isinstance(target, str) else case.model.root_entity
+            )
+            if observe is not None and not object_query_row.rows_equal(
+                rows, observe, case.model, entity, tolerance
+            ):
                 raise CaseFailure(
                     f"{case.path.name}: coherence[{index}] on node "
                     f"{step['node']} observed rows != observeRows.\n"

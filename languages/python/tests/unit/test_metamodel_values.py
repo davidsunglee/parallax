@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import sys
 import uuid
 from collections.abc import Callable
 
@@ -389,8 +390,12 @@ def test_a_timestamp_member_names_an_instant_a_utc_datetime_holds(unusable: dt.d
         (decimal.Decimal("1.000000178813934326171875"), base.FLOAT32, 1.0 + 2.0**-22),
         (decimal.Decimal("1048576.2"), base.FLOAT32, 1048576.25),
         (decimal.Decimal("1e39"), base.FLOAT32, None),
+        (decimal.Decimal("1e-46"), base.FLOAT32, 0.0),
+        (decimal.Decimal("1e-47"), base.FLOAT32, 0.0),
         (decimal.Decimal("1e309"), base.FLOAT64, None),
         (decimal.Decimal("1e-1000000000"), base.FLOAT64, 0.0),
+        (float("nan"), base.FLOAT64, None),
+        (decimal.Decimal("NaN"), base.FLOAT64, None),
     ],
 )
 def test_nearest_float_projection_is_exact_at_the_declared_width(
@@ -399,6 +404,22 @@ def test_nearest_float_projection_is_exact_at_the_declared_width(
     expected: float | None,
 ) -> None:
     assert base.nearest_float_at_width(value, declared) == expected
+
+
+def test_float64_projection_refuses_a_decimal_that_rounds_to_infinity_at_the_boundary() -> None:
+    assert (
+        base.nearest_float_at_width(decimal.Decimal("1.7976931348623159e308"), base.FLOAT64) is None
+    )
+
+
+def test_json_integer_membership_is_bounded_and_honors_an_unlimited_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    oversized = 10**6000
+    assert base.matches_neutral_type({"value": oversized}, base.JSON) is False
+
+    monkeypatch.setattr(sys, "get_int_max_str_digits", lambda: 0)
+    assert base.matches_neutral_type({"value": oversized}, base.JSON) is True
 
 
 # Developer-input coercion accepts the documented widenings without sharing

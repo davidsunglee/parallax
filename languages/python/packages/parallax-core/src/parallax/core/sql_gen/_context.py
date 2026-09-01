@@ -61,6 +61,13 @@ type _BindForm = Literal["MANAGED", "COMPARISON_TEXT"]
 type _TypedBindSlot = tuple[NeutralType, _BindForm]
 
 
+class _NoWireBindOverride:
+    pass
+
+
+_NO_WIRE_BIND_OVERRIDE = _NoWireBindOverride()
+
+
 @dataclass(frozen=True, slots=True)
 class _TypedBindSpan:
     start: int
@@ -313,10 +320,15 @@ class StatementBuilder:
     def bind_comparison_text(self, value: object, neutral_type: NeutralType) -> None:
         self._bind_typed(value, neutral_type, "COMPARISON_TEXT")
 
-    def bind_framework(self, value: object, *, wire_value: WireValue | None = None) -> None:
+    def bind_framework(
+        self,
+        value: object,
+        *,
+        wire_value: WireValue | _NoWireBindOverride = _NO_WIRE_BIND_OVERRIDE,
+    ) -> None:
         index = len(self._binds)
         self._append(value)
-        if wire_value is not None:
+        if not isinstance(wire_value, _NoWireBindOverride):
             self._wire_overrides[index] = wire_value
 
     def bind_framework_all(self, values: Sequence[object]) -> None:

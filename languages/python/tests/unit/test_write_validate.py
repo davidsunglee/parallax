@@ -527,6 +527,15 @@ def test_a_complete_subtype_insert_over_inherited_members_is_accepted() -> None:
     validate_write(_TRUCK_METADATA, _valid_truck_row(), _FAMILY_MODEL, mutation="insert")
 
 
+def test_write_validation_translates_an_inheritance_target_refusal() -> None:
+    root = _entity(_FAMILY_MODEL, "Vehicle")
+
+    with pytest.raises(WriteRejectedError) as caught:
+        validate_write(root, {"id": 1, "name": "n", "plate": {"serial": "s"}}, _FAMILY_MODEL)
+
+    assert caught.value.rule == "abstract-write-target"
+
+
 _LEDGER = identity("Ledger")
 _CASH = identity("CashLedger")
 _LEDGER_MODEL = form_metamodel(
