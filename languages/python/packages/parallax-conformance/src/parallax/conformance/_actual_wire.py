@@ -352,7 +352,10 @@ class ActualWireProjection:
             else:
                 member = None
             if isinstance(member, AttributeMetadata):
-                projected[name] = self.published_scalar(member, item)
+                try:
+                    projected[name] = self.published_scalar(member, item)
+                except WireDecodingError:
+                    projected[name] = item
             elif member is not None:
                 projected[name] = self.published_value_object(member, item)
             else:

@@ -253,6 +253,7 @@ def _check_string_predicate(
             f"{subject!r}: a string predicate reads text, but the member's declared type "
             f"is {declared!r}, not 'string'",
         )
+    decode_typed_literal(body.get("value"), declared, repr(subject))
 
 
 def _check_nested_exists(entity: Entity, body: dict[str, Any]) -> None:

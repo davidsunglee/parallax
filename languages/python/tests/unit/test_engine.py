@@ -5442,6 +5442,28 @@ def test_table_state_projects_sibling_document_paths_from_the_row_variant() -> N
     assert cash["payload"] == {"detail": "12.50", "future": None}
 
 
+def test_table_state_preserves_malformed_declared_relational_document_leaves() -> None:
+    from parallax.core import storage_layout
+
+    meta = models.load_models()["document-layout"]
+    layout = next(
+        candidate
+        for candidate in storage_layout.view(meta).tables
+        if candidate.table.name == "payment_document"
+    )
+
+    projected = ActualWireProjection(meta).table_row(
+        layout,
+        {
+            "id": 2,
+            "kind": "cash",
+            "payload": {"detail": "12.5", "future": None},
+        },
+    )
+
+    assert projected["payload"] == {"detail": "12.5", "future": None}
+
+
 def test_table_state_validates_direct_value_objects_as_stored_wire_documents() -> None:
     from parallax.core import storage_layout
 
