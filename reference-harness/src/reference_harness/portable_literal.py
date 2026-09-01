@@ -34,6 +34,8 @@ import math
 import re
 import struct
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Literal, Never
 
@@ -79,6 +81,17 @@ def _fail(reason: PortableLiteralReason, value: object, neutral_type: str) -> Ne
     raise PortableLiteralError(reason, f"{value!r} is {reason} for {neutral_type}")
 
 
+def _canonical_scalar_equal(left: Any, right: Any) -> bool:
+    return _same_json_scalar(left, right)
+
+
+@dataclass(frozen=True, slots=True)
+class _Codec:
+    decode: Callable[[Any, str], Any]
+    encode: Callable[[Any, str], Any]
+    canonical_equal: Callable[[Any, Any], bool] = _canonical_scalar_equal
+
+
 def decode(value: Any, neutral_type: str) -> Any:
     """Decode one admitted portable literal under ``neutral_type``.
 
@@ -89,95 +102,20 @@ def decode(value: Any, neutral_type: str) -> Any:
         raise PortableLiteralError(
             "type-mismatch", "null is enclosing presence, not a typed literal"
         )
-    decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
-    if decimal_type is not None:
-        precision, scale = (int(part) for part in decimal_type.groups())
-        if not isinstance(value, str):
-            _fail("type-mismatch", value, neutral_type)
-        text = str(value)
-        if _DECIMAL_NUMBER.fullmatch(text) is None:
-            _fail("type-mismatch", value, neutral_type)
-        parsed = decimal.Decimal(text)
-        if not _decimal_in_space(parsed, precision, scale):
-            _fail("out-of-space", value, neutral_type)
-        managed = parsed.copy_abs() if parsed.is_zero() else parsed
-        canonical = _exact_decimal(managed, scale)
-        if canonical != text:
-            _fail("noncanonical", value, neutral_type)
-        return managed
-    if neutral_type == "boolean":
-        if isinstance(value, bool):
-            return value
-        _fail("type-mismatch", value, neutral_type)
-    elif neutral_type in ("int32", "int64"):
-        bound = 2**31 if neutral_type == "int32" else 2**63
-        number = _source_decimal(value)
-        if number is None or not number.is_finite() or number != number.to_integral_value():
-            _fail("type-mismatch", value, neutral_type)
-        managed = int(number)
-        if not -bound <= managed < bound:
-            _fail("out-of-space", value, neutral_type)
-        return managed
-    elif neutral_type in ("float32", "float64"):
-        if _source_decimal(value) is None:
-            _fail("type-mismatch", value, neutral_type)
-        decoded = decode_number(value, binary32=neutral_type == "float32")
-        if decoded is None:
-            _fail("out-of-space", value, neutral_type)
-        return decoded
-    elif neutral_type == "string":
-        if not isinstance(value, str):
-            _fail("type-mismatch", value, neutral_type)
-        try:
-            value.encode("utf-8")
-        except UnicodeEncodeError:
-            _fail("out-of-space", value, neutral_type)
-        return value
-    elif neutral_type == "bytes":
-        if not isinstance(value, str):
-            _fail("type-mismatch", value, neutral_type)
-        text = str(value)
-        if len(text) % 2 or any(character not in _HEX_DIGITS for character in text):
-            _fail("type-mismatch", value, neutral_type)
-        if text != text.lower():
-            _fail("noncanonical", value, neutral_type)
-        return bytes.fromhex(text)
-    elif neutral_type == "date":
-        return _decode_date_classified(value, neutral_type)
-    elif neutral_type == "time":
-        return _decode_time_classified(value, neutral_type)
-    elif neutral_type == "timestamp":
-        return _decode_timestamp_classified(value, neutral_type)
-    elif neutral_type == "uuid":
-        if not isinstance(value, str):
-            _fail("type-mismatch", value, neutral_type)
-        text = str(value)
-        if _UUID_CANONICAL.fullmatch(text) is not None:
-            return uuid.UUID(text)
-        if _UUID_HYPHENATED.fullmatch(text) is not None or _UUID_BARE.fullmatch(text) is not None:
-            _fail("noncanonical", value, neutral_type)
-        _fail("type-mismatch", value, neutral_type)
-    elif neutral_type == "json":
-        if value is None:
-            _fail("type-mismatch", value, neutral_type)
-        if _json_member(value):
-            return _copy_json(value)
-        _fail("out-of-space" if _json_shape(value) else "type-mismatch", value, neutral_type)
-    raise PortableLiteralError(
-        "type-mismatch", f"{neutral_type!r} names no neutral type this table covers"
-    )
+    codec = _codec(neutral_type)
+    if codec is None:
+        return _unknown_neutral_type(neutral_type)
+    return codec.decode(value, neutral_type)
 
 
 def decode_canonical(value: Any, neutral_type: str) -> Any:
     """Decode ``value`` only when it is the canonical output for its member."""
-    managed = decode(value, neutral_type)
-    canonical = encode(managed, neutral_type)
-    equal = (
-        not _is_negative_zero_number(value) and _spelled_number(value) == _spelled_number(canonical)
-        if neutral_type in ("int32", "int64", "float32", "float64")
-        else _same_json_scalar(value, canonical)
-    )
-    if not equal:
+    codec = _codec(neutral_type)
+    if codec is None:
+        return _unknown_neutral_type(neutral_type)
+    managed = codec.decode(value, neutral_type)
+    canonical = codec.encode(managed, neutral_type)
+    if not codec.canonical_equal(value, canonical):
         raise PortableLiteralError("noncanonical", f"{value!r} is not canonical for {neutral_type}")
     return managed
 
@@ -188,45 +126,183 @@ def encode(value: Any, neutral_type: str) -> Any:
         raise PortableLiteralError(
             "type-mismatch", "null is enclosing presence, not a typed literal"
         )
+    codec = _codec(neutral_type)
+    if codec is None:
+        return _managed_type_mismatch(value, neutral_type)
+    return codec.encode(value, neutral_type)
+
+
+def _codec(neutral_type: str) -> _Codec | None:
+    if _DECIMAL_TYPE.fullmatch(neutral_type) is not None:
+        return _DECIMAL_CODEC
+    return _CODECS.get(neutral_type)
+
+
+def _unknown_neutral_type(neutral_type: str) -> Never:
+    raise PortableLiteralError(
+        "type-mismatch", f"{neutral_type!r} names no neutral type this table covers"
+    )
+
+
+def _decode_decimal(value: Any, neutral_type: str) -> decimal.Decimal:
     decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
-    if decimal_type is not None and isinstance(value, decimal.Decimal):
-        precision, scale = (int(part) for part in decimal_type.groups())
-        if _decimal_in_space(value, precision, scale):
-            return _exact_decimal(value.copy_abs() if value.is_zero() else value, scale)
-    elif neutral_type == "boolean" and isinstance(value, bool):
+    assert decimal_type is not None
+    precision, scale = (int(part) for part in decimal_type.groups())
+    if not isinstance(value, str):
+        _fail("type-mismatch", value, neutral_type)
+    if _DECIMAL_NUMBER.fullmatch(value) is None:
+        _fail("type-mismatch", value, neutral_type)
+    parsed = decimal.Decimal(value)
+    if not _decimal_in_space(parsed, precision, scale):
+        _fail("out-of-space", value, neutral_type)
+    managed = parsed.copy_abs() if parsed.is_zero() else parsed
+    if _exact_decimal(managed, scale) != value:
+        _fail("noncanonical", value, neutral_type)
+    return managed
+
+
+def _encode_decimal(value: Any, neutral_type: str) -> str:
+    decimal_type = _DECIMAL_TYPE.fullmatch(neutral_type)
+    assert decimal_type is not None
+    precision, scale = (int(part) for part in decimal_type.groups())
+    if isinstance(value, decimal.Decimal) and _decimal_in_space(value, precision, scale):
+        return _exact_decimal(value.copy_abs() if value.is_zero() else value, scale)
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _decode_boolean(value: Any, neutral_type: str) -> bool:
+    if isinstance(value, bool):
         return value
-    elif neutral_type in ("int32", "int64") and type(value) is int:
-        return decode(value, neutral_type)
-    elif neutral_type in ("float32", "float64"):
-        if type(value) is not float:
-            raise PortableLiteralError(
-                "type-mismatch", f"{value!r} is not a managed {neutral_type} value"
-            )
+    _fail("type-mismatch", value, neutral_type)
+
+
+def _encode_boolean(value: Any, neutral_type: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _decode_integer(value: Any, neutral_type: str) -> int:
+    bound = 2**31 if neutral_type == "int32" else 2**63
+    number = _source_decimal(value)
+    if number is None or not number.is_finite() or number != number.to_integral_value():
+        _fail("type-mismatch", value, neutral_type)
+    managed = int(number)
+    if not -bound <= managed < bound:
+        _fail("out-of-space", value, neutral_type)
+    return managed
+
+
+def _encode_integer(value: Any, neutral_type: str) -> int:
+    if type(value) is int:
+        return _decode_integer(value, neutral_type)
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _decode_float(value: Any, neutral_type: str) -> float:
+    if _source_decimal(value) is None:
+        _fail("type-mismatch", value, neutral_type)
+    decoded = decode_number(value, binary32=neutral_type == "float32")
+    if decoded is None:
+        _fail("out-of-space", value, neutral_type)
+    return decoded
+
+
+def _encode_float(value: Any, neutral_type: str) -> float:
+    if type(value) is float:
         target = decode_number(value, binary32=neutral_type == "float32")
         if target is not None and target == value:
             return _shortest_float(target, binary32=neutral_type == "float32")
-    elif neutral_type == "string" and isinstance(value, str):
-        return decode(value, neutral_type)
-    elif neutral_type == "bytes" and isinstance(value, (bytes, bytearray, memoryview)):
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _canonical_number_equal(value: Any, canonical: Any) -> bool:
+    return not _is_negative_zero_number(value) and _spelled_number(value) == _spelled_number(
+        canonical
+    )
+
+
+def _decode_string(value: Any, neutral_type: str) -> str:
+    if not isinstance(value, str):
+        _fail("type-mismatch", value, neutral_type)
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        _fail("out-of-space", value, neutral_type)
+    return value
+
+
+def _encode_string(value: Any, neutral_type: str) -> str:
+    if isinstance(value, str):
+        return _decode_string(value, neutral_type)
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _decode_bytes(value: Any, neutral_type: str) -> bytes:
+    if not isinstance(value, str):
+        _fail("type-mismatch", value, neutral_type)
+    if len(value) % 2 or any(character not in _HEX_DIGITS for character in value):
+        _fail("type-mismatch", value, neutral_type)
+    if value != value.lower():
+        _fail("noncanonical", value, neutral_type)
+    return bytes.fromhex(value)
+
+
+def _encode_bytes(value: Any, neutral_type: str) -> str:
+    if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value).hex()
-    elif (
-        neutral_type == "date"
-        and isinstance(value, datetime.date)
-        and not isinstance(value, datetime.datetime)
-    ):
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _encode_date(value: Any, neutral_type: str) -> str:
+    if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
         return value.isoformat()
-    elif neutral_type == "time" and isinstance(value, datetime.time) and value.tzinfo is None:
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _encode_time(value: Any, neutral_type: str) -> str:
+    if isinstance(value, datetime.time) and value.tzinfo is None:
         return value.isoformat()
-    elif (
-        neutral_type == "timestamp"
-        and isinstance(value, datetime.datetime)
-        and value.tzinfo is not None
-    ):
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _encode_timestamp(value: Any, neutral_type: str) -> str:
+    if isinstance(value, datetime.datetime) and value.tzinfo is not None:
         return value.astimezone(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
-    elif neutral_type == "uuid" and isinstance(value, uuid.UUID):
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _decode_uuid(value: Any, neutral_type: str) -> uuid.UUID:
+    if not isinstance(value, str):
+        _fail("type-mismatch", value, neutral_type)
+    if _UUID_CANONICAL.fullmatch(value) is not None:
+        return uuid.UUID(value)
+    if _UUID_HYPHENATED.fullmatch(value) is not None or _UUID_BARE.fullmatch(value) is not None:
+        _fail("noncanonical", value, neutral_type)
+    _fail("type-mismatch", value, neutral_type)
+
+
+def _encode_uuid(value: Any, neutral_type: str) -> str:
+    if isinstance(value, uuid.UUID):
         return str(value)
-    elif neutral_type == "json" and _json_member(value):
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _decode_json(value: Any, neutral_type: str) -> Any:
+    if value is None:
+        _fail("type-mismatch", value, neutral_type)
+    if _json_member(value):
         return _copy_json(value)
+    _fail("out-of-space" if _json_shape(value) else "type-mismatch", value, neutral_type)
+
+
+def _encode_json(value: Any, neutral_type: str) -> Any:
+    if _json_member(value):
+        return _copy_json(value)
+    return _managed_type_mismatch(value, neutral_type)
+
+
+def _managed_type_mismatch(value: Any, neutral_type: str) -> Never:
     raise PortableLiteralError("type-mismatch", f"{value!r} is not a managed {neutral_type} value")
 
 
@@ -658,3 +734,22 @@ def _offset(zone: str) -> datetime.timezone | None:
     if hours > 23 or minutes > 59:
         return None
     return datetime.timezone(sign * datetime.timedelta(hours=hours, minutes=minutes))
+
+
+_DECIMAL_CODEC = _Codec(_decode_decimal, _encode_decimal)
+_NUMERIC_CODEC = _Codec(_decode_integer, _encode_integer, _canonical_number_equal)
+_FLOAT_CODEC = _Codec(_decode_float, _encode_float, _canonical_number_equal)
+_CODECS: dict[str, _Codec] = {
+    "boolean": _Codec(_decode_boolean, _encode_boolean),
+    "int32": _NUMERIC_CODEC,
+    "int64": _NUMERIC_CODEC,
+    "float32": _FLOAT_CODEC,
+    "float64": _FLOAT_CODEC,
+    "string": _Codec(_decode_string, _encode_string),
+    "bytes": _Codec(_decode_bytes, _encode_bytes),
+    "date": _Codec(_decode_date_classified, _encode_date),
+    "time": _Codec(_decode_time_classified, _encode_time),
+    "timestamp": _Codec(_decode_timestamp_classified, _encode_timestamp),
+    "uuid": _Codec(_decode_uuid, _encode_uuid),
+    "json": _Codec(_decode_json, _encode_json),
+}

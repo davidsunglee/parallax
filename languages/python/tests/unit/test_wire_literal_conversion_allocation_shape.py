@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Final
 
 from _corpus_model_support import model as corpus_model
+from _corpus_model_support import target
 from memory_instruments import (
     Heap,
     Seam,
@@ -19,14 +20,19 @@ from memory_instruments import (
     whole_heap,
 )
 
-from parallax.core import inheritance, storage_layout
+from _support.sql import compile_read
+from parallax.core import inheritance, predicate, storage_layout
 from parallax.core.base import FLOAT64, STRING
 from parallax.core.base import Decimal as DecimalType
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen._context import StatementBuilder
+from parallax.core.sql_gen._context import (
+    StatementBuilder,
+    _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
+)
 from parallax.core.wire import WireDecodingError, decode_canonical_wire, loads
 
 _MODEL: Final = corpus_model("wallet")
+_WALLET: Final = target(_MODEL, "Wallet")
 _SAME_TYPE_COUNTS: Final = (256, 512, 768)
 _ROW_COUNTS: Final = (128, 256, 384)
 _DECIMAL_DIGITS: Final = (64, 128, 192)
@@ -43,13 +49,17 @@ def _builder() -> StatementBuilder:
 
 def _same_type_statement(bind_count: int) -> Seam:
     def build(sample: Callable[[], None]) -> None:
-        builder = _builder()
-        for _ in range(bind_count):
-            builder.bind_managed("value", STRING)
-        statement = builder.finish("")
-        del builder
+        membership = predicate.Membership(
+            op="in",
+            attr="Wallet.owner",
+            values=("value",) * bind_count,
+        )
+        statement = compile_read(membership, _MODEL, POSTGRES, _WALLET).statement
         assert len(statement.binds) == bind_count
-        assert len(statement.typed_bind_spans) == 1
+        assert statement.sql.endswith(
+            f"where t0.owner in ({', '.join('?' for _ in range(bind_count))})"
+        )
+        assert statement.typed_bind_spans == (_TypedBindSpan(0, bind_count, STRING, "MANAGED"),)
         sample()
 
     return build

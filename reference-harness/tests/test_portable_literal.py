@@ -155,5 +155,22 @@ def test_float_negative_zero_is_admitted_as_positive_but_not_canonical(spelling:
         literal.decode_canonical(-0.0, spelling)
 
 
+@pytest.mark.parametrize(
+    ("spelling", "value"),
+    [
+        ("int32", literal.AuthoredInteger("-0")),
+        ("int64", literal.AuthoredInteger("-0")),
+        ("float32", literal.AuthoredNumber("-0.0")),
+        ("float64", literal.AuthoredNumber("-0.0")),
+    ],
+)
+def test_each_numeric_codec_uses_the_shared_canonical_spelling_rule(
+    spelling: str, value: object
+) -> None:
+    assert literal.decode(value, spelling) == 0
+    with pytest.raises(literal.PortableLiteralError, match="not canonical"):
+        literal.decode_canonical(value, spelling)
+
+
 def test_decimal_managed_negative_zero_encodes_as_positive_zero() -> None:
     assert literal.encode(decimal.Decimal("-0.00"), "decimal(12,2)") == "0.00"
