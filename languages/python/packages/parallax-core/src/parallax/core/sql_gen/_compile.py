@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast
 
 from parallax.core.base import (
+    Bytes,
     DocumentReadOrdinals,
     NeutralType,
     UnknownFamilyTag,
@@ -22,7 +23,7 @@ from parallax.core.base import (
 )
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
-from parallax.core.document_codec import DocumentFinding
+from parallax.core.document_codec import DocumentFinding, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
 from parallax.core.metamodel import (
@@ -74,8 +75,8 @@ from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
 from parallax.core.sql_gen._predicate import MemberSubject as _MemberSubject
 from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
 
-# The continuation lane: one resolution per Continuation Order term, feeding the
-# order clause, the hidden capture cell, and the seek alike.
+# The continuation lane: one resolver per read shape, feeding the order clause,
+# the hidden capture cell, and the seek alike.
 from parallax.core.sql_gen._seek import LoweredTerm as _LoweredTerm
 from parallax.core.sql_gen._seek import TermSubject as _TermSubject
 from parallax.core.sql_gen._seek import capture_cells as _capture_cells
@@ -434,7 +435,7 @@ def compile_read(
     facet = _inheritance_view(model)
     storage = _storage_view(model)
     predicate = query.validated_predicate
-    terms = _lowered_terms(query.order_by)
+    terms = _lowered_terms(query.order_by, _reserved_result_keys(storage))
     paging = query.paging
     limit = query.limit
     narrow_to = query.narrow_to
@@ -528,6 +529,19 @@ def compile_write_predicate(
         statement.binds,
         statement,
     )
+
+
+def _reserved_result_keys(storage: _StorageLayoutFacet) -> frozenset[str]:
+    """Every result key a read of this model can carry under an authored name.
+
+    The complete reservation set a capture alias is allocated outside of: a
+    projected cell is named by its own Column spelling, by that spelling's
+    `_hex` projection, or by an allocated internal alias, and only the first can
+    collide with the framework's own. Taken over the model's Table Layouts
+    rather than over one read's projection so a given model allocates the same
+    aliases for every read of it.
+    """
+    return frozenset(slot.column.name for layout in storage.tables for slot in layout.columns)
 
 
 def _captured(terms: tuple[_LoweredTerm, ...], subject: _TermSubject, paging: Paging | None) -> str:
@@ -862,8 +876,11 @@ def _compile_tph_partitioned(
         layout,
         alias="u",
         position=plan.position,
+        wrapped=True,
     )
-    projection, projection_binds, document_reads = plan.projection(dialect, outer_scope.alias)
+    projection, projection_binds, document_reads = plan.projection(
+        dialect, outer_scope.alias, wrapped=True
+    )
     statement_ctx.bind_structural_all(projection_binds)
     parts = [
         f"select {projection}{_captured(terms, outer_scope.subject_for, paging)}",
@@ -941,28 +958,33 @@ def _compile_tpcs_read(
         statement = _normalize(statement_ctx.finish(union))
         return statement, document_reads or (), plan.transform
 
-    outer_ctx = StatementBuilder(model, facet, storage, dialect)
-    outer_scope = _EntityScope(
-        outer_ctx,
-        entity,
-        _table_layout(storage, facet, plan.branches[0].identity),
-        alias="u",
-        position=plan.position,
+    # The outer select brackets the union in the emitted text — its capture
+    # cells precede every branch and its tail follows them all — so its binds
+    # are accumulated as two fragments and spliced on either side of the
+    # branches. One context for the whole outer select would push both halves
+    # after the branches and send branch data to a capture-cell placeholder.
+    outer_layout = _table_layout(storage, facet, plan.branches[0].identity)
+    capture_ctx = StatementBuilder(model, facet, storage, dialect)
+    capture_scope = _EntityScope(
+        capture_ctx, entity, outer_layout, alias="u", position=plan.position
     )
+    tail_ctx = StatementBuilder(model, facet, storage, dialect)
+    outer_scope = _EntityScope(tail_ctx, entity, outer_layout, alias="u", position=plan.position)
     projection, _projection_binds, outer_document_reads = plan.projection(
         dialect, outer_scope.alias
     )
-    subject = _tpcs_subject(plan, outer_scope)
+    tail_subject = _tpcs_subject(plan, outer_scope)
     outer_parts = [
-        f"select {projection}{_captured(terms, subject, paging)}",
+        f"select {projection}{_captured(terms, _tpcs_subject(plan, capture_scope), paging)}",
         f"from ({union}) {outer_scope.alias}",
     ]
-    _append_where(outer_parts, _sought(terms, subject, paging, outer_ctx))
-    _append_result_shape(outer_parts, outer_scope, terms, subject, limit, None)
+    _append_where(outer_parts, _sought(terms, tail_subject, paging, tail_ctx))
+    _append_result_shape(outer_parts, outer_scope, terms, tail_subject, limit, None)
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
+    statement_ctx.append_fragment(capture_ctx.finish(""))
     for branch in branch_statements:
         statement_ctx.append_fragment(branch)
-    statement_ctx.append_fragment(outer_ctx.finish(""))
+    statement_ctx.append_fragment(tail_ctx.finish(""))
     statement = _normalize(statement_ctx.finish(" ".join(outer_parts)))
     return statement, outer_document_reads, plan.transform
 
@@ -973,7 +995,10 @@ def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityScope) -> _TermSubject:
     One thing differs from the generic scope resolver: a member is named by the
     result alias every branch projects it under rather than by any one branch's
     physical spelling, because the union is the ordered relation and a colliding
-    spelling reaches it only through its allocated alias.
+    spelling reaches it only through its allocated alias. That alias also
+    carries what the branch already rendered into it, so a `bytes` member is a
+    hex-encoded TEXT expression under the union and compares — and rebinds — as
+    the codec's own text rather than as octets.
 
     The positional rule (`m-object-query`) admits a Sort Key only over a member
     applicable to every concrete in the active position, so a legal key is owned
@@ -999,7 +1024,13 @@ def _tpcs_order_subject(
     column = plan.column_of(attribute.identity if document is None else document.slot.contributor)
     reference = scope.dialect.qualified(scope.alias, column.result_alias)
     if document is None:
-        return _MemberSubject(reference, reference, attribute.type, document_resident=False)
+        return _MemberSubject(
+            reference,
+            reference,
+            attribute.type,
+            document_resident=False,
+            text_compared=isinstance(attribute.type, Bytes),
+        )
     extraction, path_binds = scope.dialect.nested_extract(reference, document.path)
     scope.ctx.bind_structural_all(path_binds)
     return _MemberSubject(
@@ -1007,6 +1038,7 @@ def _tpcs_order_subject(
         scope.dialect.nested_cast(extraction, attribute.type),
         attribute.type,
         document_resident=True,
+        text_compared=is_text_compared(attribute.type),
     )
 
 

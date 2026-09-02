@@ -55,8 +55,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, assert_never, cast
 
-from parallax.core.base import STRING, NeutralType
-from parallax.core.dialect import Dialect
+from parallax.core.base import STRING, Bytes, NeutralType
+from parallax.core.dialect import Dialect, projection_result_key
 from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import (
@@ -167,13 +167,19 @@ class MemberSubject:
     compares ``compared`` while a null check and a string pattern read
     ``extraction``, exactly as the conventional nested vocabulary already does.
     ``document_resident`` is what decides which literal form a compared value
-    binds in.
+    binds in. ``text_compared`` is the narrower fact a REBIND needs: whether
+    ``compared`` yields the codec's comparison text rather than a value of the
+    declared type. It is not derivable from the other three — a wrapped `union
+    all` names a `bytes` member by the result key its branches already
+    hex-encoded, so that expression compares as text while claiming no document
+    residence at all.
     """
 
     extraction: str
     compared: str
     type: NeutralType
     document_resident: bool
+    text_compared: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -204,6 +210,12 @@ class EntityScope:
     even though its active entity stays the read's queried `target`, which is what
     makes "does this branch physically carry that member?" a question the scope
     can answer at all.
+
+    ``wrapped`` says :attr:`alias` is a derived table over a union of branches
+    that already applied their own per-type projection, so a direct member is
+    named by the RESULT key a branch projected it under rather than by the
+    physical Column no such union yields — and a `bytes` member is then the
+    hex-encoded text that key carries rather than octets.
     """
 
     ctx: StatementBuilder
@@ -213,6 +225,7 @@ class EntityScope:
     unaliased: bool = False
     position: tuple[EntityIdentity, ...] | None = None
     variant: EntityIdentity | None = None
+    wrapped: bool = False
 
     @property
     def meta(self) -> Metamodel:
@@ -292,8 +305,14 @@ class EntityScope:
         """
         placement = self.layout.placement(attribute.identity)
         if not isinstance(placement, DocumentPath):
-            column = self.own_column(self.slot_column(attribute.identity))
-            return MemberSubject(column, column, attribute.type, document_resident=False)
+            spelling = self.slot_column(attribute.identity)
+            encoded = self.wrapped and isinstance(attribute.type, Bytes)
+            column = self.own_column(
+                projection_result_key(spelling, attribute.type) if self.wrapped else spelling
+            )
+            return MemberSubject(
+                column, column, attribute.type, document_resident=False, text_compared=encoded
+            )
         self._record_document_applicability(attribute.identity.entity)
         document = self.own_column(placement.slot.column.name)
         extraction, path_binds = self.dialect.nested_extract(document, placement.path)
@@ -303,6 +322,7 @@ class EntityScope:
             self.dialect.nested_cast(extraction, attribute.type),
             attribute.type,
             document_resident=True,
+            text_compared=is_text_compared(attribute.type),
         )
 
     def document_root(self, vo: ValueObjectMetadata) -> tuple[str, tuple[str, ...]]:

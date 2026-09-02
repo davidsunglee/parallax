@@ -1,32 +1,32 @@
 """The continuation lane of m-sql: capture cells, the order clause, and the seek.
 
-One resolution per Continuation Order term feeds all three, so the expression a
-page orders by, the hidden cell that captures what that expression evaluated to,
-and the comparison the next page seeks past it with cannot disagree. That is the
-whole reason this lives beside the compiler rather than in
+One RESOLVER per read shape feeds all three, so the expression a page orders by,
+the hidden cell that captures what that expression evaluated to, and the
+comparison the next page seeks past it with cannot disagree. That is the whole
+reason this lives beside the compiler rather than in
 :mod:`parallax.core.continuation`: only the module that emitted the ordering
 clause knows where the dialect put a NULL, and only it knows what expression a
 member's placement resolved to.
 
-A term's subject is resolved through a caller-supplied :data:`TermSubject`
-because a wrapped table-per-concrete-subtype union names its members by the
-result alias every branch projects them under rather than by any one branch's
-physical column. Each read shape supplies its own resolver once; within a shape
-every emission goes through it.
-
-Resolution is not memoized, and deliberately so: a document-resident member's
-expression carries its own path binds, and binds are positional, so each
-occurrence in the emitted statement must push its own.
+What is shared is the FUNCTION rather than one resolved value. A term's subject
+is resolved through a caller-supplied :data:`TermSubject` because a wrapped
+table-per-concrete-subtype union names its members by the result alias every
+branch projects them under rather than by any one branch's physical column, and
+it is called once per emitted occurrence rather than once per term: a
+document-resident member's expression carries its own path binds, binds are
+positional, and each occurrence in the emitted statement must push its own. The
+resolver answers the same expression every time, so agreement rests on the
+resolver being a function of the member alone, not on a memoized product.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Sequence, Set
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from parallax.core.base import INFINITY_LITERAL, TemporalBound
 from parallax.core.dialect import Dialect
-from parallax.core.document_codec import is_text_compared
 from parallax.core.metamodel import AttributeMetadata
 from parallax.core.object_query._validated import (
     ContinuationTerm,
@@ -79,11 +79,27 @@ class LoweredTerm:
         return self.term.member
 
 
-def lowered_terms(order_by: Sequence[ValidatedOrderTerm]) -> tuple[LoweredTerm, ...]:
-    """``order_by`` with each term's capture alias allocated from its position."""
-    return tuple(
-        LoweredTerm(term, f"{_CAPTURE_PREFIX}{index}") for index, term in enumerate(order_by)
-    )
+def lowered_terms(
+    order_by: Sequence[ValidatedOrderTerm], reserved: Set[str] = frozenset()
+) -> tuple[LoweredTerm, ...]:
+    """``order_by`` with each term's capture alias allocated outside ``reserved``.
+
+    Allocation is hygienic in the same sense a wrapped union's result aliases
+    are (`m-sql`): the reservation set is every result key the read can already
+    carry under its own name, so an authored physical `parallax_seek_0` keeps
+    its own cell and the coordinate that would have collided with it takes the
+    next free index. Two cells sharing one result key would collapse into one
+    driver-row entry, and lifting the coordinate off would then either delete
+    the authored member or capture its value.
+    """
+    terms: list[LoweredTerm] = []
+    index = 0
+    for term in order_by:
+        while f"{_CAPTURE_PREFIX}{index}" in reserved:
+            index += 1
+        terms.append(LoweredTerm(term, f"{_CAPTURE_PREFIX}{index}"))
+        index += 1
+    return tuple(terms)
 
 
 def coordinate_reads(terms: Sequence[LoweredTerm]) -> tuple[str, ...]:
@@ -94,9 +110,9 @@ def coordinate_reads(terms: Sequence[LoweredTerm]) -> tuple[str, ...]:
 def capture_cells(terms: Sequence[LoweredTerm], subject: TermSubject) -> str:
     """The hidden select-list cells that capture one coordinate per term.
 
-    Emitted from the same resolution the ``order by`` clause is emitted from, so
-    what a row carries back is what the database ordered it by. Empty for a read
-    that pages through nothing, which is every eager read.
+    Emitted through the same ``subject`` the ``order by`` clause is, so what a
+    row carries back is what the database ordered it by. Empty for a read that
+    pages through nothing, which is every eager read.
     """
     return "".join(f", {subject(term.member).compared} {term.alias}" for term in terms)
 
@@ -153,9 +169,14 @@ def lower_seek(
             f"a seek over {len(seek.terms)} term(s) cannot be lowered against "
             f"{len(terms)} ordering term(s)"
         )
+    carriers = seek.coordinate.carriers
+    if len(carriers) != len(terms):
+        raise SqlGenError(
+            f"a coordinate carrying {len(carriers)} value(s) cannot be lowered against "
+            f"{len(terms)} ordering term(s)"
+        )
     for term, lowered in zip(seek.terms, terms, strict=True):
         _refuse_a_crossed_term(term, lowered)
-    carriers = seek.coordinate.carriers
     dialect = ctx.dialect
     lead = seek.terms[0]
     parts: list[str] = []
@@ -187,17 +208,35 @@ def lower_seek(
 
 
 def _refuse_a_crossed_term(term: ContinuationTerm, lowered: LoweredTerm) -> None:
-    """Refuse a seek whose terms are not the ordering clause's own, by name.
+    """Refuse a seek whose terms are not the ordering clause's own.
 
     The two arrive from one Continuation Order and are aligned positionally, so
     a disagreement means the page was composed against a different order than it
     is being lowered under — which would seek past a coordinate the statement
     never evaluated.
+
+    Every field the two spellings share is compared, not the member alone: the
+    order clause reads direction, Null Placement, and nullability off
+    :class:`LoweredTerm`, while every branch of the seek reads them off
+    :class:`~parallax.core.object_query._validated.ContinuationTerm`. Agreeing on
+    the member while disagreeing on any of the three would emit an opposite
+    comparator, or measure a branch against a placement the clause did not
+    take.
     """
-    if term.identity != lowered.member.identity:
+    if (
+        term.identity != lowered.member.identity
+        or term.direction != lowered.term.direction
+        or term.nulls != lowered.term.nulls
+        or term.nullable != lowered.member.nullable
+    ):
         raise SqlGenError(
-            f"the seek's term {term.identity.name!r} is not the ordering term "
-            f"{lowered.member.identity.name!r} at the same position"
+            f"the seek's term {term.identity.name!r} "
+            f"({term.direction}, nulls {term.nulls}, "
+            f"{'nullable' if term.nullable else 'non-nullable'}) is not the ordering term "
+            f"{lowered.member.identity.name!r} "
+            f"({lowered.term.direction}, nulls {lowered.term.nulls}, "
+            f"{'nullable' if lowered.member.nullable else 'non-nullable'}) "
+            f"at the same position"
         )
 
 
@@ -261,17 +300,26 @@ def _compared(
     The carrier is bound in the form that expression compares, which is the
     split an authored predicate over the same member already takes: a direct
     Column compares in the engine's own column type, a document extraction that
-    casts compares in the declared type, and one that does not compares as the
-    codec's own text.
+    casts compares in the declared type, and one that does not — like a wrapped
+    union's already-encoded `bytes` result key — compares as the codec's own
+    text. Which of the two a resolved subject is stands on the subject itself,
+    so a shape whose expression is neither a bare Column nor an extraction still
+    rebinds in the form it actually compares.
 
-    Nothing is re-derived to get there. A carrier already IS what its own
-    expression evaluated to — a text extraction answers the codec's comparison
-    text, a cast answers the declared type — so the split decides which BIND
-    ROLE the value crosses under rather than what to convert it into. Converting
-    would be the one place a coordinate stopped being the database's own answer.
+    An open temporal bound is the one carrier that is neither: the database
+    answers it as the `m-core` sentinel, which is a member of no declared value
+    space, so it crosses as a framework bind reported by the canonical
+    `infinity` literal — the treatment a written temporal row already takes.
+
+    Nothing else is re-derived. A carrier already IS what its own expression
+    evaluated to, so the split decides which BIND ROLE the value crosses under
+    rather than what to convert it into. Converting would be the one place a
+    coordinate stopped being the database's own answer.
     """
     resolved = subject(lowered.member)
-    if resolved.document_resident and is_text_compared(resolved.type):
+    if isinstance(carrier, TemporalBound):
+        ctx.bind_framework(carrier, wire_value=INFINITY_LITERAL)
+    elif resolved.text_compared:
         ctx.bind_comparison_text(carrier, resolved.type)
     else:
         ctx.bind_managed(carrier, resolved.type)

@@ -17,9 +17,11 @@ from _corpus_model_support import model as accepted_model
 from _corpus_model_support import target as entity_of
 
 from parallax.core import continuation, deep_fetch
+from parallax.core.base import INFINITY, INFINITY_LITERAL
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
-from parallax.core.object_query import OrderKey, object_query, validate_object_query
+from parallax.core.metamodel import TemporalDimension as AxisKind
+from parallax.core.object_query import AsOf, OrderKey, object_query, validate_object_query
 from parallax.core.object_query._validated import (
     ContinuationCoordinate,
     ContinuationTerm,
@@ -31,19 +33,32 @@ from parallax.core.predicate import All
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import LoweredStatement
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from parallax.core.sql_gen._seek import lowered_terms
 
 DOCUMENT_LAYOUT = accepted_model("document-layout")
 ORDERS = accepted_model("orders")
+POSITIONS = accepted_model("position")
 
 _TRAVELER_JOINED = "parallax.compatibility.Traveler.joinedOn"
 _ORDER_NAME = "parallax.compatibility.Order.name"
+_POSITION_VALID_END = "parallax.compatibility.Position.validEnd"
 
 _PROJECTION = deep_fetch.ReadProjectionRequest("none", False)
 
 
 def _planned(model: Metamodel, target: str, *keys: OrderKey) -> continuation.ContinuationPlan:
     entity = entity_of(model, target)
-    query = object_query(entity.identity, All(), order_by=keys)
+    query = object_query(
+        entity.identity,
+        All(),
+        order_by=keys,
+        temporal={
+            "valid-time" if axis.dimension is AxisKind.VALID_TIME else "transaction-time": AsOf(
+                "latest"
+            )
+            for axis in entity.declared_as_of_axes
+        },
+    )
     return continuation.plan(validate_object_query(entity, query, model), model)
 
 
@@ -116,7 +131,21 @@ def test_a_seek_naming_another_member_at_a_position_is_refused_by_name() -> None
     other = entity_of(ORDERS, "Order").attribute("name")
     assert other is not None
     crossed = _crossed(node, (ContinuationTerm(other.identity, "asc", "last", False),))
-    with pytest.raises(SqlGenError, match="'name' is not the ordering term 'id'"):
+    with pytest.raises(SqlGenError, match=r"the seek's term 'name' .* the ordering term 'id'"):
+        _lowered(ORDERS, crossed)  # pyright: ignore[reportArgumentType] - a deliberately crossed node
+
+
+def test_a_seek_agreeing_on_the_member_but_not_its_ordering_is_refused() -> None:
+    # Identity is not the whole term. The order clause reads direction, Null
+    # Placement, and nullability off the query while every branch of the seek
+    # reads them off the portable term, so a pair agreeing only on the member
+    # would emit `t0.id > ?` under a clause that ordered descending — a seek
+    # running back over roots the delivery had already published.
+    plan = _planned(ORDERS, "Order")
+    node = plan.after(ContinuationCoordinate((1,)), limit=2)
+    key = node.order_by[0]
+    crossed = _crossed(node, (ContinuationTerm(key.member.identity, "desc", "last", False),))
+    with pytest.raises(SqlGenError, match=r"'id' \(desc, .*'id' \(asc, "):
         _lowered(ORDERS, crossed)  # pyright: ignore[reportArgumentType] - a deliberately crossed node
 
 
@@ -149,3 +178,60 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
         "t0.id parallax_seek_0 from orders t0"
     )
+
+
+def test_a_coordinate_carried_at_another_width_than_the_order_is_refused() -> None:
+    # The seek's terms and its coordinate are two halves of one value, and the
+    # branch tree indexes the carriers by the term's own depth. A coordinate
+    # narrower than the order would raise at that subscript instead of naming
+    # the disagreement, and a wider one would seek past a term the page never
+    # ordered by.
+    plan = _planned(ORDERS, "Order")
+    node = plan.after(ContinuationCoordinate((1,)), limit=2)
+    key = node.order_by[0]
+    crossed = replace(
+        node,
+        paging=Paging(
+            seek=ValidatedSeek(
+                (ContinuationTerm(key.member.identity, "asc", "last", False),),
+                ContinuationCoordinate((1, 2)),
+            )
+        ),
+    )
+    with pytest.raises(SqlGenError, match="carrying 2 value"):
+        _lowered(ORDERS, crossed)
+
+
+def test_an_open_temporal_bound_carrier_reports_the_canonical_infinity_literal() -> None:
+    # `validEnd` is an ordinary Attribute a Sort Key may name, and the open upper
+    # bound of a live interval reads back through the port as the `m-core`
+    # sentinel rather than as an instant. It is a member of no declared value
+    # space, so it crosses as a framework bind whose reported form is the
+    # canonical `infinity` literal — the same treatment a written temporal row
+    # already takes — instead of being re-encoded as a `timestamp`.
+    plan = _planned(POSITIONS, "Position", OrderKey(attr=_POSITION_VALID_END))
+    node = plan.after(ContinuationCoordinate((INFINITY, 1)), limit=2)
+    statement = _lowered(POSITIONS, node)
+    assert statement.sql.endswith(
+        "where t0.thru_z = ? and t0.out_z = ? and t0.thru_z >= ? "
+        "and (t0.thru_z > ? or (t0.thru_z = ? and t0.pos_id > ?)) "
+        "order by t0.thru_z asc, t0.pos_id asc limit ?"
+    )
+    assert statement.binds[2:5] == (INFINITY, INFINITY, INFINITY)
+    assert statement.wire_binds()[2:5] == (INFINITY_LITERAL,) * 3
+
+
+def test_a_capture_alias_an_authored_column_already_spells_is_allocated_past() -> None:
+    # Two cells under one result key collapse into one driver-row entry, and
+    # lifting the coordinate off would then take the authored member's value or
+    # delete the member outright. Allocation therefore skips every spelling the
+    # model's own Columns reserve, exactly as a wrapped union's result aliases
+    # are allocated (`m-sql`).
+    order = _planned(ORDERS, "Order").first(limit=2).order_by
+    assert lowered_terms(order, {"parallax_seek_0", "parallax_seek_2"})[0].alias == (
+        "parallax_seek_1"
+    )
+    assert [term.alias for term in lowered_terms((*order, *order), {"parallax_seek_1"})] == [
+        "parallax_seek_0",
+        "parallax_seek_2",
+    ]
