@@ -118,8 +118,10 @@ class StoredDataIssueInput:
 
     ``path`` keeps declared member names distinct from integer array positions.
     ``stored_value`` is the already-frozen public evidence of what was rejected,
-    settled where conversion translated the finding and shared by reference from
-    there on: nothing downstream re-reads or re-freezes it.
+    frozen where conversion translated the finding and shared by reference from
+    there on: nothing downstream re-reads or re-freezes it. Which projection's
+    copy a logical node publishes is settled by :meth:`GraphBuilder.add`, which
+    answers a repeated judgment with the record that node already retains.
     """
 
     code: StoredDataIssueCode

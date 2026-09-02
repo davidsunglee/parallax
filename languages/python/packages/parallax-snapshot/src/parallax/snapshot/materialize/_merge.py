@@ -53,7 +53,9 @@ value-identical by construction, because they resolve the same row at the same
 pin. Relationship views are unioned — a view any projection loaded is loaded on
 the merged node — with the first projection to carry a given view key deciding
 that view's value. Issues are the one exception: every walked projection's are
-accumulated, undeduplicated.
+accumulated, less any record the node already holds — a projection repeating an
+earlier judgment carries the identical record object the graph builder retained,
+so that judgment lists once.
 """
 
 from __future__ import annotations

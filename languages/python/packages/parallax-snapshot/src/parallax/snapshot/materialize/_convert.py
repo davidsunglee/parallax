@@ -176,8 +176,11 @@ def convert_row(
     ``classified_members`` are the compiled row transform's provenance.
     Conversion translates those findings and does not re-judge members the
     transform already classified. Each judgment's own rejected value converges
-    here, where it is frozen as the one evidence object its issue publishes and
-    every seam above it shares.
+    here, where this row's conversion freezes it into an issue record of its own.
+    A record no earlier projection of the same logical node made is the copy
+    every seam above shares; one repeating an earlier projection's judgment is
+    replaced by that projection's record when the row reaches the builder, and
+    the copy frozen here is gone with this conversion.
 
     Scalars are keyed by the compiled projection contract. A disjoint sibling's
     null-padded result — and the synthetic family tag — therefore contributes
