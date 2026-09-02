@@ -2020,9 +2020,13 @@ or descriptor authoring form and performs no audit stamping.
 ### Sentinel identity
 
 A sentinel answers a question no ordinary value could — absent, unloaded,
-missing, unavailable, SQL null, latest, unobserved, no stored member at all — and
-every site that reads one asks `is`. For each sentinel below, **sameness is
-identity**:
+missing, unavailable, SQL null, latest, unobserved, no stored member at all. A
+site holding one on its own reads it with `is`; a site holding a union whose
+other arms carry data reads the sentinel's own class, which is the test a static
+type narrows on and the only one that reaches the carried arm's payload
+afterwards. The two never disagree, because past the one construction beside
+each class's exported constant nothing constructs another. For each sentinel
+below, **sameness is identity**:
 
 - the module-level constant is the one instance, and a second construction is a
   distinct object under both `is` and `==`;

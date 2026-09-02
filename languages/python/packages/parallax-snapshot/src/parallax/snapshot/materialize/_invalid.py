@@ -16,7 +16,7 @@ explicit attribute access.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Final, Self, cast
 
 from parallax.core.metamodel import EntityIdentity, MemberIdentity
@@ -139,6 +139,19 @@ class StoredDataIssue:
             )
             object.__setattr__(self, "_hash", cached)
         return cached
+
+    def __getstate__(self) -> list[object]:
+        """This issue's state, with the cached hash left behind.
+
+        Text hashing is seeded per interpreter, so a cache computed where the
+        issue was pickled is not the hash an equal issue computes where it is
+        read. Publication hashes every issue into a frozenset, so a cache that
+        travelled would always arrive, and arrive disagreeing with equality.
+        """
+        return [
+            None if declared.name == "_hash" else getattr(self, declared.name)
+            for declared in fields(self)
+        ]
 
 
 @dataclass(frozen=True, slots=True)
