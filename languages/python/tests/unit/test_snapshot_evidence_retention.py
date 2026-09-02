@@ -4,8 +4,8 @@ A rejected structured value crosses four seams on its way to a caller — the
 codec's finding, conversion's issue input, the public issue, and the refusal that
 reports it — and it is deliberately retained at the end of them. `m-snapshot-read`
 *What a delivery costs* admits it into the Parallax-owned working set on one
-condition: it is frozen ONCE and shared onward by reference, so what a caller
-holds is one copy of the stored value rather than one per seam.
+condition: exactly ONE frozen copy of it survives, shared onward by reference,
+so what a caller holds is one copy of the stored value rather than one per seam.
 
 That is a claim about bytes, and only bytes can make it. Identity assertions
 (`test_snapshot_classification.py`) prove the object a caller reads IS the object
@@ -25,9 +25,9 @@ arithmetic over the interpreter's own container sizing.
 **The converse is measured too**, because an equality is only worth what the
 instrument could have refused: each further frozen copy of one value steps this
 reading by the same amount again — the containers it rebuilds, its already-frozen
-members shared. Copies are therefore counted linearly, and a second freeze
-anywhere between the codec and the record has a figure here that fails rather
-than a figure that absorbs it.
+members shared. Copies are therefore counted linearly, and a second copy
+surviving anywhere between the codec and the record has a figure here that fails
+rather than a figure that absorbs it.
 """
 
 from __future__ import annotations

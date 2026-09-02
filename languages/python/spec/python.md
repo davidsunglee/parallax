@@ -3265,13 +3265,15 @@ identity a caller may copy or pickle across a boundary of their own.
   inheriting a field-tuple hash that would refuse the value or disagree with
   equality. `stored_value` is excluded from the record's `repr`, and evidence
   reaches no exception message, lifecycle event, SQL emission, log line, or
-  automatic formatter. It is frozen once, where conversion translates the
-  detecting seam's finding, and shared by reference to the public issue and to
-  `InvalidDataError` — graded in the `cost` class (§10) as a retained-bytes
-  difference over the rejected value's own size, against one frozen copy of it.
-  Repeated reach shares that one copy too: a second projection of a logical node
-  is a second row, judged and frozen apart, and the graph builder answers each of
-  its issue records with the equal record the node already retains. Sharing is
+  automatic formatter. Exactly one frozen copy of it is retained: conversion
+  freezes it where it translates the detecting seam's finding, and shares it by
+  reference to the public issue and to `InvalidDataError` — graded in the `cost`
+  class (§10) as a retained-bytes difference over the rejected value's own size,
+  against one frozen copy of it. Repeated reach shares that one copy too: a
+  second projection of a logical node is a second row, judged and frozen apart,
+  and the graph builder answers each of its issue records with the equal record
+  the node already retains, so the second row's frozen value is discarded with
+  the conversion that made it rather than retained beside the first. Sharing is
   settled per rejected occurrence, so two projections that agree about one
   occurrence and disagree about another retain one copy of the first and both of
   the second.
