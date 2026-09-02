@@ -548,7 +548,7 @@ conjoined after the caller's own predicate:
 ```text
 after(d)   carrier is null and the emitted clause placed NULLs first -> col is not null
            carrier is null and it placed them last                   -> the branch is dropped
-           the member is nullable and it placed them last            -> col <strict> ? or col is null
+           carrier is non-null and it placed them last               -> col <strict> ? or col is null
            otherwise                                                 -> col <strict> ?
 
 tie(d)     carrier is null -> col is null
@@ -559,19 +559,31 @@ branch(d)  tie(0) and … and tie(d-1) and after(d), grouped where it is a conju
 ```
 
 `<strict>` is `>` for an ascending term and `<` for a descending one. The branches
-that survive are disjoined and grouped where more than one does. Ahead of them, for
-a **non-nullable** leading term over a non-null carrier, the redundant non-strict
-range `col >=|<= ?` is emitted as its own top-level conjunct: the disjunction alone
-offers a planner nothing to push down. Where the leading term is nullable, "after"
-is two disjoint ranges of the index and no single comparison covers both, so
-nothing is hoisted.
+that survive are disjoined, and the disjunction is grouped wherever it carries a
+top-level `or` — including the case of one surviving branch whose own `after` is a
+disjunction — because the caller conjoins the fragment with `and`, which binds
+tighter.
 
-Which branches survive depends on where the **emitted** clause placed a `NULL`,
-which the compiler knows rather than assumes: the authored placement for a nullable
-term, whose clause compensated, and `m-dialect`'s native placement for every other
-term, whose clause went out plain. A coordinate the emitted ordering placed last
-leaves every branch dropped; the seek then admits nothing (`1 = 0`) and the page is
-an ordinary statement returning no root.
+Every one of those rules turns on where the **emitted** clause placed a `NULL`, and
+on nothing else: the authored placement for a nullable term, whose clause
+compensated, and `m-dialect`'s native placement for every other term, whose clause
+went out plain. Declared nullability decides none of them. A term the model says
+cannot hold a `NULL` still ranks one where the emitted clause puts it, so the same
+branch admits it — which is what lets a delivery continue past storage that is not
+conforming. A coordinate the emitted ordering placed last leaves every branch
+dropped; the seek then admits nothing (`1 = 0`) and the page is an ordinary
+statement returning no root.
+
+**The hoisted leading range is the one exception, and it is a cost decision.**
+Ahead of the branches, for a leading term the model declares **non-nullable** over a
+non-null carrier, the redundant non-strict range `col >=|<= ?` is emitted as its own
+top-level conjunct: the disjunction alone offers a planner nothing to push down, so
+without it every streamed page over a leading key scans where it could seek. That
+conjunct excludes a `NULL` wherever the clause placed it, so where such a term holds
+a stored `NULL` anyway it re-excludes the very root the branch below admits, and the
+page skips it. `m-snapshot-read` *Streamed delivery* names that skip and scopes it.
+Where the leading term is nullable nothing is hoisted at all: "after" is two disjoint
+ranges of the index and no single comparison covers both.
 
 **Rebind.** Each comparison binds its carrier in the form its own expression
 compares — a direct Column in the engine's own column type, a document extraction

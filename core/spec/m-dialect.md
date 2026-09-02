@@ -533,12 +533,14 @@ all — leaving the dialect's own convention in force.
 That is not the same as having no consequence. A non-nullable key holds no `NULL`
 under conforming storage, but a continuation seek past such a key is measured against
 the placement the emitted clause actually has, and a stored `NULL` where a `NOT NULL`
-constraint is gone falls on the side this fact names. Emitting an explicit placement
-on every continuation term instead would make the seek's assumption true by
-construction, at the cost of a backward index-ordered scan on Postgres for a
-descending term and, on MariaDB, a leading rank term that defeats index-ordered
-paging on the appended primary key of every Continuation Order — a price paid to
-place a `NULL` conforming storage cannot hold.
+constraint is gone falls on the side this fact names — so the seek's branches admit
+it there, keyed on this answer rather than on what the model declares (`m-sql`
+*Continuation coordinates*). Emitting an explicit placement on every continuation
+term instead would make one placement true on both dialects, at the cost of a
+backward index-ordered scan on Postgres for a descending term and, on MariaDB, a
+leading rank term that defeats index-ordered paging on the appended primary key of
+every Continuation Order — a price paid to relocate a `NULL` conforming storage
+cannot hold, and one this seam declines rather than pays.
 
 The compatibility suite proves the compensating and native
 forms yield the identical observable order (case `m-deep-fetch-012` for the
