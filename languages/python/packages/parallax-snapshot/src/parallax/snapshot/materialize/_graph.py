@@ -293,6 +293,7 @@ class GraphBuilder:
         "_layouts",
         "_logical_ids",
         "_member_rows",
+        "_retained",
         "_schema",
         "_sealed",
         "_slots",
@@ -311,6 +312,7 @@ class GraphBuilder:
         self._views: list[list[object]] = []
         self._identity: dict[tuple[EntityIdentity, object], int] = {}
         self._first: list[int] = []
+        self._retained: dict[int, list[StoredDataIssueInput]] = {}
         self._sealed = False
 
     # ----------------------------------------------------------------------- #
@@ -337,11 +339,11 @@ class GraphBuilder:
         decode takes an ID of its own and keeps its diagnosis, so it merges with
         nothing — not even a second read of the identical unreadable row.
 
-        A duplicate that judged its logical node the way the first projection of
-        that node did carries the FIRST projection's issues, so one occurrence
-        reached twice retains one frozen rejected value rather than two equal
-        ones. This is the earliest point where sharing is possible: the logical
-        node a row belongs to is not known until its members decode.
+        A projection repeating a judgment some earlier projection of its logical
+        node already made carries that projection's own issue record, so one
+        occurrence reached twice retains one frozen rejected value rather than
+        two equal ones. This is the earliest point where sharing is possible: the
+        logical node a row belongs to is not known until its members decode.
         """
         self._require_open()
         slots = self._schema.source(source, layout)
@@ -349,7 +351,7 @@ class GraphBuilder:
         logical = self._logical(layout, member_values, issues, projection)
         self._layouts.append(layout)
         self._member_rows.append(member_values)
-        self._issues.append(self._shared_issues(logical, projection, issues))
+        self._issues.append(self._shared_issues(logical, issues))
         self._sources.append(source)
         self._slots.append(slots)
         self._views.append([ABSENT] * len(slots.slots))
@@ -507,21 +509,34 @@ class GraphBuilder:
         return logical
 
     def _shared_issues(
-        self, logical: int, projection: int, issues: tuple[StoredDataIssueInput, ...]
+        self, logical: int, issues: tuple[StoredDataIssueInput, ...]
     ) -> tuple[StoredDataIssueInput, ...]:
-        """``issues``, or the equal tuple ``logical``'s first projection already
-        holds — the same objects, and so the same frozen rejected values.
+        """``issues`` with every record equal to one ``logical`` already retains
+        replaced by that record — the same objects, and so the same frozen
+        rejected values.
 
         Two projections of one logical node are two rows, judged apart and frozen
-        apart, and only the second one's arrival can tell they judged the same
-        occurrence the same way. Levels project different columns, so a duplicate
-        that carries a different diagnosis keeps its own.
+        apart, and only the later one's arrival can tell they judged the same
+        occurrence the same way. Sharing is decided per record rather than per
+        projection: levels project different columns, so two projections overlap
+        partially as readily as they agree entirely, and a judgment repeated
+        beside a new one still costs one frozen value. A record no earlier
+        projection of this node carried is retained here as the one a later
+        repeat of it collapses onto.
         """
-        first = self._first[logical]
-        if first == projection or not issues:
+        if not issues:
             return issues
-        carried = self._issues[first]
-        return carried if carried == issues else issues
+        return tuple(self._retain(logical, issue) for issue in issues)
+
+    def _retain(self, logical: int, issue: StoredDataIssueInput) -> StoredDataIssueInput:
+        """``issue``, or the record ``logical`` retains equal to it — keyed by
+        node rather than allocated per node, since most nodes carry none."""
+        retained = self._retained.setdefault(logical, [])
+        for already in retained:
+            if already == issue:
+                return already
+        retained.append(issue)
+        return issue
 
     def _fresh(self, projection: int) -> int:
         logical = len(self._first)
