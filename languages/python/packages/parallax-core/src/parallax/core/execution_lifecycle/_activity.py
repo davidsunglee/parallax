@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable, Sized
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Final, Protocol, runtime_checkable
+from typing import Final, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
 from parallax.core.auto_retry import retriable_failure
@@ -546,9 +546,24 @@ class _InertActivity:
     ``staticmethod`` descriptor answers the underlying function itself. Being
     static is why they answer the singleton rather than ``self``, which is exact
     because this class exists solely to have :data:`INERT` as its one instance.
+
+    Sameness is identity: :data:`INERT` is the one instance, and it stays that
+    one instance through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "INERT"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
+        return "INERT"
 
     @staticmethod
     def __enter__() -> _InertActivity:

@@ -63,7 +63,7 @@ from parallax.core import (
     attr,
     inheritance,
 )
-from parallax.core.base import INFINITY, DocumentValue, InstantError, PresentDocument, SqlNull
+from parallax.core.base import INFINITY, SQL_NULL, DocumentValue, InstantError, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
@@ -1041,7 +1041,7 @@ def _rectangle_row(*, address: dict[str, DocumentValue] | None) -> Row:
         "id": 1,
         "acct_num": "A",
         "value": Decimal("200.00"),
-        "address": SqlNull() if address is None else PresentDocument(address),
+        "address": SQL_NULL if address is None else PresentDocument(address),
         "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "thru_z": INFINITY,
         "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),

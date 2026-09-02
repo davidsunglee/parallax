@@ -21,17 +21,30 @@ value at its position already names its state.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, Self
 
 __all__ = ["ABSENT", "UNLOADED", "Absent", "NodeHandle"]
 
 
 class Absent:
-    """The type of :data:`ABSENT`, named so a reader can spell the test."""
+    """The type of :data:`ABSENT`, named so a reader can spell the test.
+
+    Sameness is identity: :data:`ABSENT` is the one instance, and it stays that
+    one instance through a copy, a deep copy, and a pickle round trip.
+    """
 
     __slots__ = ()
 
     def __repr__(self) -> str:
+        return "ABSENT"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
         return "ABSENT"
 
 
@@ -50,11 +63,24 @@ publication.
 class _Unloaded:
     """The private closed-world sentinel a frozen node's relationship position
     holds when its path was outside the include set (spec §3); never a public
-    value."""
+    value.
+
+    Sameness is identity: :data:`UNLOADED` is the one instance, and it stays that
+    one instance through a copy, a deep copy, and a pickle round trip.
+    """
 
     __slots__ = ()
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
+        return "UNLOADED"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
         return "UNLOADED"
 
 
