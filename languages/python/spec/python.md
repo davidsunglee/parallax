@@ -2017,6 +2017,41 @@ or descriptor authoring form and performs no audit stamping.
   the class declarations, which carry no information absent from the
   descriptor schema.
 
+### Sentinel identity
+
+A sentinel answers a question no ordinary value could — absent, unloaded,
+missing, unavailable, SQL null, latest, unobserved — and every site that reads
+one asks `is`. For each sentinel below, **sameness is identity**:
+
+- the module-level constant is the one instance, and a second construction is a
+  distinct object under both `is` and `==`;
+- `repr` is the exported name a reader would spell, not a constructor call; and
+- `is` survives `copy.copy`, `copy.deepcopy` at any nesting depth, and a pickle
+  round trip at every protocol.
+
+| Sentinel | Owner | Answers |
+|---|---|---|
+| `LATEST` | `parallax.core.object_query` | the explicit Latest temporal coordinate |
+| `ABSENT` | `parallax.core.entity` (private) | a positional member row's absent-or-undecodable position |
+| `UNLOADED` | `parallax.core.entity` | a relationship position outside the include set |
+| `NULL` | `parallax.core.document_codec` | a document member written as JSON null |
+| `MISSING` | `parallax.core.document_codec` | a document member whose key the document does not carry |
+| `UNAVAILABLE` | `parallax.core.document_codec` | a member whose hydration would require invention |
+| `SQL_NULL` | `parallax.core.base` | a structured-document read whose SQL column is NULL |
+| `INERT` | `parallax.core.execution_lifecycle` (private) | the activity every unobserved operation runs against |
+
+Each sentinel's class answers its own name from `__reduce__`, which pickle
+resolves in the class's *defining* module — so the singleton is declared at
+module level beside its class, whatever re-exports sit above it.
+
+The zero-field facet values — `MAX`, `COLUMNS`, `NON_TEMPORAL`, and their peers
+— are deliberately excluded. Their documented contract is equality: a freshly
+constructed one equals the exported constant, and preserving identity across a
+copy would contradict that.
+
+The public-API snapshot diffs `__all__` alone, so it observes none of this. The
+contract is graded directly instead, one case per sentinel.
+
 ## 3. Object lifecycle profile
 
 ### Snapshot lifecycle

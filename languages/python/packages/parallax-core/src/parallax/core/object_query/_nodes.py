@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import Final, Literal, Self
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.predicate import (
@@ -57,11 +57,23 @@ class Latest:
     leaving the dimension absent. It is deliberately not a coordinate — it
     re-resolves to whatever milestone is current at read time, so it is never
     replayable (python.md, the stale-web-edit recipe).
+
+    Sameness is identity: :data:`LATEST` is the one instance, and it stays that
+    one instance through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
+        return "LATEST"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
         return "LATEST"
 
 

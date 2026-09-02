@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Protocol, cast
 
 from parallax.core.base import (
+    SQL_NULL,
     DocumentValue,
     NeutralType,
     PresentDocument,
@@ -352,7 +353,7 @@ def _decode_document(
     carrier = (
         raw
         if isinstance(raw, (SqlNull, PresentDocument))
-        else SqlNull()
+        else SQL_NULL
         if raw is None
         else PresentDocument(cast("DocumentValue", raw))
     )

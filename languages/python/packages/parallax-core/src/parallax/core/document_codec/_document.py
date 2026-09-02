@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import Final, Literal, Self, cast
 
 from parallax.core.base import (
     DocumentValue,
@@ -84,9 +84,26 @@ class DocumentFinding:
     path: tuple[DocumentPathSegment, ...]
 
 
-@dataclass(frozen=True, slots=True)
 class Unavailable:
-    """A classified member for which hydration would require invention."""
+    """A classified member for which hydration would require invention.
+
+    Sameness is identity: :data:`UNAVAILABLE` is the one instance, and it stays
+    that one instance through a copy, a deep copy, and a pickle round trip.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "UNAVAILABLE"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
+        return "UNAVAILABLE"
 
 
 UNAVAILABLE: Final[Unavailable] = Unavailable()

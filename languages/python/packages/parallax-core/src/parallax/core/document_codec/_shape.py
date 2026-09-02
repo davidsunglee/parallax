@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Self
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel import (
@@ -91,14 +91,48 @@ class Present:
     value: object
 
 
-@dataclass(frozen=True, slots=True)
 class ExplicitNull:
-    """A member written as JSON null, distinct from an absent one."""
+    """A member written as JSON null, distinct from an absent one.
+
+    Sameness is identity: :data:`NULL` is the one instance, and it stays that one
+    instance through a copy, a deep copy, and a pickle round trip.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "NULL"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
+        return "NULL"
 
 
-@dataclass(frozen=True, slots=True)
 class Missing:
-    """A member whose key the document does not carry."""
+    """A member whose key the document does not carry.
+
+    Sameness is identity: :data:`MISSING` is the one instance, and it stays that
+    one instance through a copy, a deep copy, and a pickle round trip.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "MISSING"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
+        return "MISSING"
 
 
 type Presence = Present | ExplicitNull | Missing

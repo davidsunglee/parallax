@@ -63,6 +63,7 @@ from typing import Literal, Protocol, cast
 
 from parallax.core.base import (
     JSON,
+    SQL_NULL,
     DocumentReadOrdinals,
     NeutralType,
     PresentDocument,
@@ -513,7 +514,7 @@ def _classified_entity_member(
                 f"the database port returned {type(document_read).__name__}, not a DocumentRead"
             )
         if not isinstance(carrier, PresentDocument):
-            carrier = SqlNull()
+            carrier = SQL_NULL
         decoded = _classified_occurrence(
             declared.shape,
             carrier,

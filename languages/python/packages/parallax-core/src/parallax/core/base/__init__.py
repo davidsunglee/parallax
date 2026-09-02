@@ -16,7 +16,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, TypeGuard, cast
+from typing import Final, Self, TypeGuard, cast
 
 from parallax.core.base._inference import NEUTRAL_FROM_PYTHON, infer_neutral_type
 from parallax.core.base._neutral import (
@@ -113,9 +113,26 @@ type DocumentValue = (
 """A portable JSON data-model value, including bare JSON null."""
 
 
-@dataclass(frozen=True, slots=True)
 class SqlNull:
-    """A structured-document result whose SQL column is NULL."""
+    """A structured-document result whose SQL column is NULL.
+
+    Sameness is identity: :data:`SQL_NULL` is the one instance, and it stays that
+    one instance through a copy, a deep copy, and a pickle round trip.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "SQL_NULL"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
+        return "SQL_NULL"
 
 
 SQL_NULL: Final[SqlNull] = SqlNull()
