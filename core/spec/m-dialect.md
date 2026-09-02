@@ -521,12 +521,14 @@ included, so a caller joining terms never learns which structure a dialect chose
 Where a dialect places a `NULL` in a given direction when nothing asks is itself a
 dialect answer, and MUST be readable without emitting SQL: `asc` places `NULL` last
 on Postgres and first on MariaDB, `desc` the mirror. The rendered key term above and
-this fact are one decision — a term renders plain exactly where the requested
-placement already is the native one — so they can never disagree.
+this fact are one decision rather than two that could drift: the table compensates
+in exactly the cells where the requested placement is not the native one.
 
 A **nullable** key lowers through the compensating form, so its authored placement is
-the effective one. Every other key lowers to the plain `t0.c [asc|desc]` term in both
-dialects under either placement, leaving the dialect's own convention in force.
+the effective one, and it renders plain exactly where that placement already is the
+native answer. Every other key lowers to the plain `t0.c [asc|desc]` term in both
+dialects under **either** requested placement — no compensation is emitted for it at
+all — leaving the dialect's own convention in force.
 
 That is not the same as having no consequence. A non-nullable key holds no `NULL`
 under conforming storage, but a continuation seek past such a key is measured against

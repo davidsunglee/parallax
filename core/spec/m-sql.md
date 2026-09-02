@@ -501,27 +501,39 @@ composes the placement itself. The canonical Postgres terms are `t0.col asc`,
 ### Continuation coordinates — capture, seek, rebind
 
 A read carrying a **paging state** (`m-object-query`) is one page of a streamed
-delivery, and lowers three things from ONE resolution of each Continuation Order
-term: the `order by` term itself, a hidden result cell capturing what that term
-evaluated to, and — where the paging state carries a seek — the comparisons the
-next page admits roots through. The three MUST come from that one resolution.
-Deriving them independently makes their agreement a coincidence of construction,
-and a coordinate that differs from what the database ordered by silently skips or
-repeats roots.
+delivery, and lowers three things from ONE resolution RULE for each Continuation
+Order term: the `order by` term itself, a hidden result cell capturing what that
+term evaluated to, and — where the paging state carries a seek — the comparisons
+the next page admits roots through. All three MUST resolve the term the same way,
+which for a document-resident member means the same expression emitted again with
+its own path binds rather than one expression reused. Deriving them independently
+makes their agreement a coincidence of construction, and a coordinate that differs
+from what the database ordered by silently skips or repeats roots.
 
 **Capture.** A paging read projects one additional select-list cell per term, in
-term order, aliased `parallax_seek_<n>` at the term's own index, in the alias spelling every
+term order, under a `parallax_seek_N` result alias, in the alias spelling every
 projected cell uses (`<expression> <alias>`, no `as`), appended after
-every cell the read's own projection decided. The cell's expression is the term's
+every cell the read's own projection decided. Aliases are allocated
+**hygienically**, as a wrapped union's result aliases are: the complete
+reservation set is every physical Column spelling the model declares, and each
+term in turn takes the first unallocated `parallax_seek_N` starting at `N = 0`,
+skipping candidates in that set. So an authored physical `parallax_seek_0` keeps
+its own projected cell, and the coordinate that would have collided with it takes
+the next index — two cells under one result key would be one entry in the row the
+page returns, and lifting the coordinate off would then take the authored member's
+value or delete the member. The cell's expression is the term's
 own compared expression — the alias-qualified Column for a direct member, the
 dialect's extraction under the declared type's cast for a document-resident one —
-and it is emitted from the same resolution as the ordering term, path binds
+and it is emitted from the same resolution rule as the ordering term, path binds
 included. No projected cell is ever reused as a coordinate, even where it would be
 identical: a `bytes` member projects hex-encoded while its ordering expression does
 not, a document-resident member has no projected cell at all, and casts apply on
 the ordering path but never on projection, so the slice where reuse is provable is
 too thin to be worth being wrong about. Where the ordering is emitted against a
-wrapped `union all`'s own result aliases, so are the capture cells.
+wrapped `union all`'s own result aliases, so are the capture cells — and a member
+whose branches already rendered it into that alias is named and compared as the
+alias carries it, a `bytes` member being the hex-encoded TEXT the branches
+projected rather than the `bytea` column no branch yields.
 
 A cell's value crosses the port as an ordinary scalar result under the name the
 compiler chose. Nothing decodes it, admits it as a managed value, or lets it reach
@@ -563,12 +575,20 @@ an ordinary statement returning no root.
 
 **Rebind.** Each comparison binds its carrier in the form its own expression
 compares — a direct Column in the engine's own column type, a document extraction
-that casts in the declared type, and one that does not as the codec's comparison
-text — which is the split an authored predicate over the same member already takes.
+that casts in the declared type, and one that does not — a wrapped union's
+already-encoded `bytes` alias included — as the codec's comparison text. That is
+the split an authored predicate over the same member already takes. One carrier
+is neither: the open upper bound of a temporal interval reads back as the
+`m-core` temporal sentinel, which is a member of no declared value space, so it
+crosses as a framework bind whose canonical Wire report is the `infinity`
+literal — the form a written temporal row already binds it in.
+
 Seek binds append after the caller's authored predicate binds, so bind order stays
 caller-first; the ordering clause's own path binds follow them, and the cap last.
-A capture cell's path binds precede everything the `where` clause binds, because
-the cell's holes precede it in the statement.
+A capture cell's path binds precede every bind below them in the statement — a
+wrapped `union all`'s branch binds included — because the cell's holes precede
+them in the text. A statement whose fragments are assembled in any other order
+sends one fragment's data to another's placeholder.
 
 ### Clause order
 
