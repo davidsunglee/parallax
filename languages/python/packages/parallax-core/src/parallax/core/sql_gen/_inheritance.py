@@ -992,11 +992,17 @@ def render_projection(
     columns: Sequence[ProjectedColumn],
     *,
     document_pairs: bool = True,
+    wrapped: bool = False,
 ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
     """Render one select list and its ordered projection binds against ``alias``.
 
     A `bytes` column projects `encode(col, ?)`, which is where a projection BIND
     comes from and why projection binds lead the statement's bind tuple.
+
+    ``wrapped`` says ``alias`` is a derived table over a union whose branches
+    already applied that rendering, so each column is selected THROUGH under the
+    result key the branch projected it as — a second `encode` there would name a
+    column the union does not yield.
     """
     exprs: list[str] = []
     binds: list[object] = []
@@ -1012,6 +1018,10 @@ def render_projection(
             continue
         if projected.type is None:
             exprs.append(dialect.qualified(alias, projected.column))
+        elif wrapped:
+            exprs.append(
+                dialect.qualified(alias, projection_result_key(projected.column, projected.type))
+            )
         else:
             expr, extra = dialect.project(alias, projected.column, projected.type)
             exprs.append(expr)
@@ -1047,10 +1057,21 @@ class TphPlan:
     transform: RowTransform
 
     def projection(
-        self, dialect: Dialect, alias: str, *, document_pairs: bool = True
+        self,
+        dialect: Dialect,
+        alias: str,
+        *,
+        document_pairs: bool = True,
+        wrapped: bool = False,
     ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
-        """The select list and its ordered projection binds, against ``alias``."""
-        return render_projection(dialect, alias, self.columns, document_pairs=document_pairs)
+        """The select list and its ordered projection binds, against ``alias``.
+
+        ``wrapped`` is the variant-partitioned form, where ``alias`` is a derived
+        table over the per-variant union rather than the family's own Table.
+        """
+        return render_projection(
+            dialect, alias, self.columns, document_pairs=document_pairs, wrapped=wrapped
+        )
 
 
 @dataclass(frozen=True, slots=True)
