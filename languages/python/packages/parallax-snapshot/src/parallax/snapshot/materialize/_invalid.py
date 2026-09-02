@@ -50,6 +50,9 @@ class MissingStoredValue:
             MissingStoredValue._instance = super().__new__(cls)
         return MissingStoredValue._instance
 
+    def __init_subclass__(cls) -> None:
+        raise TypeError("MissingStoredValue admits one instance and therefore no subclass")
+
     def __repr__(self) -> str:
         return "MISSING_STORED_VALUE"
 

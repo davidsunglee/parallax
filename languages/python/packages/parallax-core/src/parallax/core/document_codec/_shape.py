@@ -107,6 +107,9 @@ class ExplicitNull:
             ExplicitNull._instance = super().__new__(cls)
         return ExplicitNull._instance
 
+    def __init_subclass__(cls) -> None:
+        raise TypeError("ExplicitNull admits one instance and therefore no subclass")
+
     def __repr__(self) -> str:
         return "NULL"
 
@@ -135,6 +138,9 @@ class Missing:
         if Missing._instance is None:
             Missing._instance = super().__new__(cls)
         return Missing._instance
+
+    def __init_subclass__(cls) -> None:
+        raise TypeError("Missing admits one instance and therefore no subclass")
 
     def __repr__(self) -> str:
         return "MISSING"

@@ -560,6 +560,9 @@ class _InertActivity:
             _InertActivity._instance = super().__new__(cls)
         return _InertActivity._instance
 
+    def __init_subclass__(cls) -> None:
+        raise TypeError("_InertActivity admits one instance and therefore no subclass")
+
     def __repr__(self) -> str:
         return "INERT"
 
