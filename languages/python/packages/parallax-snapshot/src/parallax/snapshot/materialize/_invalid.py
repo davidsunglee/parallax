@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, fields
-from typing import Final, Self, cast
+from typing import ClassVar, Final, Self, cast
 
 from parallax.core.metamodel import EntityIdentity, MemberIdentity
 from parallax.core.temporal_read import Edge
@@ -37,11 +37,18 @@ class MissingStoredValue:
     """The evidence a traversable stored object held no member at all.
 
     Distinct from ``None``, which is the stored SQL or JSON null. Sameness is
-    identity: :data:`MISSING_STORED_VALUE` is the one instance, and it stays that
-    one instance through a copy, a deep copy, and a pickle round trip.
+    identity: :data:`MISSING_STORED_VALUE` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[MissingStoredValue | None] = None
+
+    def __new__(cls) -> MissingStoredValue:
+        if MissingStoredValue._instance is None:
+            MissingStoredValue._instance = super().__new__(cls)
+        return MissingStoredValue._instance
 
     def __repr__(self) -> str:
         return "MISSING_STORED_VALUE"

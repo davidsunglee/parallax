@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Final, Literal, Self, cast
+from typing import ClassVar, Final, Literal, Self, cast
 
 from parallax.core.base import (
     DocumentValue,
@@ -94,11 +94,18 @@ class DocumentFinding:
 class Unavailable:
     """A classified member for which hydration would require invention.
 
-    Sameness is identity: :data:`UNAVAILABLE` is the one instance, and it stays
-    that one instance through a copy, a deep copy, and a pickle round trip.
+    Sameness is identity: :data:`UNAVAILABLE` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[Unavailable | None] = None
+
+    def __new__(cls) -> Unavailable:
+        if Unavailable._instance is None:
+            Unavailable._instance = super().__new__(cls)
+        return Unavailable._instance
 
     def __repr__(self) -> str:
         return "UNAVAILABLE"

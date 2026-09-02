@@ -2024,15 +2024,16 @@ missing, unavailable, SQL null, latest, unobserved, no stored member at all. A
 site holding one on its own reads it with `is`; a site holding a union whose
 other arms carry data reads the sentinel's own class, which is the test a static
 type narrows on and the only one that reaches the carried arm's payload
-afterwards. The two never disagree, because past the one construction beside
-each class's exported constant nothing constructs another. For each sentinel
-below, **sameness is identity**:
+afterwards. The two never disagree because the class holds no instance for them
+to disagree about: a sentinel class admits one instance, and every route to one —
+construction included — answers it. For each sentinel below, **sameness is
+identity**:
 
-- the module-level constant is the one instance, and a second construction is a
-  distinct object under both `is` and `==`;
+- the module-level constant is the one instance, and constructing the class
+  again answers that instance rather than a second object;
 - `repr` is the exported name a reader would spell, not a constructor call; and
-- `is` survives `copy.copy`, `copy.deepcopy` at any nesting depth, and a pickle
-  round trip at every protocol.
+- `is` survives construction, `copy.copy`, `copy.deepcopy` at any nesting depth,
+  and a pickle round trip at every protocol.
 
 | Sentinel | Owner | Answers |
 |---|---|---|
@@ -2052,8 +2053,9 @@ module level beside its class, whatever re-exports sit above it.
 
 The zero-field facet values — `MAX`, `COLUMNS`, `NON_TEMPORAL`, and their peers
 — are deliberately excluded. Their documented contract is equality: a freshly
-constructed one equals the exported constant, and preserving identity across a
-copy would contradict that.
+constructed one is a distinct object equal to the exported constant, and
+collapsing construction or a copy onto one instance would give identity a
+meaning their contract withholds from it.
 
 The public-API snapshot diffs `__all__` alone, so it observes none of this. The
 contract is graded directly instead, one case per sentinel.

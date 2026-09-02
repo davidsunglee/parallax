@@ -16,7 +16,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Self, TypeGuard, cast
+from typing import ClassVar, Final, Self, TypeGuard, cast
 
 from parallax.core.base._inference import NEUTRAL_FROM_PYTHON, infer_neutral_type
 from parallax.core.base._neutral import (
@@ -118,11 +118,18 @@ type DocumentValue = (
 class SqlNull:
     """A structured-document result whose SQL column is NULL.
 
-    Sameness is identity: :data:`SQL_NULL` is the one instance, and it stays that
-    one instance through a copy, a deep copy, and a pickle round trip.
+    Sameness is identity: :data:`SQL_NULL` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[SqlNull | None] = None
+
+    def __new__(cls) -> SqlNull:
+        if SqlNull._instance is None:
+            SqlNull._instance = super().__new__(cls)
+        return SqlNull._instance
 
     def __repr__(self) -> str:
         return "SQL_NULL"

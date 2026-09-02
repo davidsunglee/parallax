@@ -21,7 +21,7 @@ value at its position already names its state.
 
 from __future__ import annotations
 
-from typing import Final, Self
+from typing import ClassVar, Final, Self
 
 __all__ = ["ABSENT", "UNLOADED", "Absent", "NodeHandle"]
 
@@ -29,11 +29,18 @@ __all__ = ["ABSENT", "UNLOADED", "Absent", "NodeHandle"]
 class Absent:
     """The type of :data:`ABSENT`, named so a reader can spell the test.
 
-    Sameness is identity: :data:`ABSENT` is the one instance, and it stays that
-    one instance through a copy, a deep copy, and a pickle round trip.
+    Sameness is identity: :data:`ABSENT` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[Absent | None] = None
+
+    def __new__(cls) -> Absent:
+        if Absent._instance is None:
+            Absent._instance = super().__new__(cls)
+        return Absent._instance
 
     def __repr__(self) -> str:
         return "ABSENT"
@@ -65,11 +72,18 @@ class _Unloaded:
     holds when its path was outside the include set (spec §3); never a public
     value.
 
-    Sameness is identity: :data:`UNLOADED` is the one instance, and it stays that
-    one instance through a copy, a deep copy, and a pickle round trip.
+    Sameness is identity: :data:`UNLOADED` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[_Unloaded | None] = None
+
+    def __new__(cls) -> _Unloaded:
+        if _Unloaded._instance is None:
+            _Unloaded._instance = super().__new__(cls)
+        return _Unloaded._instance
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
         return "UNLOADED"
