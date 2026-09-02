@@ -7,10 +7,11 @@ the result is frozen, in a single traversal: translating and freezing apart woul
 cost a second walk and leave an intermediate frozen form nobody holds.
 
 The product is ordinary immutable Python, with no frozen-dict type of its own,
-and it is the judging row's own copy: every seam downstream shares that object by
-reference rather than translating or detaching its own, and where two rows judge
-one occurrence alike the graph builder keeps the copy that arrived first and
-drops the later equal one, so exactly one survives.
+and it is the judging row's candidate rather than the copy a diagnosis is
+guaranteed to carry: where two rows judge one occurrence alike, the graph builder
+keeps the copy that arrived first and drops the later equal one, so exactly one
+survives. Every seam above that decision shares the surviving object by reference
+rather than translating or detaching its own.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ __all__ = ["freeze_evidence"]
 
 
 def freeze_evidence(value: object) -> object:
-    """``value`` as the immutable evidence the judging row's public diagnosis carries.
+    """``value`` as the judging row's immutable candidate for public evidence.
 
     The codec's absence marker becomes the public one — a genuinely absent
     member reads :data:`~parallax.snapshot.materialize.MISSING_STORED_VALUE` —
