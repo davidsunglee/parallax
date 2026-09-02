@@ -67,8 +67,10 @@ class LoweredTerm:
     """One Continuation Order term as this statement lowers it.
 
     ``alias`` is the hidden result cell this term's coordinate is captured
-    under, allocated from the term's own position so capture, tie comparison,
-    and rebinding all address the order the same way.
+    under. Aliases are allocated in term order but not at the term's own index —
+    :func:`lowered_terms` skips a reserved spelling — so capture, tie
+    comparison, and rebinding all address the order through the alias the term
+    was allocated rather than through its position.
     """
 
     term: ValidatedOrderTerm
@@ -141,6 +143,8 @@ def lower_seek(
     terms: Sequence[LoweredTerm],
     subject: TermSubject,
     ctx: StatementBuilder,
+    *,
+    leading_resident: bool,
 ) -> str:
     """The `where`-clause fragment admitting the roots after ``seek``.
 
@@ -156,6 +160,10 @@ def lower_seek(
     fragment admits fewer roots than the ordering places after the coordinate,
     and the one place declared nullability still decides anything; its own
     docstring carries the trade and the specification that fixes it.
+    ``leading_resident`` is the caller's Member Placement answer for the leading
+    term, which that decision needs and no resolution here may ask for: resolving
+    a subject binds an extraction's path segments, so a probe would push binds no
+    text consumes.
 
     A coordinate the emitted ordering placed LAST leaves every branch vacuous,
     and the seek then admits nothing — the ordinary way a delivery that ended on
@@ -181,7 +189,7 @@ def lower_seek(
         _refuse_a_crossed_term(term, lowered)
     dialect = ctx.dialect
     parts: list[str] = []
-    if _hoists_a_leading_range(seek.terms, carriers):
+    if _hoists_a_leading_range(seek.terms, carriers, resident=leading_resident):
         lead = seek.terms[0]
         comparator = ">=" if lead.direction == "asc" else "<="
         parts.append(_compared(terms[0], subject, carriers[0], comparator, ctx))
@@ -270,29 +278,38 @@ def _spans_a_disjunction(term: ContinuationTerm, carrier: object, dialect: Diale
     return carrier is not None and _placement(term, dialect) == "last"
 
 
-def _hoists_a_leading_range(terms: Sequence[ContinuationTerm], carriers: Sequence[object]) -> bool:
+def _hoists_a_leading_range(
+    terms: Sequence[ContinuationTerm], carriers: Sequence[object], *, resident: bool
+) -> bool:
     """Whether to emit the redundant leading range a planner can seek on.
 
     THE ONE DELIBERATE EXCEPTION in this module, and the only question here that
     is not :func:`_placement`'s. This asks what the MODEL declares, not where the
     emitted clause put a NULL: `col >=|<= ?` excludes a NULL wherever it was
-    placed, so over a leading term declared non-nullable that holds a stored NULL
-    anyway, this conjunct re-excludes the very root the branch below it admits
-    and the delivery skips it.
+    placed, so over a leading term declared non-nullable whose expression
+    evaluates to NULL anyway, this conjunct re-excludes the very root the branch
+    below it admits and the delivery skips it.
 
-    That skip is bought rather than overlooked. The lexicographic disjunction on
-    its own offers a planner nothing to push down, so without this conjunct every
-    streamed page over a leading key scans where it could seek; widening it to
-    `(col >=|<= ? or col is null)` admits the root and loses the same range.
-    `m-snapshot-read` *Streamed delivery* names the skip as the accepted price
-    and scopes it to non-conforming storage — every other invalid stored value is
-    still delivered, because none of them makes the ordering term NULL.
+    That skip is bought rather than overlooked, and the price is bounded by what
+    can make the expression NULL. Over a DIRECT Column only a stored NULL under a
+    dropped `NOT NULL` constraint can — storage the declared model does not
+    describe — and the range is what a planner seeks on, so `m-snapshot-read`
+    *Streamed delivery* names that one skip as the accepted price. A
+    DOCUMENT-RESIDENT term is the other case and takes the opposite answer:
+    its extraction goes NULL for a missing member, an explicit JSON null, or a
+    wrong-kind parent document — ordinary invalid stored data the same
+    specification guarantees is still delivered — while a `>=` over an
+    extraction offers a planner no index range to buy the skip with. So nothing
+    is hoisted there, and the branch tree's own placement answer admits the root.
 
-    So this guard is a specified cost decision, not a placement answer: removing
-    it changes what every streamed page costs, and amending it to admit the NULL
-    means amending that specification first.
+    Widening the conjunct to `(col >=|<= ? or col is null)` would admit the root
+    on either side and lose the same range, which is why the direct case chooses
+    between them rather than keeping both. This guard is therefore a specified
+    cost decision, not a placement answer: removing it changes what every
+    streamed page over a Column costs, and amending it to admit that Column's
+    NULL means amending that specification first.
     """
-    return len(terms) > 1 and not terms[0].nullable and carriers[0] is not None
+    return len(terms) > 1 and not terms[0].nullable and not resident and carriers[0] is not None
 
 
 def _after(
