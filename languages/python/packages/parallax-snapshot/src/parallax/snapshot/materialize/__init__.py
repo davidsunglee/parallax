@@ -22,16 +22,17 @@ projection merge that produce and consume it.
 - :mod:`~parallax.snapshot.materialize._merge` collapses duplicate projections
   into one deterministic allocation order and answers each consumer by index,
   holding integers and references only; classified issues ride each winning
-  logical node without deduplication.
+  logical node, and a judgment two projections made lists once because both
+  carry the same record object.
 - :mod:`~parallax.snapshot.materialize._classify` attributes those issues to the
   result roots whose requested include trees reach them, and settles the
   construction scope that attribution implies.
 - :mod:`~parallax.snapshot.materialize._invalid` holds the public record a
   classified root publishes in place of itself, and the missing-value sentinel
   its evidence spells a genuinely absent stored member with.
-- :mod:`~parallax.snapshot.materialize._evidence` translates and freezes each
-  rejected stored value once, on its way from the seam that judged it into that
-  record.
+- :mod:`~parallax.snapshot.materialize._evidence` translates and freezes a
+  judging row's rejected stored value in one walk, on its way from the seam that
+  judged it into that record.
 - :mod:`~parallax.snapshot.materialize._wire` turns one merge into a finite tree
   of frozen plain values keyed by declared member name — the second public
   materializer, a peer of the typed one rather than a wrapper of it. It consumes

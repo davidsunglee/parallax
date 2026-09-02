@@ -984,11 +984,12 @@ def test_two_unreadable_projections_of_one_row_never_merge_with_each_other() -> 
     assert [record.ordinal for record in merge.invalid_roots] == [0, 1]
 
 
-def test_one_rejected_subtree_reached_twice_is_frozen_once() -> None:
+def test_one_rejected_subtree_reached_twice_retains_one_frozen_copy() -> None:
     # A scalar rejected value costs nothing to hold twice, and Python may hand
     # two rows the identical string anyway. A rejected document subtree is the
-    # shape the freeze-once rule is about: two rows decode two independent
-    # structures, and only one of them stays alive behind the merged node.
+    # shape the retention rule is about: two rows decode two independent
+    # structures and each freezes its own, and only the copy the merged node
+    # retains stays alive once the second row's conversion returns.
     stored: dict[str, object] = {
         "id": 1,
         "name": "Ada",
