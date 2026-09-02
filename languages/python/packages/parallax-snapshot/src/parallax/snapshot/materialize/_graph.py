@@ -336,17 +336,24 @@ class GraphBuilder:
         row within one Entity family share an ID; a projection whose key did not
         decode takes an ID of its own and keeps its diagnosis, so it merges with
         nothing — not even a second read of the identical unreadable row.
+
+        A duplicate that judged its logical node the way the first projection of
+        that node did carries the FIRST projection's issues, so one occurrence
+        reached twice retains one frozen rejected value rather than two equal
+        ones. This is the earliest point where sharing is possible: the logical
+        node a row belongs to is not known until its members decode.
         """
         self._require_open()
         slots = self._schema.source(source, layout)
         projection = len(self._layouts)
+        logical = self._logical(layout, member_values, issues, projection)
         self._layouts.append(layout)
         self._member_rows.append(member_values)
-        self._issues.append(issues)
+        self._issues.append(self._shared_issues(logical, projection, issues))
         self._sources.append(source)
         self._slots.append(slots)
         self._views.append([ABSENT] * len(slots.slots))
-        self._logical_ids.append(self._logical(layout, member_values, issues, projection))
+        self._logical_ids.append(logical)
         return projection
 
     def import_projection(self, source: SourceLevel, graph: SnapshotGraph, projection: int) -> int:
@@ -498,6 +505,23 @@ class GraphBuilder:
         logical = self._fresh(projection)
         self._identity[key] = logical
         return logical
+
+    def _shared_issues(
+        self, logical: int, projection: int, issues: tuple[StoredDataIssueInput, ...]
+    ) -> tuple[StoredDataIssueInput, ...]:
+        """``issues``, or the equal tuple ``logical``'s first projection already
+        holds — the same objects, and so the same frozen rejected values.
+
+        Two projections of one logical node are two rows, judged apart and frozen
+        apart, and only the second one's arrival can tell they judged the same
+        occurrence the same way. Levels project different columns, so a duplicate
+        that carries a different diagnosis keeps its own.
+        """
+        first = self._first[logical]
+        if first == projection or not issues:
+            return issues
+        carried = self._issues[first]
+        return carried if carried == issues else issues
 
     def _fresh(self, projection: int) -> int:
         logical = len(self._first)

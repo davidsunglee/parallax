@@ -51,7 +51,7 @@ from parallax.snapshot.materialize import (
     StoredDataIssueInput,
     merge_graph_input,
 )
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL
@@ -299,9 +299,12 @@ def test_a_scalar_the_first_projection_carries_wins_without_comparison() -> None
     assert root.items[0].sku == "x"
 
 
-def test_duplicate_projections_preserve_each_physical_stored_data_issue() -> None:
-    # Two sibling levels can project one invalid row twice. Merge retains both
-    # physical findings; per-root classification owns any later deduplication.
+def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
+    # Two sibling levels can project one invalid row twice, and each row is
+    # judged and frozen before anything can know the two are one node. The
+    # duplicate carries the first projection's issue record itself, so the node
+    # holds one rejected value rather than an equal second for the graph's life,
+    # and the merge lists it once.
     fixture = GraphFixture(
         _STORY_ORDERS,
         "parallax.compatibility.Order.items",
@@ -318,10 +321,36 @@ def test_duplicate_projections_preserve_each_physical_stored_data_issue() -> Non
         (via_ship_date,),
     )
 
+    graph = fixture.graph(order)
+    rows = graph_rows(graph)
+    assert rows.issues[via_ship_date][0] is rows.issues[via_items][0]
+    merge = merge_graph_input(graph)
+    item = _sole_node(merge, "OrderItem")
+    assert [issue.code for issue in merge.issues(item)] == ["stored-data-leaf-undecodable"]
+
+
+def test_a_duplicate_projection_that_judged_differently_contributes_its_own_finding() -> None:
+    # Sibling levels project different columns, so two projections of one node
+    # may see different stored state. Sharing is what two equal judgments earn,
+    # not what arriving second costs: a distinct rejected value is a distinct
+    # fact about the stored row and both reach the merged node.
+    fixture = GraphFixture(
+        _STORY_ORDERS,
+        "parallax.compatibility.Order.items",
+        "parallax.compatibility.Order.itemsByShipDate",
+    )
+    order = fixture.node("Order", _ORDER_ROW)
+    via_items = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+    via_ship_date = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "also-not-a-date"})
+    fixture.attach(order, "parallax.compatibility.Order.items", (via_items,))
+    fixture.attach(order, "parallax.compatibility.Order.itemsByShipDate", (via_ship_date,))
+
     merge = merge_graph_input(fixture.graph(order))
     item = _sole_node(merge, "OrderItem")
-    assert len(merge.issues(item)) == 2
-    assert merge.issues(item)[0].code == "stored-data-leaf-undecodable"
+    assert [issue.stored_value for issue in merge.issues(item)] == [
+        "not-a-date",
+        "also-not-a-date",
+    ]
 
 
 def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
@@ -889,6 +918,27 @@ def test_two_unreadable_projections_of_one_row_never_merge_with_each_other() -> 
     assert merge.roots == (None, None, 0, 0)
     assert len(merge.order) == 1
     assert [record.ordinal for record in merge.invalid_roots] == [0, 1]
+
+
+def test_one_rejected_subtree_reached_twice_is_frozen_once() -> None:
+    # A scalar rejected value costs nothing to hold twice, and Python may hand
+    # two rows the identical string anyway. A rejected document subtree is the
+    # shape the freeze-once rule is about: two rows decode two independent
+    # structures, and only one of them stays alive behind the merged node.
+    stored: dict[str, object] = {
+        "id": 1,
+        "name": "Ada",
+        "address": {"street": "1 Park Ave", "phones": {"type": "home"}},
+    }
+    fixture = GraphFixture(vo_models.CUSTOMER_MODEL)
+    first = fixture.node("Customer", dict(stored))
+    second = fixture.node("Customer", dict(stored))
+    graph = fixture.graph(first, second)
+    rows = graph_rows(graph)
+    (frozen,) = rows.issues[first]
+    assert frozen.stored_value == {"type": "home"}
+    assert rows.issues[second][0].stored_value is frozen.stored_value
+    assert merge_graph_input(graph).issues(0) == (frozen,)
 
 
 def test_no_published_value_is_the_absent_sentinel() -> None:

@@ -179,8 +179,13 @@ class GraphMerge:
         return self._rows.member_rows[self._winner[node]]
 
     def issues(self, node: int) -> tuple[StoredDataIssueInput, ...]:
-        """Every issue every projection of ``node`` carried, in walk order and
-        without deduplication."""
+        """Every issue every projection of ``node`` carried, in walk order.
+
+        A duplicate projection that judged the node the way the first one did
+        carries that projection's own issue objects, so one occurrence reached
+        twice appears once; a duplicate that judged differently appears beside
+        it.
+        """
         return self._issues[node]
 
     def view_layout(self, node: int) -> MergedViewLayout:
@@ -217,9 +222,14 @@ class GraphMerge:
             self._view_layouts.append(merged)
             winners.append([ABSENT] * len(merged.slots))
         else:
-            carried = rows.issues[projection]
+            held = self._issues[index]
+            carried = tuple(
+                issue
+                for issue in rows.issues[projection]
+                if not any(issue is already for already in held)
+            )
             if carried:
-                self._issues[index] = (*self._issues[index], *carried)
+                self._issues[index] = (*held, *carried)
         self._resolved[projection] = index
         values = rows.view_rows[projection]
         carried_views = winners[index]
