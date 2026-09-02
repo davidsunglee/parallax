@@ -769,6 +769,13 @@ _NULLS_FIRST_BASE = (
 _NULLS_FIRST_TAIL = " order by t0.sku asc nulls first, t0.id asc limit ?"
 
 
+# The appended `id asc` is non-nullable, so its branch admits NULLs wherever the
+# EMITTED clause placed them, which is each dialect's own convention: Postgres
+# trails them on `asc` and MariaDB leads them. The two spellings therefore differ
+# on that leaf alone, over a column that holds no NULL.
+_KEY_AFTER = {"postgres": "(t0.id > ? or t0.id is null)", "mariadb": "t0.id > ?"}
+
+
 def _nulls_first_case(case: Case, non_nulls: str) -> Case:
     """*case* re-authored as a Nulls First delivery, its second page spelled as given."""
     case.when["objectQuery"]["orderBy"] = [
@@ -776,15 +783,21 @@ def _nulls_first_case(case: Case, non_nulls: str) -> Case:
     ]
     case.when["stream"]["batchSize"] = 1
     pages = [
-        f"{_NULLS_FIRST_BASE}{_NULLS_FIRST_TAIL}",
-        f"{_NULLS_FIRST_BASE} where ({non_nulls} or (t0.sku is null and t0.id > ?))"
-        f"{_NULLS_FIRST_TAIL}",
-        f"{_NULLS_FIRST_BASE} where (t0.sku > ? or (t0.sku = ? and t0.id > ?)){_NULLS_FIRST_TAIL}",
+        {dialect: f"{_NULLS_FIRST_BASE}{_NULLS_FIRST_TAIL}" for dialect in _KEY_AFTER},
+        {
+            dialect: f"{_NULLS_FIRST_BASE} where ({non_nulls} or (t0.sku is null and {key}))"
+            f"{_NULLS_FIRST_TAIL}"
+            for dialect, key in _KEY_AFTER.items()
+        },
+        {
+            dialect: f"{_NULLS_FIRST_BASE} where (t0.sku > ? or (t0.sku = ? and {key}))"
+            f"{_NULLS_FIRST_TAIL}"
+            for dialect, key in _KEY_AFTER.items()
+        },
     ]
     binds: list[list[Any]] = [[1], [4, 1], ["A-100", "A-100", 1, 1]]
     case.then["statements"] = [
-        {"sql": {"postgres": sql, "mariadb": sql}, "binds": bound}
-        for sql, bound in zip(pages, binds, strict=True)
+        {"sql": sql, "binds": bound} for sql, bound in zip(pages, binds, strict=True)
     ]
     case.then["graph"] = {
         "Order": [

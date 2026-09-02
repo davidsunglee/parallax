@@ -58,7 +58,7 @@ when:
             mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
           binds: [2]
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where (t0.id > ? or t0.id is null) order by t0.id asc limit ?
             mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
           binds: [2, 2]
       referenceSql: select id, owner, balance, version from account
@@ -95,7 +95,7 @@ when:
             mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
           binds: [2]
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where (t0.id > ? or t0.id is null) order by t0.id asc limit ?
             mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
           binds: [2, 2]
       referenceSql: select id, owner, balance, version from account

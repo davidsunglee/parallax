@@ -80,12 +80,40 @@ class ContinuationTerm:
     direction: Literal["asc", "desc"]
     nulls: Literal["first", "last"]
     nullable: bool
+    placement: Literal["first", "last"]
     neutral_type: str
+
+
+_NULL_IS_LARGEST = {"postgres": True, "mariadb": False}
+"""Whether a dialect's own `order by` ranks `NULL` above every value (m-dialect)."""
+
+
+def _native_placement(dialect: str, direction: Literal["asc", "desc"]) -> Literal["first", "last"]:
+    """Where *dialect* puts a `NULL` in *direction* when nothing asks (m-dialect)."""
+    return "last" if _NULL_IS_LARGEST[dialect] == (direction == "asc") else "first"
+
+
+def _emitted_placement(
+    dialect: str,
+    *,
+    direction: Literal["asc", "desc"],
+    nulls: Literal["first", "last"],
+    nullable: bool,
+) -> Literal["first", "last"]:
+    """Where the ORDER BY a page emits actually puts this term's `NULL`s.
+
+    A nullable key lowers through the compensating Null Placement form, so its
+    authored placement is the effective one; every other key lowers plain, which
+    leaves the dialect's own convention in force whatever the key requested and
+    whatever the declaration says the column can hold.
+    """
+    return nulls if nullable else _native_placement(dialect, direction)
 
 
 def _direct_term(
     column: str,
     neutral_type: str,
+    dialect: str,
     *,
     direction: Literal["asc", "desc"],
     nulls: Literal["first", "last"],
@@ -99,6 +127,7 @@ def _direct_term(
         direction=direction,
         nulls=nulls,
         nullable=nullable,
+        placement=_emitted_placement(dialect, direction=direction, nulls=nulls, nullable=nullable),
         neutral_type=neutral_type,
     )
 
@@ -202,6 +231,7 @@ def _resident_term(
         direction=direction,
         nulls=nulls,
         nullable=nullable,
+        placement=_emitted_placement(dialect, direction=direction, nulls=nulls, nullable=nullable),
         neutral_type=member.type_spelling or "string",
     )
 
@@ -322,6 +352,7 @@ def continuation_order(
                 _direct_term(
                     attribute["column"],
                     attribute["type"],
+                    dialect,
                     direction=direction,
                     nulls=nulls,
                     nullable=nullable,
@@ -358,6 +389,7 @@ def continuation_order(
                         if attribute.get("primaryKey")
                     )
                 )["type"],
+                dialect,
                 direction="asc",
                 nulls="last",
                 nullable=False,
@@ -367,7 +399,9 @@ def continuation_order(
     for column in _milestone_edge_columns(query, root):
         if column not in named:
             terms.append(
-                _direct_term(column, "timestamp", direction="asc", nulls="last", nullable=False)
+                _direct_term(
+                    column, "timestamp", dialect, direction="asc", nulls="last", nullable=False
+                )
             )
     return terms
 
@@ -450,12 +484,20 @@ def composed_seek(terms: list[ContinuationTerm], coordinates: tuple[Any, ...]) -
     Derived from `m-snapshot-read`'s seek alone, never from the authored SQL: the
     lexicographic remainder — one branch per tie depth, disjoined, each branch
     tying with every coordinate above it before comparing its own in that term's
-    direction and placement — behind the range a non-nullable leading term
-    hoists. A single-term order composes neither part: one strict comparison
-    already is the top-level conjunct the hoist supplies. A null coordinate
-    carries no coordinate bind at any depth, both spellings that reach it being
-    null checks, and under Nulls Last contributes no branch at all: nothing sorts
-    after a null there.
+    direction and EMITTED placement — behind the range a leading term declared
+    non-nullable hoists. A single-term order composes neither part: one strict
+    comparison already is the top-level conjunct the hoist supplies. A null
+    coordinate carries no coordinate bind at any depth, both spellings that reach
+    it being null checks, and where the emitted clause placed nulls last it
+    contributes no branch at all: nothing sorts after a null there.
+
+    Placement is the emitted one rather than the authored one, because that is
+    what decides which rows the clause actually ranked after the coordinate: a
+    key the model declares non-nullable lowers plain and takes the dialect's own
+    convention. The hoist is the one part that still turns on the DECLARATION,
+    and deliberately (`m-snapshot-read` *Streamed delivery*): it buys the leading
+    index range at the price of skipping a stored NULL non-conforming storage
+    left in a `NOT NULL` column.
 
     Grading the SHAPE is what the binds cannot do — a page that seeks the wrong
     way, or disjoins what the order conjoins, binds exactly what a correct one
@@ -486,9 +528,9 @@ def _strictly_after(term: ContinuationTerm, coordinate: Any) -> ComposedSeek | N
     a depth that admits nothing contributing no branch of its own.
     """
     if coordinate is None:
-        return _null_leaf(term, negated=True) if term.nulls == "first" else None
+        return _null_leaf(term, negated=True) if term.placement == "first" else None
     strict = _comparison_leaf(term, ">" if term.direction == "asc" else "<", coordinate)
-    if term.nullable and term.nulls == "last":
+    if term.placement == "last":
         return ComposedSeek(
             _SeekJunction("or", (strict.node, _null_leaf(term).node)),
             (*strict.binds, *term.path_binds),

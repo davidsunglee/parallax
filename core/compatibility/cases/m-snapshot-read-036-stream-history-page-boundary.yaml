@@ -11,7 +11,10 @@
 # ending in the primary key cannot cross: page 2 would seek `id > 1000` and skip
 # the 75.00 milestone entirely, delivering two roots for a three-milestone set.
 # The order here is `id asc, in_z asc`, so page 2 seeks `id >= 1000 and (id > 1000
-# or (id = 1000 and in_z > 2024-01-01))` and reaches it.
+# or (id = 1000 and in_z > 2024-01-01))` and reaches it — the MariaDB spelling;
+# Postgres adds `or … is null` to each of those two branches, both terms being
+# non-nullable `asc` keys whose NULLs it trails natively where MariaDB leads them
+# (m-dialect). Neither column holds one, so the pages are the same.
 #
 # The delivery is three full pages plus the terminal empty root statement — a full
 # final page proves nothing, so exhaustion costs one more statement that returns
@@ -46,15 +49,15 @@ then:
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? order by t0.id asc, t0.in_z asc limit ?
       binds: [100, 1]
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or t0.id is null or (t0.id = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.id asc, t0.in_z asc limit ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
       binds: [100, 1000, 1000, 1000, "2024-01-01T00:00:00.000000Z", 1]
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or t0.id is null or (t0.id = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.id asc, t0.in_z asc limit ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
       binds: [100, 1000, 1000, 1000, "2024-04-01T00:00:00.000000Z", 1]
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or t0.id is null or (t0.id = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.id asc, t0.in_z asc limit ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
       binds: [100, 1001, 1001, 1001, "2024-01-01T00:00:00.000000Z", 1]
   referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where invoice_id = 100
