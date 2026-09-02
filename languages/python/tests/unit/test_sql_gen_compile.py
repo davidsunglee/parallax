@@ -313,9 +313,10 @@ def test_nullable_order_key_lowers_through_the_placement_seam(
 
 @pytest.mark.parametrize("placement", [None, "first", "last"])
 def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None:
-    # `Order.qty` is non-nullable, so placement is observationally irrelevant on it:
-    # there are no NULLs to place, both placements denote the same order, and the
-    # plain term is emitted under either.
+    # `Order.qty` is non-nullable, so placement is observationally irrelevant on it
+    # under conforming storage: there is no NULL to place, both placements denote the
+    # same order, and the plain term is emitted under either — leaving the dialect's
+    # own convention to rank a NULL a dropped `NOT NULL` constraint left behind.
     keys = (
         oq.OrderKey(
             attr="Order.qty",

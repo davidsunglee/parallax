@@ -340,8 +340,10 @@ def _key_spelling(key: WrapOrderKey, seam: _DialectSeam) -> str:
 def _expected_order_terms(key: WrapOrderKey, seam: _DialectSeam) -> list[_OrderTerm]:
     """The terms *key* lowers to under *seam* (``m-dialect`` *NULL ordering*).
 
-    A non-nullable key has no ``NULL``s to place and lowers to the plain directed term
-    in both dialects under either placement. A nullable one lowers to the plain term
+    A non-nullable key holds no ``NULL`` under conforming storage, so it lowers to the
+    plain directed term in both dialects under either placement, leaving the dialect's
+    own convention to rank a ``NULL`` non-conforming storage left behind. A nullable
+    one lowers to the plain term
     where the dialect's native placement already answers the request, and otherwise to
     the dialect's own compensation — a suffix on the term, or a boolean rank term
     before it.

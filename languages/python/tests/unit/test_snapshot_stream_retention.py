@@ -364,18 +364,20 @@ class _Namespace(NamedTuple):
     """One representation's stream, and the exact census a delivery of it leaves
     alive at any point of itself.
 
-    The three counts are the bound restated as objects. ``fixed`` is everything
+    The four counts are the bound restated as objects. ``fixed`` is everything
     sized by the plan and the handle rather than by the data — the schema, the
     layouts, the authored and validated query products, the continuation, the
     delivery, and the connected model.
     ``per_page_node`` is what the sealed page graph holds for each node it
     carries, so the page term is that count times the page's own root positions
-    times one root plus its fanout. ``per_published_node`` is what one published
-    root graph holds for each of ITS nodes, which is the same product with the
-    page size taken out of it.
+    times one root plus its fanout. ``per_page_root`` is what the page holds per
+    root POSITION rather than per node — the coordinate the database evaluated
+    for it — so its term is that count times the page size alone, with no fanout
+    in it. ``per_published_node`` is what one published root graph holds for each
+    of ITS nodes, which is the page-node product with the page size taken out.
 
-    Nothing in either product is the total result size, and nothing is how far
-    the delivery has got. That absence is the claim.
+    Nothing in any of the three products is the total result size, and nothing is
+    how far the delivery has got. That absence is the claim.
     """
 
     name: str
