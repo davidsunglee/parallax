@@ -22,10 +22,11 @@ a suite pin behavior no adapter can produce.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Self, cast
+from typing import Final, Self, cast
 
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -261,7 +262,7 @@ class ScriptedPort:
         self.calls.append(ReadCall(sql, tuple(binds)))
         if entry.raises is not None:
             raise entry.raises
-        return [dict(row) for row in entry.rows]
+        return [projected_row(sql, row) for row in entry.rows]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         entry = self._scopes[-1].take(Write, sql)
@@ -290,6 +291,32 @@ class ScriptedPort:
         if entry.rollback is not None and isinstance(outcome, RolledBack):
             return RollbackFailed(outcome.trigger, entry.rollback)
         return outcome
+
+
+_CAPTURE_CELL: Final = re.compile(r"(?:select |, )(\w+)\.\"?(\w+)\"? (parallax_seek_\d+)")
+
+
+def projected_row(sql: str, row: Mapping[str, object]) -> Row:
+    """``row`` as a fresh dict, carrying the coordinate cells ``sql`` selected.
+
+    A paging read projects one hidden cell per Continuation Order term, so a
+    stand-in database owes them exactly as a real one does. They are derived
+    from the statement rather than authored per script because they are a
+    RESTATEMENT of columns the script already carries — what the term's own
+    expression evaluated to — and a script spelling them again could only
+    disagree with itself.
+
+    Only the plain alias-qualified form is derivable here; a script whose page
+    orders by a document-resident member has to be answered by a double that
+    knows the extraction, and is refused rather than silently under-projected.
+    """
+    materialized = dict(row)
+    cells = _CAPTURE_CELL.findall(sql)
+    if len(cells) != sql.count(" parallax_seek_"):
+        raise AssertionError(f"a scripted read cannot derive every coordinate cell of {sql!r}")
+    for _alias, column, cell in cells:
+        materialized[cell] = materialized[column]
+    return materialized
 
 
 class RefusingPort:

@@ -42,13 +42,13 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
       binds: [dog, 1]
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and t0.id > ?)) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and t0.id > ?)) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
       binds: [7, 7, 1, dog, 1]
     - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and t0.id > ?)) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
+        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and t0.id > ?)) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
       binds: [3, 3, 2, dog, 1]
   referenceSql: select id, kind, name, owner_id, license_id, bark_volume from animal where kind = 'dog'
   graph:

@@ -83,7 +83,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
-from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.temporal_read import scans_validated_axis
 from parallax.core.unit_work import (
     Clock,
@@ -104,10 +103,10 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.snapshot.handle._errors import SnapshotConnectionError
+from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
-    FindResult,
     ResultPublication,
     RowsResult,
     Snapshot,
@@ -522,18 +521,17 @@ class Database:
             self._lifecycle, target=target, interface=interface, batch_size=batch_size
         )
 
-    def _page(self, node: ValidatedObjectQuery, batch: StreamBatchActivity) -> FindResult:
-        """One page of a standalone stream: the ordinary find executor, inside
-        the page's own Stream Batch.
+    def _page(self, page_plan: PagePlan, at: At, batch: StreamBatchActivity) -> StreamPage:
+        """One page of a standalone stream: the page reader, inside the page's
+        own Stream Batch.
 
-        A page IS an eager read of a bounded root query, so the executor is the
-        one :meth:`find` runs and the `1 + L` ceiling applies to the page
-        exactly as it applies to a whole eager result. Nothing precedes the batch
-        here — a standalone stream flushes nothing — so it opens where the page
-        begins.
+        A page IS an eager read of a bounded root query, so the `1 + L` ceiling
+        applies to it exactly as it applies to a whole eager result. Nothing
+        precedes the batch here — a standalone stream flushes nothing — so it
+        opens where the page begins.
         """
         with batch as calls:
-            return find(node, self._connected.model, self._port, calls=calls)
+            return read_stream_page(page_plan, at, self._connected.model, self._port, calls=calls)
 
     def _read(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
         """One non-transactional read of ``node``, published through

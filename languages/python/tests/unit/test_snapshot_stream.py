@@ -1,7 +1,7 @@
 """Snapshot Stream delivery tests: ``db.stream`` and ``db.wire.stream``.
 
 Drives the real seam end to end against a canned `m-db-port` (no Docker) — the
-page loop, the production find executor, and per-root publication through both
+delivery loop, the page reader, and per-root publication through both
 materializers — so what these assert is what a streamed read answers.
 
 Four claims bound the suite. The state table IS the enforcement, so every one of
@@ -12,9 +12,11 @@ statement returning nothing unless a declared ``limit`` was already delivered.
 Identity is root-local, which is a NARROWING of what an eager read happens to do
 rather than a second identity rule, so the within-root half is asserted to agree
 with ``find`` and the cross-root half to diverge from it, in both namespaces.
-And a root that cannot supply a cursor — its own key or an authored Sort Key's
-member undecoded — ends the delivery from whatever position it lands in, which
-is what keeps ``batch_size`` a performance dial.
+And invalid stored data inside the Continuation Order itself ends no checked
+delivery: a delivery advances on the coordinate the database evaluated, so a root
+whose sort key or primary key contradicts the model is published and the delivery
+continues past it, from whatever position and page size it lands in — which is
+what keeps ``batch_size`` a performance dial.
 """
 
 from __future__ import annotations
@@ -556,7 +558,7 @@ def test_a_to_one_two_roots_reach_diverges_the_same_way_in_the_wire_namespace() 
 
 
 # --------------------------------------------------------------------------- #
-# A root supplying no coordinate ends the stream from any position.            #
+# Invalid stored data inside the Continuation Order itself.                    #
 # --------------------------------------------------------------------------- #
 def _undecodable_qty_row() -> Row:
     return {**_order_row(0), "qty": "many"}
@@ -566,64 +568,44 @@ def _by_qty() -> ObjectQuery[Order, Order]:
     return _all_orders().order_by(Order.qty.asc())
 
 
-# Every root shape a delivery can read no cursor off: the primary key every
-# Continuation Order carries, and an authored Sort Key over any other member.
-# Both are the same rule — only decoded values are bindable — and both are graded
-# at every position and page size, because the position a corrupt row lands in
-# decides nothing.
-_CURSORLESS = [
-    pytest.param(_keyless_order_row, _all_orders, id="keyless"),
-    pytest.param(_undecodable_qty_row, _by_qty, id="undecodable-sort-key"),
-]
-
-
-def _cursorless_pages(row: Callable[[], Row], position: int, *, size: int) -> ScriptedPort:
+def _corrupt_pages(row: Callable[[], Row], position: int, *, size: int) -> ScriptedPort:
     rows = [_order_row(1), _order_row(2), _order_row(3)]
     rows[position] = row()
-    return ScriptedPort(
-        *(Read(rows=rows[start : start + size]) for start in range(0, len(rows), size))
-    )
+    pages = [rows[start : start + size] for start in range(0, len(rows), size)]
+    if len(rows) % size == 0:
+        pages.append([])
+    return ScriptedPort(*(Read(rows=page) for page in pages))
 
 
-@pytest.mark.parametrize(("row", "query"), _CURSORLESS)
 @pytest.mark.parametrize("position", [0, 1, 2], ids=["first", "middle", "last"])
 @pytest.mark.parametrize("size", [2, 3])
-def test_the_checked_view_delivers_a_cursorless_root_and_then_refuses_to_continue(
-    row: Callable[[], Row],
-    query: Callable[[], ObjectQuery[Order, Order]],
-    position: int,
-    size: int,
-) -> None:
-    # The rule is positional-independent so `batch_size` cannot change it: the
-    # same corrupt row may not be survivable at one page size and fatal at
-    # another. What the caller gets is every root up to and including the
-    # cursorless one, and then the reason there is no more.
-    delivered: list[object] = []
-    with (
-        _orders(_cursorless_pages(row, position, size=size)).stream(
-            query(), batch_size=size
-        ) as stream,
-        pytest.raises(SnapshotStreamStateError, match="cursorless-root"),
-    ):
-        for root in stream.checked():
-            delivered.append(root)
-    assert len(delivered) == position + 1
-    assert isinstance(delivered[-1], InvalidData)
+def test_a_checked_delivery_continues_past_an_invalid_sort_key(position: int, size: int) -> None:
+    # The rule this whole change exists for, and it is position- and page-size-
+    # independent so `batch_size` stays a performance dial: a root whose ORDERED-BY
+    # member contradicts the model is published as its record and the delivery
+    # carries on, because what the next page seeks past is the value the database's
+    # own `order by` expression evaluated — which exists whatever the stored value
+    # turned out to be.
+    with _orders(_corrupt_pages(_undecodable_qty_row, position, size=size)).stream(
+        _by_qty(), batch_size=size
+    ) as stream:
+        delivered = list(stream.checked())
+    assert len(delivered) == 3
+    assert [isinstance(root, InvalidData) for root in delivered] == [
+        index == position for index in range(3)
+    ]
 
 
-@pytest.mark.parametrize(("row", "query"), _CURSORLESS)
 @pytest.mark.parametrize("position", [0, 1, 2], ids=["first", "middle", "last"])
 @pytest.mark.parametrize("size", [2, 3])
-def test_the_default_view_raises_at_a_cursorless_root_from_any_position(
-    row: Callable[[], Row],
-    query: Callable[[], ObjectQuery[Order, Order]],
-    position: int,
-    size: int,
-) -> None:
+def test_the_default_view_still_stops_at_the_first_invalid_root(position: int, size: int) -> None:
+    # The throwing view stays fail-fast: continuation is what changed, not the
+    # default view's refusal, so the caller gets every root ahead of the corrupt
+    # one and then the refusal.
     delivered: list[object] = []
     with (
-        _orders(_cursorless_pages(row, position, size=size)).stream(
-            query(), batch_size=size
+        _orders(_corrupt_pages(_undecodable_qty_row, position, size=size)).stream(
+            _by_qty(), batch_size=size
         ) as stream,
         pytest.raises(InvalidDataError),
     ):
@@ -632,9 +614,25 @@ def test_the_default_view_raises_at_a_cursorless_root_from_any_position(
     assert len(delivered) == position
 
 
-def test_a_stream_that_failed_answers_nothing_further() -> None:
-    port = _cursorless_pages(_keyless_order_row, 0, size=2)
+def test_a_root_whose_primary_key_did_not_decode_is_delivered_and_placed_last() -> None:
+    # A stored NULL where the primary key belongs is a coordinate like any
+    # other, and the ordering itself says where it stands: `order by t0.id asc`
+    # places a NULL last on this dialect, so nothing follows it and the seek
+    # past it admits no root at all. The delivery publishes the record and then
+    # exhausts on an ordinary statement that returns nothing — rather than
+    # refusing to continue.
+    port = ScriptedPort(Read(rows=[_order_row(1), _keyless_order_row()]), Read(rows=[]))
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
+        delivered = list(stream.checked())
+    assert [isinstance(root, InvalidData) for root in delivered] == [False, True]
+    assert _reads(port)[1].sql.endswith(
+        "where t0.active = %s and 1 = 0 order by t0.id asc limit %s"
+    )
+
+
+def test_a_stream_that_failed_answers_nothing_further() -> None:
+    port = _corrupt_pages(_undecodable_qty_row, 0, size=2)
+    with _orders(port).stream(_by_qty(), batch_size=2) as stream:
         with pytest.raises(InvalidDataError):
             list(stream)
         with pytest.raises(SnapshotStreamStateError, match="single-pass"):
@@ -816,42 +814,30 @@ def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
         pass  # pragma: no cover - the gate refuses at scope entry
 
 
-def test_a_milestone_root_whose_edge_did_not_decode_ends_the_delivery() -> None:
-    # The keyless-root rule reaches the edge, because the edge is a Continuation
-    # Order member: a root carrying its key but not its milestone supplies no
-    # coordinate for the terms the seek binds, so the delivery publishes it and
-    # then refuses to continue — and it is published at no edge pin of its own,
-    # there being no milestone to name.
+def test_a_milestone_root_whose_edge_did_not_decode_is_published_at_the_pages_pin() -> None:
+    # The behavioural inversion the coordinate buys: a milestone root whose axis
+    # starts did not decode has no edge of its own to be pinned at, so it is
+    # published at the page's own pin — and the delivery continues past it,
+    # seeking on the carriers the ordering expressions evaluated.
     broken = {**_MILESTONES[0], "in_z": None}
-    port = ScriptedPort(Read(rows=[broken, _MILESTONES[1]]))
-    delivered: list[object] = []
-    with (
-        _positions(port).stream(_all_milestones(), batch_size=2) as stream,
-        pytest.raises(SnapshotStreamStateError, match="cursorless-root"),
-    ):
-        for root in stream.checked():
-            delivered.append(root)
-    assert len(delivered) == 1
-    record = cast("InvalidData[object]", delivered[0])
-    assert isinstance(record, InvalidData)
-    assert record.data is None
+    port = ScriptedPort(Read(rows=[broken, _MILESTONES[1]]), Read(rows=[]))
+    with _positions(port).stream(_all_milestones(), batch_size=2) as stream:
+        delivered = list(stream.checked())
+    assert [isinstance(root, InvalidData) for root in delivered] == [True, False]
+    assert pin_of(delivered[1]) == Pin(valid_time=_JANUARY, tx_time=_APRIL)
 
 
 def test_a_milestone_root_whose_key_did_not_decode_stands_at_no_edge() -> None:
     # The other half of the same rule, and the one shape that answers no member
     # at all: a root whose own primary key did not decode stands behind no
-    # projection, so there is nothing to read a milestone off and nothing to
-    # continue from either.
-    port = ScriptedPort(Read(rows=[{**_MILESTONES[0], "pos_id": None}, _MILESTONES[1]]))
-    delivered: list[object] = []
-    with (
-        _positions(port).stream(_all_milestones(), batch_size=2) as stream,
-        pytest.raises(SnapshotStreamStateError, match="cursorless-root"),
-    ):
-        for root in stream.checked():
-            delivered.append(root)
-    assert len(delivered) == 1
-    assert isinstance(delivered[0], InvalidData)
+    # projection, so there is nothing to read a milestone off — and nothing about
+    # that stops the delivery either.
+    port = ScriptedPort(
+        Read(rows=[{**_MILESTONES[0], "pos_id": None}, _MILESTONES[1]]), Read(rows=[])
+    )
+    with _positions(port).stream(_all_milestones(), batch_size=2) as stream:
+        delivered = list(stream.checked())
+    assert [isinstance(root, InvalidData) for root in delivered] == [True, False]
 
 
 def _diagnoses(root: object) -> frozenset[object] | None:

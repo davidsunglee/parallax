@@ -16,7 +16,9 @@ from typing import Literal, assert_never, cast
 from parallax.core.base import (
     DocumentReadOrdinals,
     NeutralType,
+    UnknownFamilyTag,
     admits_stored_scalar,
+    inert_scalar,
 )
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
@@ -31,8 +33,11 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectMetadata,
 )
-from parallax.core.object_query._validated import ValidatedOrderTerm
-from parallax.core.predicate import Narrow
+from parallax.core.object_query._validated import (
+    ContinuationCoordinate,
+    Paging,
+)
+from parallax.core.predicate import Narrow, Or
 from parallax.core.predicate._validated import ValidatedPredicate
 from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -66,7 +71,18 @@ from parallax.core.sql_gen._inheritance import (
 # out, with this statement's binds pushed on the shared context in order. Same
 # aliasing-down convention as the family lane above.
 from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
+from parallax.core.sql_gen._predicate import MemberSubject as _MemberSubject
 from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
+
+# The continuation lane: one resolution per Continuation Order term, feeding the
+# order clause, the hidden capture cell, and the seek alike.
+from parallax.core.sql_gen._seek import LoweredTerm as _LoweredTerm
+from parallax.core.sql_gen._seek import TermSubject as _TermSubject
+from parallax.core.sql_gen._seek import capture_cells as _capture_cells
+from parallax.core.sql_gen._seek import coordinate_reads as _coordinate_reads
+from parallax.core.sql_gen._seek import lower_seek as _lower_seek
+from parallax.core.sql_gen._seek import lowered_terms as _lowered_terms
+from parallax.core.sql_gen._seek import order_clause as _order_clause
 from parallax.core.storage_layout import DirectColumn as _DirectColumn
 from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
@@ -126,12 +142,19 @@ class MaterializedReadRow:
     Relational Document Layout, kept beside ``values`` for the same reason
     ``family_variant`` is: it is provenance rather than a field, and the fan-out
     drops it from the values a result form renders. Absent for every read that
-    projected no Structured Column. ``findings`` and ``family_tag_unknown`` are
+    projected no Structured Column. ``findings`` and ``unknown_family_tag`` are
     classified provenance that a consumer must propagate to publication;
     ``classified_members`` names values already judged by the document codec so
     conversion translates them without judging their synthesized collapse again.
-    ``family_tag`` is the stored discriminator behind ``family_tag_unknown``,
-    retained only where that flag reports it resolved to no concrete subtype.
+
+    ``unknown_family_tag`` and ``coordinate`` take one shape for one reason:
+    both are lifted off the driver row by a framework-owned name, and both are
+    ABSENT for most reads. Their presence IS the fact — that the discriminator
+    resolved to no composed concrete subtype, that this read paged — and what
+    they hold is the value behind it. A flag beside a value would let the two
+    disagree, and neither has a resting value that could stand for absence: a
+    stored ``NULL`` discriminator is a real unknown tag, and a captured NULL
+    carrier is a real coordinate.
     """
 
     values: dict[str, object]
@@ -139,9 +162,9 @@ class MaterializedReadRow:
     family_variant: str | None
     document: object | None = None
     findings: tuple[DocumentFinding, ...] = ()
-    family_tag_unknown: bool = False
+    unknown_family_tag: UnknownFamilyTag | None = None
     classified_members: frozenset[str] = frozenset()
-    family_tag: object = None
+    coordinate: ContinuationCoordinate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +212,12 @@ class CompiledRead:
     ``projected_documents`` is the demand-specific subset the statement actually
     selected; conversion receives that subset so an unrequested occurrence is
     never judged merely because the position could have carried it.
+
+    ``coordinate_reads`` is the hidden result aliases this statement allocated to
+    capture one Continuation Order coordinate per ordering term, in term order —
+    empty for every read that pages through nothing. Publishing them here is what
+    makes this compiler the only interpreter of a carrier: the expressions were
+    chosen here, so what they evaluated to is lifted off the row here too.
     """
 
     statement: LoweredStatement
@@ -198,6 +227,7 @@ class CompiledRead:
     documents: tuple[ValueObjectMetadata, ...]
     projected_documents: tuple[ValueObjectMetadata, ...]
     document_reads: tuple[DocumentReadOrdinals, ...]
+    coordinate_reads: tuple[str, ...]
     _scalar_contracts: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
         repr=False
     )
@@ -225,7 +255,7 @@ class CompiledRead:
         materialized = self.materialize_row(row)
         if (
             materialized.findings
-            or materialized.family_tag_unknown
+            or materialized.unknown_family_tag is not None
             or self._has_invalid_direct_scalar(materialized)
         ):
             raise SqlGenError("a row carrying invalid stored data cannot be flattened")
@@ -281,9 +311,24 @@ class CompiledRead:
             transformed.family_variant,
             None if column is None else _observed_document(row.get(column)),
             transformed.findings,
-            transformed.family_tag_unknown,
+            transformed.unknown_family_tag,
             transformed.classified_members,
-            transformed.family_tag,
+            self._coordinate(values),
+        )
+
+    def _coordinate(self, values: dict[str, object]) -> ContinuationCoordinate | None:
+        """Lift this read's captured coordinate off ``values``, by name.
+
+        The same move the inheritance discriminator takes: a framework-owned
+        cell is popped so it never reaches a consumer as a field, and it is
+        normalized here — at capture, by the module that chose the expression
+        that produced it — so a provider buffer is not handed onward as a
+        carrier a later page would rebind.
+        """
+        if not self.coordinate_reads:
+            return None
+        return ContinuationCoordinate(
+            tuple(inert_scalar(values.pop(alias)) for alias in self.coordinate_reads)
         )
 
 
@@ -389,15 +434,18 @@ def compile_read(
     facet = _inheritance_view(model)
     storage = _storage_view(model)
     predicate = query.validated_predicate
-    order_keys = query.order_by
+    terms = _lowered_terms(query.order_by)
+    paging = query.paging
     limit = query.limit
     narrow_to = query.narrow_to
+    captured = _coordinate_reads(terms) if paging is not None else ()
     if target.inheritance is not None:
         statement, plan_position, document_reads, transform = _compile_inheritance_read(
             target,
             predicate,
             narrow_to,
-            order_keys,
+            terms,
+            paging,
             limit,
             model,
             facet,
@@ -415,6 +463,7 @@ def compile_read(
             position_documents,
             position_documents if result_form == "instance" else (),
             document_reads,
+            captured,
             _scalar_read_contracts(model, facet, storage, dialect, plan_position),
             transform,
         )
@@ -433,13 +482,15 @@ def compile_read(
         observation=query.projection.observe_structured_document,
     )
     ctx.bind_structural_all(proj_binds)
-    select = f"select {proj_sql}"
-    parts = [select, f"from {layout.table.name} {scope.alias}"]
+    parts = [
+        f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
+        f"from {layout.table.name} {scope.alias}",
+    ]
 
     where_sql = _lower_predicate(predicate, scope)
-    if where_sql:
-        parts.append(f"where {where_sql}")
-    _append_result_shape(parts, scope, order_keys, limit, lock)
+    seek_sql = _sought(terms, scope.subject_for, paging, ctx)
+    _append_where(parts, _beside_a_seek(predicate, where_sql, seek_sql), seek_sql)
+    _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
 
     statement = _normalize(ctx.finish(" ".join(parts)))
     # A non-family read projects no tag and no variant literal, so the only
@@ -454,6 +505,7 @@ def compile_read(
         position_documents,
         query.projection.value_objects,
         document_reads,
+        captured,
         _scalar_read_contracts(model, facet, storage, dialect, position),
         transform,
     )
@@ -478,38 +530,56 @@ def compile_write_predicate(
     )
 
 
+def _captured(terms: tuple[_LoweredTerm, ...], subject: _TermSubject, paging: Paging | None) -> str:
+    """This read's hidden coordinate cells, or nothing where it pages nowhere."""
+    return "" if paging is None else _capture_cells(terms, subject)
+
+
+def _sought(
+    terms: tuple[_LoweredTerm, ...],
+    subject: _TermSubject,
+    paging: Paging | None,
+    ctx: StatementBuilder,
+) -> str:
+    """This read's seek fragment, or nothing where it starts at the beginning."""
+    if paging is None or paging.seek is None:
+        return ""
+    return _lower_seek(paging.seek, terms, subject, ctx)
+
+
+def _beside_a_seek(predicate: ValidatedPredicate, where_sql: str, seek_sql: str) -> str:
+    """The authored `where` fragment as a conjunct standing beside a seek.
+
+    An `or` binds looser than the enclosing `and`, so a top-level disjunction
+    conjoined with a seek would silently re-associate the caller's own predicate
+    into the seek's first branch.
+    """
+    if seek_sql and where_sql and isinstance(predicate.authored, Or):
+        return f"({where_sql})"
+    return where_sql
+
+
+def _append_where(parts: list[str], *fragments: str) -> None:
+    """Append one `where` clause over whichever fragments survived."""
+    surviving = [fragment for fragment in fragments if fragment]
+    if surviving:
+        parts.append("where " + " and ".join(surviving))
+
+
 def _append_result_shape(
     parts: list[str],
     scope: _EntityScope,
-    order_keys: tuple[ValidatedOrderTerm, ...],
+    terms: tuple[_LoweredTerm, ...],
+    subject: _TermSubject,
     limit: int | None,
     lock: LockMode | None,
 ) -> None:
     """Append the shared ``order by`` / ``limit`` / read-lock tail (m-sql), used by
     every single-select read form (plain, table-per-hierarchy, and a
     table-per-concrete-subtype read resolving to one concrete).
-    """
-    if order_keys:
-        # An authored key that omitted `direction` or `nulls` (serde `None`) lowers
-        # to the schema defaults `asc` and `last`.
-        terms = [_order_term(scope, key) for key in order_keys]
-        parts.append("order by " + ", ".join(terms))
-    if limit is not None:
-        parts.append(scope.dialect.limit_clause())
-        scope.ctx.bind_structural(limit)
-    if lock == "locking":
-        # The shared-row-lock suffix is the last thing in the statement (after any
-        # `where` / `order by` / `limit`).
-        parts.append(scope.dialect.read_lock_suffix(scope.alias))
 
-
-def _order_term(scope: _EntityScope, key: ValidatedOrderTerm) -> str:
-    """One ``order by`` term: the dialect's Null Placement term for a NULLABLE key,
-    else the plain form (`m-sql` "``order by`` key terms").
-
-    Placement is observationally irrelevant on a non-nullable key — there are no
-    NULLs to place, so both placements denote the same order — and such a key
-    therefore renders plain without consulting the dialect at all.
+    An ordering key that omitted `direction` or `nulls` already carries the
+    schema defaults `asc` and `last` by the time it reaches here.
 
     An ordering key over a document-resident member lowers through the same
     extraction and typed-cast seams a predicate over it does (`m-sql`), which is
@@ -517,11 +587,16 @@ def _order_term(scope: _EntityScope, key: ValidatedOrderTerm) -> str:
     text-compared spellings order as their values do, and everything else orders
     inside the engine's own type system through the cast.
     """
-    direction = key.direction
-    column_sql = scope.subject_for(key.member).compared
-    if key.member.nullable:
-        return scope.dialect.null_order(column_sql, direction, key.nulls)
-    return f"{column_sql} {direction}"
+    ordering = _order_clause(terms, subject, scope.dialect)
+    if ordering:
+        parts.append(ordering)
+    if limit is not None:
+        parts.append(scope.dialect.limit_clause())
+        scope.ctx.bind_structural(limit)
+    if lock == "locking":
+        # The shared-row-lock suffix is the last thing in the statement (after any
+        # `where` / `order by` / `limit`).
+        parts.append(scope.dialect.read_lock_suffix(scope.alias))
 
 
 # --------------------------------------------------------------------------- #
@@ -541,7 +616,8 @@ def _compile_inheritance_read(
     entity: EntityMetadata,
     predicate: ValidatedPredicate,
     narrow_to: tuple[EntityIdentity, ...] | None,
-    order_keys: tuple[ValidatedOrderTerm, ...],
+    terms: tuple[_LoweredTerm, ...],
+    paging: Paging | None,
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -577,7 +653,8 @@ def _compile_inheritance_read(
                 plan,
                 predicate,
                 entity,
-                order_keys,
+                terms,
+                paging,
                 limit,
                 model,
                 facet,
@@ -591,7 +668,8 @@ def _compile_inheritance_read(
                 plan,
                 predicate,
                 entity,
-                order_keys,
+                terms,
+                paging,
                 limit,
                 model,
                 facet,
@@ -602,7 +680,7 @@ def _compile_inheritance_read(
             return statement, plan.position, document_reads, transform
         case _TpcsUnionPlan():
             statement, document_reads, transform = _compile_tpcs_read(
-                plan, predicate, entity, order_keys, limit, model, facet, storage, dialect
+                plan, predicate, entity, terms, paging, limit, model, facet, storage, dialect
             )
             return statement, plan.position, document_reads, transform
         case _:  # pragma: no cover - exhaustiveness guard
@@ -613,7 +691,8 @@ def _compile_tph_read(
     plan: _TphPlan,
     predicate: ValidatedPredicate,
     entity: EntityMetadata,
-    order_keys: tuple[ValidatedOrderTerm, ...],
+    terms: tuple[_LoweredTerm, ...],
+    paging: Paging | None,
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -638,29 +717,33 @@ def _compile_tph_read(
     proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
     ctx.bind_structural_all(proj_binds)
 
-    select = f"select {proj_sql}"
-    parts = [select, f"from {plan.table} {scope.alias}"]
+    parts = [
+        f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
+        f"from {plan.table} {scope.alias}",
+    ]
 
-    inner_sql = _lower_predicate(_planned_inner(predicate, plan.inner), scope)
-    where_terms = [inner_sql] if inner_sql else []
+    inner = _planned_inner(predicate, plan.inner)
+    inner_sql = _lower_predicate(inner, scope)
+    seek_sql = _sought(terms, scope.subject_for, paging, ctx)
+    where_terms = [_beside_a_seek(inner, inner_sql, seek_sql), seek_sql]
     if plan.tag is not None:
-        # Planned, then bound HERE — after the user predicate above has pushed its
-        # own binds (m-sql "Grouped branch predicates": branch-predicate-first,
-        # then tag).
+        # Planned, then bound HERE — after the user predicate and the seek above
+        # have pushed their own binds (m-sql "Grouped branch predicates":
+        # branch-predicate-first, then tag).
         tag_sql, tag_binds = _tph_tag_guard(scope, facet, plan.tag)
         where_terms.append(tag_sql)
         ctx.bind_framework_all(tag_binds)
-    if where_terms:
-        parts.append("where " + " and ".join(where_terms))
+    _append_where(parts, *where_terms)
 
-    _append_result_shape(parts, scope, order_keys, limit, lock)
+    _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     if ctx.requires_variant_partition:
         return (
             *_compile_tph_partitioned(
                 plan,
                 predicate,
                 entity,
-                order_keys,
+                terms,
+                paging,
                 limit,
                 model,
                 facet,
@@ -678,7 +761,8 @@ def _compile_tph_partitioned(
     plan: _TphPlan,
     predicate: ValidatedPredicate,
     entity: EntityMetadata,
-    order_keys: tuple[ValidatedOrderTerm, ...],
+    terms: tuple[_LoweredTerm, ...],
+    paging: Paging | None,
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -725,7 +809,7 @@ def _compile_tph_partitioned(
             projection, projection_binds, _branch_document_reads = plan.projection(
                 dialect,
                 branch_scope.alias,
-                document_pairs=not order_keys and limit is None,
+                document_pairs=not terms and limit is None,
             )
             branch_ctx.bind_structural_all(projection_binds)
         branch_ctx.bind_framework_all(tag_binds)
@@ -754,16 +838,17 @@ def _compile_tph_partitioned(
             for column in key_columns
         )
         parts = [
-            f"select {projection}",
+            f"select {projection}{_captured(terms, outer_scope.subject_for, paging)}",
             f"from {plan.table} {outer_scope.alias}",
             f"join ({union}) u on {join_terms}",
         ]
         for branch in branches:
             statement_ctx.append_fragment(branch)
-        _append_result_shape(parts, outer_scope, order_keys, limit, lock)
+        _append_where(parts, _sought(terms, outer_scope.subject_for, paging, statement_ctx))
+        _append_result_shape(parts, outer_scope, terms, outer_scope.subject_for, limit, lock)
         return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
 
-    if not order_keys and limit is None:
+    if not terms and limit is None:
         _projection, _projection_binds, document_reads = plan.projection(dialect, "t0")
         statement_ctx = StatementBuilder(model, facet, storage, dialect)
         for branch in branches:
@@ -781,12 +866,13 @@ def _compile_tph_partitioned(
     projection, projection_binds, document_reads = plan.projection(dialect, outer_scope.alias)
     statement_ctx.bind_structural_all(projection_binds)
     parts = [
-        f"select {projection}",
+        f"select {projection}{_captured(terms, outer_scope.subject_for, paging)}",
         f"from ({union}) {outer_scope.alias}",
     ]
     for branch in branches:
         statement_ctx.append_fragment(branch)
-    _append_result_shape(parts, outer_scope, order_keys, limit, None)
+    _append_where(parts, _sought(terms, outer_scope.subject_for, paging, statement_ctx))
+    _append_result_shape(parts, outer_scope, terms, outer_scope.subject_for, limit, None)
     return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
 
 
@@ -794,7 +880,8 @@ def _compile_tpcs_read(
     plan: _TpcsUnionPlan,
     predicate: ValidatedPredicate,
     entity: EntityMetadata,
-    order_keys: tuple[ValidatedOrderTerm, ...],
+    terms: tuple[_LoweredTerm, ...],
+    paging: Paging | None,
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -812,10 +899,12 @@ def _compile_tpcs_read(
     wraps it as the derived table ``u`` and applies the tail against the union's
     own result aliases — the shape a table-per-hierarchy partitioned read already
     uses. The caller's predicate still lowers INSIDE each branch, where the branch
-    layout is what resolves a member's column; only the result-shape tail moves
-    outward. An unordered, uncapped read emits the bare union, unchanged.
+    layout is what resolves a member's column; the result-shape tail, the hidden
+    capture cells, and the seek all move outward together, because a coordinate
+    is measured against the very expression the union is ORDERED by. An
+    unordered, uncapped read emits the bare union, unchanged.
     """
-    wrapped = bool(order_keys) or limit is not None
+    wrapped = bool(terms) or limit is not None
     branch_sqls: list[str] = []
     branch_statements: list[LoweredStatement] = []
     document_reads: tuple[DocumentReadOrdinals, ...] | None = None
@@ -863,13 +952,13 @@ def _compile_tpcs_read(
     projection, _projection_binds, outer_document_reads = plan.projection(
         dialect, outer_scope.alias
     )
-    outer_parts = [f"select {projection}", f"from ({union}) {outer_scope.alias}"]
-    if order_keys:
-        terms = [_tpcs_order_term(plan, outer_scope, key) for key in order_keys]
-        outer_parts.append("order by " + ", ".join(terms))
-    if limit is not None:
-        outer_parts.append(dialect.limit_clause())
-        outer_ctx.bind_structural(limit)
+    subject = _tpcs_subject(plan, outer_scope)
+    outer_parts = [
+        f"select {projection}{_captured(terms, subject, paging)}",
+        f"from ({union}) {outer_scope.alias}",
+    ]
+    _append_where(outer_parts, _sought(terms, subject, paging, outer_ctx))
+    _append_result_shape(outer_parts, outer_scope, terms, subject, limit, None)
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     for branch in branch_statements:
         statement_ctx.append_fragment(branch)
@@ -878,30 +967,24 @@ def _compile_tpcs_read(
     return statement, outer_document_reads, plan.transform
 
 
-def _tpcs_order_term(plan: _TpcsUnionPlan, scope: _EntityScope, key: ValidatedOrderTerm) -> str:
-    """One ``order by`` term measured against a wrapped union's result alias.
+def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityScope) -> _TermSubject:
+    """How a wrapped union resolves one Continuation Order term.
 
-    One thing differs from :func:`_order_term`: a member is named by the result
-    alias every branch projects it under rather than by any one branch's physical
-    spelling, because the union is the ordered relation and a colliding spelling
-    reaches it only through its allocated alias.
+    One thing differs from the generic scope resolver: a member is named by the
+    result alias every branch projects it under rather than by any one branch's
+    physical spelling, because the union is the ordered relation and a colliding
+    spelling reaches it only through its allocated alias.
 
-    Nullability is the ordinary declared one. The positional rule (`m-object-query`)
-    admits a Sort Key only over a member applicable to every concrete in the active
-    position, so a legal key is owned by every branch and never meets that branch's
-    typed `NULL` placeholder.
+    The positional rule (`m-object-query`) admits a Sort Key only over a member
+    applicable to every concrete in the active position, so a legal key is owned
+    by every branch and never meets that branch's typed `NULL` placeholder.
     """
-    attribute = key.member
-    direction = key.direction
-    term = _tpcs_order_subject(plan, scope, attribute)
-    if attribute.nullable:
-        return scope.dialect.null_order(term, direction, key.nulls)
-    return f"{term} {direction}"
+    return lambda attribute: _tpcs_order_subject(plan, scope, attribute)
 
 
 def _tpcs_order_subject(
     plan: _TpcsUnionPlan, scope: _EntityScope, attribute: AttributeMetadata
-) -> str:
+) -> _MemberSubject:
     """The expression a wrapped union's ordering key compares, against the union alias.
 
     Member Placement decides which contributor the union column belongs to, exactly
@@ -916,17 +999,23 @@ def _tpcs_order_subject(
     column = plan.column_of(attribute.identity if document is None else document.slot.contributor)
     reference = scope.dialect.qualified(scope.alias, column.result_alias)
     if document is None:
-        return reference
+        return _MemberSubject(reference, reference, attribute.type, document_resident=False)
     extraction, path_binds = scope.dialect.nested_extract(reference, document.path)
     scope.ctx.bind_structural_all(path_binds)
-    return scope.dialect.nested_cast(extraction, attribute.type)
+    return _MemberSubject(
+        extraction,
+        scope.dialect.nested_cast(extraction, attribute.type),
+        attribute.type,
+        document_resident=True,
+    )
 
 
 def _compile_tpcs_single(
     plan: _TpcsSinglePlan,
     predicate: ValidatedPredicate,
     entity: EntityMetadata,
-    order_keys: tuple[ValidatedOrderTerm, ...],
+    terms: tuple[_LoweredTerm, ...],
+    paging: Paging | None,
     limit: int | None,
     model: Metamodel,
     facet: InheritanceFacet,
@@ -951,12 +1040,15 @@ def _compile_tpcs_single(
     scope = _EntityScope(ctx, entity, _table_layout(storage, facet, plan.position[0]))
     proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
     ctx.bind_structural_all(proj_binds)
-    select = f"select {proj_sql}"
-    parts = [select, f"from {plan.table} {scope.alias}"]
-    where_sql = _lower_predicate(_planned_inner(predicate, plan.inner), scope)
-    if where_sql:
-        parts.append(f"where {where_sql}")
-    _append_result_shape(parts, scope, order_keys, limit, lock)
+    parts = [
+        f"select {proj_sql}{_captured(terms, scope.subject_for, paging)}",
+        f"from {plan.table} {scope.alias}",
+    ]
+    inner = _planned_inner(predicate, plan.inner)
+    where_sql = _lower_predicate(inner, scope)
+    seek_sql = _sought(terms, scope.subject_for, paging, ctx)
+    _append_where(parts, _beside_a_seek(inner, where_sql, seek_sql), seek_sql)
+    _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))
     return statement, document_reads, plan.transform
 

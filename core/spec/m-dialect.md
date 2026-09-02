@@ -516,9 +516,29 @@ a deliberate lowering decision recorded here, not an omission.
 The seam returns the **whole** rendered key term, comma-joined leading rank term
 included, so a caller joining terms never learns which structure a dialect chose.
 
-Placement is observable only on a **nullable** key. A non-nullable key lowers to the
-plain `t0.c [asc|desc]` term in both dialects under either placement, because there
-are no `NULL`s to place. The compatibility suite proves the compensating and native
+### Native placement is an askable fact
+
+Where a dialect places a `NULL` in a given direction when nothing asks is itself a
+dialect answer, and MUST be readable without emitting SQL: `asc` places `NULL` last
+on Postgres and first on MariaDB, `desc` the mirror. The rendered key term above and
+this fact are one decision — a term renders plain exactly where the requested
+placement already is the native one — so they can never disagree.
+
+A **nullable** key lowers through the compensating form, so its authored placement is
+the effective one. Every other key lowers to the plain `t0.c [asc|desc]` term in both
+dialects under either placement, leaving the dialect's own convention in force.
+
+That is not the same as having no consequence. A non-nullable key holds no `NULL`
+under conforming storage, but a continuation seek past such a key is measured against
+the placement the emitted clause actually has, and a stored `NULL` where a `NOT NULL`
+constraint is gone falls on the side this fact names. Emitting an explicit placement
+on every continuation term instead would make the seek's assumption true by
+construction, at the cost of a backward index-ordered scan on Postgres for a
+descending term and, on MariaDB, a leading rank term that defeats index-ordered
+paging on the appended primary key of every Continuation Order — a price paid to
+place a `NULL` conforming storage cannot hold.
+
+The compatibility suite proves the compensating and native
 forms yield the identical observable order (case `m-deep-fetch-012` for the
 `asc`/`last` default; `m-object-query-004` through `-007` for all four combinations on
 an Object Query Sort Key, and `m-deep-fetch-021` through `-023` for the three a canonical

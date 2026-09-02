@@ -25,22 +25,21 @@ against what the corpus happens to declare.
 from __future__ import annotations
 
 import datetime as dt
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cmp_to_key
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import pytest
 from _corpus_model_support import corpus, formed
 from _corpus_model_support import model as accepted_model
 from _corpus_model_support import target as entity_of
 
-from _support.sql import compile_read
-from parallax.core import continuation
-from parallax.core.dialect import POSTGRES
+from parallax.core import continuation, deep_fetch
+from parallax.core.dialect import INFINITY, POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
-    EntityMetadata,
     Metamodel,
     PrimaryKey,
     entity_by_name,
@@ -58,16 +57,13 @@ from parallax.core.object_query import (
     object_query,
     validate_object_query,
 )
-from parallax.core.predicate import (
-    All,
-    And,
-    Comparison,
-    Group,
-    NoneOp,
-    NullCheck,
-    Or,
-    PredicateNode,
+from parallax.core.object_query._validated import (
+    ContinuationCoordinate,
+    ValidatedObjectQuery,
 )
+from parallax.core.predicate import All, Comparison, Or, PredicateNode
+from parallax.core.sql_gen._compile import LoweredStatement
+from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.descriptor import _records
 
 ORDERS = accepted_model("orders")
@@ -90,6 +86,7 @@ _BALANCE_TX_START = "parallax.compatibility.Balance.txStart"
 _POSITION_ID = "parallax.compatibility.Position.id"
 _POSITION_VALID_START = "parallax.compatibility.Position.validStart"
 _POSITION_TX_START = "parallax.compatibility.Position.txStart"
+_POSITION_VALID_END = "parallax.compatibility.Position.validEnd"
 
 type _Row = Mapping[AttributeIdentity, object]
 
@@ -125,14 +122,6 @@ def _identity(model: Metamodel, reference: str) -> AttributeIdentity:
     if attribute is None:
         raise KeyError(reference)
     return attribute.identity
-
-
-def _key(entity: EntityMetadata) -> AttributeIdentity:
-    return next(
-        attribute.identity
-        for attribute in entity.declared_attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    )
 
 
 def _active(model: Metamodel, target: str) -> Comparison:
@@ -211,9 +200,9 @@ def test_an_authored_key_naming_the_primary_key_keeps_the_authors_direction() ->
     # themselves, the order ends in THEIR direction and the seek's last branch
     # follows it.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_ID, direction="desc"),))
-    node = plan.after({_key(entity_of(ORDERS, "Order")): 5}, limit=3)
+    node = plan.after(ContinuationCoordinate((5,)), limit=3)
     assert node.authored.order_by == (OrderKey(attr=_ORDER_ID, direction="desc"),)
-    assert node.predicate.authored == Comparison(op="lessThan", attr=_ORDER_ID, value=5)
+    assert _where(_lowered(ORDERS, node).sql) == "t0.id < ?"
 
 
 def test_a_subtype_position_pages_by_its_family_roots_key() -> None:
@@ -257,11 +246,18 @@ def test_a_narrowed_reads_sort_key_is_measured_at_the_narrowed_position() -> Non
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class _SeekCase:
+    """One combination of the algebra, with the SQL m-sql lowers it to.
+
+    ``coordinate`` is positional over the composed ``order``, exactly as the
+    carriers a page captures are.
+    """
+
     id: str
     order_by: tuple[OrderKey, ...]
-    coordinates: tuple[tuple[str, object], ...]
+    coordinate: tuple[object, ...]
     order: tuple[OrderKey, ...]
-    seek: PredicateNode
+    where: str
+    binds: tuple[object, ...]
 
 
 _APPENDED = OrderKey(attr=_ORDER_ID, direction="asc")
@@ -270,61 +266,26 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
     _SeekCase(
         id="undeclared-key-only",
         order_by=(),
-        coordinates=((_ORDER_ID, 7),),
+        coordinate=(7,),
         order=(_APPENDED,),
-        seek=Comparison(op="greaterThan", attr=_ORDER_ID, value=7),
+        where="t0.id > ?",
+        binds=(7,),
     ),
     _SeekCase(
         id="ascending-non-nullable",
         order_by=(OrderKey(attr=_ORDER_NAME),),
-        coordinates=((_ORDER_NAME, "Ada"), (_ORDER_ID, 1)),
+        coordinate=("Ada", 1),
         order=(OrderKey(attr=_ORDER_NAME), _APPENDED),
-        seek=And(
-            operands=(
-                Comparison(op="greaterThanEquals", attr=_ORDER_NAME, value="Ada"),
-                Group(
-                    operand=Or(
-                        operands=(
-                            Comparison(op="greaterThan", attr=_ORDER_NAME, value="Ada"),
-                            Group(
-                                operand=And(
-                                    operands=(
-                                        Comparison(op="eq", attr=_ORDER_NAME, value="Ada"),
-                                        Comparison(op="greaterThan", attr=_ORDER_ID, value=1),
-                                    )
-                                )
-                            ),
-                        )
-                    )
-                ),
-            )
-        ),
+        where="t0.name >= ? and (t0.name > ? or (t0.name = ? and t0.id > ?))",
+        binds=("Ada", "Ada", "Ada", 1),
     ),
     _SeekCase(
         id="descending-non-nullable",
         order_by=(OrderKey(attr=_ORDER_NAME, direction="desc"),),
-        coordinates=((_ORDER_NAME, "Ada"), (_ORDER_ID, 1)),
+        coordinate=("Ada", 1),
         order=(OrderKey(attr=_ORDER_NAME, direction="desc"), _APPENDED),
-        seek=And(
-            operands=(
-                Comparison(op="lessThanEquals", attr=_ORDER_NAME, value="Ada"),
-                Group(
-                    operand=Or(
-                        operands=(
-                            Comparison(op="lessThan", attr=_ORDER_NAME, value="Ada"),
-                            Group(
-                                operand=And(
-                                    operands=(
-                                        Comparison(op="eq", attr=_ORDER_NAME, value="Ada"),
-                                        Comparison(op="greaterThan", attr=_ORDER_ID, value=1),
-                                    )
-                                )
-                            ),
-                        )
-                    )
-                ),
-            )
-        ),
+        where="t0.name <= ? and (t0.name < ? or (t0.name = ? and t0.id > ?))",
+        binds=("Ada", "Ada", "Ada", 1),
     ),
     _SeekCase(
         id="mixed-directions-three-terms",
@@ -332,195 +293,69 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
             OrderKey(attr=_ORDER_ACTIVE, direction="desc"),
             OrderKey(attr=_ORDER_QTY, direction="asc"),
         ),
-        coordinates=((_ORDER_ACTIVE, True), (_ORDER_QTY, 10), (_ORDER_ID, 2)),
+        coordinate=(True, 10, 2),
         order=(
             OrderKey(attr=_ORDER_ACTIVE, direction="desc"),
             OrderKey(attr=_ORDER_QTY, direction="asc"),
             _APPENDED,
         ),
-        seek=And(
-            operands=(
-                Comparison(op="lessThanEquals", attr=_ORDER_ACTIVE, value=True),
-                Group(
-                    operand=Or(
-                        operands=(
-                            Comparison(op="lessThan", attr=_ORDER_ACTIVE, value=True),
-                            Group(
-                                operand=And(
-                                    operands=(
-                                        Comparison(op="eq", attr=_ORDER_ACTIVE, value=True),
-                                        Comparison(op="greaterThan", attr=_ORDER_QTY, value=10),
-                                    )
-                                )
-                            ),
-                            Group(
-                                operand=And(
-                                    operands=(
-                                        Comparison(op="eq", attr=_ORDER_ACTIVE, value=True),
-                                        Comparison(op="eq", attr=_ORDER_QTY, value=10),
-                                        Comparison(op="greaterThan", attr=_ORDER_ID, value=2),
-                                    )
-                                )
-                            ),
-                        )
-                    )
-                ),
-            )
+        where=(
+            "t0.active <= ? and (t0.active < ? or (t0.active = ? and t0.qty > ?) "
+            "or (t0.active = ? and t0.qty = ? and t0.id > ?))"
         ),
+        binds=(True, True, True, 10, True, 10, 2),
     ),
     _SeekCase(
         id="nullable-placement-omitted-value-coordinate",
         order_by=(OrderKey(attr=_ORDER_SKU),),
-        coordinates=((_ORDER_SKU, "A-100"), (_ORDER_ID, 1)),
+        coordinate=("A-100", 1),
         order=(OrderKey(attr=_ORDER_SKU), _APPENDED),
-        seek=Group(
-            operand=Or(
-                operands=(
-                    Or(
-                        operands=(
-                            Comparison(op="greaterThan", attr=_ORDER_SKU, value="A-100"),
-                            NullCheck(op="isNull", attr=_ORDER_SKU),
-                        )
-                    ),
-                    Group(
-                        operand=And(
-                            operands=(
-                                Comparison(op="eq", attr=_ORDER_SKU, value="A-100"),
-                                Comparison(op="greaterThan", attr=_ORDER_ID, value=1),
-                            )
-                        )
-                    ),
-                )
-            )
-        ),
+        where="(t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?))",
+        binds=("A-100", "A-100", 1),
     ),
     _SeekCase(
         id="nullable-last-null-coordinate",
         order_by=(OrderKey(attr=_ORDER_SKU, nulls="last"),),
-        coordinates=((_ORDER_SKU, None), (_ORDER_ID, 4)),
+        coordinate=(None, 4),
         order=(OrderKey(attr=_ORDER_SKU, nulls="last"), _APPENDED),
-        seek=Group(
-            operand=And(
-                operands=(
-                    NullCheck(op="isNull", attr=_ORDER_SKU),
-                    Comparison(op="greaterThan", attr=_ORDER_ID, value=4),
-                )
-            )
-        ),
+        where="(t0.sku is null and t0.id > ?)",
+        binds=(4,),
     ),
     _SeekCase(
         id="nullable-first-value-coordinate",
         order_by=(OrderKey(attr=_ORDER_SKU, nulls="first"),),
-        coordinates=((_ORDER_SKU, "A-100"), (_ORDER_ID, 1)),
+        coordinate=("A-100", 1),
         order=(OrderKey(attr=_ORDER_SKU, nulls="first"), _APPENDED),
-        seek=Group(
-            operand=Or(
-                operands=(
-                    Comparison(op="greaterThan", attr=_ORDER_SKU, value="A-100"),
-                    Group(
-                        operand=And(
-                            operands=(
-                                Comparison(op="eq", attr=_ORDER_SKU, value="A-100"),
-                                Comparison(op="greaterThan", attr=_ORDER_ID, value=1),
-                            )
-                        )
-                    ),
-                )
-            )
-        ),
+        where="(t0.sku > ? or (t0.sku = ? and t0.id > ?))",
+        binds=("A-100", "A-100", 1),
     ),
     _SeekCase(
         id="nullable-first-null-coordinate",
         order_by=(OrderKey(attr=_ORDER_SKU, nulls="first"),),
-        coordinates=((_ORDER_SKU, None), (_ORDER_ID, 4)),
+        coordinate=(None, 4),
         order=(OrderKey(attr=_ORDER_SKU, nulls="first"), _APPENDED),
-        seek=Group(
-            operand=Or(
-                operands=(
-                    NullCheck(op="isNotNull", attr=_ORDER_SKU),
-                    Group(
-                        operand=And(
-                            operands=(
-                                NullCheck(op="isNull", attr=_ORDER_SKU),
-                                Comparison(op="greaterThan", attr=_ORDER_ID, value=4),
-                            )
-                        )
-                    ),
-                )
-            )
-        ),
+        where="(t0.sku is not null or (t0.sku is null and t0.id > ?))",
+        binds=(4,),
     ),
     _SeekCase(
         id="nullable-descending-last-value-coordinate",
         order_by=(OrderKey(attr=_ORDER_SKU, direction="desc"),),
-        coordinates=((_ORDER_SKU, "B-200"), (_ORDER_ID, 2)),
+        coordinate=("B-200", 2),
         order=(OrderKey(attr=_ORDER_SKU, direction="desc"), _APPENDED),
-        seek=Group(
-            operand=Or(
-                operands=(
-                    Or(
-                        operands=(
-                            Comparison(op="lessThan", attr=_ORDER_SKU, value="B-200"),
-                            NullCheck(op="isNull", attr=_ORDER_SKU),
-                        )
-                    ),
-                    Group(
-                        operand=And(
-                            operands=(
-                                Comparison(op="eq", attr=_ORDER_SKU, value="B-200"),
-                                Comparison(op="greaterThan", attr=_ORDER_ID, value=2),
-                            )
-                        )
-                    ),
-                )
-            )
-        ),
+        where="(t0.sku < ? or t0.sku is null or (t0.sku = ? and t0.id > ?))",
+        binds=("B-200", "B-200", 2),
     ),
     _SeekCase(
         id="nullable-term-BELOW-the-leading-one",
         order_by=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU)),
-        coordinates=((_ORDER_NAME, "Ada"), (_ORDER_SKU, "A-100"), (_ORDER_ID, 1)),
+        coordinate=("Ada", "A-100", 1),
         order=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU), _APPENDED),
-        seek=And(
-            operands=(
-                Comparison(op="greaterThanEquals", attr=_ORDER_NAME, value="Ada"),
-                Group(
-                    operand=Or(
-                        operands=(
-                            Comparison(op="greaterThan", attr=_ORDER_NAME, value="Ada"),
-                            Group(
-                                operand=And(
-                                    operands=(
-                                        Comparison(op="eq", attr=_ORDER_NAME, value="Ada"),
-                                        Group(
-                                            operand=Or(
-                                                operands=(
-                                                    Comparison(
-                                                        op="greaterThan",
-                                                        attr=_ORDER_SKU,
-                                                        value="A-100",
-                                                    ),
-                                                    NullCheck(op="isNull", attr=_ORDER_SKU),
-                                                )
-                                            )
-                                        ),
-                                    )
-                                )
-                            ),
-                            Group(
-                                operand=And(
-                                    operands=(
-                                        Comparison(op="eq", attr=_ORDER_NAME, value="Ada"),
-                                        Comparison(op="eq", attr=_ORDER_SKU, value="A-100"),
-                                        Comparison(op="greaterThan", attr=_ORDER_ID, value=1),
-                                    )
-                                )
-                            ),
-                        )
-                    )
-                ),
-            )
+        where=(
+            "t0.name >= ? and (t0.name > ? "
+            "or (t0.name = ? and (t0.sku > ? or t0.sku is null)) "
+            "or (t0.name = ? and t0.sku = ? and t0.id > ?))"
         ),
+        binds=("Ada", "Ada", "Ada", "A-100", "Ada", "A-100", 1),
     ),
     _SeekCase(
         id="authored-key-descending",
@@ -528,88 +363,130 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
             OrderKey(attr=_ORDER_ACTIVE, direction="asc"),
             OrderKey(attr=_ORDER_ID, direction="desc"),
         ),
-        coordinates=((_ORDER_ACTIVE, False), (_ORDER_ID, 3)),
+        coordinate=(False, 3),
         order=(
             OrderKey(attr=_ORDER_ACTIVE, direction="asc"),
             OrderKey(attr=_ORDER_ID, direction="desc"),
         ),
-        seek=And(
-            operands=(
-                Comparison(op="greaterThanEquals", attr=_ORDER_ACTIVE, value=False),
-                Group(
-                    operand=Or(
-                        operands=(
-                            Comparison(op="greaterThan", attr=_ORDER_ACTIVE, value=False),
-                            Group(
-                                operand=And(
-                                    operands=(
-                                        Comparison(op="eq", attr=_ORDER_ACTIVE, value=False),
-                                        Comparison(op="lessThan", attr=_ORDER_ID, value=3),
-                                    )
-                                )
-                            ),
-                        )
-                    )
-                ),
-            )
-        ),
+        where="t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?))",
+        binds=(False, False, False, 3),
     ),
 )
 
+_PROJECTION: Final = deep_fetch.ReadProjectionRequest("none", False)
 
-def _coordinate_map(
-    model: Metamodel, coordinates: Sequence[tuple[str, object]]
-) -> dict[AttributeIdentity, object]:
-    return {_identity(model, reference): value for reference, value in coordinates}
+
+def _lowered(model: Metamodel, node: ValidatedObjectQuery) -> LoweredStatement:
+    """One page node as m-sql lowers it: the statement, and its binds in order."""
+    return compile_entity_query(
+        deep_fetch.plan(node, model, projection=_PROJECTION).root, model, POSTGRES
+    ).statement
+
+
+def _where(sql: str) -> str:
+    """A lowered page statement's `where` clause, or "" where it carries none."""
+    if " where " not in sql:
+        return ""
+    return sql.split(" where ", 1)[1].split(" order by ", 1)[0]
+
+
+def _seek_binds(statement: LoweredStatement) -> tuple[object, ...]:
+    """The binds a page statement's `where` clause and everything after it take.
+
+    Binds are positional, so what precedes the clause is skipped by counting the
+    holes ahead of it rather than by assuming the projection contributed none.
+    """
+    ahead = statement.sql.split(" where ", 1)[0].count("?")
+    return statement.binds[ahead:]
 
 
 @pytest.mark.parametrize("case", _SEEK_MATRIX, ids=[case.id for case in _SEEK_MATRIX])
 def test_the_seek_matrix(case: _SeekCase) -> None:
     # One composed order and one exact seek per combination of direction, Null
     # Placement, term count, and whether an authored key already named the key.
-    # Asserted as whole nodes rather than by shape, because the page statement is
-    # a cross-language golden: two targets that composed different trees would
-    # lower different SQL for the same page.
+    # Asserted as whole clauses rather than by shape, because the page statement
+    # is a cross-language golden: two targets that lowered different SQL would
+    # admit different roots for the same page.
     plan = _planned(ORDERS, "Order", order_by=case.order_by)
     assert plan.first(limit=2).authored.order_by == case.order
-    node = plan.after(_coordinate_map(ORDERS, case.coordinates), limit=3)
-    assert node.predicate.authored == case.seek
+    node = plan.after(ContinuationCoordinate(case.coordinate), limit=3)
     assert node.authored.order_by == case.order
     assert node.limit == 3
+    statement = _lowered(ORDERS, node)
+    assert _where(statement.sql) == case.where
+    assert _seek_binds(statement) == (*case.binds, 3)
+
+
+def test_a_page_captures_one_hidden_cell_per_continuation_order_term() -> None:
+    # The coordinate a later page advances by is read back off a cell of the
+    # page's own select list, emitted from the same expression the `order by`
+    # term is — one per term, positionally, so capture and rebinding address the
+    # order the same way. No projected cell is reused, even where it would be
+    # identical: `t0.id` is both projected and captured.
+    plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
+    compiled = compile_entity_query(
+        deep_fetch.plan(plan.first(limit=2), ORDERS, projection=_PROJECTION).root, ORDERS, POSTGRES
+    )
+    assert compiled.coordinate_reads == ("parallax_seek_0", "parallax_seek_1")
+    assert compiled.statement.sql.startswith(
+        "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
+        "t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0"
+    )
+
+
+def test_an_eager_read_of_the_same_query_captures_nothing() -> None:
+    # Capture is what paging costs, and nothing else pays it: a query with the
+    # very same ordering but no paging emits no hidden cell and lifts no
+    # coordinate off its rows.
+    entity = entity_of(ORDERS, "Order")
+    query = object_query(entity.identity, All(), order_by=(OrderKey(attr=_ORDER_SKU),), limit=2)
+    compiled = compile_entity_query(
+        deep_fetch.plan(
+            validate_object_query(entity, query, ORDERS), ORDERS, projection=_PROJECTION
+        ).root,
+        ORDERS,
+        POSTGRES,
+    )
+    assert compiled.coordinate_reads == ()
+    assert "parallax_seek" not in compiled.statement.sql
 
 
 def test_null_placement_over_a_non_nullable_key_changes_no_seek() -> None:
     # Placement is observable only on a nullable key (m-dialect), so the two
     # spellings over `Order.name` order the same rows AND seek the same way —
     # while the page node still carries each one as authored.
-    coordinates = _coordinate_map(ORDERS, ((_ORDER_NAME, "Ada"), (_ORDER_ID, 1)))
+    coordinate = ContinuationCoordinate(("Ada", 1))
     seeks = {
-        placement: _planned(
-            ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME, nulls=placement),)
+        placement: _where(
+            _lowered(
+                ORDERS,
+                _planned(
+                    ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME, nulls=placement),)
+                ).after(coordinate, limit=2),
+            ).sql
         )
-        .after(coordinates, limit=2)
-        .predicate.authored
         for placement in ("first", "last")
     }
     assert seeks["first"] == seeks["last"]
-    assert seeks["first"] == _SEEK_MATRIX[1].seek
+    assert seeks["first"] == _SEEK_MATRIX[1].where
 
 
 def test_a_nullable_leading_term_carries_no_hoisted_range() -> None:
     # The negative half of the hoist rule. With the nulls placed after a non-null
     # coordinate "after" is two disjoint ranges of the index, so there is no
-    # single comparison to hoist and the seek is the remainder alone — one
-    # top-level conjunct rather than two.
+    # single comparison to hoist and the seek is the branch tree alone.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
-    node = plan.after(_coordinate_map(ORDERS, ((_ORDER_SKU, "A-100"), (_ORDER_ID, 1))), limit=2)
-    assert isinstance(node.predicate.authored, Group)
-    hoisted = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME),)).after(
-        _coordinate_map(ORDERS, ((_ORDER_NAME, "Ada"), (_ORDER_ID, 1))), limit=2
+    seek = _where(_lowered(ORDERS, plan.after(ContinuationCoordinate(("A-100", 1)), limit=2)).sql)
+    assert seek.startswith("(")
+    hoisted = _where(
+        _lowered(
+            ORDERS,
+            _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME),)).after(
+                ContinuationCoordinate(("Ada", 1)), limit=2
+            ),
+        ).sql
     )
-    assert isinstance(hoisted.predicate.authored, And)
-    assert hoisted.predicate.authored.operands[0] == Comparison(
-        op="greaterThanEquals", attr=_ORDER_NAME, value="Ada"
-    )
+    assert hoisted.startswith("t0.name >= ? and (")
 
 
 def test_a_nullable_terms_own_two_way_branch_stays_inside_the_ties_above_it() -> None:
@@ -623,19 +500,8 @@ def test_a_nullable_terms_own_two_way_branch_stays_inside_the_ties_above_it() ->
     plan = _planned(
         ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU))
     )
-    node = plan.after(
-        _coordinate_map(ORDERS, ((_ORDER_NAME, "Ada"), (_ORDER_SKU, "A-100"), (_ORDER_ID, 1))),
-        limit=2,
-    )
-    compiled = compile_read(
-        node.predicate.authored,
-        ORDERS,
-        POSTGRES,
-        entity_of(ORDERS, "Order"),
-        order_by=node.authored.order_by,
-        limit=node.limit,
-    )
-    assert compiled.statement.sql.endswith(
+    node = plan.after(ContinuationCoordinate(("Ada", "A-100", 1)), limit=2)
+    assert _lowered(ORDERS, node).sql.endswith(
         "where t0.name >= ? and (t0.name > ? "
         "or (t0.name = ? and (t0.sku > ? or t0.sku is null)) "
         "or (t0.name = ? and t0.sku = ? and t0.id > ?)) "
@@ -645,30 +511,23 @@ def test_a_nullable_terms_own_two_way_branch_stays_inside_the_ties_above_it() ->
 
 def test_a_document_resident_sort_key_seeks_through_the_extraction_seam() -> None:
     # Residence is a physical fact the Continuation Order never learns: the seek
-    # is ordinary comparison nodes over the member, and `m-sql` lowers both the
-    # ordering term and the comparison through the dialect's extraction and typed
-    # cast — the same seam a predicate over the same member goes through, each
-    # part in its own spelling: a comparison against the typed cast, a null check
-    # against the bare extraction, and one path bind ahead of every one of them.
+    # is m-sql's own expansion over the member, and `m-sql` lowers the capture
+    # cell, the ordering term, and every seek comparison through one derivation
+    # of the dialect's extraction and typed cast — each in its own spelling: a
+    # comparison against the typed cast, a null check against the bare
+    # extraction, and one path bind ahead of every one of them.
     plan = _planned(DOCUMENT_LAYOUT, "Traveler", order_by=(OrderKey(attr=_TRAVELER_SCORE),))
-    node = plan.after(
-        _coordinate_map(DOCUMENT_LAYOUT, ((_TRAVELER_SCORE, 7), (_TRAVELER_ID, 1))), limit=2
-    )
-    compiled = compile_read(
-        node.predicate.authored,
-        DOCUMENT_LAYOUT,
-        POSTGRES,
-        entity_of(DOCUMENT_LAYOUT, "Traveler"),
-        order_by=node.authored.order_by,
-        limit=node.limit,
-    )
-    assert compiled.statement.sql.endswith(
+    node = plan.after(ContinuationCoordinate((7, 1)), limit=2)
+    statement = _lowered(DOCUMENT_LAYOUT, node)
+    assert statement.sql.endswith(
+        "cast(jsonb_extract_path_text(t0.payload, ?) as bigint) parallax_seek_0, "
+        "t0.id parallax_seek_1 from traveler t0 "
         "where (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? "
         "or jsonb_extract_path_text(t0.payload, ?) is null "
         "or (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? and t0.id > ?)) "
         "order by cast(jsonb_extract_path_text(t0.payload, ?) as bigint) asc, t0.id asc limit ?"
     )
-    assert compiled.statement.binds == ("score", 7, "score", "score", 7, 1, "score", 2)
+    assert statement.binds == ("score", "score", 7, "score", "score", 7, 1, "score", 2)
 
 
 # --------------------------------------------------------------------------- #
@@ -679,58 +538,80 @@ def test_the_seek_is_a_top_level_conjunct_and_the_callers_terms_bind_first() -> 
     # reaches an index range through, so the seek is never nested inside the
     # caller's predicate. The caller's terms come first, which keeps bind order
     # caller-first exactly as an injected as-of term leaves it.
-    predicate = _active(ORDERS, "Order")
-    plan = _planned(ORDERS, "Order", predicate=predicate)
-    node = plan.after({_key(entity_of(ORDERS, "Order")): 4}, limit=3)
-    assert node.predicate.authored == And(
-        operands=(predicate, Comparison(op="greaterThan", attr=_ORDER_ID, value=4))
-    )
+    plan = _planned(ORDERS, "Order", predicate=_active(ORDERS, "Order"))
+    statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((4,)), limit=3))
+    assert _where(statement.sql) == "t0.name = ? and t0.id > ?"
+    assert _seek_binds(statement) == ("A", 4, 3)
 
 
 def test_a_multi_term_seek_conjoins_both_of_its_parts_beside_the_caller() -> None:
-    # The hoisted range and the remainder are two conjuncts rather than one
-    # nested value, so a caller's own predicate, the hoist, and the remainder are
+    # The hoisted range and the branch tree are two conjuncts rather than one
+    # nested value, so a caller's own predicate, the hoist, and the tree are
     # peers of one conjunction and the planner sees the range at the top level.
-    predicate = _active(ORDERS, "Order")
-    plan = _planned(ORDERS, "Order", predicate=predicate, order_by=(OrderKey(attr=_ORDER_NAME),))
-    node = plan.after(_coordinate_map(ORDERS, ((_ORDER_NAME, "Ada"), (_ORDER_ID, 1))), limit=3)
-    assert isinstance(node.predicate.authored, And)
-    assert len(node.predicate.authored.operands) == 3
-    assert node.predicate.authored.operands[0] == predicate
+    plan = _planned(
+        ORDERS,
+        "Order",
+        predicate=_active(ORDERS, "Order"),
+        order_by=(OrderKey(attr=_ORDER_NAME),),
+    )
+    statement = _lowered(ORDERS, plan.after(ContinuationCoordinate(("Ada", 1)), limit=3))
+    assert _where(statement.sql) == (
+        "t0.name = ? and t0.name >= ? and (t0.name > ? or (t0.name = ? and t0.id > ?))"
+    )
 
 
 def test_a_callers_disjunction_is_grouped_before_the_seek_is_conjoined_to_it() -> None:
     # An `or` binds looser than the enclosing `and`, so conjoining a seek onto
     # one without grouping it would silently re-associate the caller's own
-    # predicate into the seek's disjunct.
+    # predicate into the seek's first branch.
     left = _active(ORDERS, "Order")
-    right = Comparison(op="eq", attr="parallax.compatibility.Order.qty", value=1)
+    right = Comparison(op="eq", attr=_ORDER_QTY, value=1)
     plan = _planned(ORDERS, "Order", predicate=Or(operands=(left, right)))
-    node = plan.after({_key(entity_of(ORDERS, "Order")): 1}, limit=3)
-    assert node.predicate.authored == And(
-        operands=(
-            Group(operand=Or(operands=(left, right))),
-            Comparison(op="greaterThan", attr=_ORDER_ID, value=1),
-        )
-    )
+    statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((1,)), limit=3))
+    assert _where(statement.sql) == "(t0.name = ? or t0.qty = ?) and t0.id > ?"
 
 
 def test_a_later_page_of_an_unfiltered_query_carries_the_seek_alone() -> None:
-    # An unfiltered query's predicate contributes no conjunct at all, so the
-    # page's own predicate is the seek rather than a conjunction with an empty
-    # left operand — which would lower to a dangling `and`.
+    # An unfiltered query contributes no conjunct at all, so the page's `where`
+    # clause is the seek rather than a conjunction with an empty left operand —
+    # which would lower to a dangling `and`.
     plan = _planned(ORDERS, "Order")
-    node = plan.after({_key(entity_of(ORDERS, "Order")): 2}, limit=3)
-    assert node.predicate.authored == Comparison(op="greaterThan", attr=_ORDER_ID, value=2)
+    statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((2,)), limit=3))
+    assert _where(statement.sql) == "t0.id > ?"
 
 
-def test_advancing_from_a_root_that_carries_no_key_is_refused_by_name() -> None:
-    # Only decoded values are bindable. A mapping missing the Continuation
-    # Order's own member names a caller defect rather than an empty page, so it
-    # is refused rather than silently paging from nothing.
-    plan = _planned(ORDERS, "Order")
-    with pytest.raises(continuation.ContinuationError, match="does not carry"):
-        plan.after({}, limit=3)
+def test_a_coordinate_of_the_wrong_width_is_refused_by_name() -> None:
+    # A coordinate is positional over the WHOLE Continuation Order, so one of
+    # another width was captured under a different order than this plan composes
+    # — and lowering it would seek past comparisons the page never evaluated.
+    plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME),))
+    with pytest.raises(continuation.ContinuationError, match="carries 1"):
+        plan.after(ContinuationCoordinate((1,)), limit=3)
+
+
+def test_a_page_seeks_past_a_null_carrier_rather_than_refusing_it() -> None:
+    # The rule a checked delivery rests on: whatever a root's stored data turned
+    # out to be, its ordering expressions evaluated to something, and a null one
+    # is an ordinary coordinate the next page advances from. Nothing here asks
+    # whether a member decoded.
+    plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
+    statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((None, 4)), limit=3))
+    assert _where(statement.sql) == "(t0.sku is null and t0.id > ?)"
+
+
+def test_a_coordinates_snapshot_is_an_inert_copy_rather_than_a_second_cursor() -> None:
+    # What a diagnosis may be handed is a plain tuple of carriers: readable,
+    # comparable, and with no public route back to a coordinate — handing over
+    # the coordinate itself would hand over the authority to resume a delivery.
+    # A carrier may arrive as a buffer the provider still owns, so byte-likes are
+    # copied and every other scalar passes through as itself.
+    provider_buffer = bytearray(b"\x0a\x1b")
+    coordinate = ContinuationCoordinate((provider_buffer, 7, None))
+    snapshot = coordinate.snapshot()
+    assert snapshot == (b"\x0a\x1b", 7, None)
+    provider_buffer.clear()
+    assert snapshot[0] == b"\x0a\x1b"
+    assert not isinstance(snapshot, ContinuationCoordinate)
 
 
 def test_a_sort_key_naming_no_declared_attribute_is_refused_by_name() -> None:
@@ -740,15 +621,6 @@ def test_a_sort_key_naming_no_declared_attribute_is_refused_by_name() -> None:
     # no term to contribute and is refused where it is read.
     with pytest.raises(ValueError, match="no declared ordering attribute"):
         _planned(ORDERS, "Order", order_by=(OrderKey(attr="parallax.compatibility.Order.missing"),))
-
-
-def test_advancing_from_a_root_whose_sort_key_did_not_decode_is_refused_by_name() -> None:
-    # The same rule reaching an authored term: a root carrying its key but not
-    # the member the author ordered by supplies no coordinate for that term, and
-    # a delivery cannot continue past what it cannot bind.
-    plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME),))
-    with pytest.raises(continuation.ContinuationError, match="does not carry"):
-        plan.after({_key(entity_of(ORDERS, "Order")): 3}, limit=3)
 
 
 # --------------------------------------------------------------------------- #
@@ -819,75 +691,33 @@ def test_an_authored_sort_key_naming_an_axis_start_is_not_appended_twice() -> No
     )
 
 
-def test_a_milestone_page_seeks_past_the_edge_as_a_canonical_instant_literal() -> None:
-    # A projection holds an instant as a `datetime`, while a comparison binds
-    # `m-predicate`'s literal for it — the canonical UTC ISO-8601 spelling every
-    # other instant bind in the system carries. Binding the carrier would emit a
-    # page statement no golden could state.
+def test_a_milestone_page_seeks_past_the_edge_the_database_evaluated() -> None:
+    # A milestone's coordinate is its axis starts exactly as the ordering
+    # expressions produced them, so the seek binds those carriers rather than
+    # any spelling of them — and it is the same lexicographic tree an authored
+    # Sort Key gets, over one key term and two edge terms.
     plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
-    node = plan.after(
-        {
-            _identity(POSITION, _POSITION_ID): 1,
-            _identity(POSITION, _POSITION_VALID_START): dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-            _identity(POSITION, _POSITION_TX_START): dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-        },
-        limit=2,
+    valid_start = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    tx_start = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    statement = _lowered(
+        POSITION, plan.after(ContinuationCoordinate((1, valid_start, tx_start)), limit=2)
     )
-    assert node.predicate.authored == And(
-        operands=(
-            Comparison(op="greaterThanEquals", attr=_POSITION_ID, value=1),
-            Group(
-                operand=Or(
-                    operands=(
-                        Comparison(op="greaterThan", attr=_POSITION_ID, value=1),
-                        Group(
-                            operand=And(
-                                operands=(
-                                    Comparison(op="eq", attr=_POSITION_ID, value=1),
-                                    Comparison(
-                                        op="greaterThan",
-                                        attr=_POSITION_VALID_START,
-                                        value="2024-01-01T00:00:00.000000Z",
-                                    ),
-                                )
-                            )
-                        ),
-                        Group(
-                            operand=And(
-                                operands=(
-                                    Comparison(op="eq", attr=_POSITION_ID, value=1),
-                                    Comparison(
-                                        op="eq",
-                                        attr=_POSITION_VALID_START,
-                                        value="2024-01-01T00:00:00.000000Z",
-                                    ),
-                                    Comparison(
-                                        op="greaterThan",
-                                        attr=_POSITION_TX_START,
-                                        value="2024-04-01T00:00:00.000000Z",
-                                    ),
-                                )
-                            )
-                        ),
-                    )
-                )
-            ),
-        )
+    assert _where(statement.sql) == (
+        "t0.thru_z = ? and t0.pos_id >= ? and (t0.pos_id > ? "
+        "or (t0.pos_id = ? and t0.from_z > ?) "
+        "or (t0.pos_id = ? and t0.from_z = ? and t0.in_z > ?))"
     )
-
-
-def test_a_milestone_root_whose_edge_did_not_decode_cannot_be_continued_from() -> None:
-    # The keyless-root rule reaching the edge: the Continuation Order names the
-    # axis starts, so a root carrying its key but not its milestone supplies no
-    # coordinate for them and the delivery cannot continue past it.
-    plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
-    carried = {
-        _identity(POSITION, _POSITION_ID): 1,
-        _identity(POSITION, _POSITION_VALID_START): dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-    }
-    assert not plan.continues_from(carried)
-    with pytest.raises(continuation.ContinuationError, match="does not carry"):
-        plan.after(carried, limit=2)
+    assert _seek_binds(statement) == (
+        INFINITY,
+        1,
+        1,
+        1,
+        valid_start,
+        1,
+        valid_start,
+        tx_start,
+        2,
+    )
 
 
 def _milestones() -> list[_Row]:
@@ -903,6 +733,7 @@ def _milestones() -> list[_Row]:
             _identity(POSITION, _POSITION_ID): key,
             _identity(POSITION, _POSITION_VALID_START): valid_start,
             _identity(POSITION, _POSITION_TX_START): tx_start,
+            _identity(POSITION, _POSITION_VALID_END): INFINITY,
         }
         for key in (1, 2)
         for valid_start, tx_start in starts
@@ -919,24 +750,10 @@ def test_a_milestone_delivery_pages_through_every_boundary_offset_without_skip_o
     # alone would end each of those deliveries early — the next page seeks past
     # the whole key — and this is the same paging evaluation the Column orderings
     # above are graded by, over instants rather than scalars.
-    rows = _milestones()
     plan = _planned(POSITION, "Position", temporal={"transaction-time": History()})
+    delivered = _delivered(POSITION, "Position", plan, _milestones(), batch_size=batch_size)
     ranked = _ranked(POSITION, plan.first(limit=1).authored.order_by)
-    expected = sorted(rows, key=ranked)
-    delivered: list[_Row] = []
-    cursor: _Row | None = None
-    while True:
-        node = (
-            plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
-        )
-        page = sorted(
-            (row for row in rows if _matches(POSITION, node.predicate.authored, row)), key=ranked
-        )[:batch_size]
-        delivered.extend(page)
-        if len(page) < batch_size:
-            break
-        cursor = page[-1]
-    assert delivered == expected
+    assert delivered == sorted(_milestones(), key=ranked)
 
 
 # --------------------------------------------------------------------------- #
@@ -961,62 +778,137 @@ def _dataset() -> list[_Row]:
     return rows
 
 
-def _matches(model: Metamodel, node: PredicateNode, row: _Row) -> bool:
-    """Evaluate one seek against a row, in SQL's own three-valued reading.
+def _columns(model: Metamodel, target: str) -> Mapping[str, AttributeIdentity]:
+    """Every column a page statement over ``target`` can name, by identity."""
+    return {
+        f"t0.{attribute.storage.name}": attribute.identity
+        for attribute in entity_of(model, target).declared_attributes
+    }
 
-    The vocabulary is exactly what a seek is composed of. A comparison against a
-    null column is unknown and therefore selects nothing, which is why every
-    branch that must reach a null row spells a null check instead.
+
+def _admits(
+    statement: LoweredStatement, columns: Mapping[str, AttributeIdentity], row: _Row
+) -> bool:
+    """Whether one lowered page statement's `where` clause selects ``row``.
+
+    The emitted SQL is read the way a database reads it — `and` binding tighter
+    than `or`, parentheses meaning what they say, and a comparison against a
+    null column selecting nothing — so what a replay exercises is the statement
+    the page actually issues rather than a second model of it.
+
+    Binds are positional, so the holes ahead of the clause are skipped rather
+    than assumed absent.
     """
-    match node:
-        case All():
-            return True
-        case NoneOp():
-            return False
-        case Group(operand=operand):
-            return _matches(model, operand, row)
-        case And(operands=operands):
-            return all(_matches(model, operand, row) for operand in operands)
-        case Or(operands=operands):
-            return any(_matches(model, operand, row) for operand in operands)
-        case NullCheck(op=op, attr=attr):
-            held = row[_identity(model, attr)]
-            return (held is None) if op == "isNull" else (held is not None)
-        case Comparison(op=op, attr=attr, value=value):
-            held = row[_identity(model, attr)]
-            if held is None:
-                return False
-            return _compares(op, held, _as_carrier(held, value))
-        case _:  # pragma: no cover - a seek composes nothing else
-            raise AssertionError(f"the seek composed {node!r}")
+    where = _where(statement.sql)
+    if not where:
+        return True
+    ahead = statement.sql.split(" where ", 1)[0].count("?")
+    reader = _Clause(where, statement.binds[ahead:], columns, row)
+    return reader.disjunction()
 
 
-def _as_carrier(held: object, value: object) -> object:
-    """One bound literal read back as the carrier the stored value is.
+class _Clause:
+    """A recursive-descent reader over one emitted `where` clause."""
 
-    A page binds an instant as its canonical literal and the database parses it
-    back before comparing two instants; comparing the literal against the
-    carrier is what nothing does.
-    """
-    if isinstance(held, dt.datetime) and isinstance(value, str):
-        return dt.datetime.fromisoformat(value)
-    return value
+    def __init__(
+        self,
+        text: str,
+        binds: Sequence[object],
+        columns: Mapping[str, AttributeIdentity],
+        row: _Row,
+    ) -> None:
+        self._tokens = deque(text.replace("(", " ( ").replace(")", " ) ").split())
+        self._binds = iter(binds)
+        self._columns = columns
+        self._row = row
+
+    def disjunction(self) -> bool:
+        value = self._conjunction()
+        while self._tokens and self._tokens[0] == "or":
+            self._tokens.popleft()
+            branch = self._conjunction()
+            value = value or branch
+        return value
+
+    def _conjunction(self) -> bool:
+        value = self._atom()
+        while self._tokens and self._tokens[0] == "and":
+            self._tokens.popleft()
+            term = self._atom()
+            value = value and term
+        return value
+
+    def _atom(self) -> bool:
+        if self._tokens[0] == "(":
+            self._tokens.popleft()
+            value = self.disjunction()
+            self._tokens.popleft()
+            return value
+        held = self._row[self._columns[self._tokens.popleft()]]
+        operator = self._tokens.popleft()
+        if operator == "is":
+            negated = self._tokens.popleft() == "not"
+            if negated:
+                self._tokens.popleft()
+            return (held is not None) if negated else (held is None)
+        self._tokens.popleft()
+        bound = next(self._binds)
+        return False if held is None else _compares(operator, held, bound)
 
 
-def _compares(op: str, held: object, value: object) -> bool:
+def _compares(operator: str, held: object, bound: object) -> bool:
+    """One emitted SQL comparison, evaluated over the carriers it names."""
     here = cast("Any", held)
-    there = cast("Any", value)
-    match op:
-        case "eq":
+    there = cast("Any", bound)
+    match operator:
+        case "=":
             return bool(here == there)
-        case "greaterThan":
+        case ">":
             return bool(here > there)
-        case "greaterThanEquals":
+        case ">=":
             return bool(here >= there)
-        case "lessThan":
+        case "<":
             return bool(here < there)
         case _:
             return bool(here <= there)
+
+
+def _delivered(
+    model: Metamodel,
+    target: str,
+    plan: continuation.ContinuationPlan,
+    rows: Sequence[_Row],
+    *,
+    batch_size: int,
+) -> list[_Row]:
+    """Page ``rows`` through ``plan``, advancing on the coordinates it captured.
+
+    The production loop's own shape: each page issues its statement, keeps at
+    most ``batch_size`` of what the statement admits in the composed order, and
+    the next page seeks past the LAST kept root's coordinate — the carriers that
+    root's ordering expressions evaluated to, read straight off its stored
+    values.
+    """
+    columns = _columns(model, target)
+    order = plan.first(limit=1).authored.order_by
+    ranked = _ranked(model, order)
+    terms = [_identity(model, key.attr) for key in order]
+    delivered: list[_Row] = []
+    coordinate: ContinuationCoordinate | None = None
+    while True:
+        node = (
+            plan.first(limit=batch_size)
+            if coordinate is None
+            else plan.after(coordinate, limit=batch_size)
+        )
+        statement = _lowered(model, node)
+        page = sorted((row for row in rows if _admits(statement, columns, row)), key=ranked)[
+            :batch_size
+        ]
+        delivered.extend(page)
+        if len(page) < batch_size:
+            return delivered
+        coordinate = ContinuationCoordinate(tuple(page[-1][term] for term in terms))
 
 
 def _ranked(model: Metamodel, order: Sequence[OrderKey]) -> Callable[[_Row], Any]:
@@ -1039,7 +931,7 @@ def _ranked(model: Metamodel, order: Sequence[OrderKey]) -> Callable[[_Row], Any
             if here is None or here == there:
                 continue
             ascending = (term.direction or "asc") == "asc"
-            ahead = _compares("lessThan" if ascending else "greaterThan", here, there)
+            ahead = _compares("<" if ascending else ">", here, there)
             return -1 if ahead else 1
         return 0
 
@@ -1067,21 +959,9 @@ def test_paging_reproduces_the_whole_result_in_the_order_the_first_page_declares
     rows = _dataset()
     plan = _planned(ORDERS, "Order", order_by=order_by)
     ranked = _ranked(ORDERS, plan.first(limit=1).authored.order_by)
-    expected = sorted(rows, key=ranked)
-    delivered: list[_Row] = []
-    cursor: _Row | None = None
-    while True:
-        node = (
-            plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
-        )
-        page = sorted(
-            (row for row in rows if _matches(ORDERS, node.predicate.authored, row)), key=ranked
-        )[:batch_size]
-        delivered.extend(page)
-        if len(page) < batch_size:
-            break
-        cursor = page[-1]
-    assert delivered == expected
+    assert _delivered(ORDERS, "Order", plan, rows, batch_size=batch_size) == sorted(
+        rows, key=ranked
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1104,28 +984,34 @@ def _delivered_under_writes(
 ) -> list[object]:
     """The root ids a delivery yields while ``write`` mutates the dataset.
 
-    The page loop with the one ordering the production loop has: a page's cursor
-    is the last root's values AS DELIVERED, and the write that follows reaches
-    the database before the next page's own statement runs. That gap is the
-    whole subject — a cursor naming a coordinate the row has since left.
+    The page loop with the one ordering the production loop has: a page seeks
+    past the coordinate its last root stood at WHEN IT WAS DELIVERED, and the
+    write that follows reaches the database before the next page's own statement
+    runs. That gap is the whole subject — a coordinate the row has since left.
     """
     rows = [dict(row) for row in _dataset()]
     plan = _planned(ORDERS, "Order", order_by=order_by)
-    ranked = _ranked(ORDERS, plan.first(limit=1).authored.order_by)
+    columns = _columns(ORDERS, "Order")
+    order = plan.first(limit=1).authored.order_by
+    ranked = _ranked(ORDERS, order)
+    terms = [_identity(ORDERS, key.attr) for key in order]
     identity = _identity(ORDERS, _ORDER_ID)
     delivered: list[object] = []
-    cursor: _Row | None = None
+    coordinate: ContinuationCoordinate | None = None
     for _page in range(len(rows) * 2 + 2):
         node = (
-            plan.first(limit=batch_size) if cursor is None else plan.after(cursor, limit=batch_size)
+            plan.first(limit=batch_size)
+            if coordinate is None
+            else plan.after(coordinate, limit=batch_size)
         )
-        page = sorted(
-            (row for row in rows if _matches(ORDERS, node.predicate.authored, row)), key=ranked
-        )[:batch_size]
+        statement = _lowered(ORDERS, node)
+        page = sorted((row for row in rows if _admits(statement, columns, row)), key=ranked)[
+            :batch_size
+        ]
         delivered.extend(row[identity] for row in page)
         if len(page) < batch_size:
             return delivered
-        cursor = dict(page[-1])
+        coordinate = ContinuationCoordinate(tuple(page[-1][term] for term in terms))
         write(page, rows)
     raise AssertionError("the delivery did not end")
 
@@ -1277,8 +1163,10 @@ def test_the_page_node_is_a_fresh_value_rather_than_a_mutated_query() -> None:
     query: ObjectQueryNode = object_query(entity.identity, All())
     plan = continuation.plan(validate_object_query(entity, query, ORDERS), ORDERS)
     first = plan.first(limit=2)
-    later = plan.after({_key(entity): 9}, limit=2)
+    later = plan.after(ContinuationCoordinate((9,)), limit=2)
     assert query.order_by == ()
     assert query.limit is None
     assert first is not later
     assert first.predicate.authored == All()
+    assert first.paging is not None
+    assert first.paging.seek is None

@@ -685,8 +685,7 @@ def stage_rows(
             builder,
             source=ROOT_LEVEL,
             findings=row.findings,
-            family_tag_unknown=row.family_tag_unknown,
-            family_tag=row.family_tag,
+            unknown_family_tag=row.unknown_family_tag,
             classified_members=row.classified_members,
         )
         for row, context in zip(materialized, contexts, strict=True)
@@ -910,8 +909,7 @@ def _convert_rows(
             builder,
             source=source,
             findings=row.findings,
-            family_tag_unknown=row.family_tag_unknown,
-            family_tag=row.family_tag,
+            unknown_family_tag=row.unknown_family_tag,
             classified_members=row.classified_members,
         )
         refs.append(ref)

@@ -21,6 +21,7 @@ from typing import Any, cast
 
 import pytest
 
+from _support.db_port import projected_row
 from parallax.conformance import snapshot_recipes
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import (
@@ -307,7 +308,7 @@ class _CannedAccountPort:
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
         answered, self.rows = self.rows, []
-        return answered
+        return [projected_row(sql, row) for row in answered]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return 1
@@ -356,7 +357,8 @@ class _CannedOrderPort:
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return self.scripted.pop(0) if self.scripted else []
+        answered = self.scripted.pop(0) if self.scripted else []
+        return [projected_row(sql, row) for row in answered]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:  # pragma: no cover
         raise AssertionError("a read recipe issues no DML")

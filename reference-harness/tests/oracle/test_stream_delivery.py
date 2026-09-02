@@ -763,7 +763,8 @@ def test_a_continuing_page_negating_its_seek_is_refused(damaged_case: CaseLoader
 # nullable `sku` ordered nulls-first at `batchSize: 1`, delivering the null root
 # and then one non-null one.
 _NULLS_FIRST_BASE = (
-    "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0"
+    "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
+    "t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0"
 )
 _NULLS_FIRST_TAIL = " order by t0.sku asc nulls first, t0.id asc limit ?"
 
@@ -977,12 +978,16 @@ def test_a_resident_page_binding_the_wrong_path_first_is_refused(
     told apart only by the Document Paths their holes carry, in the order the seek
     composes them. Swapping the leading branch's path for the second term's leaves
     the statement text untouched.
+
+    The seek's own binds begin after the two coordinate cells the page captures,
+    whose paths precede everything the `where` clause binds.
     """
     case = damaged_case(_DOCUMENT_RESIDENT)
+    cells = 2
     for entry in _statements(case)[1:]:
         for dialect, binds in entry["binds"].items():
             entry["binds"][dialect] = [*binds]
-            entry["binds"][dialect][0] = binds[5]
+            entry["binds"][dialect][cells] = binds[cells + 5]
     reads = ScriptedReads(results=_resident_script())
 
     with pytest.raises(CaseFailure, match="root binds"):

@@ -353,37 +353,26 @@ no two roots tie in it. Every declared axis contributes, whether the query
 scanned it or pinned it: a pin selects one coordinate on that axis and leaves
 the other free to vary across the milestones the scan returns.
 
-A page after the first carries the query's own predicate conjoined with a
-**seek** admitting exactly the roots the Continuation Order places after the one
-the previous page delivered last. The seek is a top-level conjunct rather than a
-term nested inside the predicate, because a leading index range is reached
-through ordinary conjunct pushdown, and it has two parts:
+A delivery advances on **coordinates the database evaluated**, never on anything
+materialization decoded. Every page captures, per root, what each Continuation
+Order term's own ordering expression produced, and a page after the first carries
+the query's own predicate conjoined with a **seek** admitting exactly the roots the
+Continuation Order places after the one the previous page delivered last. Which
+comparisons that seek expands into is `m-sql`'s (*Continuation coordinates*),
+because it cannot be settled without knowing where the dialect placed a `NULL` in
+the ordering clause that was emitted. What is settled here is the ORDER those
+comparisons are measured against, and the rule that the position a page resumes
+from is the coordinate of the last root that page **kept**.
 
-- The **hoisted leading conjunct** — the leading term compared non-strictly
-  against its own coordinate (`>=` ascending, `<=` descending). It is implied by
-  the remainder and carried anyway, because the remainder alone offers nothing to
-  push down: without it a delivery plans as a scan from the head of the index, or
-  as a disjunction that discards index order under the page's own ordering and
-  page size. It is emitted **only for a non-nullable leading term** — where nulls
-  can fall after a non-null coordinate, "after" is two disjoint ranges and no
-  single comparison covers both.
-- The **lexicographic remainder** — one branch per tie depth, disjoined: the
-  leading term strictly after its coordinate, or the leading term at its
-  coordinate and the second strictly after its own, and so on through the last
-  term.
-
-"Strictly after" and "at" are measured in each term's **own** ordering. A
-descending term reverses the comparison. A nullable term's Null Placement decides
-which side its nulls fall on, so under `last` the nulls follow a non-null
-coordinate and under `first` they precede it; a null coordinate is *at* the nulls
-rather than at any value, so what follows it is the non-nulls under `first` and
-**nothing at all** under `last` — a depth that admits nothing contributes no
-branch. Only decoded values are bindable, so a coordinate carries a comparison
-where the term holds a value and a null test where it holds none.
-
-A single-term Continuation Order — a single-instant read declaring no `orderBy`,
-ordering by the primary key alone — needs neither part: one strict comparison
-already is the top-level conjunct the hoist exists to supply.
+A coordinate is physical and carries no authority. It is not decoded, revalidated,
+admitted as a managed value, published as a result, or turned back into one by any
+public constructor; it is compared only by its own equality, and a diagnostic copy
+of one is inert. A rejected stored value and a coordinate stay separate in both
+directions: a rejected value is evidence and never becomes a cursor, and a
+coordinate is pagination state and never becomes evidence. They may describe the
+same stored cell and still differ — a document extraction whose cast a codec
+rejects yields evidence of the rejected value while the coordinate carries what the
+`ORDER BY` expression evaluated.
 
 Delivery is bounded by a **page size** counting root positions. It never bounds
 included relationship rows, and it is a performance dial and nothing else:
@@ -409,10 +398,11 @@ whole-result one.
 A stream answers the same query over the same data, and four things about its
 answer differ. All four follow from the two facts that make a delivery a
 delivery, and neither fact is representation-specific, so every divergence
-applies identically to every representation.
+applies identically to every representation. Invalid stored data is not among
+them: it ends no checked delivery, which is stated below the four.
 
 **Because a stream publishes one root at a time**, it never holds two roots'
-results together, and two divergences follow:
+results together, and three divergences follow:
 
 - **Sharing narrows to root-local.** A row two result roots both reach is one
   node per root, where a whole-result read may answer one node for both. The
@@ -429,10 +419,15 @@ results together, and two divergences follow:
   not a pin. Exactly as the whole result does, it also retains no write evidence:
   every milestone root stands at a finite Transaction-Time edge and is read-only
   through every keyed verb.
+- **A milestone root whose edge did not decode is published at the page's own
+  pin.** Every other milestone root stands at its own edge; this one has none to
+  stand at, and the delivery continues past it. A whole-result milestone read
+  refuses the whole read instead, because it must decode an edge before it can
+  partition its rows at all — a refusal a per-root publication has no need of.
 
 **Because a stream derives a Continuation Order the query did not declare**, it
-answers in a total order where a whole-result read may answer in none, and two
-more follow:
+answers in a total order where a whole-result read may answer in none, and one
+more follows:
 
 - **An unordered `limit` becomes specified.** `m-object-query` makes an
   unordered `limit` a cap rather than pagination, returning an unspecified
@@ -441,20 +436,15 @@ more follow:
   first `n` roots. The stream is strictly more specified — nothing a
   whole-result read promised is broken — but the two answer differently, and
   that is a property of the delivery rather than of the query.
-- **A root that did not decode a Continuation Order member ends the delivery.**
-  Only decoded values are bindable, so such a root supplies no coordinate for the
-  term that names the member and nothing to continue from. The rule is over
-  **every** member the order names, whichever put it there: an authored Sort Key
-  over any member, the primary key, and a milestone-set read's own edge are one
-  rule and not three. The primary key is the instance every stream has, because
-  every Continuation Order carries it. The rule is also stated independently
-  of position — *a stream cannot continue past a root that did not decode every
-  Continuation Order member* — precisely so the page size cannot change it: the
-  same stored row may not be survivable at one page size and fatal at another.
-  The root itself is published exactly as a whole-result read publishes it, in
-  band where the reading surface delivers classified roots in band and as a
-  refusal where it refuses them; what follows it is the end of the delivery
-  either way.
+
+Invalid stored data ends **no** checked delivery. Every root the database placed in
+the Continuation Order has an evaluated coordinate by construction, whatever its
+stored data turned out to be, so a root whose sort key, primary key, or milestone
+edge contradicts the model is published exactly as a whole-result read publishes it
+— in band where the reading surface delivers classified roots in band, as a refusal
+where it refuses them — and the delivery carries on. A coordinate missing after
+execution is a violation of the `m-sql` / `m-db-port` contract rather than a stream
+state.
 
 The two deliver the same roots at the same pins whatever the query, and they
 deliver them in the same sequence wherever their two orders agree. Over **one**

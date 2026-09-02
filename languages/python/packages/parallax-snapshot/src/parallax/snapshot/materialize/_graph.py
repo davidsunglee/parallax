@@ -47,17 +47,15 @@ IDs without re-extracting or re-hashing a key.
 A sealed graph is also where result SCOPE is expressed. Because a merge's whole
 universe is the roots it is handed, :func:`root_scoped` narrows a graph to one
 of them by rebuilding the row shell alone — every array shared by reference —
-and everything downstream runs unchanged over the result. :func:`root_members`
-is the other half of advancing through a result: each root's decoded Attributes,
-the members it holds none of, and the absence that names a root whose own
-primary key never decoded.
+and everything downstream runs unchanged over the result. :func:`root_edges` is
+the other half of publishing one: the milestone each root of a scan stands at,
+or its absence for every root that stands at the graph's own pin.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
-from types import MappingProxyType
 from typing import Final, Literal, cast
 
 from parallax.core.document_codec import DocumentPathSegment
@@ -66,11 +64,12 @@ from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
+    EntityMetadata,
     MemberIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.core.temporal_read import Pin
+from parallax.core.temporal_read import Edge, Pin, TemporalReadError, milestone_edge_of
 from parallax.snapshot.materialize._views import (
     RelationshipViewKey,
     SourceLevel,
@@ -88,7 +87,7 @@ __all__ = [
     "StoredDataIssueCode",
     "StoredDataIssueInput",
     "graph_rows",
-    "root_members",
+    "root_edges",
     "root_scoped",
 ]
 
@@ -226,39 +225,41 @@ def root_scoped(graph: SnapshotGraph, position: int, *, pin: Pin | None = None) 
     )
 
 
-def root_members(graph: SnapshotGraph) -> Iterator[Mapping[AttributeIdentity, object] | None]:
-    """Each root's decoded Attribute members in result order.
+def root_edges(graph: SnapshotGraph, declaring: EntityMetadata | None) -> Iterator[Edge | None]:
+    """Each root's own As-Of edge in result order, or absence where it has none.
 
-    ``None`` where a root's own primary key is null or undecodable, which is the
-    one root shape that stands behind no projection at all and so can answer no
-    member. A caller advancing through a result reads both facts here: how far
-    it got, and whether the root it stopped on has anything to advance FROM.
+    ``declaring`` is the Entity whose declaration carries the family's axes for a
+    MILESTONE-SET read, and ``None`` for every read at one instant — whose roots
+    stand at the graph's own pin and have no edge of their own to be published
+    at.
 
-    A member whose stored value no conforming member could hold is OMITTED from
-    the mapping rather than carried as its absence sentinel: only decoded values
-    are bindable, so a caller advancing by such a member has nothing to continue
-    from and finding out by asking is the same question the ``None`` above
-    answers for the key.
-
-    Deliberately lazy and Attribute-keyed. A caller that needs one root's values
-    holds one mapping rather than the whole result's, and the identities it is
-    keyed by are the ones a member is named by everywhere else — never the
-    positions the row happens to store them at.
+    Absent, too, for a milestone root whose axis starts did not decode. Such a
+    root is published at the page's own pin and the delivery continues past it:
+    what a delivery advances by is the coordinate the database evaluated, not
+    anything this root's stored data turned out to be.
     """
     rows = graph_rows(graph)
     for root in rows.roots:
-        if isinstance(root, InvalidRootInput):
+        if declaring is None or isinstance(root, InvalidRootInput):
             yield None
-        else:
-            layout = rows.layouts[root]
-            values = rows.member_rows[root]
-            yield MappingProxyType(
-                {
-                    cast("AttributeIdentity", layout.members[position]): values[position]
-                    for position in range(layout.attribute_count)
-                    if values[position] is not ABSENT
-                }
-            )
+            continue
+        yield _root_edge(declaring, rows, root)
+
+
+def _root_edge(declaring: EntityMetadata, rows: GraphRows, root: int) -> Edge | None:
+    layout = rows.layouts[root]
+    values = rows.member_rows[root]
+    try:
+        return milestone_edge_of(
+            declaring,
+            {
+                cast("AttributeIdentity", layout.members[position]): values[position]
+                for position in range(layout.attribute_count)
+                if values[position] is not ABSENT
+            },
+        )
+    except TemporalReadError:
+        return None
 
 
 class GraphBuilder:

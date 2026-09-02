@@ -46,32 +46,32 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.active asc, t0.id desc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.active asc, t0.id desc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.active asc, t0.id desc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.active asc, t0.id desc limit ?
       binds: [2]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
       binds: [5, 3]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
       binds: [false, false, false, 3, 2]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
       binds: [42, 4]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
       binds: [true, true, true, 4, 2]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
       binds: [2, 1]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
       binds: [true, true, true, 1, 2]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders
   graph:

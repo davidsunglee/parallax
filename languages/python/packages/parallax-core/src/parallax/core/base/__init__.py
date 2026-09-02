@@ -94,6 +94,7 @@ __all__ = [
     "TemporalBound",
     "Time",
     "Timestamp",
+    "UnknownFamilyTag",
     "Uuid",
     "admits_stored_scalar",
     "coerce_neutral_input",
@@ -283,6 +284,20 @@ class Admission:
 
 _ADMITTED: Final[Admission] = Admission(True)
 """The one positive verdict, so a conforming scalar allocates nothing."""
+
+
+@dataclass(frozen=True, slots=True)
+class UnknownFamilyTag:
+    """A stored discriminator that resolved to no composed concrete subtype.
+
+    Carried on a materialized row only where that is what happened, so its
+    presence IS the verdict and ``stored_value`` is the evidence behind it. A
+    flag beside a value would let the two disagree, and no resting value could
+    stand for "the tag resolved": a stored ``NULL`` discriminator is itself an
+    unknown tag a diagnosis publishes.
+    """
+
+    stored_value: object
 
 
 def admits_stored_scalar(

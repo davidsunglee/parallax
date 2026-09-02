@@ -524,6 +524,74 @@ def _null_leaf(term: ContinuationTerm, *, negated: bool = False) -> ComposedSeek
     )
 
 
+# --- the hidden cells a page captures its coordinates through -----------------
+
+
+CAPTURE_ALIAS = "parallax_seek_"
+"""The framework-owned result alias a page captures each coordinate under."""
+
+
+def without_captured_coordinates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``rows`` with the hidden coordinate cells lifted off, by name.
+
+    A coordinate is framework-owned provenance rather than a member — the same
+    standing the inheritance discriminator has — so it never reaches the graph a
+    page publishes, and a delivery's roots are the roots the eager read of the
+    same query answers.
+    """
+    return [
+        {key: value for key, value in row.items() if not key.startswith(CAPTURE_ALIAS)}
+        for row in rows
+    ]
+
+
+def capture_binds(terms: list[ContinuationTerm]) -> list[Any]:
+    """The Document Paths a page's coordinate cells bind, in term order.
+
+    A cell is emitted from the same resolution as the term's own ordering
+    clause, so a resident member's cell binds the same path that clause does and
+    a Column-mapped one binds nothing.
+    """
+    return [bind for term in terms for bind in term.path_binds]
+
+
+def refuse_an_uncaptured_page(
+    case: Case, dialect: str, source: str, sql: str, terms: list[ContinuationTerm]
+) -> None:
+    """Refuse a page that does not project one coordinate cell per term.
+
+    A streamed delivery advances on what the database evaluated for each ordering
+    term, which reaches it as a hidden result cell aliased at the term's own
+    index and emitted from that term's own compared expression — never as a reuse
+    of a projected cell, whose expression and carrier coincide only by accident.
+
+    Graded as the trailing cells of the select list, through the same member
+    spelling the seek's own leaves are graded through, so a page capturing the
+    wrong expression fails here rather than passing on the rows it happened to
+    reach.
+    """
+    expected = [(f"{CAPTURE_ALIAS}{index}", term.compared) for index, term in enumerate(terms)]
+    projections = sqlglot.parse_one(sql, read=sqlglot_dialect(dialect)).expressions
+    captured = [
+        _captured_cell(cell, dialect) for cell in projections[len(projections) - len(terms) :]
+    ]
+    if captured != expected:
+        raise CaseFailure(
+            f"{case.path.name}: {source} ({dialect}) ends its projection with {captured!r}, "
+            f"not the coordinate cells {expected!r}. A streamed page captures one hidden cell "
+            f"per Continuation Order term, aliased at that term's own index and emitted from "
+            f"the expression the page is ordered by, after everything the read's own "
+            f"projection selected."
+        )
+
+
+def _captured_cell(cell: Expr, dialect: str) -> tuple[str, str]:
+    """One projected cell as its alias and the member it reads."""
+    if not isinstance(cell, exp.Alias):
+        return ("", _seek_member(cell, dialect))
+    return (cell.alias, _seek_member(cell.this, dialect))
+
+
 # --- grading one page's own text ---------------------------------------------
 
 

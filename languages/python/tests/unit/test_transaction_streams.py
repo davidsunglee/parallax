@@ -2,7 +2,7 @@
 
 `Transaction.stream` and `tx.wire.stream`: what participation adds to a delivery
 whose own contract — the state table, statement accounting, root-local identity,
-and the cursorless root — is graded in `test_snapshot_stream.py`.
+and continuation past invalid stored data — is graded in `test_snapshot_stream.py`.
 
 Four claims bound this suite. Participation is per PAGE, so the force-flush
 `Transaction.find` performs once happens once per page and read-your-own-writes

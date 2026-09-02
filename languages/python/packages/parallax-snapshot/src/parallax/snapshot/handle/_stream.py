@@ -1,13 +1,17 @@
 """``parallax.snapshot.handle._stream`` — the Snapshot Stream (`m-snapshot-read`).
 
 A streamed read is the eager read surrounded rather than replaced. Above the
-executor sits a page loop that asks
-:mod:`~parallax.core.continuation` for one bounded root query at a time; below
-it sits publication, which walks the page's own sealed graph ONE root at a time.
-The executor between them is the same :func:`~parallax.snapshot.handle._read.find`
-an eager read runs, planning, issuing its `1 + L` statements, and sealing one
-graph exactly as it always has — so a page's child levels are the same
-``IN (gathered keys)`` lookups, and only the root statement differs.
+executor sits a page loop that says where the delivery stands and gets back a
+page; below it sits publication, which walks the page's own sealed graph ONE
+root at a time. :func:`~parallax.snapshot.handle._page.read_stream_page` between
+them plans, issues its `1 + L` statements, and seals one graph exactly as an
+eager read does — so a page's child levels are the same ``IN (gathered keys)``
+lookups, and only the root statement differs.
+
+The loop holds a position and nothing else. How large a page is, which node
+asks for it, and which coordinate the next one resumes from all belong to the
+page operation, so a page can never be read with one request and built with
+another.
 
 What that buys is the bound this surface exists for: the working set is one
 page's sealed graph plus the current root's merge and published graph, and it
@@ -28,7 +32,7 @@ first, in the discipline the unit of work's own scope flag already uses.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator
 from typing import Final, Literal, cast
 
 from parallax.core import continuation
@@ -40,21 +44,20 @@ from parallax.core.execution_lifecycle._activity import (
     SnapshotStreamActivity,
     StreamBatchActivity,
 )
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, entity_by_name
+from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.temporal_read import (
+    Edge,
     Pin,
-    TemporalReadError,
-    milestone_edge_of,
     scans_validated_axis,
     validated_query_pin,
 )
-from parallax.snapshot._read_result import FindResult
+from parallax.snapshot.handle._page import At, PagePlan, StreamPage
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import ResultPublication, declaring_metadata, edge_pin
 from parallax.snapshot.materialize import InvalidData, InvalidDataError
-from parallax.snapshot.materialize._graph import root_members, root_scoped
+from parallax.snapshot.materialize._graph import root_edges, root_scoped
 
 __all__ = [
     "OpenStream",
@@ -64,13 +67,13 @@ __all__ = [
     "check_batch_size",
 ]
 
-type PageRead = Callable[[ValidatedObjectQuery, StreamBatchActivity], FindResult]
+type PageRead = Callable[[PagePlan, At, StreamBatchActivity], StreamPage]
 """How one page reaches the database: the executor entry its owner composed.
 
-A standalone stream's page is a plain find; a participating one's runs inside
-its unit of work's force-flush, so buffered writes reach the database before the
-page that must see them. Which it is belongs to the handle that opened the
-stream, never to the loop above it.
+A standalone stream's page reads straight through; a participating one's runs
+inside its unit of work's force-flush, so buffered writes reach the database
+before the page that must see them. Which it is belongs to the handle that
+opened the stream, never to the loop above it.
 
 The page is handed its own Stream Batch UNENTERED, because where that scope
 opens is part of the same answer: a participating page enters it after the
@@ -104,10 +107,6 @@ _SINGLE_PASS: Final = (
     "inside its scope, and to no second view and no second pass"
 )
 _IN_SCOPE: Final = "a Snapshot Stream answers only inside its own scope"
-_CURSORLESS_ROOT: Final = (
-    "a stream cannot continue past a root that did not decode every Continuation "
-    "Order member (snapshot-stream-cursorless-root)"
-)
 
 
 def check_batch_size(batch_size: int) -> None:
@@ -126,9 +125,9 @@ class SnapshotStreamStateError(RuntimeError):
     """A Snapshot Stream was asked for something its own rules refuse.
 
     Every case is a rule about the stream rather than about the data: entering
-    one twice, taking a second view or a second pass, reaching one outside its
-    scope, or continuing past a root that can supply no cursor. The message
-    names the rule; nothing about the stream's internals is reported.
+    one twice, taking a second view or a second pass, or reaching one outside
+    its scope. The message names the rule; nothing about the stream's internals
+    is reported.
     """
 
 
@@ -152,9 +151,9 @@ class SnapshotStream[T]:
 
     ``batch_size`` counts ROOT positions and is a performance dial alone. It
     changes neither the order roots arrive in, nor which roots arrive, nor what
-    each carries — including the one root shape that ends a delivery early, a
-    root that did not decode every Continuation Order member, which ends it from
-    whatever position it lands in.
+    each carries. Invalid stored data included: a delivery advances on the
+    coordinate the database evaluated for each root, which exists whatever that
+    root's stored values turned out to be.
     """
 
     __slots__ = (
@@ -165,9 +164,9 @@ class SnapshotStream[T]:
         "_model",
         "_node",
         "_open_stream",
+        "_page_plan",
         "_page_read",
         "_pin",
-        "_plan",
         "_publication",
         "_state",
     )
@@ -189,7 +188,7 @@ class SnapshotStream[T]:
         self._open_stream = open_stream
         self._batch_size = batch_size
         self._state: _State = _CREATED
-        self._plan: continuation.ContinuationPlan | None = None
+        self._page_plan: PagePlan | None = None
         self._pin: Pin = Pin()
         self._milestones: EntityMetadata | None = None
         self._activity: SnapshotStreamActivity = INERT
@@ -212,7 +211,9 @@ class SnapshotStream[T]:
         validated = preflight(self._node, model=self._model.meta, form="graph")
         entity = self._entity()
         declaring = declaring_metadata(self._model.meta, entity.identity)
-        self._plan = continuation.plan(validated, self._model.meta)
+        self._page_plan = PagePlan(
+            continuation.plan(validated, self._model.meta), self._batch_size, self._node.limit
+        )
         if scans_validated_axis(validated.temporal):
             self._milestones = declaring
             self._pin = Pin()
@@ -345,53 +346,40 @@ class SnapshotStream[T]:
         return _Delivery(self._advance, self._roots(checked=checked))
 
     def _roots(self, *, checked: bool) -> Generator[object]:
-        """One root at a time, page after page, holding only the cursor.
+        """One root at a time, page after page, holding only the position.
 
-        A short page proves exhaustion — fewer roots than asked for means no
-        more exist. A full final page does not, so it costs one more root
-        statement returning nothing, unless a declared ``limit`` has already
-        been delivered in full.
-
-        Every root is asked whether the delivery could continue from it, not
-        just the one its page ends on: a root that answers no ends the delivery
-        wherever it lands, so the page size never decides which roots arrive.
+        A page decides how many roots to ask for and whether any follow it; this
+        loop says where the delivery stands and publishes what comes back. The
+        next page resumes from the coordinate the page itself reports, so the
+        rule that a delivery advances by the LAST KEPT root lives on the page
+        rather than in a subscript here.
 
         Each page is prepared inside a Stream Batch of its own and published
         outside it, so what a stream costs an observer is two events per page
         plus two for itself — proportional to the pages it read rather than to
         the roots it delivered.
         """
-        plan = self._plan
-        if plan is None:  # pragma: no cover - draining is reachable from an entered scope alone
+        page_plan = self._page_plan
+        # Draining is reachable from an entered scope alone.
+        if page_plan is None:  # pragma: no cover - see above
             raise SnapshotStreamStateError(_IN_SCOPE)
-        limit = self._node.limit
-        cursor: Mapping[AttributeIdentity, object] | None = None
+        coordinate: ContinuationCoordinate | None = None
         emitted = 0
         while True:
-            size = self._batch_size if limit is None else min(self._batch_size, limit - emitted)
-            node = plan.first(limit=size) if cursor is None else plan.after(cursor, limit=size)
-            page = self._page_read(node, self._activity.batch())
-            delivered = 0
-            for position, members in enumerate(root_members(page.graph)):
-                root = self._published(page, position, members, ordinal=emitted + position)
-                delivered += 1
+            page = self._page_read(page_plan, At(coordinate, emitted), self._activity.batch())
+            for position, edge in enumerate(root_edges(page.graph, self._milestones)):
+                root = self._published(page, position, edge, ordinal=emitted + position)
                 if not checked and isinstance(root, InvalidData):
                     raise InvalidDataError((cast("InvalidData[object]", root),))
                 yield root
-                if members is None or not plan.continues_from(members):
-                    raise SnapshotStreamStateError(_CURSORLESS_ROOT)
-                cursor = members
-            emitted += delivered
-            if delivered < size or (limit is not None and emitted >= limit):
+            emitted += page.delivered
+            if page.resume_from is not None:
+                coordinate = page.resume_from
+            if page.exhausted:
                 return
 
     def _published(
-        self,
-        page: FindResult,
-        position: int,
-        members: Mapping[AttributeIdentity, object] | None,
-        *,
-        ordinal: int,
+        self, page: StreamPage, position: int, edge: Edge | None, *, ordinal: int
     ) -> object:
         """The one root at ``position`` of ``page``, published on its own.
 
@@ -403,29 +391,16 @@ class SnapshotStream[T]:
         pin, which is the whole of what makes a page of milestones a milestone
         page: the pin overrides on the scoped graph and flows through the merge to
         the node exactly as a whole-result milestone graph's own sealed pin does.
+        A milestone root whose axis starts did not decode has no edge of its own
+        and is published at the page's pin, and the delivery continues past it.
         """
         roots = self._publication.roots_of(
-            root_scoped(page.graph, position, pin=self._edge_pin(members)),
+            root_scoped(page.graph, position, pin=None if edge is None else edge_pin(edge)),
             page.includes,
             ordinal_offset=ordinal,
             sources=page.sources,
         )
         return roots[0]
-
-    def _edge_pin(self, members: Mapping[AttributeIdentity, object] | None) -> Pin | None:
-        """The edge pin one milestone-set root stands at, from its own members.
-
-        Absent for every single-instant read, whose roots stand at the page
-        graph's own pin, and for a milestone root whose As-Of Axis starts did not
-        decode — which is the same root the plan can continue from no further, so
-        the delivery ends at it whatever pin it was published under.
-        """
-        if self._milestones is None or members is None:
-            return None
-        try:
-            return edge_pin(milestone_edge_of(self._milestones, members))
-        except TemporalReadError:
-            return None
 
 
 class _Delivery(Iterator[object]):
