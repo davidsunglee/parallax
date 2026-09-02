@@ -268,7 +268,7 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(),
         coordinate=(7,),
         order=(_APPENDED,),
-        where="t0.id > ?",
+        where="(t0.id > ? or t0.id is null)",
         binds=(7,),
     ),
     _SeekCase(
@@ -276,7 +276,10 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_NAME),),
         coordinate=("Ada", 1),
         order=(OrderKey(attr=_ORDER_NAME), _APPENDED),
-        where="t0.name >= ? and (t0.name > ? or (t0.name = ? and t0.id > ?))",
+        where=(
+            "t0.name >= ? and (t0.name > ? or t0.name is null "
+            "or (t0.name = ? and (t0.id > ? or t0.id is null)))"
+        ),
         binds=("Ada", "Ada", "Ada", 1),
     ),
     _SeekCase(
@@ -284,7 +287,7 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_NAME, direction="desc"),),
         coordinate=("Ada", 1),
         order=(OrderKey(attr=_ORDER_NAME, direction="desc"), _APPENDED),
-        where="t0.name <= ? and (t0.name < ? or (t0.name = ? and t0.id > ?))",
+        where="t0.name <= ? and (t0.name < ? or (t0.name = ? and (t0.id > ? or t0.id is null)))",
         binds=("Ada", "Ada", "Ada", 1),
     ),
     _SeekCase(
@@ -300,8 +303,9 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
             _APPENDED,
         ),
         where=(
-            "t0.active <= ? and (t0.active < ? or (t0.active = ? and t0.qty > ?) "
-            "or (t0.active = ? and t0.qty = ? and t0.id > ?))"
+            "t0.active <= ? and (t0.active < ? "
+            "or (t0.active = ? and (t0.qty > ? or t0.qty is null)) "
+            "or (t0.active = ? and t0.qty = ? and (t0.id > ? or t0.id is null)))"
         ),
         binds=(True, True, True, 10, True, 10, 2),
     ),
@@ -310,7 +314,7 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_SKU),),
         coordinate=("A-100", 1),
         order=(OrderKey(attr=_ORDER_SKU), _APPENDED),
-        where="(t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?))",
+        where="(t0.sku > ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null)))",
         binds=("A-100", "A-100", 1),
     ),
     _SeekCase(
@@ -318,7 +322,7 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_SKU, nulls="last"),),
         coordinate=(None, 4),
         order=(OrderKey(attr=_ORDER_SKU, nulls="last"), _APPENDED),
-        where="(t0.sku is null and t0.id > ?)",
+        where="(t0.sku is null and (t0.id > ? or t0.id is null))",
         binds=(4,),
     ),
     _SeekCase(
@@ -326,7 +330,7 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_SKU, nulls="first"),),
         coordinate=("A-100", 1),
         order=(OrderKey(attr=_ORDER_SKU, nulls="first"), _APPENDED),
-        where="(t0.sku > ? or (t0.sku = ? and t0.id > ?))",
+        where="(t0.sku > ? or (t0.sku = ? and (t0.id > ? or t0.id is null)))",
         binds=("A-100", "A-100", 1),
     ),
     _SeekCase(
@@ -334,7 +338,7 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_SKU, nulls="first"),),
         coordinate=(None, 4),
         order=(OrderKey(attr=_ORDER_SKU, nulls="first"), _APPENDED),
-        where="(t0.sku is not null or (t0.sku is null and t0.id > ?))",
+        where="(t0.sku is not null or (t0.sku is null and (t0.id > ? or t0.id is null)))",
         binds=(4,),
     ),
     _SeekCase(
@@ -342,7 +346,7 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_SKU, direction="desc"),),
         coordinate=("B-200", 2),
         order=(OrderKey(attr=_ORDER_SKU, direction="desc"), _APPENDED),
-        where="(t0.sku < ? or t0.sku is null or (t0.sku = ? and t0.id > ?))",
+        where="(t0.sku < ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null)))",
         binds=("B-200", "B-200", 2),
     ),
     _SeekCase(
@@ -351,9 +355,9 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         coordinate=("Ada", "A-100", 1),
         order=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU), _APPENDED),
         where=(
-            "t0.name >= ? and (t0.name > ? "
+            "t0.name >= ? and (t0.name > ? or t0.name is null "
             "or (t0.name = ? and (t0.sku > ? or t0.sku is null)) "
-            "or (t0.name = ? and t0.sku = ? and t0.id > ?))"
+            "or (t0.name = ? and t0.sku = ? and (t0.id > ? or t0.id is null)))"
         ),
         binds=("Ada", "Ada", "Ada", "A-100", "Ada", "A-100", 1),
     ),
@@ -368,7 +372,10 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
             OrderKey(attr=_ORDER_ACTIVE, direction="asc"),
             OrderKey(attr=_ORDER_ID, direction="desc"),
         ),
-        where="t0.active >= ? and (t0.active > ? or (t0.active = ? and t0.id < ?))",
+        where=(
+            "t0.active >= ? and (t0.active > ? or t0.active is null "
+            "or (t0.active = ? and t0.id < ?))"
+        ),
         binds=(False, False, False, 3),
     ),
 )
@@ -502,9 +509,9 @@ def test_a_nullable_terms_own_two_way_branch_stays_inside_the_ties_above_it() ->
     )
     node = plan.after(ContinuationCoordinate(("Ada", "A-100", 1)), limit=2)
     assert _lowered(ORDERS, node).sql.endswith(
-        "where t0.name >= ? and (t0.name > ? "
+        "where t0.name >= ? and (t0.name > ? or t0.name is null "
         "or (t0.name = ? and (t0.sku > ? or t0.sku is null)) "
-        "or (t0.name = ? and t0.sku = ? and t0.id > ?)) "
+        "or (t0.name = ? and t0.sku = ? and (t0.id > ? or t0.id is null))) "
         "order by t0.name asc, t0.sku asc, t0.id asc limit ?"
     )
 
@@ -524,7 +531,8 @@ def test_a_document_resident_sort_key_seeks_through_the_extraction_seam() -> Non
         "t0.id parallax_seek_1 from traveler t0 "
         "where (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? "
         "or jsonb_extract_path_text(t0.payload, ?) is null "
-        "or (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? and t0.id > ?)) "
+        "or (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? "
+        "and (t0.id > ? or t0.id is null))) "
         "order by cast(jsonb_extract_path_text(t0.payload, ?) as bigint) asc, t0.id asc limit ?"
     )
     assert statement.binds == ("score", "score", 7, "score", "score", 7, 1, "score", 2)
@@ -540,7 +548,7 @@ def test_the_seek_is_a_top_level_conjunct_and_the_callers_terms_bind_first() -> 
     # caller-first exactly as an injected as-of term leaves it.
     plan = _planned(ORDERS, "Order", predicate=_active(ORDERS, "Order"))
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((4,)), limit=3))
-    assert _where(statement.sql) == "t0.name = ? and t0.id > ?"
+    assert _where(statement.sql) == "t0.name = ? and (t0.id > ? or t0.id is null)"
     assert _seek_binds(statement) == ("A", 4, 3)
 
 
@@ -556,7 +564,8 @@ def test_a_multi_term_seek_conjoins_both_of_its_parts_beside_the_caller() -> Non
     )
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate(("Ada", 1)), limit=3))
     assert _where(statement.sql) == (
-        "t0.name = ? and t0.name >= ? and (t0.name > ? or (t0.name = ? and t0.id > ?))"
+        "t0.name = ? and t0.name >= ? and (t0.name > ? or t0.name is null "
+        "or (t0.name = ? and (t0.id > ? or t0.id is null)))"
     )
 
 
@@ -568,7 +577,7 @@ def test_a_callers_disjunction_is_grouped_before_the_seek_is_conjoined_to_it() -
     right = Comparison(op="eq", attr=_ORDER_QTY, value=1)
     plan = _planned(ORDERS, "Order", predicate=Or(operands=(left, right)))
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((1,)), limit=3))
-    assert _where(statement.sql) == "(t0.name = ? or t0.qty = ?) and t0.id > ?"
+    assert _where(statement.sql) == "(t0.name = ? or t0.qty = ?) and (t0.id > ? or t0.id is null)"
 
 
 def test_a_later_page_of_an_unfiltered_query_carries_the_seek_alone() -> None:
@@ -577,7 +586,7 @@ def test_a_later_page_of_an_unfiltered_query_carries_the_seek_alone() -> None:
     # which would lower to a dangling `and`.
     plan = _planned(ORDERS, "Order")
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((2,)), limit=3))
-    assert _where(statement.sql) == "t0.id > ?"
+    assert _where(statement.sql) == "(t0.id > ? or t0.id is null)"
 
 
 def test_a_coordinate_of_the_wrong_width_is_refused_by_name() -> None:
@@ -596,7 +605,7 @@ def test_a_page_seeks_past_a_null_carrier_rather_than_refusing_it() -> None:
     # whether a member decoded.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((None, 4)), limit=3))
-    assert _where(statement.sql) == "(t0.sku is null and t0.id > ?)"
+    assert _where(statement.sql) == "(t0.sku is null and (t0.id > ? or t0.id is null))"
 
 
 def test_a_coordinates_snapshot_is_an_inert_copy_rather_than_a_second_cursor() -> None:
@@ -703,9 +712,9 @@ def test_a_milestone_page_seeks_past_the_edge_the_database_evaluated() -> None:
         POSITION, plan.after(ContinuationCoordinate((1, valid_start, tx_start)), limit=2)
     )
     assert _where(statement.sql) == (
-        "t0.thru_z = ? and t0.pos_id >= ? and (t0.pos_id > ? "
-        "or (t0.pos_id = ? and t0.from_z > ?) "
-        "or (t0.pos_id = ? and t0.from_z = ? and t0.in_z > ?))"
+        "t0.thru_z = ? and t0.pos_id >= ? and (t0.pos_id > ? or t0.pos_id is null "
+        "or (t0.pos_id = ? and (t0.from_z > ? or t0.from_z is null)) "
+        "or (t0.pos_id = ? and t0.from_z = ? and (t0.in_z > ? or t0.in_z is null)))"
     )
     assert _seek_binds(statement) == (
         INFINITY,
