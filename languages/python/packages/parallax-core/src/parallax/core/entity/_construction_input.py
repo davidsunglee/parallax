@@ -42,6 +42,9 @@ class Absent:
             Absent._instance = super().__new__(cls)
         return Absent._instance
 
+    def __init_subclass__(cls) -> None:
+        raise TypeError("Absent admits one instance and therefore no subclass")
+
     def __repr__(self) -> str:
         return "ABSENT"
 
@@ -84,6 +87,9 @@ class _Unloaded:
         if _Unloaded._instance is None:
             _Unloaded._instance = super().__new__(cls)
         return _Unloaded._instance
+
+    def __init_subclass__(cls) -> None:
+        raise TypeError("_Unloaded admits one instance and therefore no subclass")
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
         return "UNLOADED"

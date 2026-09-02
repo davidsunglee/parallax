@@ -131,6 +131,9 @@ class SqlNull:
             SqlNull._instance = super().__new__(cls)
         return SqlNull._instance
 
+    def __init_subclass__(cls) -> None:
+        raise TypeError("SqlNull admits one instance and therefore no subclass")
+
     def __repr__(self) -> str:
         return "SQL_NULL"
 

@@ -4,10 +4,10 @@ Each of these singletons answers a question no value could — absent, unloaded,
 missing, unavailable, SQL null, latest, unobserved, no stored member at all — and
 a site holding one alone asks ``is`` (a site holding a union whose other arms
 carry data reads the class instead, which is what narrows to those arms). Those
-two readings only agree while the class has one instance, so every route to one
-has to answer it: construction, and the copy and pickle boundaries where a
-second instance would answer ``is`` with ``False`` while looking identical in a
-traceback, turning a settled question back into an open one.
+two readings only agree while no second object passes the class test, so every
+route to one is closed here: construction, the copy and pickle boundaries where
+a second instance would answer ``is`` with ``False`` while looking identical in
+a traceback, and the subclass such an instance would otherwise belong to.
 
 The public API snapshot diffs ``__all__`` alone, so it cannot see this. Nothing
 else grades it either, which is why the contract is stated in ``python.md`` and
@@ -65,3 +65,16 @@ def test_a_sentinel_class_admits_no_second_instance(name: str, sentinel: object)
     # while answering `is` and `==` with `False` against the exported constant,
     # so the class answers the constant instead of constructing one.
     assert type(sentinel)() is sentinel, name
+
+
+@pytest.mark.parametrize(("name", "sentinel"), _SENTINELS, ids=[name for name, _ in _SENTINELS])
+def test_a_sentinel_class_admits_no_subclass_to_hold_a_second_instance(
+    name: str, sentinel: object
+) -> None:
+    # Answering the constant from the class binds only the class itself: a
+    # subclass declaring its own `__new__` would pass every `isinstance` reader
+    # while answering `is` with `False`, and four of these classes are on the
+    # distribution's public surface for a caller to write. Declaring the
+    # subclass is what fails, so the second instance has no class to belong to.
+    with pytest.raises(TypeError, match="admits one instance"):
+        type(f"Second{name}", (type(sentinel),), {})

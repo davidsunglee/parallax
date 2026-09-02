@@ -71,6 +71,9 @@ class Latest:
             Latest._instance = super().__new__(cls)
         return Latest._instance
 
+    def __init_subclass__(cls) -> None:
+        raise TypeError("Latest admits one instance and therefore no subclass")
+
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
         return "LATEST"
 

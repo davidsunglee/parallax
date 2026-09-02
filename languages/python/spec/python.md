@@ -2024,13 +2024,16 @@ missing, unavailable, SQL null, latest, unobserved, no stored member at all. A
 site holding one on its own reads it with `is`; a site holding a union whose
 other arms carry data reads the sentinel's own class, which is the test a static
 type narrows on and the only one that reaches the carried arm's payload
-afterwards. The two never disagree because the class holds no instance for them
-to disagree about: a sentinel class admits one instance, and every route to one —
-construction included — answers it. For each sentinel below, **sameness is
-identity**:
+afterwards. The two never disagree because no second object passes the class
+test: constructing a sentinel class answers the instance it already holds, and
+the class refuses a subclass that could hold another. `object.__new__` still
+reaches past both, as it reaches past every invariant a Python class states in
+`__new__`; nothing short of that deliberate bypass makes an object the two
+readings would split on. For each sentinel below, **sameness is identity**:
 
-- the module-level constant is the one instance, and constructing the class
-  again answers that instance rather than a second object;
+- the module-level constant is the one instance, constructing the class again
+  answers that instance rather than a second object, and subclassing is refused
+  where the class is declared;
 - `repr` is the exported name a reader would spell, not a constructor call; and
 - `is` survives construction, `copy.copy`, `copy.deepcopy` at any nesting depth,
   and a pickle round trip at every protocol.

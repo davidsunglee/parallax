@@ -107,6 +107,9 @@ class Unavailable:
             Unavailable._instance = super().__new__(cls)
         return Unavailable._instance
 
+    def __init_subclass__(cls) -> None:
+        raise TypeError("Unavailable admits one instance and therefore no subclass")
+
     def __repr__(self) -> str:
         return "UNAVAILABLE"
 
