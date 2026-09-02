@@ -325,6 +325,16 @@ class EntityScope:
             text_compared=is_text_compared(attribute.type),
         )
 
+    def document_resident(self, attribute: AttributeMetadata) -> bool:
+        """Whether this scope reads ``attribute`` out of a document.
+
+        The same Member Placement question :meth:`subject_for` renders from,
+        asked without emitting anything: resolving a subject binds the
+        extraction's path segments on the context, so a caller deciding whether
+        to emit an occurrence at all cannot ask by resolving one.
+        """
+        return isinstance(self.layout.placement(attribute.identity), DocumentPath)
+
     def document_root(self, vo: ValueObjectMetadata) -> tuple[str, tuple[str, ...]]:
         """The rendered document reference carrying ``vo``, and the path reaching it.
 

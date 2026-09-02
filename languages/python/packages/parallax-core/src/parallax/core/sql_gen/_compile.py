@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from itertools import chain
 from typing import Literal, assert_never, cast
 
 from parallax.core.base import (
@@ -435,7 +436,7 @@ def compile_read(
     facet = _inheritance_view(model)
     storage = _storage_view(model)
     predicate = query.validated_predicate
-    terms = _lowered_terms(query.order_by, _reserved_result_keys(storage))
+    terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
     paging = query.paging
     limit = query.limit
     narrow_to = query.narrow_to
@@ -489,7 +490,7 @@ def compile_read(
     ]
 
     where_sql = _lower_predicate(predicate, scope)
-    seek_sql = _sought(terms, scope.subject_for, paging, ctx)
+    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx)
     _append_where(parts, _beside_a_seek(predicate, where_sql, seek_sql), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
 
@@ -531,17 +532,31 @@ def compile_write_predicate(
     )
 
 
-def _reserved_result_keys(storage: _StorageLayoutFacet) -> frozenset[str]:
+def _reserved_result_keys(model: Metamodel, storage: _StorageLayoutFacet) -> frozenset[str]:
     """Every result key a read of this model can carry under an authored name.
 
-    The complete reservation set a capture alias is allocated outside of: a
-    projected cell is named by its own Column spelling, by that spelling's
-    `_hex` projection, or by an allocated internal alias, and only the first can
-    collide with the framework's own. Taken over the model's Table Layouts
-    rather than over one read's projection so a given model allocates the same
-    aliases for every read of it.
+    The complete reservation set a capture alias is allocated outside of. Two
+    authored spellings reach a row: a projected cell named by its own Column
+    spelling, and — under Relational Document Layout — the member spelling the
+    document fan-out writes each resident member under, which claims no Column
+    at all and so is free to spell anything. A cell's `_hex` projection and an
+    allocated internal alias are the other two forms, and neither can collide
+    with the framework's own prefix.
+
+    Taken over the whole model rather than over one read's projection or one
+    member's placement, so a given model allocates the same aliases for every
+    read of it; over-reserving costs only the index a capture alias starts from.
     """
-    return frozenset(slot.column.name for layout in storage.tables for slot in layout.columns)
+    return frozenset(
+        chain(
+            (slot.column.name for layout in storage.tables for slot in layout.columns),
+            (
+                member.storage.name
+                for entity in model.entities
+                for member in (*entity.declared_attributes, *entity.declared_value_objects)
+            ),
+        )
+    )
 
 
 def _captured(terms: tuple[_LoweredTerm, ...], subject: _TermSubject, paging: Paging | None) -> str:
@@ -551,14 +566,27 @@ def _captured(terms: tuple[_LoweredTerm, ...], subject: _TermSubject, paging: Pa
 
 def _sought(
     terms: tuple[_LoweredTerm, ...],
+    scope: _EntityScope,
     subject: _TermSubject,
     paging: Paging | None,
     ctx: StatementBuilder,
 ) -> str:
-    """This read's seek fragment, or nothing where it starts at the beginning."""
+    """This read's seek fragment, or nothing where it starts at the beginning.
+
+    ``scope`` answers the leading term's Member Placement, which decides whether
+    the seek hoists its leading range; it is the scope ``subject`` resolves
+    against, asked here rather than there because resolving would bind an
+    extraction's path segments ahead of text that may not be emitted.
+    """
     if paging is None or paging.seek is None:
         return ""
-    return _lower_seek(paging.seek, terms, subject, ctx)
+    return _lower_seek(
+        paging.seek,
+        terms,
+        subject,
+        ctx,
+        leading_resident=bool(terms) and scope.document_resident(terms[0].member),
+    )
 
 
 def _beside_a_seek(predicate: ValidatedPredicate, where_sql: str, seek_sql: str) -> str:
@@ -738,7 +766,7 @@ def _compile_tph_read(
 
     inner = _planned_inner(predicate, plan.inner)
     inner_sql = _lower_predicate(inner, scope)
-    seek_sql = _sought(terms, scope.subject_for, paging, ctx)
+    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx)
     where_terms = [_beside_a_seek(inner, inner_sql, seek_sql), seek_sql]
     if plan.tag is not None:
         # Planned, then bound HERE — after the user predicate and the seek above
@@ -858,7 +886,9 @@ def _compile_tph_partitioned(
         ]
         for branch in branches:
             statement_ctx.append_fragment(branch)
-        _append_where(parts, _sought(terms, outer_scope.subject_for, paging, statement_ctx))
+        _append_where(
+            parts, _sought(terms, outer_scope, outer_scope.subject_for, paging, statement_ctx)
+        )
         _append_result_shape(parts, outer_scope, terms, outer_scope.subject_for, limit, lock)
         return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
 
@@ -888,7 +918,9 @@ def _compile_tph_partitioned(
     ]
     for branch in branches:
         statement_ctx.append_fragment(branch)
-    _append_where(parts, _sought(terms, outer_scope.subject_for, paging, statement_ctx))
+    _append_where(
+        parts, _sought(terms, outer_scope, outer_scope.subject_for, paging, statement_ctx)
+    )
     _append_result_shape(parts, outer_scope, terms, outer_scope.subject_for, limit, None)
     return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
 
@@ -978,7 +1010,7 @@ def _compile_tpcs_read(
         f"select {projection}{_captured(terms, _tpcs_subject(plan, capture_scope), paging)}",
         f"from ({union}) {outer_scope.alias}",
     ]
-    _append_where(outer_parts, _sought(terms, tail_subject, paging, tail_ctx))
+    _append_where(outer_parts, _sought(terms, outer_scope, tail_subject, paging, tail_ctx))
     _append_result_shape(outer_parts, outer_scope, terms, tail_subject, limit, None)
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(capture_ctx.finish(""))
@@ -1078,7 +1110,7 @@ def _compile_tpcs_single(
     ]
     inner = _planned_inner(predicate, plan.inner)
     where_sql = _lower_predicate(inner, scope)
-    seek_sql = _sought(terms, scope.subject_for, paging, ctx)
+    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx)
     _append_where(parts, _beside_a_seek(inner, where_sql, seek_sql), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))

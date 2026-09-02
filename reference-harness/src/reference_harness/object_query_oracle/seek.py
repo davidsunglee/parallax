@@ -71,6 +71,10 @@ class ContinuationTerm:
     a question the cast does not change. ``path_binds`` is what every one of
     those occurrences binds ahead of its own coordinate — empty for a Column,
     which names itself.
+
+    ``document_resident`` is the placement itself rather than a shorthand read
+    off the binds, because it decides something the spellings do not: whether the
+    seek hoists its leading range at all.
     """
 
     column: str
@@ -82,6 +86,7 @@ class ContinuationTerm:
     nullable: bool
     placement: Literal["first", "last"]
     neutral_type: str
+    document_resident: bool
 
 
 _NULL_IS_LARGEST = {"postgres": True, "mariadb": False}
@@ -124,6 +129,7 @@ def _direct_term(
         compared=column,
         tested=column,
         path_binds=(),
+        document_resident=False,
         direction=direction,
         nulls=nulls,
         nullable=nullable,
@@ -228,6 +234,7 @@ def _resident_term(
         else f"cast({extraction} as {_cast_target_spelling(target, dialect)})",
         tested=extraction,
         path_binds=_extraction_path_binds(member.path, dialect),
+        document_resident=True,
         direction=direction,
         nulls=nulls,
         nullable=nullable,
@@ -484,20 +491,24 @@ def composed_seek(terms: list[ContinuationTerm], coordinates: tuple[Any, ...]) -
     Derived from `m-snapshot-read`'s seek alone, never from the authored SQL: the
     lexicographic remainder — one branch per tie depth, disjoined, each branch
     tying with every coordinate above it before comparing its own in that term's
-    direction and EMITTED placement — behind the range a leading term declared
-    non-nullable hoists. A single-term order composes neither part: one strict
-    comparison already is the top-level conjunct the hoist supplies. A null
-    coordinate carries no coordinate bind at any depth, both spellings that reach
-    it being null checks, and where the emitted clause placed nulls last it
+    direction and EMITTED placement — behind the range a leading direct Column
+    declared non-nullable hoists. A single-term order composes neither part: one
+    strict comparison already is the top-level conjunct the hoist supplies. A
+    null coordinate carries no coordinate bind at any depth, both spellings that
+    reach it being null checks, and where the emitted clause placed nulls last it
     contributes no branch at all: nothing sorts after a null there.
 
     Placement is the emitted one rather than the authored one, because that is
     what decides which rows the clause actually ranked after the coordinate: a
     key the model declares non-nullable lowers plain and takes the dialect's own
     convention. The hoist is the one part that still turns on the DECLARATION,
-    and deliberately (`m-snapshot-read` *Streamed delivery*): it buys the leading
-    index range at the price of skipping a stored NULL non-conforming storage
-    left in a `NOT NULL` column.
+    and deliberately (`m-snapshot-read` *Streamed delivery*): over a direct
+    Column it buys the leading index range at the price of skipping a stored NULL
+    non-conforming storage left in a `NOT NULL` column. It stops at the Column,
+    though — a document-resident leading term hoists nothing, because its
+    extraction reads NULL for ordinary invalid stored data that same
+    specification guarantees is delivered, and a range over an extraction is no
+    index range to trade for it.
 
     Grading the SHAPE is what the binds cannot do — a page that seeks the wrong
     way, or disjoins what the order conjoins, binds exactly what a correct one
@@ -515,7 +526,7 @@ def composed_seek(terms: list[ContinuationTerm], coordinates: tuple[Any, ...]) -
     if len(terms) == 1:
         return branches[0]
     remainder = _composed("or", branches)
-    if lead.nullable:
+    if lead.nullable or lead.document_resident or coordinates[0] is None:
         return remainder
     return _composed("and", [_hoisted_range(lead, coordinates[0]), remainder])
 
@@ -576,13 +587,21 @@ CAPTURE_ALIAS = "parallax_seek_"
 def capture_aliases(case: Case, terms: list[ContinuationTerm]) -> list[str]:
     """The result alias each term's coordinate cell is projected under, in order.
 
-    Allocated hygienically over the model's own Column spellings (`m-sql`), the
-    way a wrapped union's result aliases are: a model that authors a physical
-    `parallax_seek_0` keeps that projection under its own name, and the
-    coordinate that would have collided with it takes the next free index. Two
-    cells under one result key would be one entry in the row a page returns.
+    Allocated hygienically over every result key the model can carry under an
+    authored name (`m-sql`), the way a wrapped union's result aliases are: its
+    Column spellings, and the member spellings a Relational Document Layout fans
+    a resident member out under, which claim no Column and so may spell one. A
+    model that authors either as `parallax_seek_0` keeps that key for itself, and
+    the coordinate that would have collided with it takes the next free index —
+    two cells under one result key would be one entry in the row a page returns,
+    and a fan-out would overwrite the raw capture cell outright.
     """
     reserved = {slot.column for table in case.model.storage_layout.tables for slot in table.columns}
+    reserved |= {
+        member.column
+        for entity in case.model.entities
+        for member in case.model.storage_layout.document(entity.canonical_name).members
+    }
     aliases: list[str] = []
     index = 0
     for _term in terms:
@@ -629,10 +648,11 @@ def refuse_an_uncaptured_page(
     """Refuse a page that does not project one coordinate cell per term.
 
     A streamed delivery advances on what the database evaluated for each ordering
-    term, which reaches it as a hidden result cell under that term's own
-    allocated alias and emitted from that term's own compared expression — never
-    as a reuse of a projected cell, whose expression and carrier coincide only by
-    accident.
+    term, which reaches it as a hidden result cell under the alias that term was
+    allocated — allocation runs in term order and skips a reserved spelling, so
+    an alias is not necessarily at its term's own index — and emitted from that
+    term's own compared expression, never as a reuse of a projected cell, whose
+    expression and carrier coincide only by accident.
 
     Graded as the trailing cells of the select list, through the same member
     spelling the seek's own leaves are graded through, so a page capturing the
@@ -648,8 +668,8 @@ def refuse_an_uncaptured_page(
         raise CaseFailure(
             f"{case.path.name}: {source} ({dialect}) ends its projection with {captured!r}, "
             f"not the coordinate cells {expected!r}. A streamed page captures one hidden cell "
-            f"per Continuation Order term, aliased at that term's own index and emitted from "
-            f"the expression the page is ordered by, after everything the read's own "
+            f"per Continuation Order term, under the alias that term was allocated and emitted "
+            f"from the expression the page is ordered by, after everything the read's own "
             f"projection selected."
         )
 

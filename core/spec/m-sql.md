@@ -515,13 +515,18 @@ term order, under a `parallax_seek_N` result alias, in the alias spelling every
 projected cell uses (`<expression> <alias>`, no `as`), appended after
 every cell the read's own projection decided. Aliases are allocated
 **hygienically**, as a wrapped union's result aliases are: the complete
-reservation set is every physical Column spelling the model declares, and each
-term in turn takes the first unallocated `parallax_seek_N` starting at `N = 0`,
-skipping candidates in that set. So an authored physical `parallax_seek_0` keeps
-its own projected cell, and the coordinate that would have collided with it takes
-the next index — two cells under one result key would be one entry in the row the
-page returns, and lifting the coordinate off would then take the authored member's
-value or delete the member. The cell's expression is the term's
+reservation set is every result key a read of the model can carry under an
+authored name — every physical Column spelling it declares, and every member
+spelling a Relational Document Layout's fan-out writes a document-resident
+member under, which claims no Column and is therefore free to spell one — and
+each term in turn takes the first unallocated `parallax_seek_N` starting at
+`N = 0`, skipping candidates in that set. So an authored `parallax_seek_0` keeps
+its own result key whether it is a Column or a document-resident member, and the
+coordinate that would have collided with it takes the next index — two cells
+under one result key would be one entry in the row the page returns, a fan-out
+writing that key would overwrite the raw capture cell before the coordinate is
+lifted off, and lifting it off would then take the authored member's value or
+delete the member. The cell's expression is the term's
 own compared expression — the alias-qualified Column for a direct member, the
 dialect's extraction under the declared type's cast for a document-resident one —
 and it is emitted from the same resolution rule as the ordering term, path binds
@@ -575,15 +580,24 @@ dropped; the seek then admits nothing (`1 = 0`) and the page is an ordinary
 statement returning no root.
 
 **The hoisted leading range is the one exception, and it is a cost decision.**
-Ahead of the branches, for a leading term the model declares **non-nullable** over a
-non-null carrier, the redundant non-strict range `col >=|<= ?` is emitted as its own
-top-level conjunct: the disjunction alone offers a planner nothing to push down, so
-without it every streamed page over a leading key scans where it could seek. That
-conjunct excludes a `NULL` wherever the clause placed it, so where such a term holds
-a stored `NULL` anyway it re-excludes the very root the branch below admits, and the
-page skips it. `m-snapshot-read` *Streamed delivery* names that skip and scopes it.
-Where the leading term is nullable nothing is hoisted at all: "after" is two disjoint
-ranges of the index and no single comparison covers both.
+Ahead of the branches, for a leading term stored in a **direct Column** that the model
+declares **non-nullable**, over a non-null carrier, the redundant non-strict range
+`col >=|<= ?` is emitted as its own top-level conjunct: the disjunction alone offers a
+planner nothing to push down, so without it every streamed page over a leading key
+scans where it could seek. That conjunct excludes a `NULL` wherever the clause placed
+it, so where such a Column holds a stored `NULL` anyway it re-excludes the very root
+the branch below admits, and the page skips it. `m-snapshot-read` *Streamed delivery*
+names that skip and scopes it.
+
+Nothing is hoisted in either other case. Where the leading term is nullable, "after"
+is two disjoint ranges of the index and no single comparison covers both. Where it is
+**document-resident**, its extraction evaluates to `NULL` for a missing member, an
+explicit JSON null, or a parent document of the wrong kind — ordinary invalid stored
+data that `m-snapshot-read` guarantees is delivered, not the non-conforming storage
+the Column case is scoped to — while a range over an extraction is no index range to
+trade for it. Member Placement is therefore part of the hoist's own guard, asked of
+the read's resolution scope rather than by resolving the term, since resolving one
+binds an extraction's path segments ahead of text that may not be emitted.
 
 **Rebind.** Each comparison binds its carrier in the form its own expression
 compares — a direct Column in the engine's own column type, a document extraction

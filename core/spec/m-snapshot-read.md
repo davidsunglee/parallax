@@ -365,15 +365,24 @@ comparisons are measured against, and the rule that the position a page resumes
 from is the coordinate of the last root that page **kept**.
 
 "Exactly the roots" has one stated exception, and it is bounded by storage rather
-than by data. Where a Continuation Order term the model declares **non-nullable**
-holds a stored `NULL` — which conforming storage cannot produce, and which the
-declared model therefore does not describe — the leading range `m-sql` hoists for
-the planner may place that root outside the seek, and the delivery does not deliver
-it. That is a deliberate trade: emitting a seek that admits it costs the leading
-index range on every page of every delivery, and the value it would recover is a
-row a `NOT NULL` constraint was supposed to make impossible. It is the same class
-`m-metamodel` already leaves to storage — a duplicate or absent physical key — and
-it is the ONLY invalid stored data a delivery may skip.
+than by data. Where the LEADING Continuation Order term is stored in a **Column** the
+model declares **non-nullable** and that Column holds a stored `NULL` — which
+conforming storage cannot produce, and which the declared model therefore does not
+describe — the leading range `m-sql` hoists for the planner may place that root
+outside the seek, and the delivery does not deliver it. That is a deliberate trade:
+emitting a seek that admits it costs the leading index range on every page of every
+delivery, and the value it would recover is a row a `NOT NULL` constraint was supposed
+to make impossible. It is the same class `m-metamodel` already leaves to storage — a
+duplicate or absent physical key — and it is the ONLY invalid stored data a delivery
+may skip.
+
+The exception stops there, at the Column. A leading term stored at a **Document Path**
+hoists no range at all, because the ways its extraction reads `NULL` — a missing
+member, an explicit JSON null, a parent document of the wrong kind — are ordinary
+invalid stored data this specification guarantees a delivery publishes, not storage
+outside what the model describes. Every other term of the order is measured only by
+the branches, which follow the placement the clause emitted, so nothing below the
+leading position skips a root either.
 
 A coordinate is physical and carries no authority. It is not decoded, revalidated,
 admitted as a managed value, published as a result, or turned back into one by any
@@ -386,9 +395,14 @@ rejects yields evidence of the rejected value while the coordinate carries what 
 `ORDER BY` expression evaluated.
 
 Delivery is bounded by a **page size** counting root positions. It never bounds
-included relationship rows, and it is a performance dial and nothing else:
-changing it changes neither the order roots arrive in, nor which roots arrive,
-nor the members, loadedness, identity, or issues any of them carries.
+included relationship rows, and over storage the model describes it is a performance
+dial and nothing else: changing it changes neither the order roots arrive in, nor
+which roots arrive, nor the members, loadedness, identity, or issues any of them
+carries. The stated exception above is where it stops being one, because only a
+CONTINUING page carries a seek: a root the hoisted leading range excludes arrives in a
+first page large enough to reach it and is skipped once a smaller page puts a boundary
+in front of it. That is the same skip, observed through the dial, rather than a second
+one.
 
 Each page is an ordinary read of a bounded root query, so `m-deep-fetch`'s
 **`1 + L` ceiling applies once per page** and a page's child levels are the same
@@ -455,14 +469,18 @@ edge contradicts the model is published exactly as a whole-result read publishes
 — in band where the reading surface delivers classified roots in band, as a refusal
 where it refuses them — and the delivery carries on. An unknown discriminator, an
 undecodable scalar, a wrong-kind document, and a missing member all reach the caller
-this way, because none of them makes an ordering term `NULL`: the term still
-evaluates, the coordinate still ranks, and the seek still admits the root. The one
-value that does not is the stored `NULL` in a non-nullable term named above, which
-the hoisted leading range may exclude. A coordinate missing after execution is a
+this way. Where such a value leaves an ordering term evaluating to `NULL` — which a
+missing member, a JSON null, and a wrong-kind parent all do to a document-resident
+term — the emitted clause still ranks that `NULL` somewhere, and the seek's branches
+are measured against where it ranked it, so the root is still admitted. The one value
+that is not is the stored `NULL` in a non-nullable leading **Column** named above,
+which the hoisted leading range may exclude. A coordinate missing after execution is a
 violation of the `m-sql` / `m-db-port` contract rather than a stream state.
 
-The two deliver the same roots at the same pins whatever the query, and they
-deliver them in the same sequence wherever their two orders agree. Over **one**
+The two deliver the same roots at the same pins whatever the query — save the one
+root the stated exception above lets a continuing page's hoisted range exclude, which
+a whole-result read has no seek to exclude with — and they deliver them in the same
+sequence wherever their two orders agree. Over **one**
 key's own history they always do: the Continuation Order there is the edge rank,
 which is what the whole-result read groups by. Across several keys they generally
 do not, and that is true of a read declaring no `orderBy` as much as of one that

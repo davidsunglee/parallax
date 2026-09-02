@@ -11,13 +11,15 @@ which any composed clause can show.
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Final
 
 import pytest
+from _corpus_model_support import formed
 from _corpus_model_support import model as accepted_model
 from _corpus_model_support import target as entity_of
 
 from parallax.core import continuation, deep_fetch
-from parallax.core.base import INFINITY, INFINITY_LITERAL
+from parallax.core.base import INFINITY, INFINITY_LITERAL, PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.metamodel import TemporalDimension as AxisKind
@@ -34,6 +36,7 @@ from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import LoweredStatement
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._seek import lowered_terms
+from parallax.descriptor import _records
 
 DOCUMENT_LAYOUT = accepted_model("document-layout")
 ORDERS = accepted_model("orders")
@@ -279,3 +282,88 @@ def test_the_hoisted_leading_range_re_excludes_the_null_its_own_branch_admits() 
     )
     seek = statement.sql.partition(" where ")[2].partition(" order by ")[0]
     assert seek.startswith("t0.active >= ? and (t0.active > ? or t0.active is null or ")
+
+
+_RESIDENT_KEY: Final = _records.Metamodel(
+    entities=(
+        _records.Entity(
+            name="Beacon",
+            table="beacon",
+            layout=_records.DocumentLayout(column="payload"),
+            attributes=(
+                _records.Attribute(name="id", type="int64", column="id", primary_key=True),
+                _records.Attribute(name="rank", type="int64", column="rank"),
+            ),
+        ),
+    )
+)
+
+_SEEK_SPELLED_MEMBER: Final = _records.Metamodel(
+    entities=(
+        _records.Entity(
+            name="Beacon",
+            table="beacon",
+            layout=_records.DocumentLayout(column="payload"),
+            attributes=(
+                _records.Attribute(name="id", type="int64", column="id", primary_key=True),
+                _records.Attribute(
+                    name="parallax_seek_0", type="int64", column="parallax_seek_0", nullable=True
+                ),
+            ),
+        ),
+    )
+)
+
+
+def test_a_document_resident_leading_term_hoists_no_range() -> None:
+    # `rank` is declared non-nullable and lives at a Document Path, so its
+    # extraction reads NULL for a missing member, a JSON null, or a wrong-kind
+    # parent — invalid stored data `m-snapshot-read` guarantees a checked
+    # delivery publishes, not the dropped `NOT NULL` constraint the hoist's
+    # accepted skip is scoped to. The seek is therefore the branch tree alone,
+    # which admits the NULLs Postgres ranked after this ascending coordinate.
+    model = formed(_RESIDENT_KEY)
+    statement = _lowered(
+        model,
+        _planned(model, "Beacon", OrderKey(attr="Beacon.rank")).after(
+            ContinuationCoordinate((7, 1)), limit=2
+        ),
+    )
+    seek = statement.sql.partition(" where ")[2].partition(" order by ")[0]
+    assert seek == (
+        "(cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? "
+        "or jsonb_extract_path_text(t0.payload, ?) is null "
+        "or (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? "
+        "and (t0.id > ? or t0.id is null)))"
+    )
+
+
+def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -> None:
+    # A document-resident member claims no Column, so its own spelling reaches
+    # the row only through the fan-out — which writes it AFTER the driver row
+    # arrives. An alias colliding with it would be overwritten by the decoded
+    # member before the coordinate is lifted off, taking the ordering
+    # expression's answer with it and deleting the member. The reservation set
+    # therefore covers every result key an authored name reaches, not the
+    # Column spellings alone.
+    model = formed(_SEEK_SPELLED_MEMBER)
+    compiled = compile_entity_query(
+        deep_fetch.plan(
+            _planned(model, "Beacon", OrderKey(attr="Beacon.parallax_seek_0")).first(limit=2),
+            model,
+            projection=_PROJECTION,
+        ).root,
+        model,
+        POSTGRES,
+    )
+    assert compiled.coordinate_reads == ("parallax_seek_1", "parallax_seek_2")
+    row = compiled.materialize_row(
+        {
+            "id": 1,
+            "payload": PresentDocument({"parallax_seek_0": 3}),
+            "parallax_seek_1": 3,
+            "parallax_seek_2": 1,
+        }
+    )
+    assert row.values["parallax_seek_0"] == 3
+    assert row.coordinate == ContinuationCoordinate((3, 1))

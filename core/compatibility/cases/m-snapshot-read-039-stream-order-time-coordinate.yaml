@@ -18,8 +18,8 @@ then:
   statements:
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
       binds: { postgres: [clock, clock, "09:30:00", clock, 1] }
-    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? and jsonb_extract_path_text(t0.coordinates, ?) >= ? and (jsonb_extract_path_text(t0.coordinates, ?) > ? or jsonb_extract_path_text(t0.coordinates, ?) is null or (jsonb_extract_path_text(t0.coordinates, ?) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
-      binds: { postgres: [clock, clock, "09:30:00", clock, "09:30:00", clock, "09:30:00", clock, clock, "09:30:00", 101, clock, 1] }
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? and (jsonb_extract_path_text(t0.coordinates, ?) > ? or jsonb_extract_path_text(t0.coordinates, ?) is null or (jsonb_extract_path_text(t0.coordinates, ?) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
+      binds: { postgres: [clock, clock, "09:30:00", clock, "09:30:00", clock, clock, "09:30:00", 101, clock, 1] }
   referenceSql: { postgres: "select id, coordinates ->> 'clock' as clock from stream_coordinate where coordinates ->> 'clock' = '09:30:00'" }
   graph: { StreamCoordinate: [{ id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }] }
   roundTrips: 2
