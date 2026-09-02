@@ -17,6 +17,15 @@
 # second strictly after its own, or both equal and the key strictly after its own
 # — each binding the coordinates it ties with before its own.
 #
+# The two dialects spell those branches differently, and the difference is the
+# whole of where a `NULL` would fall. A branch admits its term's `NULL`s where
+# the EMITTED clause placed them after the coordinate, which for a term the model
+# declares non-nullable is the dialect's own convention: Postgres trails `NULL`s
+# on `asc`, so `qty` and `id` carry `or … is null`, while MariaDB trails them on
+# `desc`, so `active` carries it there and the other two do not. Nothing about
+# the rows changes — a `NOT NULL` column has no `NULL` to admit — and the pages
+# reached are identical, which is what makes the two spellings comparable at all.
+#
 # Pages of 2 over 6 roots: {1, 2}, then {4, 42} seeking past (true, 10, 2), then
 # {3, 5} seeking past (true, 30, 42), then the empty terminal statement seeking
 # past (false, 25, 5) that a full final page costs. Four root statements, no
@@ -47,16 +56,16 @@ then:
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 order by t0.active desc, t0.qty asc, t0.id asc limit ?
       binds: [2]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and (t0.qty > ? or t0.qty is null)) or (t0.active = ? and t0.qty = ? and (t0.id > ? or t0.id is null))) order by t0.active desc, t0.qty asc, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or t0.active is null or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
       binds: [true, true, true, 10, true, 10, 2, 2]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and (t0.qty > ? or t0.qty is null)) or (t0.active = ? and t0.qty = ? and (t0.id > ? or t0.id is null))) order by t0.active desc, t0.qty asc, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or t0.active is null or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
       binds: [true, true, true, 30, true, 30, 42, 2]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or (t0.active = ? and (t0.qty > ? or t0.qty is null)) or (t0.active = ? and t0.qty = ? and (t0.id > ? or t0.id is null))) order by t0.active desc, t0.qty asc, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.qty parallax_seek_1, t0.id parallax_seek_2 from orders t0 where t0.active <= ? and (t0.active < ? or t0.active is null or (t0.active = ? and t0.qty > ?) or (t0.active = ? and t0.qty = ? and t0.id > ?)) order by t0.active desc, t0.qty asc, t0.id asc limit ?
       binds: [false, false, false, 25, false, 25, 5, 2]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders
   graph:
