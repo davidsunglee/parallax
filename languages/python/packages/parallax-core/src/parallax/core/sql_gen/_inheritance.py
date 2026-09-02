@@ -58,7 +58,7 @@ module-private spelling.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol, cast
 
 from parallax.core.base import (
@@ -180,7 +180,12 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class RowTransformResult:
-    """One row transform's values and all provenance needed by its consumers."""
+    """One row transform's values and all provenance needed by its consumers.
+
+    ``family_tag`` is the stored discriminator the row carried, retained only
+    where ``family_tag_unknown`` reports that it resolved to no composed
+    concrete subtype — the value a diagnosis of that row publishes as evidence.
+    """
 
     values: dict[str, object]
     resolved_entity: EntityIdentity | None = None
@@ -188,6 +193,7 @@ class RowTransformResult:
     family_tag_unknown: bool = False
     findings: tuple[DocumentFinding, ...] = ()
     classified_members: frozenset[str] = frozenset()
+    family_tag: object = None
 
 
 class _RowMaterializer(Protocol):
@@ -235,7 +241,9 @@ class _TagTransform:
         pairs = {tag: (identity, spelling) for tag, identity, spelling in self.tag_pairs}
         resolved = pairs.get(cast("str", raw))
         if resolved is None:
-            return RowTransformResult(materialized, self.root, family_tag_unknown=True)
+            return RowTransformResult(
+                materialized, self.root, family_tag_unknown=True, family_tag=raw
+            )
         identity, spelling = resolved
         return RowTransformResult(materialized, identity, spelling)
 
@@ -369,7 +377,9 @@ class _TphDocumentTransform:
         )
         if variant is None:
             materialized.pop(self.column, None)
-            return RowTransformResult(materialized, self.root, family_tag_unknown=True)
+            return RowTransformResult(
+                materialized, self.root, family_tag_unknown=True, family_tag=raw_tag
+            )
         for key in self.padding:
             materialized[key] = None
         members = _materialize_document_members(variant.shape, document_read, variant.members)
@@ -410,6 +420,7 @@ class _TpcsDocumentTransform:
                 base.family_tag_unknown,
                 base.findings,
                 base.classified_members | frozenset(self.padding),
+                base.family_tag,
             )
         document_read = materialized.pop(variant.document_column)
         members = _materialize_document_members(variant.shape, document_read, variant.members)
@@ -421,6 +432,7 @@ class _TpcsDocumentTransform:
             base.family_tag_unknown,
             (*base.findings, *members.findings),
             base.classified_members | members.classified_members,
+            base.family_tag,
         )
 
 
@@ -477,7 +489,7 @@ class _DirectDocumentTransform:
             )
             name = occurrence.identity.path[-1]
             findings.extend(
-                DocumentFinding(finding.code, (name, *finding.path)) for finding in decoded.findings
+                replace(finding, path=(name, *finding.path)) for finding in decoded.findings
             )
             values[key] = decoded.presence.value if isinstance(decoded.presence, Present) else None
             classified.add(key)
@@ -488,6 +500,7 @@ class _DirectDocumentTransform:
             base.family_tag_unknown,
             tuple(findings),
             frozenset(classified),
+            base.family_tag,
         )
 
 
@@ -523,10 +536,7 @@ def _classified_entity_member(
         )
         return DecodedMember(
             decoded.presence,
-            tuple(
-                DocumentFinding(finding.code, (member, *finding.path))
-                for finding in decoded.findings
-            ),
+            tuple(replace(finding, path=(member, *finding.path)) for finding in decoded.findings),
         )
     if isinstance(document_read, SqlNull):
         return decode_located_member_classified(shape, document_read, member)
@@ -560,9 +570,7 @@ def _classified_occurrence(
         for index, item in enumerate(cast("list[object]", outer.presence.value)):
             value, nested = reduce_declared_members_classified(shape, item)
             reduced.append(value)
-            findings.extend(
-                DocumentFinding(finding.code, (index, *finding.path)) for finding in nested
-            )
+            findings.extend(replace(finding, path=(index, *finding.path)) for finding in nested)
         return DecodedMember(Present(reduced), tuple(findings))
     value, nested = reduce_declared_members_classified(shape, outer.presence.value)
     findings.extend(nested)

@@ -1,11 +1,11 @@
 """The identity contract every sentinel compared with ``is`` has to keep.
 
 Each of these singletons answers a question no value could — absent, unloaded,
-missing, unavailable, SQL null, latest, unobserved — and every use site and every
-other test asks ``is``. A copy boundary is where that contract is easiest to lose
-silently: a second instance would answer ``is`` with ``False`` while looking
-identical in a traceback, so a sentinel that crossed a deep copy or a pickle
-would turn a settled question back into an open one.
+missing, unavailable, SQL null, latest, unobserved, no stored member at all — and
+every use site and every other test asks ``is``. A copy boundary is where that
+contract is easiest to lose silently: a second instance would answer ``is`` with
+``False`` while looking identical in a traceback, so a sentinel that crossed a
+deep copy or a pickle would turn a settled question back into an open one.
 
 The public API snapshot diffs ``__all__`` alone, so it cannot see this. Nothing
 else grades it either, which is why the contract is stated in ``python.md`` and
@@ -24,6 +24,7 @@ from parallax.core.document_codec import MISSING, NULL, UNAVAILABLE
 from parallax.core.entity._construction_input import ABSENT, UNLOADED
 from parallax.core.execution_lifecycle._activity import INERT
 from parallax.core.object_query import LATEST
+from parallax.snapshot import MISSING_STORED_VALUE
 
 _SENTINELS: list[tuple[str, object]] = [
     ("LATEST", LATEST),
@@ -34,6 +35,7 @@ _SENTINELS: list[tuple[str, object]] = [
     ("MISSING", MISSING),
     ("UNAVAILABLE", UNAVAILABLE),
     ("SQL_NULL", SQL_NULL),
+    ("MISSING_STORED_VALUE", MISSING_STORED_VALUE),
 ]
 
 
@@ -62,3 +64,4 @@ def test_a_sentinel_class_admits_no_second_meaningful_instance() -> None:
     assert type(MISSING)() != MISSING
     assert type(UNAVAILABLE)() != UNAVAILABLE
     assert type(SQL_NULL)() != SQL_NULL
+    assert type(MISSING_STORED_VALUE)() != MISSING_STORED_VALUE

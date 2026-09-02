@@ -887,7 +887,14 @@ def _invalid(ordinal: int, code: str = "stored-data-attribute-null") -> InvalidD
     """One published record, spelled the way classification publishes it."""
     return InvalidData(
         issues=frozenset(
-            {StoredDataIssue(code, EntityIdentity("parallax.compatibility", "Account"))}  # pyright: ignore[reportArgumentType]
+            {
+                StoredDataIssue(
+                    code,  # pyright: ignore[reportArgumentType]
+                    EntityIdentity("parallax.compatibility", "Account"),
+                    path=(),
+                    stored_value=None,
+                )
+            }
         ),
         data=None,
         object_key=ObjectKey(

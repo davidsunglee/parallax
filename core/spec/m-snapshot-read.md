@@ -98,6 +98,55 @@ root's result position; it never prunes the node, silently drops the root, or
 publishes a node-level invalid union. The public result and accessor shapes that
 carry this classification are language-surface concerns built over this contract.
 
+### Evidence a public issue carries
+
+Every issue names the value that was judged and the place it was found. The
+**rejected stored value** is the provider-normalized logical value the detecting
+module judged, captured where that verdict was formed — before any collapse
+reduces it — and translated once on the way out:
+
+| Stored shape | Evidence |
+|---|---|
+| immutable scalar | preserved as it was judged |
+| array | an immutable sequence |
+| object | a detached read-only mapping |
+| stored SQL or JSON null | the ordinary null value |
+| a member genuinely absent from a traversable object | the missing-value marker |
+| wrong-kind, undecodable, or unknown family tag | the actual rejected value |
+
+The missing-value marker is distinct from a stored null and from every value a
+member could hold. A wrong-kind parent container yields one causal issue at that
+parent's own place, and its declared descendants acquire none: the container is
+what contradicts the model, and no stored state was ever seen for what it would
+have held.
+
+The **place** is the entity-relative logical path of that occurrence, keeping
+declared member names distinct from array positions. It is empty where the
+issue's member already locates the occurrence exactly — a direct Entity
+Attribute under either Storage Layout, an unresolved family tag, and a whole
+stored document read in a kind it cannot be read as — and otherwise names the
+member sequence, with an array position for each element step, that reaches the
+occurrence from the Entity.
+
+The value and the place are part of an issue's identity: repeated reach to one
+occurrence collapses within a root as before, while the same code at another
+place, or a different rejected value at one place, remains a distinct diagnosis.
+Comparison of structured evidence is structural and insensitive to object member
+order.
+
+Evidence is diagnosis and grants nothing. It is reachable by explicitly asking an
+issue for it, and is excluded from default renderings, exception messages,
+lifecycle events, SQL emissions, default logging, and automatic formatting. It
+never becomes a cursor, a managed value, a predicate literal, a repair token, or
+a storage capability, and passing it to an ordinary write is an ordinary
+validated write. The lower wire-codec rejection reason stays unpublished: the
+issue codes above remain the whole public classification.
+
+A rejected value is retained deliberately, so it is frozen exactly once and
+shared by reference from the seam that judged it to every seam that reports it. A
+translation per seam, or a copy per report, is a defect rather than an
+implementation choice (*What a delivery costs*).
+
 ## What a materialized value carries
 
 Three questions meet at a materialized Value Object occurrence — **which members

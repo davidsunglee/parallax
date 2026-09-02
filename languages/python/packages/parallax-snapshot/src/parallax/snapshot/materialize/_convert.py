@@ -30,7 +30,7 @@ physical function rather than by leaking a column-keyed mapping out of conversio
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol, cast
 
 from parallax.core.base import (
@@ -65,6 +65,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
+from parallax.snapshot.materialize._evidence import freeze_evidence
 from parallax.snapshot.materialize._graph import (
     ABSENT,
     GraphBuilder,
@@ -149,6 +150,7 @@ def convert_row(
     source: SourceLevel,
     findings: tuple[DocumentFinding, ...] = (),
     family_tag_unknown: bool = False,
+    family_tag: object = None,
     classified_members: frozenset[str] = frozenset(),
 ) -> int:
     """Convert one SQL-materialized row into ``builder``'s next projection.
@@ -170,9 +172,11 @@ def convert_row(
     issue the latter records — which is what keeps a member the read omitted
     distinguishable from one stored null.
 
-    ``findings``, ``family_tag_unknown``, and ``classified_members`` are the
-    compiled row transform's provenance. Conversion translates those findings
-    and does not re-judge members the transform already classified.
+    ``findings``, ``family_tag_unknown``, ``family_tag``, and
+    ``classified_members`` are the compiled row transform's provenance.
+    Conversion translates those findings and does not re-judge members the
+    transform already classified. Each judgment's own rejected value converges
+    here, where it is frozen once as the evidence its issue publishes.
 
     Scalars are keyed by the compiled projection contract. A disjoint sibling's
     null-padded result — and the synthetic family tag — therefore contributes
@@ -184,7 +188,13 @@ def convert_row(
         _translate_finding(finding, level) for finding in findings
     ]
     if family_tag_unknown:
-        issues.append(StoredDataIssueInput("stored-data-family-tag-unknown", level.concrete_entity))
+        issues.append(
+            StoredDataIssueInput(
+                "stored-data-family-tag-unknown",
+                level.concrete_entity,
+                stored_value=freeze_evidence(family_tag),
+            )
+        )
     members: list[object] = []
     result_keys = {contract.identity: contract for contract in level.attribute_reads}
     for attribute in layout.attributes:
@@ -202,15 +212,15 @@ def convert_row(
             )
         except WireDecodingError:
             value = raw
-        admitted = admits_stored_scalar(
+        admission = admits_stored_scalar(
             value,
             attribute.type,
             nullable=attribute.nullable,
             temporal_end=attribute.identity in layout.temporal_ends,
         )
-        if not admitted and result_key not in classified_members:
-            issues.append(_attribute_issue(attribute, value, level.concrete_entity))
-        members.append(value if admitted else ABSENT)
+        if not admission.admitted and result_key not in classified_members:
+            issues.append(_attribute_issue(attribute, admission.rejected, level.concrete_entity))
+        members.append(value if admission.admitted else ABSENT)
     for occurrence in layout.occurrences:
         if occurrence.storage.name not in projected:
             members.append(ABSENT)
@@ -234,20 +244,26 @@ def _attribute_issue(
     value: object,
     entity: EntityIdentity,
 ) -> StoredDataIssueInput:
-    """The classification one inadmissible stored scalar carries."""
+    """The classification one inadmissible stored scalar carries.
+
+    A direct Entity Attribute is located by its identity alone under either
+    Storage Layout, so the path is empty.
+    """
     if value is None:
         code: StoredDataIssueCode = (
             "stored-data-primary-key-null"
             if isinstance(attribute.primary_key, PrimaryKey)
             else "stored-data-attribute-null"
         )
-        return StoredDataIssueInput(code, entity, attribute.identity)
-    code = (
-        "stored-data-primary-key-undecodable"
-        if isinstance(attribute.primary_key, PrimaryKey)
-        else "stored-data-leaf-undecodable"
+    else:
+        code = (
+            "stored-data-primary-key-undecodable"
+            if isinstance(attribute.primary_key, PrimaryKey)
+            else "stored-data-leaf-undecodable"
+        )
+    return StoredDataIssueInput(
+        code, entity, attribute.identity, stored_value=freeze_evidence(value)
     )
-    return StoredDataIssueInput(code, entity, attribute.identity)
 
 
 def observable_columns(
@@ -373,8 +389,7 @@ def _decode_document(
             element, element_findings = _decode_element(item, declared)
             decoded.append(element)
             findings.extend(
-                DocumentFinding(finding.code, (index, *finding.path))
-                for finding in element_findings
+                replace(finding, path=(index, *finding.path)) for finding in element_findings
             )
         return decoded, tuple(findings)
     one_decoded, one_findings = _decode_element(raw, declared)
@@ -424,6 +439,12 @@ def _structure(document: Mapping[str, object], declared: _VoContainer) -> tuple[
 
 
 def _translate_finding(finding: DocumentFinding, level: LevelContext) -> StoredDataIssueInput:
+    """One Entity-document finding as the issue it publishes.
+
+    A finding that resolves to a direct Entity Attribute publishes the empty
+    path its own column would: public translation is fixed by the logical Entity
+    member rather than by the carrier the member was placed in.
+    """
     path = _logical_path(finding.path)
     occurrence = next(
         (
@@ -453,7 +474,13 @@ def _translate_finding(finding: DocumentFinding, level: LevelContext) -> StoredD
         entity_attribute=attribute is not None,
         primary_key=attribute is not None and isinstance(attribute.primary_key, PrimaryKey),
     )
-    return StoredDataIssueInput(code, level.concrete_entity, member, finding.path)
+    return StoredDataIssueInput(
+        code,
+        level.concrete_entity,
+        member,
+        () if attribute is not None else finding.path,
+        stored_value=freeze_evidence(finding.stored_value),
+    )
 
 
 def _occurrence_issue(
@@ -465,6 +492,7 @@ def _occurrence_issue(
         entity,
         _member_identity(declared, path),
         (declared.identity.path[-1], *finding.path),
+        stored_value=freeze_evidence(finding.stored_value),
     )
 
 

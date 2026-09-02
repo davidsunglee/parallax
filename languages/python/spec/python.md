@@ -2020,8 +2020,9 @@ or descriptor authoring form and performs no audit stamping.
 ### Sentinel identity
 
 A sentinel answers a question no ordinary value could — absent, unloaded,
-missing, unavailable, SQL null, latest, unobserved — and every site that reads
-one asks `is`. For each sentinel below, **sameness is identity**:
+missing, unavailable, SQL null, latest, unobserved, no stored member at all — and
+every site that reads one asks `is`. For each sentinel below, **sameness is
+identity**:
 
 - the module-level constant is the one instance, and a second construction is a
   distinct object under both `is` and `==`;
@@ -2039,6 +2040,7 @@ one asks `is`. For each sentinel below, **sameness is identity**:
 | `UNAVAILABLE` | `parallax.core.document_codec` | a member whose hydration would require invention |
 | `SQL_NULL` | `parallax.core.base` | a structured-document read whose SQL column is NULL |
 | `INERT` | `parallax.core.execution_lifecycle` (private) | the activity every unobserved operation runs against |
+| `MISSING_STORED_VALUE` | `parallax.snapshot` | a stored-data issue's evidence that a traversable object held no such member |
 
 Each sentinel's class answers its own name from `__reduce__`, which pickle
 resolves in the class's *defining* module — so the singleton is declared at
@@ -2051,6 +2053,10 @@ copy would contradict that.
 
 The public-API snapshot diffs `__all__` alone, so it observes none of this. The
 contract is graded directly instead, one case per sentinel.
+
+`MISSING_STORED_VALUE` is the one of these a caller holds: it travels out on
+`StoredDataIssue.stored_value` (§4 *Invalid stored data*), so it is the one whose
+identity a caller may copy or pickle across a boundary of their own.
 
 ## 3. Object lifecycle profile
 
@@ -3200,6 +3206,8 @@ contract is graded directly instead, one case per sentinel.
       entity: EntityIdentity
       member: MemberIdentity | None
       object_key: ObjectKey | None
+      path: tuple[str | int, ...]  # keyword-only, required
+      stored_value: object  # keyword-only, required
 
 
   class InvalidData[T]:
@@ -3218,9 +3226,10 @@ contract is graded directly instead, one case per sentinel.
   A `StoredDataIssue` names the concrete Entity it was judged against — the
   queried family root for an unknown family tag, which is the only case with no
   `member` — and the affected object, absent where an invalid primary key or a
-  family tag naming no concrete subtype left no identity. It carries no raw
-  stored value, no
+  family tag naming no concrete subtype left no identity. It carries no
   cause, no mutable details mapping, and no separately authoritative message.
+  `path` and `stored_value` are keyword-only and required, so a hand-constructed
+  issue states both rather than inheriting an unavailable-value default.
   `InvalidData.issues` is unordered: identical diagnoses collapse, and reaching
   one affected object through several include paths does not duplicate it.
   `InvalidData.object_key` names the RESULT root rather than an affected
@@ -3230,6 +3239,27 @@ contract is graded directly instead, one case per sentinel.
   facts only — they expose no observation address and grant no write authority.
   `InvalidDataError.invalid_data` is nonempty and is the exception's sole
   machine-readable report; its message derives a count and an issue-code summary.
+- **The evidence an issue carries.** `stored_value` is the provider-normalized
+  logical value that was judged and rejected and `path` is the entity-relative
+  logical path of that occurrence, both as `m-snapshot-read` *Evidence a public
+  issue carries* fixes them. In Python the frozen shapes are ordinary built-ins,
+  with no frozen-dict type introduced: an array reads as a `tuple`, an object as
+  a `types.MappingProxyType` over a detached copy, stored SQL or JSON null as
+  `None`, an immutable scalar as itself, and a byte-like provider carrier as
+  `bytes`. A member genuinely absent from a traversable stored object reads as
+  `MISSING_STORED_VALUE`, exported from `parallax.snapshot`: a singleton whose
+  sameness is identity — `repr` `MISSING_STORED_VALUE`, and the one instance
+  through a copy, a deep copy, and a pickle round trip (§2 *Sentinel identity*).
+  Both fields participate in `StoredDataIssue`'s equality; because a read-only
+  mapping is unhashable and compares insensitively to member order, the record
+  computes a matching structural hash of its own and caches it, rather than
+  inheriting a field-tuple hash that would refuse the value or disagree with
+  equality. `stored_value` is excluded from the record's `repr`, and evidence
+  reaches no exception message, lifecycle event, SQL emission, log line, or
+  automatic formatter. It is frozen once, where conversion translates the
+  detecting seam's finding, and shared by reference to the public issue and to
+  `InvalidDataError` — graded in the `cost` class (§10) as a retained-bytes
+  difference over the rejected value's own size, against one frozen copy of it.
 - **Default and checked views.** `Snapshot`'s accessors are the default view:
   each performs its existing arity check FIRST and then raises `InvalidDataError`
   when the roots it narrowed to carry invalid data. `result()` and
@@ -5238,7 +5268,7 @@ hatchling.
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

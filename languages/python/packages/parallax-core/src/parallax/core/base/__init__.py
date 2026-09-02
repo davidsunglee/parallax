@@ -72,6 +72,7 @@ __all__ = [
     "TIME",
     "TIMESTAMP",
     "UUID",
+    "Admission",
     "Boolean",
     "Bytes",
     "Date",
@@ -97,6 +98,7 @@ __all__ = [
     "admits_stored_scalar",
     "coerce_neutral_input",
     "detach_json_container",
+    "inert_scalar",
     "infer_neutral_type",
     "is_document_value",
     "is_neutral_type",
@@ -242,13 +244,44 @@ def is_neutral_type(name: str) -> bool:
     return name in NEUTRAL_TYPES or _DECIMAL.match(name) is not None
 
 
+def inert_scalar(value: object) -> object:
+    """``value`` in a form its reader cannot mutate.
+
+    A byte-like carrier is copied, because a ``bytearray`` or a ``memoryview``
+    hands its reader the buffer a provider still owns; every other scalar is
+    already immutable and passes through as itself.
+    """
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class Admission:
+    """One stored scalar's read-contract verdict, and what a rejection judged.
+
+    ``rejected`` is the value a negative verdict was formed about — the evidence
+    a diagnosis of it publishes — and is ``None`` for an admitted one. The
+    decoding reason behind that value stays unpublished.
+    """
+
+    admitted: bool
+    rejected: object = None
+
+
+_ADMITTED: Final[Admission] = Admission(True)
+"""The one positive verdict, so a conforming scalar allocates nothing."""
+
+
 def admits_stored_scalar(
     value: object,
     declared: NeutralType,
     *,
     nullable: bool,
     temporal_end: bool,
-) -> bool:
+) -> Admission:
     """Whether one decoded stored scalar satisfies its logical read contract.
 
     SQL NULL is admitted only by a nullable Attribute, the native infinity
@@ -256,10 +289,12 @@ def admits_stored_scalar(
     inhabit the Attribute's declared Neutral Type.
     """
     if value is None:
-        return nullable
-    if value is INFINITY:
-        return temporal_end
-    return matches_neutral_type(value, declared)
+        admitted = nullable
+    elif value is INFINITY:
+        admitted = temporal_end
+    else:
+        admitted = matches_neutral_type(value, declared)
+    return _ADMITTED if admitted else Admission(False, value)
 
 
 def normalize_instant(value: dt.datetime) -> dt.datetime:

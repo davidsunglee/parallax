@@ -169,7 +169,7 @@ def classify_roots(
     children = tuple(_children(merge, index) for index in range(count))
     keys = tuple(_object_key(model, merge, index) for index in range(count))
     diagnoses = tuple(
-        frozenset(StoredDataIssue(issue.code, issue.entity, issue.member, key) for issue in issues)
+        frozenset(_diagnosis(issue, key) for issue in issues)
         for issues, key in zip(carried, keys, strict=True)
     )
     blocking = tuple(not hydrates(issues) for issues in carried)
@@ -217,13 +217,27 @@ def _keyless_root(record: InvalidRootInput, ordinal: int) -> ClassifiedRoot:
     """
     return ClassifiedRoot(
         ordinal=ordinal,
-        issues=frozenset(
-            StoredDataIssue(issue.code, issue.entity, issue.member) for issue in record.issues
-        ),
+        issues=frozenset(_diagnosis(issue, None) for issue in record.issues),
         object_key=None,
         version=None,
         edge=None,
         node=None,
+    )
+
+
+def _diagnosis(issue: StoredDataIssueInput, key: ObjectKey | None) -> StoredDataIssue:
+    """One internal issue as its public diagnosis, attributed to ``key``.
+
+    Attribution is the whole of what classification adds: the path and the
+    evidence are carried by reference exactly as conversion froze them.
+    """
+    return StoredDataIssue(
+        issue.code,
+        issue.entity,
+        issue.member,
+        key,
+        path=issue.path,
+        stored_value=issue.stored_value,
     )
 
 

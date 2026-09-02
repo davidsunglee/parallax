@@ -42,11 +42,23 @@ domain; Snapshot Read translates those findings into the one stable result
 taxonomy without re-judging them.
 
 Each public issue consists only of its stable code, an `EntityIdentity`, an
-optional affected `ObjectKey`, and an optional `MemberIdentity`. The Object Key
-is absent when the affected object's primary key cannot be decoded or its family
-tag does not resolve; the member is absent only for the invalid-family-tag case.
-No raw value, cause, mutable details mapping, or separately authoritative
-message crosses the result seam.
+optional affected `ObjectKey`, an optional `MemberIdentity`, the entity-relative
+logical path of the rejected occurrence, and the immutable rejected value itself.
+The Object Key is absent when the affected object's primary key cannot be decoded
+or its family tag does not resolve; the member is absent only for the
+invalid-family-tag case. No cause, mutable details mapping, or separately
+authoritative message crosses the result seam.
+
+The rejected value is the one raw value admitted through it, and only as
+diagnosis. It crosses immutable and detached from every provider carrier, is
+reachable by explicitly asking an issue for it, and is excluded from default
+renderings, exception messages, lifecycle events, SQL emissions, default logging,
+and automatic formatting. It confers no write, repair, observation, key,
+physical-address, raw-row, or privileged-storage authority: handing it to an
+ordinary write is an ordinary validated write, and it is never a cursor, a
+managed value, a predicate literal, or a repair token. The decoding cause that
+produced it stays unpublished, so the code vocabulary remains the whole public
+classification. Every other constraint here stands unchanged.
 
 An `InvalidData` record carries the issue frozenset, optional hydrated root,
 optional result-root `ObjectKey`, optional observed version, optional milestone `Edge`,

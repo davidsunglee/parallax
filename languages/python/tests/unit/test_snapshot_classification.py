@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Sequence
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
@@ -48,7 +49,9 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.snapshot import (
+    MISSING_STORED_VALUE,
     InvalidData,
+    InvalidDataError,
     ObjectKey,
     StoredDataIssue,
     connect,
@@ -61,6 +64,7 @@ from parallax.snapshot.materialize import (
     classify_roots,
     merge_graph_input,
 )
+from parallax.snapshot.materialize._graph import graph_rows
 
 _NAMESPACE = "parallax.compatibility"
 
@@ -131,6 +135,8 @@ def test_an_invalid_included_node_invalidates_every_root_that_reaches_it() -> No
         EntityIdentity(_NAMESPACE, "OrderItem"),
         AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "shippedOn"),
         ObjectKey(EntityIdentity(_NAMESPACE, "OrderItem"), (("id", 11),)),
+        path=(),
+        stored_value="not-a-date",
     )
     affected = [_classified(root) for root in _classify(fixture, first, second).roots]
     assert [root.issues for root in affected] == [frozenset({diagnosis}), frozenset({diagnosis})]
@@ -431,6 +437,8 @@ _CHILD_KEY = ObjectKey(_TWIN_CHILD, (("id", 11),))
                     ValueObjectIdentity(_TWIN_ITEM, ("profile",)), "street"
                 ),
                 _ROOT_KEY,
+                path=("profile", "street"),
+                stored_value=MISSING_STORED_VALUE,
             ),
         ),
         (
@@ -443,6 +451,8 @@ _CHILD_KEY = ObjectKey(_TWIN_CHILD, (("id", 11),))
                     ValueObjectIdentity(_TWIN_CHILD, ("profile",)), "street"
                 ),
                 _CHILD_KEY,
+                path=("profile", "street"),
+                stored_value=MISSING_STORED_VALUE,
             ),
         ),
         (
@@ -453,6 +463,8 @@ _CHILD_KEY = ObjectKey(_TWIN_CHILD, (("id", 11),))
                 _TWIN_ITEM,
                 ValueObjectAttributeIdentity(ValueObjectIdentity(_TWIN_ITEM, ("profile",)), "city"),
                 _ROOT_KEY,
+                path=("profile", "city"),
+                stored_value=7,
             ),
         ),
         (
@@ -465,6 +477,8 @@ _CHILD_KEY = ObjectKey(_TWIN_CHILD, (("id", 11),))
                     ValueObjectIdentity(_TWIN_CHILD, ("profile",)), "city"
                 ),
                 _CHILD_KEY,
+                path=("profile", "city"),
+                stored_value=7,
             ),
         ),
     ],
@@ -485,3 +499,79 @@ def test_a_layout_twin_classifies_one_stored_state_identically(
     # object the violation was found on — the child, where the child carried it.
     assert columns.object_key == _ROOT_KEY
     assert (columns.data is not None) is hydrates
+
+
+# --------------------------------------------------------------------------- #
+# Evidence at the public seam: shared once, compared structurally, never shown. #
+# --------------------------------------------------------------------------- #
+def _issue(**overrides: Any) -> StoredDataIssue:
+    """One diagnosis, spelled the way classification publishes one."""
+    fields: dict[str, Any] = {
+        "code": "stored-data-many-wrong-kind",
+        "entity": EntityIdentity(_NAMESPACE, "Customer"),
+        "member": ValueObjectIdentity(EntityIdentity(_NAMESPACE, "Customer"), ("address",)),
+        "object_key": ObjectKey(EntityIdentity(_NAMESPACE, "Customer"), (("id", 1),)),
+        "path": ("address", "phones"),
+        "stored_value": MappingProxyType({"type": "home", "number": "555"}),
+    }
+    return StoredDataIssue(**(fields | overrides))
+
+
+def test_classification_shares_the_one_frozen_evidence_rather_than_copying_it() -> None:
+    # Conversion freezes exactly once and every seam above carries the same
+    # object: attribution adds the root's Object Key and nothing else. A second
+    # freeze anywhere would double what a large rejected document costs and give
+    # two structurally equal values no `is` can tell apart.
+    fixture = GraphFixture(vo.CUSTOMER_MODEL)
+    node = fixture.node("Customer", {"id": 1, "name": "Ada", "address": {"city": "Berlin"}})
+    (converted,) = graph_rows(fixture.graph(node)).issues[node]
+    record = invalid_record(fixture.materialize(node)[0])
+    (published,) = record.issues
+    assert published.stored_value is converted.stored_value
+    refusal = InvalidDataError((record,))
+    (reported,) = next(iter(refusal.invalid_data)).issues
+    assert reported.stored_value is converted.stored_value
+
+
+def test_one_occurrence_reached_twice_collapses_while_a_second_place_does_not() -> None:
+    # What the frozenset is for, now that two more fields decide membership.
+    # Reaching one occurrence again is the same diagnosis and collapses; the same
+    # defect at another path, or a different value at this one, is a second fact
+    # about the stored document and stays one.
+    assert len({_issue(), _issue()}) == 1
+    assert len({_issue(), _issue(path=("address", "geo"))}) == 2
+    assert len({_issue(), _issue(stored_value=MappingProxyType({"type": "work"}))}) == 2
+
+
+def test_structured_evidence_hashes_the_way_it_compares() -> None:
+    # A read-only mapping compares by member rather than by member order and is
+    # itself unhashable, so a hash inherited from the field tuple would either
+    # refuse the issue outright or disagree with equality — and an issue whose
+    # hash disagrees with its equality silently fails to collapse in a frozenset.
+    reordered = _issue(stored_value=MappingProxyType({"number": "555", "type": "home"}))
+    assert reordered == _issue()
+    assert hash(reordered) == hash(_issue())
+    assert len({_issue(), reordered}) == 1
+
+    # An array of objects carries the same requirement one level down: the
+    # sequence's own order is part of the value while each element's member
+    # order is not, so the hash has to descend rather than stop at the array.
+    listed = _issue(stored_value=(MappingProxyType({"type": "home", "number": "555"}),))
+    listed_reordered = _issue(stored_value=(MappingProxyType({"number": "555", "type": "home"}),))
+    assert listed == listed_reordered
+    assert hash(listed) == hash(listed_reordered)
+    assert len({listed, listed_reordered, _issue()}) == 2
+
+
+def test_evidence_is_reachable_only_by_asking_for_it() -> None:
+    # A diagnostic value with no authority is also a value nothing prints: it
+    # must not reach a log line, an exception message, or a debugger's rendering
+    # of the record that carries it merely because something formatted the
+    # diagnosis around it.
+    record = _customer({"id": 1, "name": "Ada", "address": {"city": "Berlin"}})
+    (issue,) = record.issues
+    assert issue.stored_value is MISSING_STORED_VALUE
+    assert "MISSING_STORED_VALUE" not in repr(issue)
+    assert "stored_value" not in repr(issue)
+    assert "MISSING_STORED_VALUE" not in repr(record)
+    assert "MISSING_STORED_VALUE" not in str(InvalidDataError((record,)))

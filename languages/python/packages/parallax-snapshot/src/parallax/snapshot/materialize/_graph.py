@@ -56,7 +56,7 @@ primary key never decoded.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Final, Literal, cast
 
@@ -117,12 +117,16 @@ class StoredDataIssueInput:
     """One classified stored-state contradiction with logical provenance.
 
     ``path`` keeps declared member names distinct from integer array positions.
+    ``stored_value`` is the already-frozen public evidence of what was rejected,
+    settled where conversion translated the finding and shared by reference from
+    there on: nothing downstream re-reads or re-freezes it.
     """
 
     code: StoredDataIssueCode
     entity: EntityIdentity
     member: AttributeIdentity | ValueObjectIdentity | ValueObjectAttributeIdentity | None = None
     path: tuple[DocumentPathSegment, ...] = ()
+    stored_value: object = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

@@ -77,6 +77,7 @@ from parallax.descriptor._records import (
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.materialize import (
+    MISSING_STORED_VALUE,
     InvalidRootInput,
     StoredDataIssueInput,
     observable_columns,
@@ -374,7 +375,7 @@ def test_a_present_leaf_outside_its_declared_type_is_classified_where_absence_co
     )
 
 
-def test_a_classified_decoding_issue_names_a_nested_leaf_and_exposes_no_stored_value() -> None:
+def test_a_classified_decoding_issue_names_a_nested_leaf_and_the_value_it_rejected() -> None:
     invalid = _converted(
         DOCUMENT_CODEC,
         "Sample",
@@ -384,6 +385,8 @@ def test_a_classified_decoding_issue_names_a_nested_leaf_and_exposes_no_stored_v
     assert invalid.issues[0].member == ValueObjectAttributeIdentity(
         ValueObjectIdentity(EntityIdentity(_NAMESPACE, "Sample"), ("profile", "entries")), "issued"
     )
+    assert invalid.issues[0].path == ("profile", "entries", 0, "issued")
+    assert invalid.issues[0].stored_value == "2026-13-40"
 
 
 def test_classified_decoding_separates_two_members_that_spell_one_dotted_path() -> None:
@@ -848,10 +851,10 @@ def test_direct_attribute_null_and_unknown_family_tag_become_projection_issues()
     ("finding", "code"),
     [
         (
-            DocumentFinding("leaf-undecodable", ("id",)),
+            DocumentFinding("leaf-undecodable", ("id",), "not-a-key"),
             "stored-data-primary-key-undecodable",
         ),
-        (DocumentFinding("required-member-null", ("name",)), "stored-data-attribute-null"),
+        (DocumentFinding("required-member-null", ("name",), None), "stored-data-attribute-null"),
     ],
 )
 def test_entity_document_findings_use_attribute_specific_issue_codes(
@@ -859,3 +862,210 @@ def test_entity_document_findings_use_attribute_specific_issue_codes(
 ) -> None:
     node = _converted(CUSTOMER, "Customer", {"id": 1, "name": "Ada"}, findings=(finding,))
     assert node.issues[0].code == code
+
+
+# --------------------------------------------------------------------------- #
+# Evidence: the rejected value itself, and the place it was found.             #
+# --------------------------------------------------------------------------- #
+_CUSTOMER = EntityIdentity(_NAMESPACE, "Customer")
+_ADDRESS = ValueObjectIdentity(_CUSTOMER, ("address",))
+_PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
+
+
+@pytest.mark.parametrize(
+    ("row", "provenance", "expected"),
+    [
+        (
+            {"id": None, "name": "Ada"},
+            {},
+            ("stored-data-primary-key-null", AttributeIdentity(_CUSTOMER, "id"), (), None),
+        ),
+        (
+            {"id": "seven", "name": "Ada"},
+            {},
+            (
+                "stored-data-primary-key-undecodable",
+                AttributeIdentity(_CUSTOMER, "id"),
+                (),
+                "seven",
+            ),
+        ),
+        (
+            {"id": 1, "name": None},
+            {},
+            ("stored-data-attribute-null", AttributeIdentity(_CUSTOMER, "name"), (), None),
+        ),
+        (
+            {"id": 1, "name": 7},
+            {},
+            ("stored-data-leaf-undecodable", AttributeIdentity(_CUSTOMER, "name"), (), 7),
+        ),
+        (
+            {"id": 1, "name": "Ada"},
+            {"family_tag_unknown": True, "family_tag": "Unicorn"},
+            ("stored-data-family-tag-unknown", None, (), "Unicorn"),
+        ),
+        (
+            {"id": 1, "name": "Ada", "address": {"city": "Oslo"}},
+            {},
+            (
+                "stored-data-required-member-absent",
+                ValueObjectAttributeIdentity(_ADDRESS, "street"),
+                ("address", "street"),
+                MISSING_STORED_VALUE,
+            ),
+        ),
+        (
+            {"id": 1, "name": "Ada", "address": {"street": None, "city": "Oslo"}},
+            {},
+            (
+                "stored-data-required-member-null",
+                ValueObjectAttributeIdentity(_ADDRESS, "street"),
+                ("address", "street"),
+                None,
+            ),
+        ),
+        (
+            {"id": 1, "name": "Ada", "address": {"street": "1 Park Ave", "geo": "unknown"}},
+            {},
+            (
+                "stored-data-one-wrong-kind",
+                ValueObjectIdentity(_CUSTOMER, ("address", "geo")),
+                ("address", "geo"),
+                "unknown",
+            ),
+        ),
+        (
+            {"id": 1, "name": "Ada", "address": "not-an-object"},
+            {},
+            ("stored-data-one-wrong-kind", _ADDRESS, ("address",), "not-an-object"),
+        ),
+        (
+            {
+                "id": 1,
+                "name": "Ada",
+                "address": {"street": "1 Park Ave", "phones": {"type": "home"}},
+            },
+            {},
+            (
+                "stored-data-many-wrong-kind",
+                _PHONES,
+                ("address", "phones"),
+                {"type": "home"},
+            ),
+        ),
+        (
+            {
+                "id": 1,
+                "name": "Ada",
+                "address": {
+                    "street": "1 Park Ave",
+                    "phones": [{"type": "home", "number": "555"}, {"number": 7}],
+                },
+            },
+            {},
+            (
+                "stored-data-leaf-undecodable",
+                ValueObjectAttributeIdentity(_PHONES, "number"),
+                ("address", "phones", 1, "number"),
+                7,
+            ),
+        ),
+    ],
+    ids=[
+        "primary-key-null",
+        "primary-key-undecodable",
+        "attribute-null",
+        "attribute-undecodable",
+        "family-tag-unknown",
+        "member-absent",
+        "member-null",
+        "one-wrong-kind",
+        "whole-occurrence-wrong-kind",
+        "many-wrong-kind",
+        "array-element-leaf",
+    ],
+)
+def test_every_issue_carries_what_was_rejected_and_where_it_was_found(
+    row: dict[str, object],
+    provenance: dict[str, Any],
+    expected: tuple[str, object, tuple[object, ...], object],
+) -> None:
+    # The whole vocabulary, read as one table, because the two new fields only
+    # mean anything against each other: `None` is a stored null and
+    # `MISSING_STORED_VALUE` a member no stored object held, an empty path is a
+    # member its identity already locates exactly, and an integer segment is an
+    # array position that no member identity can express. A code that carried the
+    # wrong one of either would read here as an ordinary row.
+    (issue,) = _converted(CUSTOMER, "Customer", row, **provenance).issues
+    assert (issue.code, issue.member, issue.path, issue.stored_value) == expected
+
+
+def test_a_wrong_kind_parent_is_diagnosed_once_at_its_own_path() -> None:
+    # The container is what contradicts the model; its declared members are only
+    # unreachable because of it. Synthesizing an absence issue per descendant
+    # would report four defects where the stored document has one, and would
+    # attribute them to members whose own stored state was never seen.
+    node = _converted(
+        CUSTOMER,
+        "Customer",
+        {"id": 1, "name": "Ada", "address": {"street": "1 Park Ave", "geo": 7}},
+    )
+    assert [(issue.code, issue.path) for issue in node.issues] == [
+        ("stored-data-one-wrong-kind", ("address", "geo"))
+    ]
+
+
+def test_structured_evidence_is_detached_read_only_and_recursive() -> None:
+    # A `many` stored as one object is the shape that carries a whole subtree as
+    # evidence, so it is where the freezing has to hold at every depth: objects
+    # answer as read-only mappings, arrays as tuples, and nothing shares a
+    # container with the row the value arrived on.
+    phones: dict[str, object] = {"type": "home", "tags": ["primary", "voice"]}
+    row: dict[str, object] = {
+        "id": 1,
+        "name": "Ada",
+        "address": {"street": "1 Park Ave", "phones": phones},
+    }
+    (issue,) = _converted(CUSTOMER, "Customer", row).issues
+    evidence = cast("Mapping[str, object]", issue.stored_value)
+    assert evidence == {"type": "home", "tags": ("primary", "voice")}
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", evidence)["type"] = "work"
+    phones["type"] = "work"
+    assert evidence["type"] == "home"
+
+
+@pytest.mark.parametrize("view", [False, True], ids=["bytearray", "memoryview"])
+def test_a_mutable_provider_carrier_is_copied_out_of_the_evidence(view: bool) -> None:
+    # A driver may answer a `bytes` column with a buffer it still owns, and
+    # answer it either as the buffer or as a view over one. Retaining either
+    # would leave a public diagnosis describing whatever that buffer later holds,
+    # so a byte-like is copied where every other scalar passes through.
+    buffer = bytearray(b"\x0a\x1b")
+    carrier: object = memoryview(buffer) if view else buffer
+    (issue,) = _projection(_context(SCALARS, "ScalarThing"), {"payload": carrier}).issues
+    del carrier
+    buffer[0] = 0xFF
+    assert issue.stored_value == b"\x0a\x1b"
+    assert type(issue.stored_value) is bytes
+
+
+def _diagnoses(node: _Projection) -> list[tuple[object, ...]]:
+    """``node``'s issues as the whole of what each one diagnoses."""
+    return [(issue.code, issue.member, issue.path, issue.stored_value) for issue in node.issues]
+
+
+def test_the_evidence_a_document_resident_attribute_publishes_is_its_columns() -> None:
+    # Storage Layout may not change a diagnosis. A direct Entity Attribute is
+    # located by its own identity under either layout, so the path it publishes
+    # is empty whether the codec judged it inside an Entity document or
+    # admission judged it in a column of its own.
+    document = _converted(
+        CUSTOMER,
+        "Customer",
+        {"id": 1, "name": "Ada"},
+        findings=(DocumentFinding("required-member-null", ("name",), None),),
+    )
+    columns = _converted(CUSTOMER, "Customer", {"id": 1, "name": None})
+    assert _diagnoses(document) == _diagnoses(columns)

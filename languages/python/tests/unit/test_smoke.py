@@ -41,6 +41,7 @@ def test_top_package_public_surfaces() -> None:
         "SnapshotStreamStateError",
         "InvalidData",
         "InvalidDataError",
+        "MISSING_STORED_VALUE",
         "ObjectKey",
         "StoredDataIssue",
         "DeferredFeatureError",
