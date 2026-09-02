@@ -11,9 +11,11 @@ and build the SAME
 :class:`~parallax.snapshot.materialize.SnapshotGraph`, so the per-level
 loop exists exactly once on the developer-facing path.
 
-Graph levels materialize and convert rows one at a time: a converted node names
-its correlation members, so the next level gathers keys from the converted
-parent rather than a retained row. Flat-row, history, and predicate-write lanes
+Included graph levels materialize and convert rows one at a time: a converted
+node names its correlation members, so the next level gathers keys from the
+converted parent rather than a retained row. A graph read's own ROOTS instead
+stage as one tuple across :func:`read_roots` / :func:`build_graph`, the one joint
+a whole-result read has. Flat-row, history, and predicate-write lanes
 instead stage one tuple of SQL-materialized rows and merge them once, before any
 consumer-specific derivation, so each lane classifies or refuses that one staging
 graph rather than judging rows as it walks them. The port's raw
@@ -74,7 +76,7 @@ failed-call rules.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -382,36 +384,17 @@ def find(
     ledger: ObservationLedger | None = None,
     calls: DatabaseCallScope = INERT,
 ) -> FindResult:
-    """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
-    "one query per non-empty relationship level"; m-snapshot-read "round trips").
+    """The whole-result read: every root ``query`` matches, and the graph below them.
+
+    Defined as the composition of its two halves — :func:`read_roots` runs the
+    root statement, :func:`build_graph` converts what came back and deep-fetches
+    each planned level — so that reading the roots and building the graph they
+    stand at the top of are separable without a second executor.
 
     ``query`` is the read's canonical Object Query: one carrying Include Paths,
     or any other query planned with zero levels (root-only instance-form
     materialization — a plain snapshot read, or the source find behind a
-    scenario `mutate` action). Canonicalizes the root query (`m-temporal-read` +
-    `m-navigate`, composed here), compiles and executes it, then for each
-    planned level: restricts the parent nodes to the ones a path-root guard admits
-    (`FetchLevel.source_position`, m-deep-fetch — an excluded parent contributes no
-    key and receives no attachment, so its view stays unset); gathers the distinct
-    non-null parent keys; an empty gathered
-    set attaches the empty/null relationship result and issues no child SQL; a
-    back-reference level issues no SQL either (resolved through the merge scope's
-    own graph-local identity map); otherwise compiles and executes ONE child query
-    (carrying the level's declared relationship ordering), applies
-    `familyVariant` materialization (`m-sql`) to its rows, and converts them.
-    Every level is the same three steps — compile, execute, convert — with
-    `familyVariant` materialization and each row's resolved concrete Entity coming
-    from that level's OWN `~parallax.core.sql_gen._compile.CompiledRead`, never re-derived
-    here from the query a second time.
-
-    Keys are gathered and fanned back by MEMBER identity
-    (`FetchLevel.owner` / `related`), which is what lets each
-    level's rows be converted one at a time: no column-to-member
-    inversion happens here, and no row outlives its own level.
-
-    Returns the whole sealed Snapshot graph — every projection, the root
-    indexes in result order, and the query's own lowered pin — plus the
-    Source Hint each observed projection's value will carry.
+    scenario `mutate` action).
 
     ``model`` is the connected model as one value: the accepted Metamodel every
     level's own Entity resolves against, and the exact-model layout catalog
@@ -445,20 +428,121 @@ def find(
     runs the same code and emits nothing, and is what the default path, a
     declined root, and one page of a streamed read do.
     """
-    meta = model.meta
-    root_entity = query.root
-    plan_ = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
-    builder = GraphBuilder(ViewSchema(_slot_table(plan_)))
-    observations = ReadObservations()
+    return build_graph(
+        read_roots(query, model, port, preference=preference, calls=calls),
+        model,
+        port,
+        preference=preference,
+        ledger=ledger,
+        calls=calls,
+    )
 
-    root_compiled = compile_read(
+
+@dataclass(frozen=True, slots=True)
+class RootRead:
+    """One root statement already executed and materialized, together with what
+    the graph built from its rows must be built under.
+
+    The whole-result form of the pairing :func:`_execute_compiled` makes for one
+    statement: the ``plan`` whose levels descend below these roots, the
+    ``compiled`` read they materialized under, and the ``temporal`` selection
+    their pin and their retained evidence are settled from all reach conversion
+    as the one read that produced the rows, so no half of a find can be run
+    against another half's query.
+    """
+
+    plan: deep_fetch.ObjectQueryPlan
+    compiled: CompiledRead
+    rows: tuple[MaterializedReadRow, ...]
+    temporal: tuple[ValidatedTemporalSelection, ...]
+
+
+def read_roots(
+    query: ValidatedObjectQuery,
+    model: CatalogedModel,
+    port: DbPort,
+    *,
+    preference: Concurrency | None = None,
+    calls: DatabaseCallScope = INERT,
+) -> RootRead:
+    """Plan ``query``, issue its ROOT statement, and materialize the rows it returned.
+
+    Canonicalizes the root query (`m-temporal-read` + `m-navigate`, composed
+    here), compiles it, and runs it. Nothing here converts, judges, or attaches
+    anything, and no level's SQL is issued: what comes back is one statement's
+    rows and the read they belong to.
+
+    The rows come back whole rather than as the lazy materialization a level
+    converts out of: an iterator crossing this seam would have to be consumed by
+    conversion, which is the one pass the seam exists to separate.
+    """
+    meta = model.meta
+    plan_ = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
+    compiled = compile_read(
         plan_.root,
         meta,
         port.dialect,
         result_form="instance",
-        lock=entity_read_lock(meta, root_entity.identity, preference),
+        lock=entity_read_lock(meta, query.root.identity, preference),
     )
-    root_refs = _convert_level(builder, ROOT_LEVEL, model, port, root_compiled, calls, observations)
+    return RootRead(
+        plan=plan_,
+        compiled=compiled,
+        rows=tuple(_execute_compiled(port, compiled, calls)),
+        temporal=query.temporal,
+    )
+
+
+def build_graph(
+    root_read: RootRead,
+    model: CatalogedModel,
+    port: DbPort,
+    *,
+    preference: Concurrency | None = None,
+    ledger: ObservationLedger | None = None,
+    calls: DatabaseCallScope = INERT,
+) -> FindResult:
+    """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
+    "one query per non-empty relationship level"; m-snapshot-read "round trips").
+
+    Converts ``root_read``'s rows, then for each planned level: restricts the
+    parent nodes to the ones a path-root guard admits
+    (`FetchLevel.source_position`, m-deep-fetch — an excluded parent contributes no
+    key and receives no attachment, so its view stays unset); gathers the distinct
+    non-null parent keys; an empty gathered
+    set attaches the empty/null relationship result and issues no child SQL; a
+    back-reference level issues no SQL either (resolved through the merge scope's
+    own graph-local identity map); otherwise compiles and executes ONE child query
+    (carrying the level's declared relationship ordering), applies
+    `familyVariant` materialization (`m-sql`) to its rows, and converts them.
+    Every level is the same three steps — compile, execute, convert — with
+    `familyVariant` materialization and each row's resolved concrete Entity coming
+    from that level's OWN `~parallax.core.sql_gen._compile.CompiledRead`, never re-derived
+    here from the query a second time. The root level's own three steps are
+    :func:`read_roots`'s, which is why its compiled read arrives here rather than
+    being compiled a second time.
+
+    Keys are gathered and fanned back by MEMBER identity
+    (`FetchLevel.owner` / `related`), which is what lets each
+    level's rows be converted one at a time: no column-to-member
+    inversion happens here, and no row outlives its own level.
+
+    Returns the whole sealed Snapshot graph — every projection, the root
+    indexes in result order, and the query's own lowered pin — plus the
+    Source Hint each observed projection's value will carry.
+
+    ``model``, ``preference``, ``ledger``, and ``calls`` are :func:`find`'s own,
+    and every level below the root derives its read lock, its retained evidence,
+    and its Database Call bracket from them exactly as the root did.
+    """
+    meta = model.meta
+    plan_ = root_read.plan
+    builder = GraphBuilder(ViewSchema(_slot_table(plan_)))
+    observations = ReadObservations()
+
+    root_refs = _convert_rows(
+        builder, ROOT_LEVEL, model, root_read.compiled, root_read.rows, observations
+    )
 
     level_refs: list[tuple[int, ...]] = []
     for index, level in enumerate(plan_.levels):
@@ -488,11 +572,11 @@ def find(
         _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
-    pin = validated_query_pin(query.temporal)
+    pin = validated_query_pin(root_read.temporal)
     return FindResult(
         graph=builder.seal(root_refs, pin),
         includes=_include_tree(plan_.levels),
-        sources=_retained(meta, query.temporal, observations, ledger=ledger, pin=pin),
+        sources=_retained(meta, root_read.temporal, observations, ledger=ledger, pin=pin),
     )
 
 
@@ -766,6 +850,29 @@ def _convert_level(
 ) -> tuple[int, ...]:
     """Execute one level and convert each of its rows as that row materializes.
 
+    A level converts straight out of the lazy materialization rather than out of
+    a retained tuple the way a root read does, so it holds one materialized row
+    at a time.
+    """
+    return _convert_rows(
+        builder, source, model, compiled, _execute_compiled(port, compiled, calls), observations
+    )
+
+
+def _convert_rows(
+    builder: GraphBuilder,
+    source: SourceLevel,
+    model: CatalogedModel,
+    compiled: CompiledRead,
+    rows: Iterable[MaterializedReadRow],
+    observations: ReadObservations,
+) -> tuple[int, ...]:
+    """Convert ``rows`` into ``builder``, observing each one while it is still live.
+
+    ``compiled`` is the read those rows materialized under, and every row is
+    converted against its own layout, projected documents, and attribute reads
+    from it — never from a second derivation of what the statement projected.
+
     ``source`` is where in the plan these rows land, which is what sizes each
     projection's view row: the levels attaching BELOW this one are what its rows
     can receive.
@@ -791,7 +898,7 @@ def _convert_level(
     settles against.
     """
     refs: list[int] = []
-    for row in _execute_compiled(port, compiled, calls):
+    for row in rows:
         context = LevelContext(
             model.layouts.entity(row.resolved_entity),
             compiled.projected_documents,
@@ -991,9 +1098,9 @@ def _execute_compiled(
 
     The statement runs inside its own Database Call bracket on the way in; the
     port's own whole-result `list[Row]` is what a row-returning execute answers
-    by contract, and only the per-row materialization is lazy — so each
-    MATERIALIZED row is reachable for exactly as long as its consumer takes to
-    convert it, and the level never holds a second copy of its result set.
+    by contract, and only the per-row materialization is lazy — so a consumer
+    converting as it iterates keeps each MATERIALIZED row for exactly as long as
+    that conversion takes, and holds no second copy of its result set.
     """
     return map(compiled.materialize_row, execute_read(port, compiled, calls))
 
