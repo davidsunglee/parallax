@@ -142,24 +142,26 @@ def lower_seek(
     subject: TermSubject,
     ctx: StatementBuilder,
 ) -> str:
-    """The `where`-clause fragment admitting exactly the roots after ``seek``.
+    """The `where`-clause fragment admitting the roots after ``seek``.
 
     The lexicographic expansion: one branch per tie depth, each tying with every
     term above it and stepping past its own, with the branches whose leaf admits
-    nothing omitted. Ahead of them, for a NON-NULLABLE leading term over a
-    non-null carrier, the redundant non-strict range that gives a planner a
-    leading index range to seek — the disjunction alone offers nothing to push
-    down. Where the leading term can hold a NULL, "after" is two disjoint ranges
-    of the index and no single comparison covers both, so there is nothing to
-    hoist.
+    nothing omitted. Every leaf is measured against the placement this statement
+    KNOWS it emitted (:func:`_placement`) rather than against declared
+    nullability, so a term whose NULLs the clause placed after this coordinate
+    admits them.
+
+    Ahead of the branches, :func:`_hoists_a_leading_range` may add a redundant
+    non-strict range for the planner. That conjunct is the ONE place this
+    fragment admits fewer roots than the ordering places after the coordinate,
+    and the one place declared nullability still decides anything; its own
+    docstring carries the trade and the specification that fixes it.
 
     A coordinate the emitted ordering placed LAST leaves every branch vacuous,
     and the seek then admits nothing — the ordinary way a delivery that ended on
     the final root discovers there is no more.
 
-    Every comparison is emitted from the same ``subject`` the order clause was,
-    and every leaf is measured against the placement this statement KNOWS it
-    emitted rather than one it assumes.
+    Every comparison is emitted from the same ``subject`` the order clause was.
 
     Binds append in emitted order, after whatever the caller's own predicate has
     already pushed.
@@ -178,21 +180,24 @@ def lower_seek(
     for term, lowered in zip(seek.terms, terms, strict=True):
         _refuse_a_crossed_term(term, lowered)
     dialect = ctx.dialect
-    lead = seek.terms[0]
     parts: list[str] = []
-    if len(terms) > 1 and not lead.nullable and carriers[0] is not None:
+    if _hoists_a_leading_range(seek.terms, carriers):
+        lead = seek.terms[0]
         comparator = ">=" if lead.direction == "asc" else "<="
         parts.append(_compared(terms[0], subject, carriers[0], comparator, ctx))
     branches: list[str] = []
+    loose = False
     for depth, term in enumerate(seek.terms):
         if carriers[depth] is None and _placement(term, dialect) == "last":
             continue
         conjuncts = [_ties_with(terms[at], subject, carriers[at], ctx) for at in range(depth)]
         after = _after(term, terms[depth], subject, carriers[depth], ctx)
+        spans = _spans_a_disjunction(term, carriers[depth], dialect)
         if not conjuncts:
             branches.append(after)
+            loose = loose or spans
             continue
-        conjuncts.append(f"({after})" if _spans_a_disjunction(term, carriers[depth]) else after)
+        conjuncts.append(f"({after})" if spans else after)
         branches.append(f"({' and '.join(conjuncts)})")
     if not branches:
         # The database placed this coordinate last in its own ordering, so
@@ -201,9 +206,12 @@ def lower_seek(
         # discovers that it is exhausted.
         return _EXHAUSTED
     disjunction = " or ".join(branches)
-    # A lone branch parenthesizes itself where it needs to — it is either one
-    # comparison or a conjunction this loop already grouped.
-    parts.append(f"({disjunction})" if len(branches) > 1 else disjunction)
+    # Grouped wherever the fragment carries a top-level `or`, because the caller
+    # conjoins it with `and`, which binds tighter. A LONE branch is not
+    # automatically atomic: at depth 0 it is `after(0)` ungrouped, and `after`
+    # is itself a disjunction wherever the emitted clause placed this term's
+    # NULLs after the coordinate.
+    parts.append(f"({disjunction})" if len(branches) > 1 or loose else disjunction)
     return " and ".join(parts)
 
 
@@ -250,9 +258,41 @@ def _placement(term: ContinuationTerm, dialect: Dialect) -> Literal["first", "la
     return term.nulls if term.nullable else dialect.native_placement(term.direction)
 
 
-def _spans_a_disjunction(term: ContinuationTerm, carrier: object) -> bool:
-    """Whether "after this coordinate" reaches this term's nulls as well."""
-    return term.nullable and carrier is not None and term.nulls == "last"
+def _spans_a_disjunction(term: ContinuationTerm, carrier: object, dialect: Dialect) -> bool:
+    """Whether "after this coordinate" reaches this term's NULLs as well.
+
+    Asks :func:`_placement` rather than re-deriving the answer from declared
+    nullability. Where the emitted clause put a NULL is one question with one
+    answer in this module, and a stored NULL under a `NOT NULL` constraint that
+    is gone lands exactly where that answer says — so the branch admitting it is
+    the branch this decides.
+    """
+    return carrier is not None and _placement(term, dialect) == "last"
+
+
+def _hoists_a_leading_range(terms: Sequence[ContinuationTerm], carriers: Sequence[object]) -> bool:
+    """Whether to emit the redundant leading range a planner can seek on.
+
+    THE ONE DELIBERATE EXCEPTION in this module, and the only question here that
+    is not :func:`_placement`'s. This asks what the MODEL declares, not where the
+    emitted clause put a NULL: `col >=|<= ?` excludes a NULL wherever it was
+    placed, so over a leading term declared non-nullable that holds a stored NULL
+    anyway, this conjunct re-excludes the very root the branch below it admits
+    and the delivery skips it.
+
+    That skip is bought rather than overlooked. The lexicographic disjunction on
+    its own offers a planner nothing to push down, so without this conjunct every
+    streamed page over a leading key scans where it could seek; widening it to
+    `(col >=|<= ? or col is null)` admits the root and loses the same range.
+    `m-snapshot-read` *Streamed delivery* names the skip as the accepted price
+    and scopes it to non-conforming storage — every other invalid stored value is
+    still delivered, because none of them makes the ordering term NULL.
+
+    So this guard is a specified cost decision, not a placement answer: removing
+    it changes what every streamed page costs, and amending it to admit the NULL
+    means amending that specification first.
+    """
+    return len(terms) > 1 and not terms[0].nullable and carriers[0] is not None
 
 
 def _after(
@@ -266,16 +306,17 @@ def _after(
 
     Measured in the term's OWN ordering: a descending term reverses the
     comparison, and where the emitted clause placed nulls first, a null carrier
-    is followed by every non-null. The ``or is null`` arm is guarded on declared
-    nullability rather than applied everywhere — widening it would put a
-    disjunction on the primary-key term of every seek for a value conforming
-    storage cannot hold.
+    is followed by every non-null. The ``or is null`` arm follows the emitted
+    placement alone, so a term whose NULLs the clause put after this coordinate
+    admits them here whether or not the model says it can hold one — which is
+    what a delivery over non-conforming storage needs, since a `NOT NULL`
+    constraint that is gone leaves a NULL the ordering still ranks.
     """
     if carrier is None:
         return f"{subject(lowered.member).extraction} is not null"
     strict = ">" if term.direction == "asc" else "<"
     comparison = _compared(lowered, subject, carrier, strict, ctx)
-    if not _spans_a_disjunction(term, carrier):
+    if not _spans_a_disjunction(term, carrier, ctx.dialect):
         return comparison
     return f"{comparison} or {subject(lowered.member).extraction} is null"
 

@@ -42,6 +42,7 @@ POSITIONS = accepted_model("position")
 _TRAVELER_JOINED = "parallax.compatibility.Traveler.joinedOn"
 _ORDER_NAME = "parallax.compatibility.Order.name"
 _POSITION_VALID_END = "parallax.compatibility.Position.validEnd"
+_ORDER_ACTIVE = "parallax.compatibility.Order.active"
 
 _PROJECTION = deep_fetch.ReadProjectionRequest("none", False)
 
@@ -81,7 +82,7 @@ def test_a_text_compared_resident_carrier_crosses_as_the_text_it_already_is() ->
     assert statement.sql.endswith(
         "where (jsonb_extract_path_text(t0.payload, ?) > ? "
         "or jsonb_extract_path_text(t0.payload, ?) is null "
-        "or (jsonb_extract_path_text(t0.payload, ?) = ? and t0.id > ?)) "
+        "or (jsonb_extract_path_text(t0.payload, ?) = ? and (t0.id > ? or t0.id is null))) "
         "order by jsonb_extract_path_text(t0.payload, ?) asc, t0.id asc limit ?"
     )
     assert statement.binds == (
@@ -214,7 +215,8 @@ def test_an_open_temporal_bound_carrier_reports_the_canonical_infinity_literal()
     statement = _lowered(POSITIONS, node)
     assert statement.sql.endswith(
         "where t0.thru_z = ? and t0.out_z = ? and t0.thru_z >= ? "
-        "and (t0.thru_z > ? or (t0.thru_z = ? and t0.pos_id > ?)) "
+        "and (t0.thru_z > ? or t0.thru_z is null "
+        "or (t0.thru_z = ? and (t0.pos_id > ? or t0.pos_id is null))) "
         "order by t0.thru_z asc, t0.pos_id asc limit ?"
     )
     assert statement.binds[2:5] == (INFINITY, INFINITY, INFINITY)
@@ -235,3 +237,45 @@ def test_a_capture_alias_an_authored_column_already_spells_is_allocated_past() -
         "parallax_seek_0",
         "parallax_seek_2",
     ]
+
+
+def test_a_non_nullable_terms_branch_follows_the_emitted_placement_not_the_declaration() -> None:
+    # Two terms the model declares equally non-nullable, differing only in the
+    # placement their own direction gives them under this dialect: Postgres
+    # trails NULLs on `asc` and leads them on `desc`. The ascending term's branch
+    # therefore admits its NULLs and the descending one's does not — which is the
+    # rule a delivery over storage that lost a `NOT NULL` constraint depends on,
+    # since such a NULL is ranked by the clause whatever the declaration says.
+    ascending = _lowered(
+        ORDERS,
+        _planned(ORDERS, "Order", OrderKey(attr=_ORDER_ACTIVE)).after(
+            ContinuationCoordinate((True, 1)), limit=2
+        ),
+    )
+    descending = _lowered(
+        ORDERS,
+        _planned(ORDERS, "Order", OrderKey(attr=_ORDER_ACTIVE, direction="desc")).after(
+            ContinuationCoordinate((True, 1)), limit=2
+        ),
+    )
+    assert "t0.active > ? or t0.active is null" in ascending.sql
+    assert "t0.active < ? or t0.active is null" not in descending.sql
+    assert "t0.active < ?" in descending.sql
+
+
+def test_the_hoisted_leading_range_re_excludes_the_null_its_own_branch_admits() -> None:
+    # The one deliberate exception, graded so removing it is a decision rather
+    # than an edit. The leading term is declared non-nullable, so the page hoists
+    # `t0.active >= ?` for the planner; the branch beneath it still admits the
+    # NULLs the emitted clause placed after the coordinate, and the hoist then
+    # excludes them again. A stored NULL in that column is therefore skipped —
+    # the price `m-snapshot-read` *Streamed delivery* records for the leading
+    # index range.
+    statement = _lowered(
+        ORDERS,
+        _planned(ORDERS, "Order", OrderKey(attr=_ORDER_ACTIVE)).after(
+            ContinuationCoordinate((True, 1)), limit=2
+        ),
+    )
+    seek = statement.sql.partition(" where ")[2].partition(" order by ")[0]
+    assert seek.startswith("t0.active >= ? and (t0.active > ? or t0.active is null or ")
