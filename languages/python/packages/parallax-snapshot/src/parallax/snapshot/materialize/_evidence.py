@@ -7,7 +7,8 @@ the result is frozen, in a single traversal: translating and freezing apart woul
 cost a second walk and leave an intermediate frozen form nobody holds.
 
 The product is ordinary immutable Python, with no frozen-dict type of its own,
-and it is frozen exactly once — every seam downstream shares it by reference.
+and one frozen copy of a judged value is what survives — every seam downstream
+shares that object by reference rather than translating or detaching its own.
 """
 
 from __future__ import annotations

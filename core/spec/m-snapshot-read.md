@@ -144,12 +144,17 @@ storage capability, and passing it to an ordinary write is an ordinary validated
 write. The lower wire-codec rejection reason stays unpublished: the
 issue codes above remain the whole public classification.
 
-A rejected value is retained deliberately, so it is frozen exactly once and
-shared by reference from the seam that judged it to every seam that reports it. A
-translation per seam, or a copy per report, is a defect rather than an
-implementation choice (*What a delivery costs*). Repeated reach to one occurrence
-is one such report: a read that reaches it again retains the value it already
-froze rather than an equal second one.
+A rejected value is retained deliberately, so exactly one frozen copy of it
+survives: it is frozen where it is judged and shared by reference from that seam
+to every seam that reports it. The count is over the copies a delivery retains
+rather than over how many times the freezing walk runs; what makes a translation
+per seam, or a copy per report, a defect rather than an implementation choice
+(*What a delivery costs*) is that each leaves a further copy alive for as long as
+the diagnosis is. A copy that exists only inside the conversion of the row that
+judged it, and is gone when that conversion returns, retains nothing and is
+bounded by that page's own converted result. Repeated reach to one occurrence is
+one such report: a read that reaches it again retains the value it already froze
+rather than an equal second one.
 
 ## What a materialized value carries
 

@@ -519,10 +519,11 @@ def _issue(**overrides: Any) -> StoredDataIssue:
 
 
 def test_classification_shares_the_one_frozen_evidence_rather_than_copying_it() -> None:
-    # Conversion freezes exactly once and every seam above carries the same
-    # object: attribution adds the root's Object Key and nothing else. A second
-    # freeze anywhere would double what a large rejected document costs and give
-    # two structurally equal values no `is` can tell apart.
+    # Conversion freezes a judged value where it judges it, and every seam above
+    # carries that same object: attribution adds the root's Object Key and
+    # nothing else. A further copy surviving anywhere along that chain would
+    # double what a large rejected document costs and give two structurally
+    # equal values no `is` can tell apart.
     fixture = GraphFixture(vo.CUSTOMER_MODEL)
     node = fixture.node("Customer", {"id": 1, "name": "Ada", "address": {"city": "Berlin"}})
     (converted,) = graph_rows(fixture.graph(node)).issues[node]
