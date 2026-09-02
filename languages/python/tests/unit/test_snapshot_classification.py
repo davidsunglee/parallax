@@ -17,6 +17,7 @@ here in `test_snapshot_find.py`.
 from __future__ import annotations
 
 import datetime as dt
+import pickle
 from collections.abc import Sequence
 from decimal import Decimal
 from types import MappingProxyType
@@ -561,6 +562,24 @@ def test_structured_evidence_hashes_the_way_it_compares() -> None:
     assert listed == listed_reordered
     assert hash(listed) == hash(listed_reordered)
     assert len({listed, listed_reordered, _issue()}) == 2
+
+
+def test_a_hashed_issue_pickles_the_way_an_unhashed_equal_one_does() -> None:
+    # The cache behind that hash is process-local: text hashing is seeded per
+    # interpreter, so what one process cached is not what an equal issue
+    # computes in another. Publication hashes every issue into a frozenset, so
+    # a cache that travelled would always travel — and would arrive
+    # contradicting the equality it exists to agree with, leaving a restored
+    # issue missing from a set built where it was read. Structured evidence is
+    # a read-only mapping and pickles nowhere, so the shapes that cross this
+    # boundary are the scalar, array, and marker ones.
+    hashed = _issue(stored_value=("555", MISSING_STORED_VALUE))
+    hash(hashed)
+    assert pickle.dumps(hashed) == pickle.dumps(_issue(stored_value=("555", MISSING_STORED_VALUE)))
+
+    restored = cast("StoredDataIssue", pickle.loads(pickle.dumps(hashed)))
+    assert restored == hashed
+    assert len({restored, hashed}) == 1
 
 
 def test_evidence_is_reachable_only_by_asking_for_it() -> None:

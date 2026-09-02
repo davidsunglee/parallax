@@ -1,11 +1,13 @@
-"""The identity contract every sentinel compared with ``is`` has to keep.
+"""The identity contract every sentinel has to keep.
 
 Each of these singletons answers a question no value could — absent, unloaded,
 missing, unavailable, SQL null, latest, unobserved, no stored member at all — and
-every use site and every other test asks ``is``. A copy boundary is where that
-contract is easiest to lose silently: a second instance would answer ``is`` with
-``False`` while looking identical in a traceback, so a sentinel that crossed a
-deep copy or a pickle would turn a settled question back into an open one.
+a site holding one alone asks ``is`` (a site holding a union whose other arms
+carry data reads the class instead, which is what narrows to those arms). A copy
+boundary is where the contract is easiest to lose silently: a second instance
+would answer ``is`` with ``False`` while looking identical in a traceback, so a
+sentinel that crossed a deep copy or a pickle would turn a settled question back
+into an open one.
 
 The public API snapshot diffs ``__all__`` alone, so it cannot see this. Nothing
 else grades it either, which is why the contract is stated in ``python.md`` and
@@ -57,9 +59,9 @@ def test_a_sentinel_repr_names_the_export_a_reader_would_spell(name: str, sentin
 
 def test_a_sentinel_class_admits_no_second_meaningful_instance() -> None:
     # A zero-field frozen dataclass compares a fresh instance equal to the
-    # singleton, so two notions of sameness would coexist where every use site
-    # asks `is`. These classes are plain identity classes: a second construction
-    # is a distinct object under both `is` and `==`.
+    # singleton, so two notions of sameness would coexist where a use site asks
+    # `is`. These classes are plain identity classes: a second construction is a
+    # distinct object under both `is` and `==`.
     assert type(NULL)() != NULL
     assert type(MISSING)() != MISSING
     assert type(UNAVAILABLE)() != UNAVAILABLE

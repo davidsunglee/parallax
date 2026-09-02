@@ -134,12 +134,14 @@ place, or a different rejected value at one place, remains a distinct diagnosis.
 Comparison of structured evidence is structural and insensitive to object member
 order.
 
-Evidence is diagnosis and grants nothing. It is reachable by explicitly asking an
-issue for it, and is excluded from default renderings, exception messages,
-lifecycle events, SQL emissions, default logging, and automatic formatting. It
-never becomes a cursor, a managed value, a predicate literal, a repair token, or
-a storage capability, and passing it to an ordinary write is an ordinary
-validated write. The lower wire-codec rejection reason stays unpublished: the
+The rejected value is diagnosis and grants nothing. It is reachable by explicitly
+asking an issue for it, and is excluded from default renderings, exception
+messages, lifecycle events, SQL emissions, default logging, and automatic
+formatting. The place carries no stored state and is outside that exclusion: it
+locates the diagnosis exactly as the issue's other locators do. The value never
+becomes a cursor, a managed value, a predicate literal, a repair token, or a
+storage capability, and passing it to an ordinary write is an ordinary validated
+write. The lower wire-codec rejection reason stays unpublished: the
 issue codes above remain the whole public classification.
 
 A rejected value is retained deliberately, so it is frozen exactly once and

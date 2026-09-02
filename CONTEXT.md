@@ -567,14 +567,21 @@ _Avoid_: Domain Snapshot, Neutral Graph, serialized Snapshot Graph, physical row
 **StoredDataIssue**:
 A structured diagnosis that persisted state violates the accepted model,
 carrying an Issue Code, the affected Entity Identity, the affected Object Key
-when decodable, and a Member Identity except when an invalid family tag prevents
-identifying a concrete member. It carries no raw stored value, cause, mutable
-details, or separately authoritative message. Snapshot Read owns its closed
-public code vocabulary and issue identity; the lower codec or conversion seam
-that understands a violation owns detecting it. `InvalidData` carries unique
-issues as an unordered immutable set because traversal order has no domain
-meaning.
-_Avoid_: validation issue, decoding exception, raw bad value, repair instruction
+when decodable, a Member Identity except when an invalid family tag prevents
+identifying a concrete member, the entity-relative logical path of the rejected
+occurrence, and the rejected value itself. That value is the one raw value the
+result seam admits and it crosses as diagnosis alone: immutable, detached from
+every provider carrier, reachable only by explicitly asking an issue for it, and
+excluded from default renderings, exception messages, lifecycle events, SQL
+emissions, default logging, and automatic formatting. The issue carries no cause,
+mutable details, or separately authoritative message. Snapshot Read owns its
+closed public code vocabulary and issue identity; the lower codec or conversion
+seam that understands a violation owns detecting it. The path and the rejected
+value are part of issue identity, so repeated reach to one occurrence collapses
+while another place, or another rejected value at one place, stays a distinct
+diagnosis. `InvalidData` carries unique issues as an unordered immutable set
+because traversal order has no domain meaning.
+_Avoid_: validation issue, decoding exception, raw row, repair instruction
 
 **InvalidData**:
 The root-level read result classification for one or more StoredDataIssues. It
