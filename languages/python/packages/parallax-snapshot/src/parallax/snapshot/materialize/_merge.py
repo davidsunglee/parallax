@@ -181,10 +181,9 @@ class GraphMerge:
     def issues(self, node: int) -> tuple[StoredDataIssueInput, ...]:
         """Every issue every projection of ``node`` carried, in walk order.
 
-        A duplicate projection that judged the node the way the first one did
-        carries that projection's own issue objects, so one occurrence reached
-        twice appears once; a duplicate that judged differently appears beside
-        it.
+        A projection repeating an earlier projection's judgment carries that
+        projection's own issue object, so one occurrence reached twice appears
+        once; a judgment only one projection made appears beside it.
         """
         return self._issues[node]
 

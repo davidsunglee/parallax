@@ -3267,9 +3267,11 @@ identity a caller may copy or pickle across a boundary of their own.
   `InvalidDataError` — graded in the `cost` class (§10) as a retained-bytes
   difference over the rejected value's own size, against one frozen copy of it.
   Repeated reach shares that one copy too: a second projection of a logical node
-  is a second row, judged and frozen apart, and the graph builder retains the
-  first projection's issue objects for it wherever the two judged the node the
-  same way.
+  is a second row, judged and frozen apart, and the graph builder answers each of
+  its issue records with the equal record the node already retains. Sharing is
+  settled per rejected occurrence, so two projections that agree about one
+  occurrence and disagree about another retain one copy of the first and both of
+  the second.
 - **Default and checked views.** `Snapshot`'s accessors are the default view:
   each performs its existing arity check FIRST and then raises `InvalidDataError`
   when the roots it narrowed to carry invalid data. `result()` and

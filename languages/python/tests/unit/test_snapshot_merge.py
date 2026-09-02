@@ -353,6 +353,50 @@ def test_a_duplicate_projection_that_judged_differently_contributes_its_own_find
     ]
 
 
+def test_a_duplicate_sharing_one_judgment_of_several_shares_that_one() -> None:
+    # One row can hold several rejected occurrences at once, and two reads of it
+    # agree about some and not others: both reject the identical stored `geo`
+    # subtree while rejecting different `phones` ones. Sharing is earned per
+    # rejected occurrence rather than per projection, so the repeated `geo`
+    # evidence is retained once while both `phones` findings stay distinct
+    # facts about the stored row.
+    fixture = GraphFixture(vo_models.CUSTOMER_MODEL)
+    first = fixture.node("Customer", _customer_row("home"))
+    second = fixture.node("Customer", _customer_row("work"))
+
+    graph = fixture.graph(first, second)
+    rows = graph_rows(graph)
+    assert rows.issues[second][0] is rows.issues[first][0]
+    assert rows.issues[second][1] is not rows.issues[first][1]
+    merge = merge_graph_input(graph)
+    assert [issue.path for issue in merge.issues(0)] == [
+        ("address", "geo"),
+        ("address", "phones"),
+        ("address", "phones"),
+    ]
+
+
+def test_a_judgment_first_made_after_a_clean_projection_is_shared_from_there() -> None:
+    # The projection a node is first reached through may reject nothing, which
+    # says nothing about the ones behind it. Retention belongs to the node
+    # rather than to its first projection, so the second read of one rejected
+    # occurrence collapses onto the first read that rejected it.
+    fixture = GraphFixture(vo_models.CUSTOMER_MODEL)
+    clean = fixture.node(
+        "Customer",
+        {"id": 1, "name": "Ada", "address": {"street": "1 Park Ave", "phones": []}},
+    )
+    rejected = fixture.node("Customer", _customer_row("home"))
+    rejected_again = fixture.node("Customer", _customer_row("home"))
+
+    graph = fixture.graph(clean, rejected, rejected_again)
+    rows = graph_rows(graph)
+    assert rows.issues[clean] == ()
+    assert rows.issues[rejected_again][0] is rows.issues[rejected][0]
+    assert rows.issues[rejected_again][1] is rows.issues[rejected][1]
+    assert len(merge_graph_input(graph).issues(0)) == 2
+
+
 def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
     # Classification is root-granular: a clean root cannot hide an invalid
     # included child merely because the root's own members are constructible,
@@ -951,6 +995,21 @@ def test_no_published_value_is_the_absent_sentinel() -> None:
     assert isinstance(root, sm.SnapOrder)
     assert "sku" not in root.model_fields_set
     assert all(value is not ABSENT for value in vars(root).values())
+
+
+def _customer_row(phone_type: str) -> dict[str, object]:
+    """One stored Customer rejected twice over: an array where the ``geo``
+    object belongs — identical in every row — and an object where ``phones``
+    holds an array, spelled per row by ``phone_type``."""
+    return {
+        "id": 1,
+        "name": "Ada",
+        "address": {
+            "street": "1 Park Ave",
+            "geo": [{"country": "GB", "elevation": 3.0}],
+            "phones": {"type": phone_type},
+        },
+    }
 
 
 def _sole_node(merge: Any, name: str) -> int:
