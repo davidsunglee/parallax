@@ -181,6 +181,7 @@ def test_invalid_root_carriers_require_a_position_and_an_issue() -> None:
     issue = StoredDataIssueInput(
         "stored-data-primary-key-null",
         EntityIdentity(_NAMESPACE, "SnapOrder"),
+        stored_value=None,
     )
     with pytest.raises(ValueError, match="nonnegative"):
         InvalidRootInput(-1, (issue,))

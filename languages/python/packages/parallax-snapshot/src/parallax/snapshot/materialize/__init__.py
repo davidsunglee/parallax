@@ -27,7 +27,11 @@ projection merge that produce and consume it.
   result roots whose requested include trees reach them, and settles the
   construction scope that attribution implies.
 - :mod:`~parallax.snapshot.materialize._invalid` holds the public record a
-  classified root publishes in place of itself.
+  classified root publishes in place of itself, and the missing-value sentinel
+  its evidence spells a genuinely absent stored member with.
+- :mod:`~parallax.snapshot.materialize._evidence` translates and freezes each
+  rejected stored value once, on its way from the seam that judged it into that
+  record.
 - :mod:`~parallax.snapshot.materialize._wire` turns one merge into a finite tree
   of frozen plain values keyed by declared member name — the second public
   materializer, a peer of the typed one rather than a wrapper of it. It consumes
@@ -76,6 +80,7 @@ from parallax.snapshot.materialize._graph import (
     StoredDataIssueInput,
 )
 from parallax.snapshot.materialize._invalid import (
+    MISSING_STORED_VALUE,
     InvalidData,
     InvalidDataError,
     StoredDataIssue,
@@ -102,6 +107,7 @@ from parallax.snapshot.materialize._wire import (
 __all__ = [
     "EMPTY_UNWIND",
     "FAMILY_VARIANT_KEY",
+    "MISSING_STORED_VALUE",
     "SNAPSHOT_DECODING_FAILED",
     "ClassifiedRoot",
     "ConformingRoot",

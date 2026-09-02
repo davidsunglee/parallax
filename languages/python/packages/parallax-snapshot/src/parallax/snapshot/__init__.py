@@ -7,11 +7,12 @@ and calls ``parallax.snapshot.connect(adapter, model)``), :class:`Snapshot`
 (``Snapshot[T]``) with :class:`CheckedSnapshot` (``CheckedSnapshot[T]``), its
 checked view, the in-band invalid-result vocabulary a classified root publishes
 — :class:`InvalidData`, :class:`StoredDataIssue`, :class:`ObjectKey` (the
-identity a record locates itself by), and the :class:`InvalidDataError` a
-default accessor raises. Execution observability is deliberately absent: a
-result carries no lifecycle record, and an application reaches that vocabulary
-through :mod:`parallax.core.execution_lifecycle` and ``connect``'s own
-``lifecycle_provider`` seam instead.
+identity a record locates itself by), :data:`MISSING_STORED_VALUE` (what an
+issue's evidence spells a genuinely absent stored member with), and the
+:class:`InvalidDataError` a default accessor raises. Execution observability is
+deliberately absent: a result carries no lifecycle record, and an application
+reaches that vocabulary through :mod:`parallax.core.execution_lifecycle` and
+``connect``'s own ``lifecycle_provider`` seam instead.
 :class:`NoResultFound` /
 :class:`TooManyResultsFound` are ``Snapshot.result()`` / ``.result_or_none()``'s
 own arity errors. The refusals are :class:`QueryTargetError`, of a query
@@ -95,10 +96,11 @@ from parallax.snapshot.handle import (
     WriteInstructionError,
     connect,
 )
-from parallax.snapshot.materialize import SnapshotDecodingError
+from parallax.snapshot.materialize import MISSING_STORED_VALUE, SnapshotDecodingError
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
+    "MISSING_STORED_VALUE",
     "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
     "DeferredFeatureError",

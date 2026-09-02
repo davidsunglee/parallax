@@ -852,3 +852,34 @@ def test_a_milestone_root_whose_key_did_not_decode_stands_at_no_edge() -> None:
             delivered.append(root)
     assert len(delivered) == 1
     assert isinstance(delivered[0], InvalidData)
+
+
+def _diagnoses(root: object) -> frozenset[object] | None:
+    """``root``'s published diagnoses, or absence where it published as itself."""
+    return (
+        frozenset(cast("InvalidData[object]", root).issues)
+        if isinstance(root, InvalidData)
+        else None
+    )
+
+
+def test_an_eager_and_a_streamed_checked_read_publish_one_roots_issues_alike() -> None:
+    # A page IS an eager read, so a diagnosis has to be too — down to the
+    # evidence it carries. `qty` is outside this query's Continuation Order, so
+    # the corrupt root is published and the delivery continues past it, which is
+    # what lets the two readings be compared root for root.
+    rows = [_order_row(1), {**_order_row(2), "qty": "many"}, _order_row(3)]
+    eager = _orders(ScriptedPort(Read(rows=rows))).find(_all_orders()).checked().results()
+    with _orders(ScriptedPort(Read(rows=rows[:2]), Read(rows=rows[2:]))).stream(
+        _all_orders(), batch_size=2
+    ) as stream:
+        streamed = list(stream.checked())
+    assert [_diagnoses(root) for root in eager] == [_diagnoses(root) for root in streamed]
+    issues = _diagnoses(streamed[1])
+    assert issues is not None
+    (issue,) = cast("frozenset[Any]", issues)
+    assert (issue.code, issue.path, issue.stored_value) == (
+        "stored-data-leaf-undecodable",
+        (),
+        "many",
+    )

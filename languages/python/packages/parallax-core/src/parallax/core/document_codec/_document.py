@@ -7,7 +7,7 @@ and a returned document shares no mutable state with one passed in.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, Literal, Self, cast
 
 from parallax.core.base import (
@@ -78,10 +78,17 @@ type DocumentPathSegment = str | int
 
 @dataclass(frozen=True, slots=True)
 class DocumentFinding:
-    """One stored-shape contradiction at a logical document member path."""
+    """One stored-shape contradiction at a logical document member path.
+
+    ``stored_value`` is the internal value the contradiction was judged about,
+    captured before the classification collapses it: the codec's :data:`MISSING`
+    marker where the member was genuinely absent from a traversable object, and
+    the rejected value itself otherwise.
+    """
 
     code: DocumentFindingCode
     path: tuple[DocumentPathSegment, ...]
+    stored_value: object
 
 
 class Unavailable:
@@ -202,22 +209,28 @@ def _classify_member(
         if not isinstance(raw, list) or not all(
             isinstance(item, dict) for item in cast("list[object]", raw)
         ):
-            return DecodedMember(Present([]), (DocumentFinding("many-wrong-kind", path),))
+            return DecodedMember(
+                Present([]), (DocumentFinding("many-wrong-kind", path, cast("object", raw)),)
+            )
         return DecodedMember(Present(detach_json_container(cast("list[DocumentValue]", raw))))
     if isinstance(raw, Missing):
-        findings = (DocumentFinding("required-member-absent", path),) if not member.nullable else ()
+        findings = (
+            (DocumentFinding("required-member-absent", path, raw),) if not member.nullable else ()
+        )
         return DecodedMember(MISSING, findings)
     if raw is None:
-        findings = (DocumentFinding("required-member-null", path),) if not member.nullable else ()
+        findings = (
+            (DocumentFinding("required-member-null", path, raw),) if not member.nullable else ()
+        )
         return DecodedMember(NULL, findings)
     if isinstance(member, Occurrence):
         if not isinstance(raw, dict):
-            return DecodedMember(MISSING, (DocumentFinding("one-wrong-kind", path),))
+            return DecodedMember(MISSING, (DocumentFinding("one-wrong-kind", path, raw),))
         return DecodedMember(Present(detach_json_container(cast("dict[str, DocumentValue]", raw))))
     try:
         return DecodedMember(Present(decode_leaf(member.type, raw)))
     except LeafEncodingError:
-        return DecodedMember(UNAVAILABLE, (DocumentFinding("leaf-undecodable", path),))
+        return DecodedMember(UNAVAILABLE, (DocumentFinding("leaf-undecodable", path, raw),))
 
 
 def reduce_declared_members_classified(
@@ -239,7 +252,7 @@ def reduce_declared_members_classified(
     if document is None:
         return None, ()
     if not isinstance(document, Mapping):
-        return None, (DocumentFinding("one-wrong-kind", ()),)
+        return None, (DocumentFinding("one-wrong-kind", (), document),)
     source = cast("Mapping[str, object]", document)
     reduced: dict[str, object] = {}
     findings: list[DocumentFinding] = []
@@ -267,7 +280,7 @@ def reduce_declared_members_classified(
                 nested, nested_findings = reduce_declared_members_classified(member.shape, item)
                 elements.append(nested)
                 findings.extend(
-                    DocumentFinding(finding.code, (member.name, index, *finding.path))
+                    replace(finding, path=(member.name, index, *finding.path))
                     for finding in nested_findings
                 )
             reduced[member.name] = elements
@@ -278,8 +291,7 @@ def reduce_declared_members_classified(
             )
             reduced[member.name] = nested
             findings.extend(
-                DocumentFinding(finding.code, (member.name, *finding.path))
-                for finding in nested_findings
+                replace(finding, path=(member.name, *finding.path)) for finding in nested_findings
             )
         elif held or classified.findings:
             reduced[member.name] = None

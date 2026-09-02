@@ -6,23 +6,77 @@ is delivered as the record here. Classification is root-granular — an issue
 anywhere in a root's requested include tree makes that root invalid — so nothing
 below a root is ever pruned or unioned.
 
-The record carries diagnoses and positions, never authority: no raw stored value,
-no decoding cause, no mutable details, and no observation address. Its locators
-answer *which* result element is invalid, not what a caller may then write.
+The record carries diagnoses, positions, and the immutable evidence of what was
+rejected — never authority: no decoding cause, no mutable details, and no
+observation address. Its locators answer *which* result element is invalid, not
+what a caller may then write, and the evidence it carries is reachable only by
+explicit attribute access.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Final
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from typing import Final, Self, cast
 
 from parallax.core.metamodel import EntityIdentity, MemberIdentity
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import ObjectKey
 from parallax.snapshot.materialize._graph import StoredDataIssueCode
 
-__all__ = ["InvalidData", "InvalidDataError", "StoredDataIssue"]
+__all__ = [
+    "MISSING_STORED_VALUE",
+    "InvalidData",
+    "InvalidDataError",
+    "MissingStoredValue",
+    "StoredDataIssue",
+]
+
+
+class MissingStoredValue:
+    """The evidence a traversable stored object held no member at all.
+
+    Distinct from ``None``, which is the stored SQL or JSON null. Sameness is
+    identity: :data:`MISSING_STORED_VALUE` is the one instance, and it stays that
+    one instance through a copy, a deep copy, and a pickle round trip.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "MISSING_STORED_VALUE"
+
+    def __copy__(self) -> Self:
+        return self
+
+    def __deepcopy__(self, _memo: dict[int, object]) -> Self:
+        return self
+
+    def __reduce__(self) -> str:
+        return "MISSING_STORED_VALUE"
+
+
+MISSING_STORED_VALUE: Final[MissingStoredValue] = MissingStoredValue()
+
+
+def _structural_hash(value: object) -> int:
+    """``value``'s hash under the structural equality evidence compares by.
+
+    A read-only mapping is unhashable and its equality is key-order
+    insensitive, so the mapping arm hashes an unordered set of member hashes;
+    every other frozen shape is already hashable, and the tuple arm exists only
+    so a tuple holding a mapping stays reachable.
+    """
+    if isinstance(value, Mapping):
+        return hash(
+            frozenset(
+                (key, _structural_hash(item))
+                for key, item in cast("Mapping[object, object]", value).items()
+            )
+        )
+    if isinstance(value, tuple):
+        return hash(tuple(_structural_hash(item) for item in cast("tuple[object, ...]", value)))
+    return hash(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,12 +93,52 @@ class StoredDataIssue:
     :attr:`InvalidData.object_key`, which always names the RESULT root: reaching
     one included Entity from several roots repeats this diagnosis in each root's
     record while identifying the same affected object.
+
+    ``path`` is the entity-relative logical path of the rejected occurrence,
+    keeping declared member names distinct from integer array positions. It is
+    empty where the member identity already locates the occurrence exactly: a
+    direct Entity Attribute under either Storage Layout, an unresolved family
+    tag, and a whole stored document read in a kind it cannot be read as.
+
+    ``stored_value`` is the provider-normalized logical value that was judged
+    and rejected, immutable and detached from every provider carrier: arrays
+    read as tuples, objects as read-only mappings, stored SQL or JSON null as
+    ``None``, and a member genuinely absent from a traversable object as
+    :data:`MISSING_STORED_VALUE`. It is diagnostic evidence and nothing else —
+    reachable by explicit attribute access and in a debugger, kept out of the
+    default repr, and granting no write, repair, observation, key, or storage
+    authority.
+
+    Both fields participate in equality, so repeated reach to one occurrence
+    collapses in a frozenset while different paths or different evidence stay
+    distinct. Structured evidence is unhashable and compares insensitively to
+    object key order, so the hash is derived structurally from what the evidence
+    holds, and cached because a frozenset asks for it once per membership test.
     """
 
     code: StoredDataIssueCode
     entity: EntityIdentity
     member: MemberIdentity | None = None
     object_key: ObjectKey | None = None
+    path: tuple[str | int, ...] = field(kw_only=True)
+    stored_value: object = field(kw_only=True, repr=False)
+    _hash: int | None = field(default=None, init=False, compare=False, repr=False)
+
+    def __hash__(self) -> int:
+        cached = self._hash
+        if cached is None:
+            cached = hash(
+                (
+                    self.code,
+                    self.entity,
+                    self.member,
+                    self.object_key,
+                    self.path,
+                    _structural_hash(self.stored_value),
+                )
+            )
+            object.__setattr__(self, "_hash", cached)
+        return cached
 
 
 @dataclass(frozen=True, slots=True)

@@ -130,6 +130,8 @@ class MaterializedReadRow:
     classified provenance that a consumer must propagate to publication;
     ``classified_members`` names values already judged by the document codec so
     conversion translates them without judging their synthesized collapse again.
+    ``family_tag`` is the stored discriminator behind ``family_tag_unknown``,
+    retained only where that flag reports it resolved to no concrete subtype.
     """
 
     values: dict[str, object]
@@ -139,6 +141,7 @@ class MaterializedReadRow:
     findings: tuple[DocumentFinding, ...] = ()
     family_tag_unknown: bool = False
     classified_members: frozenset[str] = frozenset()
+    family_tag: object = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,7 +257,7 @@ class CompiledRead:
                 contract.type,
                 nullable=contract.nullable,
                 temporal_end=contract.temporal_end,
-            ):
+            ).admitted:
                 return True
         return False
 
@@ -280,6 +283,7 @@ class CompiledRead:
             transformed.findings,
             transformed.family_tag_unknown,
             transformed.classified_members,
+            transformed.family_tag,
         )
 
 
