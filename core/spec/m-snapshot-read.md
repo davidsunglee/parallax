@@ -147,7 +147,9 @@ issue codes above remain the whole public classification.
 A rejected value is retained deliberately, so it is frozen exactly once and
 shared by reference from the seam that judged it to every seam that reports it. A
 translation per seam, or a copy per report, is a defect rather than an
-implementation choice (*What a delivery costs*).
+implementation choice (*What a delivery costs*). Repeated reach to one occurrence
+is one such report: a read that reaches it again retains the value it already
+froze rather than an equal second one.
 
 ## What a materialized value carries
 
