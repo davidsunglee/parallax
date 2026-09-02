@@ -1,8 +1,10 @@
-# A streamed page ordered by a document-resident `uuid` canonicalizes the root's
-# managed UUID through the resolved member before composing its seek. The caller
-# predicate and continuing statement bind the identical lowercase hyphenated
-# spelling; a carrier-based renderer could accidentally preserve another admitted
-# form and fail only on the generated second page this case requires.
+# A streamed page ordered by a document-resident `uuid` seeks past the extracted
+# text, `uuid` being text-compared and its canonical document spelling the
+# lowercase hyphenated one. The caller predicate and the continuing statement
+# therefore carry the identical spelling without either being derived from the
+# other; a page composing its seek off the root's own decoded UUID could preserve
+# another admitted form, and only the generated second page this case requires
+# would show it.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, uuid, document-layout, graph, slice-snapshot-1]
 shape: read

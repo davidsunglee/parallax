@@ -1,8 +1,9 @@
-# A streamed page ordered by a document-resident `time` carries a managed local
-# time into its generated continuation comparison. The authored equality and
-# later seek must both observe the canonical seconds spelling under the resolved
-# declaration, not infer a rendering from `datetime.time`. The full first page
-# and empty second page make the generated coordinate and bind form observable.
+# A streamed page ordered by a document-resident `time` seeks past the extracted
+# text its own ordering expression evaluated, never a rendering inferred from a
+# host `datetime.time`. `time` is text-compared, so the extraction carries no
+# cast and the captured carrier is already the canonical seconds spelling the
+# authored equality binds. The full first page and empty second page make the
+# captured cell and the form its carrier rebinds in observable.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, time, document-layout, graph, slice-snapshot-1]
 shape: read

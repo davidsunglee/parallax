@@ -422,8 +422,9 @@ def test_leaving_the_loop_early_reads_no_further_page() -> None:
 
 
 def test_a_later_page_seeks_past_the_last_root_of_the_page_before_it() -> None:
-    # The cursor falls out of publication: the last root delivered is what the
-    # next page's own predicate binds against.
+    # The position falls out of the page rather than out of publication: what the
+    # next page's seek binds is the coordinate the database evaluated for the last
+    # root the page before it kept.
     port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[_order_row(5)]))
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
         assert _ids(iter(stream)) == [1, 2, 5]
@@ -580,12 +581,12 @@ def _corrupt_pages(row: Callable[[], Row], position: int, *, size: int) -> Scrip
 @pytest.mark.parametrize("position", [0, 1, 2], ids=["first", "middle", "last"])
 @pytest.mark.parametrize("size", [2, 3])
 def test_a_checked_delivery_continues_past_an_invalid_sort_key(position: int, size: int) -> None:
-    # The rule this whole change exists for, and it is position- and page-size-
-    # independent so `batch_size` stays a performance dial: a root whose ORDERED-BY
-    # member contradicts the model is published as its record and the delivery
-    # carries on, because what the next page seeks past is the value the database's
-    # own `order by` expression evaluated — which exists whatever the stored value
-    # turned out to be.
+    # Invalid stored data ends no checked delivery, and it ends none at any
+    # position or page size, so `batch_size` stays a performance dial: a root whose
+    # ORDERED-BY member contradicts the model is published as its record and the
+    # delivery carries on, because what the next page seeks past is the value the
+    # database's own `order by` expression evaluated — which exists whatever the
+    # stored value turned out to be.
     with _orders(_corrupt_pages(_undecodable_qty_row, position, size=size)).stream(
         _by_qty(), batch_size=size
     ) as stream:
@@ -720,8 +721,9 @@ def test_a_streamed_milestone_set_publishes_every_milestone_at_its_own_edge_pin(
 def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() -> None:
     # The page statements the delivery actually ran: the key is constant across
     # the whole result, so an order ending in it would seek `pos_id > 1` and
-    # deliver ONE root. What each continuing page binds is the previous root's
-    # own milestone, as the managed instant retained by continuation planning.
+    # deliver ONE root. What each continuing page binds is the previous root's own
+    # milestone, as the database evaluated the edge term for it and the page
+    # captured it.
     port = _milestone_pages(size=1)
     with _positions(port).stream(_all_milestones(), batch_size=1) as stream:
         assert len(list(stream)) == 3

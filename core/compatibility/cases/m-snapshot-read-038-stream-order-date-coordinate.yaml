@@ -1,9 +1,12 @@
-# A streamed page ordered by a document-resident `date` derives its continuing
-# seek from the validated query and the last root's managed date coordinate.
-# The caller-authored equality and generated seek therefore bind the same
-# canonical ISO date through the same extraction form. One matching root fills
-# the page, so the empty second statement proves continuation was attempted;
-# comparing the Python carrier directly would not prove the declared-type seam.
+# A streamed page ordered by a document-resident `date` captures what its own
+# ordering extraction evaluated to and seeks past that carrier unchanged. The
+# canonical document spelling of a `date` already orders as text, so the
+# extraction compares WITHOUT a cast and the captured carrier IS the ISO text the
+# caller's authored equality binds — bound back as comparison text rather than
+# re-derived from a decoded date. One matching root fills the page, so the empty
+# second statement is what makes the captured cell and its rebind observable; a
+# page re-encoding the coordinate from a managed value would agree here only by
+# coincidence and would have nothing to encode for a corrupt one.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, date, document-layout, graph, slice-snapshot-1]
 shape: read

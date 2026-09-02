@@ -25,14 +25,21 @@ sizes and fan-outs is exactly
 
 ```text
 survivors = fixed + per_page_node x batch_size x (1 + fanout)
+                  + per_page_root x batch_size
                   + per_published_node x (1 + fanout)
 ```
 
-with the coefficients pinned as literals — 35 / 2 / 2 in the Typed lane, 36 / 2 /
-1 in the Wire lane. The Wire lane's one extra fixed object is the frozen sequence
-its published root spells the included relationship as, which a Typed root answers
-from its node state instead; there is one per relationship the include tree names,
-whatever the fan-out inside it, which is what makes it fixed. **There is
+with the coefficients pinned as literals — 41 / 2 / 1 / 2 in the Typed lane, 42 /
+2 / 1 / 1 in the Wire lane. The Wire lane's one extra fixed object is the frozen
+sequence its published root spells the included relationship as, which a Typed root
+answers from its node state instead; there is one per relationship the include tree
+names, whatever the fan-out inside it, which is what makes it fixed. The page-ROOT
+term is the coordinate the database evaluated for each root of the page, which is
+what a delivery advances on: it is one object per root position rather than per
+node — a child has no coordinate — and it holds its carriers in one tuple rather
+than wrapping each cell, so the page's own cost is `O(B x T)` in the Continuation
+Order rather than in the graph below it. The delivery's own carried position is one
+more of them, and is fixed. **There is
 no term in the total result size and no term in how far the delivery has got**,
 and both absences are read directly as well as by omission — over every survivor
 whatever defined its type, over the references those survivors hold, and in bytes
@@ -111,7 +118,7 @@ than a ratio.
 **The page size is the whole cost.** The working set is affine in it — about
 2,640 bytes per root position of the page at fan-out 4, in both lanes — because a
 page's sealed graph holds every projection for that page's roots and their
-children. A caller who wants a smaller working set asks for a smaller page and
+children, and the page holds one evaluated coordinate per root beside it. A caller who wants a smaller working set asks for a smaller page and
 pays for it in round trips, which the `us/root` column prices in the other
 direction: at page size 1 a delivery costs one round trip per root and reads more
 than twice as slowly per root as at page size 32.

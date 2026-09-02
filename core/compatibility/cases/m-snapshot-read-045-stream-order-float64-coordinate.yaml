@@ -1,8 +1,9 @@
-# A streamed page ordered by document-resident `float64` retains the binary64
-# value and projects its shortest canonical number under the resolved member.
-# The authored predicate and generated continuation both cast extraction to
-# `double precision` and bind `2.25`. This complements the binary32 witness by
-# proving the same Python carrier does not erase the declared width at page two.
+# A streamed page ordered by document-resident `float64` compares under the
+# declared width's cast to `double precision`, and captures and rebinds what that
+# cast evaluated. The authored predicate and the generated continuation carry the
+# same shortest canonical `2.25`. This complements the binary32 witness: the two
+# widths share one host carrier, and only the declaration decides which cast the
+# page's second statement is measured under.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, float64, document-layout, cast, graph, slice-snapshot-1]
 shape: read

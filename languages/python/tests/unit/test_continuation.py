@@ -162,10 +162,10 @@ def test_the_page_size_is_the_nodes_limit_rather_than_a_clause_of_its_own() -> N
 
 
 def test_the_continuation_order_is_not_readable_off_the_plan() -> None:
-    # Deliberate: a caller hands over a whole root and the plan selects its own
-    # terms, so there is no way to assemble a cursor the plan would then disagree
-    # with. Where the order is observable is where it is graded — the `orderBy`
-    # of the node `first` returns.
+    # Deliberate: a caller hands over one opaque coordinate and the plan states
+    # which terms it is measured against, so there is no way to assemble a cursor
+    # the plan would then disagree with. Where the order is observable is where it
+    # is graded — the `orderBy` of the node `first` returns.
     plan = _planned(ORDERS, "Order")
     assert not hasattr(plan, "order")
     assert not hasattr(plan, "key")

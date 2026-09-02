@@ -7,9 +7,10 @@
 # lexicographic remainder over ordinary comparisons and null checks. What changes
 # is that a member inside a Structured Column has no Column to name, so every one
 # of its occurrences lowers to the dialect's extraction and binds a Document Path
-# ahead of its own coordinate — on the ordering term, on each comparison, and on
-# each null check. A page here binds sixteen values where the same order over
-# Columns would bind four.
+# ahead of its own coordinate — on its hidden capture cell, on the ordering term,
+# on each comparison, and on each null check. A continuing page here binds
+# eighteen values, eleven of them Document Paths, where the same order over
+# Columns would bind seven and no path at all.
 #
 # The two resident terms divide the extraction's two forms. `destination` is a
 # `string`, whose canonical document spelling already orders as text, so it
@@ -52,7 +53,7 @@ shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "a streamed read's keyset seek - each continuing root statement binds the Document Path and the Continuation Order coordinate of every term, read off the root the previous page delivered last"
+  note: "a streamed read's keyset seek - each continuing root statement binds the Document Path and the Continuation Order coordinate of every term, captured by the previous page's own hidden cells for the root it delivered last"
 when:
   objectQuery:
     target: parallax.compatibility.Trip
