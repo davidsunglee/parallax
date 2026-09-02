@@ -117,11 +117,12 @@ class StoredDataIssueInput:
     """One classified stored-state contradiction with logical provenance.
 
     ``path`` keeps declared member names distinct from integer array positions.
-    ``stored_value`` is the already-frozen public evidence of what was rejected,
-    frozen where conversion translated the finding and shared by reference from
-    there on: nothing downstream re-reads or re-freezes it. Which projection's
-    copy a logical node publishes is settled by :meth:`GraphBuilder.add`, which
-    answers a repeated judgment with the record that node already retains.
+    ``stored_value`` is the already-frozen evidence of what was rejected, frozen
+    where conversion translated the finding: nothing downstream re-reads or
+    re-freezes it. Whether this record is the one its logical node publishes is
+    settled by :meth:`GraphBuilder.add`, which answers a repeated judgment with
+    the record that node already retains and drops the arriving copy. The
+    retained record is what every seam above shares by reference.
     """
 
     code: StoredDataIssueCode
