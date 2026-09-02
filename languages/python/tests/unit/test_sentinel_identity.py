@@ -3,11 +3,11 @@
 Each of these singletons answers a question no value could — absent, unloaded,
 missing, unavailable, SQL null, latest, unobserved, no stored member at all — and
 a site holding one alone asks ``is`` (a site holding a union whose other arms
-carry data reads the class instead, which is what narrows to those arms). A copy
-boundary is where the contract is easiest to lose silently: a second instance
-would answer ``is`` with ``False`` while looking identical in a traceback, so a
-sentinel that crossed a deep copy or a pickle would turn a settled question back
-into an open one.
+carry data reads the class instead, which is what narrows to those arms). Those
+two readings only agree while the class has one instance, so every route to one
+has to answer it: construction, and the copy and pickle boundaries where a
+second instance would answer ``is`` with ``False`` while looking identical in a
+traceback, turning a settled question back into an open one.
 
 The public API snapshot diffs ``__all__`` alone, so it cannot see this. Nothing
 else grades it either, which is why the contract is stated in ``python.md`` and
@@ -57,13 +57,11 @@ def test_a_sentinel_repr_names_the_export_a_reader_would_spell(name: str, sentin
     assert repr(sentinel) == name
 
 
-def test_a_sentinel_class_admits_no_second_meaningful_instance() -> None:
-    # A zero-field frozen dataclass compares a fresh instance equal to the
-    # singleton, so two notions of sameness would coexist where a use site asks
-    # `is`. These classes are plain identity classes: a second construction is a
-    # distinct object under both `is` and `==`.
-    assert type(NULL)() != NULL
-    assert type(MISSING)() != MISSING
-    assert type(UNAVAILABLE)() != UNAVAILABLE
-    assert type(SQL_NULL)() != SQL_NULL
-    assert type(MISSING_STORED_VALUE)() != MISSING_STORED_VALUE
+@pytest.mark.parametrize(("name", "sentinel"), _SENTINELS, ids=[name for name, _ in _SENTINELS])
+def test_a_sentinel_class_admits_no_second_instance(name: str, sentinel: object) -> None:
+    # Every class here is exported and callable, and the readers that hold a
+    # sentinel inside a union ask `isinstance` because that is what narrows to
+    # the arms carrying data. A second instance would satisfy those readers
+    # while answering `is` and `==` with `False` against the exported constant,
+    # so the class answers the constant instead of constructing one.
+    assert type(sentinel)() is sentinel, name

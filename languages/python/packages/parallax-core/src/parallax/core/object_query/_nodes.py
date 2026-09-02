@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Final, Literal, Self
+from typing import ClassVar, Final, Literal, Self
 
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.predicate import (
@@ -58,11 +58,18 @@ class Latest:
     re-resolves to whatever milestone is current at read time, so it is never
     replayable (python.md, the stale-web-edit recipe).
 
-    Sameness is identity: :data:`LATEST` is the one instance, and it stays that
-    one instance through a copy, a deep copy, and a pickle round trip.
+    Sameness is identity: :data:`LATEST` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[Latest | None] = None
+
+    def __new__(cls) -> Latest:
+        if Latest._instance is None:
+            Latest._instance = super().__new__(cls)
+        return Latest._instance
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
         return "LATEST"

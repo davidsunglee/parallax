@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final, Self
+from typing import ClassVar, Final, Self
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel import (
@@ -94,11 +94,18 @@ class Present:
 class ExplicitNull:
     """A member written as JSON null, distinct from an absent one.
 
-    Sameness is identity: :data:`NULL` is the one instance, and it stays that one
-    instance through a copy, a deep copy, and a pickle round trip.
+    Sameness is identity: :data:`NULL` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[ExplicitNull | None] = None
+
+    def __new__(cls) -> ExplicitNull:
+        if ExplicitNull._instance is None:
+            ExplicitNull._instance = super().__new__(cls)
+        return ExplicitNull._instance
 
     def __repr__(self) -> str:
         return "NULL"
@@ -116,11 +123,18 @@ class ExplicitNull:
 class Missing:
     """A member whose key the document does not carry.
 
-    Sameness is identity: :data:`MISSING` is the one instance, and it stays that
-    one instance through a copy, a deep copy, and a pickle round trip.
+    Sameness is identity: :data:`MISSING` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[Missing | None] = None
+
+    def __new__(cls) -> Missing:
+        if Missing._instance is None:
+            Missing._instance = super().__new__(cls)
+        return Missing._instance
 
     def __repr__(self) -> str:
         return "MISSING"

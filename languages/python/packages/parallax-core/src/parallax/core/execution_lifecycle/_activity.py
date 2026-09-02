@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable, Sized
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Final, Protocol, Self, runtime_checkable
+from typing import ClassVar, Final, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
 from parallax.core.auto_retry import retriable_failure
@@ -547,11 +547,18 @@ class _InertActivity:
     static is why they answer the singleton rather than ``self``, which is exact
     because this class exists solely to have :data:`INERT` as its one instance.
 
-    Sameness is identity: :data:`INERT` is the one instance, and it stays that
-    one instance through a copy, a deep copy, and a pickle round trip.
+    Sameness is identity: :data:`INERT` is the one instance, construction
+    answers it rather than making a second, and it stays that one instance
+    through a copy, a deep copy, and a pickle round trip.
     """
 
     __slots__ = ()
+    _instance: ClassVar[_InertActivity | None] = None
+
+    def __new__(cls) -> _InertActivity:
+        if _InertActivity._instance is None:
+            _InertActivity._instance = super().__new__(cls)
+        return _InertActivity._instance
 
     def __repr__(self) -> str:
         return "INERT"
