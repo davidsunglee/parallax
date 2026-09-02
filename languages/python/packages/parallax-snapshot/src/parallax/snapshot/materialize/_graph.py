@@ -413,10 +413,12 @@ class GraphBuilder:
     def seal(self, roots: tuple[int, ...], pin: Pin) -> SnapshotGraph:
         """Publish this builder's arrays as one sealed graph, roots in result order.
 
-        The builder is invalidated in the same step, and the key map it assigned
-        identity through is discarded with it: what a sealed graph carries is
-        what a merge reads, and nothing observes a half-published graph or writes
-        to a published one.
+        The builder is invalidated in the same step, and every array it
+        accumulated into is dropped with it — the key map it assigned identity
+        through and the pool it interned issue records against included: what a
+        sealed graph carries is what a merge reads, nothing observes a
+        half-published graph or writes to a published one, and a caller holding
+        the sealed builder holds none of what it published.
 
         A root whose own key did not decode becomes an :class:`InvalidRootInput`
         carrying its result ordinal and its issues, which is how a result
@@ -452,6 +454,7 @@ class GraphBuilder:
         self._views = []
         self._identity = {}
         self._first = []
+        self._retained = {}
         return SnapshotGraph(rows)
 
     # ----------------------------------------------------------------------- #
