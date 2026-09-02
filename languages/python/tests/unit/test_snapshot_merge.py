@@ -882,6 +882,26 @@ def test_a_sealed_builder_refuses_every_further_use() -> None:
             use()
 
 
+def test_a_sealed_builder_holds_none_of_what_it_accumulated() -> None:
+    # Sealing transfers the accumulation, so a caller who keeps the sealed
+    # builder keeps nothing the sealed graph carries — the interned issue
+    # records and their frozen evidence included, which is the only accumulator
+    # a caller cannot reach through the refusals above. Read over the declared
+    # slots rather than a list written here, so an accumulator added later is
+    # held to this without the case being remembered.
+    fixture = GraphFixture(_STORY_ORDERS, "parallax.compatibility.Order.items")
+    order = fixture.node("Order", _ORDER_ROW)
+    item = fixture.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
+    fixture.attach(order, "parallax.compatibility.Order.items", (item,))
+    builder = fixture.builder
+    kept = ("_schema", "_sealed")
+    accumulators = tuple(name for name in GraphBuilder.__slots__ if name not in kept)
+
+    assert any(getattr(builder, name) for name in accumulators)
+    fixture.graph(order)
+    assert [name for name in accumulators if getattr(builder, name)] == []
+
+
 def test_a_merge_refuses_a_builder_that_has_published_no_graph() -> None:
     builder, _ = _one_projection()
     with pytest.raises(TypeError, match="publishes no graph to read"):
