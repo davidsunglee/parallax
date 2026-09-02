@@ -364,6 +364,17 @@ the ordering clause that was emitted. What is settled here is the ORDER those
 comparisons are measured against, and the rule that the position a page resumes
 from is the coordinate of the last root that page **kept**.
 
+"Exactly the roots" has one stated exception, and it is bounded by storage rather
+than by data. Where a Continuation Order term the model declares **non-nullable**
+holds a stored `NULL` — which conforming storage cannot produce, and which the
+declared model therefore does not describe — the leading range `m-sql` hoists for
+the planner may place that root outside the seek, and the delivery does not deliver
+it. That is a deliberate trade: emitting a seek that admits it costs the leading
+index range on every page of every delivery, and the value it would recover is a
+row a `NOT NULL` constraint was supposed to make impossible. It is the same class
+`m-metamodel` already leaves to storage — a duplicate or absent physical key — and
+it is the ONLY invalid stored data a delivery may skip.
+
 A coordinate is physical and carries no authority. It is not decoded, revalidated,
 admitted as a managed value, published as a result, or turned back into one by any
 public constructor; it is compared only by its own equality, and a diagnostic copy
@@ -442,9 +453,13 @@ the Continuation Order has an evaluated coordinate by construction, whatever its
 stored data turned out to be, so a root whose sort key, primary key, or milestone
 edge contradicts the model is published exactly as a whole-result read publishes it
 — in band where the reading surface delivers classified roots in band, as a refusal
-where it refuses them — and the delivery carries on. A coordinate missing after
-execution is a violation of the `m-sql` / `m-db-port` contract rather than a stream
-state.
+where it refuses them — and the delivery carries on. An unknown discriminator, an
+undecodable scalar, a wrong-kind document, and a missing member all reach the caller
+this way, because none of them makes an ordering term `NULL`: the term still
+evaluates, the coordinate still ranks, and the seek still admits the root. The one
+value that does not is the stored `NULL` in a non-nullable term named above, which
+the hoisted leading range may exclude. A coordinate missing after execution is a
+violation of the `m-sql` / `m-db-port` contract rather than a stream state.
 
 The two deliver the same roots at the same pins whatever the query, and they
 deliver them in the same sequence wherever their two orders agree. Over **one**
