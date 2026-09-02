@@ -53,6 +53,7 @@ from parallax.core.base import (
     Decimal,
     NeutralType,
     PresentDocument,
+    UnknownFamilyTag,
 )
 from parallax.core.document_codec import DocumentFinding, encode_leaf
 from parallax.core.entity import graph_construction_of
@@ -840,7 +841,9 @@ def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], 
 
 
 def test_direct_attribute_null_and_unknown_family_tag_become_projection_issues() -> None:
-    node = _converted(CUSTOMER, "Customer", {"id": 1, "name": None}, family_tag_unknown=True)
+    node = _converted(
+        CUSTOMER, "Customer", {"id": 1, "name": None}, unknown_family_tag=UnknownFamilyTag("Zebra")
+    )
     assert [issue.code for issue in node.issues] == [
         "stored-data-family-tag-unknown",
         "stored-data-attribute-null",
@@ -902,7 +905,7 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
         ),
         (
             {"id": 1, "name": "Ada"},
-            {"family_tag_unknown": True, "family_tag": "Unicorn"},
+            {"unknown_family_tag": UnknownFamilyTag("Unicorn")},
             ("stored-data-family-tag-unknown", None, (), "Unicorn"),
         ),
         (

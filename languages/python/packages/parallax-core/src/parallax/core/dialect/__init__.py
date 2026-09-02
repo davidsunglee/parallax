@@ -236,6 +236,19 @@ class Dialect:
         """Prevent a discriminator-filtered derived table from being flattened."""
         return "offset 0", []
 
+    def native_placement(self, direction: Literal["asc", "desc"]) -> Literal["first", "last"]:
+        """Where this database puts a NULL in ``direction`` when nothing asks.
+
+        Not portable, and not observationally irrelevant: an ordering key that
+        lowers to the plain term — a non-nullable one, or one whose authored
+        placement is already this answer — leaves the database's own convention
+        deciding which side of the non-nulls a stored NULL falls on, and a
+        continuation seek past that key admits or excludes it accordingly.
+        Postgres treats NULL as the largest value and MariaDB as the smallest,
+        so the two are mirror images.
+        """
+        return "last" if direction == "asc" else "first"
+
     def null_order(
         self,
         column_sql: str,
@@ -253,11 +266,11 @@ class Dialect:
         LEADING rank term a dialect needs: Postgres compensates with a
         `nulls first`/`nulls last` suffix while MariaDB has no such syntax and
         compensates with a leading boolean rank term instead, and no caller composes
-        or splits either form. Where the dialect's native placement already answers
-        the request it returns the plain term — a deliberate lowering decision, not
-        an omission.
+        or splits either form. Where :meth:`native_placement` already answers the
+        request it returns the plain term — a deliberate lowering decision, not an
+        omission, and one a seek reads back through that same method.
         """
-        if (direction, placement) in (("asc", "last"), ("desc", "first")):
+        if placement == self.native_placement(direction):
             return f"{column_sql} {direction}"
         return f"{column_sql} {direction} nulls {placement}"
 

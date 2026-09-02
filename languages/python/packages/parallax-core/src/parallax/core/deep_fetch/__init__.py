@@ -33,6 +33,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.object_query._validated import (
+    Paging,
     ValidatedIncludePath,
     ValidatedIncludeSegment,
     ValidatedObjectQuery,
@@ -138,6 +139,7 @@ class ValidatedEntityQuery:
     narrow_to: tuple[EntityIdentity, ...] | None = None
     order_by: tuple[ValidatedOrderTerm, ...] = ()
     limit: int | None = None
+    paging: Paging | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +277,7 @@ def plan(
         order_by=query.order_by,
         projection=_projection_for(entity, families, projection),
         limit=query.limit,
+        paging=query.paging,
     )
 
     builder = _PlanBuilder(model=model, families=families, root_pins=root_pins)

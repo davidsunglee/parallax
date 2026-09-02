@@ -73,7 +73,7 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Co
         builder,
         source=ROOT_LEVEL,
         findings=materialized.findings,
-        family_tag_unknown=materialized.family_tag_unknown,
+        unknown_family_tag=materialized.unknown_family_tag,
         classified_members=materialized.classified_members,
     )
     rows = graph_rows(builder.seal((index,), Pin()))

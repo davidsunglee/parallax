@@ -17,7 +17,7 @@ import jsonschema
 import pytest
 from _second_dialect import BACKTICKED
 
-from _support.db_port import body_outcome
+from _support.db_port import body_outcome, projected_row
 from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
 from parallax.conformance._lifecycle_observation import LifecycleRun
@@ -1078,7 +1078,7 @@ class _QueuePort:
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return self._responses.pop(0)
+        return [projected_row(sql, row) for row in self._responses.pop(0)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -1499,7 +1499,7 @@ class _OrderWithItemsPort:
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return self._responses.pop(0)
+        return [projected_row(sql, row) for row in self._responses.pop(0)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError

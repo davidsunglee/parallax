@@ -58,7 +58,8 @@ def _stream_page(
     reports how much, because the statements after it belong to later pages.
     """
     root_rows = materialize.materialize_read(
-        case, execute.query_rows(case, reader, root_sql, root_binds)
+        case,
+        seek.without_captured_coordinates(execute.query_rows(case, reader, root_sql, root_binds)),
     )
     if not includes.query_has_includes(query):
         narrowed = materialize.narrow_to_variant_columns(case, root_rows)
@@ -125,7 +126,12 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
     while a full one is followed by one more root statement returning nothing,
     unless a declared ``limit`` was already delivered in full.
 
-    The FIRST page's own binds are the baseline the later pages are measured
+    Every page also projects one hidden coordinate cell per Continuation Order
+    term, which is what a delivery advances on, and both halves of that are
+    derived: the cells' own expressions from the order, and the Document Paths
+    they bind ahead of everything the page's `where` clause binds.
+
+    The FIRST page's remaining binds are the baseline the later pages are measured
     against rather than an independently derived list: the harness executes
     authored goldens rather than compiling the query, so a predicate's binds have
     no second source here. What is derived is everything the pages after it must
@@ -179,8 +185,10 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
         composed: seek.ComposedSeek | None = None
         if page == 0:
             first_root_sql = root_sql
+            seek.refuse_an_uncaptured_page(case, dialect, source, root_sql, terms)
+            cells = seek.capture_binds(terms)
             carried_binds = list(authored[:-1])
-            expected_binds: list[Any] = [*carried_binds, requested]
+            expected_binds: list[Any] = [*cells, *carried_binds[len(cells) :], requested]
             expected_bind_types: list[str | None] = [None] * len(expected_binds)
         else:
             composed = seek.composed_seek(terms, cursor)

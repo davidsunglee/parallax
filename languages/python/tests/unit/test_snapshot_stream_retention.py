@@ -136,7 +136,7 @@ from memory_instruments import (
     whole_heap,
 )
 
-from _support.db_port import body_outcome
+from _support.db_port import body_outcome, projected_row
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
@@ -293,7 +293,7 @@ class _GeneratingPort:
                 for offset in range(self._fanout)
             ]
         self._page = self._next_page(cast("int", binds[-1]))
-        return [_order_row(order_id) for order_id in self._page]
+        return [projected_row(sql, _order_row(order_id)) for order_id in self._page]
 
     def _next_page(self, size: int) -> tuple[int, ...]:
         taken = min(size, self._total - self._delivered)
@@ -328,8 +328,11 @@ class _WritingPort(_GeneratingPort):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        del document_reads, sql
-        return [_account_row(account_id) for account_id in self._next_page(cast("int", binds[-1]))]
+        del document_reads
+        return [
+            projected_row(sql, _account_row(account_id))
+            for account_id in self._next_page(cast("int", binds[-1]))
+        ]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         del sql, binds
@@ -379,6 +382,7 @@ class _Namespace(NamedTuple):
     opener: _Opener
     fixed: int
     per_page_node: int
+    per_page_root: int
     per_published_node: int
 
     def survivors_for(self, *, batch_size: int, fanout: int) -> int:
@@ -386,17 +390,29 @@ class _Namespace(NamedTuple):
         return (
             self.fixed
             + self.per_page_node * batch_size * nodes_per_root
+            + self.per_page_root * batch_size
             + self.per_published_node * nodes_per_root
         )
 
 
-_TYPED: Final = _Namespace("typed", _typed_stream, fixed=46, per_page_node=2, per_published_node=2)
+_TYPED: Final = _Namespace(
+    "typed", _typed_stream, fixed=41, per_page_node=2, per_page_root=1, per_published_node=2
+)
 """The Typed lane. Two objects per page node — the Source Hint a page retains for
-it and the Object Key that hint is filed under — and two per published node, the
-frozen Entity instance and the node state naming what it was read from."""
+it and the Object Key that hint is filed under — one per page ROOT rather than
+per node, the coordinate the database evaluated for it, and two per published
+node, the frozen Entity instance and the node state naming what it was read
+from.
 
-_WIRE: Final = _Namespace("wire", _wire_stream, fixed=47, per_page_node=2, per_published_node=1)
-"""The Wire lane. The same page term, because retention is a property of the read
+The root term is what makes the page's cost `O(B x T)` in the Continuation Order
+rather than in the graph below it: children have no coordinate, and a coordinate
+holds its carriers in one tuple rather than wrapping each cell. The delivery's
+own carried position is one more of them, and is fixed."""
+
+_WIRE: Final = _Namespace(
+    "wire", _wire_stream, fixed=42, per_page_node=2, per_page_root=1, per_published_node=1
+)
+"""The Wire lane. The same page terms, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
 value tree carries its own state in the tree rather than beside it. One MORE
 fixed object than the Typed lane — the frozen sequence the published root's one
@@ -629,8 +645,8 @@ _SOURCES: Final = frozenset(
         "parallax.core.unit_work.retain",
         "parallax.core.unit_work.write_planner",
         "parallax.snapshot._inspection",
-        "parallax.snapshot._read_result",
         "parallax.snapshot.handle._database",
+        "parallax.snapshot.handle._page",
         "parallax.snapshot.handle._planning",
         "parallax.snapshot.handle._read",
         "parallax.snapshot.handle._stream",
@@ -650,11 +666,12 @@ part of a coefficient.
 
 The frontier is the interesting half. The metamodel entry is the canonical
 relationship identity shared by the validated include and its view keys. There
-is no entry for the merge module, the read result's own snapshot, or anything
-under ``parallax.core.sql_gen`` — a page is planned and compiled and the products
-of both are gone by the time it is published — and none for the Wire view a Wire
-delivery was opened through, which is answered fresh per access and released as
-soon as the stream exists.
+is no entry for the merge module, for the eager executor's own result carrier — a
+delivery holds the page it read rather than a find's — or anything under
+``parallax.core.sql_gen``, a page being planned and compiled and the products of
+both gone by the time it is published; and none for the Wire view a Wire delivery
+was opened through, which is answered fresh per access and released as soon as
+the stream exists.
 """
 
 

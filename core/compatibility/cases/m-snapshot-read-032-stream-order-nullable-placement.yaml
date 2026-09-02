@@ -40,20 +40,20 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.sku asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 order by t0.sku is null, t0.sku asc, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.sku asc, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.sku is null, t0.sku asc, t0.id asc limit ?
       binds: [2]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku asc, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
       binds: [A-300, A-300, 3, 2]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku asc, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
       binds: [B-200, B-200, 2, 2]
     - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where (t0.sku is null and t0.id > ?) order by t0.sku asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where (t0.sku is null and t0.id > ?) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku is null and t0.id > ?) order by t0.sku asc, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku is null and t0.id > ?) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
       binds: [4, 2]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders
   graph:

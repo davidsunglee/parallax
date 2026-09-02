@@ -397,7 +397,7 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         "t0.qty, t0.price, t0.active, t0.ordered_on from orders t0', binds=()), "
         "narrow_to=None, target=EntityIdentity(namespace='parallax.compatibility', name='Order'), "
         "resolved_position=(EntityIdentity(namespace='parallax.compatibility', name='Order'),), "
-        "documents=(), projected_documents=(), document_reads=(), "
+        "documents=(), projected_documents=(), document_reads=(), coordinate_reads=(), "
         "_transform=_IdentityTransform())"
     )
 

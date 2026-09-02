@@ -24,7 +24,7 @@ import pytest
 from _metamodel_support import Declaration, attribute, key, source
 from _second_dialect import BACKTICKED
 
-from _support.db_port import body_outcome
+from _support.db_port import body_outcome, projected_row
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, models, sweep
 from parallax.conformance._actual_wire import ActualWireProjection
@@ -1710,7 +1710,8 @@ class _ScriptedPort:
         if self._raise_on_read is not None:
             raise self._raise_on_read
         self.reads.append((sql, tuple(binds)))
-        return self._read_rows.pop(0) if self._read_rows else []
+        rows = self._read_rows.pop(0) if self._read_rows else []
+        return [projected_row(sql, row) for row in rows]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.writes.append((sql, tuple(binds)))
@@ -5842,7 +5843,7 @@ class QueueDbPort:
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return self._responses.pop(0)
+        return [projected_row(sql, row) for row in self._responses.pop(0)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError

@@ -312,9 +312,48 @@ deeply immutable, and no public constructor or serialization contract exists.
 
 The product is the complete resolved meaning of one authored Object Query, not a
 lowered SQL request and not a wrapper rebuilt from selected clauses. A producer-
-owned page-derivation operation accepts a validated base plus an already-validated
-seek predicate, resolved effective order, and cap, and returns another
-`ValidatedObjectQuery` without re-resolving or decoding the base.
+owned page-derivation operation accepts a validated base plus a paging state,
+resolved effective order, and cap, and returns another `ValidatedObjectQuery`
+without re-resolving or decoding the base. The base's own Predicate is carried
+through unchanged: a page's seek is not an authored comparison.
+
+### Paging state
+
+A validated query MAY carry a producer-owned paging state. Its presence means the
+read is one page of a streamed delivery and MUST capture one coordinate per
+Continuation Order term; its absence means the read captures none. Two independent
+flags are forbidden — capturing nothing while continuing from somewhere is not a
+representable state.
+
+A paging state carries at most one `ValidatedSeek`. Absence is the first page,
+which admits every result the caller's own Predicate does.
+
+```text
+ValidatedSeek
+  terms       ContinuationTerm[]        the WHOLE Continuation Order, in precedence
+  coordinate  ContinuationCoordinate    positionally aligned with terms
+
+ContinuationTerm
+  identity    the Attribute the term orders by
+  direction   asc | desc
+  nulls       first | last              the authored Null Placement
+  nullable    whether the member can hold a NULL at all
+
+ContinuationCoordinate
+  carriers    one opaque value per term, positionally, exactly as that term's
+              ordering expression evaluated it and normalized once at capture
+  equality    structural over those carriers
+  snapshot    an inert copy for diagnostics, with no way back to a coordinate
+```
+
+A coordinate is physical. It is never decoded, revalidated, admitted as a managed
+value, published as a result, or compared by anything but its own equality. `m-sql`
+is the only module that constructs one or reads what a carrier means; every other
+module carries it opaquely.
+
+The lexicographic expansion of a seek into comparisons is NOT part of this
+product. It cannot be settled without knowing where the dialect placed a NULL in
+the ordering clause that was emitted, which is `m-sql`'s own answer.
 
 `m-deep-fetch` is the mandatory next phase. It consumes
 `ValidatedObjectQuery` and produces the resolved flat-read products for the root

@@ -1889,6 +1889,7 @@ type = "layers"
 layers = [
     "parallax.core.sql_gen._write",
     "parallax.core.sql_gen._compile",
+    "parallax.core.sql_gen._seek",
     "parallax.core.sql_gen._predicate",
     "parallax.core.sql_gen._navigation",
     "parallax.core.sql_gen._inheritance",
@@ -1901,6 +1902,7 @@ type = "forbidden"
 source_modules = [
     "parallax.core.sql_gen._write",
     "parallax.core.sql_gen._compile",
+    "parallax.core.sql_gen._seek",
     "parallax.core.sql_gen._predicate",
     "parallax.core.sql_gen._navigation",
     "parallax.core.sql_gen._inheritance",

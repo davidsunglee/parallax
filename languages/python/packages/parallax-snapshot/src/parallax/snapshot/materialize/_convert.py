@@ -39,6 +39,7 @@ from parallax.core.base import (
     NeutralType,
     PresentDocument,
     SqlNull,
+    UnknownFamilyTag,
     admits_stored_scalar,
     unwrap_document_read,
 )
@@ -149,8 +150,7 @@ def convert_row(
     *,
     source: SourceLevel,
     findings: tuple[DocumentFinding, ...] = (),
-    family_tag_unknown: bool = False,
-    family_tag: object = None,
+    unknown_family_tag: UnknownFamilyTag | None = None,
     classified_members: frozenset[str] = frozenset(),
 ) -> int:
     """Convert one SQL-materialized row into ``builder``'s next projection.
@@ -172,8 +172,8 @@ def convert_row(
     issue the latter records — which is what keeps a member the read omitted
     distinguishable from one stored null.
 
-    ``findings``, ``family_tag_unknown``, ``family_tag``, and
-    ``classified_members`` are the compiled row transform's provenance.
+    ``findings``, ``unknown_family_tag``, and ``classified_members`` are the
+    compiled row transform's provenance.
     Conversion translates those findings and does not re-judge members the
     transform already classified. Each judgment's own rejected value converges
     here, where this row's conversion freezes it into an issue record of its own.
@@ -191,12 +191,12 @@ def convert_row(
     issues: list[StoredDataIssueInput] = [
         _translate_finding(finding, level) for finding in findings
     ]
-    if family_tag_unknown:
+    if unknown_family_tag is not None:
         issues.append(
             StoredDataIssueInput(
                 "stored-data-family-tag-unknown",
                 level.concrete_entity,
-                stored_value=freeze_evidence(family_tag),
+                stored_value=freeze_evidence(unknown_family_tag.stored_value),
             )
         )
     members: list[object] = []

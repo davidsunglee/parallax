@@ -7,29 +7,32 @@ same cross-language contract the ``1 + L`` shape is — every target must lower
 the same SQL for the same page — so the keyset algebra is stated once here
 rather than re-derived per implementation.
 
-The plan answers two nodes and one question about a root.
-:meth:`ContinuationPlan.first` is the first page: the caller's own query under
-the Continuation Order, capped at the page size. :meth:`ContinuationPlan.after`
-is every later page: the same node with the caller's predicate conjoined with
-the seek that skips everything already delivered. And
-:meth:`ContinuationPlan.continues_from` is whether a root supplies the
-coordinates that seek would bind — the question a delivery asks of every root it
-publishes rather than only of the one a page happens to end on.
+The plan answers two nodes. :meth:`ContinuationPlan.first` is the first page:
+the caller's own query under the Continuation Order, capped at the page size.
+:meth:`ContinuationPlan.after` is every later page: the same node carrying the
+seek that skips everything already delivered.
 
-The Continuation Order itself is deliberately NOT readable off the plan. A
-caller hands over the last root's whole member map and the plan selects its own
-terms, so there is no way to assemble a cursor the plan would then disagree
-with; where the order is observable is where it is graded, as the ``orderBy`` of
-the node :meth:`ContinuationPlan.first` returns.
+That seek is a VALUE rather than predicate nodes. Continuation owns which terms
+are in the order and in what precedence; what "strictly after" expands into
+cannot be settled here, because it depends on where the dialect placed a NULL in
+the clause m-sql emitted. So this module hands over a
+:class:`~parallax.core.object_query._validated.ValidatedSeek` — the order plus
+one opaque coordinate — and m-sql lowers the branch tree.
+
+The coordinate is the one the database itself evaluated for the last delivered
+root, carried through here without being inspected. Nothing about a root's
+decoded members reaches this module, which is what lets a delivery continue past
+a root whose stored data contradicted the model.
+
+The Continuation Order itself is deliberately NOT readable off the plan: where
+it is observable is where it is graded, as the ``orderBy`` of the node
+:meth:`ContinuationPlan.first` returns.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
 
-from parallax.core.base import ManagedValue
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -41,31 +44,14 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import OrderKey
 from parallax.core.object_query._validated import (
+    ContinuationCoordinate,
+    ContinuationTerm,
+    Paging,
     ValidatedObjectQuery,
     ValidatedOrderTerm,
+    ValidatedSeek,
     derive_page,
     resolved_order_term,
-)
-from parallax.core.predicate import (
-    Group,
-    NoneOp,
-    Or,
-)
-from parallax.core.predicate._validated import (
-    ValidatedPredicate,
-)
-from parallax.core.predicate._validated import (
-    compose as _compose,
-)
-from parallax.core.predicate._validated import (
-    conjunction as _validated_conjunction,
-)
-from parallax.core.predicate._validated import empty_predicate as _empty_predicate
-from parallax.core.predicate._validated import (
-    managed_comparison as _managed_comparison,
-)
-from parallax.core.predicate._validated import (
-    null_check as _null_check,
 )
 from parallax.core.temporal_read import scans_validated_axis
 
@@ -78,23 +64,21 @@ class ContinuationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class _Term:
-    """One Continuation Order term, resolved to everything a seek needs of it.
+    """One Continuation Order term, in both spellings one page needs of it.
 
-    The resolved fields are what the page order and seek are composed from: the
-    member the cursor coordinate is read under, the effective direction and null
-    placement, and whether the ordering can put a null anywhere at all.
+    ``resolved`` is the ordering clause the page node carries; ``portable`` is
+    the same term as the seek reads it. Both are derived here from one
+    resolution of the member, so the clause a page orders by and the branch tree
+    m-sql expands cannot disagree about a term's direction or Null Placement.
     """
 
-    identity: AttributeIdentity
-    direction: Literal["asc", "desc"]
-    nulls: Literal["first", "last"]
-    nullable: bool
     member: AttributeMetadata
     resolved: ValidatedOrderTerm
+    portable: ContinuationTerm
 
     @property
-    def attr(self) -> str:
-        return _reference(self.identity)
+    def identity(self) -> AttributeIdentity:
+        return self.member.identity
 
 
 class ContinuationPlan:
@@ -117,90 +101,39 @@ class ContinuationPlan:
         self._terms = terms
 
     def first(self, *, limit: int) -> ValidatedObjectQuery:
-        """The first page: the caller's query, ordered and capped at ``limit``."""
-        return derive_page(
-            self._query,
-            seek=None,
-            order_by=tuple(term.resolved for term in self._terms),
-            limit=limit,
-        )
+        """The first page: the caller's query, ordered and capped at ``limit``.
 
-    def after(
-        self, last_root: Mapping[AttributeIdentity, object], *, limit: int
-    ) -> ValidatedObjectQuery:
-        """The page following the root whose members are ``last_root``.
-
-        The mapping is the whole root, keyed by Attribute Identity; which of its
-        members the cursor is made of is this plan's own answer, so no caller
-        can assemble one this plan would disagree with.
-
-        The seek is composed of top-level conjuncts of the caller's own
-        predicate and never of terms nested inside it, because that is what a
-        planner reaches an index range through: an ordinary AND-qual over the
-        leading ordering column. The caller's terms bind first, so bind order
-        stays caller-first exactly as an injected as-of term leaves it.
+        It carries paging without a seek, which is what makes it capture the
+        coordinates a later page will advance from while admitting every root
+        the caller's own predicate does.
         """
-        seek_terms = self._seek(last_root)
-        seek = seek_terms[0] if len(seek_terms) == 1 else _validated_conjunction(*seek_terms)
-        return derive_page(
-            self._query,
-            seek=seek,
-            order_by=tuple(term.resolved for term in self._terms),
-            limit=limit,
-        )
+        return self._page(Paging(), limit=limit)
 
-    def continues_from(self, root: Mapping[AttributeIdentity, object]) -> bool:
-        """Whether ``root`` carries a coordinate for every term the seek binds.
+    def after(self, coordinate: ContinuationCoordinate, *, limit: int) -> ValidatedObjectQuery:
+        """The page following the root that stood at ``coordinate``.
 
-        Only decoded values are bindable, so a root missing one of the plan's own
-        members can begin no later page. The question is asked of every published
-        root rather than only of the one a page ends on, which is what keeps the
-        page size from deciding whether a stored row is survivable.
+        The coordinate is the whole Continuation Order's worth of carriers the
+        database evaluated for that root, positionally — never a selection a
+        caller assembled, and never anything materialization decoded. It is
+        carried into the node opaquely: this plan states which terms the seek
+        is measured against and in what precedence, and m-sql expands that into
+        the comparisons a page actually admits roots through.
         """
-        return all(term.identity in root for term in self._terms)
-
-    def _seek(
-        self, last_root: Mapping[AttributeIdentity, object]
-    ) -> tuple[ValidatedPredicate, ...]:
-        """The conjuncts admitting exactly the roots after ``last_root``.
-
-        One term needs one strict comparison, which is already the top-level
-        AND-qual a hoist exists to supply. Several need the lexicographic
-        remainder — one disjunct per tie depth — and, ahead of it, the redundant
-        non-strict comparison on the leading term that gives a planner a leading
-        range to seek: the remainder alone offers nothing to push down, so it
-        plans as a scan from the head of the index or as a disjunction that
-        discards index order under the page's own ``order by`` and ``limit``.
-        """
-        coordinates = tuple(self._coordinate(term, last_root) for term in self._terms)
-        lead = self._terms[0]
-        if len(self._terms) == 1:
-            return (_strictly_after(lead, coordinates[0]),)
-        remainder = _remainder(self._terms, coordinates)
-        if lead.nullable:
-            return (remainder,)
-        return (_hoist(lead, coordinates[0]), remainder)
-
-    def _coordinate(
-        self, term: _Term, last_root: Mapping[AttributeIdentity, object]
-    ) -> ManagedValue | None:
-        """``term``'s managed coordinate from the last delivered root.
-
-        Continuation predicate construction adopts the value the managed root
-        already carries. Predicate lowering owns its eventual bind carrier and
-        canonical Wire observation; this seam neither renders nor re-decodes it.
-
-        A member the root does not carry — one whose stored value no conforming
-        member could hold — leaves nothing bindable to continue from, so it is
-        refused by name rather than paged past.
-        """
-        if term.identity not in last_root:
+        if len(coordinate.carriers) != len(self._terms):
             raise ContinuationError(
-                f"{term.identity.name}: the Continuation Order names a member the delivered "
-                "root does not carry"
+                f"the Continuation Order has {len(self._terms)} term(s) and the coordinate "
+                f"carries {len(coordinate.carriers)}"
             )
-        value = last_root[term.identity]
-        return cast("ManagedValue | None", value)
+        seek = ValidatedSeek(tuple(term.portable for term in self._terms), coordinate)
+        return self._page(Paging(seek=seek), limit=limit)
+
+    def _page(self, paging: Paging, *, limit: int) -> ValidatedObjectQuery:
+        return derive_page(
+            self._query,
+            paging=paging,
+            order_by=tuple(term.resolved for term in self._terms),
+            limit=limit,
+        )
 
 
 def plan(query: ValidatedObjectQuery, model: Metamodel) -> ContinuationPlan:
@@ -246,121 +179,29 @@ def _milestone_edge(
     return tuple(axis.start_attribute for axis in axes)
 
 
-def _remainder(
-    terms: tuple[_Term, ...], coordinates: tuple[ManagedValue | None, ...]
-) -> ValidatedPredicate:
-    """The lexicographic disjunction: one branch per tie depth.
-
-    A depth whose term admits nothing after its own coordinate — a null under
-    Nulls Last, which every remaining null ties with and no row follows —
-    contributes no branch, because a branch that matches no row is one a reader
-    has to reason past to see what the seek does.
-
-    A branch that ties with something is grouped, because an ``and`` inside an
-    ``or`` reads as a branch of it, and its own "strictly after" is grouped in
-    turn where that is a disjunction — a nullable term under Nulls Last is
-    strictly after its coordinate OR null, and ungrouped beside its ties the
-    ``or`` would escape them and admit every null of that term whatever the terms
-    above it hold. The leading branch is grouped neither way: it ties with
-    nothing, so whatever it is composed of is already a disjunct of the whole.
-    Where a single branch survives beside another term, it is never the leading
-    one alone — every order carries the primary key, a non-nullable term whose
-    branch drops under no coordinate — so the remainder handed back as one node is
-    never an ungrouped disjunction.
-    """
-    branches: list[ValidatedPredicate] = []
-    for depth, term in enumerate(terms):
-        after = _strictly_after(term, coordinates[depth])
-        if isinstance(after.authored, NoneOp):
-            continue
-        ties = tuple(_ties_with(terms[at], coordinates[at]) for at in range(depth))
-        if not ties:
-            branches.append(after)
-            continue
-        within = _group(after) if isinstance(after.authored, Or) else after
-        conjunction = _validated_conjunction(*ties, within)
-        branches.append(_group(conjunction))
-    if len(branches) == 1:
-        return branches[0]
-    disjunction = Or(operands=tuple(branch.authored for branch in branches))
-    return _group(_compose(disjunction, *branches))
-
-
-def _hoist(term: _Term, coordinate: ManagedValue | None) -> ValidatedPredicate:
-    """``term`` non-strictly past ``coordinate`` — the redundant leading range.
-
-    Emitted only for a NON-NULLABLE leading term. With nulls placed after a
-    non-null coordinate, "after" is two disjoint ranges of the index and no
-    single comparison covers both, so there is nothing to hoist.
-    """
-    if coordinate is None:  # pragma: no cover - hoisting is limited to a non-nullable lead
-        raise ContinuationError(f"{term.attr}: a non-nullable continuation coordinate is null")
-    return _managed_comparison(
-        op="greaterThanEquals" if term.direction == "asc" else "lessThanEquals",
-        attr=term.attr,
-        member=term.member,
-        value=coordinate,
-    )
-
-
-def _strictly_after(term: _Term, coordinate: ManagedValue | None) -> ValidatedPredicate:
-    """Everything ``term`` orders strictly after ``coordinate``.
-
-    Measured in the term's OWN ordering: a descending term reverses the
-    comparison, and a nullable term's Null Placement decides which side of the
-    non-nulls its nulls fall on. A null coordinate ties with every other null, so
-    what follows it is the non-nulls under Nulls First and nothing at all under
-    Nulls Last.
-    """
-    if coordinate is None:
-        if term.nulls == "first":
-            return _null_check(op="isNotNull", attr=term.attr, member=term.member)
-        return _empty_predicate()
-    strict = _managed_comparison(
-        op="greaterThan" if term.direction == "asc" else "lessThan",
-        attr=term.attr,
-        member=term.member,
-        value=coordinate,
-    )
-    if term.nullable and term.nulls == "last":
-        is_null = _null_check(op="isNull", attr=term.attr, member=term.member)
-        return _compose(Or(operands=(strict.authored, is_null.authored)), strict, is_null)
-    return strict
-
-
-def _ties_with(term: _Term, coordinate: ManagedValue | None) -> ValidatedPredicate:
-    if coordinate is None:
-        return _null_check(op="isNull", attr=term.attr, member=term.member)
-    return _managed_comparison(op="eq", attr=term.attr, member=term.member, value=coordinate)
-
-
-def _group(predicate: ValidatedPredicate) -> ValidatedPredicate:
-    return _compose(Group(operand=predicate.authored), predicate)
-
-
 def _term(key: OrderKey, model: Metamodel) -> _Term:
+    """One appended term from the generated Sort Key naming it.
+
+    An appended key omits `direction` and `nulls` nowhere else, so the schema
+    defaults are applied here rather than left for a reader to infer.
+    """
     attribute = _attribute(key.attr, model)
     direction = key.direction or "asc"
     nulls = key.nulls or "last"
-    return _Term(
-        identity=attribute.identity,
-        direction=direction,
-        nulls=nulls,
-        nullable=attribute.nullable,
-        member=attribute,
-        resolved=resolved_order_term(attribute, direction=direction, nulls=nulls),
-    )
+    return _term_from_resolved(resolved_order_term(attribute, direction=direction, nulls=nulls))
 
 
 def _term_from_resolved(term: ValidatedOrderTerm) -> _Term:
     member = term.member
     return _Term(
-        identity=member.identity,
-        direction=term.direction,
-        nulls=term.nulls,
-        nullable=member.nullable,
         member=member,
         resolved=term,
+        portable=ContinuationTerm(
+            identity=member.identity,
+            direction=term.direction,
+            nulls=term.nulls,
+            nullable=member.nullable,
+        ),
     )
 
 

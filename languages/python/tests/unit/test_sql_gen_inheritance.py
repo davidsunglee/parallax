@@ -427,7 +427,7 @@ def test_tph_document_materialization_decodes_only_the_tagged_variant_shape() ->
     unknown = compiled.materialize_row(
         {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})}
     )
-    assert unknown.family_tag_unknown
+    assert unknown.unknown_family_tag is not None
 
 
 def test_tph_document_row_projection_pads_members_outside_the_tagged_variant() -> None:
@@ -895,7 +895,7 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
             "meta": PresentDocument({"note": "unclassified"}),
         }
     )
-    assert unknown.family_tag_unknown
+    assert unknown.unknown_family_tag is not None
     assert unknown.resolved_entity.name == "Root"
 
 
@@ -1025,7 +1025,7 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     wolf_row = compiled.transform_row({"id": 1, "kind": "wolf", "howl": "aooo"})
     assert wolf_row["familyVariant"] == "Wolf"
     unknown = compiled.materialize_row({"id": 2, "kind": "bear", "howl": None})
-    assert unknown.family_tag_unknown
+    assert unknown.unknown_family_tag is not None
 
 
 def test_tpcs_union_read_renames_the_projected_literal_column() -> None:

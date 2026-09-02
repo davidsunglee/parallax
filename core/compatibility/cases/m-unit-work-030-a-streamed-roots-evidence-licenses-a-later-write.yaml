@@ -54,12 +54,12 @@ when:
       note: the first delivery — two pages, the second one root short of the size it asked for
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
           binds: [2]
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
           binds: [2, 2]
       referenceSql: select id, owner, balance, version from account
       expectRows:
@@ -91,12 +91,12 @@ when:
       note: the second delivery — its first page force-flushes the pending intent and then observes account 1 at generation two
       statements:
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 order by t0.id asc limit ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
           binds: [2]
         - sql:
-            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
-            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id > ? order by t0.id asc limit ?
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
           binds: [2, 2]
       referenceSql: select id, owner, balance, version from account
       expectRows:

@@ -498,12 +498,86 @@ composes the placement itself. The canonical Postgres terms are `t0.col asc`,
 `asc`/`last`, `asc`/`first`, `desc`/`last`, and `desc`/`first` respectively;
 `m-dialect`'s table is normative for every dialect.
 
+### Continuation coordinates — capture, seek, rebind
+
+A read carrying a **paging state** (`m-object-query`) is one page of a streamed
+delivery, and lowers three things from ONE resolution of each Continuation Order
+term: the `order by` term itself, a hidden result cell capturing what that term
+evaluated to, and — where the paging state carries a seek — the comparisons the
+next page admits roots through. The three MUST come from that one resolution.
+Deriving them independently makes their agreement a coincidence of construction,
+and a coordinate that differs from what the database ordered by silently skips or
+repeats roots.
+
+**Capture.** A paging read projects one additional select-list cell per term, in
+term order, aliased `parallax_seek_<n>` at the term's own index, in the alias spelling every
+projected cell uses (`<expression> <alias>`, no `as`), appended after
+every cell the read's own projection decided. The cell's expression is the term's
+own compared expression — the alias-qualified Column for a direct member, the
+dialect's extraction under the declared type's cast for a document-resident one —
+and it is emitted from the same resolution as the ordering term, path binds
+included. No projected cell is ever reused as a coordinate, even where it would be
+identical: a `bytes` member projects hex-encoded while its ordering expression does
+not, a document-resident member has no projected cell at all, and casts apply on
+the ordering path but never on projection, so the slice where reuse is provable is
+too thin to be worth being wrong about. Where the ordering is emitted against a
+wrapped `union all`'s own result aliases, so are the capture cells.
+
+A cell's value crosses the port as an ordinary scalar result under the name the
+compiler chose. Nothing decodes it, admits it as a managed value, or lets it reach
+a result form: the materializing consumer lifts it off the row by name, exactly as
+the inheritance discriminator is lifted, and carries it as the read's
+`ContinuationCoordinate`. Byte-like carriers are copied at capture, so a coordinate
+never holds a buffer the provider still owns.
+
+**Seek.** A paging state's `ValidatedSeek` lowers to the lexicographic branch tree,
+conjoined after the caller's own predicate:
+
+```text
+after(d)   carrier is null and the emitted clause placed NULLs first -> col is not null
+           carrier is null and it placed them last                   -> the branch is dropped
+           the member is nullable and it placed them last            -> col <strict> ? or col is null
+           otherwise                                                 -> col <strict> ?
+
+tie(d)     carrier is null -> col is null
+           otherwise       -> col = ?
+
+branch(d)  tie(0) and … and tie(d-1) and after(d), grouped where it is a conjunction,
+           with after(d) grouped in turn where it is itself a disjunction
+```
+
+`<strict>` is `>` for an ascending term and `<` for a descending one. The branches
+that survive are disjoined and grouped where more than one does. Ahead of them, for
+a **non-nullable** leading term over a non-null carrier, the redundant non-strict
+range `col >=|<= ?` is emitted as its own top-level conjunct: the disjunction alone
+offers a planner nothing to push down. Where the leading term is nullable, "after"
+is two disjoint ranges of the index and no single comparison covers both, so
+nothing is hoisted.
+
+Which branches survive depends on where the **emitted** clause placed a `NULL`,
+which the compiler knows rather than assumes: the authored placement for a nullable
+term, whose clause compensated, and `m-dialect`'s native placement for every other
+term, whose clause went out plain. A coordinate the emitted ordering placed last
+leaves every branch dropped; the seek then admits nothing (`1 = 0`) and the page is
+an ordinary statement returning no root.
+
+**Rebind.** Each comparison binds its carrier in the form its own expression
+compares — a direct Column in the engine's own column type, a document extraction
+that casts in the declared type, and one that does not as the codec's comparison
+text — which is the split an authored predicate over the same member already takes.
+Seek binds append after the caller's authored predicate binds, so bind order stays
+caller-first; the ordering clause's own path binds follow them, and the cap last.
+A capture cell's path binds precede everything the `where` clause binds, because
+the cell's holes precede it in the statement.
+
 ### Clause order
 
 The `EntityQuery` ordering and cap fields lower into the fixed clause order
 (rule 5):
 `select … from … [where …] [order by …] [limit …]`. `orderBy` and `limit`
-therefore always follow any predicate.
+therefore always follow any predicate. A paging read's capture cells sit inside
+the select list and its seek inside the `where` clause, so the clause order is the
+same one every read has.
 
 ## Joins by navigation
 

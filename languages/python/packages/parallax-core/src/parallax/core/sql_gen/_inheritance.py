@@ -68,6 +68,7 @@ from parallax.core.base import (
     NeutralType,
     PresentDocument,
     SqlNull,
+    UnknownFamilyTag,
     unwrap_document_read,
 )
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
@@ -182,18 +183,17 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 class RowTransformResult:
     """One row transform's values and all provenance needed by its consumers.
 
-    ``family_tag`` is the stored discriminator the row carried, retained only
-    where ``family_tag_unknown`` reports that it resolved to no composed
-    concrete subtype — the value a diagnosis of that row publishes as evidence.
+    ``unknown_family_tag`` is present exactly where the row's stored
+    discriminator resolved to no composed concrete subtype, and carries the
+    value a diagnosis of that row publishes as evidence.
     """
 
     values: dict[str, object]
     resolved_entity: EntityIdentity | None = None
     family_variant: str | None = None
-    family_tag_unknown: bool = False
+    unknown_family_tag: UnknownFamilyTag | None = None
     findings: tuple[DocumentFinding, ...] = ()
     classified_members: frozenset[str] = frozenset()
-    family_tag: object = None
 
 
 class _RowMaterializer(Protocol):
@@ -242,7 +242,7 @@ class _TagTransform:
         resolved = pairs.get(cast("str", raw))
         if resolved is None:
             return RowTransformResult(
-                materialized, self.root, family_tag_unknown=True, family_tag=raw
+                materialized, self.root, unknown_family_tag=UnknownFamilyTag(raw)
             )
         identity, spelling = resolved
         return RowTransformResult(materialized, identity, spelling)
@@ -378,7 +378,7 @@ class _TphDocumentTransform:
         if variant is None:
             materialized.pop(self.column, None)
             return RowTransformResult(
-                materialized, self.root, family_tag_unknown=True, family_tag=raw_tag
+                materialized, self.root, unknown_family_tag=UnknownFamilyTag(raw_tag)
             )
         for key in self.padding:
             materialized[key] = None
@@ -417,10 +417,9 @@ class _TpcsDocumentTransform:
                 materialized,
                 identity,
                 spelling,
-                base.family_tag_unknown,
+                base.unknown_family_tag,
                 base.findings,
                 base.classified_members | frozenset(self.padding),
-                base.family_tag,
             )
         document_read = materialized.pop(variant.document_column)
         members = _materialize_document_members(variant.shape, document_read, variant.members)
@@ -429,10 +428,9 @@ class _TpcsDocumentTransform:
             materialized,
             identity,
             spelling,
-            base.family_tag_unknown,
+            base.unknown_family_tag,
             (*base.findings, *members.findings),
             base.classified_members | members.classified_members,
-            base.family_tag,
         )
 
 
@@ -497,10 +495,9 @@ class _DirectDocumentTransform:
             values,
             base.resolved_entity,
             base.family_variant,
-            base.family_tag_unknown,
+            base.unknown_family_tag,
             tuple(findings),
             frozenset(classified),
-            base.family_tag,
         )
 
 

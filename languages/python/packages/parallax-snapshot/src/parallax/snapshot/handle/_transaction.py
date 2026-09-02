@@ -73,13 +73,13 @@ from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPre
 # import a reportPrivateUsage error.
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._family import declaring as declaring_of
+from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
-    FindResult,
     ResultPublication,
     RowsResult,
     Snapshot,
@@ -677,7 +677,7 @@ class Transaction:
             batch_size=batch_size,
         )
 
-    def _page(self, node: ValidatedObjectQuery, batch: StreamBatchActivity) -> FindResult:
+    def _page(self, page_plan: PagePlan, at: At, batch: StreamBatchActivity) -> StreamPage:
         """One page of a participating stream: a find inside the force-flush.
 
         The flush is per page rather than once at entry for two reasons that
@@ -693,13 +693,14 @@ class Transaction:
         same attempt rather than a scope containing it
         (`m-execution-lifecycle`).
         """
-        return self._uow.read(lambda: self._paged(node, batch))
+        return self._uow.read(lambda: self._paged(page_plan, at, batch))
 
-    def _paged(self, node: ValidatedObjectQuery, batch: StreamBatchActivity) -> FindResult:
+    def _paged(self, page_plan: PagePlan, at: At, batch: StreamBatchActivity) -> StreamPage:
         """One page's own activity: execute and seal, inside the page's batch."""
         with batch as calls:
-            return find(
-                node,
+            return read_stream_page(
+                page_plan,
+                at,
                 self._model,
                 self._conn,
                 preference=self._uow.settings.concurrency,
