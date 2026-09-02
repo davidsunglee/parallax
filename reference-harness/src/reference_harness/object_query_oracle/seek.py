@@ -528,21 +528,42 @@ def _null_leaf(term: ContinuationTerm, *, negated: bool = False) -> ComposedSeek
 
 
 CAPTURE_ALIAS = "parallax_seek_"
-"""The framework-owned result alias a page captures each coordinate under."""
+"""The framework-owned result alias prefix a page captures each coordinate under."""
 
 
-def without_captured_coordinates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """``rows`` with the hidden coordinate cells lifted off, by name.
+def capture_aliases(case: Case, terms: list[ContinuationTerm]) -> list[str]:
+    """The result alias each term's coordinate cell is projected under, in order.
+
+    Allocated hygienically over the model's own Column spellings (`m-sql`), the
+    way a wrapped union's result aliases are: a model that authors a physical
+    `parallax_seek_0` keeps that projection under its own name, and the
+    coordinate that would have collided with it takes the next free index. Two
+    cells under one result key would be one entry in the row a page returns.
+    """
+    reserved = {slot.column for table in case.model.storage_layout.tables for slot in table.columns}
+    aliases: list[str] = []
+    index = 0
+    for _term in terms:
+        while f"{CAPTURE_ALIAS}{index}" in reserved:
+            index += 1
+        aliases.append(f"{CAPTURE_ALIAS}{index}")
+        index += 1
+    return aliases
+
+
+def without_captured_coordinates(
+    rows: list[dict[str, Any]], aliases: list[str]
+) -> list[dict[str, Any]]:
+    """``rows`` with the hidden coordinate cells lifted off, by their own names.
 
     A coordinate is framework-owned provenance rather than a member — the same
     standing the inheritance discriminator has — so it never reaches the graph a
     page publishes, and a delivery's roots are the roots the eager read of the
-    same query answers.
+    same query answers. Lifted by the aliases this delivery allocated rather than
+    by the prefix, so an authored Column spelled like one survives.
     """
-    return [
-        {key: value for key, value in row.items() if not key.startswith(CAPTURE_ALIAS)}
-        for row in rows
-    ]
+    lifted = set(aliases)
+    return [{key: value for key, value in row.items() if key not in lifted} for row in rows]
 
 
 def capture_binds(terms: list[ContinuationTerm]) -> list[Any]:
@@ -556,21 +577,27 @@ def capture_binds(terms: list[ContinuationTerm]) -> list[Any]:
 
 
 def refuse_an_uncaptured_page(
-    case: Case, dialect: str, source: str, sql: str, terms: list[ContinuationTerm]
+    case: Case,
+    dialect: str,
+    source: str,
+    sql: str,
+    terms: list[ContinuationTerm],
+    aliases: list[str],
 ) -> None:
     """Refuse a page that does not project one coordinate cell per term.
 
     A streamed delivery advances on what the database evaluated for each ordering
-    term, which reaches it as a hidden result cell aliased at the term's own
-    index and emitted from that term's own compared expression — never as a reuse
-    of a projected cell, whose expression and carrier coincide only by accident.
+    term, which reaches it as a hidden result cell under that term's own
+    allocated alias and emitted from that term's own compared expression — never
+    as a reuse of a projected cell, whose expression and carrier coincide only by
+    accident.
 
     Graded as the trailing cells of the select list, through the same member
     spelling the seek's own leaves are graded through, so a page capturing the
     wrong expression fails here rather than passing on the rows it happened to
     reach.
     """
-    expected = [(f"{CAPTURE_ALIAS}{index}", term.compared) for index, term in enumerate(terms)]
+    expected = [(alias, term.compared) for alias, term in zip(aliases, terms, strict=True)]
     projections = sqlglot.parse_one(sql, read=sqlglot_dialect(dialect)).expressions
     captured = [
         _captured_cell(cell, dialect) for cell in projections[len(projections) - len(terms) :]

@@ -47,6 +47,7 @@ def _stream_page(
     root_sql: str,
     root_binds: list[Any],
     levels: list[tuple[str, list[Any]]],
+    aliases: list[str],
 ) -> _StreamPage:
     """Execute one page of a streamed read and publish its roots.
 
@@ -59,7 +60,9 @@ def _stream_page(
     """
     root_rows = materialize.materialize_read(
         case,
-        seek.without_captured_coordinates(execute.query_rows(case, reader, root_sql, root_binds)),
+        seek.without_captured_coordinates(
+            execute.query_rows(case, reader, root_sql, root_binds), aliases
+        ),
     )
     if not includes.query_has_includes(query):
         narrowed = materialize.narrow_to_variant_columns(case, root_rows)
@@ -161,6 +164,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
     steps = includes.fetch_steps(case.model, query) if includes.query_has_includes(query) else []
     root_entity = case.model.entity(query["target"])
     terms = seek.continuation_order(case, query, root_entity, dialect)
+    aliases = seek.capture_aliases(case, terms)
     limit = query.get("limit")
 
     nodes: list[dict[str, Any]] = []
@@ -185,7 +189,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
         composed: seek.ComposedSeek | None = None
         if page == 0:
             first_root_sql = root_sql
-            seek.refuse_an_uncaptured_page(case, dialect, source, root_sql, terms)
+            seek.refuse_an_uncaptured_page(case, dialect, source, root_sql, terms, aliases)
             cells = seek.capture_binds(terms)
             carried_binds = list(authored[:-1])
             expected_binds: list[Any] = [*cells, *carried_binds[len(cells) :], requested]
@@ -222,7 +226,16 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             )
 
         executed = _stream_page(
-            case, reader, source, query, steps, root_entity, root_sql, authored, entries[index:]
+            case,
+            reader,
+            source,
+            query,
+            steps,
+            root_entity,
+            root_sql,
+            authored,
+            entries[index:],
+            aliases,
         )
         index += executed.consumed
         delivered = len(executed.root_rows)
