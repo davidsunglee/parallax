@@ -1,8 +1,10 @@
-# A streamed page ordered by a document-resident `timestamp` adopts the root's
-# managed instant and encodes it at UTC with six fractional digits and `Z`.
-# The authored equality uses that same declared projection, and the full first
-# page forces a generated second statement. This separates canonical Wire time
-# from the driver's offset-bearing datetime carrier without re-decoding the root.
+# A streamed page ordered by a document-resident `timestamp` seeks past the
+# extracted text — UTC, six fractional digits, `Z` — because that canonical
+# document spelling is what the ordering extraction compares and therefore what
+# the page captured. The authored equality binds the same spelling, and the full
+# first page forces a generated second statement. What this separates is the
+# canonical Wire instant from the driver's own offset-bearing datetime carrier,
+# with the root never re-decoded to reach it.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, timestamp, document-layout, graph, slice-snapshot-1]
 shape: read

@@ -1,8 +1,9 @@
-# A streamed page ordered by a document-resident `decimal(12,2)` retains the
-# exact managed Decimal and projects it through the resolved declaration. Both
-# the caller predicate and generated seek bind `10.25` while every comparison
-# casts the extracted digit string numerically. The terminal continuation would
-# expose either host-float inference or a missing fixed-scale Wire projection.
+# A streamed page ordered by a document-resident `decimal(12,2)` compares under
+# the declared type's cast, so the captured carrier is what that cast evaluated
+# and the seek binds it back at the declared scale. Both the caller predicate and
+# the generated seek carry `10.25` while every comparison casts the extracted
+# digit string numerically. The terminal continuation is what would expose a
+# host-float rendering or a lost fixed scale.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, decimal, document-layout, cast, graph, slice-snapshot-1]
 shape: read

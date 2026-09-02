@@ -1,8 +1,9 @@
-# A streamed page ordered by document-resident `bytes` obtains lowercase hex
-# from the resolved declaration for both its authored equality and generated
-# continuation seek. The root itself carries managed octets, so the second
-# statement distinguishes declared-type encoding from generic bytes/string
-# carrier inference while retaining the document extraction path and key tie.
+# A streamed page ordered by document-resident `bytes` compares the extraction as
+# TEXT, its canonical document spelling being lowercase hex, so the captured
+# carrier is that hex and the seek binds it back as comparison text. The published
+# root carries managed octets instead, which is what makes the second statement
+# distinguish the coordinate the database evaluated from anything derived off the
+# root's own decoded value — while retaining the extraction path and the key tie.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, bytes, document-layout, graph, slice-snapshot-1]
 shape: read

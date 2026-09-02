@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-87**.
+Entry numbering is continuous and never reused. The next new number is **D-88**.
 
 ## Entries
 
@@ -759,6 +759,52 @@ corpus model being class-backed — neither of which has a streaming rationale, 
 closing them means reopening a cross-language contract the corpus took the other
 way on purpose. It stays graded at
 `tests/unit/test_transaction_streams.py`.
+
+### D-87 — A corrupt Continuation Order carrier has no canonical Wire rendering, and statement reporting reaches it
+
+*Medium — reachable today through the conformance engine's statement reporting,
+and the one place where "a coordinate is never decoded or revalidated" is not yet
+true end to end.* Relates to
+`parallax.core.sql_gen._context.LoweredStatement.wire_binds`,
+`parallax.core.sql_gen._seek._compared`,
+`parallax.conformance.engine`, `core/spec/m-sql.md` *Continuation coordinates —
+capture, seek, rebind*.
+
+**What.** A streamed page rebinds each coordinate carrier through
+`bind_managed(carrier, member.type)`, whose reported form is `encode_wire(type,
+carrier)`. That is exact for every carrier conforming storage can produce. It is
+not defined for the carriers this delivery contract exists to stream past: a
+stored value outside the declared type's value space is by construction not a
+member of it, so `encode_wire` raises `WireEncodingError` rather than reporting
+anything. The one carrier of that shape already witnessed — the open temporal
+bound — is handled by name, as a framework bind reporting the canonical
+`infinity` literal; nothing generalizes that to a carrier whose shape is not
+known in advance.
+
+`wire_binds()` is reached only by `parallax.conformance.engine`'s statement
+reporting, so no ordinary caller can hit it. But that is exactly the surface a
+compatibility case corrupting a member the Continuation Order names would run
+through, which makes the gap the reason such a case cannot be authored rather
+than a consequence of not having authored one.
+
+**Why it is deferred rather than fixed.** Closing it is a normative choice with
+three shapes and no obvious winner, and it belongs with the corpus work that
+would first exercise it:
+
+- a **carrier-shaped reported form** — a bind role reporting the carrier as the
+  ordinary Wire scalar it already is, extending the override the temporal
+  sentinel uses — which makes every coordinate reportable but puts a second
+  rendering rule beside canonical Wire projection;
+- an **explicit reportability restriction**, where a statement's coordinate
+  binds are reported as opaque and the adapter contract says so, which keeps one
+  rendering rule and weakens what a golden can pin; or
+- **refusing to author** a corrupt-carrier case at all, which leaves the
+  contract unstated and the gap latent.
+
+**When.** The corpus mechanism the choice belongs with is
+[COR-114](https://linear.app/flimflam/issue/COR-114) Phase 6 (`given.corrupt`,
+streamed `then.storedDataIssues`). Recorded here because the ledger, not a task
+artifact, is what binds a later session.
 
 ## Forwarding pointers
 

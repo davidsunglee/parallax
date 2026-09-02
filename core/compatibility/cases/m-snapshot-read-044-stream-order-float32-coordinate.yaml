@@ -1,8 +1,9 @@
-# A streamed page ordered by document-resident `float32` retains the binary32
-# managed value and uses its shortest round-tripping number in both the authored
-# equality and generated seek. Every extraction is cast to `real`; the terminal
-# page proves continuation does not infer binary64 merely because Python carries
-# both widths as `float`, which is the semantic distinction this case pins down.
+# A streamed page ordered by document-resident `float32` compares under the
+# declared width's cast to `real`, so what it captures and rebinds is what that
+# cast evaluated rather than a number re-derived at some other width. The authored
+# equality and the seek carry the same shortest round-tripping spelling; the
+# terminal page is what proves the width is the declaration's rather than the
+# host's, Python carrying both widths as `float`.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, float32, document-layout, cast, graph, slice-snapshot-1]
 shape: read
