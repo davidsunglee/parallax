@@ -215,16 +215,19 @@ class InvalidDataError(RuntimeError):
     sole machine-readable report: there is no singular code, no flattened issue
     collection, no cause, and no second name for the same tuple. The
     constructor settles it together with the message derived from it, and every
-    later assignment or deletion is refused — including the inherited ``args``
-    :func:`str` reads — so the wording can never describe results the report no
-    longer carries.
+    later attribute assignment or deletion is refused — including the inherited
+    ``args`` :func:`str` reads — so the wording can never describe results the
+    report no longer carries.
 
     The two records get that immutability from ``frozen=True``, which an
     exception cannot use: a frozen ``__setattr__`` also refuses
     :meth:`add_note`, and ``__slots__`` restricts nothing while
     :class:`BaseException` carries an instance dictionary. Freezing by hand
     instead leaves the state the interpreter owns — chaining, traceback, and
-    notes — writable, and refuses everything else.
+    notes — writable, and refuses everything else. Being a ``__setattr__`` is
+    also what bounds it: an instance-dictionary write, ``object.__setattr__``,
+    and a subclass replacing it reach past this refusal exactly as they reach
+    past ``frozen=True``, and are outside the contract for the same reason.
     """
 
     _invalid_data: tuple[InvalidData[object], ...]
