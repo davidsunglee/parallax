@@ -12,8 +12,11 @@ authored assignment against the entity's members.
 Every PHYSICAL answer instead comes from the Storage Layout Facet, entered
 through :func:`entity_layout`: the row-owning Entity's canonical slot selection.
 :func:`slot_column`, :func:`axis_columns`, and :func:`members` map a semantically
-selected contributor identity onto that layout's slots, so no module importing
-this one composes a physical column sequence of its own.
+selected contributor identity onto that layout's slots. A module above may still
+order those answers into a column sequence its own question needs — retention's
+primary-key column list, the lowering side's Table-ordered slot selection — but
+it composes one out of this leaf's answers and the view they came from, never out
+of a storage declaration it read for itself.
 
 This is the package's bottom leaf but one: it imports no handle module except
 the dependency-free refusal leaf :mod:`parallax.snapshot.handle._errors`, so any
