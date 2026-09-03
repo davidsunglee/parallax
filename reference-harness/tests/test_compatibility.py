@@ -17,6 +17,9 @@ because the harness designates exactly one entry point to a live database — th
 ``provider`` fixture below — and both directions of the runner need one. What
 belongs here is what THIS module still owns; every accepted-read refusal is
 exercised against the read oracle's own seam under ``tests/oracle/``.
+
+The graded MariaDB release floor is asserted here for the same reason: only a
+live provider can report which server a floating image tag resolved to.
 """
 
 from __future__ import annotations
@@ -41,6 +44,11 @@ COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 ALL_CASES = discover_cases(COMPATIBILITY_ROOT)
 CASES = dialect_executed_cases(COMPATIBILITY_ROOT)
 DIALECTS = available_dialects()
+
+# The first MariaDB release carrying `innodb_snapshot_isolation` (m-db-port's
+# adapter profile). The pinned image is far above it; the floor is what a
+# conforming adapter needs, not what the tag happens to resolve to.
+_MARIADB_SNAPSHOT_ISOLATION_FLOOR = (11, 4, 2)
 
 
 def _case_id(case) -> str:
@@ -80,6 +88,21 @@ def test_api_conformance_lane_cases_are_not_executed() -> None:
 def test_a_dialect_is_available() -> None:
     assert DIALECTS, (
         "no database providers available; set PARALLAX_DATABASES or ensure a provider is registered"
+    )
+
+
+def test_the_booted_mariadb_meets_the_graded_isolation_floor(provider) -> None:
+    # MariaDB's Repeatable Read forbids the lost update only with
+    # `innodb_snapshot_isolation`, which no release below 11.4.2 has. The image
+    # pin is a floating major.minor tag, so which server a run actually boots is
+    # asserted here rather than remembered from the tag.
+    if provider.dialect != "mariadb":
+        pytest.skip("the snapshot-isolation floor is a MariaDB fact")
+    reported = provider.query("select version() as version")[0]["version"]
+    release = tuple(int(part) for part in reported.split("-")[0].split(".")[:3])
+    assert release >= _MARIADB_SNAPSHOT_ISOLATION_FLOOR, (
+        f"MariaDB {reported} is below {_MARIADB_SNAPSHOT_ISOLATION_FLOOR}, the first release "
+        "carrying innodb_snapshot_isolation; the graded Repeatable Read promise is unreachable"
     )
 
 

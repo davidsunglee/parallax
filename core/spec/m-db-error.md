@@ -33,8 +33,19 @@ naive cross-dialect `SQLSTATE` compare would misclassify. The mapping:
 | Category | Postgres (`SQLSTATE`) | MariaDB (errno) |
 |---|---|---|
 | `uniqueViolation` | `23505` | `1062` |
-| `deadlock` | `40P01`, `40001` | `1213` |
+| `deadlock` | `40P01`, `40001` | `1213`, `1020` |
 | `lockWaitTimeout` | `55P03` | `1205` |
+
+MariaDB's `1020` (`ER_CHECKREAD`, `SQLSTATE HY000`) is the write/write conflict
+InnoDB raises under `innodb_snapshot_isolation` when a transaction tries to lock
+a row that changed since its read view was taken. The server rolls that
+transaction back exactly as it does a deadlock, so it classifies and retries on
+the same terms — the MariaDB counterpart of the Postgres `40001` a snapshot
+conflict raises.
+
+Because the code source is a dialect decision, the table is not one shared
+lookup: each adapter or provider owns its own engine's codes and classifies
+through them into the shared neutral vocabulary above.
 
 ## What the suite pins down
 
@@ -44,6 +55,7 @@ neutral category, the per-dialect native code, and the call-site predicate
 partition. `uniqueViolation` cases trigger single-connection (a duplicate insert /
 colliding update whose final statement raises); `deadlock` and `lockWaitTimeout`
 cases trigger two-connection (a `concurrency` choreography of barrier-separated
-rounds). The classifier is a thin per-dialect extraction over the shared, DB-free
-category map + call-site predicates, so the harness exercises the interface the
-language implementations build, not a harness-only shortcut (`m-case-format`).
+rounds). The classifier is a thin extraction and per-dialect lookup answering in
+the shared, DB-free category vocabulary + call-site predicates, so the harness
+exercises the interface the language implementations build, not a harness-only
+shortcut (`m-case-format`).
