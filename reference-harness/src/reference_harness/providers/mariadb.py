@@ -45,8 +45,21 @@ from ._binds import adapt_document_scalar_binds
 if TYPE_CHECKING:
     from . import Node
 
-# Pinned at a current stable MariaDB major (m-case-format/DQ15). Refresh on new majors.
-MARIADB_IMAGE = "mariadb:11.4"
+# Pinned at the current MariaDB long-term-support series (m-case-format/DQ15).
+# Refresh on new LTS series, never below 11.4.2 -- the first release carrying
+# `innodb_snapshot_isolation`, which the compatibility suite asserts it booted.
+MARIADB_IMAGE = "mariadb:12.3"
+
+# MariaDB keys on the vendor errno; a code absent here is `errors.UNKNOWN`, so an
+# unclassified error fails an assertion loudly rather than passing silently.
+_CODES: dict[int, str] = {
+    1062: errors.UNIQUE_VIOLATION,  # ER_DUP_ENTRY
+    1213: errors.DEADLOCK,  # ER_LOCK_DEADLOCK
+    1205: errors.LOCK_WAIT_TIMEOUT,  # ER_LOCK_WAIT_TIMEOUT
+    # ER_CHECKREAD: a snapshot-isolation write/write conflict at Repeatable Read,
+    # which the server itself rolls back like a deadlock.
+    1020: errors.DEADLOCK,
+}
 
 # MariaDB has no native timestamp infinity; the open upper bound (m-core/m-dialect) is the
 # largest representable DATETIME(6). This is the documented max-sentinel the seam
@@ -237,7 +250,8 @@ class MariaDbProvider:
 
     def classify_error(self, exc: Exception) -> str:
         """Map a raised pymysql error to a neutral m-db-error category (see errors.py)."""
-        return errors.classify(self.dialect, self.native_error_code(exc))
+        code = self.native_error_code(exc)
+        return errors.UNKNOWN if code is None else _CODES.get(code, errors.UNKNOWN)
 
     @contextmanager
     def open_session(self) -> Iterator[_MariaTxSession]:

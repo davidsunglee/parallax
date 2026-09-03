@@ -1,18 +1,20 @@
-"""The m-db-error error-code classification core (dialect-agnostic, DB-free).
+"""The m-db-error neutral category vocabulary (dialect-agnostic, DB-free).
 
 Reladomo's `DatabaseType` exposes error classification not as one string map but
 as a set of neutral predicates interrogated at distinct call sites: the txn retry
 loop asks `isRetriable` (deadlock / serialization failure), the insert/merge path
 asks `violatesUniqueIndex`, the lock path asks `isTimedOut`. This module is the
-language-neutral equivalent: a closed category vocabulary, the per-dialect native
-code -> category map, and the call-site predicates defined as category membership
-(so a predicate can never drift from its category).
+language-neutral equivalent of that half: a closed category vocabulary and the
+call-site predicates defined as category membership (so a predicate can never
+drift from its category).
 
-The native code lives in a DIFFERENT attribute per dialect, and the same value
-can mean different things: Postgres keys on the SQLSTATE string (`23505`,
+The native code a category is reached FROM is a per-dialect fact and lives on the
+provider that owns the engine, mirroring how the Python core keeps each table on
+its `Dialect`. The code lives in a different attribute per driver, and the same
+value can mean different things: Postgres keys on the SQLSTATE string (`23505`,
 `40P01`), MariaDB on the vendor errno (`1062`, `1213`). SQLSTATE `40001` is a
 serialization failure on Postgres but the deadlock state on MariaDB -- which is
-exactly why the code source is a dialect decision, not a shared lookup.
+exactly why no shared lookup can classify for both.
 """
 
 from __future__ import annotations
@@ -26,42 +28,6 @@ UNKNOWN = "unknown"
 CATEGORIES: frozenset[str] = frozenset(
     {UNIQUE_VIOLATION, DEADLOCK, LOCK_WAIT_TIMEOUT, CONNECTION_DEAD, UNKNOWN}
 )
-
-# Postgres keys on the SQLSTATE string.
-_POSTGRES_CODES: dict[str, str] = {
-    "23505": UNIQUE_VIOLATION,
-    "40P01": DEADLOCK,
-    "40001": DEADLOCK,  # serialization_failure -- retriable, folded into deadlock
-    "55P03": LOCK_WAIT_TIMEOUT,  # lock_not_available (SET lock_timeout exceeded)
-}
-
-# MariaDB keys on the vendor errno (an int).
-_MARIADB_CODES: dict[int, str] = {
-    1062: UNIQUE_VIOLATION,  # ER_DUP_ENTRY
-    1213: DEADLOCK,  # ER_LOCK_DEADLOCK
-    1205: LOCK_WAIT_TIMEOUT,  # ER_LOCK_WAIT_TIMEOUT
-}
-
-
-def classify(dialect: str, code: str | int | None) -> str:
-    """Map a native DB error code to a neutral m-db-error category.
-
-    *code* is the SQLSTATE string for ``postgres`` and the vendor errno (int) for
-    ``mariadb`` -- the value each driver surfaces (see the providers). Returns
-    :data:`UNKNOWN` for an unrecognized or missing code, so an unclassified error
-    fails an assertion loudly rather than passing silently.
-    """
-    if code is None:
-        return UNKNOWN
-    if dialect == "postgres":
-        return _POSTGRES_CODES.get(str(code), UNKNOWN)
-    if dialect == "mariadb":
-        try:
-            errno = int(code)
-        except (TypeError, ValueError):
-            return UNKNOWN
-        return _MARIADB_CODES.get(errno, UNKNOWN)
-    return UNKNOWN
 
 
 def is_retriable(category: str) -> bool:

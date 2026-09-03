@@ -2450,11 +2450,12 @@ seam so provisioning can be swapped without touching the assertion layer:
   migrated, isolated database for a single dialect, exposing `reset`,
   `apply_ddl`, `load`, `query`, `execute` (DML, for write sequences), and a
   `dialect` identifier. **Testcontainers** is the default mechanism, pinned at
-  the latest stable Postgres major; a language **MAY** substitute an embedded
-  binary that satisfies the same reset/isolation contract. An **optional**
-  `open_peer` capability yields a second, independent connection to the
-  **same** database — modeling a peer application server (node B) for coherence
-  cases; a provider that omits it simply cannot run coherence cases.
+  the latest stable Postgres major and at the current MariaDB long-term-support
+  series; a language **MAY** substitute an embedded binary that satisfies the
+  same reset/isolation contract. An **optional** `open_peer` capability yields a
+  second, independent connection to the **same** database — modeling a peer
+  application server (node B) for coherence cases; a provider that omits it
+  simply cannot run coherence cases.
 - **Runner + assertions.** The case runner applies the four (later five) layers
   above against whatever provider it is handed.
 

@@ -11,12 +11,12 @@ from typing import Final
 
 __all__ = ["POSTGRES_DIGEST", "POSTGRES_IMAGE", "POSTGRES_TAG"]
 
-POSTGRES_TAG: Final[str] = "postgres:16.4-alpine"
+POSTGRES_TAG: Final[str] = "postgres:18.6-alpine"
 POSTGRES_DIGEST: Final[str] = (
-    "sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c"
+    "sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
 )
 
 # The exact image reference (tag pinned to its content digest) the provisioner
 # boots. Digest-pinning makes the base image reproducible; the human-readable tag
 # rides alongside for inspection.
-POSTGRES_IMAGE: Final[str] = f"postgres:16.4-alpine@{POSTGRES_DIGEST}"
+POSTGRES_IMAGE: Final[str] = f"{POSTGRES_TAG}@{POSTGRES_DIGEST}"

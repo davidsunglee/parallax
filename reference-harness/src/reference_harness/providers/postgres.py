@@ -32,7 +32,16 @@ if TYPE_CHECKING:
     from . import Node
 
 # Pinned at the latest stable Postgres major (m-case-format/DQ15). Refresh on new majors.
-POSTGRES_IMAGE = "postgres:17"
+POSTGRES_IMAGE = "postgres:18"
+
+# Postgres keys on the SQLSTATE string; a code absent here is `errors.UNKNOWN`, so
+# an unclassified error fails an assertion loudly rather than passing silently.
+_CODES: dict[str, str] = {
+    "23505": errors.UNIQUE_VIOLATION,
+    "40P01": errors.DEADLOCK,
+    "40001": errors.DEADLOCK,  # serialization_failure -- retriable, folded into deadlock
+    "55P03": errors.LOCK_WAIT_TIMEOUT,  # lock_not_available (SET lock_timeout exceeded)
+}
 
 
 def _adapt(value: Any) -> Any:
@@ -235,7 +244,8 @@ class PostgresProvider:
 
     def classify_error(self, exc: Exception) -> str:
         """Map a raised psycopg error to a neutral m-db-error category (see errors.py)."""
-        return errors.classify(self.dialect, self.native_error_code(exc))
+        code = self.native_error_code(exc)
+        return errors.UNKNOWN if code is None else _CODES.get(code, errors.UNKNOWN)
 
     @contextmanager
     def open_session(self) -> Iterator[_PgTxSession]:

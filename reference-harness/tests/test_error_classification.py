@@ -1,9 +1,9 @@
-"""Unit tests for the `m-db-error` error-classification core (DB-free).
+"""Unit tests for `m-db-error` classification (DB-free).
 
-The pure category map + call-site predicates are pinned here. The DB-coupled
-parts (extracting the native code from a real driver exception, and triggering
-the actual errors) are exercised end-to-end against real Postgres + MariaDB by
-the compatibility suite's `error` cases.
+The neutral vocabulary's call-site predicates and each provider's own native-code
+table are pinned here. A provider's classification is pure over the exception, so
+it is exercised on an uninitialized instance; triggering the actual errors is the
+compatibility suite's `error` cases, end-to-end against real Postgres + MariaDB.
 """
 
 from __future__ import annotations
@@ -21,37 +21,6 @@ from reference_harness.ddl_builder import ddl_for
 from reference_harness.providers.mariadb import MariaDbProvider
 from reference_harness.providers.postgres import PostgresProvider
 from reference_harness.schemas import build_registry, load_schemas
-
-
-def test_postgres_codes_map_to_categories() -> None:
-    assert errors.classify("postgres", "23505") == errors.UNIQUE_VIOLATION
-    assert errors.classify("postgres", "40P01") == errors.DEADLOCK
-    # A serialization failure is retriable like a deadlock (folded in).
-    assert errors.classify("postgres", "40001") == errors.DEADLOCK
-    assert errors.classify("postgres", "55P03") == errors.LOCK_WAIT_TIMEOUT
-
-
-def test_mariadb_errnos_map_to_categories() -> None:
-    assert errors.classify("mariadb", 1062) == errors.UNIQUE_VIOLATION
-    assert errors.classify("mariadb", 1213) == errors.DEADLOCK
-    assert errors.classify("mariadb", 1205) == errors.LOCK_WAIT_TIMEOUT
-
-
-def test_same_sqlstate_means_different_things_per_dialect() -> None:
-    # SQLSTATE 40001 is serialization-failure on PG but the deadlock state on
-    # MariaDB (errno 1213). Classification MUST be per-dialect: PG keys on the
-    # SQLSTATE string, MariaDB on the vendor errno. A naive cross-dialect match
-    # on "40001" would misclassify -- this is why the code source is a dialect
-    # decision. Both land on DEADLOCK here, but via different inputs.
-    assert errors.classify("postgres", "40001") == errors.DEADLOCK
-    assert errors.classify("mariadb", 1213) == errors.DEADLOCK
-
-
-def test_unknown_code_is_unknown() -> None:
-    assert errors.classify("postgres", "99999") == errors.UNKNOWN
-    assert errors.classify("postgres", None) == errors.UNKNOWN
-    assert errors.classify("mariadb", 9999) == errors.UNKNOWN
-    assert errors.classify("mariadb", None) == errors.UNKNOWN
 
 
 def test_predicates_partition_by_category() -> None:
@@ -85,7 +54,7 @@ class _FakeMariaError(Exception):
         super().__init__(errno, "fake")  # pymysql packs (errno, msg) into args
 
 
-def test_postgres_provider_classifies_via_sqlstate() -> None:
+def test_postgres_codes_map_to_categories() -> None:
     # classify_error is a pure method over the exception; no connection needed,
     # so call it on an uninitialized instance.
     provider = PostgresProvider.__new__(PostgresProvider)
@@ -93,18 +62,37 @@ def test_postgres_provider_classifies_via_sqlstate() -> None:
     assert provider.native_error_code(_FakePgError("23505")) == "23505"
     assert provider.classify_error(_FakePgError("23505")) == errors.UNIQUE_VIOLATION
     assert provider.classify_error(_FakePgError("40P01")) == errors.DEADLOCK
+    # A serialization failure is retriable like a deadlock (folded in).
+    assert provider.classify_error(_FakePgError("40001")) == errors.DEADLOCK
     assert provider.classify_error(_FakePgError("55P03")) == errors.LOCK_WAIT_TIMEOUT
+    assert provider.classify_error(_FakePgError("99999")) == errors.UNKNOWN
     assert provider.classify_error(Exception("no sqlstate")) == errors.UNKNOWN
 
 
-def test_mariadb_provider_classifies_via_errno() -> None:
+def test_mariadb_errnos_map_to_categories() -> None:
     provider = MariaDbProvider.__new__(MariaDbProvider)
     assert provider.dialect == "mariadb"
     assert provider.native_error_code(_FakeMariaError(1062)) == 1062
     assert provider.classify_error(_FakeMariaError(1062)) == errors.UNIQUE_VIOLATION
     assert provider.classify_error(_FakeMariaError(1213)) == errors.DEADLOCK
+    # ER_CHECKREAD: the snapshot-isolation write/write conflict, rolled back like
+    # a deadlock and therefore retriable in the same category.
+    assert provider.classify_error(_FakeMariaError(1020)) == errors.DEADLOCK
     assert provider.classify_error(_FakeMariaError(1205)) == errors.LOCK_WAIT_TIMEOUT
+    assert provider.classify_error(_FakeMariaError(9999)) == errors.UNKNOWN
     assert provider.classify_error(Exception("non-integer")) == errors.UNKNOWN
+
+
+def test_same_sqlstate_means_different_things_per_dialect() -> None:
+    # SQLSTATE 40001 is serialization-failure on PG but the deadlock state on
+    # MariaDB (errno 1213). Classification MUST be per-dialect: PG keys on the
+    # SQLSTATE string, MariaDB on the vendor errno. A naive cross-dialect match
+    # on "40001" would misclassify -- this is why each provider owns its own
+    # table. Both land on DEADLOCK here, but via different inputs.
+    postgres = PostgresProvider.__new__(PostgresProvider)
+    mariadb = MariaDbProvider.__new__(MariaDbProvider)
+    assert postgres.classify_error(_FakePgError("40001")) == errors.DEADLOCK
+    assert mariadb.classify_error(_FakeMariaError(1213)) == errors.DEADLOCK
 
 
 def _error_case(raw: dict) -> Case:
