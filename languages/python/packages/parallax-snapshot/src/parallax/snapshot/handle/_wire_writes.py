@@ -234,7 +234,7 @@ def wire_insert(
     assert isinstance(prepared, PreparedKeyedWrite)
     row = prepared.rows[0]
     admit_and_buffer(lane.uow, lane.model.meta, prepared, None)
-    lane.inserts.record(written_object_of_row(entity, declaring, row))
+    lane.inserts.record(written_object_of_row(entity, lane.model.meta, row))
     opened = object_key(prepared, lane.model.meta)
     # A Create Payload is a complete document, so the row it buffers always
     # names its own object by the time validation has admitted it.
@@ -322,7 +322,6 @@ def buffer_prepared_keyed_write(
     mutation = prepared.mutation
     source, hint = _keyed_source(mutation, observed)
     record = _concrete_entity(lane.model.meta, hint)
-    declaring = declaring_of(lane.model.meta, record)
     validate_source_pin(record.identity, hint.pin)
     identity_row = dict(hint.object_key.primary_key)
     members = _row_members(lane.model.meta, record)
@@ -333,7 +332,7 @@ def buffer_prepared_keyed_write(
     if row is None:
         return
     prepared = instructions.derive_keyed_write(prepared, (row,))
-    written = written_object_of_row(record, declaring, identity_row)
+    written = written_object_of_row(record, lane.model.meta, identity_row)
     evidence: SettledEvidence | None = (
         None
         if lane.inserts.holds(written)

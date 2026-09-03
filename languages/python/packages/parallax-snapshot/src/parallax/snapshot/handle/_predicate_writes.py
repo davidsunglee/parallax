@@ -99,6 +99,7 @@ from parallax.snapshot.handle._family import (
     entity_layout,
     entity_of,
     family_primary_key,
+    is_temporal,
     members,
     placed_members,
     slot_column,
@@ -332,14 +333,14 @@ def buffer_predicate_instruction(
     inheritance.reject_predicate_write(entity)
     declaring_entity = declaring(meta, entity)
     version_attr = version_attribute(meta, declaring_entity)
-    is_temporal = bool(declaring_entity.declared_as_of_axes)
-    if not is_temporal:
+    temporal = is_temporal(declaring_entity)
+    if not temporal:
         refusal = instructions.non_temporal_milestone_refusal(
             entity.identity.name, instruction.mutation
         )
         if refusal is not None:
             raise instructions.WriteInstructionError(refusal)
-    if not is_temporal and version_attr is None:
+    if not temporal and version_attr is None:
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.
         _reject_readless_document_many(meta, entity, instruction)
@@ -438,7 +439,7 @@ def _materialize_predicate_write(
         assignment_member(assignment.attr): assignment.value
         for assignment in instruction.managed_assignments
     }
-    is_temporal = bool(declaring_entity.declared_as_of_axes)
+    temporal = is_temporal(declaring_entity)
     # Need-sensitive projection (`m-case-format` "Predicate-selected write
     # instruction"): the resolving read projects the resolved row's own
     # value-object document(s) for TWO independent needs, on EVERY target
@@ -477,7 +478,7 @@ def _materialize_predicate_write(
     # then projects the ASSIGNED value-object document(s) only — never every
     # declared one, matching an ordinary read's own need-driven projection.
     assignment_bearing = instruction.mutation in _ASSIGNMENT_BEARING
-    predecessor_need = version_attr is None and is_temporal
+    predecessor_need = version_attr is None and temporal
     member_columns = members(placed_members(meta, entity, layout))
     occurrences = {
         occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects

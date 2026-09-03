@@ -88,7 +88,6 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
-    PrimaryKey,
     TemporalDimension,
     ValueObjectMetadata,
     entity_by_name,
@@ -131,6 +130,8 @@ from parallax.snapshot.handle._family import (
     axis_columns,
     declaring,
     entity_layout,
+    family_primary_key,
+    is_temporal,
     members,
     placed_members,
     slot_column,
@@ -232,32 +233,18 @@ class TransactionTimePinReadOnlyError(ValueError):
     code: Final[str] = "transaction-time-pin-read-only"
 
 
-def _declared_primary_key(entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
-    """``entity``'s OWN declared primary key — used where ``entity`` is already
-    the declaring root, so its local declaration IS the family key."""
-    return tuple(
-        attribute
-        for attribute in entity.declared_attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    )
-
-
-def _is_temporal(declaring_entity: EntityMetadata) -> bool:
-    return bool(declaring_entity.declared_as_of_axes)
-
-
 def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
     return declaring_entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
 
 
 def written_object_key(
-    record: EntityMetadata, declaring_entity: EntityMetadata, row: Mapping[str, object]
+    record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
 ) -> ObjectKey:
     """The object a WRITTEN instance addresses — the same
     :class:`~parallax.core.unit_work.ObjectKey`
     :func:`retain_evidence` names its hints by (the instance's OWN Entity
     Identity, never family-normalized; pk pairs by canonical attribute name, in
-    the declaring entity's primary-key order) and `unit_work.object_key`
+    the family-effective primary key's own order) and `unit_work.object_key`
     computes at flush, so a verb-time refusal and the flush-time settle can
     never name the object two different ways.
 
@@ -269,7 +256,7 @@ def written_object_key(
         record.identity,
         tuple(
             (attr.identity.name, row[attr.identity.name])
-            for attr in _declared_primary_key(declaring_entity)
+            for attr in family_primary_key(meta, record)
         ),
     )
 
@@ -281,7 +268,7 @@ equivalence a same-transaction insert is recognized by, never a row and never an
 
 
 def written_object(
-    record: EntityMetadata, declaring_entity: EntityMetadata, value: EntityBase
+    record: EntityMetadata, meta: Metamodel, value: EntityBase
 ) -> WrittenObject | None:
     """Which object ``value`` names, read straight off its primary-key members —
     or ``None`` when its own class carries no attribute for one of them.
@@ -303,7 +290,7 @@ def written_object(
     """
     names = wire_names_of(type(value))
     pairs: list[tuple[str, object]] = []
-    for attribute in _declared_primary_key(declaring_entity):
+    for attribute in family_primary_key(meta, record):
         py_name = names.name_to_py.get(attribute.identity.name)
         if py_name is None:
             return None
@@ -312,18 +299,17 @@ def written_object(
 
 
 def written_object_of_row(
-    record: EntityMetadata, declaring_entity: EntityMetadata, row: Mapping[str, object]
+    record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
 ) -> WrittenObject | None:
     """Which object a written ROW names — :func:`written_object`'s peer for an
     ingress holding a row rather than an Entity value.
 
     A Wire verb never holds an instance, so the read-your-own-writes exemption
     has to be answerable from the canonical row an insert buffers. Both readings
-    key by the SAME declared primary-key members in the SAME declaring-entity
-    order and carry the values as the caller supplied them, so a Typed insert and
-    a Wire update of one object name one member of
-    :class:`BufferedInserts` — which is what makes the exemption span both
-    representations rather than one each.
+    key by the SAME family-effective primary-key members in the SAME order and
+    carry the values as the caller supplied them, so a Typed insert and a Wire
+    update of one object name one member of :class:`BufferedInserts` — which is
+    what makes the exemption span both representations rather than one each.
 
     ``None`` for a row short of a primary-key member, which names no object at
     all. Defensive rather than reachable: an insert's row is judged complete
@@ -331,7 +317,7 @@ def written_object_of_row(
     key its source's own read filed.
     """
     pairs: list[tuple[str, object]] = []
-    for attribute in _declared_primary_key(declaring_entity):
+    for attribute in family_primary_key(meta, record):
         name = attribute.identity.name
         if name not in row:  # pragma: no cover - both callers hold a complete key already
             return None
@@ -726,7 +712,7 @@ def retain_evidence(
         if resolved is None:  # pragma: no cover - defends a malformed model/projection
             continue
         object_key, declaring_entity, observation = resolved
-        observed_pin = pin if _is_temporal(declaring_entity) else None
+        observed_pin = pin if is_temporal(declaring_entity) else None
         if observation is None:
             hints[observed.node] = SourceHint(
                 observed.entity, object_key, participation, None, observed_pin
@@ -763,7 +749,7 @@ def _observed_object(
     layout = entity_layout(meta, entity)
     if layout is None:  # pragma: no cover - a materialized node always owns rows
         return None
-    pk_attrs = _declared_primary_key(declaring_entity)
+    pk_attrs = family_primary_key(meta, declaring_entity)
     pk_columns = [slot_column(layout, attr.identity) for attr in pk_attrs]
     if not pk_attrs or any(  # pragma: no cover - defends a malformed model/projection
         column not in observed_fields for column in pk_columns
@@ -786,7 +772,7 @@ def _observed_object(
             declaring_entity,
             VersionObservation(observed_version=cast("int", observed_fields[version_column])),
         )
-    if not _is_temporal(declaring_entity):
+    if not is_temporal(declaring_entity):
         return object_key, declaring_entity, None
     tx_axis = tx_time_axis(declaring_entity)
     tx_start_column, _tx_end_column = axis_columns(layout, tx_axis)
@@ -1279,7 +1265,7 @@ def _validate_valid_from(
             )
         return normalize_instant(_stated_instant(name, mutation, "valid_from", valid_from))
     if valid_from is not None:
-        shape = "a Transaction-Time-Only" if _is_temporal(declaring_entity) else "a non-temporal"
+        shape = "a Transaction-Time-Only" if is_temporal(declaring_entity) else "a non-temporal"
         raise instructions.WriteInstructionError(
             f"{name}: {shape} {mutation!r} takes no valid_from "
             f"({name!r} declares no Valid-Time dimension to bound)"
