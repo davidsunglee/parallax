@@ -464,8 +464,8 @@ with the declared `when.stream.batchSize`, and by nothing else. Running the eage
 read and reporting its result is a conformance failure even where the graph
 matches: what the case states is the page partition — the requested size each
 root statement binds, the Continuation Order coordinates each later page
-continues from, and the statement a full final page costs to prove exhaustion —
-and an eager read produces none of it.
+continues from, and the page that came back short of what it asked for and so
+ended the delivery — and an eager read produces none of it.
 
 The case names **no representation**, because delivery is the verb and the
 namespace stays the surface's. An adapter drives whichever streamed read it
@@ -492,8 +492,7 @@ exposes and reports:
   observation depend on the page size. An adapter reports whichever of the two
   its case authors, and the choice is the query's: a scanned axis makes the read
   milestone-set.
-- **`observations.roundTrips`** — every database call the delivery made, the
-  terminal empty root statement included.
+- **`observations.roundTrips`** — every database call the delivery made.
 - **`emissions`** — every statement the delivery executed, in execution order
   across pages: each page's root statement followed by the child levels that page
   ran. The list is the whole delivery's, not one page's. It is read off the

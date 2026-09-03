@@ -21,7 +21,7 @@ halves of the middle layer's contract are therefore read — that it does not
 survive the root it published, by the census between two roots, and that its peak
 is one root's own graph rather than the page's, by the region.
 
-**Eight readings, each its own statement.** Page graphs do not accumulate with
+**Nine readings, each its own statement.** Page graphs do not accumulate with
 the result. A delivery holds one page graph and one published root at a time, and
 the survivor census says so in arithmetic rather than in prose: it is exactly
 affine in the page's own node population and the published root's, with **no term
@@ -33,7 +33,9 @@ exactly independent of the result, of the position, and of the page, and costing
 less per node at each of eight fan-outs than at the one before. And
 two of the three exclusions are demonstrated rather than asserted — a caller
 retaining every root reproduces the `O(N)` growth the bound declines to prevent,
-and a writing loop's buffer grows with the page size and stops there.
+and a writing loop's buffer grows with the page size and stops there. A wide
+Continuation Order is priced on a grid of its own: the width costs the plan once
+and the page one coordinate per root position whatever it is.
 
 **The third exclusion has no executable witness here, by construction.** What the
 database and its driver hold for a delivery — server-side cursors, connection
@@ -83,7 +85,7 @@ every value the fixtures produce is fixed-width, because a total will move for a
 longer string as readily as for a leak. What it does not widen to is memory a
 Python object merely points at, which is the last paragraph below.
 
-**What the eight readings still do not prove.** Nothing here sees a transient
+**What the nine readings still do not prove.** Nothing here sees a transient
 smaller than the region it is allocated in — a high-water mark is a maximum, so an
 allocation that never takes the process above an earlier moment of the same
 publication is invisible however it scales, which is why the page grid the peak
@@ -183,6 +185,18 @@ _FURTHER: Final = 37
 """A second, later sample position. The census at ``_AT`` and at this must agree:
 what a delivery holds is what it holds at every point of the same delivery."""
 
+_TERM_COUNTS: Final = (0, 1, 3)
+"""Authored Sort Keys the term grid varies, holding page size and fan-out fixed.
+
+Zero is the undeclared ordering every other reading here runs under, so the grid
+starts where they stand and widens from there rather than beside them."""
+
+_TERM_PAGES: Final = (2, 4)
+"""The two page sizes the term grid crosses, narrow first.
+
+Two is enough: what the crossing has to separate is a cost per ROOT from a cost
+per DELIVERY, and two points either side of it settle which of them moved."""
+
 _TENFOLD: Final = 10
 """The factor between the two result sizes every independence reading is taken
 at."""
@@ -264,20 +278,21 @@ class _GeneratingPort:
     """A port that answers each page from a counter and retains nothing.
 
     A recording port would grow with the result on its own and swamp the reading
-    it is there to take, so this one holds exactly the page it last answered:
-    the parent keys the child level is about to gather, and how far through the
-    result it is.
+    it is there to take, so this one holds how far through the result it is and
+    nothing else. The child level is answered from the parent keys its own
+    statement binds rather than from the page that gathered them, which is what
+    keeps the lookahead root — read by a page and never kept — from being handed
+    children no statement asked for.
     """
 
     dialect: Dialect = POSTGRES
 
-    __slots__ = ("_delivered", "_fanout", "_page", "_total")
+    __slots__ = ("_delivered", "_fanout", "_total")
 
     def __init__(self, total: int, fanout: int = _FANOUT) -> None:
         self._total = total
         self._fanout = fanout
         self._delivered = 0
-        self._page: tuple[int, ...] = ()
 
     def execute(
         self,
@@ -288,17 +303,25 @@ class _GeneratingPort:
         del document_reads
         if "order_item t0" in sql:
             return [
-                _item_row(parent * 100 + offset, parent)
-                for parent in self._page
+                _item_row(cast("int", parent) * 100 + offset, cast("int", parent))
+                for parent in binds
                 for offset in range(self._fanout)
             ]
-        self._page = self._next_page(cast("int", binds[-1]))
-        return [projected_row(sql, _order_row(order_id)) for order_id in self._page]
+        return [
+            projected_row(sql, _order_row(order_id))
+            for order_id in self._next_page(cast("int", binds[-1]))
+        ]
 
     def _next_page(self, size: int) -> tuple[int, ...]:
+        """The next ``size`` roots, of which the delivery keeps all but the last.
+
+        A page reads one root past its batch and discards it, so the counter
+        advances by what the page DELIVERS: the discarded root is read again by
+        the page that delivers it, exactly as a real database returns it twice.
+        """
         taken = min(size, self._total - self._delivered)
         page = tuple(range(self._delivered + 1, self._delivered + taken + 1))
-        self._delivered += taken
+        self._delivered += taken - 1 if taken == size else taken
         return page
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -349,6 +372,25 @@ def _query() -> ObjectQuery[Order, Order]:
     return Order.where(Order.active == True).include(Order.items)  # noqa: E712 - the query algebra's own equality
 
 
+_ORDER_KEYS: Final = (Order.name.asc(), Order.sku.asc(), Order.qty.asc(), Order.price.asc())
+"""Authored Sort Keys the term grid draws its Continuation Orders from.
+
+Direct Columns, so every one of them lowers to a capture cell the stand-in port
+can answer, and each adds one term to the order and one carrier to every
+coordinate.
+"""
+
+
+def _ordered(terms: int) -> ObjectQuery[Order, Order]:
+    """The same delivery under a Continuation Order of ``terms`` authored keys.
+
+    The primary key is appended to every one of them, so the order the page is
+    measured against is one term wider than the count named here.
+    """
+    keys = _ORDER_KEYS[:terms]
+    return _query().order_by(*keys) if keys else _query()
+
+
 type _Opener = Callable[[Database, int], SnapshotStream[Any]]
 
 
@@ -370,11 +412,15 @@ class _Namespace(NamedTuple):
     delivery, and the connected model.
     ``per_page_node`` is what the sealed page graph holds for each node it
     carries, so the page term is that count times the page's own root positions
-    times one root plus its fanout. ``per_page_root`` is what the page holds per
-    root POSITION rather than per node — the coordinate the database evaluated
-    for it — so its term is that count times the page size alone, with no fanout
-    in it. ``per_published_node`` is what one published root graph holds for each
-    of ITS nodes, which is the page-node product with the page size taken out.
+    times one root plus its fanout. Both are counted over the roots the page
+    KEEPS: a page reads one root past its batch to prove whether another page
+    follows, and neither that root nor anything under it is converted, so it
+    leaves the census untouched at every point of the grid. ``per_page_root`` is
+    what the page holds per root POSITION rather than per node — the coordinate
+    the database evaluated for it — so its term is that count times the page size
+    alone, with no fanout in it. ``per_published_node`` is what one published root
+    graph holds for each of ITS nodes, which is the page-node product with the
+    page size taken out.
 
     Nothing in any of the three products is the total result size, and nothing is
     how far the delivery has got. That absence is the claim.
@@ -409,7 +455,9 @@ from.
 The root term is what makes the page's cost `O(B x T)` in the Continuation Order
 rather than in the graph below it: children have no coordinate, and a coordinate
 holds its carriers in one tuple rather than wrapping each cell. The delivery's
-own carried position is one more of them, and is fixed."""
+own carried position is one more of them, and is fixed. That the term count `T`
+is a delivery-lifetime cost rather than a per-root one is read on its own grid
+below."""
 
 _WIRE: Final = _Namespace(
     "wire", _wire_stream, fixed=42, per_page_node=2, per_page_root=1, per_published_node=1
@@ -459,6 +507,21 @@ def _paused(namespace: _Namespace, total: int, *, batch_size: int, fanout: int, 
     def seam(sample: Callable[[], None]) -> None:
         database = Database(cast("DbPort", _GeneratingPort(total, fanout)), ORDERS_MODEL)
         with namespace.opener(database, batch_size) as stream:
+            for position, _root in enumerate(stream):
+                if position == at:
+                    sample()
+                    return
+
+    return seam
+
+
+def _paused_over(terms: int, total: int, *, batch_size: int, fanout: int, at: int) -> Seam:
+    """:func:`_paused`'s Typed reading under a Continuation Order of ``terms``
+    authored keys, so the term count varies while everything else holds."""
+
+    def seam(sample: Callable[[], None]) -> None:
+        database = Database(cast("DbPort", _GeneratingPort(total, fanout)), ORDERS_MODEL)
+        with database.stream(_ordered(terms), batch_size=batch_size) as stream:
             for position, _root in enumerate(stream):
                 if position == at:
                     sample()
@@ -828,6 +891,57 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
     # view of its own — and a set neither lane reaches would be a name nothing
     # here still produces.
     assert defined_in == _SOURCES, _SOURCES - defined_in
+
+
+@in_a_child_interpreter
+def test_a_wide_continuation_order_costs_the_plan_once_and_the_page_per_root() -> None:
+    # The page term's other dimension, which the grid above holds at its
+    # narrowest: how many terms the Continuation Order has. A coordinate holds
+    # its carriers in ONE tuple rather than wrapping each cell, so a page retains
+    # one of them per root POSITION whatever the order's width — the width itself
+    # is a delivery-lifetime cost, paid once by the plan and the page node rather
+    # than once per root.
+    #
+    # Stated as two differences over a crossed grid, because either alone is
+    # satisfiable by the other: the term difference is the same at both page
+    # sizes, so nothing the width costs is per-root, and the page-size difference
+    # is the same at every width, so nothing a page costs per root grows with the
+    # width. Ten times the roots moves neither.
+    counts = {
+        (batch_size, terms): _census(
+            _paused_over(terms, _LARGE, batch_size=batch_size, fanout=_FANOUT, at=_AT)
+        )
+        for batch_size in _TERM_PAGES
+        for terms in _TERM_COUNTS
+    }
+    narrow, wide = _TERM_PAGES
+    for batch_size in _TERM_PAGES:
+        for terms in _TERM_COUNTS:
+            # The page's own, plus the position the delivery carries between two
+            # pages — which is the page before this one's last kept root, and is
+            # one whatever the order's width.
+            assert counts[batch_size, terms][1]["ContinuationCoordinate"] == batch_size + 1, (
+                batch_size,
+                terms,
+                counts,
+            )
+    widths = [
+        counts[batch_size, terms][0].parallax - counts[batch_size, _TERM_COUNTS[0]][0].parallax
+        for batch_size in _TERM_PAGES
+        for terms in _TERM_COUNTS[1:]
+    ]
+    assert widths[: len(_TERM_COUNTS) - 1] == widths[len(_TERM_COUNTS) - 1 :], (widths, counts)
+    assert all(width > 0 for width in widths), (widths, counts)
+    pages = {
+        terms: counts[wide, terms][0].parallax - counts[narrow, terms][0].parallax
+        for terms in _TERM_COUNTS
+    }
+    assert len(set(pages.values())) == 1, (pages, counts)
+    widest = _TERM_COUNTS[-1]
+    larger = _census(
+        _paused_over(widest, _LARGE * _TENFOLD, batch_size=wide, fanout=_FANOUT, at=_AT)
+    )
+    assert larger == counts[wide, widest], (larger, counts[wide, widest])
 
 
 @in_a_child_interpreter

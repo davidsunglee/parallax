@@ -2,8 +2,9 @@
 # declared width's cast to `real`, so what it captures and rebinds is what that
 # cast evaluated rather than a number re-derived at some other width. The authored
 # equality and the seek carry the same shortest round-tripping spelling; the
-# terminal page is what proves the width is the declaration's rather than the
-# host's, Python carrying both widths as `float`.
+# continuing page — two rows carry that value, so one is delivered and the other
+# sought — is what proves the width is the declaration's rather than the host's,
+# Python carrying both widths as `float`.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, float32, document-layout, cast, graph, slice-snapshot-1]
 shape: read
@@ -17,9 +18,12 @@ when:
 then:
   statements:
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, cast(jsonb_extract_path_text(t0.coordinates, ?) as real) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where cast(jsonb_extract_path_text(t0.coordinates, ?) as real) = ? order by cast(jsonb_extract_path_text(t0.coordinates, ?) as real) asc, t0.id asc limit ?" }
-      binds: { postgres: [f32, f32, 1.5, f32, 1] }
+      binds: { postgres: [f32, f32, 1.5, f32, 2] }
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, cast(jsonb_extract_path_text(t0.coordinates, ?) as real) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where cast(jsonb_extract_path_text(t0.coordinates, ?) as real) = ? and (cast(jsonb_extract_path_text(t0.coordinates, ?) as real) > ? or jsonb_extract_path_text(t0.coordinates, ?) is null or (cast(jsonb_extract_path_text(t0.coordinates, ?) as real) = ? and (t0.id > ? or t0.id is null))) order by cast(jsonb_extract_path_text(t0.coordinates, ?) as real) asc, t0.id asc limit ?" }
-      binds: { postgres: [f32, f32, 1.5, f32, 1.5, f32, f32, 1.5, 101, f32, 1] }
+      binds: { postgres: [f32, f32, 1.5, f32, 1.5, f32, f32, 1.5, 101, f32, 2] }
   referenceSql: { postgres: "select id, cast(coordinates ->> 'f32' as real) as f32 from stream_coordinate where cast(coordinates ->> 'f32' as real) = 1.5" }
-  graph: { StreamCoordinate: [{ id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }] }
+  graph:
+    StreamCoordinate:
+      - { id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
+      - { id: 103, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
   roundTrips: 2

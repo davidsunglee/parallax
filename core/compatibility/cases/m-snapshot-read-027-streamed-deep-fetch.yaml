@@ -1,17 +1,19 @@
 # A streamed deep fetch pays `1 + L` per PAGE (m-snapshot-read): the page loop
-# around the executor adds nothing to the ceiling, and a short final page ends
-# the delivery without a further statement.
+# around the executor adds nothing to the ceiling, and a final page short of what
+# it asked for ends the delivery without a further statement.
 #
 # Orders {1, 2, 42} are delivered at `batchSize: 2` with two include levels
 # (`Order.items`, then `OrderItem.statuses`), so the delivery is two pages of
 # three statements each — never one whole-result read, and never a statement per
-# root. Page 1 asks for 2 and gets orders 1 and 2; its item level gathers order
-# ids {1, 2} and its status level the item ids {11, 12, 21}. Page 2 continues
-# from the Continuation Order coordinate of the root page 1 delivered LAST — id
-# 2 — so its root statement carries a `t0.id > ?` conjunct page 1 has no
-# coordinate for, and its own levels gather {42} and {421, 422}. It returns ONE
-# root for a requested 2, which proves exhaustion: no third root statement is
-# authored or executed.
+# root. Page 1 asks for 3 — its batch plus the one lookahead root that proves
+# another page follows — and gets orders 1, 2, and 42; it DELIVERS 1 and 2, so
+# its item level gathers order ids {1, 2} and its status level the item ids
+# {11, 12, 21}, and order 42 is read here but fetched by the page that delivers
+# it. Page 2 continues from the Continuation Order coordinate of the root page 1
+# KEPT last — id 2 — so its root statement carries a `t0.id > ?` conjunct page 1
+# has no coordinate for, and its own levels gather {42} and {421, 422}. It
+# returns ONE root for a requested 3, which proves exhaustion: no third root
+# statement is authored or executed.
 #
 # The delivered graph is exactly what an eager read of the same Object Query
 # publishes, in the same order, because a page size is a performance dial and
@@ -44,7 +46,7 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) order by t0.id asc limit ?
-      binds: [1, 2, 42, 2]
+      binds: [1, 2, 42, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
@@ -56,7 +58,7 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and (t0.id > ? or t0.id is null) order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and t0.id > ? order by t0.id asc limit ?
-      binds: [1, 2, 42, 2, 2]
+      binds: [1, 2, 42, 2, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc

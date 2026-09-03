@@ -16,10 +16,11 @@
 # binds AFTER the seek it is conjoined beside, which is what a page whose query
 # carries clauses of its own looks like.
 #
-# Pages of 1 over the family's two dogs: {Rex} at barkVolume 7, then {Fido} at 3
-# seeking past (7, 1), then the empty terminal statement seeking past (3, 2) that
-# a full final page costs. Three root statements, no includes, and the delivered
-# graph carries each node's `familyVariant` with no sibling branch's columns.
+# Pages of 1 over the family's two dogs, each asking for 2: {Rex} at barkVolume 7
+# out of both, then {Fido} at 3 seeking past (7, 1) — ONE root for a requested
+# two, which proves exhaustion. Two root statements, no includes, and the
+# delivered graph carries each node's `familyVariant` with no sibling branch's
+# columns.
 model: models/animal.yaml
 tags: [m-snapshot-read, m-object-query, m-inheritance, m-sql, table-per-hierarchy, narrow, stream, streamed-delivery, orderBy, ordering, nullable, familyVariant, graph, materialization, slice-snapshot-1]
 shape: read
@@ -43,13 +44,10 @@ then:
   statements:
     - sql:
         postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
-      binds: [dog, 1]
+      binds: [dog, 2]
     - sql:
         postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and (t0.id > ? or t0.id is null))) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
-      binds: [7, 7, 1, dog, 1]
-    - sql:
-        postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, t0.bark_volume parallax_seek_0, t0.id parallax_seek_1 from animal t0 where (t0.bark_volume < ? or t0.bark_volume is null or (t0.bark_volume = ? and (t0.id > ? or t0.id is null))) and t0.kind = ? order by t0.bark_volume desc nulls last, t0.id asc limit ?
-      binds: [3, 3, 2, dog, 1]
+      binds: [7, 7, 1, dog, 2]
   referenceSql: select id, kind, name, owner_id, license_id, bark_volume from animal where kind = 'dog'
   graph:
     Animal:
@@ -65,4 +63,4 @@ then:
         licenseId: L-101
         barkVolume: 3
         familyVariant: Dog
-  roundTrips: 3
+  roundTrips: 2

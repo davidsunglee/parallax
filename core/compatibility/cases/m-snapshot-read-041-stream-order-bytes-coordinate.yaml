@@ -1,9 +1,10 @@
 # A streamed page ordered by document-resident `bytes` compares the extraction as
 # TEXT, its canonical document spelling being lowercase hex, so the captured
 # carrier is that hex and the seek binds it back as comparison text. The published
-# root carries managed octets instead, which is what makes the second statement
-# distinguish the coordinate the database evaluated from anything derived off the
-# root's own decoded value — while retaining the extraction path and the key tie.
+# root carries managed octets instead, which is what makes the continuing page —
+# reached because two rows carry that payload — distinguish the coordinate the
+# database evaluated from anything derived off the root's own decoded value, while
+# retaining the extraction path and the key tie.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, bytes, document-layout, graph, slice-snapshot-1]
 shape: read
@@ -17,9 +18,12 @@ when:
 then:
   statements:
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
-      binds: { postgres: [payload, payload, "0a1b", payload, 1] }
+      binds: { postgres: [payload, payload, "0a1b", payload, 2] }
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? and (jsonb_extract_path_text(t0.coordinates, ?) > ? or jsonb_extract_path_text(t0.coordinates, ?) is null or (jsonb_extract_path_text(t0.coordinates, ?) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
-      binds: { postgres: [payload, payload, "0a1b", payload, "0a1b", payload, payload, "0a1b", 101, payload, 1] }
+      binds: { postgres: [payload, payload, "0a1b", payload, "0a1b", payload, payload, "0a1b", 101, payload, 2] }
   referenceSql: { postgres: "select id, coordinates ->> 'payload' as payload from stream_coordinate where coordinates ->> 'payload' = '0a1b'" }
-  graph: { StreamCoordinate: [{ id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }] }
+  graph:
+    StreamCoordinate:
+      - { id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
+      - { id: 103, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
   roundTrips: 2

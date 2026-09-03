@@ -19,12 +19,12 @@
 # them on MariaDB, so each dialect admits them on the one term the other does
 # not, over columns that hold none.
 #
-# Each nonempty page then runs its own item level over the order ids that page
-# gathered — including page 1's, whose two roots have no items at all and whose
-# level still runs because keys were gathered. Pages of 2 over 6 roots: {5, 3},
-# {42, 4} seeking past (false, 3), {2, 1} seeking past (true, 4), then the empty
-# terminal root statement seeking past (true, 1), which gathers nothing and so
-# runs no level. Three pages of 2 statements plus 1 is 7.
+# Each page then runs its own item level over the order ids that page gathered —
+# including page 1's, whose two roots have no items at all and whose level still
+# runs because keys were gathered. Pages of 2 over 6 roots, each asking for 3:
+# {5, 3}, {42, 4} seeking past (false, 3), {2, 1} seeking past (true, 4) — two
+# roots for a requested three, which proves exhaustion. Three pages of 2
+# statements is 6.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, stream, streamed-delivery, orderBy, ordering, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read
@@ -52,7 +52,7 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.active asc, t0.id desc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.active asc, t0.id desc limit ?
-      binds: [2]
+      binds: [3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
@@ -60,7 +60,7 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or t0.active is null or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and (t0.id < ? or t0.id is null))) order by t0.active asc, t0.id desc limit ?
-      binds: [false, false, false, 3, 2]
+      binds: [false, false, false, 3, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
@@ -68,15 +68,11 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or t0.active is null or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and (t0.id < ? or t0.id is null))) order by t0.active asc, t0.id desc limit ?
-      binds: [true, true, true, 4, 2]
+      binds: [true, true, true, 4, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
       binds: [2, 1]
-    - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or t0.active is null or (t0.active = ? and t0.id < ?)) order by t0.active asc, t0.id desc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.active parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.active >= ? and (t0.active > ? or (t0.active = ? and (t0.id < ? or t0.id is null))) order by t0.active asc, t0.id desc limit ?
-      binds: [true, true, true, 1, 2]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders
   graph:
     Order:
@@ -133,4 +129,4 @@ then:
         items:
           - { id: 12, orderId: 1, sku: B-200, quantity: 1, shippedOn: 2024-02-15 }
           - { id: 11, orderId: 1, sku: A-100, quantity: 2, shippedOn: null }
-  roundTrips: 7
+  roundTrips: 6

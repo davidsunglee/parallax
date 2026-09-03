@@ -45,11 +45,10 @@
 # placement rather than an authored one, and only Postgres — which trails NULLs on
 # `asc` — admits them in that branch.
 #
-# Pages of 1 over 3 roots: {51}, then {53} seeking past (Oslo, 3, 51), then {52}
-# seeking past (Bergen, 7, 53), then the empty terminal statement seeking past
-# (Bergen, 1, 52) — a full final page proves nothing, so exhaustion costs one more
-# root statement. Four root statements, no includes, and the delivered graph is
-# the eager read's own.
+# Pages of 1 over 3 roots, each asking for 2: {51}, then {53} seeking past
+# (Oslo, 3, 51), then {52} seeking past (Bergen, 7, 53) — ONE root for a requested
+# two, which proves exhaustion. Three root statements, no includes, and the
+# delivered graph is the eager read's own.
 model: models/document-layout.yaml
 tags: [m-snapshot-read, m-storage-layout, m-object-query, m-sql, m-dialect, stream, streamed-delivery, orderBy, ordering, nullable, json, document-layout, cast, graph, materialization, slice-snapshot-1]
 shape: read
@@ -75,26 +74,20 @@ then:
         postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload, jsonb_extract_path_text(t0.payload, ?) parallax_seek_0, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) parallax_seek_1, t0.id parallax_seek_2 from trip t0 order by jsonb_extract_path_text(t0.payload, ?) desc nulls last, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last, t0.id asc limit ?
         mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload, json_value(t0.payload, ?) parallax_seek_0, cast(json_value(t0.payload, ?) as signed) parallax_seek_1, t0.id parallax_seek_2 from trip t0 order by json_value(t0.payload, ?) desc, cast(json_value(t0.payload, ?) as signed) desc, t0.id asc limit ?
       binds:
-        postgres: [destination, nights, destination, nights, 1]
-        mariadb: ['$.destination', '$.nights', '$.destination', '$.nights', 1]
+        postgres: [destination, nights, destination, nights, 2]
+        mariadb: ['$.destination', '$.nights', '$.destination', '$.nights', 2]
     - sql:
         postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload, jsonb_extract_path_text(t0.payload, ?) parallax_seek_0, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) parallax_seek_1, t0.id parallax_seek_2 from trip t0 where (jsonb_extract_path_text(t0.payload, ?) < ? or jsonb_extract_path_text(t0.payload, ?) is null or (jsonb_extract_path_text(t0.payload, ?) = ? and (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) < ? or jsonb_extract_path_text(t0.payload, ?) is null)) or (jsonb_extract_path_text(t0.payload, ?) = ? and cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.payload, ?) desc nulls last, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last, t0.id asc limit ?
         mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload, json_value(t0.payload, ?) parallax_seek_0, cast(json_value(t0.payload, ?) as signed) parallax_seek_1, t0.id parallax_seek_2 from trip t0 where (json_value(t0.payload, ?) < ? or json_value(t0.payload, ?) is null or (json_value(t0.payload, ?) = ? and (cast(json_value(t0.payload, ?) as signed) < ? or json_value(t0.payload, ?) is null)) or (json_value(t0.payload, ?) = ? and cast(json_value(t0.payload, ?) as signed) = ? and t0.id > ?)) order by json_value(t0.payload, ?) desc, cast(json_value(t0.payload, ?) as signed) desc, t0.id asc limit ?
       binds:
-        postgres: [destination, nights, destination, Oslo, destination, destination, Oslo, nights, 3, nights, destination, Oslo, nights, 3, 51, destination, nights, 1]
-        mariadb: ['$.destination', '$.nights', '$.destination', Oslo, '$.destination', '$.destination', Oslo, '$.nights', 3, '$.nights', '$.destination', Oslo, '$.nights', 3, 51, '$.destination', '$.nights', 1]
+        postgres: [destination, nights, destination, Oslo, destination, destination, Oslo, nights, 3, nights, destination, Oslo, nights, 3, 51, destination, nights, 2]
+        mariadb: ['$.destination', '$.nights', '$.destination', Oslo, '$.destination', '$.destination', Oslo, '$.nights', 3, '$.nights', '$.destination', Oslo, '$.nights', 3, 51, '$.destination', '$.nights', 2]
     - sql:
         postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload, jsonb_extract_path_text(t0.payload, ?) parallax_seek_0, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) parallax_seek_1, t0.id parallax_seek_2 from trip t0 where (jsonb_extract_path_text(t0.payload, ?) < ? or jsonb_extract_path_text(t0.payload, ?) is null or (jsonb_extract_path_text(t0.payload, ?) = ? and (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) < ? or jsonb_extract_path_text(t0.payload, ?) is null)) or (jsonb_extract_path_text(t0.payload, ?) = ? and cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.payload, ?) desc nulls last, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last, t0.id asc limit ?
         mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload, json_value(t0.payload, ?) parallax_seek_0, cast(json_value(t0.payload, ?) as signed) parallax_seek_1, t0.id parallax_seek_2 from trip t0 where (json_value(t0.payload, ?) < ? or json_value(t0.payload, ?) is null or (json_value(t0.payload, ?) = ? and (cast(json_value(t0.payload, ?) as signed) < ? or json_value(t0.payload, ?) is null)) or (json_value(t0.payload, ?) = ? and cast(json_value(t0.payload, ?) as signed) = ? and t0.id > ?)) order by json_value(t0.payload, ?) desc, cast(json_value(t0.payload, ?) as signed) desc, t0.id asc limit ?
       binds:
-        postgres: [destination, nights, destination, Bergen, destination, destination, Bergen, nights, 7, nights, destination, Bergen, nights, 7, 53, destination, nights, 1]
-        mariadb: ['$.destination', '$.nights', '$.destination', Bergen, '$.destination', '$.destination', Bergen, '$.nights', 7, '$.nights', '$.destination', Bergen, '$.nights', 7, 53, '$.destination', '$.nights', 1]
-    - sql:
-        postgres: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload, jsonb_extract_path_text(t0.payload, ?) parallax_seek_0, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) parallax_seek_1, t0.id parallax_seek_2 from trip t0 where (jsonb_extract_path_text(t0.payload, ?) < ? or jsonb_extract_path_text(t0.payload, ?) is null or (jsonb_extract_path_text(t0.payload, ?) = ? and (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) < ? or jsonb_extract_path_text(t0.payload, ?) is null)) or (jsonb_extract_path_text(t0.payload, ?) = ? and cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.payload, ?) desc nulls last, cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last, t0.id asc limit ?
-        mariadb: select t0.id, t0.traveler_id, not t0.payload is null, t0.payload, json_value(t0.payload, ?) parallax_seek_0, cast(json_value(t0.payload, ?) as signed) parallax_seek_1, t0.id parallax_seek_2 from trip t0 where (json_value(t0.payload, ?) < ? or json_value(t0.payload, ?) is null or (json_value(t0.payload, ?) = ? and (cast(json_value(t0.payload, ?) as signed) < ? or json_value(t0.payload, ?) is null)) or (json_value(t0.payload, ?) = ? and cast(json_value(t0.payload, ?) as signed) = ? and t0.id > ?)) order by json_value(t0.payload, ?) desc, cast(json_value(t0.payload, ?) as signed) desc, t0.id asc limit ?
-      binds:
-        postgres: [destination, nights, destination, Bergen, destination, destination, Bergen, nights, 1, nights, destination, Bergen, nights, 1, 52, destination, nights, 1]
-        mariadb: ['$.destination', '$.nights', '$.destination', Bergen, '$.destination', '$.destination', Bergen, '$.nights', 1, '$.nights', '$.destination', Bergen, '$.nights', 1, 52, '$.destination', '$.nights', 1]
+        postgres: [destination, nights, destination, Bergen, destination, destination, Bergen, nights, 7, nights, destination, Bergen, nights, 7, 53, destination, nights, 2]
+        mariadb: ['$.destination', '$.nights', '$.destination', Bergen, '$.destination', '$.destination', Bergen, '$.nights', 7, '$.nights', '$.destination', Bergen, '$.nights', 7, 53, '$.destination', '$.nights', 2]
   referenceSql:
     postgres: select id, traveler_id, payload ->> 'destination' as destination, cast(payload ->> 'nights' as integer) as nights from trip
     mariadb: select id, traveler_id, json_value(payload, '$.destination') as destination, cast(json_value(payload, '$.nights') as signed) as nights from trip
@@ -103,4 +96,4 @@ then:
       - { id: 51, travelerId: 1, destination: Oslo, nights: 3 }
       - { id: 53, travelerId: 2, destination: Bergen, nights: 7 }
       - { id: 52, travelerId: 1, destination: Bergen, nights: 1 }
-  roundTrips: 4
+  roundTrips: 3

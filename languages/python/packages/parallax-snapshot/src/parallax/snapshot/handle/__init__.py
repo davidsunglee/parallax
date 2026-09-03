@@ -61,13 +61,14 @@ public-surface check promises. Where the exported names live:
   instruction IR, and the buffer with the Typed verbs.
 - :mod:`~parallax.snapshot.handle._stream` — :class:`SnapshotStream`, the
   scope-bound single-pass delivery ``db.stream`` / ``tx.stream`` and their Wire
-  peers answer, and :class:`SnapshotStreamStateError`, the one refusal its own
-  rules raise. The loop that says where the delivery stands, and the per-root
-  publication below it, live here.
+  peers answer, plus its two refusals: :class:`SnapshotStreamStateError`, which
+  its own rules raise, and :class:`SnapshotStreamContinuationError`, which the
+  stored data does. The loop that says where the delivery stands, and the
+  per-root publication below it, live here.
 - :mod:`~parallax.snapshot.handle._page` — the page that loop is written
-  against: how many roots to ask for, which node asks for them, and the
-  coordinate the next one resumes from, settled in one operation over the read
-  executor's own two halves.
+  against: how many roots to ask for, which node asks for them, which of the
+  returned roots survive, and the coordinate the next one resumes from, settled
+  in one operation over the read executor's own two halves.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, :func:`entity_read_lock`, the composed
   per-Entity read-lock derivation every participating read resolves its own
@@ -143,7 +144,11 @@ from parallax.snapshot.handle._read import (
     find,
     find_history,
 )
-from parallax.snapshot.handle._stream import SnapshotStream, SnapshotStreamStateError
+from parallax.snapshot.handle._stream import (
+    SnapshotStream,
+    SnapshotStreamContinuationError,
+    SnapshotStreamStateError,
+)
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import (
     WireChanges,
@@ -190,6 +195,7 @@ __all__ = [
     "SnapshotConnectionError",
     "SnapshotMaterializationError",
     "SnapshotStream",
+    "SnapshotStreamContinuationError",
     "SnapshotStreamStateError",
     "StoredDataIssue",
     "TooManyResultsFound",

@@ -349,7 +349,9 @@ canonical axis rank — Valid Time before Transaction Time. A milestone's edge i
 unique within its key by construction (`m-temporal-read`: a from-instant lies
 inside its own half-open interval, and two milestones of one key do not overlap
 on every axis at once), so the composed order is total for every read shape and
-no two roots tie in it. Every declared axis contributes, whether the query
+no two roots tie in it — over storage the model describes. Where storage has lost
+a constraint the order rests on, two roots may stand at ONE evaluated coordinate,
+and *Ending a delivery at a tie* below settles what a delivery does about it. Every declared axis contributes, whether the query
 scanned it or pinned it: a pin selects one coordinate on that axis and leaves
 the other free to vary across the milestones the scan returns.
 
@@ -406,10 +408,28 @@ one.
 
 Each page is an ordinary read of a bounded root query, so `m-deep-fetch`'s
 **`1 + L` ceiling applies once per page** and a page's child levels are the same
-`IN (gathered keys)` lookups any read issues. A page that returned fewer roots
-than it asked for proves exhaustion; a full one does not, so exhaustion costs one
-more root statement returning nothing — unless a declared `limit` was already
-delivered in full, which proves it without asking.
+`IN (gathered keys)` lookups any read issues.
+
+A page reads one root MORE than it may deliver — a **lookahead** root, read
+complete, used only to decide the page, and then dropped. A page that came back
+short of what it asked for proves exhaustion; one that came back full proves
+another page follows. Exhaustion therefore costs no terminal statement of its own,
+not even where the result fills its final page exactly: the root-statement count is
+`1` where no root is delivered and `ceil(N / B)` for `N` roots at page size `B`.
+
+The lookahead root is **not** delivered by the page that read it. It is not
+deep-fetched, converted, classified, or published there, and it is never paired
+with children another page fetched: the next page's own root statement returns it
+again, because that page resumes from the last root the page before it KEPT. The
+`1 + L` ceiling is unaffected — a page gathers keys from the roots it kept.
+
+A declared `limit` is a hard database-read and locking boundary rather than a
+filter applied afterwards, so it caps the lookahead too: where no more than a page
+is left of it, the final page asks for exactly that remainder and reads no root the
+limit excludes. That page's result proves nothing about what follows it and needs
+to prove nothing — the limit is already delivered in full. The consequence is
+deliberate: a tie between the last included root and the first excluded one goes
+undetected there, and no later seek exists that could skip it.
 
 Delivery adds no capability and removes none. A query a whole-result read may not
 execute is equally unexecutable streamed, and the reverse holds too: a `history`
@@ -490,6 +510,40 @@ term, the primary key or an authored member, before it reaches the edge. A key
 whose milestones interleave with another key's is therefore delivered in one
 sequence eagerly and another streamed.
 
+### Ending a delivery at a tie
+
+Two roots the page statement evaluated to ONE Continuation Order coordinate end the
+delivery. There is no fallback: a delivery never knowingly skips a root, delivers one
+twice, loops, or continues through an identical coordinate, and the strict seek a
+later page would carry steps over the twin of the root it resumed from.
+
+A tie is storage the model does not describe — the composed order is total over
+storage that keeps the constraints it rests on — so this is a diagnosis of the data
+rather than of the query or the caller. A delivery reaching one:
+
+- **publishes the maximal strictly ordered prefix** of the page it was found in, in
+  order, and every root before that page exactly as it published them;
+- **touches neither tied root**: neither is deep-fetched, converted, classified, or
+  published, so the stored-data issues they might have carried never compete with the
+  refusal for precedence;
+- then **refuses**, naming the Continuation Order it was measured against, an inert
+  copy of the coordinate both roots stood at, and the ordinal — counted from the
+  start of the delivery — of the first root it could not deliver.
+
+Refusal follows publication in that order for both views. A throwing view's refusal
+of invalid stored data is raised while the prefix is being published, so it arrives
+FIRST where both apply; the tie refusal is raised only once the page's kept roots
+have all been delivered. Sameness is the coordinate's own rule, over the carriers a
+provider produced and normalized once at capture, and is deliberately narrow: under
+storage that has lost a constraint a database may treat carriers as tied where this
+comparison does not, and detecting that exhaustively is not attempted.
+
+Because the scan covers the LOOKAHEAD root, a tie spanning a page boundary is caught
+before a seek could step over it. The one boundary it does not cover is a declared
+`limit`'s: the final page that limit caps reads no excluded root, so a tie between
+the last included root and the first excluded one goes undetected, and no later seek
+exists that could skip it.
+
 ### Stability under concurrent writing
 
 A delivery is stable **per page**, and that is the whole of what it promises.
@@ -564,6 +618,13 @@ Three layers, each separately bounded and each released at a stated point:
 | the current root's merge and classification | the merged nodes and issues reachable from that root | `O(G_max)` | when that root is published |
 | the current root's materialized value | that root's published graph and its cycle and aliasing closure | `O(G_max)` | when the delivery advances |
 
+Two page-scoped terms sit inside the first layer rather than beside it. A page holds
+one evaluated coordinate per root POSITION it kept — `O(B x T)` for `T` Continuation
+Order terms, and nothing per node below a root — plus the one the delivery carries
+between two pages. And the lookahead root a page read and did not keep is released at
+the page decision, before anything below it is fetched, so it costs one root's raw
+result and nothing converted.
+
 The bound is deliberately **not** `O(B)`. `P_B` is a page's whole converted
 result rather than its root count, so a page of roots each carrying a large
 relationship fan-out is priced at what it carries; and `G_max` is one root's own
@@ -621,9 +682,9 @@ to pin the `1 + L` ceiling independently of whether observation is installed.
 Snapshot cases are **read**-shape deep-fetch cases (`m-case-format`): golden
 statements, the assembled `then.graph`, and the declared `then.roundTrips`. A
 **streamed** case is the same shape carrying `when.stream`, so the page
-partition its statements spell out — the requested size, the seek each later
-page continues from, and the statement a full final page costs — is graded
-beside the delivered graph, and a **batch-size pair** grades the invariance the
+partition its statements spell out — the requested size, lookahead root
+included, the seek each later page continues from, and the page that came back
+short of it and so ended the delivery — is graded beside the delivered graph, and a **batch-size pair** grades the invariance the
 page size promises. The
 graph fixture is a tree, so the diamond's shared node appears as equal values at
 both positions, and diamond fixtures stay **projection-neutral** — every path to

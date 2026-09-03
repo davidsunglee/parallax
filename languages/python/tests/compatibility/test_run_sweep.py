@@ -199,9 +199,11 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
     include paths recovers. What every page's root statement carries and no child
     level of one ever does is the page's own bound, so that is what a root is
     recognized by. How MANY pages there are is the delivery's own arithmetic — a
-    page delivers the size it asked for until one falls short, and a declared
-    limit ends it early — and a delivery that ran a different number of them
-    fails here rather than being graded against the wrong statements.
+    page asks for its batch plus the one LOOKAHEAD root that proves another page
+    follows, and ends the delivery as soon as one comes back short of that, while
+    a declared limit caps the final page and reads no lookahead root at all — and
+    a delivery that ran a different number of them fails here rather than being
+    graded against the wrong statements.
     """
     doc = case_document(case)
     query = cast("dict[str, Any]", doc["when"]["objectQuery"])
@@ -211,11 +213,13 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
     pages = 0
     delivered = 0
     while True:
-        requested = size if limit is None else min(size, limit - delivered)
-        page = min(requested, roots - delivered)
+        remaining = None if limit is None else limit - delivered
+        lookahead = remaining is None or remaining > size
+        requested = size + 1 if remaining is None or lookahead else remaining
+        returned = min(requested, roots - delivered)
         pages += 1
-        delivered += page
-        if page < requested or (limit is not None and delivered >= limit):
+        delivered += returned - 1 if lookahead and returned == requested else returned
+        if not lookahead or returned < requested:
             break
     positions = {index for index, sql in enumerate(statements) if _PAGE_BOUND.search(sql)}
     assert positions and min(positions) == 0, (case.case_id, sorted(positions))

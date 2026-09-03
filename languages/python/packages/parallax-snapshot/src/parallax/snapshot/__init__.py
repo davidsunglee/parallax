@@ -39,9 +39,13 @@ The streamed peer of a Snapshot is here as well: :class:`SnapshotStream`
 (``SnapshotStream[T]``), what ``db.stream`` / ``tx.stream`` and their Wire peers
 answer — a scope-bound, single-pass delivery of roots with no whole-result
 accessor — and :class:`SnapshotStreamStateError`, its refusal of a second entry,
-a second view, or a reach outside its scope. Every case is a rule about the
-stream rather than about the data: a checked delivery continues past a root
-whose stored state contradicts the model.
+a second view, or a reach outside its scope. Every case of that one is a rule
+about the stream rather than about the data: a checked delivery continues past a
+root whose stored state contradicts the model.
+:class:`SnapshotStreamContinuationError` is the delivery's other refusal and the
+one that is about the data — two roots the database placed at one Continuation
+Order coordinate, which no delivery can continue past — reported after every
+root before them has been published.
 
 The Wire read interface's own result vocabulary is here too: :class:`WireEntity`,
 the frozen Entity node ``db.wire.find`` / ``tx.wire.find`` publishes, and
@@ -86,6 +90,7 @@ from parallax.snapshot.handle import (
     SnapshotConnectionError,
     SnapshotMaterializationError,
     SnapshotStream,
+    SnapshotStreamContinuationError,
     SnapshotStreamStateError,
     StoredDataIssue,
     TooManyResultsFound,
@@ -117,6 +122,7 @@ __all__ = [
     "SnapshotInspectionError",
     "SnapshotMaterializationError",
     "SnapshotStream",
+    "SnapshotStreamContinuationError",
     "SnapshotStreamStateError",
     "StoredDataIssue",
     "TooManyResultsFound",

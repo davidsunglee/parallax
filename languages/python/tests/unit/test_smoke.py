@@ -38,6 +38,7 @@ def test_top_package_public_surfaces() -> None:
         "Snapshot",
         "CheckedSnapshot",
         "SnapshotStream",
+        "SnapshotStreamContinuationError",
         "SnapshotStreamStateError",
         "InvalidData",
         "InvalidDataError",

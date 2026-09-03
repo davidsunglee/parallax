@@ -7,9 +7,10 @@
 # differ only in `when.stream.batchSize` and the physical observations that follow
 # from it; the static twin gate holds them equal on everything else, so a later
 # edit cannot quietly make them two unrelated cases that both pass. This arm pages
-# orders {1, 2, 3, 42} three at a time: {1, 2, 3}, then {42} seeking past id 3 —
-# ONE root for a requested three, which proves exhaustion, so this arm pays no
-# terminal statement at all where its sibling pays one.
+# orders {1, 2, 3, 42} three at a time, each page asking for four: {1, 2, 3} out
+# of all four, then {42} seeking past id 3 — ONE root for a requested four, which
+# proves exhaustion. Where the two arms differ is the partition and the seek,
+# never what exhaustion costs.
 #
 # It declares NO includes, which is what makes it the witness for the compile
 # rule as well: with no deep-fetch fan-out anywhere, the only query result its
@@ -40,11 +41,11 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) order by t0.id asc limit ?
-      binds: [1, 2, 3, 42, 3]
+      binds: [1, 2, 3, 42, 4]
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) and (t0.id > ? or t0.id is null) order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) and t0.id > ? order by t0.id asc limit ?
-      binds: [1, 2, 3, 42, 3, 3]
+      binds: [1, 2, 3, 42, 3, 4]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 2, 3, 42)
   graph:
     Order:

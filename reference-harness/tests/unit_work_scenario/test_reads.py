@@ -123,7 +123,11 @@ def _account(id_: int, owner: str, balance: str, version: int) -> dict[str, Any]
 _LINUS = [_account(2, "Linus", "250.00", 1)]
 
 _FIRST_DELIVERY = [
-    [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
+    [
+        _account(1, "Ada", "100.00", 1),
+        _account(2, "Linus", "250.00", 1),
+        _account(3, "Grace", "10.00", 1),
+    ],
     [_account(3, "Grace", "10.00", 1)],
     [
         _account(1, "Ada", "100.00", 1),
@@ -132,7 +136,11 @@ _FIRST_DELIVERY = [
     ],
 ]
 _SECOND_DELIVERY = [
-    [_account(1, "Ada", "125.00", 2), _account(2, "Linus", "250.00", 1)],
+    [
+        _account(1, "Ada", "125.00", 2),
+        _account(2, "Linus", "250.00", 1),
+        _account(3, "Grace", "10.00", 1),
+    ],
     [_account(3, "Grace", "10.00", 1)],
     [
         _account(1, "Ada", "125.00", 2),
@@ -1121,7 +1129,7 @@ def test_a_streamed_step_ending_on_a_full_page_is_refused(damaged_case: CaseLoad
     """Dropping the short final page leaves a delivery that never proved exhaustion.
 
     A grader taking the step's FIRST statement and stopping would accept this: the
-    remaining page still returns the two roots page 1 asked for.
+    remaining page still returns every root it asked for, lookahead included.
     """
     case = damaged_case(_STREAMED_EVIDENCE)
     step = _steps(case)[0]
