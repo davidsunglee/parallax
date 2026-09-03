@@ -22,9 +22,10 @@ def _modules_directly_in(wheelhouse: Wheelhouse, package: str, directory: str) -
     """Every module the wheel ships directly inside ``directory``, nested ones excluded.
 
     An exact set is what a completeness claim needs. Hatch discovers the tree
-    rather than enumerating modules, so a required-path list grades only what a
-    split was expected to produce and stays green over whatever else the tree
-    happens to carry — the under-coverage that let a module ship unnamed.
+    rather than enumerating modules, so a required-path list grades only the
+    modules it happens to name and passes over every other module the tree
+    carries; compared as a set, an unexpected module fails as loudly as a
+    missing one.
     """
     return {
         name
@@ -87,12 +88,10 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # The checks above see `parallax/snapshot` only at the top-package prefix, so
     # they cannot tell a handle.py from a handle/ directory. This is the complete
     # package — the eighteen private modules plus the re-exporting interface — and
-    # the set is compared whole so it stays that claim: Hatch discovers the tree
-    # rather than enumerating modules, so a required-path list would have gone on
-    # passing over a module nobody named, which is how `_page.py` shipped
-    # ungraded. The absent old path is the half no set over the directory reaches:
-    # `handle.py` sits beside the package, and a wheel carrying it is a stale
-    # build or a half-applied split.
+    # the set is compared whole so it stays that claim: a module shipped here
+    # that nobody named fails as loudly as a missing one. The absent old path is
+    # the half no set over the directory reaches: `handle.py` sits beside the
+    # package, and a wheel carrying it is a stale build or a half-applied split.
     assert _modules_directly_in(wheelhouse, "parallax-snapshot", "parallax/snapshot/handle/") == {
         "parallax/snapshot/handle/__init__.py",
         "parallax/snapshot/handle/_database.py",
