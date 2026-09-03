@@ -25,6 +25,7 @@ import parallax.postgres.adapter as adapter_module
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    ISOLATION_LEVELS,
     BeginFailed,
     CallbackRaised,
     CommitFailed,
@@ -32,8 +33,9 @@ from parallax.core.db_port import (
     JsonDocument,
     RollbackFailed,
     RolledBack,
+    isolation_level,
 )
-from parallax.postgres import PostgresAdapter
+from parallax.postgres import PostgresAdapter, isolation_spelling
 from parallax.postgres.adapter import (
     adapt_binds,
     fold_document_reads,
@@ -47,10 +49,22 @@ from parallax.postgres.adapter import (
 _DIALECT = PostgresAdapter.dialect
 
 
-def test_public_surface_is_the_adapter_alone() -> None:
-    assert parallax.postgres.__all__ == ["PostgresAdapter"]
+def test_public_surface_is_the_adapter_and_this_engines_isolation_spelling() -> None:
+    assert parallax.postgres.__all__ == ["PostgresAdapter", "isolation_spelling"]
     assert not hasattr(parallax.postgres, "Json")
     assert not hasattr(parallax.postgres, "Jsonb")
+
+
+def test_every_portable_level_has_exactly_one_postgres_spelling() -> None:
+    # The map is keyed by the port's own vocabulary, so a level added there with no
+    # spelling here — or a spelling for a level the vocabulary does not name — is a
+    # gap the adapter would meet as a KeyError at the boundary it was opening.
+    spellings = {level: isolation_spelling(isolation_level(level)) for level in ISOLATION_LEVELS}
+    assert spellings == {
+        "read_committed": "read committed",
+        "repeatable_read": "repeatable read",
+        "serializable": "serializable",
+    }
 
 
 def testadapt_binds_wraps_json_documents_and_passes_scalars_through() -> None:

@@ -1,26 +1,26 @@
-# Serialization failure classifies to `deadlock` (m-db-error). A real Postgres
-# SQLSTATE 40001 (`could not serialize access due to read/write dependencies`) is
-# folded into the retriable `deadlock` category — the SAME neutral class as a true
-# lock-cycle deadlock (40P01) — with NO vocabulary change (m-db-error.md:33-37;
-# errors.py already maps 40001 -> deadlock).
+# Serializable refuses a nonserial committed result, and the refusal classifies to
+# the retriable `deadlock` category on both engines (m-db-error). What the case
+# grades is the portable promise of `when.uow.isolation: serializable` — that the
+# committed participating transactions are equivalent to some serial order — never
+# the mechanism either server reaches it by, which is why one choreography holds for
+# both while `then.nativeCode` differs.
 #
-# The trigger is a classic SERIALIZABLE write-skew, distinct from the lock-cycle
-# deadlock cases (m-db-error-004/005): there is NO lock contention. Under SSI both
-# transactions read one row and write ANOTHER (no write-write conflict, so neither
-# blocks), forming a read/write dependency CYCLE the serializable monitor detects at
-# COMMIT — victimizing one transaction with 40001:
-#   round 0 : A reads gauge 2, B reads gauge 1 (each takes its SIREAD predicate lock)
-#   round 1 : A writes gauge 1, B writes gauge 2 (crossing the reads — the dangerous
-#             structure; different rows, so neither blocks)
-#   commit  : the runner commits both held SERIALIZABLE transactions; the cycle makes
-#             ONE commit raise 40001. The runner classifies whichever is victimized.
+# The trigger is a write skew, distinct from the lock-cycle deadlock cases
+# (m-db-error-004/005), which are ordinary row-lock contention at any level:
+#   round 0 : A reads gauge 2, B reads gauge 1
+#   round 1 : A writes gauge 1, B writes gauge 2 — each writing the row the peer
+#             read, so no serial order of the two produces this pair of outcomes
+#   round 2 : each node COMMITS its own held transaction (`kind: commit`), the
+#             moment the refusal can surface at
 #
-# Postgres-only: 40001 is a Postgres SQLSTATE. MariaDB surfaces serialization
-# conflicts as its deadlock errno (1213), already witnessed by m-db-error-004/005, so
-# this case carries only a `postgres` golden + native code (the harness runs it on
-# Postgres and skips MariaDB, which declares no golden here).
+# Postgres reaches it optimistically: SSI takes SIREAD predicate locks, nothing
+# blocks, and the cycle is detected at commit as `40001`. MariaDB reaches it
+# pessimistically: Serializable converts both plain SELECTs to shared locking reads,
+# so round 1's crossed writes wait on each other and InnoDB victimizes one with
+# `1213`. Either way exactly one node's transaction is refused; the runner classifies
+# whichever is victimized.
 model: models/error-cases.yaml
-tags: [m-db-error, deadlock, serialization, slice-snapshot-1, slice-managed-1]
+tags: [m-db-error, isolation, deadlock, serialization, slice-snapshot-1, slice-managed-1]
 shape: error
 compileEligibility:
   mode: run-only
@@ -29,29 +29,40 @@ compileEligibility:
 given:
   fixtures: true
 when:
+  uow:
+    isolation: serializable
   concurrency:
     rounds:
       - A:
           statements:
             - sql:
                 postgres: select t0.id, t0.v from gauge t0 where t0.id = ?
+                mariadb: select t0.id, t0.v from gauge t0 where t0.id = ?
               binds: [2]
         B:
           statements:
             - sql:
                 postgres: select t0.id, t0.v from gauge t0 where t0.id = ?
+                mariadb: select t0.id, t0.v from gauge t0 where t0.id = ?
               binds: [1]
       - A:
           statements:
             - sql:
                 postgres: update gauge set v = ? where id = ?
+                mariadb: update gauge set v = ? where id = ?
               binds: [11, 1]
         B:
           statements:
             - sql:
                 postgres: update gauge set v = ? where id = ?
+                mariadb: update gauge set v = ? where id = ?
               binds: [21, 2]
+      - A:
+          kind: commit
+        B:
+          kind: commit
 then:
   errorClass: deadlock
   nativeCode:
     postgres: "40001"
+    mariadb: 1213

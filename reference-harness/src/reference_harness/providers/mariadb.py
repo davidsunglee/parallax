@@ -64,6 +64,23 @@ _CODES: dict[int, str] = {
     1020: errors.DEADLOCK,
 }
 
+# Each portable Isolation Level (m-db-port), keyed by the core serialized value a
+# case declares, as the statements that open a session at it. Repeatable Read takes
+# two: without `innodb_snapshot_isolation` InnoDB lets a locking read or a write see
+# the current row rather than the read view's, which is the lost update the level
+# forbids. It is set explicitly whatever the server defaults to, so the promise is a
+# property of the session rather than of whichever release the image tag resolves to.
+# Serializable never sets it: that level forbids the anomaly through shared locking
+# reads and range protection instead, and the read view is not what it works from.
+_ISOLATION: dict[str, tuple[str, ...]] = {
+    "read-committed": ("set session transaction isolation level read committed",),
+    "repeatable-read": (
+        "set session transaction isolation level repeatable read",
+        "set session innodb_snapshot_isolation = ON",
+    ),
+    "serializable": ("set session transaction isolation level serializable",),
+}
+
 # MariaDB has no native timestamp infinity; the open upper bound (m-core/m-dialect) is the
 # largest representable DATETIME(6). This is the documented max-sentinel the seam
 # substitutes for the suite's `infinity` literal.
@@ -257,18 +274,28 @@ class MariaDbProvider:
         return errors.UNKNOWN if code is None else _CODES.get(code, errors.UNKNOWN)
 
     @contextmanager
-    def open_session(self) -> Iterator[_MariaTxSession]:
+    def open_session(self, isolation: str | None = None) -> Iterator[_MariaTxSession]:
         """A second connection in MANUAL-commit mode, for lock contention.
 
         Mirrors the Postgres session. MariaDB's default
         ``innodb_lock_wait_timeout`` is 50s -- far too slow for the suite -- so it
         is lowered to 1s on open; a blocked lock then raises errno 1205 quickly.
         InnoDB detects deadlocks immediately (no timeout knob needed).
+
+        A declared ``isolation`` is applied first, at SESSION scope, because a
+        case's whole choreography is one transaction on this connection and
+        MariaDB's per-next-transaction form is neither readable back nor legal
+        once that transaction has begun. Session scope is right here and wrong for
+        a real adapter: this provider creates and closes the connection itself, so
+        the setting outlives no caller's transaction and there is nothing to
+        restore.
         """
         params = {**self._connect_params, "autocommit": False}
         conn = pymysql.connect(database=self._dbname, **params)
         try:
             with conn.cursor() as cur:
+                for statement in _ISOLATION[isolation] if isolation is not None else ():
+                    cur.execute(statement)
                 cur.execute("set innodb_lock_wait_timeout = 1")
             conn.commit()
         except BaseException:

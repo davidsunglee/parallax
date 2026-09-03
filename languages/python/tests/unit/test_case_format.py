@@ -44,6 +44,56 @@ def _write(tmp_path: Path, name: str, body: str) -> Path:
     return path
 
 
+def _isolation_case(document: dict[str, object]) -> Case:
+    return Case(
+        path=Path("m-db-error-009-example.yaml"),
+        case_id="m-db-error-009",
+        shape="error",
+        tags=("m-db-error", "isolation"),
+        model="models/error-cases.yaml",
+        document=document,
+    )
+
+
+@pytest.mark.parametrize(
+    ("serialized", "literal"),
+    [
+        ("read-committed", "read_committed"),
+        ("repeatable-read", "repeatable_read"),
+        ("serializable", "serializable"),
+    ],
+)
+def test_a_core_serialized_level_converts_to_its_python_literal(
+    serialized: str, literal: str
+) -> None:
+    assert case_format.isolation_literal(serialized) == literal
+
+
+def test_a_level_outside_the_vocabulary_is_refused_at_ingress() -> None:
+    # The schema closes `when.uow.isolation`, so a value reaching here that the
+    # port does not name is a corpus defect — reported where it is read rather
+    # than carried into a runner as a string.
+    with pytest.raises(ValueError, match="isolation must be one of"):
+        case_format.isolation_literal("read-uncommitted")
+
+
+def test_a_declared_level_is_read_off_when_uow() -> None:
+    case = _isolation_case({"when": {"uow": {"isolation": "repeatable-read"}}})
+    assert case_format.uow_isolation(case) == "repeatable_read"
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {},
+        {"when": {}},
+        {"when": {"uow": {"concurrency": "locking"}}},
+    ],
+)
+def test_an_undeclared_level_reads_as_requesting_nothing(document: dict[str, object]) -> None:
+    assert case_format.uow_isolation(_isolation_case(document)) is None
+
+
 def test_is_module_tag_grammar() -> None:
     assert case_format.is_module_tag("m-predicate")
     assert case_format.is_module_tag("m-predicate-002")  # a case ID also matches

@@ -19,7 +19,9 @@ belongs here is what THIS module still owns; every accepted-read refusal is
 exercised against the read oracle's own seam under ``tests/oracle/``.
 
 The graded MariaDB release floor is asserted here for the same reason: only a
-live provider can report which server a floating image tag resolved to.
+live provider can report which server a floating image tag resolved to, and so is
+the provider's isolation seam, whose whole claim is what a real server reports the
+session running at.
 """
 
 from __future__ import annotations
@@ -51,6 +53,26 @@ DIALECTS = available_dialects()
 # series is a deliberate choice, so a release below this floor fails it whether or not
 # it carries the variable.
 _MARIADB_SNAPSHOT_ISOLATION_FLOOR = (11, 4, 2)
+
+# Each engine's own way of reporting the level the session is running at, and what
+# it answers for each portable level a case may declare (m-db-port). The provider
+# maps the portable value; this is the read-back that proves the mapping arrived.
+_ISOLATION_READBACK = {
+    "postgres": "show transaction_isolation",
+    "mariadb": "select @@transaction_isolation as transaction_isolation",
+}
+_REPORTED_ISOLATION = {
+    "postgres": {
+        "read-committed": "read committed",
+        "repeatable-read": "repeatable read",
+        "serializable": "serializable",
+    },
+    "mariadb": {
+        "read-committed": "READ-COMMITTED",
+        "repeatable-read": "REPEATABLE-READ",
+        "serializable": "SERIALIZABLE",
+    },
+}
 
 
 def _case_id(case) -> str:
@@ -107,6 +129,42 @@ def test_the_booted_mariadb_meets_the_graded_isolation_floor(provider) -> None:
         "first 11.4-series release carrying innodb_snapshot_isolation; the graded Repeatable "
         "Read promise is not underwritten below it"
     )
+
+
+def test_a_held_session_opens_at_each_declared_isolation(provider) -> None:
+    # The provider is the harness's adapter for the sessions it owns, so a case
+    # declaring a portable level names no engine spelling and no session variable.
+    # What proves the mapping landed is the server's own report of the level the
+    # session is running at.
+    reported = _REPORTED_ISOLATION[provider.dialect]
+    read_back = _ISOLATION_READBACK[provider.dialect]
+    for level, expected in reported.items():
+        with provider.open_session(level) as session:
+            observed = session.query(read_back)[0]["transaction_isolation"]
+        assert observed == expected, f"{provider.dialect} session at {level} reported {observed!r}"
+
+
+def test_mariadb_turns_snapshot_isolation_on_for_repeatable_read_alone(provider) -> None:
+    # MariaDB's Repeatable Read forbids the lost update only with
+    # `innodb_snapshot_isolation`, so the provider sets it there and nowhere else:
+    # Serializable forbids the same anomaly through shared locking reads and range
+    # protection, which do not work from the read view the variable governs.
+    #
+    # The two halves read differently depending on what the booted image defaults
+    # to. Where the default is already ON, the Repeatable Read half pins that the
+    # level's own set succeeded rather than that it was needed, and the Serializable
+    # half that the level issues no set of its own; where the default is OFF — as
+    # every 11.4-series release the graded floor admits has it — the pair separates
+    # the two levels outright.
+    if provider.dialect != "mariadb":
+        pytest.skip("innodb_snapshot_isolation is a MariaDB setting")
+    probe = "select @@innodb_snapshot_isolation as flag"
+    with provider.open_session() as session:
+        default = session.query(probe)[0]["flag"]
+    with provider.open_session("repeatable-read") as session:
+        assert session.query(probe)[0]["flag"] == 1
+    with provider.open_session("serializable") as session:
+        assert session.query(probe)[0]["flag"] == default
 
 
 @pytest.mark.parametrize("case", CASES, ids=[_case_id(c) for c in CASES])

@@ -238,6 +238,7 @@ def _assert_schema(case: Case) -> None:
                 f"{case.path.name}: error case declares no trigger — needs then.statements "
                 f"(single-connection) or a non-empty concurrency choreography"
             )
+        _assert_commit_is_a_nodes_last_step(case)
     elif case.is_concurrency_success:
         if not (
             _concurrency_has_golden(case, "postgres") or _concurrency_has_golden(case, "mariadb")
@@ -251,6 +252,7 @@ def _assert_schema(case: Case) -> None:
         # (no SQL-verb sniffing), so a mis-declared step would mis-dispatch. Redundant with
         # the schema (which requires kind + the read/write expectRows rule), as defense.
         _assert_concurrency_success_step_kinds(case)
+        _assert_commit_is_a_nodes_last_step(case)
     elif case.is_boundary:
         if not case.boundary:
             raise CaseFailure(f"{case.path.name}: boundary case has no actions")
@@ -2729,6 +2731,34 @@ def _error_has_golden(case: Case, dialect: str) -> bool:
     return bool(_error_statements(case, dialect))
 
 
+def _assert_commit_is_a_nodes_last_step(case: Case) -> None:
+    """Guard: a node's ``kind: commit`` step is the LAST step that node declares.
+
+    A held session is opened once, at the case's declared isolation, and stays one
+    transaction for the whole choreography; committing ends it. A step after the
+    commit would run in a second transaction the case never described — at a level
+    nothing states and with locks the first one released — so which transaction a
+    round belongs to would stop being readable off the case. Database-free and
+    timing-independent, run pre-flight, naming the offending
+    ``/concurrency/rounds/{i}/{node}`` pointer.
+    """
+    concurrency = case.concurrency or {}
+    committed_at: dict[str, int] = {}
+    for index, rnd in enumerate(concurrency.get("rounds", [])):
+        for node in ("A", "B"):
+            step = rnd.get(node)
+            if not isinstance(step, dict):
+                continue
+            if node in committed_at:
+                raise CaseFailure(
+                    f"{case.path.name}: /concurrency/rounds/{index}/{node}: node {node} "
+                    f"already committed at round {committed_at[node]}; a commit ends the "
+                    f"transaction the node opened, so it must be that node's last step"
+                )
+            if step.get("kind") == "commit":
+                committed_at[node] = index
+
+
 def _assert_error_normalization(case: Case, dialect: str) -> None:
     for statement in _error_statements(case, dialect):
         canonical = normalize(statement, dialect)
@@ -2819,16 +2849,16 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     statement raises. A thread that catches an error ROLLS BACK immediately
     (releasing its locks so the peer can proceed) then meets the barrier.
 
-    A **serialization-failure** case (Postgres SQLSTATE ``40001``) is a different
-    mechanism: there is NO lock contention -- under SERIALIZABLE both transactions
-    read one row and write ANOTHER (a read/write dependency cycle), so nothing
-    blocks and nothing raises mid-round. The dangerous structure surfaces only at
-    COMMIT, so this runner switches into a serialization mode (keyed off the
-    expected ``40001`` native code): each node runs its transaction at SERIALIZABLE
-    (an isolation SET the harness issues, NOT authored golden SQL) and, after the
-    rounds, the runner COMMITS each still-open transaction and captures the SSI
-    abort raised on the victim. This is orthogonal to the deadlock / lock-timeout
-    cases, which never enter serialization mode and behave exactly as before.
+    A **serialization-failure** case is a different mechanism: there is NO lock
+    contention -- under a level that forbids serialization anomalies both
+    transactions read one row and write ANOTHER (a read/write dependency cycle),
+    so nothing blocks and nothing raises mid-round, and the dangerous structure
+    surfaces only at COMMIT. Such a case declares ``when.uow.isolation`` (the
+    level both sessions open at, applied by the provider) and AUTHORS the commits
+    as a final round of ``kind: commit`` steps, so the moment each transaction
+    ends is part of the choreography rather than a mode the runner infers. A
+    commit-time raise is that node's contention signal exactly as a mid-round
+    raise is.
 
     The single raised error is classified. Sessions are rolled back + closed in a
     finally.
@@ -2841,52 +2871,33 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     nodes = ("A", "B")
     barrier = threading.Barrier(len(nodes))
     raised: dict[str, Exception] = {}
-    # A serialization-failure case declares Postgres SQLSTATE 40001; it needs
-    # SERIALIZABLE isolation + a commit phase (the SSI abort is a commit-time event).
-    # Every other error/concurrency case (deadlock 40P01, lock-wait 55P03) leaves this
-    # False and keeps the original mid-round-raise-only behavior untouched.
-    serialization = str(case.expected_native_code.get(dialect)) == "40001"
     execution = CaseExecution(case, db)
 
     provision(case, db)  # given.fixtures seeds the lockable Gauge rows
 
     def run_node(node: str, session: Any) -> None:
-        errored = False
-        if serialization:
-            # A read/write dependency cycle is only a *conflict* under SERIALIZABLE;
-            # set it as the first statement of the transaction (before any read).
-            session.execute("set transaction isolation level serializable")
         for rnd in rounds:
             step = rnd.get(node)
-            pairs = entry_pairs(step.get("statements"), dialect) if isinstance(step, dict) else []
-            if pairs:
+            if isinstance(step, dict):
                 try:
-                    for sql, binds in pairs:
-                        session.execute(sql, binds)
+                    if step.get("kind") == "commit":
+                        session.commit()
+                    else:
+                        for sql, binds in entry_pairs(step.get("statements"), dialect):
+                            session.execute(sql, binds)
                 except Exception as exc:  # noqa: BLE001 -- the contention signal
                     raised[node] = exc
-                    errored = True
                     with contextlib.suppress(Exception):
                         session.rollback()  # release locks so the peer unblocks
             try:
                 barrier.wait(timeout=30)
             except threading.BrokenBarrierError:
                 return
-        # Serialization mode: the dangerous read/write cycle surfaces at COMMIT, not
-        # mid-round. Commit each still-open transaction; the SSI monitor aborts one
-        # with 40001, which this captures as the contention signal (the peer commits
-        # cleanly). The barrier above guarantees BOTH transactions finished their
-        # reads + writes before either commits, so the cycle is complete.
-        if serialization and not errored:
-            try:
-                session.commit()
-            except Exception as exc:  # noqa: BLE001 -- the serialization-failure signal
-                raised[node] = exc
-                with contextlib.suppress(Exception):
-                    session.rollback()
 
     with contextlib.ExitStack() as stack:
-        sessions = {node: stack.enter_context(execution.open_session()) for node in nodes}
+        sessions = {
+            node: stack.enter_context(execution.open_session(case.isolation)) for node in nodes
+        }
         threads = [
             threading.Thread(target=run_node, args=(node, sessions[node]), daemon=True)
             for node in nodes
@@ -2936,9 +2947,10 @@ def _concurrency_has_golden(case: Case, dialect: str) -> bool:
 
 def _assert_concurrency_success_step_kinds(case: Case) -> None:
     """Guard: every present step of a concurrency-success case MUST declare a valid
-    ``kind`` (``"read"`` or ``"write"``), and a ``read`` step MUST carry ``expectRows``.
+    ``kind`` (``"read"``, ``"write"``, or ``"commit"``), and a ``read`` step MUST carry
+    ``expectRows``.
 
-    ``kind`` is the EXPLICIT read-vs-write discriminator :func:`_assert_concurrency_success`
+    ``kind`` is the EXPLICIT step discriminator :func:`_assert_concurrency_success`
     branches on -- replacing the brittle SQL-verb sniffing that could misclassify a write
     CTE or a novel read form. Database-free and timing-independent, run pre-flight before
     any round executes: a step missing/with an unknown kind would mis-dispatch (a read
@@ -2954,11 +2966,11 @@ def _assert_concurrency_success_step_kinds(case: Case) -> None:
             if step is None:
                 continue
             kind = step.get("kind")
-            if kind not in ("read", "write"):
+            if kind not in ("read", "write", "commit"):
                 raise CaseFailure(
                     f"{case.path.name}: /concurrency/rounds/{index}/{node}: a concurrency-"
-                    f"success step must declare kind: 'read' | 'write' (the explicit read-"
-                    f"vs-write discriminator); got {kind!r}"
+                    f"success step must declare kind: 'read' | 'write' | 'commit' (the "
+                    f"explicit step discriminator); got {kind!r}"
                 )
             if kind == "read" and step.get("expectRows") is None:
                 raise CaseFailure(
@@ -2988,9 +3000,10 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     fetched on that HELD session (``session.query`` -- inside the open transaction, so
     a locking SELECT both takes the lock and returns its rows) and its ``expectRows``
     compared via the order-insensitive :func:`case_assertions.rows_equal`, while a ``kind: write``
-    step asserts only that it did not block/raise. Success is exactly "NO node raised
-    and every ``expectRows`` matched". Sessions are rolled back + closed in a finally
-    (releasing any lock a held read took).
+    step asserts only that it did not block/raise and a ``kind: commit`` step ends that
+    node's held transaction where the choreography says so. Success is exactly "NO node
+    raised and every ``expectRows`` matched". Sessions are rolled back + closed in a
+    finally (releasing any lock a held read took).
     """
     dialect = db.dialect
     tolerance = case.tolerance
@@ -3010,7 +3023,12 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
         for rnd in rounds:
             step = rnd.get(node)
             pairs = entry_pairs(step.get("statements"), dialect) if isinstance(step, dict) else []
-            if pairs:
+            if isinstance(step, dict) and step.get("kind") == "commit":
+                try:
+                    session.commit()
+                except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
+                    raised[node] = exc
+            elif pairs:
                 try:
                     if step.get("kind") == "read":
                         # A read step: fetch on the HELD session (a shared-lock SELECT
@@ -3046,7 +3064,9 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
                 return
 
     with contextlib.ExitStack() as stack:
-        sessions = {node: stack.enter_context(execution.open_session()) for node in nodes}
+        sessions = {
+            node: stack.enter_context(execution.open_session(case.isolation)) for node in nodes
+        }
         threads = [
             threading.Thread(target=run_node, args=(node, sessions[node]), daemon=True)
             for node in nodes

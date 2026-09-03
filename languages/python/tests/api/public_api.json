@@ -426,7 +426,8 @@
     "view"
   ],
   "parallax.postgres": [
-    "PostgresAdapter"
+    "PostgresAdapter",
+    "isolation_spelling"
   ],
   "parallax.snapshot": [
     "CheckedSnapshot",

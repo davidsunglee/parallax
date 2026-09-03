@@ -106,6 +106,26 @@ def test_parse_rounds_reads_kind_and_expect_rows_for_concurrency_success() -> No
     assert round0["B"].expect_rows is None
 
 
+def test_parse_rounds_reads_a_commit_step_that_authors_no_statement() -> None:
+    case = _case(
+        {
+            "when": {
+                "uow": {"isolation": "serializable"},
+                "concurrency": {
+                    "rounds": [
+                        {"A": {"statements": [{"sql": {"postgres": "select 1"}}]}},
+                        {"A": {"kind": "commit"}},
+                    ]
+                },
+            }
+        }
+    )
+    _, round1 = concurrency_runner.parse_rounds(case, "postgres")
+    assert round1["A"].kind == "commit"
+    assert round1["A"].statements == ()
+    assert round1["A"].expect_rows is None
+
+
 def test_parse_rounds_a_node_absent_from_a_round_is_omitted() -> None:
     case = _case(
         {
@@ -466,57 +486,72 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
     assert outcome[0].rounds[1]["A"].rows == ()
 
 
-def test_run_rounds_isolation_override_runs_first_and_adds_a_commit_round() -> None:
-    # An `isolation=` override (`m-db-error-009`'s serializable SSI
-    # write-skew) must be each transaction's OWN first statement -- BEFORE
-    # either lock-contention GUC -- and appends ONE synthetic, barrier-
-    # synchronized COMMIT round after the authored rounds (SSI surfaces the
-    # conflict at COMMIT, never during the writes). A clean commit records NO
-    # outcome: the synthetic round's dict stays empty on success.
+def _commit() -> ConcurrencyStep:
+    """An authored `kind: commit` step: no statements, no rows to grade."""
+    return ConcurrencyStep(statements=(), kind="commit", expect_rows=None)
+
+
+def test_run_rounds_issues_the_declared_level_first_in_the_engines_own_spelling() -> None:
+    # The declared level is each transaction's OWN first statement -- BEFORE
+    # either lock-contention GUC, since `set transaction isolation level` is
+    # legal only there -- and reaches the session in Postgres' spelling of the
+    # portable value, never in the portable value's own underscored form.
     a, b = _FakeSession(), _FakeSession()
     peers = iter([a, b])
     rounds = _rounds(
         {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
     )
-    run = concurrency_runner.run_rounds(rounds, lambda: next(peers), isolation="serializable")
-    # A's own authored step is the `select 1` between setup and commit; B is
-    # idle every authored round, so its list is setup + commit exactly.
+    concurrency_runner.run_rounds(rounds, lambda: next(peers), isolation="repeatable_read")
     assert a.calls == [
-        ("execute", "set transaction isolation level serializable", ()),
+        ("execute", "set transaction isolation level repeatable read", ()),
         ("execute", "set deadlock_timeout = '100ms'", ()),
         ("execute", "set lock_timeout = '250ms'", ()),
         ("execute", "select 1", ()),
-        ("execute", "commit", ()),
     ]
     assert b.calls == [
-        ("execute", "set transaction isolation level serializable", ()),
+        ("execute", "set transaction isolation level repeatable read", ()),
         ("execute", "set deadlock_timeout = '100ms'", ()),
         ("execute", "set lock_timeout = '250ms'", ()),
-        ("execute", "commit", ()),
     ]
-    assert len(run.rounds) == 2  # the authored round + the synthetic commit round
-    assert run.rounds[1] == {}
 
 
-def test_run_rounds_a_commit_time_error_lands_on_the_synthetic_round() -> None:
+def test_run_rounds_commits_where_the_choreography_authors_a_commit_step() -> None:
+    # The commit is a round of the case's own, so it is issued exactly where
+    # the case put it and nowhere else -- and a clean commit records no
+    # outcome, leaving its round's dict empty.
+    a, b = _FakeSession(), _FakeSession()
+    peers = iter([a, b])
+    rounds = _rounds(
+        {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)},
+        {"A": _commit(), "B": _commit()},
+    )
+    run = concurrency_runner.run_rounds(rounds, lambda: next(peers), isolation="serializable")
+    assert a.calls[-1] == ("execute", "commit", ())
+    assert b.calls[-1] == ("execute", "commit", ())
+    assert len(run.rounds) == 2
+    assert run.rounds[1]["A"].error is None
+    assert run.rounds[1]["B"].error is None
+
+
+def test_run_rounds_a_commit_time_error_lands_on_the_round_that_authored_it() -> None:
     err = DatabaseError(category="deadlock", native_code="40001", message="ssi write-skew")
     a = _FakeSession()
     b = _FakeSession(raises_on="commit", error=err)
     peers = iter([a, b])
     rounds = _rounds(
-        {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)}
+        {"A": ConcurrencyStep(statements=(("select 1", ()),), kind=None, expect_rows=None)},
+        {"A": _commit(), "B": _commit()},
     )
     run = concurrency_runner.run_rounds(rounds, lambda: next(peers), isolation="serializable")
     assert run.rounds[1]["B"].error is err
-    assert "A" not in run.rounds[1]
+    assert run.rounds[1]["A"].error is None
 
 
-def test_run_rounds_an_already_errored_node_skips_its_own_commit_attempt() -> None:
-    # A node whose transaction already aborted during an authored round must
-    # NOT attempt the synthetic commit (it would raise a spurious
-    # "transaction aborted" error, never the genuine one) -- while it still
-    # meets its partner at both synthetic-round barriers, and the healthy
-    # partner's own commit proceeds.
+def test_run_rounds_an_already_errored_node_skips_its_own_authored_commit() -> None:
+    # A node whose transaction already aborted during an earlier round must NOT
+    # attempt its commit (the database would answer with the abort, never with
+    # the genuine contention error already recorded) -- while it still meets its
+    # partner at both of that round's barriers, and the healthy partner commits.
     err = DatabaseError(category="deadlock", native_code="40P01", message="deadlock")
     a = _FakeSession(raises_on="update", error=err)
     b = _FakeSession()
@@ -526,7 +561,8 @@ def test_run_rounds_an_already_errored_node_skips_its_own_commit_attempt() -> No
             "A": ConcurrencyStep(
                 statements=(("update t set x = 1", ()),), kind=None, expect_rows=None
             )
-        }
+        },
+        {"A": _commit(), "B": _commit()},
     )
     run = concurrency_runner.run_rounds(rounds, lambda: next(peers), isolation="serializable")
     assert run.rounds[0]["A"].error is err
