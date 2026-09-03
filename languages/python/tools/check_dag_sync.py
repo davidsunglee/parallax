@@ -18,6 +18,12 @@ the §7 prose rows, the §7 fence, and :data:`SUPPORT_SCOPE_DEPS`. Editing any o
 of them alone fails generation, and so does editing two of them consistently
 while the third disagrees.
 
+§7 marks some child scopes ``isolated`` or ``sealed``, which no contract can
+express: ``tools/check_scope_ownership.py`` enforces both over the files, reading
+:data:`ISOLATED_CHILD_SCOPES` and :data:`SEALED_CHILD_SCOPES`. Dropping a scope
+from either set therefore changes nothing generated, so the marks are compared
+with the sets exactly, and losing a guarantee one of them promises fails here.
+
 A forbidden row is the complement of a *closure*, so a scope is never forbidden
 what its own grants reach transitively. A scope that exists in order to stay
 clear of some boundary therefore has to be granted narrowly enough that the
@@ -371,10 +377,12 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.handle._keyed_sql": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_lowering": _LOWERING_GROUP_DEPS,
     # Write-observation retention is scoped apart from its own package so the
-    # generated contract carries the claim its module docstring makes: what a
-    # read retains is a pure function of accepted metadata, the columns a row
-    # observed, and Unit Work's own observation vocabulary, resolved through the
-    # family leaf. Measured against the PARENT grant this row replaces, nine
+    # generated contract carries the OUTWARD half of its module docstring's
+    # account: what a read retains is a pure function of accepted metadata, the
+    # columns a row observed, and Unit Work's own observation vocabulary,
+    # resolved through the family leaf. The half facing INTO the package is
+    # beyond any contract sourced here and is graded by the SEALED mark below.
+    # Measured against the PARENT grant this row replaces, nine
     # scopes leave the closure — `continuation`, `parallax.snapshot.materialize`,
     # `parallax.snapshot._read_result`, `parallax.snapshot._inspection`,
     # `parallax.core.entity` (private `_declaration` / `_entity` with it),
@@ -406,8 +414,8 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # scope, so a row naming it overlaps its own source and is silently skipped.
     # That is what the SEALED mark below is for: `check_scope_ownership.py` walks
     # this scope's files and refuses every import into `parallax.snapshot.handle`
-    # no grant covers, so `_read`, `_write_inputs`, and every permitted-closure
-    # sibling are rejected over the source rather than left to prose.
+    # no grant covers, so `_read`, `_write_inputs`, and every sibling but the
+    # granted `_family` are rejected over the source rather than left to prose.
     "parallax.snapshot.handle._retention": frozenset(
         {
             "parallax.core.metamodel",
@@ -501,8 +509,9 @@ ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_life
 # Write-observation retention is sealed for the same reason read the other way:
 # the read executor DRIVES it, and the dependency going only that way is what
 # lets a row's evidence be a pure function of the row. That executor is a module
-# of the parent package, so the seal is the only place the rule can be stated at
-# all — and it holds the rest of the package out with it, which is what makes
+# of the parent package, so no contract sourced at the child can reject that
+# import and the seal is where the rule is GRADED rather than merely stated —
+# and it holds the rest of the package out with it, which is what makes
 # retention's four grants its whole reach rather than its whole intent.
 SEALED_CHILD_SCOPES: frozenset[str] = frozenset(
     {
@@ -610,6 +619,10 @@ _TABLE_HEADER = "| Behavioral/support module |"
 _SUPPORT_ROW = "(support"
 _APPLICATION_OWNED = "(application-owned)"
 _BACKTICKED = re.compile(r"`([^`]+)`")
+# The mark a §7 row's first cell carries on a child scope whose enforcement needs
+# more than its generated row: "isolated child of `parent`", "sealed child of
+# `parent`". An unmarked child says "child of", and matches neither.
+_CHILD_MARK = re.compile(r"\b(isolated|sealed) child of\b")
 
 
 def _table_rows(text: str) -> list[list[str]]:
@@ -722,6 +735,28 @@ def parse_support_scope_table(text: str) -> dict[str, frozenset[str]]:
     return declared
 
 
+def parse_child_scope_marks(text: str) -> dict[str, frozenset[str]]:
+    """The scopes §7's prose rows mark ``isolated child`` or ``sealed child``.
+
+    Keyed by the mark, so :func:`check_child_scope_marks` can compare each one
+    with the tool set it must equal. A row carries at most one mark: the two
+    describe opposite halves of one overlap — a grant on the parent not carrying
+    the child, and the child's grants being complete inside the parent — and
+    naming both of a single scope declares an enforcement the generator has no
+    shape for.
+    """
+    marked: dict[str, set[str]] = {mark: set() for mark in ("isolated", "sealed")}
+    for module, owner, scope_cell, _deps, _rule in _table_rows(text):
+        if _SUPPORT_ROW not in module or scope_cell == _APPLICATION_OWNED:
+            continue
+        found = {match.group(1) for match in _CHILD_MARK.finditer(module)}
+        if len(found) > 1:
+            raise ValueError(f"§7 row marks one scope {sorted(found)}: {module!r}")
+        for mark in found:
+            marked[mark].update(_row_scopes(scope_cell, owner))
+    return {mark: frozenset(scopes) for mark, scopes in marked.items()}
+
+
 def _compare_declarations(
     left_name: str,
     left: Mapping[str, frozenset[str]],
@@ -774,6 +809,27 @@ def check_support_scope_parity(
         SUPPORT_SCOPE_DEPS,
         "SUPPORT_SCOPE_DEPS has drifted from the spec/python.md §7 support-scope-graph block",
     )
+
+
+def check_child_scope_marks(marked: Mapping[str, frozenset[str]]) -> None:
+    """Fail when §7's row marks and this module's child-scope sets disagree.
+
+    Neither mark generates anything: what enforces them is
+    ``tools/check_scope_ownership.py`` reading :data:`ISOLATED_CHILD_SCOPES` and
+    :data:`SEALED_CHILD_SCOPES`. So without this comparison the spec could call a
+    scope sealed while the tool no longer sealed it — every contract still
+    generated, every check still green, and one declaration still promising a
+    one-way guarantee nothing graded. The marks are the spec's statement of those
+    sets, and equality is what makes editing either side alone fail.
+    """
+    for mark, declared in (("isolated", ISOLATED_CHILD_SCOPES), ("sealed", SEALED_CHILD_SCOPES)):
+        in_spec = marked.get(mark, frozenset())
+        if in_spec != declared:
+            raise ValueError(
+                f"the {mark} child scopes have drifted from spec/python.md §7: "
+                f"marked only in the spec {sorted(in_spec - declared)}, declared "
+                f"only in the tool {sorted(declared - in_spec)}"
+            )
 
 
 def check_child_scopes() -> None:
@@ -1027,6 +1083,7 @@ def generate() -> str:
     check_support_scope_parity(
         parse_support_scope_graph(python_md), parse_support_scope_table(python_md)
     )
+    check_child_scope_marks(parse_child_scope_marks(python_md))
     check_child_scopes()
     edges = parse_dependency_graph(MODULES_MD.read_text())
     adjacency = build_adjacency(edges)
