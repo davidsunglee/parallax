@@ -5,8 +5,11 @@ m-inheritance concrete-subtype write protocol).
 ROW calls: the conformance engine's rejected run lane, and both keyed write
 representations through the one prepared-write producer their two entry points
 share (``instructions.prepare_typed_write`` and
-``instructions.prepare_wire_write``, which differ only in how a leaf and a
-temporal bound decode) -- the "one validator, many callers" pattern
+``instructions.prepare_wire_write``, which differ in how a leaf and a temporal
+bound decode, and in that only the wire entry point takes a keyed assignment set
+-- the managed-value lane's authored member names, checked against the single
+addressed row before this validator runs) -- the "one validator, many callers"
+pattern
 ``validate_predicate`` established
 (`parallax.core.predicate.validate`): the SAME rule classification and check
 order runs on every path, so they cannot drift.
