@@ -260,9 +260,8 @@ def test_a_wire_streamed_value_and_a_typed_find_of_one_row_carry_one_observation
     # decides what a value may license: two views of one observed state share
     # ONE retained observation rather than equal copies, which is what keeps a
     # flush that spends the evidence from leaving a second copy still licensing.
-    # Two result sets, not three: the delivery is abandoned after its first root
-    # rather than drained, so no terminal page is read and the second belongs to
-    # the find.
+    # Two result sets, not three: the stream's one page asks for two roots and
+    # receives one, which proves exhaustion, so the second belongs to the find.
     port = ScriptedPort(Transact(Read(rows=[_account_row(1)], times=2)))
 
     def fn(tx: Transaction) -> tuple[Any, Any]:

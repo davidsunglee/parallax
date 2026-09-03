@@ -427,7 +427,7 @@ class SnapshotStreamFinished(_Event):
 
 @dataclass(frozen=True, slots=True)
 class StreamBatchCompleted:
-    """The whole page is ready to yield, the empty terminal page included."""
+    """The whole page is ready to yield, a page that kept no root included."""
 
 
 @dataclass(frozen=True, slots=True)
