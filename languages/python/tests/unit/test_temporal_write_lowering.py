@@ -96,7 +96,7 @@ from parallax.snapshot.handle import (
     build_write_planner,
     plan_temporal_close,
 )
-from parallax.snapshot.handle._write_inputs import ReadObservations, retain_evidence
+from parallax.snapshot.handle._retention import ObservedRows, retain_evidence
 
 
 def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
@@ -1042,7 +1042,7 @@ _SPOT_QUOTE_EDGE: Final[Edge] = Edge(tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.U
 
 def _retained(
     model: AcceptedMetamodel,
-    observations: ReadObservations,
+    observations: ObservedRows,
     uow: UnitOfWork,
     entity: EntityIdentity,
 ) -> WriteObservation | None:
@@ -1068,7 +1068,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     # narrowed to the declaring root's members would silently NULL `symbol` on the
     # next milestone instead of carrying it forward.
     model, entity = _accepted("SpotQuote", QUOTE)
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, entity.identity, _SPOT_QUOTE_COLUMNS, None)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
@@ -1109,7 +1109,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
     # (`m-unit-work`).
     model, entity = _accepted("SpotQuote", QUOTE)
     stored = {"price": "50.00", "symbol": "ACME", "charterCode": "NB-118"}
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, entity.identity, _SPOT_QUOTE_COLUMNS, stored)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:

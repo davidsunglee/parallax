@@ -33,10 +33,10 @@ surface they convert into and the pin helpers that carry a query's or a
 milestone's as-of coordinates across that conversion.
 
 A graph-form read also retains the write evidence its rows observed, onto the
-values it publishes: this module drives :mod:`parallax.snapshot.handle.
-_write_inputs`'s retention while each row is still live, and hands the resulting
-Source Hints to whichever materializer runs. The dependency goes this way and
-only this way — the write-input module names nothing here.
+values it publishes: this module drives
+:mod:`parallax.snapshot.handle._retention` while each row is still live, and
+hands the resulting Source Hints to whichever materializer runs. The dependency
+goes this way and only this way — the retention module names nothing here.
 
 One executor, two materializers. The two :class:`ResultPublication` values are
 PEERS over the same
@@ -117,9 +117,9 @@ from parallax.snapshot._read_result import (
 )
 from parallax.snapshot.handle._errors import SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
-from parallax.snapshot.handle._write_inputs import (
+from parallax.snapshot.handle._retention import (
     ObservationLedger,
-    ReadObservations,
+    ObservedRows,
     ReadSources,
     retain_evidence,
 )
@@ -538,7 +538,7 @@ def build_graph(
     meta = model.meta
     plan_ = root_read.plan
     builder = GraphBuilder(ViewSchema(_slot_table(plan_)))
-    observations = ReadObservations()
+    observations = ObservedRows()
 
     root_refs = _convert_rows(
         builder, ROOT_LEVEL, model, root_read.compiled, root_read.rows, observations
@@ -583,7 +583,7 @@ def build_graph(
 def _retained(
     meta: Metamodel,
     temporal: tuple[ValidatedTemporalSelection, ...],
-    observations: ReadObservations,
+    observations: ObservedRows,
     *,
     ledger: ObservationLedger | None,
     pin: Pin,
@@ -845,7 +845,7 @@ def _convert_level(
     port: DbPort,
     compiled: CompiledRead,
     calls: DatabaseCallScope,
-    observations: ReadObservations,
+    observations: ObservedRows,
 ) -> tuple[int, ...]:
     """Execute one level and convert each of its rows as that row materializes.
 
@@ -864,7 +864,7 @@ def _convert_rows(
     model: CatalogedModel,
     compiled: CompiledRead,
     rows: Iterable[MaterializedReadRow],
-    observations: ReadObservations,
+    observations: ObservedRows,
 ) -> tuple[int, ...]:
     """Convert ``rows`` into ``builder``, observing each one while it is still live.
 

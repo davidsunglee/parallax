@@ -594,6 +594,7 @@ def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
             "parallax.snapshot.handle._family",
             "parallax.snapshot.handle._keyed_sql",
             "parallax.snapshot.handle._write_lowering",
+            "parallax.snapshot.handle._retention",
         }
     )
     # A scope's own name is never among its siblings, an only child has none,
@@ -658,6 +659,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
             "parallax.snapshot.handle._family",
             "parallax.snapshot.handle._keyed_sql",
             "parallax.snapshot.handle._write_lowering",
+            "parallax.snapshot.handle._retention",
         }
     )
     assert dag.scope_descendants("parallax.core.base") == frozenset()

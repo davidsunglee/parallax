@@ -10,7 +10,7 @@ Materialized Write Group buffering.
 
 Every entry point threads ``(uow, model, conn)`` — the three pieces of
 transaction state this lane actually reads — mirroring
-:func:`~parallax.snapshot.handle._write_inputs.retain_evidence`'s own shape.
+:func:`~parallax.snapshot.handle._retention.retain_evidence`'s own shape.
 ``model`` is the connected model as one value: the accepted Metamodel every
 target resolves against, paired with the exact-model layouts a materializing
 write's resolving read converts its rows through. Family shape comes from the
@@ -26,7 +26,9 @@ through ``uow.buffer`` directly and never reaches back into ``Transaction``.
 Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
 attribute, and the layout member-to-column map),
 :mod:`parallax.snapshot.handle._write_inputs` (window validation and the per-row
-column contributions), and :mod:`parallax.snapshot.handle._read` for both
+column contributions), :mod:`parallax.snapshot.handle._retention` (the one
+payload extraction a resolved row's Predecessor Row shares with a real find's),
+and :mod:`parallax.snapshot.handle._read` for both
 :func:`~parallax.snapshot.handle._read.execute_read` and
 :func:`~parallax.snapshot.handle._read.stage_publishable_rows` — the resolving
 read brackets its Database Call through the package's one read-call seam, then
@@ -42,7 +44,7 @@ underscores.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance
@@ -111,11 +113,11 @@ from parallax.snapshot.handle._read import (
     execute_read,
     stage_publishable_rows,
 )
+from parallax.snapshot.handle._retention import row_payload
 from parallax.snapshot.handle._write_inputs import (
     is_no_op_assignment,
     key_column_values,
     normalize_assignment_values,
-    predecessor_payload,
     validate_window,
 )
 from parallax.snapshot.materialize import observable_columns
@@ -461,7 +463,7 @@ def _materialize_predicate_write(
     # EVERY declared document is projected rather than only the assigned
     # ones — a carried row must keep whichever documents the assignments do
     # NOT themselves reassign. Every target's carried state reads through the
-    # SAME Predecessor Row (`predecessor_payload`, below); there is no
+    # SAME Predecessor Row (`_predecessor_payload`, below); there is no
     # separate audit-only merge.
     #
     # COMPARISON need: an assignment-bearing verb's per-row no-op
@@ -595,7 +597,7 @@ def _materialize_predicate_write(
         ):
             continue  # per-row no-op elimination (assignment-bearing verbs only)
         append_key(row)
-        payload = predecessor_payload(member_columns, row)
+        payload = _predecessor_payload(member_columns, row)
         for name in attribute_names:
             attribute_builders[name].append(payload[name])
         for name in value_object_names:
@@ -625,6 +627,23 @@ def _materialize_predicate_write(
         )
     )
     _claim_selected_states(uow, selected)
+
+
+def _predecessor_payload(
+    member_columns: Mapping[str, tuple[str, bool]], row: Row
+) -> dict[str, object]:
+    """One resolved row's COMPLETE Predecessor Row payload — every applicable
+    member, value-object documents included.
+
+    The SAME extraction a real find's retention applies to its own rows
+    (:func:`~parallax.snapshot.handle._retention.row_payload`), applied here to a
+    materializing resolve's row-form row, so a Predecessor Row means the same
+    thing whichever read produced it (`m-unit-work` "A Predecessor Row is the
+    complete, immutable persisted state"). A materializing resolve reads the
+    CURRENT milestone by construction, so every predecessor it retains is
+    latest-pinned.
+    """
+    return row_payload(member_columns, row)
 
 
 def _claim_selected_states(uow: UnitOfWork, selected: Sequence[ObservedStateKey]) -> None:
