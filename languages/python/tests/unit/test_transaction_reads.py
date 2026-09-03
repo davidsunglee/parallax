@@ -74,7 +74,7 @@ from parallax.snapshot.handle import (
 from parallax.snapshot.handle import _database as database_module
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _transaction as transaction_module
-from parallax.snapshot.handle._write_inputs import ObservationLedger
+from parallax.snapshot.handle._retention import ObservationLedger
 
 
 @dataclass(frozen=True, slots=True)

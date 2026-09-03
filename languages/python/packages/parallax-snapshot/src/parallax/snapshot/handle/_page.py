@@ -40,7 +40,7 @@ from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot.handle._read import RootRead, build_graph, read_roots
-from parallax.snapshot.handle._write_inputs import ObservationLedger, ReadSources
+from parallax.snapshot.handle._retention import ObservationLedger, ReadSources
 from parallax.snapshot.materialize import SnapshotGraph, UnwindTree
 
 __all__ = [

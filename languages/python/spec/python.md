@@ -4902,6 +4902,7 @@ scopes ordinarily do.
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
 | Snapshot handle write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
+| Snapshot write-observation retention (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
@@ -5073,6 +5074,10 @@ parallax.snapshot.handle._write_lowering --> parallax.core.unit_work
 parallax.snapshot.handle._write_lowering --> parallax.core.opt_lock
 parallax.snapshot.handle._write_lowering --> parallax.core.txtime_write
 parallax.snapshot.handle._write_lowering --> parallax.core.bitemp_write
+parallax.snapshot.handle._retention --> parallax.core.metamodel
+parallax.snapshot.handle._retention --> parallax.core.unit_work
+parallax.snapshot.handle._retention --> parallax.core.temporal_read
+parallax.snapshot.handle._retention --> parallax.snapshot.handle._family
 parallax.postgres --> parallax.core.base
 parallax.postgres --> parallax.core.wire
 parallax.postgres --> parallax.core.db_port

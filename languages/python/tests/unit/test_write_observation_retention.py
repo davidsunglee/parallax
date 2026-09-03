@@ -1,6 +1,6 @@
-"""Write-observation retention unit tests (`parallax.snapshot.handle._write_inputs`).
+"""Write-observation retention unit tests (`parallax.snapshot.handle._retention`).
 
-Drives :class:`ReadObservations` and :func:`retain_evidence` directly, off
+Drives :class:`ObservedRows` and :func:`retain_evidence` directly, off
 hand-written physical-column rows rather than through a `Transaction.find`: which
 of the two mutually exclusive branches a row takes (a versioned row's observed
 version, a temporal row's whole predecessor milestone), which rows retain no
@@ -46,11 +46,10 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle import build_write_planner
 from parallax.snapshot.handle._family import entity_layout, members, placed_members
-from parallax.snapshot.handle._write_inputs import (
-    ReadObservations,
-    predecessor_payload,
-    retain_evidence,
+from parallax.snapshot.handle._predicate_writes import (
+    _predecessor_payload,  # pyright: ignore[reportPrivateUsage] - the predicate lane's own contribution, proved to be one extraction with retention's
 )
+from parallax.snapshot.handle._retention import ObservedRows, retain_evidence
 
 _MODELS = models.load_models()
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -118,14 +117,12 @@ _VOYAGE_DOCUMENT: Mapping[str, object] = {
 }
 
 
-def _standalone(
-    model: AcceptedMetamodel, observations: ReadObservations
-) -> Mapping[int, SourceHint]:
+def _standalone(model: AcceptedMetamodel, observations: ObservedRows) -> Mapping[int, SourceHint]:
     """The hints a STANDALONE read retains — no unit of work behind it."""
     return retain_evidence(model, observations, ledger=None)
 
 
-def _hint(model: AcceptedMetamodel, observations: ReadObservations, node: int = 0) -> SourceHint:
+def _hint(model: AcceptedMetamodel, observations: ObservedRows, node: int = 0) -> SourceHint:
     return _standalone(model, observations)[node]
 
 
@@ -149,7 +146,7 @@ def test_a_collector_that_observed_nothing_retains_no_sources() -> None:
     # A read that materialized no row — or whose every row was non-hydrating —
     # hands the retention an empty collector, and every value it publishes
     # carries no hint rather than a hint over nothing.
-    assert _standalone(_accepted("account"), ReadObservations()) == {}
+    assert _standalone(_accepted("account"), ObservedRows()) == {}
 
 
 def test_an_edit_to_the_observed_columns_reaches_nothing_the_retention_answered() -> None:
@@ -158,7 +155,7 @@ def test_an_edit_to_the_observed_columns_reaches_nothing_the_retention_answered(
     # handed. The copy protects the OUTPUT: an edit afterwards reaches neither
     # the object a hint names nor the state it retained.
     handed: dict[str, object] = dict(_account_columns())
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Account"), handed, None)
     handed["id"] = 2
     handed["owner"] = "Grace"
@@ -175,7 +172,7 @@ def test_an_edit_to_the_observed_columns_reaches_no_member_of_a_retained_predece
     # member is exactly what an aliased mapping would corrupt: the successor a
     # later write chains would carry the edited value forward as stored state.
     handed: dict[str, object] = dict(_balance_columns())
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Balance"), handed, None)
     handed["bal_id"] = 2
     handed["acct_num"] = "A-2"
@@ -199,7 +196,7 @@ def test_an_edit_to_the_observed_columns_reaches_no_member_of_a_retained_predece
 # The two mutually exclusive retention branches.                              #
 # --------------------------------------------------------------------------- #
 def test_a_versioned_row_retains_its_observed_version() -> None:
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Account"), _account_columns(), None)
     hint = _hint(_accepted("account"), observations)
     assert hint.observation is not None
@@ -211,7 +208,7 @@ def test_a_versioned_row_whose_version_column_the_projection_omitted_retains_no_
     # The seam takes no data on faith: a row that reached it without the version
     # column it would gate on retains no evidence rather than observing a guess.
     # It still names the object it denotes, which is all a hint claims.
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Account"), _account_columns(version=None), None)
     hint = _hint(_accepted("account"), observations)
     assert hint.observation is None
@@ -221,7 +218,7 @@ def test_a_versioned_row_whose_version_column_the_projection_omitted_retains_no_
 def test_a_row_that_is_neither_versioned_nor_temporal_retains_no_state() -> None:
     # An unversioned Non-Temporal row observes no state at all, so its hint
     # carries the object and the participation and nothing else.
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Order"), {"id": 1, "customer_id": 2}, None)
     hint = _hint(_accepted("orders"), observations)
     assert hint.observation is None
@@ -233,7 +230,7 @@ def test_a_temporal_row_retains_its_whole_predecessor_milestone() -> None:
     # The Predecessor Row is COMPLETE — every applicable member, not just the
     # bounds — because a chained successor carries forward members the authored
     # mutation never mentioned.
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Balance"), _balance_columns(), None)
     hint = _hint(_accepted("balance"), observations)
     assert hint.observation is not None
@@ -254,7 +251,7 @@ def test_a_retained_predecessor_is_the_extraction_a_predicate_write_also_streams
     # A real find's Predecessor Row and the one a materializing predicate write
     # contributes per resolved row are ONE extraction over the row's applicable
     # members, not two that happen to agree: `retain_evidence` and
-    # `predecessor_payload` reach the same payload rule, value-object
+    # `_predecessor_payload` reach the same `row_payload` rule, value-object
     # occurrences included. Two extractions that drifted would chain successors
     # carrying different rows forward from the same stored state.
     model = _accepted("document-layout")
@@ -264,14 +261,14 @@ def test_a_retained_predecessor_is_the_extraction_a_predicate_write_also_streams
     assert layout is not None
     columns = _voyage_columns()
 
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Voyage"), columns, _VOYAGE_DOCUMENT)
     hint = _hint(model, observations)
     assert hint.observation is not None
     observation = hint.observation.evidence
     assert isinstance(observation, TemporalObservation)
 
-    streamed = predecessor_payload(members(placed_members(model, entity, layout)), columns)
+    streamed = _predecessor_payload(members(placed_members(model, entity, layout)), columns)
     assert {"manifest", "legs"} <= streamed.keys()
     assert dict(observation.predecessor.members) == streamed
     # The Structured Column rides BESIDE the members either way, so the shared
@@ -296,7 +293,7 @@ def test_evidence_is_keyed_by_the_rows_own_entity_never_its_family_root() -> Non
         "in_z": _RATE_TX_START,
         "out_z": _INFINITY,
     }
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("DepositRate"), columns, None)
     hint = _hint(_accepted("rate"), observations)
     assert hint.observation is not None
@@ -314,9 +311,9 @@ def test_two_reads_of_one_milestone_at_different_pins_retain_one_state() -> None
     # a transaction the second read answers the FIRST read's own evidence, so a
     # value still held from the first read is not superseded by the second.
     model = _accepted("balance")
-    latest = ReadObservations()
+    latest = ObservedRows()
     latest.observe_row(0, corpus_entity("Balance"), _balance_columns(), None)
-    historical = ReadObservations()
+    historical = ObservedRows()
     historical.observe_row(0, corpus_entity("Balance"), _balance_columns(), None)
 
     def observe(uow: UnitOfWork) -> tuple[RetainedObservation, RetainedObservation]:
@@ -337,9 +334,9 @@ def test_two_observed_versions_of_one_object_are_distinct_states() -> None:
     # version 7 hold evidence about two different states rather than overwriting
     # one slot.
     model = _accepted("account")
-    first_read = ReadObservations()
+    first_read = ObservedRows()
     first_read.observe_row(0, corpus_entity("Account"), _account_columns(version=4), None)
-    second_read = ReadObservations()
+    second_read = ObservedRows()
     second_read.observe_row(0, corpus_entity("Account"), _account_columns(version=7), None)
 
     def observe(uow: UnitOfWork) -> tuple[ObservedStateKey, ObservedStateKey]:
@@ -365,7 +362,7 @@ def test_two_observed_versions_of_one_object_are_distinct_states() -> None:
 def test_every_observed_row_retains_its_own_evidence() -> None:
     # One find observes the root and every attached level, so the collector holds
     # more than one row and each retains independently, under its own projection.
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Account"), _account_columns(id_=1, version=4), None)
     observations.observe_row(1, corpus_entity("Account"), _account_columns(id_=2, version=7), None)
     hints = _standalone(_accepted("account"), observations)
@@ -382,7 +379,7 @@ def test_two_projections_of_one_state_share_one_retained_observation() -> None:
     # A graph alias reaches one row through two positions. Both hints answer the
     # identical claim, which is what makes a shared node's evidence one claim
     # rather than two that could be spent independently.
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Account"), _account_columns(), None)
     observations.observe_row(1, corpus_entity("Account"), _account_columns(), None)
     hints = _standalone(_accepted("account"), observations)
@@ -393,7 +390,7 @@ def test_two_projections_of_one_state_share_one_retained_observation() -> None:
 # Participation: what a read stamps on the values it produced.                #
 # --------------------------------------------------------------------------- #
 def test_a_standalone_read_stamps_no_participation() -> None:
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Account"), _account_columns(), None)
     hint = _hint(_accepted("account"), observations)
     assert hint.participation is None
@@ -403,7 +400,7 @@ def test_a_standalone_read_stamps_no_participation() -> None:
 
 def test_a_participating_read_stamps_its_own_unit_of_works_participation() -> None:
     model = _accepted("account")
-    observations = ReadObservations()
+    observations = ObservedRows()
     observations.observe_row(0, corpus_entity("Account"), _account_columns(), None)
 
     def observe(uow: UnitOfWork) -> bool:

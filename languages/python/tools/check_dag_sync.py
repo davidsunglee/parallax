@@ -370,6 +370,45 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.handle._family": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._keyed_sql": _LOWERING_GROUP_DEPS,
     "parallax.snapshot.handle._write_lowering": _LOWERING_GROUP_DEPS,
+    # Write-observation retention is scoped apart from its own package so the
+    # generated contract carries the claim its module docstring makes: what a
+    # read retains is a pure function of accepted metadata, the columns a row
+    # observed, and Unit Work's own observation vocabulary, resolved through the
+    # family leaf. Measured against the PARENT grant this row replaces, nine
+    # scopes leave the closure — `continuation`, `parallax.snapshot.materialize`,
+    # `parallax.snapshot._read_result`, `parallax.snapshot._inspection`,
+    # `parallax.core.entity` (private `_declaration` / `_entity` with it),
+    # `read_lock`, `auto_retry`, `execution_lifecycle` and `batch_write` — so
+    # retention reaches neither the read's own machinery nor an Entity frontend,
+    # and can never grow the third accepted private-Entity reach its keyed
+    # sibling's two would otherwise leave room for.
+    #
+    # Three claims a reader might expect are NOT made, and the reasons differ.
+    # `m-deep-fetch` and `m-navigate` stay inside the closure although nothing
+    # here names them: `_family`'s own grant reaches `m-sql`, which reaches both.
+    # Port- and SQL-freedom is unreachable for the same shape of reason —
+    # `m-unit-work` reaches `m-db-port`, and `_family` names `sql_gen`, `dialect`
+    # and `db_port` outright — so `_preflight`'s property cannot be replicated
+    # short of splitting `_family`, which no decision here takes. And the one-way
+    # rule that retention never names the read executor cannot be generated at
+    # all: `compute_forbidden` subtracts a scope's ancestors unconditionally and
+    # import-linter's forbidden contracts are package-scoped on both sides, so a
+    # child naming its parent overlaps and is silently skipped. The read executor
+    # lives in the parent scope, so that rule stays a docstring invariant.
+    #
+    # The complement this row generates is therefore identical to the lowering
+    # group's, because `_family` is retention's only handle dependency and its
+    # grant already covers the other three. What the row carries is the
+    # DECLARATION: the file resolves here rather than to the parent's twenty-five
+    # scopes, and a reach beyond these four has to widen this entry to land.
+    "parallax.snapshot.handle._retention": frozenset(
+        {
+            "parallax.core.metamodel",
+            "parallax.core.unit_work",
+            "parallax.core.temporal_read",
+            "parallax.snapshot.handle._family",
+        }
+    ),
     "parallax.postgres": frozenset(
         {
             "parallax.core.base",
@@ -414,6 +453,7 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._family": "parallax.snapshot.handle",
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",
     "parallax.snapshot.handle._write_lowering": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._retention": "parallax.snapshot.handle",
 }
 
 # Child scopes a grant on the PARENT does not carry. A forbidden row is the
