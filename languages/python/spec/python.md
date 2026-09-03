@@ -4854,10 +4854,15 @@ it happen to import. The same `tools/check_scope_ownership.py` walk closes that
 residue over the sealed scope's own files, in every spelling, so what a sealed
 scope reaches inside its parent package is what its row grants and nothing more,
 and a granted sibling stays legal however the import that reaches it is written.
-`parallax.core.entity._construction_input`, `._instance_state`, `._layout`, and
-`._pydantic_storage` are the sealed scopes; a scope not marked so is judged by
-its contract alone, and reaching a private module of its parent is what child
-scopes ordinarily do.
+`parallax.core.entity._construction_input`, `._instance_state`, `._layout`,
+`._pydantic_storage`, and `parallax.snapshot.handle._retention` are the sealed
+scopes; a scope not marked so is judged by its contract alone, and reaching a
+private module of its parent is what child scopes ordinarily do. The last of
+them is sealed for the rule read the other way round: the find executor drives
+write-observation retention while its rows are live, and retention names nothing
+of that executor back. The executor is a module of the parent package, so no
+contract sourced at the child can reject that import, and the seal is where the
+one-way rule is graded rather than merely stated.
 
 | Behavioral/support module | Source owner/path | Enforcement scope | Allowed direct dependencies | Enforcement rule/config |
 |---|---|---|---|---|
@@ -4902,7 +4907,7 @@ scopes ordinarily do.
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
 | Snapshot handle write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
-| Snapshot write-observation retention (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts |
+| Snapshot write-observation retention (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |

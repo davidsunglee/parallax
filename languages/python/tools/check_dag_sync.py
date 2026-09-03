@@ -383,24 +383,31 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # and can never grow the third accepted private-Entity reach its keyed
     # sibling's two would otherwise leave room for.
     #
-    # Three claims a reader might expect are NOT made, and the reasons differ.
+    # Two claims a reader might expect are NOT made, for one shape of reason.
     # `m-deep-fetch` and `m-navigate` stay inside the closure although nothing
     # here names them: `_family`'s own grant reaches `m-sql`, which reaches both.
-    # Port- and SQL-freedom is unreachable for the same shape of reason —
-    # `m-unit-work` reaches `m-db-port`, and `_family` names `sql_gen`, `dialect`
-    # and `db_port` outright — so `_preflight`'s property cannot be replicated
-    # short of splitting `_family`, which no decision here takes. And the one-way
-    # rule that retention never names the read executor cannot be generated at
-    # all: `compute_forbidden` subtracts a scope's ancestors unconditionally and
-    # import-linter's forbidden contracts are package-scoped on both sides, so a
-    # child naming its parent overlaps and is silently skipped. The read executor
-    # lives in the parent scope, so that rule stays a docstring invariant.
+    # Port- and SQL-freedom goes the same way — `m-unit-work` reaches
+    # `m-db-port`, and `_family` names `sql_gen`, `dialect` and `db_port`
+    # outright — so `_preflight`'s property cannot be replicated short of
+    # splitting `_family`, which no decision here takes.
     #
     # The complement this row generates is therefore identical to the lowering
     # group's, because `_family` is retention's only handle dependency and its
     # grant already covers the other three. What the row carries is the
     # DECLARATION: the file resolves here rather than to the parent's twenty-five
-    # scopes, and a reach beyond these four has to widen this entry to land.
+    # scopes, and a reach outside the closure these four open has to widen this
+    # entry to land. INSIDE that closure the row says nothing, which is why the
+    # scopes named above are the whole of what it rejects.
+    #
+    # The one-way rule — retention never names the read executor — is the half no
+    # contract sourced here can state: `compute_forbidden` subtracts a scope's
+    # ancestors unconditionally, import-linter's forbidden contracts are
+    # package-scoped on both sides, and the read executor lives in the parent
+    # scope, so a row naming it overlaps its own source and is silently skipped.
+    # That is what the SEALED mark below is for: `check_scope_ownership.py` walks
+    # this scope's files and refuses every import into `parallax.snapshot.handle`
+    # no grant covers, so `_read`, `_write_inputs`, and every permitted-closure
+    # sibling are rejected over the source rather than left to prose.
     "parallax.snapshot.handle._retention": frozenset(
         {
             "parallax.core.metamodel",
@@ -490,12 +497,20 @@ ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_life
 # vocabulary both a row's producer and its reader are stated in must reach
 # nothing at all, and a value's own attribute storage must reach nothing either —
 # every one of which sits in the parent package beside them.
+#
+# Write-observation retention is sealed for the same reason read the other way:
+# the read executor DRIVES it, and the dependency going only that way is what
+# lets a row's evidence be a pure function of the row. That executor is a module
+# of the parent package, so the seal is the only place the rule can be stated at
+# all — and it holds the rest of the package out with it, which is what makes
+# retention's four grants its whole reach rather than its whole intent.
 SEALED_CHILD_SCOPES: frozenset[str] = frozenset(
     {
         "parallax.core.entity._construction_input",
         "parallax.core.entity._instance_state",
         "parallax.core.entity._layout",
         "parallax.core.entity._pydantic_storage",
+        "parallax.snapshot.handle._retention",
     }
 )
 
