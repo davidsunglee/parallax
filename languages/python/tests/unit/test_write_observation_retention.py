@@ -169,6 +169,32 @@ def test_an_edit_to_the_observed_columns_reaches_nothing_the_retention_answered(
     assert hint.observation.evidence == VersionObservation(observed_version=4)
 
 
+def test_an_edit_to_the_observed_columns_reaches_no_member_of_a_retained_predecessor() -> None:
+    # The snapshot covers the WHOLE row, not only the columns a hint is keyed
+    # by. A temporal row retains every applicable member, so an ordinary payload
+    # member is exactly what an aliased mapping would corrupt: the successor a
+    # later write chains would carry the edited value forward as stored state.
+    handed: dict[str, object] = dict(_balance_columns())
+    observations = ReadObservations()
+    observations.observe_row(0, corpus_entity("Balance"), handed, None)
+    handed["bal_id"] = 2
+    handed["acct_num"] = "A-2"
+    handed["val"] = Decimal("9.00")
+    handed["in_z"] = _FIXED
+    hint = _hint(_accepted("balance"), observations)
+    assert hint.observation is not None
+    observation = hint.observation.evidence
+    assert isinstance(observation, TemporalObservation)
+    assert dict(observation.predecessor.members) == {
+        "id": 1,
+        "acctNum": "A-1",
+        "value": Decimal("5.00"),
+        "txStart": _TX_START,
+        "txEnd": _INFINITY,
+    }
+    assert hint.observation.key == _BALANCE_STATE
+
+
 # --------------------------------------------------------------------------- #
 # The two mutually exclusive retention branches.                              #
 # --------------------------------------------------------------------------- #

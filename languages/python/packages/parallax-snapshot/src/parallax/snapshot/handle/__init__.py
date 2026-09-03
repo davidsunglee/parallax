@@ -15,10 +15,12 @@ the import-side DAG exemption), so there is exactly one write-lowering seam.
 
 This module defines nothing: every name below is defined in a private
 sibling and re-exported here, and no runtime orchestration remains at this level.
-The private modules are implementation rather than seams — nothing outside the
-package imports one except the three sanctioned test seams — so a name's
-``__module__`` now reports its private defining module, which no specification or
-public-surface check promises. Where the exported names live:
+The private modules are implementation rather than seams — the public surface is
+the re-export list below, and a direct importer of a private sibling is this
+package, the conformance family under its import-side exemption, or a unit suite
+testing that module itself — so a name's ``__module__`` reports its private
+defining module, which no specification or public-surface check promises. Where
+the exported names live:
 
 - :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
   :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
@@ -108,7 +110,7 @@ no result, transaction, or stream this package answers carries a lifecycle
 accessor, so there is no type a caller reads off their own result to re-export.
 
 The modules behind no exported name (``_materializer``, ``_family``,
-``_keyed_sql``, ``_predicate_writes``) are reached only through the modules
+``_keyed_sql``, ``_predicate_writes``) are composed only through the modules
 above; each documents its own place in the package's acyclic internal graph.
 ``_preflight`` owns the shared internal gate an adapter's compile lane also
 uses; its own §7 scope proves that gate reaches no port.
