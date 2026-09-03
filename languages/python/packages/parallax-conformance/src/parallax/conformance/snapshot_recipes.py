@@ -77,7 +77,8 @@ def stream_a_result_one_root_at_a_time(db: Database, page: int) -> tuple[int, li
     namespaces over one query.
 
     ``db.stream`` is ``db.find``'s peer, not a different read: the same Object
-    Query, the same includes, the same values. What differs is delivery. The
+    Query, the same includes, and — over storage the model describes — the same
+    values. What differs is delivery. The
     result is scope-bound and single-pass — it has no whole-result accessor, and
     nothing outside the ``with`` block answers — so a loop over it holds one root
     and the page it came from, whatever the result's size. Summing as you go, as

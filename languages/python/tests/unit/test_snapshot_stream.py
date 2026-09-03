@@ -14,9 +14,14 @@ rather than a second identity rule, so the within-root half is asserted to agree
 with ``find`` and the cross-root half to diverge from it, in both namespaces.
 And invalid stored data inside the Continuation Order itself ends no checked
 delivery: a delivery advances on the coordinate the database evaluated, so a root
-whose sort key or primary key contradicts the model is published and the delivery
-continues past it, from whatever position and page size it lands in — which is
-what keeps ``batch_size`` a performance dial.
+whose sort key contradicts the model is published and the delivery continues past
+it, from whatever position and page size it lands in — which is what keeps
+``batch_size`` a performance dial over storage the model describes. A stored
+``NULL`` where a non-nullable primary key belongs is storage the model does not
+describe, and it is graded where a delivery is bound to reach it: a first page
+carries no seek, so that root is published and the delivery exhausts past it,
+while a continuing page's hoisted leading range may exclude such a root instead
+of delivering it.
 """
 
 from __future__ import annotations
@@ -435,7 +440,7 @@ def test_a_later_page_seeks_past_the_last_root_of_the_page_before_it() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# `batch_size` is a performance dial and nothing else.                         #
+# `batch_size` is a dial alone over storage the model describes.               #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("size", [1, 2, 3, 5])
 def test_the_root_sequence_is_the_same_at_every_page_size(size: int) -> None:
