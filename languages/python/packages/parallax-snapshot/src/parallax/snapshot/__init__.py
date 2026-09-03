@@ -39,8 +39,9 @@ The streamed peer of a Snapshot is here as well: :class:`SnapshotStream`
 (``SnapshotStream[T]``), what ``db.stream`` / ``tx.stream`` and their Wire peers
 answer — a scope-bound, single-pass delivery of roots with no whole-result
 accessor — and :class:`SnapshotStreamStateError`, its refusal of a second entry,
-a second view, a reach outside its scope, or a continuation past a root that did
-not decode every Continuation Order member.
+a second view, or a reach outside its scope. Every case is a rule about the
+stream rather than about the data: a checked delivery continues past a root
+whose stored state contradicts the model.
 
 The Wire read interface's own result vocabulary is here too: :class:`WireEntity`,
 the frozen Entity node ``db.wire.find`` / ``tx.wire.find`` publishes, and

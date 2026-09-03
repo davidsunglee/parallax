@@ -153,11 +153,20 @@ class SnapshotStream[T]:
     is a performance dial alone: it changes neither the order roots arrive in,
     nor which roots arrive, nor what each carries. Invalid stored data included:
     a delivery advances on the coordinate the database evaluated for each root,
-    which exists whatever that root's stored values turned out to be. One stored
-    value falls outside both, and it is storage the model does not describe: a
-    ``NULL`` in a Column the model declares non-nullable, where that Column is
-    the LEADING Continuation Order term. A page after the first may leave that
-    root out, so a smaller page can drop the root a larger one delivered.
+    which exists whatever that root's stored values turned out to be.
+
+    ONE stored value falls outside that, and this is where the Python surface
+    states it; every other docstring qualifying a streamed claim with "storage
+    the model describes" means this and nothing wider. The LEADING Continuation
+    Order term — the query's first ``order_by`` term, or the primary key when it
+    declared no ordering — resolved to a direct Column the model declares
+    non-nullable, holding a stored ``NULL`` anyway. The leading range a page
+    after the first hoists for the planner may leave such a root out, so a
+    smaller page can drop the root a larger one delivered. Nothing narrows it to
+    the key, and nothing widens it past a Column: a leading term at a Document
+    Path hoists no range, so a ``NULL`` its extraction reads is ordinary invalid
+    stored data the delivery publishes and continues past. `m-snapshot-read`
+    *Streamed delivery* settles the bound.
     """
 
     __slots__ = (
