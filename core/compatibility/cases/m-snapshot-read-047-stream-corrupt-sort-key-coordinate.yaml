@@ -1,0 +1,59 @@
+# A checked delivery continues past a root whose own Sort Key no conforming member
+# could hold. `given.corrupt` writes `0000-13-99` over row 102's `day` once the
+# conforming fixtures have loaded, which is a `date` no canonical decoding admits
+# and, as extracted TEXT, the smallest of the three — so the root the model
+# contradicts is delivered FIRST and every page after it continues from its
+# coordinate. That is the whole claim: the coordinate is what the database's own
+# ordering expression evaluated, so it exists whether or not the value decoded,
+# and the delivery neither ends nor skips.
+#
+# The first position publishes `null` and states its diagnosis instead: a non-null
+# document leaf the declared type does not admit leaves its root unhydratable
+# (m-snapshot-read), and the position keeps its place in the ordered result. The
+# two conforming roots follow it unchanged, which is what makes this a case about
+# CONTINUING rather than about classifying.
+#
+# The second page's leading seek binds `0000-13-99` back verbatim. `day` is
+# document-resident and text-compared, so the extraction compares without a cast
+# and the carrier IS the stored text — bound back as comparison text, never
+# re-derived from a decoded value, because there is no decoded value to derive it
+# from. A page that re-encoded its coordinate from a managed one would have
+# nothing to encode here and could not continue at all.
+model: models/stream-coordinates.yaml
+tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, stored-data, corrupt, document-layout, graph, slice-snapshot-1]
+shape: read
+compileEligibility: { mode: run-only, reason: query-result-dependent }
+given:
+  corrupt:
+    - entity: parallax.compatibility.StreamCoordinate
+      key: 102
+      member: [day]
+      value: "0000-13-99"
+when:
+  objectQuery:
+    target: parallax.compatibility.StreamCoordinate
+    predicate: { all: {} }
+    orderBy: [{ attr: parallax.compatibility.StreamCoordinate.day }]
+  stream: { batchSize: 1 }
+then:
+  statements:
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
+      binds: { postgres: [day, day, 2] }
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where (jsonb_extract_path_text(t0.coordinates, ?) > ? or jsonb_extract_path_text(t0.coordinates, ?) is null or (jsonb_extract_path_text(t0.coordinates, ?) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
+      binds: { postgres: [day, day, "0000-13-99", day, day, "0000-13-99", 102, day, 2] }
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where (jsonb_extract_path_text(t0.coordinates, ?) > ? or jsonb_extract_path_text(t0.coordinates, ?) is null or (jsonb_extract_path_text(t0.coordinates, ?) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
+      binds: { postgres: [day, day, "2026-01-15", day, day, "2026-01-15", 101, day, 2] }
+  graph:
+    StreamCoordinate:
+      - null
+      - { id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
+      - { id: 103, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
+  storedDataIssues:
+    - ordinal: 0
+      hydrated: false
+      issues:
+        - code: stored-data-leaf-undecodable
+          entity: parallax.compatibility.StreamCoordinate
+          member: parallax.compatibility.StreamCoordinate.day
+          objectKey: { entity: parallax.compatibility.StreamCoordinate, key: { id: 102 } }
+  roundTrips: 3

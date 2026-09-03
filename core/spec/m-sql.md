@@ -609,6 +609,22 @@ is neither: the open upper bound of a temporal interval reads back as the
 crosses as a framework bind whose canonical Wire report is the `infinity`
 literal — the form a written temporal row already binds it in.
 
+**A coordinate bind's reported form is that same split, and it is total over every
+carrier a delivery can reach.** A statement reports its binds in canonical Wire
+(*Bind metadata*), and a carrier is reportable exactly where the form it was bound
+in already answers one: a comparison-text bind reports the extracted text as it
+stands, and a managed bind reports the canonical Wire rendering of a value the
+declared type admits. Both hold for storage the model contradicts, which is the
+point — a text-compared extraction reports whatever text the document held, and a
+casting extraction reports the engine's own cast result, which is a member of the
+declared value space because the engine produced it as one. The single carrier the
+rule does not cover is a **direct Column** holding a value outside its declared
+type: no canonical Wire spelling exists for a value the type does not admit, and
+conforming DDL cannot store one, so a coordinate of that shape is unreachable rather
+than unreported. That is what lets a compatibility case corrupt a member the
+Continuation Order names and still author the pages that continue past it
+(`m-case-format` *Corrupting stored state*).
+
 Seek binds append after the caller's authored predicate binds, so bind order stays
 caller-first; the ordering clause's own path binds follow them, and the cap last.
 A capture cell's path binds precede every bind below them in the statement — a

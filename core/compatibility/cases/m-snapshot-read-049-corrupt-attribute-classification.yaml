@@ -1,0 +1,59 @@
+# The two stored-data verdicts a top-level Entity Attribute can carry, authored
+# where no fixture can reach them: a fixture leaf is re-decoded at authoring time,
+# so a `token` no canonical decoding admits and a non-nullable `clock` holding
+# JSON null are both refused before a case runs. `given.corrupt` states them as
+# storage instead.
+#
+# Both leave their root UNHYDRATABLE and neither prunes it: the result keeps three
+# positions in `id` order, the first two carry `null`, and each states the one
+# diagnosis its own row earned. The third row is the conforming control — it shares
+# every value with the first except the corrupted one, so what separates them is
+# the corruption and nothing else.
+#
+# `clock` and `token` are document-resident here, which is what makes the states
+# storable at all: a Structured Column holds any JSON value, while the typed
+# Column a `Columns` layout would give either member could be made to hold one only
+# by first dropping the constraint that forbids it (m-case-format *Corrupting
+# stored state*).
+model: models/stream-coordinates.yaml
+tags: [m-snapshot-read, m-object-query, stored-data, corrupt, document-layout, graph, slice-snapshot-1]
+shape: read
+given:
+  corrupt:
+    - entity: parallax.compatibility.StreamCoordinate
+      key: 101
+      member: [token]
+      value: NOT-A-UUID
+    - entity: parallax.compatibility.StreamCoordinate
+      key: 102
+      member: [clock]
+      value: null
+when:
+  objectQuery:
+    target: parallax.compatibility.StreamCoordinate
+    predicate: { all: {} }
+    orderBy: [{ attr: parallax.compatibility.StreamCoordinate.id }]
+then:
+  statements:
+    - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates from stream_coordinate t0 order by t0.id asc" }
+  graph:
+    StreamCoordinate:
+      - null
+      - null
+      - { id: 103, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
+  storedDataIssues:
+    - ordinal: 0
+      hydrated: false
+      issues:
+        - code: stored-data-leaf-undecodable
+          entity: parallax.compatibility.StreamCoordinate
+          member: parallax.compatibility.StreamCoordinate.token
+          objectKey: { entity: parallax.compatibility.StreamCoordinate, key: { id: 101 } }
+    - ordinal: 1
+      hydrated: false
+      issues:
+        - code: stored-data-attribute-null
+          entity: parallax.compatibility.StreamCoordinate
+          member: parallax.compatibility.StreamCoordinate.clock
+          objectKey: { entity: parallax.compatibility.StreamCoordinate, key: { id: 102 } }
+  roundTrips: 1

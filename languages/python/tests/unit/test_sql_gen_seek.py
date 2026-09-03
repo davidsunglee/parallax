@@ -36,6 +36,7 @@ from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import LoweredStatement
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._seek import lowered_terms
+from parallax.core.wire import WireEncodingError
 from parallax.descriptor import _records
 
 DOCUMENT_LAYOUT = accepted_model("document-layout")
@@ -367,3 +368,29 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
     )
     assert row.values["parallax_seek_0"] == 3
     assert row.coordinate == ContinuationCoordinate((3, 1))
+
+
+def test_a_corrupt_text_compared_carrier_still_reports_the_text_it_crossed_as() -> None:
+    # The reported form of a coordinate bind is the form it was BOUND in, which
+    # is what makes a delivery past storage the model contradicts reportable at
+    # all: `joinedOn` compares as extracted text, so a stored spelling no `date`
+    # decoding admits crosses and reports as those same characters. A compatibility
+    # case corrupting a member the Continuation Order names authors its pages from
+    # exactly this (`m-case-format` *Corrupting stored state*).
+    plan = _planned(DOCUMENT_LAYOUT, "Traveler", OrderKey(attr=_TRAVELER_JOINED))
+    node = plan.after(ContinuationCoordinate(("0000-13-99", 1)), limit=2)
+    statement = _lowered(DOCUMENT_LAYOUT, node)
+    assert statement.wire_binds()[2] == "0000-13-99"
+
+
+def test_a_direct_column_carrier_outside_its_declared_type_has_no_reported_form() -> None:
+    # The one shape the rule above does not cover, and the reason it does not
+    # need to: a direct Column binds its carrier as a managed value, and canonical
+    # Wire has no spelling for a value the declared type admits no member of.
+    # Conforming DDL cannot store one — the Column's own type refuses it — so no
+    # corpus case can author this, and the statement itself still lowers.
+    plan = _planned(ORDERS, "Order", OrderKey(attr=_ORDER_NAME))
+    node = plan.after(ContinuationCoordinate((object(), 1)), limit=2)
+    statement = _lowered(ORDERS, node)
+    with pytest.raises(WireEncodingError):
+        statement.wire_binds()

@@ -35,7 +35,8 @@ class _StreamPage:
     """
 
     root_rows: list[materialize.PublishedRow]
-    nodes: list[dict[str, Any]]
+    nodes: list[dict[str, Any] | None]
+    coordinates: list[tuple[Any, ...]]
     consumed: int
     returned: int
 
@@ -47,6 +48,7 @@ def _stream_page(
     query: dict[str, Any],
     steps: list[includes.FetchStep],
     root_entity: Entity,
+    terms: list[seek.ContinuationTerm],
     root_sql: str,
     root_binds: list[Any],
     levels: list[tuple[str, list[Any]]],
@@ -68,25 +70,34 @@ def _stream_page(
     the discarded root gathers no key, receives no child, and is read again by
     the page that delivers it.
     """
-    returned = materialize.materialize_read(
-        case,
-        seek.without_captured_coordinates(
-            execute.query_rows(case, reader, root_sql, root_binds), aliases
-        ),
-    )
+    raw = execute.query_rows(case, reader, root_sql, root_binds)
+    returned = materialize.materialize_read(case, seek.without_captured_coordinates(raw, aliases))
     keep = requested - 1 if lookahead and len(returned) == requested else len(returned)
     root_rows = returned[:keep]
+    coordinates = [
+        seek.evaluated_coordinate(published, raw_row, terms, aliases)
+        for published, raw_row in zip(root_rows, raw[:keep], strict=True)
+    ]
     if not includes.query_has_includes(query):
         narrowed = materialize.narrow_to_variant_columns(case, root_rows)
-        nodes = [graph.graph_node(case, root_entity, row) for row in narrowed]
-        return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=0, returned=len(returned))
+        kept: list[dict[str, Any] | None] = [
+            graph.graph_node(case, root_entity, row) for row in narrowed
+        ]
+        return _StreamPage(
+            root_rows=root_rows,
+            nodes=kept,
+            coordinates=coordinates,
+            consumed=0,
+            returned=len(returned),
+        )
 
     executed = includes.execute_fetch_levels(case, reader, source, query, steps, root_rows, levels)
     assembled = graph.assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
-    nodes = assembled.get(root_entity.name, [])
+    nodes: list[dict[str, Any] | None] = list(assembled.get(root_entity.name, []))
     return _StreamPage(
         root_rows=root_rows,
         nodes=nodes,
+        coordinates=coordinates,
         consumed=executed.consumed,
         returned=len(returned),
     )
@@ -103,7 +114,7 @@ def _binds_equal(
     return all(
         scalars_equal(left, right, None)
         if neutral_type is None
-        else execute.bind_value_equal(left, right, neutral_type)
+        else execute.coordinate_bind_equal(left, right, neutral_type)
         for left, right, neutral_type in zip(authored, derived, neutral_types, strict=True)
     )
 
@@ -114,7 +125,7 @@ class StreamDelivery:
     assembled from them, concatenated across every page in delivery order."""
 
     root_rows: list[materialize.PublishedRow]
-    nodes: list[dict[str, Any]]
+    nodes: list[dict[str, Any] | None]
 
 
 def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDelivery:
@@ -189,7 +200,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
     aliases = seek.capture_aliases(case, terms)
     limit = query.get("limit")
 
-    nodes: list[dict[str, Any]] = []
+    nodes: list[dict[str, Any] | None] = []
     root_rows: list[materialize.PublishedRow] = []
     carried_binds: list[Any] = []
     first_root_sql = ""
@@ -257,6 +268,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             query,
             steps,
             root_entity,
+            terms,
             root_sql,
             authored,
             entries[index:],
@@ -274,9 +286,8 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             )
         nodes.extend(executed.nodes)
         root_rows.extend(executed.root_rows)
-        if executed.root_rows:
-            last = executed.root_rows[-1]
-            cursor = tuple(coerce_identity_key(last[term.column]) for term in terms)
+        if executed.coordinates:
+            cursor = tuple(coerce_identity_key(carrier) for carrier in executed.coordinates[-1])
         page += 1
         if not lookahead or returned < requested:
             break

@@ -659,8 +659,9 @@ class Case:
 
         Holds ``fixtures`` (whether to load the model's fixtures), ``apply`` (naive
         statement entries a conflict case runs verbatim before the golden write),
-        and ``fault`` (a boundary case's injected fault). Absent for a case that
-        starts from the model's default fixtures and injects nothing.
+        ``corrupt`` (stored state written over those fixtures), and ``fault`` (a
+        boundary case's injected fault). Absent for a case that starts from the
+        model's default fixtures and injects nothing.
         """
         return self.raw.get("given", {})
 
@@ -830,6 +831,18 @@ class Case:
         otherwise state no authored member of the model could produce.
         """
         return self.given.get("apply", [])
+
+    @property
+    def corrupt(self) -> list[dict[str, Any]]:
+        """The stored-state corruptions applied over the loaded fixtures
+        (``given.corrupt``).
+
+        Each entry addresses one occurrence — ``entity`` + primary ``key`` +
+        logical ``member`` path — and states the raw ``value`` written there. The
+        addressing is `then.storedDataIssues`' own, so a case's setup and its
+        assertion name one location in one vocabulary.
+        """
+        return self.given.get("corrupt", [])
 
     @property
     def write_rows(self) -> list[dict[str, Any]]:

@@ -36,7 +36,7 @@ from typing import Any, NamedTuple
 
 from ..case import Case, Entity, Model
 from ..case_assertions import CaseFailure
-from ..document_codec import decode_leaf, decode_stored
+from ..document_codec import DocumentEncodingError, decode_leaf, decode_stored
 from ..inheritance import (
     STRATEGY_TPCS,
     STRATEGY_TPH,
@@ -46,6 +46,7 @@ from ..inheritance import (
 )
 from ..storage_layout import (
     ColumnSlot,
+    DocumentMember,
     DocumentPath,
     PositionBranch,
     PositionLayoutView,
@@ -58,6 +59,26 @@ from . import tpcs
 from .execute import (
     golden_projection_columns,
 )
+
+# --- unhydratable stored state ----------------------------------------------
+
+
+class UnavailableLeaf(NamedTuple):
+    """A stored leaf that left its result position UNHYDRATABLE (m-snapshot-read).
+
+    A non-null document leaf the declared type does not admit, and a non-nullable
+    top-level Entity Attribute that read absent or JSON null, both make the whole
+    root unavailable rather than collapsing to a producible value. The judged
+    value rides along so a failure names what was stored rather than only where.
+    """
+
+    stored: Any
+
+
+def is_unavailable(row: Mapping[str, Any]) -> bool:
+    """Whether *row*'s stored state left its result position unhydratable."""
+    return any(isinstance(value, UnavailableLeaf) for value in row.values())
+
 
 # --- materialized rows ------------------------------------------------------
 
@@ -451,12 +472,42 @@ def _materialize_document_layout(
         for member in selected:
             stored = _document_value(document, member.path)
             node[member.column] = (
-                stored
-                if member.type_spelling is None
-                else decode_leaf(member.type_spelling, stored)
+                stored if member.type_spelling is None else _decoded_leaf(entity, member, stored)
             )
         materialized.append(node)
     return materialized
+
+
+def _decoded_leaf(entity: Entity, member: DocumentMember, stored: Any) -> Any:
+    """One document-resident leaf as the read publishes it, or the judgement that
+    left its root unhydratable.
+
+    Two stored states are unhydratable and the rest are ordinary values: a
+    non-null leaf the declared type does not admit, and — for a top-level Entity
+    Attribute alone — an absent or JSON-null one the model declares non-nullable.
+    The second is `m-snapshot-read`'s layout-parity rule: a document member and a
+    SQL `NULL` Column are one logical state, so the document arm may not publish
+    a hydratable absence where the Column arm publishes none.
+    """
+    if stored is None:
+        return None if _leaf_nullable(entity, member) else UnavailableLeaf(None)
+    try:
+        return decode_leaf(member.type_spelling or "", stored)
+    except DocumentEncodingError:
+        return UnavailableLeaf(stored)
+
+
+def _leaf_nullable(entity: Entity, member: DocumentMember) -> bool:
+    """Whether the top-level Attribute *member* spells may hold no value."""
+    declared = next(
+        (
+            attribute
+            for attribute in entity.attributes
+            if attribute["name"] == member.address.path[0]
+        ),
+        None,
+    )
+    return declared is None or bool(declared.get("nullable"))
 
 
 def _materialize_target_document_layout(

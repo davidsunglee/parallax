@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-88**.
+Entry numbering is continuous and never reused. The next new number is **D-89**.
 
 ## Entries
 
@@ -760,51 +760,45 @@ closing them means reopening a cross-language contract the corpus took the other
 way on purpose. It stays graded at
 `tests/unit/test_transaction_streams.py`.
 
-### D-87 — A corrupt Continuation Order carrier has no canonical Wire rendering, and statement reporting reaches it
+### D-88 — The read oracle refuses a Continuation Order naming a member a wrapped `union all` resolves per branch
 
-*Medium — reachable today through the conformance engine's statement reporting,
-and the one place where "a coordinate is never decoded or revalidated" is not yet
-true end to end.* Relates to
-`parallax.core.sql_gen._context.LoweredStatement.wire_binds`,
-`parallax.core.sql_gen._seek._compared`,
-`parallax.conformance.engine`, `core/spec/m-sql.md` *Continuation coordinates —
-capture, seek, rebind*.
+*Medium — a shape the compiler lowers correctly and the corpus therefore cannot
+grade.* Relates to
+`reference_harness.object_query_oracle.seek._resolved_document_member`,
+`reference_harness.sql_wrapped_union._assert_wrap_projection`,
+`core/spec/m-sql.md` *Continuation coordinates — capture, seek, rebind*.
 
-**What.** A streamed page rebinds each coordinate carrier through
-`bind_managed(carrier, member.type)`, whose reported form is `encode_wire(type,
-carrier)`. That is exact for every carrier conforming storage can produce. It is
-not defined for the carriers this delivery contract exists to stream past: a
-stored value outside the declared type's value space is by construction not a
-member of it, so `encode_wire` raises `WireEncodingError` rather than reporting
-anything. The one carrier of that shape already witnessed — the open temporal
-bound — is handled by name, as a framework bind reporting the canonical
-`infinity` literal; nothing generalizes that to a carrier whose shape is not
-known in advance.
+**What.** A table-per-concrete-subtype family places one declared member in a
+Structured Column per branch, so no single extraction spells it against one
+Table. The compiler resolves it through the union's own result alias and lowers
+the ordering term, the capture cells, and the seek on the wrapping select — which
+is correct and measured: a streamed read of `Publication` ordered by the
+root-declared, document-resident `title` emits
+`jsonb_extract_path_text(u.payload, ?) parallax_seek_0` beside `u.id
+parallax_seek_1` and seeks over the same expressions. The reference harness
+refuses that read by name instead, at `_resolved_document_member`, which resolves
+a resident Sort Key to one Table's document or to nothing.
 
-`wire_binds()` is reached only by `parallax.conformance.engine`'s statement
-reporting, so no ordinary caller can hit it. But that is exactly the surface a
-compatibility case corrupting a member the Continuation Order names would run
-through, which makes the gap the reason such a case cannot be authored rather
-than a consequence of not having authored one.
+**Why it is deferred rather than fixed.** Authoring the case first — the order the
+work was taken in — showed the derivation is three coordinated harness changes
+rather than one: the wrapped-union projection gate admits only the union's result
+aliases and a `Document` read pair, so it refuses the trailing capture cells
+outright; the resident-member resolution has to answer the union alias rather than
+a branch's column; and every term's spelling for such a read is the wrap alias's,
+not `t0`'s, which the direct-term derivation also fixes. That is its own unit of
+work in the harness, and none of it is Python-target behaviour: nothing in the
+implementation is missing, and the residual is a corpus case the oracle cannot yet
+grade.
 
-**Why it is deferred rather than fixed.** Closing it is a normative choice with
-three shapes and no obvious winner, and it belongs with the corpus work that
-would first exercise it:
-
-- a **carrier-shaped reported form** — a bind role reporting the carrier as the
-  ordinary Wire scalar it already is, extending the override the temporal
-  sentinel uses — which makes every coordinate reportable but puts a second
-  rendering rule beside canonical Wire projection;
-- an **explicit reportability restriction**, where a statement's coordinate
-  binds are reported as opaque and the adapter contract says so, which keeps one
-  rendering rule and weakens what a golden can pin; or
-- **refusing to author** a corrupt-carrier case at all, which leaves the
-  contract unstated and the gap latent.
-
-**When.** The corpus mechanism the choice belongs with is
-[COR-114](https://linear.app/flimflam/issue/COR-114) Phase 6 (`given.corrupt`,
-streamed `then.storedDataIssues`). Recorded here because the ledger, not a task
-artifact, is what binds a later session.
+**When.** With the next reference-harness work over the read oracle. The case
+itself is one file over the existing `document-layout` model, whose two fixture
+rows (`Book` 10 "Systems", `Film` 20 "Frames") deliver in two pages at
+`batchSize: 1`; both statements wrap
+`select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union
+all select t0.id, t0.payload, 'Film' family_variant from publication_film t0` as
+`u`, project `u.id, not u.payload is null, u.payload, u.family_variant` plus the
+two capture cells, and the second conjoins the ordinary branch tree over
+`jsonb_extract_path_text(u.payload, ?)` and `u.id` binding `Frames` and `20`.
 
 ## Forwarding pointers
 
@@ -812,6 +806,7 @@ Removed entries whose number a live document still cites. One line each; drop a
 line once nothing cites it. This section is not an entry list and must never grow
 prose.
 
+- **D-87** → closed by [COR-114](https://linear.app/flimflam/issue/COR-114) Phase 6. The reported form is the bind role's own and needs no second rendering rule: `m-sql` *Continuation coordinates* now states it, `m-case-format` *Corrupting stored state* states the authoring restriction that follows, and both reachable forms are graded at the m-sql seam. A comparison-text bind reports the extracted text as it stands, so a corrupt text-compared coordinate reports whatever the document held; a managed bind reports the canonical Wire of the engine's own cast result, which is in the declared value space by construction. The one shape left undefined — a direct Column holding a value outside its declared type — conforming DDL cannot store, so it is unreachable rather than unreported.
 - **D-38** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P7. Mirror the remaining 15 corpus models.
 - **D-40** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P4. Eager `fetchall` at the adapter boundary; port-level streaming is [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory).
 - **D-44** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P2. Deep-fetch depth beyond two hops.
