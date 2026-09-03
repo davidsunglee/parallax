@@ -22,9 +22,9 @@ importer exemption), and the support-scope additions:
 * an isolated child scope, which a grant on its parent does NOT carry, with a
   canary importing the testing-only lifecycle recorder into a production scope
   the parent package is granted to;
-* the ``isolated`` and ``sealed`` marks §7's rows carry, which generate nothing
-  and so leave every contract identical when a scope loses one — compared with
-  the tool's sets, with a drift canary per side;
+* the ``isolated`` and ``sealed`` marks §7's rows carry, each naming the parent
+  its guarantee is stated against — mark, scope, and parent compared with the
+  tool's tables, with a drift canary per side and one for a falsified parent;
 * a zero-grant child scope, whose emptiness IS its contract, with two canaries —
   one importing a scope from outside its own package, one importing a sibling
   child scope inside it, the half a package-scoped row can only reach by naming
@@ -37,6 +37,7 @@ importer exemption), and the support-scope additions:
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -716,17 +717,20 @@ def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
 
 def test_the_spec_marks_the_child_scopes_the_tool_isolates_and_seals() -> None:
     marked = dag.parse_child_scope_marks(dag.PYTHON_MD.read_text())
-    assert marked["isolated"] == dag.ISOLATED_CHILD_SCOPES
-    assert marked["sealed"] == dag.SEALED_CHILD_SCOPES
+    assert set(marked["isolated"]) == dag.ISOLATED_CHILD_SCOPES
+    assert set(marked["sealed"]) == dag.SEALED_CHILD_SCOPES
+    for scopes in marked.values():
+        for scope, parent in scopes.items():
+            assert dag.CHILD_SCOPE_PARENT[scope] == parent
     dag.check_child_scope_marks(marked)
 
 
 def test_a_seal_dropped_by_the_tool_alone_fails_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Neither mark generates a contract, so unsealing a scope leaves every
-    # emitted row byte-identical while the guarantee the spec still promises
-    # goes ungraded. The mark comparison is the only thing that reports it.
+    # Sealing generates no contract, so unsealing a scope leaves every emitted
+    # row byte-identical while the guarantee the spec still promises goes
+    # ungraded. The mark comparison is the only thing that reports it.
     monkeypatch.setattr(
         dag,
         "SEALED_CHILD_SCOPES",
@@ -754,14 +758,26 @@ def test_a_mark_dropped_by_the_spec_alone_fails_generation(
         dag.generate()
 
 
-def test_parse_child_scope_marks_rejects_a_row_marked_both_ways() -> None:
-    row = (
-        "| Ghost (support, isolated child of `parallax.core.ghost`, sealed child "
-        "of `parallax.core.ghost`) | `parallax.core.ghost.child` | "
-        "`parallax.core.ghost.child` | (none) | generated forbidden contracts |"
+def test_a_mark_naming_another_parent_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A mark constrains a relationship, not a scope: what a sealed scope may not
+    # reach is its parent package, and the ownership walk takes that package from
+    # CHILD_SCOPE_PARENT. A row naming a different one promises a guarantee
+    # nothing enforces while every scope set still matches.
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(
+        "(support, sealed child of `parallax.snapshot.handle`)",
+        "(support, sealed child of `parallax.core.entity`)",
+        1,
     )
-    with pytest.raises(ValueError, match="marks one scope"):
-        dag.parse_child_scope_marks(f"{_HEADER}\n{row}\n")
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    with pytest.raises(ValueError, match=re.escape("a sealed child of 'parallax.core.entity'")):
+        dag.generate()
 
 
 def test_check_child_scopes_rejects_a_sealed_scope_that_is_not_a_child(
