@@ -160,8 +160,7 @@ def _corrupt_row(
             continue
         column, path = _corruption_target(entity, view, tuple(entry["member"]))
         index = columns.index(column)
-        cells[index] = _thawed(cells[index])
-        _write_at(cells[index], path, entry["value"])
+        cells[index] = _replaced_at(_thawed(cells[index]), path, entry["value"])
         applied.add(position)
     return applied
 
@@ -176,6 +175,9 @@ def _corruption_target(
     Value Object occurrence under `Columns` contributes its own Structured Column
     with an empty path, and whatever the address did not consume — the nested
     member names and the array positions a placement never carries — follows.
+    An address that stops at a top-level occurrence consumes everything, so the
+    empty path that answers it addresses that Structured Column's whole stored
+    value, which is the occurrence itself.
 
     A member the layout places in a Column of its own is refused: only a
     Structured Column can hold a value its declaration contradicts.
@@ -199,7 +201,7 @@ def _corruption_target(
         rest = member[cut:]
         if isinstance(placement, DocumentPath):
             return placement.slot.column, (*placement.path, *rest)
-        if rest:
+        if isinstance(placement.slot.contributor, ValueObjectContributor):
             return placement.slot.column, rest
         break
     raise ValueError(
@@ -222,12 +224,16 @@ def _thawed(document: Any) -> Any:
     return document
 
 
-def _write_at(document: Any, path: tuple[Any, ...], value: Any) -> None:
-    """Store *value* at *path* inside the already-built *document*."""
+def _replaced_at(document: Any, path: tuple[Any, ...], value: Any) -> Any:
+    """*document* with *value* stored at *path*, or *value* itself where *path* is
+    empty and the whole stored value is what the address named."""
+    if not path:
+        return value
     current = document
     for segment in path[:-1]:
         current = current[segment]
     current[path[-1]] = value
+    return document
 
 
 def _cell(

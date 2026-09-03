@@ -309,6 +309,16 @@
       "then": {
         "properties": { "then": { "properties": { "roundTrips": { "const": 0 } } } }
       }
+    },
+    {
+      "description": "`given.corrupt` belongs to the `read` shape alone (m-case-format *Corrupting stored state*). Corruption is the stored state a READ observes, and only a read lane applies it: every other shape's executor walks past the member, so a case declaring it elsewhere would assert a verdict about storage its own execution never produced — and an adapter that corrupts as its fixtures land would observe different storage there than one that corrupts before the action. The grammar refuses the mixture rather than leaving the two readings to disagree.",
+      "if": {
+        "required": ["given"],
+        "properties": { "given": { "required": ["corrupt"] } }
+      },
+      "then": {
+        "properties": { "shape": { "const": "read" } }
+      }
     }
   ],
   "properties": {
@@ -395,7 +405,7 @@
                 "description": "The corrupted row's model primary-key value, in its canonical Wire spelling (m-metamodel admits no composite primary key, so one value addresses one row)."
               },
               "member": {
-                "description": "The corrupted occurrence's entity-relative logical path: declared member names, with an integer for an array position — the same vocabulary `then.storedDataIssues` reports a diagnosis at, so setup and assertion read as one sentence and nothing is translated between them.",
+                "description": "The corrupted occurrence's entity-relative logical path: declared member names, with an integer for an array position — the same vocabulary `then.storedDataIssues` reports a diagnosis at, so setup and assertion read as one sentence and nothing is translated between them. The path stops wherever the case means it to: one stopping at a top-level Value Object occurrence names that occurrence, and `value` replaces its whole stored value, which is how a wrong-KIND verdict at a `One` or a `Many` is stated.",
                 "type": "array",
                 "minItems": 1,
                 "items": { "type": ["string", "integer"] }

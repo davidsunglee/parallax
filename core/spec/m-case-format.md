@@ -814,6 +814,15 @@ location, expect a diagnosis at this location. Nothing is translated between the
 setup and the assertion, so a disagreement between them is a defect the case
 exposes rather than absorbs.
 
+The address is **logical**, so it names one occurrence under either Storage
+Layout and stops wherever the case means it to. One that stops at a top-level
+Value Object occurrence names the OCCURRENCE, and `value` replaces what the whole
+occurrence is stored as — which is how a case states a wrong-kind verdict at a
+`One` or a `Many`. Under `Columns` such an occurrence keeps a Structured Column of
+its own, whose stored root is the object or the array the occurrence is, so an
+address descending past it indexes that value directly rather than a member of a
+shared document.
+
 Each adapter realizes the step in its own way — the case states what is wrong
 once, portably. Raw post-load SQL would be authored per dialect, which is
 tolerable where `given.apply`'s statements arrange timing but not here, where the

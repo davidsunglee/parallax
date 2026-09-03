@@ -425,33 +425,39 @@ def _corrupt_stored_state(
             f"{case.path.name}: given.corrupt addresses {entity.identity.canonical} "
             f"{entry['key']!r}, which the loaded fixtures do not hold"
         )
-    document = _stored_document(rows[0][column])
-    _write_at(document, path, entry["value"])
+    document = _replaced_at(_stored_value(rows[0][column]), path, entry["value"])
     port.execute_write(
         dialect.to_driver_sql(f"update {table} set {dialect.quote(column)} = ? {where}"),
         [JsonDocument(document), key],
     )
 
 
-def _stored_document(cell: object) -> dict[str, object]:
-    """One Structured Column as the mutable document its provider returned."""
-    document = json.loads(cell) if isinstance(cell, str) else cell
-    if not isinstance(document, dict):  # pragma: no cover - the column is never SQL null
-        raise EngineError("a Structured Column holds a document")
-    return cast("dict[str, object]", document)
+def _stored_value(cell: object) -> object:
+    """One Structured Column as the mutable JSON value its provider returned.
+
+    The root is whatever the column carries rather than an object in every case:
+    a shared document and a top-level `One` occurrence are objects, and a
+    top-level `Many` occurrence is an array.
+    """
+    return json.loads(cell) if isinstance(cell, str) else cell
 
 
-def _write_at(document: dict[str, object], path: tuple[object, ...], value: object) -> None:
-    """Store ``value`` at ``path`` inside ``document``, walking its own containers.
+def _replaced_at(document: object, path: tuple[object, ...], value: object) -> object:
+    """``document`` with ``value`` stored at ``path``, walking its own containers.
 
     A path segment is a member name or an array position, and the container it
     indexes is whatever the stored document holds there, so the walk is untyped
-    for the same reason the stored state is: it is not the model's.
+    for the same reason the stored state is: it is not the model's. The empty
+    path addresses the Structured Column's whole stored value, which is what an
+    address naming a top-level occurrence itself resolves to.
     """
+    if not path:
+        return value
     current: Any = document
     for segment in path[:-1]:
         current = current[segment]
     current[path[-1]] = value
+    return document
 
 
 def _corruption_target(
@@ -462,25 +468,32 @@ def _corruption_target(
 ) -> tuple[str, tuple[object, ...]]:
     """The Structured Column and in-document path one addressed member resolves to.
 
-    The addressed top-level member answers it: a document-resident one contributes
-    its own Document Path, a top-level Value Object occurrence under `Columns`
-    contributes its own Structured Column, and the nested names and array
-    positions the address carries follow. A member the layout keeps in a Column of
-    its own is refused — only a Structured Column can hold a value its own
-    declaration contradicts.
+    The addressed top-level member answers it through the DECLARING member the
+    name resolves to, because a placement stays keyed by declaration identity
+    across every Entity that inherits it (`m-storage-layout`): a document-resident
+    member contributes its own Document Path, a top-level Value Object occurrence
+    under `Columns` contributes its own Structured Column, and the nested names
+    and array positions the address carries follow — an address stopping at the
+    occurrence itself leaving the whole stored value as the target. A member the
+    layout keeps in a Column of its own is refused — only a Structured Column can
+    hold a value its own declaration contradicts.
     """
     view = storage_layout.view(model).entity(entity.identity)
+    family = inheritance.view(model).entity(entity.identity)
     name = member[0]
-    placement = None
-    if isinstance(name, str) and view is not None:
-        for identity in (
-            AttributeIdentity(entity.identity, name),
-            ValueObjectIdentity(entity.identity, (name,)),
-        ):
-            placement = placement or view.layout.placement(identity)
+    declared = (
+        None
+        if not isinstance(name, str) or family is None
+        else family.applicable_attribute(name) or family.applicable_value_object(name)
+    )
+    placement = (
+        None if declared is None or view is None else view.layout.placement(declared.identity)
+    )
     if isinstance(placement, DocumentPath):
         return placement.slot.column.name, (*placement.path, *member[1:])
-    if isinstance(placement, DirectColumn) and len(member) > 1:
+    if isinstance(placement, DirectColumn) and isinstance(
+        placement.slot.contributor, ValueObjectIdentity
+    ):
         return placement.slot.column.name, member[1:]
     raise EngineError(
         f"{case.path.name}: given.corrupt addresses {entity.identity.canonical}."
