@@ -38,7 +38,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 from referencing import Registry
 
-from .case import Entity, names_earlier_step
+from .case import Entity, corrupt_temporal_entity, names_earlier_step
 from .corpus_yaml import read_corpus_yaml
 from .execution_validate import validate_execution
 from .inheritance import (
@@ -62,7 +62,7 @@ from .query_references import collect_query_reference_classes
 from .schemas import build_registry, load_schemas
 from .storage_layout import validate_storage_layout
 from .temporal_selection_validate import validate_temporal_selections
-from .temporality import derive_temporal_structure
+from .temporality import derive_temporal_structure, temporal_axes
 from .value_object_resolve import RejectionError
 from .write_validate import assignment_violation, undeclared_members
 
@@ -280,6 +280,28 @@ def _effective_entity(entity_defs: list[dict[str, Any]], entity_name: str) -> En
         return Entity(definition=resolve_effective_definition(entity_defs, entity_name))
     except (KeyError, RejectionError):
         return None
+
+
+def _validate_corruptions(
+    given: Any, entity_defs: list[dict[str, Any]], label: str, errors: list[str]
+) -> None:
+    """Refuse a `given.corrupt` entry addressing a temporal Entity.
+
+    The entry names its row by the model primary key alone, which addresses one
+    row only where the physical key IS that key (`m-case-format` *Corrupting
+    stored state*). Asked here, where the model is in hand and no executor has
+    run, so the corpus refuses the address once rather than leaving each adapter
+    to decide for itself what a milestone chain means.
+    """
+    entries = given.get("corrupt") if isinstance(given, dict) else None
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("entity"), str):
+            continue  # the case schema owns a malformed entry
+        entity = _effective_entity(entity_defs, entry["entity"])
+        if entity is not None and temporal_axes(entity.runtime_facts):
+            errors.append(f"{label}: {corrupt_temporal_entity(entry['entity'])}")
 
 
 def _validate_buffered_write(
@@ -983,6 +1005,15 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         errors,
                         registry,
                     )
+        # A corruption's address is judged against the model it names, which JSON
+        # Schema cannot see: `given.corrupt` addresses a non-temporal Entity.
+        if isinstance(case, dict):
+            _validate_corruptions(
+                case.get("given"),
+                model_entities.get(model_name or "", []),
+                f"case {case_path.name}",
+                errors,
+            )
         # The referenced model must exist.
         if isinstance(case, dict) and isinstance(case.get("model"), str):
             referenced = compatibility_root / case["model"]

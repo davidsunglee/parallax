@@ -1287,3 +1287,17 @@ def dialect_executed_cases(compatibility_root: Path) -> list[Case]:
         for case in discover_cases(compatibility_root)
         if case.lane != "api-conformance" and case.shape != "rejected"
     ]
+
+
+def corrupt_temporal_entity(entity: str) -> str:
+    """Why a `given.corrupt` entry addressing *entity* is refused.
+
+    One sentence, so the corpus's static validation, the harness loader, and
+    every language adapter tell a case reaching for a temporal Entity the same
+    thing wherever it is refused (`m-case-format` *Corrupting stored state*).
+    """
+    return (
+        f"given.corrupt addresses {entity}, a temporal Entity: its model primary key "
+        "addresses a milestone chain rather than one row (m-case-format *Corrupting "
+        "stored state*)"
+    )
