@@ -2851,12 +2851,14 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
 
     A **serialization-failure** case is a different trigger: under a level that
     forbids serialization anomalies both transactions read one row and write
-    ANOTHER (a read/write dependency cycle), so neither node is waiting on a row
-    lock the other holds. WHERE the refusal lands is the engine's own and this
-    runner assumes neither: an engine reaching the level optimistically (Postgres
-    SSI) blocks nothing mid-round and detects the cycle at COMMIT, while one
-    reaching it by turning the reads into shared locks (MariaDB Serializable)
-    refuses in the crossed-write round exactly as ordinary contention does. Such
+    ANOTHER (a read/write dependency cycle), an outcome no serial order produces
+    rather than the authored lock cycle above. HOW the engine reaches the refusal
+    -- and whether either node ever waits at all -- is its own business, which this
+    runner assumes nothing about: reaching the level optimistically (Postgres SSI)
+    blocks nothing mid-round and detects the cycle at COMMIT, while reaching it by
+    turning the reads into shared locks (MariaDB Serializable) leaves the crossed
+    writes waiting on each other and refuses in that round exactly as ordinary
+    contention does. Such
     a case declares ``when.uow.isolation`` (the level both sessions open at,
     applied by the provider) and AUTHORS the commits as a final round of
     ``kind: commit`` steps, so the moment each transaction ends is part of the

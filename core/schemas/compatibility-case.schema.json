@@ -111,11 +111,27 @@
       }
     },
     {
-      "description": "An error-classification case (m-db-error): triggers a real DB error and asserts the neutral category it classifies to (`then.errorClass`) plus the per-dialect native code (`then.nativeCode`). A case MUST declare a trigger: top-level `then.statements` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `when.concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds). A choreography MAY declare `when.uow.isolation`, the portable level both held sessions open at, and MAY author a `kind: commit` step where a node's transaction must end mid-choreography.",
+      "description": "An error-classification case (m-db-error): triggers a real DB error and asserts the neutral category it classifies to (`then.errorClass`) plus the per-dialect native code (`then.nativeCode`). A case MUST declare a trigger: top-level `then.statements` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `when.concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds). A choreography MAY declare `when.uow.isolation`, the portable level both held sessions open at. A step here takes one of exactly two forms: a statement step declaring NO `kind` at all, or a `kind: commit` step ending that node's held transaction where the choreography needs it to end. The nested `rounds.items.properties.{A,B}.kind: {const: commit}` is what refuses the third form: `read` / `write` are the concurrency-success shape's grading vocabulary, and a step declaring one here would name a distinction nothing on this shape grades while dispatching differently per runner.",
       "required": ["shape", "then"],
       "properties": {
         "shape": { "const": "error" },
-        "when": { "propertyNames": { "enum": ["concurrency", "uow"] } },
+        "when": {
+          "propertyNames": { "enum": ["concurrency", "uow"] },
+          "properties": {
+            "concurrency": {
+              "properties": {
+                "rounds": {
+                  "items": {
+                    "properties": {
+                      "A": { "properties": { "kind": { "const": "commit" } } },
+                      "B": { "properties": { "kind": { "const": "commit" } } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         "then": { "required": ["errorClass", "nativeCode"] }
       },
       "anyOf": [
@@ -1759,7 +1775,7 @@
       "additionalProperties": { "$ref": "write-instruction.schema.json#/$defs/writeRowValue" }
     },
     "concurrencyStep": {
-      "description": "One node's step within a `when.concurrency` round. A statement step carries its golden SQL as `statements` ({sql, binds} entries, dialect-keyed map form); a `kind: commit` step carries none, because committing that node's held transaction is boundary mechanics rather than authored SQL. On the concurrency-SUCCESS shape a step additionally declares an explicit `read` / `write` kind: a `read` step is fetched on its HELD session and its `expectRows` graded; a `write` step is executed and asserts only that it did not block/raise. `kind` is optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries none on its statement steps; the concurrency-success root branch requires it on every present step.",
+      "description": "One node's step within a `when.concurrency` round. A statement step carries its golden SQL as `statements` ({sql, binds} entries, dialect-keyed map form); a `kind: commit` step carries none, because committing that node's held transaction is boundary mechanics rather than authored SQL. On the concurrency-SUCCESS shape a step additionally declares an explicit `read` / `write` kind: a `read` step is fetched on its HELD session and its `expectRows` graded; a `write` step is executed and asserts only that it did not block/raise. `kind` is optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries none on its statement steps; the concurrency-success root branch requires it on every present step, and the error root branch narrows it, when present, to `commit`.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1768,7 +1784,7 @@
           "$ref": "#/$defs/goldenStatements"
         },
         "kind": {
-          "description": "The EXPLICIT step discriminator the runners branch on (replacing the brittle SQL-verb sniffing). `read` — the step is fetched on its HELD session (`session.query`) and its rows graded against `expectRows`; `write` — the step is executed (`session.execute`) and asserts only that it did not block/raise; `commit` — the node COMMITS its held transaction at this round, so a choreography that needs a peer's write to land mid-flight, or that surfaces a conflict only at commit, authors that moment instead of leaving it to a runner. `read` and `write` are the concurrency-success form's own vocabulary; `commit` is legal on both shapes that carry `when.concurrency`, and a commit-time raise is that node's classified error exactly as a mid-round raise is. A commit ends the transaction the node opened at the declared `when.uow.isolation`, so it MUST be that node's LAST step — the runners enforce it pre-flight rather than reason about a second, unstated transaction.",
+          "description": "The EXPLICIT step discriminator the runners branch on (replacing the brittle SQL-verb sniffing). `read` — the step is fetched on its HELD session (`session.query`) and its rows graded against `expectRows`; `write` — the step is executed (`session.execute`) and asserts only that it did not block/raise; `commit` — the node COMMITS its held transaction at this round, so a choreography that needs a peer's write to land mid-flight, or that surfaces a conflict only at commit, authors that moment instead of leaving it to a runner. `read` and `write` are the concurrency-success form's own vocabulary and the error root branch refuses them; `commit` is legal on both shapes that carry `when.concurrency`, and a commit-time raise is that node's classified error exactly as a mid-round raise is. A commit ends the transaction the node opened at the declared `when.uow.isolation`, so it MUST be that node's LAST step — the runners enforce it pre-flight rather than reason about a second, unstated transaction.",
           "enum": ["read", "write", "commit"]
         },
         "expectRows": {

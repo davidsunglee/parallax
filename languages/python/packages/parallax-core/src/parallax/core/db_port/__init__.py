@@ -68,17 +68,25 @@ ISOLATION_LEVELS: Final[frozenset[str]] = frozenset(get_args(IsolationLevel))
 
 
 def isolation_level(value: object) -> IsolationLevel:
-    """Return ``value`` as an :data:`IsolationLevel`, or raise ``ValueError``.
+    """Return the vocabulary's own spelling of ``value``, or raise ``ValueError``.
 
     The vocabulary is closed, so a name outside it names no guarantee any adapter
     could map — which makes it the caller's mistake rather than a database's
     refusal, reportable before anything opens. Every value outside it is refused
-    the one way, including one no set can be asked about (an unhashable value),
-    which membership alone would raise a ``TypeError`` for.
+    the one way, whatever its type: the candidate is compared to each level rather
+    than looked up in the set, since a value no set can be asked about (an
+    unhashable ``str`` subclass) would make membership alone raise ``TypeError``.
+
+    What comes back is the matched level itself, never the caller's own object, so
+    an accepted value is a plain hashable ``str`` an adapter can key its per-level
+    spelling table by.
     """
-    if not isinstance(value, str) or value not in ISOLATION_LEVELS:
-        raise ValueError(f"isolation must be one of {sorted(ISOLATION_LEVELS)}, got {value!r}")
-    return cast("IsolationLevel", value)
+    known = sorted(ISOLATION_LEVELS)
+    if isinstance(value, str):
+        for level in known:
+            if value == level:
+                return cast("IsolationLevel", level)
+    raise ValueError(f"isolation must be one of {known}, got {value!r}")
 
 
 @dataclass(frozen=True, slots=True)
