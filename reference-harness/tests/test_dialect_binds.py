@@ -180,7 +180,7 @@ class _RecordingExecutor:
         return 1
 
     @contextmanager
-    def open_session(self) -> Iterator[_RecordingExecutor]:
+    def open_session(self, isolation: str | None = None) -> Iterator[_RecordingExecutor]:
         yield self
 
 

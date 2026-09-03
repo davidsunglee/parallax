@@ -743,6 +743,16 @@ class Case:
         return self.uow.get("concurrency", "optimistic")
 
     @property
+    def isolation(self) -> str | None:
+        """The declared portable Isolation Level (`m-db-port`), or ``None``.
+
+        Unlike :attr:`concurrency_mode` this is PRESCRIPTIVE: it is the level every
+        held session the case opens is opened at, in the core serialized spelling
+        the provider maps. ``None`` requests nothing and keeps the server's default.
+        """
+        return self.uow.get("isolation")
+
+    @property
     def object_query(self) -> dict[str, Any]:
         """The canonical Object Query a read or rejected case carries."""
         return self.when["objectQuery"]

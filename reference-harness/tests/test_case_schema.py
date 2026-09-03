@@ -1456,6 +1456,24 @@ def _corrupt_on_a_scenario() -> dict[str, Any]:
     return doc
 
 
+def _commit_step_on_a_scenario() -> dict[str, Any]:
+    # A `kind: commit` step commits a node's own held session, which only the two
+    # shapes carrying `when.concurrency` have. A scenario commits each `uow` group
+    # after its last step, so a choreography member here names machinery the shape
+    # does not run.
+    doc = _scenario_case()
+    doc["when"]["concurrency"] = {"rounds": [{"A": {"kind": "commit"}}]}
+    return doc
+
+
+def _isolation_on_a_scenario_step() -> dict[str, Any]:
+    # A level is the whole case's, declared once under `when.uow`; a step naming its
+    # own would leave one scenario's groups running at levels nothing states together.
+    doc = _scenario_case()
+    doc["when"]["scenario"][0]["isolation"] = "serializable"
+    return doc
+
+
 def _streamed_without_page_size() -> dict[str, Any]:
     doc = _streamed_read_case()
     doc["when"]["stream"] = {}
@@ -1632,6 +1650,8 @@ REJECTED_CASES = {
     "streamed-step-naming-a-representation": _streamed_step_naming_a_representation,
     "corrupt-on-a-write-sequence": _corrupt_on_a_write_sequence,
     "corrupt-on-a-scenario": _corrupt_on_a_scenario,
+    "commit-step-on-a-scenario": _commit_step_on_a_scenario,
+    "isolation-on-a-scenario-step": _isolation_on_a_scenario_step,
 }
 
 

@@ -18,6 +18,7 @@ from typing import Any, Final, cast
 
 import yaml
 
+from parallax.core.db_port import IsolationLevel, isolation_level
 from parallax.core.wire._json import authored_number
 
 __all__ = [
@@ -28,10 +29,12 @@ __all__ = [
     "find_repo_root",
     "is_module_tag",
     "is_selected",
+    "isolation_literal",
     "load_case",
     "load_cases",
     "safe_load_yaml",
     "select",
+    "uow_isolation",
 ]
 
 
@@ -180,6 +183,30 @@ class Case:
             if is_module_tag(tag):
                 return tag
         raise ValueError(f"{self.path.name}: no module tag in {self.tags!r}")
+
+
+def isolation_literal(value: str) -> IsolationLevel:
+    """The Python level a case's core serialized `when.uow.isolation` names.
+
+    The corpus spells a level hyphenated and the language spells it as a Python
+    identifier, so one conversion sits at case ingress and every runner reads the
+    converted value. Routing it through :func:`~parallax.core.db_port.isolation_level`
+    keeps a corpus value the schema does not admit a refusal here rather than a
+    string a runner passes on.
+    """
+    return isolation_level(value.replace("-", "_"))
+
+
+def uow_isolation(case: Case) -> IsolationLevel | None:
+    """A case's declared portable Isolation Level, or ``None`` for none declared.
+
+    Read exactly as production reads an omitted option: absence requests nothing
+    rather than standing in for a value the suite would supply.
+    """
+    when = cast("dict[str, Any]", case.document.get("when") or {})
+    uow = cast("dict[str, Any]", when.get("uow") or {})
+    declared = cast("str | None", uow.get("isolation"))
+    return None if declared is None else isolation_literal(declared)
 
 
 def _case_id(stem: str) -> str:

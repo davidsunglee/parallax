@@ -13,8 +13,7 @@ TWO-SESSION choreography every such case shares:
 
 - :func:`parse_rounds` parses a case's own `when.concurrency.rounds` into an
   ordered, per-node step plan (`ConcurrencyStep`) — the language-neutral
-  golden statements + (`concurrencySuccess` only) each present step's
-  `kind` / `expectRows`.
+  golden statements + each present step's `kind` / `expectRows`.
 - :func:`run_rounds` drives it: each node (`A` / `B`) gets its OWN
   independent, non-autocommit session (the `Provisioner.peer` seam, threaded
   in EXPLICITLY as `peer_factory` — this module constructs no connections
@@ -37,10 +36,14 @@ TWO-SESSION choreography every such case shares:
 Statements execute VERBATIM (`m-case-format`'s own case contract for this
 shape — a `when.concurrency` round's `statements` ARE the golden, dialect-
 keyed SQL, never lowered from a neutral instruction): a step with no
-declared `kind` (the `error` shape never declares one) or `kind: "read"`
-calls the port's `execute` (row-returning; harmless on DML too — psycopg
-does not require a SELECT to read rows back, `cursor.description is None`
-degrades to an empty list); `kind: "write"` calls `execute_write`. Grading
+declared `kind` (an `error`-shape statement step declares none) or
+`kind: "read"` calls the port's `execute` (row-returning; harmless on DML
+too — psycopg does not require a SELECT to read rows back,
+`cursor.description is None` degrades to an empty list); `kind: "write"`
+calls `execute_write`; `kind: "commit"` ends that node's held transaction,
+carrying no statement of its own — a choreography that needs a peer's write
+to land mid-flight, or that surfaces a conflict only at commit, authors that
+moment rather than leaving it to this runner. Grading
 (the classified error for the `error` shape; `expectRows` per read step for
 `concurrencySuccess`) is the CALLER's job (`tests/compatibility/
 test_run_sweep.py`) — this module reports only the raw per-step outcome
@@ -59,8 +62,9 @@ from typing import Protocol, cast, runtime_checkable
 
 from parallax.conformance import case_format
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DocumentReadOrdinals, Row
+from parallax.core.db_port import Bind, DocumentReadOrdinals, IsolationLevel, Row
 from parallax.core.dialect import Dialect
+from parallax.postgres import isolation_spelling
 
 __all__ = [
     "ConcurrencyStep",
@@ -157,9 +161,11 @@ class PeerSession(Protocol):
 class ConcurrencyStep:
     """One node's own step within one round (`m-case-format` `concurrencyStep`).
 
-    ``kind`` is ``None`` for the `error` shape (whose only assertion is the
-    classified error the contention round raises); `concurrencySuccess`
-    declares it on every present step (`"read"` / `"write"`).
+    ``kind`` is ``None`` for an `error`-shape statement step (whose only assertion
+    is the classified error the contention round raises); `concurrencySuccess`
+    declares it on every present step (`"read"` / `"write"`). ``"commit"`` is the
+    one kind that carries no ``statements``: it ends the node's held transaction
+    where the choreography says so, and is legal on both shapes.
     """
 
     statements: tuple[tuple[str, tuple[Bind, ...]], ...]
@@ -193,7 +199,7 @@ def _step(raw: Mapping[str, object], dialect_name: str) -> ConcurrencyStep:
         else None
     )
     return ConcurrencyStep(
-        statements=_statement_entries(raw["statements"], dialect_name),
+        statements=_statement_entries(raw.get("statements", []), dialect_name),
         kind=cast("str | None", kind) if isinstance(kind, str) else None,
         expect_rows=expect_rows,
     )
@@ -258,7 +264,15 @@ def _execute_step(session: PeerSession, step: ConcurrencyStep) -> tuple[Row, ...
     authored DML without SQL-verb sniffing (`m-case-format`'s own `kind`
     discriminator is what exists to replace that, for the ONE shape —
     `concurrencySuccess` — whose grading needs the distinction at all).
+
+    A `kind: "commit"` step runs the node's own COMMIT — through `execute`
+    rather than the raw driver connection, so a commit-time error crosses the
+    port translated exactly like any other. It carries no authored statement,
+    because ending a transaction is boundary mechanics no golden SQL states.
     """
+    if step.kind == "commit":
+        session.execute("commit", [])
+        return ()
     rows: tuple[Row, ...] = ()
     for sql, binds in step.statements:
         driver_sql = session.dialect.to_driver_sql(sql)
@@ -279,28 +293,37 @@ class _WorkerResult:
     failure: BaseException | None = None
 
 
+def _commit_of_an_abandoned_transaction(result: _WorkerResult, step: ConcurrencyStep) -> bool:
+    """Whether ``step`` is a commit whose node already recorded a failure.
+
+    The database aborted that node's transaction when it raised, so a COMMIT
+    against it answers with the abort rather than with anything the choreography
+    is asking about — a second recorded error standing in front of the genuine
+    one. The node has nothing left to commit either way.
+    """
+    return step.kind == "commit" and any(
+        outcome.error is not None for outcome in result.outcomes.values()
+    )
+
+
 def run_rounds(
     rounds: Sequence[Mapping[str, ConcurrencyStep]],
     peer_factory: Callable[[], PeerSession],
     *,
-    isolation: str | None = None,
+    isolation: IsolationLevel | None = None,
 ) -> RoundsRun:
     """Drive ``rounds`` over two independently-held peer sessions (the
     m-read-lock behavioral matrix and `m-db-error`'s own five two-session
     error cases; `m-case-format` "Error cases" / "concurrencySuccess").
 
-    ``isolation`` is an OPTIONAL transaction-isolation override (e.g.
-    ``"serializable"``), applied to BOTH sessions as the SQL-standard `SET
-    TRANSACTION ISOLATION LEVEL` — deliberately the very FIRST statement
-    either session issues (before even the lock-contention GUCs), since a peer
-    session's whole choreography is ONE continuous transaction and that verb
-    is only legal as a transaction's own first statement: `m-db-error-009`'s
-    own serialization-failure witness needs genuine Postgres SSI (its golden
-    SIREAD-predicate-lock write-skew never arises at the default READ
-    COMMITTED), a runner-level fact about ONE case `m-case-format` declares
-    no schema field for. ``None`` (a case declaring no isolation) issues no
-    override at all — the driver's own default isolation, preserving
-    byte-identical behavior for the m-read-lock matrix.
+    ``isolation`` is the portable Isolation Level a case declares in
+    `when.uow.isolation`, spelled for this engine and applied to BOTH sessions
+    as the SQL-standard `SET TRANSACTION ISOLATION LEVEL` — deliberately the
+    very FIRST statement either session issues (before even the lock-contention
+    GUCs), since a peer session's whole choreography is ONE continuous
+    transaction and that verb is only legal as a transaction's own first
+    statement. ``None`` (a case declaring no level) issues no statement at all
+    and keeps the driver's own default.
 
     Opens exactly two sessions via ``peer_factory`` (never constructs a
     connection itself) with INCREMENTAL protection (`contextlib.ExitStack`):
@@ -349,7 +372,8 @@ def run_rounds(
             # `lock_timeout` (plain session GUCs, safe at any point) have
             # already opened it.
             if isolation is not None:
-                session.execute(f"set transaction isolation level {isolation}", [])
+                spelling = isolation_spelling(isolation)
+                session.execute(f"set transaction isolation level {spelling}", [])
             # Then both lock-contention GUCs, `deadlock_timeout` FIRST and
             # strictly BELOW `lock_timeout` -- see the constants' own timer-race
             # derivation. (Their relative order here is immaterial; their
@@ -367,36 +391,12 @@ def run_rounds(
                 for index, round_steps in enumerate(rounds):
                     barrier.wait()
                     step = round_steps.get(node)
-                    if step is not None:
+                    if step is not None and not _commit_of_an_abandoned_transaction(result, step):
                         try:
                             rows = _execute_step(session, step)
                             result.outcomes[index] = NodeOutcome(rows=rows)
                         except DatabaseError as exc:
                             result.outcomes[index] = NodeOutcome(error=exc)
-                    barrier.wait()
-                # A genuine SSI (`isolation="serializable"`) write-skew conflict
-                # is detected AT COMMIT, never during the conflicting writes
-                # themselves (`m-db-error-009`'s own commentary) — so an
-                # explicit, barrier-synchronized COMMIT round follows the
-                # authored rounds whenever an isolation override is in play
-                # (both barrier waits are UNCONDITIONAL so a node that skips
-                # its own commit attempt still meets its partner at the SAME
-                # boundary, never stranding it), via `execute` (never the raw
-                # driver connection) so a commit-time driver error crosses the
-                # port translated exactly like any other. The attempt itself
-                # is skipped for a node that already recorded an error (its
-                # transaction is already aborted; a COMMIT there would raise a
-                # spurious "transaction aborted" error, never the genuine one)
-                # — unreachable for `m-db-error-009` itself (neither node's
-                # own reads/writes ever raise), kept for honesty should a
-                # future isolation-override case need it.
-                if isolation is not None:
-                    barrier.wait()
-                    if not any(outcome.error is not None for outcome in result.outcomes.values()):
-                        try:
-                            session.execute("commit", [])
-                        except DatabaseError as exc:
-                            result.outcomes[len(rounds)] = NodeOutcome(error=exc)
                     barrier.wait()
             except BaseException as exc:
                 result.failure = exc
@@ -434,14 +434,6 @@ def run_rounds(
         secondary = next((exc for node, exc in failures.items() if node != originating_node), None)
         raise originating from secondary
 
-    # `+ 1` when an isolation override is in play: the SYNTHETIC final
-    # commit round the worker above appends at index `len(rounds)`, one past
-    # the corpus's own authored rounds — included here so its own outcome
-    # (the SSI conflict a write-skew case like `m-db-error-009` can only
-    # surface at commit) reaches the caller's grading exactly like any other
-    # round's. Absent for a case that declares no isolation (`isolation is None`),
-    # preserving byte-identical `RoundsRun` shape there.
-    total_rounds = len(rounds) + (1 if isolation is not None else 0)
     return RoundsRun(
         rounds=tuple(
             {
@@ -449,6 +441,6 @@ def run_rounds(
                 for node in _NODES
                 if index in results[node].outcomes
             }
-            for index in range(total_rounds)
+            for index in range(len(rounds))
         )
     )

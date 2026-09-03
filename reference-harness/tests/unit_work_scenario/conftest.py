@@ -197,7 +197,7 @@ class ScriptedProvider:
         return self._execute(None, sql, binds)
 
     @contextlib.contextmanager
-    def open_session(self) -> Iterator[_ScriptedSession]:
+    def open_session(self, isolation: str | None = None) -> Iterator[_ScriptedSession]:
         ordinal = self._sessions
         self._sessions += 1
         self.chronology.append(Opened(ordinal))
@@ -278,7 +278,7 @@ class RefusingProvider:
     def execute(self, sql: str, binds: Sequence[Any] = ()) -> int:
         raise DatabaseRefused("execute")
 
-    def open_session(self) -> Any:
+    def open_session(self, isolation: str | None = None) -> Any:
         raise DatabaseRefused("open_session")
 
 

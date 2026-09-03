@@ -25,7 +25,9 @@ class _StatementExecutor(_ReadExecutor, Protocol):
 
 
 class _SessionSource(Protocol):
-    def open_session(self) -> AbstractContextManager[_StatementExecutor]: ...
+    def open_session(
+        self, isolation: str | None = None
+    ) -> AbstractContextManager[_StatementExecutor]: ...
 
 
 class _PeerSource(Protocol):
@@ -70,9 +72,9 @@ class CaseExecution:
         cast(_TransactionExecutor, self._executor).rollback()
 
     @contextmanager
-    def open_session(self) -> Iterator[CaseExecution]:
+    def open_session(self, isolation: str | None = None) -> Iterator[CaseExecution]:
         source = cast(_SessionSource, self._executor)
-        with source.open_session() as session:
+        with source.open_session(isolation) as session:
             yield CaseExecution(self._case, session)
 
     @contextmanager

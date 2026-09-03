@@ -68,9 +68,11 @@ def test_top_package_public_surfaces() -> None:
         "pin_of",
         "edge_of",
     }
-    # §8 topology fixes the adapter's public export as PostgresAdapter alone;
-    # psycopg bind mechanics (Jsonb) stay internal to the adapter.
-    assert set(parallax.postgres.__all__) == {"PostgresAdapter"}
+    # §8 topology fixes the adapter's public exports as the adapter itself plus
+    # this engine's name for each portable Isolation Level, which the adapter and
+    # the conformance rounds runner both spell through; psycopg bind mechanics
+    # (Jsonb) stay internal to the adapter.
+    assert set(parallax.postgres.__all__) == {"PostgresAdapter", "isolation_spelling"}
     # §8 pins the Descriptor Frontend's surface closed, so the committed
     # public-API snapshot is the authority for it rather than a second list.
     descriptor_surface = json.loads(_PUBLIC_API_SNAPSHOT.read_text())["parallax.descriptor"]

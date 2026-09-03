@@ -111,11 +111,11 @@
       }
     },
     {
-      "description": "An error-classification case (m-db-error): triggers a real DB error and asserts the neutral category it classifies to (`then.errorClass`) plus the per-dialect native code (`then.nativeCode`). A case MUST declare a trigger: top-level `then.statements` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `when.concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds).",
+      "description": "An error-classification case (m-db-error): triggers a real DB error and asserts the neutral category it classifies to (`then.errorClass`) plus the per-dialect native code (`then.nativeCode`). A case MUST declare a trigger: top-level `then.statements` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `when.concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds). A choreography MAY declare `when.uow.isolation`, the portable level both held sessions open at, and MAY author a `kind: commit` step where a node's transaction must end mid-choreography.",
       "required": ["shape", "then"],
       "properties": {
         "shape": { "const": "error" },
-        "when": { "propertyNames": { "enum": ["concurrency"] } },
+        "when": { "propertyNames": { "enum": ["concurrency", "uow"] } },
         "then": { "required": ["errorClass", "nativeCode"] }
       },
       "anyOf": [
@@ -136,7 +136,7 @@
         "shape": { "const": "concurrencySuccess" },
         "when": {
           "required": ["concurrency"],
-          "propertyNames": { "enum": ["concurrency"] },
+          "propertyNames": { "enum": ["concurrency", "uow"] },
           "properties": {
             "concurrency": {
               "properties": {
@@ -433,7 +433,7 @@
       "additionalProperties": false,
       "properties": {
         "uow": {
-          "description": "The unit-of-work configuration the action runs under (m-unit-work strategy selection + m-auto-retry/m-opt-lock bounded automatic retry). Optional and descriptive: it declares the resolved Concurrency Preference (so a case's mode-dependent golden SQL is self-describing) and the retry configuration a boundary case exercises. `locking` forces the effective Locking strategy for every lockable Entity. `optimistic` is the default and selects Optimistic for an Entity with an explicit-version or Transaction-Time-derived optimistic key, while an unversioned Non-Temporal Entity falls back to Locking. The target Entity's Effective Concurrency Strategy decides gate presence by itself, never the mutation kind: Optimistic omits the shared read lock and gates every observation-requiring write; Locking takes the qualifying shared read lock and emits no gate, though a versioned UPDATE still advances the version. The rule is uniform across the versioned keyed UPDATE, the versioned keyed DELETE, and the temporal milestone close. The harness executes the authored golden SQL either way; the block documents WHICH preference produced it.",
+          "description": "The unit-of-work configuration the action runs under (m-unit-work strategy selection + m-auto-retry/m-opt-lock bounded automatic retry). Optional and descriptive: it declares the resolved Concurrency Preference (so a case's mode-dependent golden SQL is self-describing) and the retry configuration a boundary case exercises. `locking` forces the effective Locking strategy for every lockable Entity. `optimistic` is the default and selects Optimistic for an Entity with an explicit-version or Transaction-Time-derived optimistic key, while an unversioned Non-Temporal Entity falls back to Locking. The target Entity's Effective Concurrency Strategy decides gate presence by itself, never the mutation kind: Optimistic omits the shared read lock and gates every observation-requiring write; Locking takes the qualifying shared read lock and emits no gate, though a versioned UPDATE still advances the version. The rule is uniform across the versioned keyed UPDATE, the versioned keyed DELETE, and the temporal milestone close. The harness executes the authored golden SQL either way; the block documents WHICH preference produced it. `isolation` is the one member that is never merely descriptive: it names the portable Isolation Level every boundary the case opens is opened at, and a runner that opens no boundary at all carries it nowhere.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -449,6 +449,10 @@
             "retryOptimisticConflicts": {
               "description": "Whether an optimistic-lock conflict joins the retriable set for this unit of work (m-opt-lock). Default false — a conflict surfaces to the caller after one attempt. Transient database failures (deadlock / serialization failure) are always retriable regardless of this flag.",
               "type": "boolean"
+            },
+            "isolation": {
+              "description": "The portable Isolation Level every held session or unit-of-work group this case opens runs at (m-db-port), named by the anomalies it forbids rather than by any engine's spelling: `read-committed` forbids dirty reads, `repeatable-read` also forbids nonrepeatable reads, `serializable` additionally makes the committed participating transactions equivalent to some serial order. PRESCRIPTIVE wherever a runner opens the boundary — the harness opens each held session at it, an API Conformance Suite passes it to each group's transaction — and omitted means the case requests nothing and keeps whatever the adapter defaults to. A case never names an engine level or a session variable: mapping the portable value is the adapter's, and the provider's, own work.",
+              "enum": ["read-committed", "repeatable-read", "serializable"]
             }
           }
         },
@@ -1755,18 +1759,17 @@
       "additionalProperties": { "$ref": "write-instruction.schema.json#/$defs/writeRowValue" }
     },
     "concurrencyStep": {
-      "description": "One node's step within a `when.concurrency` round. Carries its golden SQL as `statements` ({sql, binds} entries, dialect-keyed map form). On the concurrency-SUCCESS shape it additionally declares an explicit `kind`: a `read` step is fetched on its HELD session and its `expectRows` graded; a `write` step is executed and asserts only that it did not block/raise. `kind` is optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries no `kind`; the concurrency-success root branch requires it on every present step.",
+      "description": "One node's step within a `when.concurrency` round. A statement step carries its golden SQL as `statements` ({sql, binds} entries, dialect-keyed map form); a `kind: commit` step carries none, because committing that node's held transaction is boundary mechanics rather than authored SQL. On the concurrency-SUCCESS shape a step additionally declares an explicit `read` / `write` kind: a `read` step is fetched on its HELD session and its `expectRows` graded; a `write` step is executed and asserts only that it did not block/raise. `kind` is optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries none on its statement steps; the concurrency-success root branch requires it on every present step.",
       "type": "object",
-      "required": ["statements"],
       "additionalProperties": false,
       "properties": {
         "statements": {
-          "description": "This node step's golden SQL, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form).",
+          "description": "This node step's golden SQL, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form). REQUIRED on every step but a `kind: commit` one, which runs no statement.",
           "$ref": "#/$defs/goldenStatements"
         },
         "kind": {
-          "description": "concurrency-success form only: the EXPLICIT read-vs-write discriminator the runners branch on (replacing the brittle SQL-verb sniffing). `read` — the step is fetched on its HELD session (`session.query`) and its rows graded against `expectRows`; `write` — the step is executed (`session.execute`) and asserts only that it did not block/raise. Structural: a `read` step MUST carry `expectRows`, a `write` step MUST omit it (the if/then below).",
-          "enum": ["read", "write"]
+          "description": "The EXPLICIT step discriminator the runners branch on (replacing the brittle SQL-verb sniffing). `read` — the step is fetched on its HELD session (`session.query`) and its rows graded against `expectRows`; `write` — the step is executed (`session.execute`) and asserts only that it did not block/raise; `commit` — the node COMMITS its held transaction at this round, so a choreography that needs a peer's write to land mid-flight, or that surfaces a conflict only at commit, authors that moment instead of leaving it to a runner. `read` and `write` are the concurrency-success form's own vocabulary; `commit` is legal on both shapes that carry `when.concurrency`, and a commit-time raise is that node's classified error exactly as a mid-round raise is. A commit ends the transaction the node opened at the declared `when.uow.isolation`, so it MUST be that node's LAST step — the runners enforce it pre-flight rather than reason about a second, unstated transaction.",
+          "enum": ["read", "write", "commit"]
         },
         "expectRows": {
           "description": "concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error. A full-scalar shared read observes the object (INSTANCE-FORM / the object lane); every concurrency-success case reads the value-object-free `account`.",
@@ -1790,6 +1793,20 @@
             "properties": { "kind": { "const": "write" } }
           },
           "then": { "not": { "required": ["expectRows"] } }
+        },
+        {
+          "description": "A commit step (`kind: commit`) carries NEITHER `statements` nor `expectRows`: what it performs is the node's own commit, which is boundary mechanics no golden SQL states, and what it asserts is only whether that commit raised. A statements-bearing commit would put two different things — authored SQL and the boundary — under one step, leaving the round's observed error unattributable to either.",
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "commit" } }
+          },
+          "then": {
+            "allOf": [
+              { "not": { "required": ["statements"] } },
+              { "not": { "required": ["expectRows"] } }
+            ]
+          },
+          "else": { "required": ["statements"] }
         }
       ]
     }

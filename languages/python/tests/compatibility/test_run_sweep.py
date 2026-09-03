@@ -1204,28 +1204,17 @@ def test_run_only_write_sequence_run_sweep(
 # --------------------------------------------------------------------------- #
 # The `when.concurrency` rounds runner (the m-read-lock behavioral matrix,   #
 # joined by `m-db-error`'s own five two-session error cases too, case-       #
-# driven through the SAME `Provisioner.peer` choreography with zero new      #
-# machinery beyond the isolation-level knob below): `m-read-lock-006`        #
+# driven through the SAME `Provisioner.peer` choreography): `m-read-lock-006`#
 # (error / lockWaitTimeout), `-007`/`-008` (concurrencySuccess), and          #
 # `m-db-error-004/-005/-006/-007/-009` (deadlock cycle/reverse, lock-wait     #
 # timeout x2, serialization failure) — structurally identical to the         #
 # m-read-lock matrix: two barrier-synchronized peer sessions, verbatim       #
 # statement execution, error-shape classification (`sweep`'s own module      #
-# docstring named this gap; it is closed here).                              #
+# docstring named this gap; it is closed here). Each case's own              #
+# `when.uow.isolation` is what the sessions open at, read at ingress like    #
+# every other declared option.                                              #
 # --------------------------------------------------------------------------- #
 _CONCURRENCY_MODULES: Final[frozenset[str]] = frozenset({"m-read-lock", "m-db-error"})
-
-# `m-db-error-009` (serialization-failure) needs its two peer sessions under
-# genuine SERIALIZABLE isolation (Postgres SSI): the golden SIREAD-predicate-
-# lock write-skew it pins never arises at the default READ COMMITTED every
-# other concurrency case runs under (deadlock/lock-wait are ordinary row-lock
-# contention, isolation-independent). `m-case-format` declares no isolation
-# field — this is a runner-level fact about ONE case, not corpus data — so it
-# is named here rather than added to the shared schema; every other case
-# passes `isolation=None` (`concurrency_runner.run_rounds`'s own default,
-# unchanged), preserving byte-identical behavior for the already-exercised
-# m-read-lock matrix.
-_SERIALIZABLE_ISOLATION_CASES: Final[frozenset[str]] = frozenset({"m-db-error-009"})
 
 
 def _reachable_concurrency_rounds_cases() -> list[case_format.Case]:
@@ -1264,9 +1253,10 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
     profile_run.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
     rounds = concurrency_runner.parse_rounds(case, profile.dialect.name)
-    isolation = "serializable" if case.case_id in _SERIALIZABLE_ISOLATION_CASES else None
     run = concurrency_runner.run_rounds(
-        rounds, lambda: profile_run.peer(autocommit=False), isolation=isolation
+        rounds,
+        lambda: profile_run.peer(autocommit=False),
+        isolation=case_format.uow_isolation(case),
     )
 
     if case.shape == "error":

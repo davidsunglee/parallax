@@ -75,12 +75,11 @@ or configuration is behind a port is the composition root's own knowledge and
 appears neither on the port nor in any envelope a harness publishes; the dialect
 is a fact about the SQL, not a name for the thing executing it.
 
-`isolation` is optional and, when present, is the isolation the caller asked
-**this** boundary to open at, spelled in the concrete database's own vocabulary.
-The port defines no portable vocabulary of levels and grades no level's
-behavior: it carries the requested value to the adapter unchanged, and an
-adapter applies it to the transaction it is about to open. Two rules make the
-option meaningful rather than advisory. It is **boundary-scoped**, never
+`isolation` is optional and, when present, is the **Isolation Level** the caller
+asked **this** boundary to open at, named in the portable vocabulary the next
+section defines. The port carries the requested value to the adapter unchanged,
+and an adapter maps it to whatever its database needs. Two rules make the option
+meaningful rather than advisory. It is **boundary-scoped**, never
 connection-scoped — a session default would outlive the transaction that asked
 for it and silently govern the next one — and an adapter that cannot open a
 boundary at the requested isolation **reports a boundary failure** rather than
@@ -100,6 +99,92 @@ managed row value is either `SqlNull` or `PresentDocument(document)`, and SQL
 `NULL` remains distinct from `PresentDocument(document: JSON null)` even when the
 driver used one host sentinel for both raw values. No consumer may reconstruct
 the tag from the raw document cell after the adapter boundary.
+
+## The portable isolation vocabulary
+
+Parallax names exactly three Isolation Levels, each defined by the anomalies it
+forbids rather than by any vendor's implementation of it. The serialized values
+are `read-committed`, `repeatable-read`, and `serializable`.
+
+| Level | Forbids | Still permitted |
+|---|---|---|
+| Read Committed | dirty reads | nonrepeatable reads, phantoms, serialization anomalies |
+| Repeatable Read | dirty reads, nonrepeatable reads | phantoms, serialization anomalies such as write skew |
+| Serializable | all of the above; committed participating transactions are equivalent to some serial order | a retryable failure rather than eventual success |
+
+Read Uncommitted and vendor-specific levels are **not** part of the vocabulary
+and cannot be requested. A level is exact, never an ordered substitution rule: an
+adapter asked for Repeatable Read that can only open Serializable **reports a
+boundary failure**, because a caller that named a level named the guarantee it
+budgeted for on both sides.
+
+What a level permits, it does not require. Nothing may depend on a phantom or a
+write skew occurring merely because the requested level allows one, so the
+contract promises no coherent predicate result across the several statements of a
+deep fetch or a paged stream even where an engine happens to give one — that is
+adapter-profile information, below.
+
+**Serializable protects the committed outcome only among transactions that all
+request it.** A transaction at a weaker level participating in the same
+interleaving is outside the guarantee. Serializable promises neither identical
+blocking behavior across engines nor eventual success: an engine may refuse a
+participant with a retryable failure instead of ordering it, and that refusal is
+the guarantee being kept.
+
+### Mapping obligations
+
+An adapter maps the requested level to whatever its database needs to forbid that
+level's anomalies for exactly **one Transaction Attempt**, and repeats that work
+for every attempt of an invocation, because an attempt is where the guarantee has
+to hold. Applying the level acquires no snapshot of its own: an adapter **MUST
+NOT** issue a query merely to force one, since when a snapshot is taken is the
+database's own business and a forced one changes what the boundary observes.
+
+Omission requests nothing and keeps the adapter's own default, **provided that
+default is at least Read Committed**. An adapter checks this **once per
+connection, when it takes the connection** — not per boundary and not per attempt
+— and refuses a connection whose default is weaker as a connection error rather
+than silently upgrading it, because a caller who named no level asked for the
+adapter's default and would otherwise get one it did not configure. A default at
+or above the floor is kept as it is; an engine that executes Read Uncommitted as
+Read Committed meets the floor.
+
+Where a level needs session state rather than a boundary keyword, the adapter
+owns that state's whole life, because `m-db-port` makes the option
+boundary-scoped and an adapter may be handed a connection the application also
+uses. For MariaDB's Repeatable Read, which forbids the lost update only with
+`innodb_snapshot_isolation` on, that is four obligations per **physical attempt**:
+
+1. read and save the session's current `innodb_snapshot_isolation`;
+2. set it `ON` before the attempt when it is not already on — for Repeatable Read
+   alone, never for Serializable, whose shared locking reads and range protection
+   forbid the same anomaly without it;
+3. restore the saved value after the attempt commits or rolls back;
+4. repeat both for every retry attempt.
+
+Session setup that fails before the callback **fails the boundary**: the callback
+does not run, and the outcome is a boundary that never opened. Restoration that
+fails after commit or rollback **preserves the outcome already reached** — the
+work committed or did not, and a failed restore does not change that — and
+**discards the connection** rather than returning it, since what it would run
+next would run under session state nothing states.
+
+### Adapter profile — nonportable, per engine
+
+What each engine does with a level is stated here so it is documented rather than
+promised. None of it is a portable guarantee, and no case may assert it.
+
+| Decision point | Postgres | MariaDB |
+|---|---|---|
+| Read Committed | fresh statement snapshot | fresh statement/read snapshot |
+| Repeatable Read | transaction-stable snapshot; no phantoms on supported versions; write skew possible | transaction-stable snapshot with `innodb_snapshot_isolation` on; no phantoms on the supported floor; conflict raises `1020`, which retries |
+| Serializable / conflict behavior | SSI; conflict raises `40001`, which retries | shared locking reads and range protection; conflict raises `1213`, which retries |
+
+The graded MariaDB floor is **11.4.2+**, the first release of the 11.4
+long-term-support series carrying `innodb_snapshot_isolation`; below it no
+conforming Repeatable Read mapping exists. Both engines' native codes classify
+through `m-db-error`'s per-dialect table into the neutral categories, so a
+snapshot conflict is a `deadlock` on either engine and retries on the same terms.
 
 ## One error instance per failed invocation
 

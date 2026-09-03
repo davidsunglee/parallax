@@ -43,6 +43,20 @@ _CODES: dict[str, str] = {
     "55P03": errors.LOCK_WAIT_TIMEOUT,  # lock_not_available (SET lock_timeout exceeded)
 }
 
+# Each portable Isolation Level (m-db-port), keyed by the core serialized value a
+# case declares, as the statements that open a session at it. Postgres reaches all
+# three by name and needs nothing else: Read Committed takes a fresh snapshot per
+# statement, Repeatable Read a transaction-stable one, and Serializable is SSI.
+_ISOLATION: dict[str, tuple[str, ...]] = {
+    "read-committed": (
+        "set session characteristics as transaction isolation level read committed",
+    ),
+    "repeatable-read": (
+        "set session characteristics as transaction isolation level repeatable read",
+    ),
+    "serializable": ("set session characteristics as transaction isolation level serializable",),
+}
+
 
 def _adapt(value: Any) -> Any:
     """Adapt a fixture / bind value for binding.
@@ -248,7 +262,7 @@ class PostgresProvider:
         return errors.UNKNOWN if code is None else _CODES.get(code, errors.UNKNOWN)
 
     @contextmanager
-    def open_session(self) -> Iterator[_PgTxSession]:
+    def open_session(self, isolation: str | None = None) -> Iterator[_PgTxSession]:
         """A second connection in MANUAL-commit mode, for lock contention.
 
         Deadlock / lock-wait-timeout cases need two connections each holding a row
@@ -257,11 +271,20 @@ class PostgresProvider:
         applied + committed on open so a blocked lock fails fast instead of
         hanging the suite: ``deadlock_timeout`` shortens PG's cycle-detector delay
         and ``lock_timeout`` bounds a plain lock wait.
+
+        A declared ``isolation`` is applied first, as the session's own default,
+        because a case's whole choreography is one transaction on this connection
+        and Postgres accepts a level only before that transaction's first query.
+        Session scope is right here and wrong for a real adapter: this provider
+        creates and closes the connection itself, so the setting outlives no
+        caller's transaction and there is nothing to restore.
         """
         conn = psycopg.connect(self._url, autocommit=False)
         _register_stable_loaders(conn)
         try:
             with conn.cursor() as cur:
+                for statement in _ISOLATION[isolation] if isolation is not None else ():
+                    cur.execute(_trusted_query(statement))
                 cur.execute(_trusted_query("set deadlock_timeout = '100ms'"))
                 cur.execute(_trusted_query("set lock_timeout = '250ms'"))
             conn.commit()  # persist the SETs beyond this implicit transaction

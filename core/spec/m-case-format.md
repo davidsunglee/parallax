@@ -168,7 +168,8 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
   `then.errorClass` (`m-read-lock` behavioral read-lock — barrier-separated rounds
   on two held sessions that assert no error is raised; every present step declares
   an explicit `kind`, a `read` step's `expectRows` observed on its held session, a
-  `write` step asserting only that it did not block/raise). Proves the shared read
+  `write` step asserting only that it did not block/raise, a `commit` step ending
+  that node's held transaction). Proves the shared read
   lock is compatible with a second reader.
 - **`boundary`** — `when.boundary` ordered actions + `then.outcome`
   (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
@@ -355,7 +356,8 @@ values.
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
-| `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; `concurrency` is the resolved Concurrency Preference, not a claim that every Entity uses one strategy; descriptive |
+| `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`, `isolation`) the action runs under; `concurrency` is the resolved Concurrency Preference, not a claim that every Entity uses one strategy; descriptive apart from `isolation` |
+| `when.uow.isolation` | `when.uow` | no | the portable Isolation Level (`m-db-port`) every held session or `uow` group the case opens is opened at — `read-committed` \| `repeatable-read` \| `serializable`, the core serialized values. **Prescriptive**: the harness opens each held session at it through the provider seam, and an API Conformance Suite passes it to each group's own transaction. Omitted means the case requests nothing and keeps whatever the adapter defaults to. A case never names an engine's own level or a session variable |
 | `when.stream` | `when` or a scenario read step | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph`, and in its second placement on a `uow`-grouped scenario read step whose own `statements` are the delivery's pages (see *Streamed reads* and *Streamed read steps*, below) |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
 | `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
@@ -1569,6 +1571,16 @@ ungated version-advancing `UPDATE` are self-describing. Its default is
 preference yields Optimistic or the mandatory Locking fallback. A case whose SQL
 depends on that effective choice SHOULD declare `when.uow.concurrency` explicitly.
 
+**`when.uow.isolation`** is the block's one prescriptive member. It names a
+portable Isolation Level (`m-db-port`) in the core serialized spelling, and every
+boundary the case opens is opened at it: each held session of a `when.concurrency`
+choreography, and each `uow` group of a scenario. It changes no authored SQL —
+setting a level is boundary mechanics like begin and commit, so it appears in no
+golden statement and costs no round trip — and a runner that opens no boundary at
+all carries it nowhere. A case names the portable level only; which statements or
+session variables an engine needs to forbid that level's anomalies is the
+adapter's, and the harness provider's, own work.
+
 #### Lifecycle action steps
 
 Beyond read and write steps, a scenario carries a third step kind — the **action
@@ -1898,15 +1910,29 @@ rather than forking a new one for the same primary key).
   `lockWaitTimeout` cases trigger two-connection: a `when.concurrency` choreography
   of barrier-separated rounds, each naming the statements nodes A and B run that
   round. The harness runs each node on
-  its own **non-autocommit session** (the provider seam's `open_session`, with the
+  its own **non-autocommit session** (the provider seam's `open_session`, opened at
+  the case's declared `when.uow.isolation` and with the
   dialect's lock-contention tuning — Postgres `deadlock_timeout`/`lock_timeout`,
   MariaDB `innodb_lock_wait_timeout` — applied so a blocked lock fails fast), drives
   them on threads synchronized by a barrier, and classifies the error raised in the
   contention round via the provider's `classify_error`. The classifier is a thin
-  per-dialect extraction (Postgres SQLSTATE, MariaDB errno) over the shared,
-  DB-free category map + call-site predicates; the runner asserts the predicate
+  per-dialect extraction (Postgres SQLSTATE, MariaDB errno) into the shared,
+  DB-free category vocabulary + call-site predicates; the runner asserts the predicate
   partition, so the harness exercises the interface the language implementations
   build, not a harness-only shortcut.
+
+A node's step declares its `kind`, and one of them is **`commit`**: the node
+commits its own held transaction at that round. It is legal on the two shapes that
+carry `when.concurrency` — `error` and `concurrencySuccess` — carries no
+`statements` and no `expectRows`, and **MUST be that node's last step**, because a
+held session is one transaction opened once at the declared level and a step after
+the commit would run in a second transaction the case never described. A raise at
+the commit is that node's classified error exactly as a mid-round raise is. The
+step exists so that a choreography needing a peer's write to land mid-flight, or
+one whose conflict can only surface at commit, authors that moment rather than
+leaving a runner to infer it: `m-db-error-009` declares `serializable` and commits
+both nodes as its final round, and its refusal arrives as Postgres `40001` or
+MariaDB `1213` from the same authored choreography.
 
 ### Boundary cases (`m-auto-retry`)
 

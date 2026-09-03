@@ -412,3 +412,131 @@ def test_runner_assert_schema_allows_write_step_without_expect_rows() -> None:
         }
     )
     _assert_schema(case)  # must not raise
+
+
+# --- the declared level and the authored commit (m-db-port isolation) --------
+
+
+def _serializable_error_case() -> dict[str, Any]:
+    """The two-connection error shape declaring its level and authoring its commits."""
+    return {
+        "model": "models/error-cases.yaml",
+        "shape": "error",
+        "when": {
+            "uow": {"isolation": "serializable"},
+            "concurrency": {
+                "rounds": [
+                    {"A": {"statements": [_entry(_SHARED_READ, [2])]}},
+                    {"A": {"kind": "commit"}, "B": {"kind": "commit"}},
+                ]
+            },
+        },
+        "then": {"errorClass": "deadlock", "nativeCode": {"postgres": "40001", "mariadb": 1213}},
+        "tags": ["m-db-error", "isolation", "deadlock"],
+    }
+
+
+def test_schema_accepts_a_declared_isolation_beside_an_authored_commit() -> None:
+    assert list(_case_validator().iter_errors(_serializable_error_case())) == []
+
+
+def test_schema_accepts_a_commit_step_on_the_concurrency_success_shape() -> None:
+    # `kind: commit` is legal on both shapes that carry `when.concurrency`; on the
+    # success shape it is one more present step declaring its kind, and it grades
+    # only that the commit did not raise.
+    case = {
+        "model": "models/account.yaml",
+        "shape": "concurrencySuccess",
+        "when": {
+            "uow": {"isolation": "repeatable-read"},
+            "concurrency": {
+                "rounds": [
+                    {
+                        "A": {
+                            "kind": "read",
+                            "statements": [_entry(_SHARED_READ, [2])],
+                            "expectRows": [{"id": 2}],
+                        }
+                    },
+                    {"A": {"kind": "commit"}},
+                ]
+            },
+        },
+        "tags": ["m-read-lock", "isolation", "read-lock"],
+    }
+    assert list(_case_validator().iter_errors(case)) == []
+
+
+def test_schema_rejects_a_commit_step_carrying_statements() -> None:
+    # A commit performs the boundary and nothing else; authored SQL beside it would
+    # leave the round's observed error unattributable to either.
+    case = _serializable_error_case()
+    case["when"]["concurrency"]["rounds"][1]["A"] = {
+        "kind": "commit",
+        "statements": [_entry(_UPDATE, [999.00, 2])],
+    }
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject a kind: commit step that carries statements"
+    )
+
+
+def test_schema_rejects_a_statement_step_carrying_no_statements() -> None:
+    # Dropping `statements` from the base def is what admits a commit step; every
+    # other step still owes the golden SQL it runs.
+    case = _serializable_error_case()
+    case["when"]["concurrency"]["rounds"][0]["A"] = {"kind": "read", "expectRows": [{"id": 2}]}
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject a non-commit step that declares no statements"
+    )
+
+
+def test_schema_rejects_an_unknown_isolation_level() -> None:
+    # The vocabulary is closed at three portable levels, so a case cannot name Read
+    # Uncommitted or an engine's own level (m-db-port).
+    case = _serializable_error_case()
+    case["when"]["uow"]["isolation"] = "read-uncommitted"
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject an isolation level outside the portable vocabulary"
+    )
+
+
+def test_runner_assert_schema_rejects_a_step_after_a_nodes_commit() -> None:
+    # A held session is one transaction opened once at the declared level; a step
+    # after the commit would run in a second transaction the case never described,
+    # so the pre-flight refuses it, naming the offending pointer.
+    case = _concurrency_case(
+        {
+            "shape": "error",
+            "when": {
+                "uow": {"isolation": "serializable"},
+                "concurrency": {
+                    "rounds": [
+                        {"A": {"kind": "commit"}},
+                        {"A": {"statements": [_entry(_SHARED_READ, [2])]}},
+                    ]
+                },
+            },
+            "then": {"errorClass": "deadlock", "nativeCode": {"postgres": "40001"}},
+        }
+    )
+    with pytest.raises(CaseFailure, match=r"/concurrency/rounds/1/A: node A already committed"):
+        _assert_schema(case)
+
+
+def test_runner_assert_schema_allows_a_commit_as_a_nodes_last_step() -> None:
+    case = _concurrency_case(
+        {
+            "shape": "error",
+            "when": {
+                "uow": {"isolation": "serializable"},
+                "concurrency": {
+                    "rounds": [
+                        {"A": {"statements": [_entry(_SHARED_READ, [2])]}},
+                        {"A": {"kind": "commit"}},
+                    ]
+                },
+            },
+            "then": {"errorClass": "deadlock", "nativeCode": {"postgres": "40001"}},
+        }
+    )
+    _assert_schema(case)  # must not raise

@@ -6,7 +6,10 @@ seam call to run compiled SQL and demarcate transactions. It names
 ``execute`` (row-oriented), ``execute_write`` (affected-row count), and
 ``transaction`` (callback reporting a :data:`TransactionOutcome`, at an
 optionally requested isolation) — and nothing
-more. The dialect is the port's because the port is what holds the connection:
+more. The portable isolation vocabulary that option is named in lives here too,
+because the port is what carries the value from a caller to an adapter and
+neither end may name a level the other cannot.
+The dialect is the port's because the port is what holds the connection:
 a caller reads it off the port it already has rather than choosing a second
 value beside it. The port still depends on nothing
 application-specific (no driver, no concrete database) — the dialect layer is
@@ -23,12 +26,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 from parallax.core.base import DocumentReadOrdinals
 from parallax.core.dialect import Dialect
 
 __all__ = [
+    "ISOLATION_LEVELS",
     "BeginFailed",
     "Bind",
     "CallbackRaised",
@@ -37,18 +41,42 @@ __all__ = [
     "DbPort",
     "DeclaresDialect",
     "DocumentReadOrdinals",
+    "IsolationLevel",
     "JsonDocument",
     "RollbackFailed",
     "RollbackTrigger",
     "RolledBack",
     "Row",
     "TransactionOutcome",
+    "isolation_level",
 ]
 
 # A neutral bind value (m-core scalars) or the language's managed carriers.
 Bind = object
 # A managed result row: attribute/column name -> managed value.
 Row = dict[str, object]
+
+# The closed portable isolation vocabulary (m-db-port). Each level names the
+# anomalies it forbids rather than any database's own spelling: `read_committed`
+# forbids dirty reads, `repeatable_read` also forbids nonrepeatable reads, and
+# `serializable` additionally makes the committed participating transactions
+# equivalent to some serial order. Read Uncommitted and vendor-specific levels are
+# outside it, so there is no spelling here to request one by.
+IsolationLevel = Literal["read_committed", "repeatable_read", "serializable"]
+
+ISOLATION_LEVELS: Final[frozenset[str]] = frozenset(get_args(IsolationLevel))
+
+
+def isolation_level(value: object) -> IsolationLevel:
+    """Return ``value`` as an :data:`IsolationLevel`, or raise ``ValueError``.
+
+    The vocabulary is closed, so a name outside it names no guarantee any adapter
+    could map — which makes it the caller's mistake rather than a database's
+    refusal, reportable before anything opens.
+    """
+    if value not in ISOLATION_LEVELS:
+        raise ValueError(f"isolation must be one of {sorted(ISOLATION_LEVELS)}, got {value!r}")
+    return cast("IsolationLevel", value)
 
 
 @dataclass(frozen=True, slots=True)
