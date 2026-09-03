@@ -98,7 +98,8 @@ costs, and the floor it is read against, therefore belong to the interpreter
 rather than to what is being measured. :func:`in_a_child_interpreter` is how a
 suite says so: the measurement is taken in a process that has loaded only what it
 needs, which is what leaves one reading comparable with the same reading taken
-beside anything else.
+beside anything else, and whose hashing is pinned, which is what leaves it
+comparable with the same reading taken again.
 
 Three ``tests/unit`` cost suites read these, which is what puts them here beside
 them; ``tools/snapshot_graph_overhead.py`` reads them too, and names this
@@ -611,12 +612,30 @@ _COVERAGE_VARIABLES: Final = (
 ``pytest-cov`` and ``coverage`` publish for it."""
 
 
+_HASH_SEED: Final = "0"
+"""What the child's string and bytes hashing is pinned to.
+
+Every byte figure here is read over containers the interpreter sizes by hash. A
+set's fill and a dictionary's probe sequence follow the hashes of the keys put
+into them, and those hashes are salted per process unless this is set, so the
+same structure occupies a different number of bytes in one child than in the
+next and a difference between two arms carries that variance rather than
+cancelling it. The seam is held fixed by the caller and the interpreter is the
+child's own; this is what holds the last thing that varies, and it is what lets
+a reading be an exact equality rather than a tolerance."""
+
+
 def _child_environment() -> dict[str, str]:
-    """The parent's environment, less what would trace the child.
+    """The parent's environment, less what would trace the child and with its
+    hashing pinned.
 
     The paths are carried over because the runner rather than the interpreter is
     what puts this test tree on the path, and a child started from a module file
     sees only that module's own directory.
+
+    The seed is pinned for the reason :data:`_HASH_SEED` gives, and pinned HERE
+    rather than by each measurement because every reading any child takes is a
+    reading of a heap that hash order sized.
 
     The tracer is dropped because the child exists to measure without one: a
     traced child allocates per executed line inside every window, which is the
@@ -628,7 +647,10 @@ def _child_environment() -> dict[str, str]:
     inherited = {
         name: value for name, value in os.environ.items() if name not in _COVERAGE_VARIABLES
     }
-    return inherited | {"PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry)}
+    return inherited | {
+        "PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry),
+        "PYTHONHASHSEED": _HASH_SEED,
+    }
 
 
 def in_a_child_interpreter(measurement: Callable[[], None]) -> Callable[[], None]:
@@ -636,7 +658,8 @@ def in_a_child_interpreter(measurement: Callable[[], None]) -> Callable[[], None
 
     What the module docstring states as a contract, applied to one measurement:
     the reading becomes a property of the seam rather than of whatever else the
-    runner happened to load beside it.
+    runner happened to load beside it, or of the hash seed the process taking it
+    started with.
 
     The child re-runs the defining module as a script, naming the measurement,
     and asserts for itself; the parent reports the child's whole output when it
