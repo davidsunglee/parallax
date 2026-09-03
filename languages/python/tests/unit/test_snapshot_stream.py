@@ -16,12 +16,12 @@ And invalid stored data inside the Continuation Order itself ends no checked
 delivery: a delivery advances on the coordinate the database evaluated, so a root
 whose sort key contradicts the model is published and the delivery continues past
 it, from whatever position and page size it lands in — which is what keeps
-``batch_size`` a performance dial over storage the model describes. A stored
-``NULL`` where a non-nullable primary key belongs is storage the model does not
-describe, and it is graded where a delivery is bound to reach it: a first page
-carries no seek, so that root is published and the delivery exhausts past it,
-while a continuing page's hoisted leading range may exclude such a root instead
-of delivering it.
+``batch_size`` a performance dial over storage the model describes. What the one
+stored value outside that is, ``SnapshotStream``'s own docstring states and this
+suite does not restate; graded here is a single instance of it — a ``NULL`` under
+the primary key a query declaring no ordering leads with — reached on a first
+page, which carries no seek, so the root is published and the delivery exhausts
+past it.
 """
 
 from __future__ import annotations

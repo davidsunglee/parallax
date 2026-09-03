@@ -108,14 +108,15 @@ class WireDatabaseView:
         """Deliver ``query``'s roots one at a time, in the Continuation Order,
         as the scope-bound single-pass peer of :meth:`find`.
 
-        Delivery is the verb and representation stays the namespace: this
-        publishes the frozen
-        :class:`~parallax.snapshot.materialize.WireEntity` nodes ``find``
-        publishes, one root at a time instead of all of them, with no format
-        argument anywhere. Over storage the model describes they are also the
-        same roots, and ``batch_size`` counts root positions and is a
-        performance dial alone there, exactly as in the Typed namespace;
-        :class:`SnapshotStream` names the one stored value outside it.
+        Delivery is the verb and representation stays the namespace: every root
+        this publishes arrives as the frozen
+        :class:`~parallax.snapshot.materialize.WireEntity` node ``find``
+        publishes for that root, one at a time instead of all of them, with no
+        format argument anywhere. WHICH roots arrive is the separate claim: over
+        storage the model describes they are ``find``'s roots exactly, and
+        ``batch_size`` counts root positions and is a performance dial alone
+        there, exactly as in the Typed namespace. :class:`SnapshotStream` states
+        the one stored value outside that, for both namespaces.
         """
         return self._stream(wire_query_node(query), batch_size)
 
