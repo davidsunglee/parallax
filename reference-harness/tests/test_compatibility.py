@@ -45,9 +45,12 @@ ALL_CASES = discover_cases(COMPATIBILITY_ROOT)
 CASES = dialect_executed_cases(COMPATIBILITY_ROOT)
 DIALECTS = available_dialects()
 
-# The first MariaDB release carrying `innodb_snapshot_isolation`. Below it the
-# server has no setting under which Repeatable Read forbids the lost update, so a
-# booted image beneath this floor cannot honour the guarantee the suite grades.
+# The graded MariaDB floor: 11.4.2, the first release of the 11.4 series carrying
+# `innodb_snapshot_isolation`, without which the server has no setting under which
+# Repeatable Read forbids the lost update. Earlier maintenance series ship the
+# variable from 10.6.18, 10.11.8, 11.0.6, 11.1.5, and 11.2.4; grading from the 11.4
+# long-term-support series is a deliberate choice, so a release below this floor
+# fails it whether or not it carries the variable.
 _MARIADB_SNAPSHOT_ISOLATION_FLOOR = (11, 4, 2)
 
 
@@ -93,7 +96,7 @@ def test_a_dialect_is_available() -> None:
 
 def test_the_booted_mariadb_meets_the_graded_isolation_floor(provider) -> None:
     # MariaDB's Repeatable Read forbids the lost update only with
-    # `innodb_snapshot_isolation`, which no release below 11.4.2 has. The image
+    # `innodb_snapshot_isolation`, which no 11.4-series release below 11.4.2 has. The image
     # pin is a floating major.minor tag, so which server a run actually boots is
     # asserted here rather than remembered from the tag.
     if provider.dialect != "mariadb":
@@ -101,8 +104,9 @@ def test_the_booted_mariadb_meets_the_graded_isolation_floor(provider) -> None:
     reported = provider.query("select version() as version")[0]["version"]
     release = tuple(int(part) for part in reported.split("-")[0].split(".")[:3])
     assert release >= _MARIADB_SNAPSHOT_ISOLATION_FLOOR, (
-        f"MariaDB {reported} is below {_MARIADB_SNAPSHOT_ISOLATION_FLOOR}, the first release "
-        "carrying innodb_snapshot_isolation; the graded Repeatable Read promise is unreachable"
+        f"MariaDB {reported} is below the graded floor {_MARIADB_SNAPSHOT_ISOLATION_FLOOR}, the "
+        "first 11.4-series release carrying innodb_snapshot_isolation; the graded Repeatable "
+        "Read promise is not underwritten below it"
     )
 
 
