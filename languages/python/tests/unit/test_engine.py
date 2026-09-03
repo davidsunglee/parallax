@@ -8067,11 +8067,11 @@ def test_given_corrupt_refuses_a_temporal_entity_before_reading_anything() -> No
     assert port.reads == [] and port.writes == []
 
 
-def test_given_corrupt_judges_the_whole_list_before_it_applies_any_of_it() -> None:
-    # The refusal is about the CASE rather than about one entry, so a legal entry
-    # standing before a refused one must not have written a row by the time the
-    # list is refused — which is where the reference harness stands too: it
-    # refuses the whole list before any row lands.
+def test_given_corrupt_refuses_a_temporal_entry_before_an_earlier_legal_one_applies() -> None:
+    # The temporal refusal is about the CASE rather than about one entry, so a
+    # legal entry standing before a temporal one must not have written a row by
+    # the time the list is refused — which is where the reference harness stands
+    # too: it judges every entry's Entity before any row lands.
     port = _CorruptionPort({"title": "Dune", "detail": "hardback", "pages": 412})
     case = _load_case("m-inheritance-126")
     document = dict(case.document)
