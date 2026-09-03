@@ -108,11 +108,12 @@ imports the Provider, Handler, event, and diagnostic vocabulary from that module
 no result, transaction, or stream this package answers carries a lifecycle
 accessor, so there is no type a caller reads off their own result to re-export.
 
-The modules behind no exported name (``_materializer``, ``_family``,
-``_keyed_sql``, ``_predicate_writes``) are composed only through the modules
-above; each documents its own place in the package's acyclic internal graph.
-``_preflight`` owns the shared internal gate an adapter's compile lane also
-uses; its own §7 scope proves that gate reaches no port.
+A private sibling the list above does not reach is composed only through the
+modules that do, and documents its own place in the package's acyclic internal
+graph; appearing there is a matter of orienting a reader of the exported names,
+never a statement about which siblings exist. ``_preflight`` owns the shared
+internal gate an adapter's compile lane also uses; its own §7 scope proves that
+gate reaches no port.
 """
 
 from __future__ import annotations

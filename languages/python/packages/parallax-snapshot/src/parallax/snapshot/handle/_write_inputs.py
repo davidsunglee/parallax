@@ -1,10 +1,10 @@
-"""``parallax.snapshot.handle._write_inputs`` — verb-input preparation and evidence.
+"""``parallax.snapshot.handle._write_inputs`` — the keyed verb-input step library.
 
 Everything a keyed write needs from the moment a verb is called to the moment
 the buffer holds it, including the write evidence it resolves off the source
-value it was handed. Both keyed ingresses — the Typed verbs and ``tx.wire``'s —
-reach the whole of it, which is what keeps one judgement and one buffer behind
-two representations:
+value it was handed, and nothing a read needs. Both keyed ingresses — the Typed
+verbs and ``tx.wire``'s — reach the whole of it, which is what keeps one
+judgement and one buffer behind two representations:
 
 * build-time window validation every keyed AND ``_where`` temporal verb shares
   (:func:`validate_window`), the
@@ -33,25 +33,26 @@ two representations:
   both ingresses record into and read (:class:`BufferedInserts`,
   :func:`written_object_of_row`).
 
-Semantic family facts come from the accepted Metamodel and its facets, resolved
-through :mod:`parallax.snapshot.handle._family` (the declaring root,
-family-effective axes and primary key, version attribute). Every PHYSICAL column
-instead comes from the row-owning Entity's Storage Layout view, which each entry
-point resolves once and carries into the helpers that read or write a row's
-columns. The participating unit of work reaches this module as one structural
-protocol — :class:`ClaimLedger`, the three answers a keyed write needs — rather
-than as the whole scope.
+Family facts come from the accepted Metamodel and its facets, reached through
+:mod:`parallax.snapshot.handle._family` as two SEMANTIC answers and no others:
+the family-effective primary key a written object is addressed by
+(:func:`~parallax.snapshot.handle._family.family_primary_key`) and whether the
+family declares as-of axes at all
+(:func:`~parallax.snapshot.handle._family.is_temporal`). No step here composes a
+physical column sequence or reads a Storage Layout view — a ``row`` crossing this
+seam is a canonical identity row keyed by ATTRIBUTE name, as the Entity Row Codec
+or a Wire ingress derived it. The participating unit of work reaches this module
+as one structural protocol — :class:`ClaimLedger`, the three answers a keyed
+write needs — rather than as the whole scope.
 
-Names crossing a module boundary (read from ``_transaction``, ``_wire_writes``,
-or ``_predicate_writes``) are spelled bare; a helper whose every caller lives
-here keeps its underscore.
-Privacy is carried by this MODULE's leading underscore and by the package's
-frozen ``__all__``, never by per-name underscores —
-:class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin` are
-additionally re-exported through that ``__all__`` (the conformance engine's
-scenario grading shares the exact validator the developer verbs run), as are
-:class:`KeyedWriteValueError` and :data:`KEYED_WRITE_VALUE_CODES`, which a
-developer catches from ``parallax.snapshot`` itself.
+Names crossing a module boundary are spelled bare; a helper whose every caller
+lives here keeps its underscore. Privacy is carried by this MODULE's leading
+underscore and by the package's frozen ``__all__``, never by per-name
+underscores. What that ``__all__`` carries onward from here it carries for one of
+two reasons: a developer catches the keyed write-value and write-evidence
+refusals from ``parallax.snapshot`` itself, and the conformance engine's scenario
+grading runs the exact finite-Transaction-Time-pin validator the developer verbs
+run. The package's re-export list is which names those are.
 """
 
 from __future__ import annotations
