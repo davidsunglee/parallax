@@ -45,9 +45,10 @@ from ._binds import adapt_document_scalar_binds
 if TYPE_CHECKING:
     from . import Node
 
-# Pinned at the current MariaDB long-term-support series (m-case-format/DQ15).
-# Refresh on new LTS series, never below 11.4.2 -- the first release carrying
-# `innodb_snapshot_isolation`, which the compatibility suite asserts it booted.
+# The provisioning seam pins a MariaDB long-term-support series (m-case-format/DQ15).
+# This pin must stay at or above 11.4.2, the first release carrying
+# `innodb_snapshot_isolation`, without which Repeatable Read cannot forbid the lost
+# update; the compatibility suite asserts the booted server against that floor.
 MARIADB_IMAGE = "mariadb:12.3"
 
 # MariaDB keys on the vendor errno; a code absent here is `errors.UNKNOWN`, so an
