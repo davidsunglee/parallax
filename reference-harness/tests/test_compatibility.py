@@ -45,9 +45,9 @@ ALL_CASES = discover_cases(COMPATIBILITY_ROOT)
 CASES = dialect_executed_cases(COMPATIBILITY_ROOT)
 DIALECTS = available_dialects()
 
-# The first MariaDB release carrying `innodb_snapshot_isolation` (m-db-port's
-# adapter profile). The pinned image is far above it; the floor is what a
-# conforming adapter needs, not what the tag happens to resolve to.
+# The first MariaDB release carrying `innodb_snapshot_isolation`. Below it the
+# server has no setting under which Repeatable Read forbids the lost update, so a
+# booted image beneath this floor cannot honour the guarantee the suite grades.
 _MARIADB_SNAPSHOT_ISOLATION_FLOOR = (11, 4, 2)
 
 

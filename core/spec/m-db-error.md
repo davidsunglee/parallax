@@ -44,8 +44,9 @@ the same terms — the MariaDB counterpart of the Postgres `40001` a snapshot
 conflict raises.
 
 Because the code source is a dialect decision, the table is not one shared
-lookup: each adapter or provider owns its own engine's codes and classifies
-through them into the shared neutral vocabulary above.
+lookup: each dialect strategy carries its own engine's codes — in the
+compatibility harness, each provider carries them — and classifies through them
+into the shared neutral vocabulary above.
 
 ## What the suite pins down
 
