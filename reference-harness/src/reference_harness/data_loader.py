@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ._declared_contributor import DeclaredContributor
-from .case import Entity, Model, corrupt_temporal_entity
+from .case import Entity, Model, temporal_corruption_refusal
 from .ddl_builder import declared_contributors
 from .document_codec import encode_leaf
 from .inheritance import assert_no_abstract_fixture_rows
@@ -131,7 +131,9 @@ def _primary_key_name(entity: Entity) -> str:
     """The declared member name of *entity*'s model primary key.
 
     `m-metamodel` admits no composite primary key, so one name addresses one row
-    — which is what lets ``given.corrupt`` name a row by a single ``key`` value.
+    on a NON-temporal entity, whose physical key is that model key — which is
+    what lets ``given.corrupt`` name a row by a single ``key`` value, and why an
+    entity carrying an As-Of Axis is refused before any row loads.
     """
     for attribute in entity.attributes:
         if attribute.get("primaryKey"):
@@ -278,7 +280,7 @@ def _refuse_temporal_corruptions(model: Model, corruptions: Sequence[Mapping[str
     for entry in corruptions:
         entity = by_name.get(str(entry["entity"]))
         if entity is not None and temporal_axes(entity.runtime_facts):
-            raise ValueError(corrupt_temporal_entity(entity.canonical_name))
+            raise ValueError(temporal_corruption_refusal(entity.canonical_name))
 
 
 def load_model(

@@ -19,7 +19,7 @@ from typing import Any, cast
 
 import pytest
 
-from reference_harness.case import corrupt_temporal_entity, load_model
+from reference_harness.case import load_model, temporal_corruption_refusal
 from reference_harness.data_loader import load_model as load_fixture_rows
 from reference_harness.schema_validate import _validate_corruptions
 
@@ -46,7 +46,7 @@ def _static_errors(model_rel: str, *entries: dict[str, Any]) -> list[str]:
 
 def test_the_corpus_refuses_a_corruption_addressing_a_temporal_entity() -> None:
     assert _static_errors("models/position.yaml", _corruption(_POSITION)) == [
-        f"case probe: {corrupt_temporal_entity(_POSITION)}"
+        f"case probe: {temporal_corruption_refusal(_POSITION)}"
     ]
 
 
@@ -54,7 +54,7 @@ def test_the_corpus_admits_a_corruption_addressing_a_non_temporal_entity() -> No
     assert _static_errors("models/stream-coordinates.yaml", _corruption(_STREAM_COORDINATE)) == []
 
 
-def test_a_case_declaring_no_corruption_is_judged_at_all() -> None:
+def test_a_case_declaring_no_corruption_is_accepted() -> None:
     errors: list[str] = []
     _validate_corruptions({"fixtures": True}, _entity_defs("models/position.yaml"), "probe", errors)
     assert errors == []

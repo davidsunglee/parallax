@@ -821,6 +821,9 @@ value there addresses a milestone CHAIN and names no single row in it. Left
 admitted, the same address would mean two different things — every milestone of
 the key corrupted, or none — so it is refused instead: by every adapter, in the
 same terms, and by the corpus's own static validation before any adapter runs.
+An adapter judges the whole list before it applies any of it, so a legal entry
+standing before a refused one leaves no corrupted state behind.
+
 The consequence is deliberate and bounded: a temporal Entity's document-resident
 state has no corpus expression, and giving it one means adding a per-milestone
 locator to this grammar first, which is a specification change and the

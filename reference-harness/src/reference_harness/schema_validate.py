@@ -38,7 +38,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 from referencing import Registry
 
-from .case import Entity, corrupt_temporal_entity, names_earlier_step
+from .case import Entity, names_earlier_step, temporal_corruption_refusal
 from .corpus_yaml import read_corpus_yaml
 from .execution_validate import validate_execution
 from .inheritance import (
@@ -301,7 +301,7 @@ def _validate_corruptions(
             continue  # the case schema owns a malformed entry
         entity = _effective_entity(entity_defs, entry["entity"])
         if entity is not None and temporal_axes(entity.runtime_facts):
-            errors.append(f"{label}: {corrupt_temporal_entity(entry['entity'])}")
+            errors.append(f"{label}: {temporal_corruption_refusal(entry['entity'])}")
 
 
 def _validate_buffered_write(

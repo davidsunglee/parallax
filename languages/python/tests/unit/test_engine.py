@@ -8067,6 +8067,39 @@ def test_given_corrupt_refuses_a_temporal_entity_before_reading_anything() -> No
     assert port.reads == [] and port.writes == []
 
 
+def test_given_corrupt_judges_the_whole_list_before_it_applies_any_of_it() -> None:
+    # The refusal is about the CASE rather than about one entry, so a legal entry
+    # standing before a refused one must not have written a row by the time the
+    # list is refused — which is where the reference harness stands too: it
+    # refuses the whole list before any row lands.
+    port = _CorruptionPort({"title": "Dune", "detail": "hardback", "pages": 412})
+    case = _load_case("m-inheritance-126")
+    document = dict(case.document)
+    document["given"] = {
+        "corrupt": [
+            {
+                "entity": "parallax.compatibility.Book",
+                "key": 1,
+                "member": ["title"],
+                "value": 7,
+            },
+            {
+                "entity": "parallax.compatibility.Charter",
+                "key": 1,
+                "member": ["terms", "clause"],
+                "value": 7,
+            },
+        ]
+    }
+    with pytest.raises(engine.EngineError, match="a temporal Entity: its model primary key"):
+        engine._apply_given_corrupt(  # pyright: ignore[reportPrivateUsage] - the engine's own realization
+            dataclasses.replace(case, document=document),
+            models.accepted_model_of(engine.load_case_domain_model(case)),
+            port,
+        )
+    assert port.reads == [] and port.writes == []
+
+
 def test_given_corrupt_reports_how_many_rows_its_key_answered_with() -> None:
     # The count is reported rather than assumed to be zero: a key that selected
     # too many rows is a different fault from one that selected none, and reading
