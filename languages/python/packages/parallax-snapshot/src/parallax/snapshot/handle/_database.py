@@ -441,9 +441,11 @@ class Database:
         the result.
 
         ``batch_size`` counts ROOT positions — never included relationship rows
-        — and is a performance dial alone: it changes neither the order roots
-        arrive in, nor which roots arrive, nor what any of them carries. It is
-        validated exactly as ``limit`` is, at this call and before any I/O.
+        — and, over storage the model describes, is a performance dial alone: it
+        changes neither the order roots arrive in, nor which roots arrive, nor
+        what any of them carries. :class:`SnapshotStream` names the one stored
+        value that falls outside that. It is validated exactly as ``limit`` is,
+        at this call and before any I/O.
 
         The refusal order is :meth:`find`'s: re-entry first, then a connection
         that can materialize no Snapshot at all, then this call's own arguments.

@@ -619,9 +619,9 @@ def without_captured_coordinates(
 
     A coordinate is framework-owned provenance rather than a member — the same
     standing the inheritance discriminator has — so it never reaches the graph a
-    page publishes, and a delivery's roots are the roots the eager read of the
-    same query answers. Lifted by the aliases this delivery allocated rather than
-    by the prefix, so an authored Column spelled like one survives.
+    page publishes, and a delivered root carries exactly what the eager read of
+    the same query gives it. Lifted by the aliases this delivery allocated
+    rather than by the prefix, so an authored Column spelled like one survives.
     """
     lifted = set(aliases)
     return [{key: value for key, value in row.items() if key not in lifted} for row in rows]

@@ -1115,8 +1115,8 @@ _STREAMED_DELIVERY_REASON: Final[str] = (
     "`then.graph`, or the per-milestone `then.graphs` a milestone-set delivery publishes "
     "one edge-pinned root at a time; and the delivery contract the surface adds on top — "
     "single pass, one view, scope binding, continuation past invalid stored data, and "
-    "page-size invariance in BOTH namespaces — is graded against the shipped surface by "
-    "`tests/unit/test_snapshot_stream.py`"
+    "page-size invariance over storage the model describes, in BOTH namespaces — is "
+    "graded against the shipped surface by `tests/unit/test_snapshot_stream.py`"
 )
 
 # The composition family's Transaction-Time-only arm. `m-snapshot-read-021`
