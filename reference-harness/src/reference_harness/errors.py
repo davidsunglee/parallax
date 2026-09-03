@@ -8,13 +8,13 @@ language-neutral equivalent of that half: a closed category vocabulary and the
 call-site predicates defined as category membership (so a predicate can never
 drift from its category).
 
-The native code a category is reached FROM is a per-dialect fact and lives on the
-provider that owns the engine, mirroring how the Python core keeps each table on
-its `Dialect`. The code lives in a different attribute per driver, and the same
-value can mean different things: Postgres keys on the SQLSTATE string (`23505`,
-`40P01`), MariaDB on the vendor errno (`1062`, `1213`). SQLSTATE `40001` is a
-serialization failure on Postgres but the deadlock state on MariaDB -- which is
-exactly why no shared lookup can classify for both.
+The native code a category is reached FROM is a per-dialect fact, so it lives on
+the provider that owns the engine rather than here: the code arrives in a
+different attribute per driver, and the same value can mean different things.
+Postgres keys on the SQLSTATE string (`23505`, `40P01`), MariaDB on the vendor
+errno (`1062`, `1213`); SQLSTATE `40001` is a serialization failure on Postgres
+but the deadlock state on MariaDB -- which is exactly why no shared lookup can
+classify for both.
 """
 
 from __future__ import annotations

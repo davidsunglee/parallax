@@ -48,9 +48,9 @@ if TYPE_CHECKING:
 # The provisioning seam pins a MariaDB long-term-support series (m-case-format/DQ15).
 # This pin must stay at or above 11.4.2, the first release of the 11.4 series carrying
 # `innodb_snapshot_isolation`, without which Repeatable Read cannot forbid the lost
-# update. Older maintenance series ship the variable too (10.6.18, 10.11.8, 11.0.6,
-# 11.1.5, 11.2.4); grading from the 11.4 long-term-support series is the deliberate
-# floor, and the compatibility suite asserts the booted server against it.
+# update. Grading from the 11.4 long-term-support series is the deliberate floor, so an
+# earlier series is below it whether or not it carries the variable; the compatibility
+# suite asserts the booted server against that floor.
 MARIADB_IMAGE = "mariadb:12.3"
 
 # MariaDB keys on the vendor errno; a code absent here is `errors.UNKNOWN`, so an

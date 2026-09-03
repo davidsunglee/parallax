@@ -47,10 +47,9 @@ DIALECTS = available_dialects()
 
 # The graded MariaDB floor: 11.4.2, the first release of the 11.4 series carrying
 # `innodb_snapshot_isolation`, without which the server has no setting under which
-# Repeatable Read forbids the lost update. Earlier maintenance series ship the
-# variable from 10.6.18, 10.11.8, 11.0.6, 11.1.5, and 11.2.4; grading from the 11.4
-# long-term-support series is a deliberate choice, so a release below this floor
-# fails it whether or not it carries the variable.
+# Repeatable Read forbids the lost update. Grading from the 11.4 long-term-support
+# series is a deliberate choice, so a release below this floor fails it whether or not
+# it carries the variable.
 _MARIADB_SNAPSHOT_ISOLATION_FLOOR = (11, 4, 2)
 
 
