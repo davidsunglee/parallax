@@ -28,13 +28,16 @@ from .executor import ReadExecutor
 class _StreamPage:
     """One page of a streamed delivery.
 
-    ``consumed`` counts the CHILD-level statements the page took off the flat
-    authored list, which is where the next page's root statement begins.
+    ``root_rows`` is what the page KEEPS; ``returned`` is what its statement
+    answered, which is one more wherever a further page follows. ``consumed``
+    counts the CHILD-level statements the page took off the flat authored list,
+    which is where the next page's root statement begins.
     """
 
     root_rows: list[materialize.PublishedRow]
     nodes: list[dict[str, Any]]
     consumed: int
+    returned: int
 
 
 def _stream_page(
@@ -48,8 +51,10 @@ def _stream_page(
     root_binds: list[Any],
     levels: list[tuple[str, list[Any]]],
     aliases: list[str],
+    requested: int,
+    lookahead: bool,
 ) -> _StreamPage:
-    """Execute one page of a streamed read and publish its roots.
+    """Execute one page of a streamed read and publish the roots it keeps.
 
     A page IS an eager read of a bounded root query (`m-snapshot-read` *Streamed
     delivery*), so it is graded by the graders an eager read of the same Object
@@ -57,22 +62,34 @@ def _stream_page(
     Include Paths, the single-statement instance-form materialization where it
     declares none. What the page adds is that it consumes a PREFIX of *levels* and
     reports how much, because the statements after it belong to later pages.
+
+    A page asking for a lookahead root reads one MORE than it may deliver, so a
+    full result is cut back to the batch before anything below it is fetched:
+    the discarded root gathers no key, receives no child, and is read again by
+    the page that delivers it.
     """
-    root_rows = materialize.materialize_read(
+    returned = materialize.materialize_read(
         case,
         seek.without_captured_coordinates(
             execute.query_rows(case, reader, root_sql, root_binds), aliases
         ),
     )
+    keep = requested - 1 if lookahead and len(returned) == requested else len(returned)
+    root_rows = returned[:keep]
     if not includes.query_has_includes(query):
         narrowed = materialize.narrow_to_variant_columns(case, root_rows)
         nodes = [graph.graph_node(case, root_entity, row) for row in narrowed]
-        return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=0)
+        return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=0, returned=len(returned))
 
     executed = includes.execute_fetch_levels(case, reader, source, query, steps, root_rows, levels)
     assembled = graph.assemble_graph(case, query, steps, root_rows, executed.children_by_hop)
     nodes = assembled.get(root_entity.name, [])
-    return _StreamPage(root_rows=root_rows, nodes=nodes, consumed=executed.consumed)
+    return _StreamPage(
+        root_rows=root_rows,
+        nodes=nodes,
+        consumed=executed.consumed,
+        returned=len(returned),
+    )
 
 
 def _binds_equal(
@@ -117,17 +134,21 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
 
     Four properties are then derived independently of the authored SQL, so a
     delivery that reached the right rows the wrong way fails rather than passing
-    on its graph alone. The requested page size is `batchSize`, narrowed by
-    whatever of a declared ``limit`` is still undelivered, and a page returns at
-    most that many roots. A page after the first seeks past the Continuation
-    Order coordinates of the root the page before it delivered LAST, composed and
-    lowered by :mod:`.seek` from the query's own ``orderBy``, the model's primary
-    key, and a milestone-set read's own edge columns rather than read off the
-    golden — its coordinates graded as binds and the direction it compares them
-    in, which no bind carries, graded as the comparators it spells. And
-    exhaustion is proven rather than assumed: a short page ends the delivery,
-    while a full one is followed by one more root statement returning nothing,
-    unless a declared ``limit`` was already delivered in full.
+    on its graph alone. The requested page size is `batchSize` plus the one
+    LOOKAHEAD root a page reads past its batch, and a page returns at most that
+    many roots and delivers at most the batch; where a declared ``limit`` leaves
+    no more than a batch undelivered the page it caps asks for exactly that
+    remainder and reads no lookahead root at all, an authored limit being a hard
+    database-read boundary. A page after the first seeks past the Continuation
+    Order coordinates of the root the page before it KEPT last — never the
+    lookahead root it discarded — composed and lowered by :mod:`.seek` from the
+    query's own ``orderBy``, the model's primary key, and a milestone-set read's
+    own edge columns rather than read off the golden — its coordinates graded as
+    binds and the direction it compares them in, which no bind carries, graded as
+    the comparators it spells. And exhaustion is proven rather than assumed: a
+    page that comes back short of what it asked for ends the delivery, so a
+    result filling its final page exactly costs no terminal statement, and a page
+    reading a full lookahead is followed by another.
 
     Every page also projects one hidden coordinate cell per Continuation Order
     term, which is what a delivery advances on, and both halves of that are
@@ -180,13 +201,16 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
         if index >= len(entries):
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) ends after {page} page(s), "
-                f"but the delivery is not exhausted — the last page returned a FULL "
-                f"{batch_size} root(s), which proves nothing. Author the root statement "
-                f"that returns none, or a final page shorter than the size it asked for."
+                f"but the delivery is not exhausted — the last page returned every root "
+                f"it asked for, lookahead included, which proves another page follows. "
+                f"Author that page's root statement, or a final page shorter than the "
+                f"size it asked for."
             )
         root_sql, authored = entries[index]
         index += 1
-        requested = batch_size if limit is None else min(batch_size, limit - len(root_rows))
+        remaining = None if limit is None else limit - len(root_rows)
+        lookahead = remaining is None or remaining > batch_size
+        requested = batch_size + 1 if remaining is None or lookahead else remaining
         composed: seek.ComposedSeek | None = None
         if page == 0:
             first_root_sql = root_sql
@@ -237,14 +261,16 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             authored,
             entries[index:],
             aliases,
+            requested,
+            lookahead,
         )
         index += executed.consumed
-        delivered = len(executed.root_rows)
-        if delivered > requested:
+        returned = executed.returned
+        if returned > requested:
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) page {page + 1} returned "
-                f"{delivered} root(s) for a requested {requested}. A page size bounds the "
-                f"root positions a page delivers."
+                f"{returned} root(s) for a requested {requested}. A page's own `limit` "
+                f"bounds what its statement may answer."
             )
         nodes.extend(executed.nodes)
         root_rows.extend(executed.root_rows)
@@ -252,14 +278,14 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             last = executed.root_rows[-1]
             cursor = tuple(coerce_identity_key(last[term.column]) for term in terms)
         page += 1
-        if delivered < requested or (limit is not None and len(root_rows) >= limit):
+        if not lookahead or returned < requested:
             break
 
     if index != len(entries):
         raise CaseFailure(
             f"{case.path.name}: {source} ({dialect}) lists {len(entries) - index} "
-            f"statement(s) after the delivery ended. A stream stops at its first short "
-            f"page, so nothing follows it."
+            f"statement(s) after the delivery ended. A stream stops at its first page "
+            f"short of what it asked for, so nothing follows it."
         )
 
     return StreamDelivery(root_rows=root_rows, nodes=nodes)

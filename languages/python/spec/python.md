@@ -3120,13 +3120,30 @@ identity a caller may copy or pickle across a boundary of their own.
   delivery answers the EMPTY pin there, exactly as `find`'s own milestone-set
   Snapshot does: a scan is not a pin, and each root it publishes stands at its
   own edge, read back through `pin_of` / `edge_of`.
+- **`SnapshotStreamContinuationError` is the stream's other refusal, and the only
+  one about the DATA.** It is a `RuntimeError` rather than a
+  `SnapshotStreamStateError`, because nothing was misused and no caller can avoid
+  it: two roots the database placed at ONE Continuation Order coordinate end the
+  delivery, after every root before them has been published. It carries `code`
+  `"snapshot-stream-continuation-order-not-total"`, `terms` (the
+  `AttributeIdentity` tuple the coordinates were measured against), `coordinate`
+  (an inert `tuple[object, ...]`, never a cursor), and `ordinal` (the delivery
+  position of the first undeliverable root). It is frozen by hand exactly as
+  `InvalidDataError` is, so `add_note` and chaining work while every other
+  assignment or deletion raises; `coordinate` is reachable by attribute access
+  alone, and stays out of the message, the default repr, lifecycle events, and
+  default logging. `m-snapshot-read` *Ending a delivery at a tie* settles when it
+  is raised and what precedes it.
 - **`batch_size` is public, per-call, and defaults to `1000`.** It counts ROOT
   positions, never included relationship rows, and is validated exactly as
   `limit` is: `type(batch_size) is not int` is an identity check, so nothing is
   coerced and `True` is not the page size 1, and a non-positive or non-`int`
   value raises `ValueError` at the call, before any plan or page exists. There
   is no handle-level default, no connection setting, and no environment
-  variable — the only page size is the one a call names.
+  variable — the only page size is the one a call names. It counts the roots a
+  page DELIVERS: the statement asks for one more, which is the lookahead root
+  `m-snapshot-read` prices, so `limit ?` binds `batch_size + 1` on every page a
+  declared `limit` does not cap.
 - **Refusal order matches `find`'s.** Re-entry is refused first, then a
   connection over a model that composes no Entity Class (Typed only), then this
   call's own arguments; the read gate and the deferred-Feature refusal follow at
@@ -3156,10 +3173,12 @@ identity a caller may copy or pickle across a boundary of their own.
 - **The memory bound is gated as a SHAPE and reported as a number.**
   `m-snapshot-read` *What a delivery costs* bounds the Parallax-owned working set
   at `O(P_B + G_max)` with three named exclusions; this target grades that in the
-  `cost` class (§10), as eight measurements over `tests/unit/`'s memory
+  `cost` class (§10), as nine measurements over `tests/unit/`'s memory
   instruments. What is asserted there is a survivor census with no term in the
   result size and no term in how far the delivery has got, with the page graph and
-  the published root counted separately; the census is read five ways — over
+  the published root counted separately and the Continuation Order's own width
+  priced on a grid of its own — one coordinate per page ROOT whatever that width
+  is, the width itself costing the plan once; the census is read five ways — over
   Parallax's own survivors, over every survivor whatever defined its type, over
   the references they hold, over what a holder older than the window took of
   them, and in bytes over the survivors and everything untracked they hold — so a

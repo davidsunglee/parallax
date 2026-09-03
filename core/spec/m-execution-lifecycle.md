@@ -345,7 +345,7 @@ StreamBatchFinished(StreamBatchCompleted | StreamBatchFailed(failure))
 It starts after any read-dependency Write Batch and before page planning. Its
 Database Calls are direct children; it spans conversion and completes once the
 page's converted result — the one shared input every root of that page is
-published from — is ready, including an empty terminal page. Materializing and
+published from — is ready, including a page that returned no root at all. Materializing and
 publishing those roots runs one root at a time under the parent Snapshot Stream,
 outside every batch, so a per-root materialization or invalid-data failure
 reaches a batch that already finished Completed and is attributed to the

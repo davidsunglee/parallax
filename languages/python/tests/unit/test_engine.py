@@ -1038,16 +1038,22 @@ def _account(identifier: int, owner: str, balance: str, version: int) -> Row:
 def _two_delivery_port() -> _ScriptedPort:
     """The four pages `m-unit-work-030`'s two deliveries read at `batchSize: 2`.
 
-    Each delivery reads every account — {1, 2} then {3} — and the second reads
-    account 1 at the version the first write left, which is what makes the two
-    deliveries' own observations of that key distinguishable at all.
+    Each page asks for THREE accounts and delivers two, so each delivery reads
+    {1, 2, 3} and keeps {1, 2}, then reads {3} and ends on that short page. The
+    second delivery reads account 1 at the version the first write left, which
+    is what makes the two deliveries' own observations of that key
+    distinguishable at all.
     """
+    first = _account(1, "Ada", "100.00", 1)
+    written = _account(1, "Ada", "125.00", 2)
+    second = _account(2, "Linus", "250.00", 1)
+    third = _account(3, "Grace", "10.00", 1)
     return _ScriptedPort(
         read_rows=[
-            [_account(1, "Ada", "100.00", 1), _account(2, "Linus", "250.00", 1)],
-            [_account(3, "Grace", "10.00", 1)],
-            [_account(1, "Ada", "125.00", 2), _account(2, "Linus", "250.00", 1)],
-            [_account(3, "Grace", "10.00", 1)],
+            [first, second, third],
+            [third],
+            [written, second, third],
+            [third],
         ]
     )
 
@@ -1056,9 +1062,10 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
     # `m-unit-work-030`: a grouped read step carrying `stream` runs through
     # `tx.wire.stream` at its declared page size, and each write settles against
     # the generation the DELIVERY it names published. The scripted port answers
-    # the four pages the two deliveries read — {1, 2} then {3}, twice, with
-    # account 1 at version 2 the second time round, which is the state the first
-    # write left. Both writes address account 1 and neither is resolved from case
+    # the four pages the two deliveries read — {1, 2, 3} kept down to {1, 2},
+    # then {3}, twice, with account 1 at version 2 the second time round, which
+    # is the state the first write left. Both writes address account 1 and neither
+    # is resolved from case
     # state: the first gates on the version delivery one published for a root it
     # handed over on a page since released, the second on the version delivery
     # two published for the same key. Each write here names the delivery that ran
@@ -1078,7 +1085,7 @@ def test_run_scenario_case_settles_a_write_against_the_delivery_that_published_i
         "/scenario/2/objectQuery",
         "/scenario/3/write",
     ]
-    assert [binds for _sql, binds in port.reads] == [(2,), (2, 2), (2,), (2, 2)]
+    assert [binds for _sql, binds in port.reads] == [(3,), (2, 3), (3,), (2, 3)]
     assert [e.binds for e in run.emissions if e.case_pointer.endswith("write")] == [
         (125.00, 2, 1, 1),
         (175.00, 3, 1, 2),
@@ -6513,16 +6520,15 @@ def test_run_streamed_graphs_case_groups_a_delivery_back_into_edge_ranked_graphs
     april = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     port = QueueDbPort(
         [
-            [line(1000, "50.00", january, april)],
-            [line(1000, "75.00", april, INFINITY)],
+            [line(1000, "50.00", january, april), line(1000, "75.00", april, INFINITY)],
+            [line(1000, "75.00", april, INFINITY), line(1001, "25.00", january, INFINITY)],
             [line(1001, "25.00", january, INFINITY)],
-            [],
         ]
     )
     case = _doctored("m-snapshot-read-013", stream={"batchSize": 1})
     emissions, graphs, round_trips = engine.run_streamed_graphs_case(case, port)
-    assert round_trips == 4
-    assert len(emissions) == 4
+    assert round_trips == 3
+    assert len(emissions) == 3
     assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
         "2024-01-01T00:00:00.000000Z",
         "2024-04-01T00:00:00.000000Z",

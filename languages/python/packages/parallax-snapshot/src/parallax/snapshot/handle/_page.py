@@ -12,7 +12,13 @@ one this design exists to prevent: a silently skipped root.
 The cut lands between the root statement and conversion, where
 :func:`~parallax.snapshot.handle._read.find` has its one joint: a page's
 decision reads coordinates alone, and coordinates are lifted off the rows before
-anything is converted, deep-fetched, or classified.
+anything is converted, deep-fetched, or classified. Everything that decision is
+made of — :meth:`PagePlan.page_request` and :func:`page_decision` — is
+computation over counts and coordinates with no port and no SQL under it, which
+is what lets the lookahead discard, the tie, and the maximal strict prefix be
+exercised directly. It stays an internal seam of this module either way:
+:func:`read_stream_page`'s own interface never exposes it, and the stream's
+surface above is what the behavior is graded through.
 
 :class:`StreamPage` never surfaces publicly. Cursor state is not a thing a
 caller of a Snapshot Stream holds, so neither the eager
@@ -22,13 +28,14 @@ caller of a Snapshot Stream holds, so neither the eager
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 from parallax.core.continuation import ContinuationPlan
 from parallax.core.db_port import DbPort
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
+from parallax.core.metamodel import AttributeIdentity
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.unit_work import Concurrency
@@ -36,7 +43,67 @@ from parallax.snapshot.handle._read import RootRead, build_graph, read_roots
 from parallax.snapshot.handle._write_inputs import ObservationLedger, ReadSources
 from parallax.snapshot.materialize import SnapshotGraph, UnwindTree
 
-__all__ = ["At", "PagePlan", "StreamPage", "read_stream_page"]
+__all__ = [
+    "At",
+    "PagePlan",
+    "PageRequest",
+    "PageVerdict",
+    "StreamPage",
+    "TieFound",
+    "page_decision",
+    "read_stream_page",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class PageRequest:
+    """How many roots one page asks for, and how its answer is to be read.
+
+    ``lookahead`` is the whole difference between the two kinds of page. With
+    one, ``size`` is a root MORE than the page may deliver, so a full result
+    means "one more root exists" and a short one proves exhaustion outright. On
+    a final page there is no such root to ask for, and a full result proves
+    nothing about what follows — the authored limit settles it instead.
+
+    ``emitted`` travels with them because a tie's ordinal counts from the start
+    of the delivery rather than from the start of this page.
+    """
+
+    size: int
+    lookahead: bool
+    emitted: int
+
+
+@dataclass(frozen=True, slots=True)
+class TieFound:
+    """Two adjacent roots one page's statement evaluated to ONE coordinate.
+
+    The Continuation Order is total over storage the model describes, so this is
+    storage that has lost a constraint the order rests on. Everything the
+    refusal reports is settled here, where it was discovered: ``terms`` is the
+    order that turned out not to be total, ``ordinal`` counts the first
+    undeliverable root from the start of the delivery, and ``coordinate`` is the
+    inert diagnostic copy of where it stood — never a coordinate, which is
+    pagination authority.
+    """
+
+    terms: tuple[AttributeIdentity, ...]
+    ordinal: int
+    coordinate: tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PageVerdict:
+    """Which of a page's roots survive, and what the delivery does after them.
+
+    ``keep`` is the count taken from the FRONT of what the statement returned:
+    the discarded lookahead root and every root from a tie onwards are the same
+    kind of thing to everything downstream — read, never converted.
+    """
+
+    keep: int
+    exhausted: bool
+    tie: TieFound | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,15 +121,23 @@ class PagePlan:
     batch_size: int
     limit: int | None
 
-    def size(self, emitted: int) -> int:
-        """How many roots the page after ``emitted`` asks for.
+    def page_request(self, emitted: int) -> PageRequest:
+        """What the page after ``emitted`` asks the database for.
 
-        An authored limit is a hard database-read boundary rather than a filter
-        applied afterwards, so a final page asks only for what is left of it.
+        A page reads one root PAST its batch, which is what proves exhaustion
+        without a terminal statement that returns nothing and what puts the
+        first root of the next page inside this page's own tie scan — a tie
+        with it would otherwise be stepped straight over by a strict seek.
+
+        An authored limit is a hard database-read and locking boundary rather
+        than a filter applied afterwards, so the final page it caps asks for
+        exactly what is left of it and reads no excluded root merely to inspect
+        a boundary tie. The tie there goes undetected, and no later seek exists
+        that could skip it.
         """
-        if self.limit is None:
-            return self.batch_size
-        return min(self.batch_size, self.limit - emitted)
+        if self.limit is None or self.limit - emitted > self.batch_size:
+            return PageRequest(size=self.batch_size + 1, lookahead=True, emitted=emitted)
+        return PageRequest(size=self.limit - emitted, lookahead=False, emitted=emitted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +161,14 @@ class StreamPage:
     :class:`~parallax.snapshot._read_result.FindResult` carries, because a page
     IS an eager read of a bounded root query — the publication seam above is the
     same one, and only which graphs it is handed differs.
+
+    ``coordinates`` is one per root this page KEEPS, so a root the page read and
+    discarded — the lookahead, or one at a tie — is absent from it exactly as it
+    is absent from the graph.
+
+    ``tie`` is present where the delivery can go no further because two adjacent
+    roots stood at one coordinate. The page reports it rather than raising: this
+    page's kept roots are published first, and the refusal follows them.
     """
 
     graph: SnapshotGraph
@@ -93,6 +176,7 @@ class StreamPage:
     sources: ReadSources
     coordinates: tuple[ContinuationCoordinate, ...]
     exhausted: bool
+    tie: TieFound | None
 
     @property
     def resume_from(self) -> ContinuationCoordinate | None:
@@ -128,35 +212,77 @@ def read_stream_page(
 
     The node is this plan's own — the caller's query under the Continuation
     Order, capped at the size this position asks for, and seeking past the
-    coordinate the last delivered root stood at. The roots come back, their
-    coordinates are lifted off them, and only then is the graph below them
-    built: the ``1 + L`` shape of a page is an eager read's, so ``model``,
+    coordinate the last root the page before it KEPT stood at. The roots come
+    back, their coordinates are lifted off them, and only then is the graph
+    below them built: the ``1 + L`` shape of a page is an eager read's, so ``model``,
     ``port``, ``preference``, ``ledger``, and ``calls`` are the executor's own
     and every level below the root derives its lock, its retained evidence, and
     its Database Call bracket from them exactly as an eager find does.
 
-    A short page proves exhaustion — fewer roots than asked for means no more
-    exist — and a full one does not, so it costs one more root statement,
-    unless an authored ``limit`` has by then been delivered in full.
+    The roots the verdict discards are read and nothing more: the graph is built
+    from the kept prefix alone, so a discarded root is never deep-fetched,
+    converted, classified, or published, and its children are never fetched
+    beside another page's.
     """
-    size = page_plan.size(at.emitted)
+    request = page_plan.page_request(at.emitted)
     query = (
-        page_plan.plan.first(limit=size)
+        page_plan.plan.first(limit=request.size)
         if at.coordinate is None
-        else page_plan.plan.after(at.coordinate, limit=size)
+        else page_plan.plan.after(at.coordinate, limit=request.size)
     )
     root_read = read_roots(query, model, port, preference=preference, calls=calls)
     coordinates = _coordinates(root_read)
-    result = build_graph(root_read, model, port, preference=preference, ledger=ledger, calls=calls)
-    delivered = at.emitted + len(coordinates)
+    terms = tuple(term.member.identity for term in query.order_by)
+    verdict = page_decision(request, terms, coordinates)
+    kept = replace(root_read, rows=root_read.rows[: verdict.keep])
+    result = build_graph(kept, model, port, preference=preference, ledger=ledger, calls=calls)
     return StreamPage(
         graph=result.graph,
         includes=result.includes,
         sources=result.sources,
-        coordinates=coordinates,
-        exhausted=len(coordinates) < size
-        or (page_plan.limit is not None and delivered >= page_plan.limit),
+        coordinates=coordinates[: verdict.keep],
+        exhausted=verdict.exhausted,
+        tie=verdict.tie,
     )
+
+
+def page_decision(
+    request: PageRequest,
+    terms: tuple[AttributeIdentity, ...],
+    coordinates: tuple[ContinuationCoordinate, ...],
+) -> PageVerdict:
+    """Which of the roots a page returned it may deliver, and what follows them.
+
+    A scan over the coordinates and nothing else. Sameness is the coordinate's
+    own rule — comparing carriers here would put a provider judgment where no
+    provider knowledge is — and the scan covers the lookahead root, which is
+    what makes a tie that spans a page boundary reachable at all: resuming from
+    a kept root that ties with the root after it emits a strict comparison
+    stepping over its twin.
+
+    A tie at ``index`` means the tied group starts at ``index - 1``, so the kept
+    prefix is the maximal strictly ordered one and the coordinate after it is
+    the first undeliverable root. Keeping nothing is ordinary: the page
+    publishes no root and the delivery refuses immediately.
+
+    ``terms`` is the Continuation Order those coordinates were evaluated
+    against, positionally, and is reported by a tie alone.
+    """
+    for index in range(1, len(coordinates)):
+        if coordinates[index] == coordinates[index - 1]:
+            keep = index - 1
+            return PageVerdict(
+                keep=keep,
+                exhausted=True,
+                tie=TieFound(
+                    terms=terms,
+                    ordinal=request.emitted + keep,
+                    coordinate=coordinates[keep].snapshot(),
+                ),
+            )
+    if request.lookahead and len(coordinates) == request.size:
+        return PageVerdict(keep=request.size - 1, exhausted=False, tie=None)
+    return PageVerdict(keep=len(coordinates), exhausted=True, tie=None)
 
 
 def _coordinates(root_read: RootRead) -> tuple[ContinuationCoordinate, ...]:

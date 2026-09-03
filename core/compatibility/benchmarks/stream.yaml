@@ -2,7 +2,7 @@
 #
 # Prices, at scale, the statement shape of m-snapshot-read's Streamed delivery.
 # The headline property is the one `expectRoundTrips` declares: a delivery costs
-# `floor(N / B) + 1` root statements and `ceil(N / B) * L` child statements — the
+# `ceil(N / B)` root statements and `ceil(N / B) * L` child statements — the
 # `1 + L` deep-fetch ceiling applied ONCE PER PAGE. What is declared here is that
 # count and the page statements behind it, not a delivery: like every fixture in
 # this directory this one carries golden SQL rather than an Object Query, so a run
@@ -14,17 +14,17 @@
 # for a delivery, and adds the page arithmetic on top.
 #
 # The three workloads are the same 20 roots at three page sizes, which is what
-# makes the page size legible as a TRADE rather than as a setting: 9, 6, and 3
+# makes the page size legible as a TRADE rather than as a setting: 8, 6, and 2
 # round trips for one result, against a working set that grows with the page. The
 # roots are ordered by the Continuation Order — here the primary key ascending,
 # the undeclared-`orderBy` case — and each page after the first carries the keyset
-# seek past the last root the page before it delivered.
+# seek past the last root the page before it KEPT.
 #
-# Two of the workloads carry the terminal empty root statement and one does not,
-# which is the exhaustion rule stated in arithmetic. A full final page proves
-# nothing, so 20 roots at page size 5 or 20 costs one more root statement
-# returning no rows; 20 roots at page size 7 ends on a page of 6, which is shorter
-# than it asked for and therefore proves exhaustion by itself.
+# Every page asks for one root MORE than it delivers — the lookahead root
+# m-snapshot-read prices — so no workload here carries a terminal statement: a
+# page comes back short of what it asked for exactly where the delivery ends, and
+# that is as true of 20 roots at page size 5 or 20, where the result fills the
+# final page exactly, as of page size 7, whose final page delivers 6.
 #
 # The dataset is the shared `orders-tree` recipe at 200 orders, of which each
 # workload streams the first 20; the include level is `Order.items`, whose
@@ -38,14 +38,14 @@ dataset:
     fanout: 5
 workloads:
   - name: stream-page-5
-    note: 20 roots at page size 5 — four full pages, the terminal empty root statement, and one child level per page
+    note: 20 roots at page size 5 — four pages each asking for six, one child level per page, and no terminal statement
     iterations: 20
-    expectRoundTrips: 9
+    expectRoundTrips: 8
     statements:
       - sql:
           postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? order by t0.id asc limit ?
           mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? order by t0.id asc limit ?
-        binds: [20, 5]
+        binds: [20, 6]
       - sql:
           postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?) order by t0.id desc
           mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?) order by t0.id desc
@@ -53,7 +53,7 @@ workloads:
       - sql:
           postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
           mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-        binds: [20, 5, 5]
+        binds: [20, 5, 6]
       - sql:
           postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?) order by t0.id desc
           mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?) order by t0.id desc
@@ -61,7 +61,7 @@ workloads:
       - sql:
           postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
           mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-        binds: [20, 10, 5]
+        binds: [20, 10, 6]
       - sql:
           postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?) order by t0.id desc
           mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?) order by t0.id desc
@@ -69,24 +69,20 @@ workloads:
       - sql:
           postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
           mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-        binds: [20, 15, 5]
+        binds: [20, 15, 6]
       - sql:
           postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?) order by t0.id desc
           mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?) order by t0.id desc
         binds: [16, 17, 18, 19, 20]
-      - sql:
-          postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-          mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-        binds: [20, 20, 5]
   - name: stream-page-7
-    note: the same 20 roots at page size 7 — a short final page of 6, which proves exhaustion without a further statement
+    note: the same 20 roots at page size 7 — a final page of 6 for a requested 8, which proves exhaustion without a further statement
     iterations: 20
     expectRoundTrips: 6
     statements:
       - sql:
           postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? order by t0.id asc limit ?
           mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? order by t0.id asc limit ?
-        binds: [20, 7]
+        binds: [20, 8]
       - sql:
           postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?, ?) order by t0.id desc
           mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?, ?) order by t0.id desc
@@ -94,7 +90,7 @@ workloads:
       - sql:
           postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
           mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-        binds: [20, 7, 7]
+        binds: [20, 7, 8]
       - sql:
           postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?, ?) order by t0.id desc
           mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?, ?) order by t0.id desc
@@ -102,7 +98,7 @@ workloads:
       - sql:
           postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
           mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-        binds: [20, 14, 7]
+        binds: [20, 14, 8]
       - sql:
           postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?) order by t0.id desc
           mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?) order by t0.id desc
@@ -110,17 +106,13 @@ workloads:
   - name: stream-page-20
     note: the same 20 roots in one page — the fewest round trips a delivery of this result can cost, and the largest page graph
     iterations: 20
-    expectRoundTrips: 3
+    expectRoundTrips: 2
     statements:
       - sql:
           postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? order by t0.id asc limit ?
           mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? order by t0.id asc limit ?
-        binds: [20, 20]
+        binds: [20, 21]
       - sql:
           postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id desc
           mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id desc
         binds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
-      - sql:
-          postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-          mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id <= ? and t0.id > ? order by t0.id asc limit ?
-        binds: [20, 20, 20]

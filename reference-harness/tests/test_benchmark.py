@@ -191,40 +191,43 @@ def test_deep_fetch_round_trips_match_statement_count() -> None:
 
 
 def test_stream_round_trips_are_the_page_arithmetic_of_one_result() -> None:
-    # A delivery of N roots at page size B over L levels costs `floor(N/B) + 1`
-    # root statements and `ceil(N/B) * L` child ones (m-perf-bench, streamed
-    # delivery), so each workload's declared count is derivable from its own page
-    # size rather than merely equal to how many statements someone authored. The
-    # three workloads are ONE result at three page sizes, which is what makes the
-    # count the trade rather than a setting: 20 roots cost 9, 6, and 3 round trips.
+    # A delivery of N roots at page size B over L levels costs `ceil(N/B)` root
+    # statements and `ceil(N/B) * L` child ones (m-perf-bench, streamed delivery)
+    # — a page reads one root past its batch, so no terminal statement proves
+    # exhaustion — and each workload's declared count is derivable from its own
+    # page size rather than merely equal to how many statements someone authored.
+    # The three workloads are ONE result at three page sizes, which is what makes
+    # the count the trade rather than a setting: 20 roots cost 8, 6, and 2 round
+    # trips.
     fixture = yaml.safe_load((BENCHMARKS_ROOT / "stream.yaml").read_text(encoding="utf-8"))
     roots, levels = 20, 1
     for workload, page in zip(fixture["workloads"], (5, 7, 20), strict=True):
         pages = -(-roots // page)
-        declared = roots // page + 1 + pages * levels
+        declared = pages * (1 + levels)
         for dialect in ("postgres", "mariadb"):
             assert workload["expectRoundTrips"] == len(_statements(workload, dialect)), (
                 workload["name"],
                 dialect,
             )
         assert workload["expectRoundTrips"] == declared, workload["name"]
-    assert [w["expectRoundTrips"] for w in fixture["workloads"]] == [9, 6, 3]
+    assert [w["expectRoundTrips"] for w in fixture["workloads"]] == [8, 6, 2]
 
 
 def test_stream_pages_seek_from_the_root_the_previous_page_delivered_last() -> None:
     # The keyset seek, read off the binds rather than off the SQL: every root
     # statement after the first carries one more bind than the first, and that bind
-    # is the primary key of the root its predecessor page ended on. A workload
+    # is the primary key of the root its predecessor page KEPT last. A workload
     # authored with a fixed cursor — or with none — re-delivers or skips rows, and
-    # would still spell exactly the right number of statements.
+    # would still spell exactly the right number of statements. Each page asks for
+    # its own size plus the one lookahead root that proves another page follows.
     fixture = yaml.safe_load((BENCHMARKS_ROOT / "stream.yaml").read_text(encoding="utf-8"))
     for workload, page in zip(fixture["workloads"], (5, 7, 20), strict=True):
         roots = [
             entry for entry in workload["statements"] if "from orders" in entry["sql"]["postgres"]
         ]
-        assert [entry["binds"][-1] for entry in roots] == [page] * len(roots), workload["name"]
+        assert [entry["binds"][-1] for entry in roots] == [page + 1] * len(roots), workload["name"]
         cursors = [entry["binds"][1] for entry in roots[1:]]
-        assert cursors == [min(page * (n + 1), 20) for n in range(len(cursors))], workload["name"]
+        assert cursors == [page * (n + 1) for n in range(len(cursors))], workload["name"]
 
 
 def test_temporal_document_layout_declares_the_milestone_write_shapes() -> None:

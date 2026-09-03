@@ -1,16 +1,16 @@
-# A FULL final page proves nothing, so exhaustion costs one more root statement
-# that returns no rows (m-snapshot-read) — and that terminal statement is the
-# whole cost, because a page with no roots gathers no parent keys and so issues
-# no child SQL.
+# A result that fills its final page EXACTLY costs no terminal statement
+# (m-snapshot-read): a page asks for one root more than it may deliver, so the
+# statement that delivered the last two roots is also the one that proved no
+# third page exists.
 #
 # Orders {1, 2, 3, 42} are delivered at `batchSize: 2` with one include level
-# (`Order.items`), and 4 divides by 2 exactly. Page 1 returns orders 1 and 2 and
-# fetches their items; page 2 seeks past id 2, returns orders 3 and 42, and
-# fetches items for BOTH parent ids even though order 3 has none — the level runs
-# because the page gathered keys, and order 3's view is materialized empty. Page 2
-# is full, so the delivery cannot end there: a third root statement seeks past id
-# 42, returns nothing, and ends it at a cost of exactly one statement. Total 2 + 2
-# + 1 = 5.
+# (`Order.items`), and 4 divides by 2 exactly. Page 1 asks for three, gets orders
+# 1, 2, and 3, delivers 1 and 2, and fetches their items — order 3 is read here
+# and fetched by the page that delivers it. Page 2 seeks past id 2, asks for
+# three, gets orders 3 and 42, and fetches items for BOTH parent ids even though
+# order 3 has none — the level runs because the page gathered keys, and order 3's
+# view is materialized empty. Two roots for a requested three proves exhaustion,
+# so nothing follows. Total 2 + 2 = 4.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, stream, streamed-delivery, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read
@@ -39,7 +39,7 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) order by t0.id asc limit ?
-      binds: [1, 2, 3, 42, 2]
+      binds: [1, 2, 3, 42, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
@@ -47,15 +47,11 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) and (t0.id > ? or t0.id is null) order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) and t0.id > ? order by t0.id asc limit ?
-      binds: [1, 2, 3, 42, 2, 2]
+      binds: [1, 2, 3, 42, 2, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
       binds: [3, 42]
-    - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) and (t0.id > ? or t0.id is null) order by t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?, ?) and t0.id > ? order by t0.id asc limit ?
-      binds: [1, 2, 3, 42, 42, 2]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 2, 3, 42)
   graph:
     Order:
@@ -96,4 +92,4 @@ then:
         items:
           - { id: 422, orderId: 42, sku: B-200, quantity: 5, shippedOn: 2024-02-05 }
           - { id: 421, orderId: 42, sku: A-999, quantity: 3, shippedOn: 2024-03-10 }
-  roundTrips: 5
+  roundTrips: 4

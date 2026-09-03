@@ -37,6 +37,7 @@ from _support.db_port import (
     ScriptedPort,
     Transact,
     Write,
+    paged_reads,
 )
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core.db_error import DatabaseError
@@ -168,7 +169,7 @@ def _of[T: ExecutionEvent](root: RecordedRoot, kind: type[T]) -> list[T]:
 # --------------------------------------------------------------------------- #
 def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> None:
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[_order_row(3)]))
+    port = ScriptedPort(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
     with _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream:
         assert [root.id for root in stream] == [1, 2, 3]
 
@@ -223,21 +224,36 @@ def test_a_wire_stream_reports_its_own_interface() -> None:
     assert started.interface == "WIRE"
 
 
-def test_the_empty_terminal_page_is_a_batch_of_its_own_and_the_stream_still_exhausts() -> None:
-    # A full final page proves nothing, so exhaustion costs one more root
-    # statement — and that statement is a PAGE, so it is a Stream Batch like any
-    # other and completes like any other. The batch whose page returned nothing
-    # is what "including an empty terminal page" names.
+def test_a_page_filled_exactly_is_the_last_batch_and_the_stream_still_exhausts() -> None:
+    # A page reads one root past its batch, so the page that delivered the last
+    # two roots also proved that none follow: a result that fills its final page
+    # exactly costs no further statement and therefore no further Stream Batch.
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[]))
+    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]))
     with _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream:
         assert [root.id for root in stream] == [1, 2]
 
     (root,) = recorder.roots
-    assert [type(event).__name__ for event in root.events].count("StreamBatchStarted") == 2
+    assert [type(event).__name__ for event in root.events].count("StreamBatchStarted") == 1
     assert [outcome.outcome for outcome in _of(root, StreamBatchFinished)] == [
-        StreamBatchCompleted(),
-        StreamBatchCompleted(),
+        StreamBatchCompleted()
+    ]
+    (finished,) = _of(root, SnapshotStreamFinished)
+    assert finished.outcome == StreamExhausted()
+
+
+def test_a_delivery_that_reaches_no_root_is_still_a_batch_of_its_own() -> None:
+    # A Stream Batch is opened by the page rather than by what the page turned
+    # out to hold, so the one statement that discovered an empty result is a
+    # batch like any other and completes like any other.
+    recorder = RecordingLifecycleProvider()
+    port = ScriptedPort(Read(rows=[]))
+    with _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream:
+        assert list(stream) == []
+
+    (root,) = recorder.roots
+    assert [outcome.outcome for outcome in _of(root, StreamBatchFinished)] == [
+        StreamBatchCompleted()
     ]
     (finished,) = _of(root, SnapshotStreamFinished)
     assert finished.outcome == StreamExhausted()
@@ -265,20 +281,19 @@ def test_a_stream_refused_at_the_gate_opens_no_root() -> None:
 
 def test_the_event_count_grows_with_pages_and_not_with_roots() -> None:
     # The reason per-root publication is deliberately NOT an activity: two
-    # deliveries at one page size cost two events per page plus two for the
+    # deliveries at one page size cost four events per page plus two for the
     # stream, whatever each page delivered. Twelve roots in three pages weigh
     # exactly what three roots in three pages weigh.
     def delivered(count: int, *, size: int) -> int:
         recorder = RecordingLifecycleProvider()
         rows = [_order_row(identifier) for identifier in range(1, count + 1)]
-        pages = [rows[at : at + size] for at in range(0, count, size)]
-        port = ScriptedPort(*(Read(rows=page) for page in pages), Read())
+        port = ScriptedPort(*paged_reads(rows, size=size))
         with _orders(port, recorder).stream(_active_orders(), batch_size=size) as stream:
             assert len(list(stream)) == count
         (root,) = recorder.roots
         return len(root.events)
 
-    assert delivered(3, size=1) == delivered(12, size=4) == 2 + 4 * 4
+    assert delivered(3, size=1) == delivered(12, size=4) == 2 + 3 * 4
 
 
 # --------------------------------------------------------------------------- #
@@ -362,7 +377,7 @@ def test_once_exhausted_a_later_caller_error_cannot_rewrite_the_outcome() -> Non
 def test_a_page_read_failure_fails_its_batch_first_and_causes_the_stream_failure() -> None:
     recorder = RecordingLifecycleProvider()
     failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
-    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]), Read(raises=failure))
+    port = ScriptedPort(Read(rows=[_order_row(index) for index in (1, 2, 3)]), Read(raises=failure))
     with (
         pytest.raises(DatabaseError),
         _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream,
@@ -427,7 +442,7 @@ def test_a_failure_the_caller_caught_still_finishes_the_stream_failed() -> None:
 def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(
-        Transact(Read(rows=[_account_row(1), _account_row(2)]), Read(rows=[_account_row(3)]))
+        Transact(*paged_reads([_account_row(index) for index in (1, 2, 3)], size=2))
     )
 
     def fn(tx: Transaction) -> list[int]:
@@ -471,7 +486,11 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
     # would report the flush as work the page did.
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(
-        Transact(Read(rows=[_account_row(1)]), Write(), Read(rows=[_account_row(2)]), Read(rows=[]))
+        Transact(
+            Read(rows=[_account_row(1), _account_row(2)]),
+            Write(),
+            Read(rows=[_account_row(2)]),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -498,10 +517,6 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "WriteBatchFinished",
-        "StreamBatchStarted",
-        "DatabaseCallStarted",
-        "DatabaseCallFinished",
-        "StreamBatchFinished",
         "StreamBatchStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
@@ -545,7 +560,7 @@ def test_a_declined_stream_root_costs_its_opening_and_delivers_unchanged() -> No
     # told nothing, and the delivery below it runs exactly as an unobserved one
     # does — every page, every root.
     provider = _Declining()
-    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[_order_row(3)]))
+    port = ScriptedPort(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
     with _connected(port, ORDERS_MODEL, provider).stream(_active_orders(), batch_size=2) as stream:
         assert [root.id for root in stream] == [1, 2, 3]
     assert [execution.kind for execution in provider.opened] == ["SNAPSHOT_STREAM"]
@@ -559,7 +574,7 @@ def test_a_handler_quarantined_mid_delivery_stops_its_events_and_not_the_deliver
     # at the one that failed rather than resuming later.
     handler = _FailingHandler(fail_at=2)
     provider = _QuarantiningProvider(handler)
-    port = ScriptedPort(Read(rows=[_order_row(1), _order_row(2)]), Read(rows=[_order_row(3)]))
+    port = ScriptedPort(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
     with _connected(port, ORDERS_MODEL, provider).stream(_active_orders(), batch_size=2) as stream:
         assert [root.id for root in stream] == [1, 2, 3]
 
@@ -579,7 +594,7 @@ def test_a_participating_stream_under_a_quarantined_root_opens_no_scope_of_its_o
     # so the stream does the rest of its lifecycle work not at all.
     handler = _FailingHandler(fail_at=1)
     provider = _QuarantiningProvider(handler)
-    port = ScriptedPort(Transact(Read(rows=[_account_row(1)]), Read(rows=[])))
+    port = ScriptedPort(Transact(Read(rows=[_account_row(1)])))
 
     def fn(tx: Transaction) -> list[int]:
         with tx.stream(mm.Account.where(mm.Account.id >= 1), batch_size=1) as stream:
@@ -587,12 +602,12 @@ def test_a_participating_stream_under_a_quarantined_root_opens_no_scope_of_its_o
 
     assert _connected(port, ACCOUNT, provider).transact(fn) == [1]
     assert [type(event).__name__ for event in handler.seen] == ["TransactionInvocationStarted"]
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, ReadCall, CommitCall]
+    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
 def test_an_unobserved_stream_delivers_its_roots_and_publishes_nothing() -> None:
     # The default path runs the same code an observed one runs, and the whole of
     # what it must not do is observable here as nothing at all being opened.
-    port = ScriptedPort(Read(rows=[_account_row(1)]), Read(rows=[]))
+    port = ScriptedPort(Read(rows=[_account_row(1)]))
     with account_db(port).stream(mm.Account.where(mm.Account.id >= 1), batch_size=1) as stream:
         assert [account.id for account in stream] == [1]

@@ -39,6 +39,7 @@ from _support.db_port import (
     Transact,
     Write,
     WriteCall,
+    paged_reads,
 )
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import POSITION_MODEL, Position
@@ -131,7 +132,11 @@ def test_a_write_buffered_mid_delivery_reaches_the_database_before_the_next_page
     # observe it runs after it. A flush once at entry would leave the rule
     # holding only when the loop happened to call `find` as well.
     port = ScriptedPort(
-        Transact(Read(rows=[_account_row(1)]), Write(), Read(rows=[_account_row(2)]), Read(rows=[]))
+        Transact(
+            Read(rows=[_account_row(1), _account_row(2)]),
+            Write(),
+            Read(rows=[_account_row(2)]),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -141,7 +146,7 @@ def test_a_write_buffered_mid_delivery_reaches_the_database_before_the_next_page
                     tx.update(account.edit(balance=Decimal("125.00")))
 
     account_db(port).transact(fn)
-    assert _kinds(port) == [BeginCall, ReadCall, WriteCall, ReadCall, ReadCall, CommitCall]
+    assert _kinds(port) == [BeginCall, ReadCall, WriteCall, ReadCall, CommitCall]
     assert port.calls[2] == WriteCall(_UPDATE_SQL, (Decimal("125.00"), 2, 1, 1))
 
 
@@ -149,7 +154,7 @@ def test_a_read_only_delivery_emits_no_dml_at_all() -> None:
     # An empty buffer is one truthiness check, so a loop that writes nothing pays
     # nothing for the per-page flush — no DML, and no Write Batch to open.
     port = ScriptedPort(
-        Transact(Read(rows=[_account_row(1), _account_row(2)]), Read(rows=[_account_row(3)]))
+        Transact(*paged_reads([_account_row(index) for index in (1, 2, 3)], size=2))
     )
 
     def fn(tx: Transaction) -> list[int]:
@@ -166,11 +171,13 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
     # what a loop accumulates is a page's worth, whatever the result's size, so
     # the same dial that sizes a page sizes the buffer.
     rows = [_account_row(account_id) for account_id in range(1, 7)]
-    pages = [rows[at : at + size] for at in range(0, len(rows), size)]
     port = ScriptedPort(
         Transact(
-            *(entry for page in pages for entry in (Read(rows=page), Write(times=len(page)))),
-            Read(),
+            *(
+                entry
+                for read in paged_reads(rows, size=size)
+                for entry in (read, Write(times=min(len(read.rows), size)))
+            )
         )
     )
     held: list[int] = []
@@ -196,7 +203,6 @@ def test_a_streamed_page_locks_the_unversioned_level_and_not_the_versioned_root(
         Transact(
             Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
             Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
-            Read(rows=[]),
         )
     )
 
@@ -206,7 +212,7 @@ def test_a_streamed_page_locks_the_unversioned_level_and_not_the_versioned_root(
             list(stream)
 
     db_for(mx.MIXED_STRATEGY_MODEL, port).transact(fn)
-    assert _kinds(port) == [BeginCall, ReadCall, ReadCall, ReadCall, CommitCall]
+    assert _kinds(port) == [BeginCall, ReadCall, ReadCall, CommitCall]
     assert not _sql(port, 1).endswith("for share of t0")
     assert _sql(port, 2).endswith("for share of t0")
 
@@ -218,7 +224,6 @@ def test_the_locking_preference_locks_every_level_of_a_streamed_page() -> None:
         Transact(
             Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
             Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
-            Read(rows=[]),
         )
     )
 
@@ -239,7 +244,7 @@ def test_a_streamed_roots_own_observation_licenses_a_later_keyed_write() -> None
     # The write is settled against the version the DELIVERY observed rather than
     # against a resolving read at write time: the gate binds 1 and the advance
     # writes 2, both derived from the root the stream published.
-    port = ScriptedPort(Transact(Read(rows=[_account_row(1)]), Read(rows=[]), Write()))
+    port = ScriptedPort(Transact(Read(rows=[_account_row(1)]), Write()))
 
     def fn(tx: Transaction) -> None:
         with tx.stream(_accounts(), batch_size=1) as stream:
@@ -293,9 +298,7 @@ def test_releasing_every_streamed_source_makes_the_transactions_index_forget_it(
     # The converse, and the reason the page is not a retention scope either: the
     # unit of work holds a WEAK index, so an observed state no delivered value
     # still reaches disappears from it with the last reference to that value.
-    port = ScriptedPort(
-        Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW]), Read(rows=[]))
-    )
+    port = ScriptedPort(Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])))
 
     def fn(tx: Transaction) -> tuple[ObservedStateKey, RetainedObservation | None]:
         with tx.stream(_POLICY_QUERY, batch_size=1) as stream:
@@ -320,13 +323,10 @@ def test_a_retried_callback_opens_a_fresh_stream_and_observes_the_roots_again() 
     # until commit, so the re-executed callback starts from the beginning. The
     # stream it opens is a new one: the previous attempt's is closed with its
     # scope and answers nothing further.
+    rows = [_account_row(index) for index in (1, 2, 3)]
     port = ScriptedPort(
-        Transact(
-            Read(rows=[_account_row(1), _account_row(2)]),
-            Read(rows=[_account_row(3)]),
-            commit=deadlock(),
-        ),
-        Transact(Read(rows=[_account_row(1), _account_row(2)]), Read(rows=[_account_row(3)])),
+        Transact(*paged_reads(rows, size=2), commit=deadlock()),
+        Transact(*paged_reads(rows, size=2)),
     )
     attempts: list[list[int]] = []
     opened: list[SnapshotStream[Any]] = []

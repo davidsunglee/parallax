@@ -31,11 +31,12 @@ from .conftest import ScriptedReads
 CaseLoader = Callable[[str], Case]
 
 _DEEP_FETCH = "m-snapshot-read-027-streamed-deep-fetch.yaml"
-_TERMINAL_PAGE = "m-snapshot-read-028-stream-empty-terminal-page.yaml"
+_EXACT_MULTIPLE = "m-snapshot-read-028-stream-exact-multiple-page.yaml"
 _BATCH_TWIN_2 = "m-snapshot-read-029-page-invariance-batch-size-twin-2.yaml"
 _BATCH_TWIN_3 = "m-snapshot-read-030-page-invariance-batch-size-twin-3.yaml"
 _MIXED_DIRECTIONS = "m-snapshot-read-031-stream-order-mixed-directions.yaml"
 _NULLABLE_PLACEMENT = "m-snapshot-read-032-stream-order-nullable-placement.yaml"
+_NULLS_FIRST = "m-snapshot-read-046-stream-order-nulls-first-coordinate.yaml"
 _MULTI_TERM_SEEK = "m-snapshot-read-033-stream-order-multi-term-seek.yaml"
 _DOCUMENT_RESIDENT = "m-snapshot-read-035-stream-order-document-resident.yaml"
 _HISTORY_BOUNDARY = "m-snapshot-read-036-stream-history-page-boundary.yaml"
@@ -248,9 +249,14 @@ def _statements(case: Case) -> list[dict[str, Any]]:
 
 
 def _deep_fetch_script() -> list[list[dict[str, Any]]]:
-    """`m-snapshot-read-027`: two pages of a two-level deep fetch, plus its oracle."""
+    """`m-snapshot-read-027`: two pages of a two-level deep fetch, plus its oracle.
+
+    Every page's root statement answers its batch plus the LOOKAHEAD root the page
+    reads and discards, which is the first root of the page after it — so order 42
+    is returned twice and deep-fetched once.
+    """
     return [
-        _rows(_ORDERS, 1, 2),
+        _rows(_ORDERS, 1, 2, 42),
         _rows(_ITEMS, 21, 12, 11),
         _rows(_STATUSES, 202, 201, 203),
         _rows(_ORDERS, 42),
@@ -260,50 +266,46 @@ def _deep_fetch_script() -> list[list[dict[str, Any]]]:
     ]
 
 
-def _terminal_page_script() -> list[list[dict[str, Any]]]:
-    """`m-snapshot-read-028`: two full pages, then the empty one exhaustion costs."""
+def _exact_multiple_script() -> list[list[dict[str, Any]]]:
+    """`m-snapshot-read-028`: two pages over four roots, the second proving exhaustion."""
     return [
-        _rows(_ORDERS, 1, 2),
+        _rows(_ORDERS, 1, 2, 3),
         _rows(_ITEMS, 21, 12, 11),
         _rows(_ORDERS, 3, 42),
         _rows(_ITEMS, 422, 421),
-        [],
         _rows(_ORDERS, 1, 2, 3, 42),
     ]
 
 
 def _multi_term_script() -> list[list[dict[str, Any]]]:
-    """`m-snapshot-read-033`: three full pages under a two-term order, then empty."""
+    """`m-snapshot-read-033`: three pages under a two-term order, the last one short."""
     return [
-        _rows(_ORDERS, 5, 3),
+        _rows(_ORDERS, 5, 3, 42),
         [],
-        _rows(_ORDERS, 42, 4),
+        _rows(_ORDERS, 42, 4, 2),
         _rows(_ITEMS, 422, 421),
         _rows(_ORDERS, 2, 1),
         _rows(_ITEMS, 21, 12, 11),
-        [],
         _rows(_ORDERS, 5, 3, 42, 4, 2, 1),
     ]
 
 
 def _nullable_script() -> list[list[dict[str, Any]]]:
-    """`m-snapshot-read-032`: a nullable Sort Key delivered nulls-last, then empty."""
+    """`m-snapshot-read-032`: a nullable Sort Key delivered nulls-last."""
     return [
-        _rows(_ORDERS, 1, 3),
-        _rows(_ORDERS, 42, 2),
+        _rows(_ORDERS, 1, 3, 42),
+        _rows(_ORDERS, 42, 2, 5),
         _rows(_ORDERS, 5, 4),
-        [],
         _rows(_ORDERS, 1, 2, 3, 4, 5, 42),
     ]
 
 
 def _mixed_directions_script() -> list[list[dict[str, Any]]]:
-    """`m-snapshot-read-031`: `active desc, qty asc` over three full pages."""
+    """`m-snapshot-read-031`: `active desc, qty asc` over three pages."""
     return [
-        _rows(_ORDERS, 1, 2),
-        _rows(_ORDERS, 4, 42),
+        _rows(_ORDERS, 1, 2, 4),
+        _rows(_ORDERS, 4, 42, 3),
         _rows(_ORDERS, 3, 5),
-        [],
         _rows(_ORDERS, 1, 2, 3, 4, 5, 42),
     ]
 
@@ -311,10 +313,9 @@ def _mixed_directions_script() -> list[list[dict[str, Any]]]:
 def _resident_script() -> list[list[dict[str, Any]]]:
     """`m-snapshot-read-035`: one root per page under two document-resident terms."""
     return [
-        _rows(_TRIPS, 51),
-        _rows(_TRIPS, 53),
+        _rows(_TRIPS, 51, 53),
+        _rows(_TRIPS, 53, 52),
         _rows(_TRIPS, 52),
-        [],
         [dict(row) for row in _TRIP_REFERENCE],
     ]
 
@@ -342,12 +343,22 @@ def _typed_coordinate_script(member: str, value: object) -> list[list[dict[str, 
         "f32": 1.5,
         "f64": 2.25,
     }
-    return [[{"id": 101, "coordinates": document}], [], [reference]]
+    twin = {**reference, "id": 103}
+    return [
+        [{"id": 101, "coordinates": document}, {"id": 103, "coordinates": document}],
+        [{"id": 103, "coordinates": document}],
+        [reference, twin],
+    ]
 
 
 def _history_script() -> list[list[dict[str, Any]]]:
-    """`m-snapshot-read-036`: one milestone per page, then the empty terminal page."""
-    return [[_LINES[0]], [_LINES[1]], [_LINES[2]], [], [dict(row) for row in _LINES]]
+    """`m-snapshot-read-036`: one milestone delivered per page, two read."""
+    return [
+        [_LINES[0], _LINES[1]],
+        [_LINES[1], _LINES[2]],
+        [_LINES[2]],
+        [dict(row) for row in _LINES],
+    ]
 
 
 def test_a_delivery_whose_pages_return_the_authored_roots_passes(corpus_case: CaseLoader) -> None:
@@ -375,22 +386,24 @@ def test_each_pages_child_levels_are_consumed_before_the_next_pages_root(
 
     statements = case.golden_statements("postgres")
     assert reads.statements[3] == statements[3]
-    assert reads.calls[3][1] == (1, 2, 42, 2, 2)
+    assert reads.calls[3][1] == (1, 2, 42, 2, 3)
 
 
-def test_a_full_final_page_costs_one_more_root_statement(corpus_case: CaseLoader) -> None:
-    """Exhaustion is proven, not assumed: the terminal page returns no roots at all.
+def test_a_result_filling_its_final_page_exactly_costs_no_terminal_statement(
+    corpus_case: CaseLoader,
+) -> None:
+    """Exhaustion is proven, not assumed, and the proof rides on the page itself.
 
-    Its Include level is elided with it — a level whose parents gathered no keys
-    consumes nothing — so the empty page's group is one statement wide.
+    Four roots at a page size of two is two pages, not two pages and an empty
+    third: the second asks for three and gets two, which proves no root follows.
     """
-    case = corpus_case(_TERMINAL_PAGE)
-    reads = ScriptedReads(results=_terminal_page_script())
+    case = corpus_case(_EXACT_MULTIPLE)
+    reads = ScriptedReads(results=_exact_multiple_script())
 
     assert_case_read(case, reads)
 
-    assert len(reads.calls) == 6
-    assert reads.calls[4][1] == (1, 2, 3, 42, 42, 2)
+    assert len(reads.calls) == 5
+    assert reads.calls[2][1] == (1, 2, 3, 42, 2, 3)
 
 
 def test_the_same_delivery_at_two_batch_sizes_publishes_the_same_roots(
@@ -400,27 +413,26 @@ def test_the_same_delivery_at_two_batch_sizes_publishes_the_same_roots(
 
     The batch-size twins share one model, one Object Query, and one ``then.graph``;
     only the partition differs, so the same four roots are graded against the same
-    claim over three page statements and over two.
+    claim over two pages of two and over two pages of three and one.
     """
     at_two = corpus_case(_BATCH_TWIN_2)
     at_three = corpus_case(_BATCH_TWIN_3)
     two_pages = ScriptedReads(
         results=[
-            _rows(_ORDERS, 1, 2),
+            _rows(_ORDERS, 1, 2, 3),
             _rows(_ORDERS, 3, 42),
-            [],
             _rows(_ORDERS, 1, 2, 3, 42),
         ]
     )
     three_pages = ScriptedReads(
-        results=[_rows(_ORDERS, 1, 2, 3), _rows(_ORDERS, 42), _rows(_ORDERS, 1, 2, 3, 42)]
+        results=[_rows(_ORDERS, 1, 2, 3, 42), _rows(_ORDERS, 42), _rows(_ORDERS, 1, 2, 3, 42)]
     )
 
     assert_case_read(at_two, two_pages)
     assert_case_read(at_three, three_pages)
 
     assert at_two.expected_graph == at_three.expected_graph
-    assert len(two_pages.calls) == 4
+    assert len(two_pages.calls) == 3
     assert len(three_pages.calls) == 3
 
 
@@ -429,7 +441,7 @@ def test_a_short_page_ends_the_delivery_without_a_terminal_statement(
 ) -> None:
     case = corpus_case(_BATCH_TWIN_3)
     reads = ScriptedReads(
-        results=[_rows(_ORDERS, 1, 2, 3), _rows(_ORDERS, 42), _rows(_ORDERS, 1, 2, 3, 42)]
+        results=[_rows(_ORDERS, 1, 2, 3, 42), _rows(_ORDERS, 42), _rows(_ORDERS, 1, 2, 3, 42)]
     )
 
     assert_case_read(case, reads)
@@ -437,20 +449,39 @@ def test_a_short_page_ends_the_delivery_without_a_terminal_statement(
     assert len(case.golden_statements("postgres")) == 2
 
 
-def test_a_nullable_sort_key_seeks_a_null_coordinate_through_a_null_test(
+def test_a_nullable_sort_key_ends_its_delivery_on_the_null_root_it_places_last(
     corpus_case: CaseLoader,
 ) -> None:
-    """Under Nulls Last a null coordinate ties through `is null` and compares nowhere.
+    """Under Nulls Last nothing follows a null coordinate, so nothing seeks past one.
 
-    The last page seeks past a root whose `sku` is null, so its seek is the single
-    branch the primary key contributes and it binds one coordinate, not three.
+    The page delivering the null-`sku` root asks for a lookahead root that cannot
+    exist and comes back short, so every seek this delivery spells binds a
+    non-null coordinate and the null root ends it.
     """
     case = corpus_case(_NULLABLE_PLACEMENT)
     reads = ScriptedReads(results=_nullable_script())
 
     assert_case_read(case, reads)
 
-    assert reads.calls[3][1] == (4, 2)
+    assert len(reads.calls) == 4
+    assert reads.calls[2][1] == ("B-200", "B-200", 2, 3)
+
+
+def test_a_nulls_first_sort_key_seeks_a_null_coordinate_through_a_negated_null_test(
+    corpus_case: CaseLoader,
+) -> None:
+    """Nulls First puts the null root FIRST, so the branch after it is emitted.
+
+    Its leading branch is the negation of the tie leaf below it rather than a
+    comparison, and it binds one coordinate — the key's — because no value
+    compares after a null.
+    """
+    case = corpus_case(_NULLS_FIRST)
+    reads = ScriptedReads(results=[_rows(_ORDERS, 4, 1), _rows(_ORDERS, 1), _rows(_ORDERS, 1, 4)])
+
+    assert_case_read(case, reads)
+
+    assert reads.calls[1][1] == (1, 4, 4, 2)
 
 
 def test_a_multi_term_order_binds_a_coordinate_at_every_tie_depth(
@@ -461,17 +492,17 @@ def test_a_multi_term_order_binds_a_coordinate_at_every_tie_depth(
 
     assert_case_read(case, reads)
 
-    assert reads.calls[1][1] == (True, True, True, 10, True, 10, 2, 2)
+    assert reads.calls[1][1] == (True, True, True, 10, True, 10, 2, 3)
 
 
 def test_a_page_returning_more_roots_than_it_asked_for_is_refused(
     corpus_case: CaseLoader,
 ) -> None:
-    """The page size bounds the root positions a page delivers, whatever it returned."""
-    case = corpus_case(_BATCH_TWIN_3)
+    """A page's own `limit` bounds what its statement may answer, lookahead included."""
+    case = corpus_case(_BATCH_TWIN_2)
     reads = ScriptedReads(results=[_rows(_ORDERS, 1, 2, 3, 42)])
 
-    with pytest.raises(CaseFailure, match="A page size bounds the root positions"):
+    with pytest.raises(CaseFailure, match="bounds what its statement may answer"):
         assert_case_read(case, reads)
 
 
@@ -546,7 +577,7 @@ def test_a_milestone_set_delivery_pins_each_root_at_its_own_edge(
         1000,
         1000,
         "2024-04-01T00:00:00.000000Z",
-        1,
+        2,
     )
 
 
@@ -564,27 +595,29 @@ def test_a_page_seeking_from_the_wrong_root_is_refused(damaged_case: CaseLoader)
 
 
 def test_a_page_asking_for_the_wrong_size_is_refused(damaged_case: CaseLoader) -> None:
-    """The requested size is `batchSize`, not whatever the golden happens to bind."""
+    """The requested size is `batchSize` plus one, not whatever the golden binds."""
     case = damaged_case(_DEEP_FETCH)
-    _statements(case)[0]["binds"][-1] = 3
+    _statements(case)[0]["binds"][-1] = 2
     reads = ScriptedReads(results=_deep_fetch_script())
 
     with pytest.raises(CaseFailure, match="the size it is asking for"):
         assert_case_read(case, reads)
 
 
-def test_a_delivery_ending_on_a_full_page_is_refused(damaged_case: CaseLoader) -> None:
-    """A full final page proves nothing, so dropping the terminal statement fails."""
-    case = damaged_case(_TERMINAL_PAGE)
-    del _statements(case)[4]
-    reads = ScriptedReads(results=_terminal_page_script()[:4])
+def test_a_delivery_ending_on_a_page_that_read_its_lookahead_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    """A page returning every root it asked for proves another page follows."""
+    case = damaged_case(_EXACT_MULTIPLE)
+    del _statements(case)[2:]
+    reads = ScriptedReads(results=_exact_multiple_script()[:2])
 
     with pytest.raises(CaseFailure, match="the delivery is not exhausted"):
         assert_case_read(case, reads)
 
 
 def test_a_statement_after_the_delivery_ended_is_refused(damaged_case: CaseLoader) -> None:
-    """A stream stops at its first short page, so nothing may follow it."""
+    """A stream stops at its first page short of what it asked for."""
     case = damaged_case(_DEEP_FETCH)
     entries = _statements(case)
     entries.append(copy.deepcopy(entries[3]))
@@ -690,19 +723,17 @@ def test_a_page_seeking_the_wrong_WAY_past_the_right_coordinates_is_refused(
 ) -> None:
     """A page's binds carry its coordinates and never the direction it compares them in.
 
-    The damaged page is the terminal one, whose coordinates are null where no
-    other page's are, so no sibling page constrains its text; its binds are
-    untouched and correct; and it still returns nothing, the one root it could
-    have reached having been delivered already. Every other oracle here passes.
-    What refuses it is that the Continuation Order composes the comparator, and
-    an ascending term is never sought backwards.
+    The damaged page is the one continuing from a NULL coordinate, whose text no
+    sibling page constrains, and its binds are untouched and correct. Every other
+    oracle here passes. What refuses it is that the Continuation Order composes
+    the comparator, and an ascending term is never sought backwards.
     """
-    case = damaged_case(_NULLABLE_PLACEMENT)
-    entry = _statements(case)[3]
+    case = damaged_case(_NULLS_FIRST)
+    entry = _statements(case)[1]
     entry["sql"] = {
         dialect: sql.replace("t0.id > ?", "t0.id < ?") for dialect, sql in entry["sql"].items()
     }
-    reads = ScriptedReads(results=_nullable_script())
+    reads = ScriptedReads(results=[_rows(_ORDERS, 4, 1), _rows(_ORDERS, 1), _rows(_ORDERS, 1, 4)])
 
     with pytest.raises(CaseFailure, match="seeks .*, not "):
         assert_case_read(case, reads)
@@ -720,7 +751,7 @@ def test_continuing_pages_drifting_outside_their_seek_are_refused(
     reorder themselves is not one read paged.
     """
     case = damaged_case(_MULTI_TERM_SEEK)
-    for index in (2, 4, 6):
+    for index in (2, 4):
         entry = _statements(case)[index]
         entry["sql"] = {
             dialect: sql.replace(
@@ -739,17 +770,17 @@ def test_a_continuing_page_negating_its_seek_is_refused(damaged_case: CaseLoader
 
     The damaged page mentions exactly the comparisons and null checks its own
     coordinates compose, in exactly their order, and binds exactly what a correct
-    page binds. It is the terminal one, whose null coordinate no sibling page's
-    text constrains, and it still returns nothing. Only the Boolean shape is
-    different, and a Continuation Order composes no negation at any depth.
+    page binds. It is the one continuing from a NULL coordinate, whose text no
+    sibling page constrains. Only the Boolean shape is different, and a
+    Continuation Order composes no negation at any depth.
     """
-    case = damaged_case(_NULLABLE_PLACEMENT)
-    entry = _statements(case)[3]
+    case = damaged_case(_NULLS_FIRST)
+    entry = _statements(case)[1]
     entry["sql"] = {
         dialect: sql.replace("t0.id > ?", "not not t0.id > ?")
         for dialect, sql in entry["sql"].items()
     }
-    reads = ScriptedReads(results=_nullable_script())
+    reads = ScriptedReads(results=[_rows(_ORDERS, 4, 1), _rows(_ORDERS, 1), _rows(_ORDERS, 1, 4)])
 
     with pytest.raises(CaseFailure, match="seeks .*, not "):
         assert_case_read(case, reads)
@@ -757,72 +788,28 @@ def test_a_continuing_page_negating_its_seek_is_refused(damaged_case: CaseLoader
 
 # --- the two spellings of a negated null test --------------------------------
 
-# Under Nulls First what follows a null coordinate is the non-nulls, which the
-# seek spells as a negated null test — the one leaf a page may write two ways.
-# No shipped case authors Nulls First, so the delivery below is authored here: a
-# nullable `sku` ordered nulls-first at `batchSize: 1`, delivering the null root
-# and then one non-null one.
-_NULLS_FIRST_BASE = (
-    "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
-    "t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0"
-)
-_NULLS_FIRST_TAIL = " order by t0.sku asc nulls first, t0.id asc limit ?"
 
+def _nulls_first_spelled(case: Case, non_nulls: str) -> Case:
+    """*case* with its continuing page's negated null test spelled as given.
 
-# The appended `id asc` is non-nullable, so its branch admits NULLs wherever the
-# EMITTED clause placed them, which is each dialect's own convention: Postgres
-# trails them on `asc` and MariaDB leads them. The two spellings therefore differ
-# on that leaf alone, over a column that holds no NULL.
-_KEY_AFTER = {"postgres": "(t0.id > ? or t0.id is null)", "mariadb": "t0.id > ?"}
-
-
-def _nulls_first_case(case: Case, non_nulls: str) -> Case:
-    """*case* re-authored as a Nulls First delivery, its second page spelled as given."""
-    case.when["objectQuery"]["orderBy"] = [
-        {"attr": "parallax.compatibility.Order.sku", "nulls": "first"}
-    ]
-    case.when["stream"]["batchSize"] = 1
-    pages = [
-        {dialect: f"{_NULLS_FIRST_BASE}{_NULLS_FIRST_TAIL}" for dialect in _KEY_AFTER},
-        {
-            dialect: f"{_NULLS_FIRST_BASE} where ({non_nulls} or (t0.sku is null and {key}))"
-            f"{_NULLS_FIRST_TAIL}"
-            for dialect, key in _KEY_AFTER.items()
-        },
-        {
-            dialect: f"{_NULLS_FIRST_BASE} where (t0.sku > ? or (t0.sku = ? and {key}))"
-            f"{_NULLS_FIRST_TAIL}"
-            for dialect, key in _KEY_AFTER.items()
-        },
-    ]
-    binds: list[list[Any]] = [[1], [4, 1], ["A-100", "A-100", 1, 1]]
-    case.then["statements"] = [
-        {"sql": sql, "binds": bound} for sql, bound in zip(pages, binds, strict=True)
-    ]
-    case.then["graph"] = {
-        "Order": [
-            {
-                "id": 4,
-                "name": "Margaret",
-                "sku": None,
-                "qty": 20,
-                "price": "40.00",
-                "active": True,
-                "orderedOn": "2024-04-20",
-            },
-            {
-                "id": 1,
-                "name": "Ada",
-                "sku": "A-100",
-                "qty": 5,
-                "price": "10.50",
-                "active": True,
-                "orderedOn": "2024-01-05",
-            },
-        ]
+    The shipped case carries each dialect's own canonical form of that one leaf —
+    MariaDB reads ``x is not null`` as ``not x is null`` — so both are replaced
+    and only the one its dialect authored is present to replace.
+    """
+    entry = _statements(case)[1]
+    entry["sql"] = {
+        dialect: sql.replace("t0.sku is not null", non_nulls).replace(
+            "not t0.sku is null or", f"{non_nulls} or"
+        )
+        for dialect, sql in entry["sql"].items()
     }
-    del case.then["referenceSql"]
     return case
+
+
+def _nulls_first_reads(dialect: str) -> ScriptedReads:
+    return ScriptedReads(
+        dialect, results=[_rows(_ORDERS, 4, 1), _rows(_ORDERS, 1), _rows(_ORDERS, 1, 4)]
+    )
 
 
 @pytest.mark.parametrize("spelling", ["t0.sku is not null", "not t0.sku is null"])
@@ -837,10 +824,9 @@ def test_either_production_spelling_of_a_negated_null_check_is_accepted(
     order composes, so a seek graded as an expression must accept either on
     either dialect.
     """
-    case = _nulls_first_case(damaged_case(_NULLABLE_PLACEMENT), spelling)
-    reads = ScriptedReads(dialect, results=[_rows(_ORDERS, 4), _rows(_ORDERS, 1), []])
+    case = _nulls_first_spelled(damaged_case(_NULLS_FIRST), spelling)
 
-    assert_case_read(case, reads)
+    assert_case_read(case, _nulls_first_reads(dialect))
 
 
 @pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
@@ -855,11 +841,10 @@ def test_a_DOUBLY_negated_null_check_is_refused_on_either_dialect(
     different trees for it, so folding the pair away rather than one negation
     would make the same text's verdict depend on which parser read it.
     """
-    case = _nulls_first_case(damaged_case(_NULLABLE_PLACEMENT), "not t0.sku is not null")
-    reads = ScriptedReads(dialect, results=[_rows(_ORDERS, 4), _rows(_ORDERS, 1), []])
+    case = _nulls_first_spelled(damaged_case(_NULLS_FIRST), "not t0.sku is not null")
 
     with pytest.raises(CaseFailure, match="seeks .*, not "):
-        assert_case_read(case, reads)
+        assert_case_read(case, _nulls_first_reads(dialect))
 
 
 # --- a document-resident Continuation Order ----------------------------------
@@ -1069,7 +1054,7 @@ def test_a_milestone_page_continuing_from_another_milestone_is_refused(
     case = damaged_case(_MILESTONE_EDGE_PINS)
     binds = _statements(case)[2]["binds"]
     binds[7] = _statements(case)[1]["binds"][7]
-    reads = ScriptedReads(results=[[_POSITIONS[0]], [_POSITIONS[1]]])
+    reads = ScriptedReads(results=[[_POSITIONS[0], _POSITIONS[1]], [_POSITIONS[1], _POSITIONS[2]]])
 
     with pytest.raises(CaseFailure, match="Continuation Order coordinate"):
         assert_case_read(case, reads)
@@ -1100,7 +1085,7 @@ def test_a_streamed_milestone_graph_claiming_the_wrong_root_is_refused(
 def test_a_driver_exception_from_a_page_propagates_unchanged(corpus_case: CaseLoader) -> None:
     case = corpus_case(_BATCH_TWIN_3)
     boom = RuntimeError("connection reset")
-    reads = ScriptedReads(results=[_rows(_ORDERS, 1, 2, 3), boom])
+    reads = ScriptedReads(results=[_rows(_ORDERS, 1, 2, 3, 42), boom])
 
     with pytest.raises(RuntimeError, match="connection reset"):
         assert_case_read(case, reads)

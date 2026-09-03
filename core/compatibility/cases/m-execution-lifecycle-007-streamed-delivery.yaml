@@ -25,9 +25,10 @@
 # the same six stream and batch events three roots and two pages would emit at
 # any result size, plus the two Database Call pairs each page owes.
 #
-# The stream finishes `exhausted` at the moment exhaustion was discovered: page 2
-# asked for two roots and got one, which proves no more exist without the extra
-# root statement a full final page would cost (m-snapshot-read). Every Database
+# The stream finishes `exhausted` at the moment exhaustion was discovered: each
+# page asks for one root MORE than its batch, so page 2 asked for three and got
+# one, which proves no more exist without a further root statement
+# (m-snapshot-read). Every Database
 # Call names its statement by INDEX into the same flat `then.statements` list a
 # streamed case already authors page by page, so the emission order and the
 # delivery agree here or the case fails.
@@ -58,7 +59,7 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) order by t0.id asc limit ?
-      binds: [1, 2, 3, 2]
+      binds: [1, 2, 3, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?) order by t0.id desc
@@ -66,7 +67,7 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and (t0.id > ? or t0.id is null) order by t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.id parallax_seek_0 from orders t0 where t0.id in (?, ?, ?) and t0.id > ? order by t0.id asc limit ?
-      binds: [1, 2, 3, 2, 2]
+      binds: [1, 2, 3, 2, 3]
     - sql:
         postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
         mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?) order by t0.id desc
@@ -128,7 +129,7 @@ then:
           - sequence: 4
             activity: 3
             parent: 2
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 2 }
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 3 }
           - sequence: 5
             activity: 4
             parent: 2

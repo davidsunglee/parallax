@@ -25,6 +25,7 @@ from parallax.core.unit_work import ObjectKey
 from parallax.snapshot.materialize._graph import StoredDataIssueCode
 
 __all__ = [
+    "EXCEPTION_MACHINERY",
     "MISSING_STORED_VALUE",
     "InvalidData",
     "InvalidDataError",
@@ -195,9 +196,16 @@ class InvalidData[T]:
     ordinal: int
 
 
-_EXCEPTION_MACHINERY: Final[frozenset[str]] = frozenset(
+EXCEPTION_MACHINERY: Final[frozenset[str]] = frozenset(
     {"__cause__", "__context__", "__notes__", "__suppress_context__", "__traceback__"}
 )
+"""The attributes of an exception the INTERPRETER owns rather than its author.
+
+An exception frozen by hand leaves exactly these writable, so chaining,
+tracebacks, and notes behave as they do on any exception. Shared by every
+hand-frozen refusal in this package, because which names those are is a fact
+about Python rather than about any one of them.
+"""
 
 
 class InvalidDataError(RuntimeError):
@@ -232,12 +240,12 @@ class InvalidDataError(RuntimeError):
         object.__setattr__(self, "_invalid_data", records)
 
     def __setattr__(self, name: str, value: object) -> None:
-        if name not in _EXCEPTION_MACHINERY:
+        if name not in EXCEPTION_MACHINERY:
             raise AttributeError(f"InvalidDataError is frozen; cannot assign {name!r}")
         super().__setattr__(name, value)
 
     def __delattr__(self, name: str) -> None:
-        if name not in _EXCEPTION_MACHINERY:
+        if name not in EXCEPTION_MACHINERY:
             raise AttributeError(f"InvalidDataError is frozen; cannot delete {name!r}")
         super().__delattr__(name)
 

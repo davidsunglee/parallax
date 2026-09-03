@@ -1,4 +1,11 @@
 # Canonical authored literals for the streamed-coordinate compatibility model.
+#
+# Rows 101 and 103 hold the SAME value in every coordinate member and differ by
+# their primary key alone, so a read filtering on one of those members matches
+# both: a page delivering the first has a second to continue to, and the seek it
+# continues through is the one whose leading term TIES and whose key breaks it.
+# Row 102 differs everywhere, so nothing about it is reachable through a filter
+# on 101's values.
 parallax.compatibility.StreamCoordinate:
   - id: 101
     day: "2026-01-15"
@@ -18,3 +25,12 @@ parallax.compatibility.StreamCoordinate:
     instant: "2026-02-01T10:45:00.000000Z"
     f32: 2.5
     f64: 9.75
+  - id: 103
+    day: "2026-01-15"
+    clock: "09:30:00"
+    amount: "10.25"
+    payload: "0a1b"
+    token: "00000000-0000-4000-8000-0000000000ab"
+    instant: "2026-01-15T09:30:00.000000Z"
+    f32: 1.5
+    f64: 2.25

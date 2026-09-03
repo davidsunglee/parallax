@@ -1600,6 +1600,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-snapshot-read-043": _STREAMED_DELIVERY_REASON,
     "m-snapshot-read-044": _STREAMED_DELIVERY_REASON,
     "m-snapshot-read-045": _STREAMED_DELIVERY_REASON,
+    "m-snapshot-read-046": _STREAMED_DELIVERY_REASON,
     # -- m-value-object: predicate-read representative siblings ------------- #
     "m-value-object-004": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-005": _VO_PREDICATE_SIBLING_REASON,

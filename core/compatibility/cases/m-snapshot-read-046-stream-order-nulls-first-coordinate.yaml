@@ -1,0 +1,74 @@
+# A page seeks past a NULL coordinate through a NEGATED null test, which is what
+# Nulls First makes reachable (m-snapshot-read *Streamed delivery* x m-sql
+# *Continuation coordinates*).
+#
+# Under the canonical Nulls Last placement a null-coordinate root sorts LAST, so
+# no page ever continues from one: nothing follows it, the page delivering it
+# comes back short of the lookahead root it asked for, and the delivery ends
+# there (m-snapshot-read-032 is that shape). Nulls First inverts exactly that —
+# the null root leads, and the page delivering it has a whole result still to
+# come — so the seek's "after a null coordinate" branch is emitted and executed
+# here and nowhere else in the corpus.
+#
+# Orders {1, 4} at `batchSize: 1`, ordered `sku asc nulls first`: order 4 has no
+# sku and leads, order 1 follows at A-100. Page 2 seeks past (null, 4) and its
+# leading branch is `t0.sku is not null` — the negation of the tie leaf below it
+# — rather than a comparison, because no value compares after a null and every
+# non-null row is what follows one. The branch beneath it ties on `t0.sku is
+# null` and parts on the appended key. The two dialects spell that leading leaf
+# differently, which is a canonicalization fact rather than a semantic one:
+# MariaDB reads `x is not null` as `not x is null` while Postgres keeps the two
+# apart, so each golden carries its own dialect's canonical form of one
+# expression.
+#
+# The dialect that compensates is the mirror of the default's: Postgres treats
+# NULL as largest and must spell `asc nulls first`, while MariaDB treats it as
+# smallest and emits the plain term (m-dialect). The seek reads the placement
+# back off what it emitted, so `sku` — nullable, and therefore carrying the
+# AUTHORED placement on both — spells the same two branches either way, while the
+# appended `id asc` is non-nullable and takes each dialect's OWN placement:
+# Postgres trails NULLs on `asc` and admits them in the key's branch, MariaDB
+# leads them and does not. Neither column holds one, so both dialects reach the
+# same two roots.
+#
+# `sku` is nullable, so no continuing page hoists a leading range — under either
+# placement "after" spans two disjoint ranges of the index and no single
+# comparison covers both.
+model: models/orders.yaml
+tags: [m-snapshot-read, m-object-query, m-dialect, stream, streamed-delivery, orderBy, ordering, nulls, nullable, graph, materialization, slice-snapshot-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed read's keyset seek - the continuing root statement binds the Continuation Order coordinates of the root the previous page delivered last, so the emissions depend on a query result even though the read declares no includes"
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      in:
+        attr: parallax.compatibility.Order.id
+        values:
+          - 1
+          - 4
+    orderBy:
+      - attr: parallax.compatibility.Order.sku
+        direction: asc
+        nulls: first
+  stream:
+    batchSize: 1
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id in (?, ?) order by t0.sku asc nulls first, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id in (?, ?) order by t0.sku asc, t0.id asc limit ?
+      binds: [1, 4, 2]
+    - sql:
+        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id in (?, ?) and (t0.sku is not null or (t0.sku is null and (t0.id > ? or t0.id is null))) order by t0.sku asc nulls first, t0.id asc limit ?
+        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where t0.id in (?, ?) and (not t0.sku is null or (t0.sku is null and t0.id > ?)) order by t0.sku asc, t0.id asc limit ?
+      binds: [1, 4, 4, 2]
+  referenceSql: select id, name, sku, qty, price, active, ordered_on from orders where id in (1, 4)
+  graph:
+    Order:
+      - { id: 4, name: Margaret, sku: null, qty: 20, price: "40.00", active: true, orderedOn: 2024-04-20 }
+      - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05 }
+  roundTrips: 2

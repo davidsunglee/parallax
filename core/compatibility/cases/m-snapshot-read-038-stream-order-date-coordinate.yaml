@@ -3,10 +3,10 @@
 # canonical document spelling of a `date` already orders as text, so the
 # extraction compares WITHOUT a cast and the captured carrier IS the ISO text the
 # caller's authored equality binds — bound back as comparison text rather than
-# re-derived from a decoded date. One matching root fills the page, so the empty
-# second statement is what makes the captured cell and its rebind observable; a
-# page re-encoding the coordinate from a managed value would agree here only by
-# coincidence and would have nothing to encode for a corrupt one.
+# re-derived from a decoded date. Two rows carry that day, so the page delivers
+# one and continues to the other on a seek whose branches bind the captured
+# carrier back; a page re-encoding the coordinate from a managed value would agree
+# here only by coincidence and would have nothing to encode for a corrupt one.
 #
 # This is also where the boundary of `m-sql`'s hoisted leading range is visible.
 # `day` is non-nullable, which over a direct Column would hoist `<column> >= ?`
@@ -29,9 +29,12 @@ when:
 then:
   statements:
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
-      binds: { postgres: [day, day, "2026-01-15", day, 1] }
+      binds: { postgres: [day, day, "2026-01-15", day, 2] }
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? and (jsonb_extract_path_text(t0.coordinates, ?) > ? or jsonb_extract_path_text(t0.coordinates, ?) is null or (jsonb_extract_path_text(t0.coordinates, ?) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
-      binds: { postgres: [day, day, "2026-01-15", day, "2026-01-15", day, day, "2026-01-15", 101, day, 1] }
+      binds: { postgres: [day, day, "2026-01-15", day, "2026-01-15", day, day, "2026-01-15", 101, day, 2] }
   referenceSql: { postgres: "select id, coordinates ->> 'day' as day from stream_coordinate where coordinates ->> 'day' = '2026-01-15'" }
-  graph: { StreamCoordinate: [{ id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }] }
+  graph:
+    StreamCoordinate:
+      - { id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
+      - { id: 103, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
   roundTrips: 2

@@ -68,9 +68,10 @@ issued.
 A **streamed-delivery** workload is the deep-fetch family's paging counterpart,
 and it declares the same kind of thing: the round-trip arithmetic a paged delivery
 of one result owes. A delivery of `N` roots at page size `B` over `L` relationship
-levels costs `floor(N / B) + 1` root statements and `ceil(N / B) x L` child
-statements, and each workload's `expectRoundTrips` is that arithmetic evaluated at
-its own page size.
+levels costs `ceil(N / B)` root statements and `ceil(N / B) x L` child statements
+— a page reads one root past its batch, so exhaustion is proved by the page that
+delivered the last roots rather than by a statement of its own — and each
+workload's `expectRoundTrips` is that arithmetic evaluated at its own page size.
 
 What the family exports is that count and the page statements behind it — the
 shape a conforming delivery of the result must produce. It exports no delivery: a

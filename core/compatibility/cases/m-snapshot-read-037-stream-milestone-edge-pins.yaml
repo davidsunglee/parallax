@@ -17,8 +17,10 @@
 # would deliver ONE root; ordering by the key and Transaction Time alone would tie
 # R2 with R3, which share `in_z`.
 #
-# The delivery is three full pages at `batchSize: 1` plus the terminal empty root
-# statement. `then.graphs` states three PAIRWISE DISJOINT bitemporal pins, one per
+# The delivery is three pages at `batchSize: 1`, each asking for two roots and
+# delivering one until the last, which gets one back and so proves exhaustion
+# without a statement of its own. `then.graphs` states three PAIRWISE DISJOINT
+# bitemporal pins, one per
 # published root, each naming that milestone's own from-instant on both axes and
 # never the coordinates of any read — the same partition m-temporal-read-016's
 # whole-result read of this query resolves into rows.
@@ -48,19 +50,15 @@ then:
     - sql:
         postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.pos_id parallax_seek_0, t0.from_z parallax_seek_1, t0.in_z parallax_seek_2 from position t0 where t0.pos_id = ? order by t0.pos_id asc, t0.from_z asc, t0.in_z asc limit ?
         mariadb: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.pos_id parallax_seek_0, t0.from_z parallax_seek_1, t0.in_z parallax_seek_2 from position t0 where t0.pos_id = ? order by t0.pos_id asc, t0.from_z asc, t0.in_z asc limit ?
-      binds: [1, 1]
+      binds: [1, 2]
     - sql:
         postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.pos_id parallax_seek_0, t0.from_z parallax_seek_1, t0.in_z parallax_seek_2 from position t0 where t0.pos_id = ? and t0.pos_id >= ? and (t0.pos_id > ? or t0.pos_id is null or (t0.pos_id = ? and (t0.from_z > ? or t0.from_z is null)) or (t0.pos_id = ? and t0.from_z = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.pos_id asc, t0.from_z asc, t0.in_z asc limit ?
         mariadb: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.pos_id parallax_seek_0, t0.from_z parallax_seek_1, t0.in_z parallax_seek_2 from position t0 where t0.pos_id = ? and t0.pos_id >= ? and (t0.pos_id > ? or (t0.pos_id = ? and t0.from_z > ?) or (t0.pos_id = ? and t0.from_z = ? and t0.in_z > ?)) order by t0.pos_id asc, t0.from_z asc, t0.in_z asc limit ?
-      binds: [1, 1, 1, 1, "2024-01-01T00:00:00.000000Z", 1, "2024-01-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", 1]
+      binds: [1, 1, 1, 1, "2024-01-01T00:00:00.000000Z", 1, "2024-01-01T00:00:00.000000Z", "2024-01-01T00:00:00.000000Z", 2]
     - sql:
         postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.pos_id parallax_seek_0, t0.from_z parallax_seek_1, t0.in_z parallax_seek_2 from position t0 where t0.pos_id = ? and t0.pos_id >= ? and (t0.pos_id > ? or t0.pos_id is null or (t0.pos_id = ? and (t0.from_z > ? or t0.from_z is null)) or (t0.pos_id = ? and t0.from_z = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.pos_id asc, t0.from_z asc, t0.in_z asc limit ?
         mariadb: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.pos_id parallax_seek_0, t0.from_z parallax_seek_1, t0.in_z parallax_seek_2 from position t0 where t0.pos_id = ? and t0.pos_id >= ? and (t0.pos_id > ? or (t0.pos_id = ? and t0.from_z > ?) or (t0.pos_id = ? and t0.from_z = ? and t0.in_z > ?)) order by t0.pos_id asc, t0.from_z asc, t0.in_z asc limit ?
-      binds: [1, 1, 1, 1, "2024-01-01T00:00:00.000000Z", 1, "2024-01-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z", 1]
-    - sql:
-        postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.pos_id parallax_seek_0, t0.from_z parallax_seek_1, t0.in_z parallax_seek_2 from position t0 where t0.pos_id = ? and t0.pos_id >= ? and (t0.pos_id > ? or t0.pos_id is null or (t0.pos_id = ? and (t0.from_z > ? or t0.from_z is null)) or (t0.pos_id = ? and t0.from_z = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.pos_id asc, t0.from_z asc, t0.in_z asc limit ?
-        mariadb: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.pos_id parallax_seek_0, t0.from_z parallax_seek_1, t0.in_z parallax_seek_2 from position t0 where t0.pos_id = ? and t0.pos_id >= ? and (t0.pos_id > ? or (t0.pos_id = ? and t0.from_z > ?) or (t0.pos_id = ? and t0.from_z = ? and t0.in_z > ?)) order by t0.pos_id asc, t0.from_z asc, t0.in_z asc limit ?
-      binds: [1, 1, 1, 1, "2024-06-01T00:00:00.000000Z", 1, "2024-06-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z", 1]
+      binds: [1, 1, 1, 1, "2024-01-01T00:00:00.000000Z", 1, "2024-01-01T00:00:00.000000Z", "2024-04-01T00:00:00.000000Z", 2]
   referenceSql: select pos_id, acct_num, val, from_z, thru_z, in_z, out_z from position where pos_id = 1
   graphs:
     - pin: { valid-time: "2024-01-01T00:00:00.000000Z", transaction-time: "2024-01-01T00:00:00.000000Z" }
@@ -75,4 +73,4 @@ then:
       graph:
         Position:
           - { id: 1, acctNum: A, value: "200.00", validStart: "2024-06-01T00:00:00.000000Z", validEnd: infinity, txStart: "2024-04-01T00:00:00.000000Z", txEnd: infinity }
-  roundTrips: 4
+  roundTrips: 3

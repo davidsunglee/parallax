@@ -3,8 +3,9 @@
 # lowercase hyphenated one. The caller predicate and the continuing statement
 # therefore carry the identical spelling without either being derived from the
 # other; a page composing its seek off the root's own decoded UUID could preserve
-# another admitted form, and only the generated second page this case requires
-# would show it.
+# another admitted form, and only the continuing page this case requires — two
+# rows carry that token, so one is delivered and the other sought — would show
+# it.
 model: models/stream-coordinates.yaml
 tags: [m-snapshot-read, m-object-query, stream, streamed-delivery, uuid, document-layout, graph, slice-snapshot-1]
 shape: read
@@ -18,9 +19,12 @@ when:
 then:
   statements:
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
-      binds: { postgres: [token, token, "00000000-0000-4000-8000-0000000000ab", token, 1] }
+      binds: { postgres: [token, token, "00000000-0000-4000-8000-0000000000ab", token, 2] }
     - sql: { postgres: "select t0.id, not t0.coordinates is null, t0.coordinates, jsonb_extract_path_text(t0.coordinates, ?) parallax_seek_0, t0.id parallax_seek_1 from stream_coordinate t0 where jsonb_extract_path_text(t0.coordinates, ?) = ? and (jsonb_extract_path_text(t0.coordinates, ?) > ? or jsonb_extract_path_text(t0.coordinates, ?) is null or (jsonb_extract_path_text(t0.coordinates, ?) = ? and (t0.id > ? or t0.id is null))) order by jsonb_extract_path_text(t0.coordinates, ?) asc, t0.id asc limit ?" }
-      binds: { postgres: [token, token, "00000000-0000-4000-8000-0000000000ab", token, "00000000-0000-4000-8000-0000000000ab", token, token, "00000000-0000-4000-8000-0000000000ab", 101, token, 1] }
+      binds: { postgres: [token, token, "00000000-0000-4000-8000-0000000000ab", token, "00000000-0000-4000-8000-0000000000ab", token, token, "00000000-0000-4000-8000-0000000000ab", 101, token, 2] }
   referenceSql: { postgres: "select id, coordinates ->> 'token' as token from stream_coordinate where coordinates ->> 'token' = '00000000-0000-4000-8000-0000000000ab'" }
-  graph: { StreamCoordinate: [{ id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }] }
+  graph:
+    StreamCoordinate:
+      - { id: 101, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
+      - { id: 103, day: "2026-01-15", clock: "09:30:00", amount: "10.25", payload: "0a1b", token: "00000000-0000-4000-8000-0000000000ab", instant: "2026-01-15T09:30:00.000000Z", f32: 1.5, f64: 2.25 }
   roundTrips: 2

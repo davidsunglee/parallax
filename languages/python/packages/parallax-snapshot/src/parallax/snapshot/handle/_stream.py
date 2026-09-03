@@ -44,7 +44,7 @@ from parallax.core.execution_lifecycle._activity import (
     SnapshotStreamActivity,
     StreamBatchActivity,
 )
-from parallax.core.metamodel import EntityMetadata, entity_by_name
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.temporal_read import (
@@ -58,11 +58,13 @@ from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import ResultPublication, declaring_metadata, edge_pin
 from parallax.snapshot.materialize import InvalidData, InvalidDataError
 from parallax.snapshot.materialize._graph import root_edges, root_scoped
+from parallax.snapshot.materialize._invalid import EXCEPTION_MACHINERY
 
 __all__ = [
     "OpenStream",
     "PageRead",
     "SnapshotStream",
+    "SnapshotStreamContinuationError",
     "SnapshotStreamStateError",
     "check_batch_size",
 ]
@@ -129,6 +131,85 @@ class SnapshotStreamStateError(RuntimeError):
     its scope. The message names the rule; nothing about the stream's internals
     is reported.
     """
+
+
+class SnapshotStreamContinuationError(RuntimeError):
+    """A delivery reached two roots the database placed at ONE coordinate.
+
+    Deliberately not a :class:`SnapshotStreamStateError`: nothing about the
+    stream was misused, and nothing the caller can do differently avoids it. The
+    Continuation Order is total over storage the model describes, so what this
+    reports is storage that has lost a constraint the order rests on — and a
+    delivery that continued past it would have to skip a root, duplicate one, or
+    loop, none of which a delivery may do.
+
+    Every root before the tie is published first, so this arrives after the
+    maximal strictly ordered prefix and :attr:`ordinal` is the position of the
+    first root that could not be delivered. :attr:`terms` is the order that
+    turned out not to be total, and :attr:`coordinate` is an inert copy of where
+    that root stood — readable and comparable, with no public constructor
+    turning it back into pagination authority, and kept out of the message, the
+    default repr, lifecycle events, and default logging. A one-root lookahead
+    proves that at LEAST two roots tie, so no count of them is reported.
+
+    Frozen by hand for :class:`~parallax.snapshot.materialize.InvalidDataError`'s
+    own reason: a frozen dataclass would also refuse :meth:`add_note`, and
+    ``__slots__`` restricts nothing on a :class:`BaseException`.
+    """
+
+    code: Final[str] = "snapshot-stream-continuation-order-not-total"
+
+    _terms: tuple[AttributeIdentity, ...]
+    _coordinate: tuple[object, ...]
+    _ordinal: int
+
+    def __init__(
+        self,
+        *,
+        terms: tuple[AttributeIdentity, ...],
+        coordinate: tuple[object, ...],
+        ordinal: int,
+    ) -> None:
+        order = ", ".join(f"{identity.entity.canonical}.{identity.name}" for identity in terms)
+        super().__init__(
+            f"the delivery cannot continue past result {ordinal}: two adjacent roots stand "
+            f"at one Continuation Order coordinate, so ({order}) is not total over the "
+            f"stored data"
+        )
+        object.__setattr__(self, "_terms", terms)
+        object.__setattr__(self, "_coordinate", coordinate)
+        object.__setattr__(self, "_ordinal", ordinal)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name not in EXCEPTION_MACHINERY:
+            raise AttributeError(
+                f"SnapshotStreamContinuationError is frozen; cannot assign {name!r}"
+            )
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name not in EXCEPTION_MACHINERY:
+            raise AttributeError(
+                f"SnapshotStreamContinuationError is frozen; cannot delete {name!r}"
+            )
+        super().__delattr__(name)
+
+    @property
+    def terms(self) -> tuple[AttributeIdentity, ...]:
+        """The Continuation Order the tied coordinates were measured against."""
+        return self._terms
+
+    @property
+    def coordinate(self) -> tuple[object, ...]:
+        """An inert copy of the coordinate both tied roots stood at, positionally
+        aligned with :attr:`terms`."""
+        return self._coordinate
+
+    @property
+    def ordinal(self) -> int:
+        """The zero-based position, in the delivery, of the first root that could
+        not be delivered."""
+        return self._ordinal
 
 
 class SnapshotStream[T]:
@@ -365,6 +446,11 @@ class SnapshotStream[T]:
         rule that a delivery advances by the LAST KEPT root lives on the page
         rather than in a subscript here.
 
+        The order of the last steps IS the precedence: every root the page kept
+        is published first, a throwing view's refusal of invalid stored data
+        interrupts that publication from inside the loop, and a page that could
+        not be continued past refuses only once the loop has run to completion.
+
         Each page is prepared inside a Stream Batch of its own and published
         outside it, so what a stream costs an observer is two events per page
         plus two for itself — proportional to the pages it read rather than to
@@ -386,6 +472,12 @@ class SnapshotStream[T]:
             emitted += page.delivered
             if page.resume_from is not None:
                 coordinate = page.resume_from
+            if page.tie is not None:
+                raise SnapshotStreamContinuationError(
+                    terms=page.tie.terms,
+                    coordinate=page.tie.coordinate,
+                    ordinal=page.tie.ordinal,
+                )
             if page.exhausted:
                 return
 

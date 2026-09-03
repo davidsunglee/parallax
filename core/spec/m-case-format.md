@@ -698,8 +698,8 @@ primary oracle. Such a pair is named
 their shared claim covers.
 
 `then.roundTrips` needs no rule of its own: every authored page statement
-executes, the terminal empty root statement included, so the deep-fetch rule
-(the count equals the authored statement count) already holds across pages.
+executes, so the deep-fetch rule (the count equals the authored statement count)
+already holds across pages.
 
 #### Graph keys and back-reference cycles
 
@@ -841,10 +841,12 @@ rather than once over the whole list: the statements partition into the pages'
 own `1 + L` groups, and a group's child levels are keyed by the distinct parent
 keys **that page's** roots gathered, never the whole result's. The partition
 itself is graded beside them — the requested size each root statement binds, the
-Continuation Order coordinates a page after the first seeks from, and whether a
-full final page is followed by the empty root statement exhaustion requires — so
-a delivery that reached the same rows through different pages fails the case
-rather than passing on its graph alone.
+page size plus the one lookahead root a page reads past its batch; the
+Continuation Order coordinates a page after the first seeks from, which are the
+previous page's last KEPT root's; and whether a page that came back with every
+root it asked for is followed by another — so a delivery that reached the same
+rows through different pages fails the case rather than passing on its graph
+alone.
 
 A **path-root guard** (`m-object-query`'s `appliesTo` beside a path's
 `segments`) participates in this layer twice, and both are declared rather than
@@ -1250,7 +1252,7 @@ declared `roundTrips` is the length of that list and the per-step count rule
 needs no clause of its own. The three properties graded independently of the SQL
 text are the same three, derived the same way: the size each page asks for, the
 Continuation Order coordinates each page after the first seeks from, and the
-statement a full final page costs to prove exhaustion. Its `expectRows` are the
+page that came back short of what it asked for and so ended the delivery. Its `expectRows` are the
 roots the delivery published, across every page, in delivery order.
 
 That order is **compared positionally**, which no other row oracle is: `then.rows`

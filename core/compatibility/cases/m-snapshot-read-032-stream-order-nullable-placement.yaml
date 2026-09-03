@@ -3,15 +3,16 @@
 # sought through a null check rather than through a comparison.
 #
 # `Order.sku` is nullable and order 4 has none, so the Continuation Order
-# `sku asc (nulls last), id asc` places that root last. Two consequences the
-# authored pages spell out. No continuing page carries the redundant leading
-# range a non-nullable term hoists: with the nulls placed after a non-null
-# coordinate, "after" is two disjoint ranges of the index and no single
+# `sku asc (nulls last), id asc` places that root last. The consequence the
+# authored pages spell out is that no continuing page carries the redundant
+# leading range a non-nullable term hoists: with the nulls placed after a
+# non-null coordinate, "after" is two disjoint ranges of the index and no single
 # comparison covers both — which is exactly what the first branch of pages 2 and
-# 3 says instead, `t0.sku > ? or t0.sku is null`. And a NULL coordinate binds
-# nothing: page 4 seeks past (null, 4) with the leading branch dropped entirely,
-# because nothing sorts after a null under Nulls Last, so its statement text
-# legitimately differs from the pages before it.
+# 3 says instead, `t0.sku > ? or t0.sku is null`. Nothing here seeks PAST a null
+# coordinate: the null root sorts last, so the page delivering it comes back
+# short of the lookahead root it asked for and the delivery ends on it.
+# m-snapshot-read-046 is where that branch is reachable, under the mirrored
+# placement that puts a null root first.
 #
 # The two dialects order the same rows differently spelled — Postgres trails
 # NULLs on `asc` natively while MariaDB forces it with a leading `sku is null`
@@ -21,9 +22,10 @@
 # admits them in the key's branch. `sku`'s own branches are identical on both,
 # its authored placement being what its compensated clause emitted.
 #
-# Pages of 2 over 6 roots: {1, 3}, then {42, 2} seeking past ('A-300', 3), then
-# {5, 4} seeking past ('B-200', 2), then the empty terminal statement. Four root
-# statements, and the delivered graph is the eager read's own.
+# Pages of 2 over 6 roots, each asking for 3: {1, 3}, then {42, 2} seeking past
+# ('A-300', 3), then {5, 4} seeking past ('B-200', 2) — two roots for a requested
+# three, which proves exhaustion. Three root statements, and the delivered graph
+# is the eager read's own.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-dialect, stream, streamed-delivery, orderBy, ordering, nulls, nullable, graph, materialization, slice-snapshot-1]
 shape: read
@@ -45,19 +47,15 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.sku asc, t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 order by t0.sku is null, t0.sku asc, t0.id asc limit ?
-      binds: [2]
+      binds: [3]
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null))) order by t0.sku asc, t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
-      binds: [A-300, A-300, 3, 2]
+      binds: [A-300, A-300, 3, 3]
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null))) order by t0.sku asc, t0.id asc limit ?
         mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku > ? or t0.sku is null or (t0.sku = ? and t0.id > ?)) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
-      binds: [B-200, B-200, 2, 2]
-    - sql:
-        postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku is null and (t0.id > ? or t0.id is null)) order by t0.sku asc, t0.id asc limit ?
-        mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, t0.sku parallax_seek_0, t0.id parallax_seek_1 from orders t0 where (t0.sku is null and t0.id > ?) order by t0.sku is null, t0.sku asc, t0.id asc limit ?
-      binds: [4, 2]
+      binds: [B-200, B-200, 2, 3]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders
   graph:
     Order:
@@ -67,4 +65,4 @@ then:
       - { id: 2, name: Linus, sku: B-200, qty: 10, price: "20.00", active: true, orderedOn: 2024-02-10 }
       - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: "50.75", active: false, orderedOn: 2024-05-25 }
       - { id: 4, name: Margaret, sku: null, qty: 20, price: "40.00", active: true, orderedOn: 2024-04-20 }
-  roundTrips: 4
+  roundTrips: 3

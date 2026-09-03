@@ -1212,30 +1212,29 @@ def _order(identifier: int, name: str) -> dict[str, object]:
 
 def test_run_case_streamed_observation_reports_the_delivered_roots() -> None:
     # `when.stream` routes ahead of the result member, through `run_stream_case`
-    # and the shipped streamed read — three pages at `batchSize: 2` over four
-    # roots, the third returning nothing because a full final page proves no
-    # exhaustion. The envelope carries the delivered graph, the round trips the
-    # delivery cost, and one emission per page: a Snapshot Stream publishes a
-    # Stream Batch per page and that page's Database Calls under it, so the
-    # statements come off the delivered lifecycle exactly as every other lane's
-    # do. The seek is what shows they are the DELIVERY's rather than an eager
-    # read's — page 2 continues from the id page 1 delivered last.
+    # and the shipped streamed read — two pages at `batchSize: 2` over four
+    # roots, each asking for three and delivering two, so the second comes back
+    # short and proves exhaustion without a third. The envelope carries the
+    # delivered graph, the round trips the delivery cost, and one emission per
+    # page: a Snapshot Stream publishes a Stream Batch per page and that page's
+    # Database Calls under it, so the statements come off the delivered
+    # lifecycle exactly as every other lane's do. The seek is what shows they
+    # are the DELIVERY's rather than an eager read's — page 2 continues from the
+    # id page 1 delivered last, never from the lookahead root it discarded.
     port = _QueuePort(
         [
-            [_order(1, "Ada"), _order(2, "Linus")],
+            [_order(1, "Ada"), _order(2, "Linus"), _order(3, "ada")],
             [_order(3, "ada"), _order(42, "Grace")],
-            [],
         ]
     )
     envelope = adapter.run_case(_STREAM_CASE, _PROFILE.on_stand_in(port))
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert [emission["binds"] for emission in envelope["emissions"]] == [
-        [1, 2, 3, 42, 2],
-        [1, 2, 3, 42, 2, 2],
-        [1, 2, 3, 42, 42, 2],
+        [1, 2, 3, 42, 3],
+        [1, 2, 3, 42, 2, 3],
     ]
-    assert envelope["observations"]["roundTrips"] == 3
+    assert envelope["observations"]["roundTrips"] == 2
     assert [root["id"] for root in envelope["observations"]["graph"]["Order"]] == [1, 2, 3, 42]
     assert "storedDataIssues" not in envelope["observations"]
     assert json.loads(json.dumps(envelope)) == envelope
