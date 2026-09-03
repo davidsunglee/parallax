@@ -3,10 +3,11 @@ m-inheritance concrete-subtype write protocol).
 
 :func:`validate_write` is the SHARED validator every ingress carrying a write
 ROW calls: the conformance engine's rejected run lane, and both keyed write
-representations through the one judgment they share
-(``_write_inputs.validate_keyed_instruction``, reached from the Typed verbs'
-``_buffer`` and from the Wire lane's own ingress) -- the "one validator, many
-callers" pattern ``validate_predicate`` established
+representations through the one prepared-write producer their two entry points
+share (``instructions.prepare_typed_write`` and
+``instructions.prepare_wire_write``, which differ only in how a leaf and a
+temporal bound decode) -- the "one validator, many callers" pattern
+``validate_predicate`` established
 (`parallax.core.predicate.validate`): the SAME rule classification and check
 order runs on every path, so they cannot drift.
 

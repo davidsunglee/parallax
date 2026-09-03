@@ -12,18 +12,17 @@ authored assignment against the entity's members.
 Every PHYSICAL answer instead comes from the Storage Layout Facet, entered
 through :func:`entity_layout`: the row-owning Entity's canonical slot selection.
 :func:`slot_column`, :func:`axis_columns`, and :func:`members` map a semantically
-selected contributor identity onto that layout's slots, so no write-side module
-composes a physical column sequence of its own.
+selected contributor identity onto that layout's slots, so no module importing
+this one composes a physical column sequence of its own.
 
 This is the package's bottom leaf but one: it imports no handle module except
-the dependency-free refusal leaf :mod:`parallax.snapshot.handle._errors`, so
-every write-side module (`_keyed_sql`, `_write_lowering`, `_write_inputs`,
-`_transaction`, `_predicate_writes`) may import it freely without any risk of a
-cycle. Each helper is read from at least two of those, which is precisely why
-the module exists — an inheritance participant declares its as-of axes and its
-version column on the family ROOT alone (ADR 0026 / ADR 0027), so the lowering
-side and the verb-input side must resolve them the SAME way or they disagree
-about the shape of the row they are writing.
+the dependency-free refusal leaf :mod:`parallax.snapshot.handle._errors`, so any
+module above may import it without risking a cycle. Answering here rather than
+at each of them is what the module is for — an inheritance participant declares
+its as-of axes and its version column on the family ROOT alone (ADR 0026 /
+ADR 0027), so the retention side, the lowering side and the verb-input side must
+resolve them the SAME way or they disagree about the shape of the row they are
+reading or writing.
 
 Every name here is spelled bare: privacy is carried by this MODULE's leading
 underscore and by the package's frozen ``__all__``, not by per-name underscores
