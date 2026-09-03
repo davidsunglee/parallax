@@ -1943,11 +1943,12 @@ def stream_a_result_one_root_at_a_time(db: Database, page: int) -> tuple[int, li
     below, is the shape that stays bounded; appending each root to a list is not,
     and is outside the guarantee on purpose.
 
-    ``batch_size`` counts ROOT positions and is a performance dial and nothing
-    else. It changes neither which roots arrive, nor the order they arrive in, nor
-    what any of them carries; what it changes is how many round trips the delivery
-    costs and how much one page holds. Included children are not counted by it:
-    every one of a delivered root's items is loaded, exactly as under ``db.find``.
+    ``batch_size`` counts ROOT positions and, over storage the model describes,
+    is a performance dial and nothing else. It changes neither which roots arrive,
+    nor the order they arrive in, nor what any of them carries; what it changes is
+    how many round trips the delivery costs and how much one page holds. Included
+    children are not counted by it: every one of a delivered root's items is
+    loaded, exactly as under ``db.find``.
 
     Roots arrive in the Continuation Order — the query's own ``order_by`` first,
     then the primary key — which is a total order the delivery derives, so it is

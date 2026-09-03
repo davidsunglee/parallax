@@ -149,11 +149,15 @@ class SnapshotStream[T]:
     second — of either kind — is refused rather than silently delivering
     nothing.
 
-    ``batch_size`` counts ROOT positions and is a performance dial alone. It
-    changes neither the order roots arrive in, nor which roots arrive, nor what
-    each carries. Invalid stored data included: a delivery advances on the
-    coordinate the database evaluated for each root, which exists whatever that
-    root's stored values turned out to be.
+    ``batch_size`` counts ROOT positions and, over storage the model describes,
+    is a performance dial alone: it changes neither the order roots arrive in,
+    nor which roots arrive, nor what each carries. Invalid stored data included:
+    a delivery advances on the coordinate the database evaluated for each root,
+    which exists whatever that root's stored values turned out to be. One stored
+    value falls outside both, and it is storage the model does not describe: a
+    ``NULL`` in a Column the model declares non-nullable, where that Column is
+    the LEADING Continuation Order term. A page after the first may leave that
+    root out, so a smaller page can drop the root a larger one delivered.
     """
 
     __slots__ = (

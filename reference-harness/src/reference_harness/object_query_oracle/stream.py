@@ -151,8 +151,9 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
     spliced in, spelling the seek its own coordinates compose.
 
     The published roots are the concatenation of the pages', which is what the
-    caller compares to its own result oracle, because a page size changes neither
-    membership nor order nor what a root carries.
+    caller compares to its own result oracle, because over the storage a case's
+    model describes — the only storage a fixture can seed — a page size changes
+    neither membership nor order nor what a root carries.
     """
     dialect = reader.dialect
     query = case.object_query

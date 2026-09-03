@@ -113,7 +113,8 @@ class WireDatabaseView:
         :class:`~parallax.snapshot.materialize.WireEntity` nodes ``find`` does,
         one root at a time instead of all of them, with no format argument
         anywhere. ``batch_size`` counts root positions and is a performance dial
-        alone.
+        alone over storage the model describes, exactly as in the Typed
+        namespace.
         """
         return self._stream(wire_query_node(query), batch_size)
 
