@@ -8,12 +8,13 @@ The property pinned here is the one the write side rests on: for a family's
 DECLARING ROOT, the family-effective primary key resolved through the applicable
 member chain is exactly the primary key that root declares locally, in exactly
 that order — and every position of the family, abstract or concrete, resolves the
-same key its root does. `m-inheritance` "One family primary key" constrains only
-the CARDINALITY of the key across the applicable chain and leaves declaration
-identity with the ancestor that introduced it, so a primary key declared below
-the root is a legal shape in principle. This suite is what says the corpus
-declares none; a model that grew one would fail here rather than silently
-changing which object a write addresses.
+same key its root does. Formation is what makes those two readings equivalent
+rather than merely agreeing: `m-inheritance` "One family primary key" is asked of
+EVERY position's applicable ancestry chain, and a root's chain is the root alone,
+so a key declared below the root leaves the root's own chain without one. What
+this suite pins is that :func:`family_primary_key` really does answer that
+root-local declaration at every shape a family takes; a resolution that drifted
+would silently change which object a write addresses.
 
 Family-shape resolution AS A WHOLE stays covered by the `m-inheritance-*` corpus
 cases and by the downstream suites that write and read through these helpers.
@@ -80,10 +81,8 @@ _DEEPEST_ANCESTRY: Final[int] = 3
 
 
 def _locally_declared_primary_key(entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
-    """The primary key ``entity``'s OWN local declaration carries.
-
-    The second reading the keyed write inputs once held, restated here so the
-    equivalence stays provable now that only :func:`family_primary_key` remains.
+    """The primary key ``entity``'s OWN local declaration carries, in declared
+    order — the root-local reading the family-effective one is measured against.
     """
     return tuple(
         attribute
@@ -94,16 +93,16 @@ def _locally_declared_primary_key(entity: EntityMetadata) -> tuple[AttributeMeta
 
 def _family_shape(model: Metamodel, entity: EntityMetadata, position: InheritanceMetadata) -> str:
     strategy = declaring(model, entity).inheritance
-    named = (
+    strategy_name = (
         "table-per-hierarchy"
         if isinstance(strategy, AbstractRoot) and isinstance(strategy.strategy, TablePerHierarchy)
         else "table-per-concrete-subtype"
     )
     if isinstance(position, AbstractRoot):
-        return f"{named} root"
+        return f"{strategy_name} root"
     if isinstance(position, AbstractSubtype):
-        return f"{named} abstract subtype"
-    return f"{named} concrete subtype"
+        return f"{strategy_name} abstract subtype"
+    return f"{strategy_name} concrete subtype"
 
 
 @pytest.mark.parametrize("stem", _CORPUS)
