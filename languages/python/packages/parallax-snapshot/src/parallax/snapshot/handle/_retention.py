@@ -17,9 +17,11 @@ hint is stamped with. A caller learns one collector and one verb.
 
 The read executor drives this module while its rows are live, and the dependency
 goes that way and ONLY that way — nothing here names
-:mod:`parallax.snapshot.handle._read`. That rule is stated rather than generated:
-a child scope's forbidden contract can never name its own parent, and the read
-executor lives in the parent scope.
+:mod:`parallax.snapshot.handle._read`. No generated contract can say so: a child
+scope's forbidden row can never name its own parent, and the read executor lives
+in the parent scope. This scope is SEALED instead (`spec/python.md` §7), so the
+rule is graded over this file — every import into the handle package that this
+scope's grants do not cover is refused, the executor among them.
 
 Semantic family facts come from the accepted Metamodel and its facets, resolved
 through :mod:`parallax.snapshot.handle._family` (the declaring root, the
