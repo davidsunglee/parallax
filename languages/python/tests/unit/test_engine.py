@@ -10,6 +10,7 @@ reading and the engine's failure modes are pinned too.
 from __future__ import annotations
 
 import contextlib
+import copy
 import dataclasses
 import datetime as dt
 import decimal
@@ -5852,8 +5853,10 @@ class QueueDbPort:
     ) -> list[Row]:
         return [projected_row(sql, row) for row in self._responses.pop(0)]
 
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        # A read case's own `given.corrupt` writes through this port before the
+        # read runs (m-case-format), so a stand-in for one answers a write.
+        return 1
 
     def transaction[T](
         self, body: Callable[[DbPort], T], *, isolation: str | None = None
@@ -5956,6 +5959,9 @@ def test_run_graph_case_reports_the_records_a_classified_root_published() -> Non
     # occurrence, and the affected object's own key.
     port = QueueDbPort(
         [
+            # The case's own `given.corrupt` reads the addressed document back
+            # before it writes over it (m-case-format), ahead of the read.
+            [{"profile": {"street": "4 Main", "city": "Boston"}}],
             [
                 {"id": 1, "profile": PresentDocument({"street": "1 Main", "city": None})},
                 {"id": 2, "profile": PresentDocument({"city": "Oslo"})},
@@ -5996,6 +6002,9 @@ def test_run_graph_case_publishes_null_where_nothing_could_be_hydrated() -> None
     # `hydrated` is what says the null means "unhydrated" rather than "collapsed".
     port = QueueDbPort(
         [
+            # The case's own `given.corrupt` reads the addressed document back
+            # before it writes over it (m-case-format), ahead of the read.
+            [{"profile": {"street": "4 Main", "city": "Boston"}}],
             [{"id": 1, "profile": PresentDocument({"street": "1 Main", "city": 7})}],
             [],
         ]
@@ -7874,3 +7883,144 @@ def test_run_stream_case_reports_a_refused_delivery_as_an_engine_error() -> None
     with pytest.raises(engine.EngineError):
         engine.run_stream_case(case, port)
     assert port.executed == []
+
+
+# --------------------------------------------------------------------------- #
+# given.corrupt: the stored state a read case observes instead of the           #
+# conforming one its fixtures loaded (m-case-format).                           #
+# --------------------------------------------------------------------------- #
+class _CorruptionPort:
+    """A port answering one stored document and recording what was written back."""
+
+    dialect: Dialect = POSTGRES
+
+    def __init__(self, stored: object) -> None:
+        self._stored = stored
+        self.reads: list[tuple[str, list[object]]] = []
+        self.writes: list[tuple[str, list[object]]] = []
+
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
+        self.reads.append((sql, list(binds)))
+        column = sql.removeprefix("select ").partition(" from ")[0]
+        return [{column: copy.deepcopy(self._stored)}]
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        self.writes.append((sql, list(binds)))
+        return 1
+
+    def transaction[T](
+        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+    ) -> TransactionOutcome[T]:  # pragma: no cover - a corruption runs outside one
+        return body_outcome(self, body)
+
+
+def _corrupting(case_id: str, stored: object, *entries: Mapping[str, object]) -> _CorruptionPort:
+    """Apply *entries* over ``case_id``'s model against a port holding *stored*."""
+    case = _load_case(case_id)
+    if entries:
+        document = dict(case.document)
+        document["given"] = {"corrupt": list(entries)}
+        case = dataclasses.replace(case, document=document)
+    port = _CorruptionPort(stored)
+    engine._apply_given_corrupt(  # pyright: ignore[reportPrivateUsage] - the engine's own realization
+        case, models.accepted_model_of(engine.load_case_domain_model(case)), port
+    )
+    return port
+
+
+def test_given_corrupt_writes_the_authored_value_into_the_stored_document() -> None:
+    port = _corrupting(
+        "m-snapshot-read-049", {"day": "2026-01-15", "clock": "09:30:00", "token": "old"}
+    )
+    assert [binds for _sql, binds in port.reads] == [[101], [102]]
+    assert all("from stream_coordinate where id = %s" in sql for sql, _ in port.reads)
+    written = [cast("JsonDocument", binds[0]).value for _sql, binds in port.writes]
+    assert written == [
+        {"day": "2026-01-15", "clock": "09:30:00", "token": "NOT-A-UUID"},
+        {"day": "2026-01-15", "clock": None, "token": "old"},
+    ]
+    assert all(
+        sql == "update stream_coordinate set coordinates = %s where id = %s"
+        for sql, _binds in port.writes
+    )
+
+
+def test_given_corrupt_reads_a_document_its_provider_returned_as_text() -> None:
+    port = _corrupting(
+        "m-snapshot-read-049",
+        '{"day": "2026-01-15", "clock": "09:30:00", "token": "old"}',
+    )
+    written = cast("dict[str, object]", cast("JsonDocument", port.writes[0][1][0]).value)
+    assert written["token"] == "NOT-A-UUID"
+
+
+def test_given_corrupt_descends_into_a_value_object_document() -> None:
+    port = _corrupting(
+        "m-storage-layout-027",
+        {"street": "4 Main", "city": "Boston"},
+        {
+            "entity": "parallax.compatibility.ClassificationTwinItem",
+            "key": 4,
+            "member": ["profile", "street"],
+            "value": 7,
+        },
+    )
+    assert cast("JsonDocument", port.writes[0][1][0]).value == {"street": 7, "city": "Boston"}
+
+
+def test_given_corrupt_refuses_a_member_kept_in_a_column_of_its_own() -> None:
+    with pytest.raises(engine.EngineError, match="does not place inside a Structured Column"):
+        _corrupting(
+            "m-snapshot-read-049",
+            {},
+            {
+                "entity": "parallax.compatibility.StreamCoordinate",
+                "key": 101,
+                "member": ["id"],
+                "value": None,
+            },
+        )
+
+
+def test_given_corrupt_refuses_a_row_the_fixtures_do_not_hold() -> None:
+    class _Empty(_CorruptionPort):
+        def execute(
+            self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[Row]:
+            return []
+
+    case = _load_case("m-snapshot-read-049")
+    with pytest.raises(engine.EngineError, match="the loaded fixtures do not hold"):
+        engine._apply_given_corrupt(  # pyright: ignore[reportPrivateUsage] - the engine's own realization
+            case, models.accepted_model_of(engine.load_case_domain_model(case)), _Empty({})
+        )
+
+
+def test_given_corrupt_descends_a_nested_occurrence_path() -> None:
+    port = _corrupting(
+        "m-storage-layout-018",
+        {"displayName": "Ada", "address": {"city": "Oslo", "geo": {"country": "NO"}}},
+        {
+            "entity": "parallax.compatibility.Traveler",
+            "key": 1,
+            "member": ["address", "geo", "country"],
+            "value": 7,
+        },
+    )
+    written = cast("dict[str, Any]", cast("JsonDocument", port.writes[0][1][0]).value)
+    assert written["address"] == {"city": "Oslo", "geo": {"country": 7}}
+
+
+def test_a_case_declaring_no_corruption_writes_nothing() -> None:
+    case = _load_case("m-snapshot-read-049")
+    document = dict(case.document)
+    document["given"] = {"fixtures": True}
+    port = _CorruptionPort({})
+    engine._apply_given_corrupt(  # pyright: ignore[reportPrivateUsage] - the engine's own realization
+        dataclasses.replace(case, document=document),
+        models.accepted_model_of(engine.load_case_domain_model(case)),
+        port,
+    )
+    assert port.reads == [] and port.writes == []

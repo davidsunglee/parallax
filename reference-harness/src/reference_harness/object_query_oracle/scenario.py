@@ -507,7 +507,7 @@ class ScenarioReads:
 
     def _materialized_graph(
         self, step_index: int, observation: retained.Observation
-    ) -> dict[str, list[dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, Any] | None]]:
         """The graph a read step's own Include Paths materialized."""
         case = self._case
         view = observation.includes

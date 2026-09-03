@@ -16,7 +16,7 @@ that reached the right rows the wrong way a failure rather than a pass.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
@@ -561,12 +561,27 @@ def _hoisted_range(term: ContinuationTerm, coordinate: Any) -> ComposedSeek:
 
 
 def _comparison_leaf(term: ContinuationTerm, comparator: str, coordinate: Any) -> ComposedSeek:
-    canonical = portable_literal.canonicalize_observed(coordinate, term.neutral_type)
+    canonical = _reported_carrier(coordinate, term.neutral_type)
     return ComposedSeek(
         f"{term.compared} {comparator} ?",
         (*term.path_binds, canonical),
         (*(None for _ in term.path_binds), term.neutral_type),
     )
+
+
+def _reported_carrier(coordinate: Any, neutral_type: str) -> Any:
+    """One coordinate in the form the page that rebinds it reports (`m-sql`).
+
+    A carrier the term's declared type admits reports as its canonical Wire
+    projection. One the type does NOT admit reports as it stands, which is the
+    form the page bound it in: a delivery continuing past storage the model
+    contradicts carries the text its own ordering expression evaluated, and no
+    canonical spelling exists for a value the type has no member for.
+    """
+    try:
+        return portable_literal.canonicalize_observed(coordinate, neutral_type)
+    except portable_literal.PortableLiteralError:
+        return coordinate
 
 
 def _null_leaf(term: ContinuationTerm, *, negated: bool = False) -> ComposedSeek:
@@ -625,6 +640,29 @@ def without_captured_coordinates(
     """
     lifted = set(aliases)
     return [{key: value for key, value in row.items() if key not in lifted} for row in rows]
+
+
+def evaluated_coordinate(
+    published: Mapping[str, Any],
+    raw: Mapping[str, Any],
+    terms: list[ContinuationTerm],
+    aliases: list[str],
+) -> tuple[Any, ...]:
+    """What the ordering expression evaluated for one delivered root, per term.
+
+    The published member answers it wherever the declared type admits the stored
+    value, because the ordering expression and the projection read one stored
+    value. Where the type admits none there is no published member to read — the
+    position publishes nothing at all — and the row's own capture cell is the only
+    witness of what the database ranked, which for a casting extraction is not the
+    stored spelling the read refused (`m-sql` *Continuation coordinates*).
+    """
+    return tuple(
+        raw[alias]
+        if isinstance(published[term.column], materialize.UnavailableLeaf)
+        else published[term.column]
+        for term, alias in zip(terms, aliases, strict=True)
+    )
 
 
 def capture_binds(terms: list[ContinuationTerm]) -> list[Any]:

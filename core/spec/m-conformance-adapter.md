@@ -424,8 +424,8 @@ assert different things:
   whose stored state contradicted the declared model, and omits the key entirely
   when every position conformed. A read case carrying `when.stream` reports the
   same result observation its unstreamed peer would — `graph`, or `graphs` for a
-  milestone-set read — delivered rather than materialized whole (see *Streamed
-  reads*, below)
+  milestone-set read — delivered rather than materialized whole, and reports
+  `storedDataIssues` for it on the same terms (see *Streamed reads*, below)
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`, plus `stepRows` for the
@@ -492,6 +492,18 @@ exposes and reports:
   observation depend on the page size. An adapter reports whichever of the two
   its case authors, and the choice is the query's: a scanned axis makes the read
   milestone-set.
+- **`observations.storedDataIssues`** — the diagnoses the delivery published for
+  the result positions whose stored state contradicted the declared model, in the
+  same shape and at the same ordinals an eager graph read reports them, and
+  omitted entirely where every delivered position conformed. The adapter drives
+  the reading surface that delivers classified roots **in band**, because a
+  surface that refuses at the first one would end the delivery and report a
+  prefix; the roots a delivery publishes are the roots the eager read of the same
+  Object Query classifies, so the two observations agree position for position.
+  The refusing surface's own fail-fast is a language-surface divergence
+  (`m-snapshot-read` *Divergence between the two views*) and is graded by each
+  language's API Conformance Suite rather than here, where a result form has no
+  place to state a delivery that raised.
 - **`observations.roundTrips`** — every database call the delivery made.
 - **`emissions`** — every statement the delivery executed, in execution order
   across pages: each page's root statement followed by the child levels that page

@@ -1080,8 +1080,10 @@ class _QueuePort:
     ) -> list[Row]:
         return [projected_row(sql, row) for row in self._responses.pop(0)]
 
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        # A read case's own `given.corrupt` writes through this port before the
+        # read runs (m-case-format), so a stand-in for one answers a write.
+        return 1
 
     def transaction[T](
         self, body: Callable[[DbPort], T], *, isolation: str | None = None
@@ -1147,6 +1149,9 @@ def test_run_case_graph_observation_reports_the_positions_a_read_classified() ->
     # beside the graph, and the whole envelope still round-trips through the wire.
     port = _QueuePort(
         [
+            # The case's own `given.corrupt` reads the addressed document back
+            # before it writes over it (m-case-format), ahead of the read.
+            [{"profile": {"street": "4 Main", "city": "Boston"}}],
             [{"id": 1, "profile": PresentDocument({"city": "Oslo"})}],
             [],
         ]

@@ -8,8 +8,8 @@ Every row-owning entity in a (possibly multi-entity) descriptor is loaded.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, cast
 
 from ._declared_contributor import DeclaredContributor
 from .case import Entity, Model
@@ -95,10 +95,11 @@ def _load_entity(
     view: EntityLayoutView,
     db: DatabaseProvider,
     declarations: Mapping[ColumnContributor, DeclaredContributor],
-) -> None:
+    corruptions: Sequence[Mapping[str, Any]],
+) -> set[int]:
     rows = entity.rows
     if not rows:
-        return
+        return set()
 
     slots = view.columns
     document_slot = next(
@@ -109,6 +110,7 @@ def _load_entity(
     members.update(document_names)
     columns = [slot.column for slot in slots]
 
+    applied: set[int] = set()
     tuples: list[list[Any]] = []
     for row in rows:
         unknown = set(row) - members
@@ -116,11 +118,116 @@ def _load_entity(
             raise ValueError(
                 f"fixture row for {entity.name} references unknown member(s) {sorted(unknown)}"
             )
-        tuples.append(
-            [_cell(slot, entity, view, document_names, row, declarations) for slot in slots]
-        )
+        cells = [_cell(slot, entity, view, document_names, row, declarations) for slot in slots]
+        applied |= _corrupt_row(entity, view, columns, cells, row, corruptions)
+        tuples.append(cells)
 
     db.load(view.layout.table, columns, tuples)
+    return applied
+
+
+def _primary_key_name(entity: Entity) -> str:
+    """The declared member name of *entity*'s model primary key.
+
+    `m-metamodel` admits no composite primary key, so one name addresses one row
+    — which is what lets ``given.corrupt`` name a row by a single ``key`` value.
+    """
+    for attribute in entity.attributes:
+        if attribute.get("primaryKey"):
+            return str(attribute["name"])
+    raise ValueError(f"{entity.name} declares no primary key to address a corruption by")
+
+
+def _corrupt_row(
+    entity: Entity,
+    view: EntityLayoutView,
+    columns: Sequence[str],
+    cells: list[Any],
+    row: Mapping[str, Any],
+    corruptions: Sequence[Mapping[str, Any]],
+) -> set[int]:
+    """Write every corruption addressed at *row* into the physical cells it produced,
+    and answer which of *corruptions* it applied.
+
+    A corruption is stored state rather than an authored value, so it replaces
+    what the conforming fixture produced instead of passing through the codec
+    that produced it (`m-case-format` *Corrupting stored state*).
+    """
+    key = row.get(_primary_key_name(entity))
+    applied: set[int] = set()
+    for position, entry in enumerate(corruptions):
+        if entry["entity"] != entity.canonical_name or entry["key"] != key:
+            continue
+        column, path = _corruption_target(entity, view, tuple(entry["member"]))
+        index = columns.index(column)
+        cells[index] = _thawed(cells[index])
+        _write_at(cells[index], path, entry["value"])
+        applied.add(position)
+    return applied
+
+
+def _corruption_target(
+    entity: Entity, view: EntityLayoutView, member: tuple[Any, ...]
+) -> tuple[str, tuple[Any, ...]]:
+    """The Structured Column and in-document path one addressed member resolves to.
+
+    The longest declared prefix of *member* that the Table Layout places answers
+    it: a document-resident member contributes its own Document Path, a top-level
+    Value Object occurrence under `Columns` contributes its own Structured Column
+    with an empty path, and whatever the address did not consume — the nested
+    member names and the array positions a placement never carries — follows.
+
+    A member the layout places in a Column of its own is refused: only a
+    Structured Column can hold a value its declaration contradicts.
+    """
+    placements = view.layout.placements
+    for cut in range(len(member), 0, -1):
+        prefix = member[:cut]
+        candidates = [
+            (address, placement)
+            for address, placement in placements.items()
+            if address.path == prefix
+        ]
+        owned = [
+            placement for address, placement in candidates if address.owner == entity.canonical_name
+        ]
+        placement = next(iter(owned), None) or next(
+            (placement for _address, placement in candidates), None
+        )
+        if placement is None:
+            continue
+        rest = member[cut:]
+        if isinstance(placement, DocumentPath):
+            return placement.slot.column, (*placement.path, *rest)
+        if rest:
+            return placement.slot.column, rest
+        break
+    raise ValueError(
+        f"given.corrupt addresses {entity.canonical_name}.{'.'.join(str(s) for s in member)}, "
+        "which this model does not place inside a Structured Column"
+    )
+
+
+def _thawed(document: Any) -> Any:
+    """*document* rebuilt out of ordinary mutable containers.
+
+    A fixture row's own sub-documents come straight from the parsed corpus, which
+    is immutable and shared between cases, so a corruption writes into a copy of
+    the cell rather than into the fixture every other case reads.
+    """
+    if isinstance(document, dict):
+        return {key: _thawed(value) for key, value in cast("dict[Any, Any]", document).items()}
+    if isinstance(document, list):
+        return [_thawed(element) for element in cast("list[Any]", document)]
+    return document
+
+
+def _write_at(document: Any, path: tuple[Any, ...], value: Any) -> None:
+    """Store *value* at *path* inside the already-built *document*."""
+    current = document
+    for segment in path[:-1]:
+        current = current[segment]
+    current[path[-1]] = value
 
 
 def _cell(
@@ -153,18 +260,31 @@ def _tag_value(view: EntityLayoutView) -> str:
     return view.discriminator.value
 
 
-def load_model(model: Model, db: DatabaseProvider) -> None:
+def load_model(
+    model: Model, db: DatabaseProvider, corruptions: Sequence[Mapping[str, Any]] = ()
+) -> None:
     """Insert every row-owning entity's fixture rows into its table via the provider.
 
     Fixture rows are keyed to row-owning entities only; an abstract inheritance
     node is rowless (m-inheritance), so a fixture keyed to one is refused before
     load and owns no layout selection here.
+
+    Every corruption must reach a row: one that addresses none would leave a case
+    asserting a verdict about storage nothing produced, which passes for the wrong
+    reason rather than failing.
     """
     assert_no_abstract_fixture_rows(model)
     layout = model.storage_layout
     declarations = declared_contributors(model)
+    applied: set[int] = set()
     for entity in model.entities:
         view = layout.entity(entity.canonical_name)
         if view is None:
             continue
-        _load_entity(entity, view, db, declarations)
+        applied |= _load_entity(entity, view, db, declarations, corruptions)
+    unapplied = [entry for position, entry in enumerate(corruptions) if position not in applied]
+    if unapplied:
+        raise ValueError(
+            "given.corrupt addresses row(s) the model's fixtures do not hold: "
+            f"{[(entry['entity'], entry['key']) for entry in unapplied]}"
+        )

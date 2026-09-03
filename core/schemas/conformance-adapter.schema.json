@@ -642,7 +642,7 @@
           "items": { "$ref": "#/$defs/identityCheck" }
         },
         "storedDataIssues": {
-          "description": "The stored-data diagnoses a read published for the result positions whose stored state contradicted the declared model (m-snapshot-read), compared against the case's `then.storedDataIssues`. Optional and additive — a conforming read publishes none and omits it, and existing run outputs stay valid.",
+          "description": "The stored-data diagnoses a read published for the result positions whose stored state contradicted the declared model (m-snapshot-read), compared against the case's `then.storedDataIssues`. Reported by an eager and a STREAMED graph-form read alike: a delivery classifies the same positions at the same ordinals its eager peer does, so the observation is the delivery's own rather than a second eager read's. Optional and additive — a conforming read publishes none and omits it, and existing run outputs stay valid.",
           "type": "array",
           "items": { "$ref": "#/$defs/storedDataRecord" }
         },

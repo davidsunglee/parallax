@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags", "shape"],
   "oneOf": [
     {
-      "description": "A read case: a queryable Object Query with expected rows or an expected object graph. The optional `when.stream` context member makes the read STREAMED — the roots are delivered one at a time in the Continuation Order over keyset-paged root statements of `when.stream.batchSize` positions each — and is admitted beside `then.graph` and beside a milestone-set `then.graphs`, never beside `then.rows`, which has no streamed peer.",
+      "description": "A read case: a queryable Object Query with expected rows or an expected object graph. The optional `when.stream` context member makes the read STREAMED — the roots are delivered one at a time in the Continuation Order over keyset-paged root statements of `when.stream.batchSize` positions each — and is admitted beside `then.graph` and beside a milestone-set `then.graphs`, never beside `then.rows`, which has no streamed peer. A streamed read states `then.storedDataIssues` exactly as its eager peer does: the delivery publishes the same classified positions at the same ordinals.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "read" },
@@ -364,7 +364,7 @@
       }
     },
     "given": {
-      "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, and any injected fault. Optional — a case that starts from the model's default fixtures and injects nothing omits `given` entirely.",
+      "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, the stored state to corrupt once they are loaded, and any injected fault. Optional — a case that starts from the model's default fixtures and injects nothing omits `given` entirely.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -376,6 +376,35 @@
         "apply": {
           "description": "conflict / temporal-conflict cases (m-opt-lock) only. An ordered list of out-of-band naive statement entries the harness applies verbatim AFTER the fixtures load and BEFORE the golden write, simulating a concurrent transaction that mutated or removed the row so the golden write reaches fewer rows than it addressed. Under `optimistic` mode the shortfall is a conflict the rendered gate detected; under `locking` mode the golden renders no gate and the same shortfall is a stale write. Each entry is a `{sql, binds}` statement whose `sql` is a plain string (dialect-agnostic naive SQL, run on every dialect). Absent for the success case (nothing intervened, so the write affects the row it addressed).",
           "$ref": "#/$defs/naiveStatements"
+        },
+        "corrupt": {
+          "description": "read cases only. An ordered list of stored-state corruptions applied AFTER the model's conforming fixtures load and BEFORE the action, so the read observes storage its own model contradicts (m-snapshot-read *Invalid stored data*). Each entry addresses one occurrence with the vocabulary `StoredDataIssue.path` reports it in — the row by its model primary key, then the member as a path of declared member names with integers for array positions — and states the raw stored `value` that replaces it. The corrupt value is stored as authored and never encoded, so it bypasses the canonical-literal oracle a fixture leaf passes; canonical fixtures and ordinary writes therefore stay conforming by construction. An addressed member MUST be document-resident, because a Structured Column holds any JSON value while a typed, constrained Column can be made to hold a non-conforming one only by first removing the constraint that forbids it — which is a schema change, and a case that changed its schema would no longer be reading the model it declares.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["entity", "key", "member", "value"],
+            "properties": {
+              "entity": {
+                "description": "The canonical spelling of the Entity owning the corrupted row.",
+                "type": "string",
+                "minLength": 1
+              },
+              "key": {
+                "description": "The corrupted row's model primary-key value, in its canonical Wire spelling (m-metamodel admits no composite primary key, so one value addresses one row)."
+              },
+              "member": {
+                "description": "The corrupted occurrence's entity-relative logical path: declared member names, with an integer for an array position — the same vocabulary `then.storedDataIssues` reports a diagnosis at, so setup and assertion read as one sentence and nothing is translated between them.",
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": ["string", "integer"] }
+              },
+              "value": {
+                "description": "The raw stored value written at that location, authored as the JSON it becomes in the Structured Column and never re-encoded. `null` spells a stored JSON null."
+              }
+            }
+          }
         },
         "fault": {
           "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). Absent when the case exercises only loop configuration (`retries: 0`, the callback-withheld-on-abort case).",

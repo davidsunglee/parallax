@@ -1119,6 +1119,18 @@ _STREAMED_DELIVERY_REASON: Final[str] = (
     "graded against the shipped surface by `tests/unit/test_snapshot_stream.py`"
 )
 
+_CORRUPT_STORED_STATE_REASON: Final[str] = (
+    "the corpus's corrupt-stored-state lane, whose claim is a verdict about STORAGE the "
+    "case itself wrote (`m-case-format` *Corrupting stored state*) rather than anything a "
+    "client can do. An idiomatic story would have to author the same non-conforming "
+    "document out of band and would then grade the classification the run sweep already "
+    "grades over the real provider, position by position, against the case's own "
+    "`then.storedDataIssues`. What the surface adds on top of that verdict — the evidence "
+    "each published issue carries, its structural equality, and its absence from every "
+    "automatic rendering — is graded against the shipped surface by "
+    "`tests/unit/test_snapshot_classification.py` and `tests/unit/test_snapshot_conversion.py`"
+)
+
 # The composition family's Transaction-Time-only arm. `m-snapshot-read-021`
 # reads `models/invoice.yaml`, which this package deliberately authors no
 # idiomatic class family for (`tests/_support/mirrored_models.UNMIRRORED`: the
@@ -1601,6 +1613,10 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-snapshot-read-044": _STREAMED_DELIVERY_REASON,
     "m-snapshot-read-045": _STREAMED_DELIVERY_REASON,
     "m-snapshot-read-046": _STREAMED_DELIVERY_REASON,
+    "m-snapshot-read-047": _STREAMED_DELIVERY_REASON,
+    "m-snapshot-read-048": _STREAMED_DELIVERY_REASON,
+    # -- m-snapshot-read: the corrupt-stored-state lane ---------------------- #
+    "m-snapshot-read-049": _CORRUPT_STORED_STATE_REASON,
     # -- m-value-object: predicate-read representative siblings ------------- #
     "m-value-object-004": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-005": _VO_PREDICATE_SIBLING_REASON,

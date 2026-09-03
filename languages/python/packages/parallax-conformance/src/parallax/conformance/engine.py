@@ -23,7 +23,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, Literal, Protocol, cast, runtime_checkable
+from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import (
     _case_ingress,
@@ -64,6 +64,7 @@ from parallax.core.db_port import (
     Committed,
     DbPort,
     DocumentReadOrdinals,
+    JsonDocument,
     RollbackFailed,
     RolledBack,
     Row,
@@ -99,6 +100,7 @@ from parallax.core.predicate import (
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.sql_gen._write import compile_write_step
+from parallax.core.storage_layout import DirectColumn, DocumentPath
 from parallax.core.temporal_read import Pin, TemporalReadError, query_pin, scans_an_axis
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
@@ -371,6 +373,147 @@ def _read_query(case: case_format.Case, model: AcceptedMetamodel) -> ObjectQuery
     return _case_ingress.normalize_case_query(deserialize_query(body["objectQuery"]), model)
 
 
+# --------------------------------------------------------------------------- #
+# given.corrupt: the stored state a read case observes instead of the           #
+# conforming one its fixtures loaded (m-case-format "Corrupting stored state"). #
+# --------------------------------------------------------------------------- #
+def _apply_given_corrupt(case: case_format.Case, model: AcceptedMetamodel, port: DbPort) -> None:
+    """Write a read case's ``given.corrupt`` entries over its loaded fixtures.
+
+    Applied where every read lane already stands — after provisioning, before the
+    action — so a case states the stored value once and every read form observes
+    the same storage. Each entry addresses a Structured Column and a path inside
+    it, and the value is stored exactly as authored: it is what the model
+    contradicts, so passing it back through the codec that spells a conforming
+    one would refuse it.
+    """
+    given = case.document.get("given")
+    if not isinstance(given, Mapping):
+        return
+    entries = cast("Mapping[str, object]", given).get("corrupt")
+    if not isinstance(entries, list):
+        return
+    for entry in cast("list[Mapping[str, object]]", entries):
+        _corrupt_stored_state(case, model, port, entry)
+
+
+def _corrupt_stored_state(
+    case: case_format.Case, model: AcceptedMetamodel, port: DbPort, entry: Mapping[str, object]
+) -> None:
+    """Realize one corruption as a whole-document replacement of one row's cell.
+
+    Read, mutate, write: a document holds the value at an authored path, and
+    replacing the whole document reaches it without a per-dialect document
+    mutation expression — the corrupt value is the subject of the case's own
+    assertion, so it must mean the same thing on every provider.
+    """
+    entity = case_entity(model, cast("str", entry["entity"]))
+    view = storage_layout.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - a corrupted Entity owns rows
+        raise EngineError(f"{case.path.name}: {entity.identity.canonical} owns no table")
+    member = tuple(cast("list[object]", entry["member"]))
+    column, path = _corruption_target(case, model, entity, member)
+    key_column, key = _corruption_key(case, model, entity, entry["key"])
+    dialect = port.dialect
+    table = dialect.quote(view.layout.table.name)
+    where = f"where {dialect.quote(key_column)} = ?"
+    rows = port.execute(
+        dialect.to_driver_sql(f"select {dialect.quote(column)} from {table} {where}"), [key]
+    )
+    if len(rows) != 1:
+        raise EngineError(
+            f"{case.path.name}: given.corrupt addresses {entity.identity.canonical} "
+            f"{entry['key']!r}, which the loaded fixtures do not hold"
+        )
+    document = _stored_document(rows[0][column])
+    _write_at(document, path, entry["value"])
+    port.execute_write(
+        dialect.to_driver_sql(f"update {table} set {dialect.quote(column)} = ? {where}"),
+        [JsonDocument(document), key],
+    )
+
+
+def _stored_document(cell: object) -> dict[str, object]:
+    """One Structured Column as the mutable document its provider returned."""
+    document = json.loads(cell) if isinstance(cell, str) else cell
+    if not isinstance(document, dict):  # pragma: no cover - the column is never SQL null
+        raise EngineError("a Structured Column holds a document")
+    return cast("dict[str, object]", document)
+
+
+def _write_at(document: dict[str, object], path: tuple[object, ...], value: object) -> None:
+    """Store ``value`` at ``path`` inside ``document``, walking its own containers.
+
+    A path segment is a member name or an array position, and the container it
+    indexes is whatever the stored document holds there, so the walk is untyped
+    for the same reason the stored state is: it is not the model's.
+    """
+    current: Any = document
+    for segment in path[:-1]:
+        current = current[segment]
+    current[path[-1]] = value
+
+
+def _corruption_target(
+    case: case_format.Case,
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    member: tuple[object, ...],
+) -> tuple[str, tuple[object, ...]]:
+    """The Structured Column and in-document path one addressed member resolves to.
+
+    The addressed top-level member answers it: a document-resident one contributes
+    its own Document Path, a top-level Value Object occurrence under `Columns`
+    contributes its own Structured Column, and the nested names and array
+    positions the address carries follow. A member the layout keeps in a Column of
+    its own is refused — only a Structured Column can hold a value its own
+    declaration contradicts.
+    """
+    view = storage_layout.view(model).entity(entity.identity)
+    name = member[0]
+    placement = None
+    if isinstance(name, str) and view is not None:
+        for identity in (
+            AttributeIdentity(entity.identity, name),
+            ValueObjectIdentity(entity.identity, (name,)),
+        ):
+            placement = placement or view.layout.placement(identity)
+    if isinstance(placement, DocumentPath):
+        return placement.slot.column.name, (*placement.path, *member[1:])
+    if isinstance(placement, DirectColumn) and len(member) > 1:
+        return placement.slot.column.name, member[1:]
+    raise EngineError(
+        f"{case.path.name}: given.corrupt addresses {entity.identity.canonical}."
+        f"{'.'.join(str(segment) for segment in member)}, which this model does not place "
+        "inside a Structured Column"
+    )
+
+
+def _corruption_key(
+    case: case_format.Case, model: AcceptedMetamodel, entity: EntityMetadata, key: object
+) -> tuple[str, object]:
+    """The primary-key Column one corruption addresses its row by, and the managed
+    value it binds (`m-metamodel` admits no composite primary key)."""
+    view = storage_layout.view(model).entity(entity.identity)
+    family = inheritance.view(model).entity(entity.identity)
+    attributes = () if family is None else family.applicable_attributes
+    declared = next(
+        (attribute for attribute in attributes if isinstance(attribute.primary_key, PrimaryKey)),
+        None,
+    )
+    placement = (
+        None if declared is None or view is None else view.layout.placement(declared.identity)
+    )
+    # Defensive: every accepted Entity declares one primary key and every Storage
+    # Layout keeps it in a Column of its own.
+    if declared is None or not isinstance(placement, DirectColumn):  # pragma: no cover
+        raise EngineError(
+            f"{case.path.name}: {entity.identity.canonical} declares no primary key a "
+            "corruption can address a row by"
+        )
+    return placement.slot.column.name, decode_wire(declared.type, cast("WireValue", key))
+
+
 def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
     """The read's result form from its asserted result member (m-case-format / m-sql).
 
@@ -519,6 +662,7 @@ def run_read_case(
     model = models.accepted_model_of(domain)
     query = _read_query(case, model)
     observed = lifecycle_run(lifecycle).observation()
+    _apply_given_corrupt(case, model, port)
     db = handle.Database(port, domain, lifecycle_provider=observed.provider)
     concurrency = _read_case_concurrency(case)
     try:
@@ -585,6 +729,7 @@ def _wire_read(
     retains nothing about the execution that produced it.
     """
     observed = lifecycle.observation()
+    _apply_given_corrupt(case, models.accepted_model_of(domain), port)
     db = handle.Database(port, domain, lifecycle_provider=observed.provider)
     try:
         return db.wire.find(query), observed
@@ -750,6 +895,7 @@ def _wire_delivery(
     delivery published, and that needs the whole delivery in hand.
     """
     observed = lifecycle_run(lifecycle).observation()
+    _apply_given_corrupt(case, models.accepted_model_of(domain), port)
     db = handle.Database(port, domain, lifecycle_provider=observed.provider)
     roots: list[object] = []
     try:

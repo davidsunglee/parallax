@@ -57,8 +57,14 @@ def _refuse_unpublished_roots(case: Case, root_rows: Sequence[materialize.Publis
 # --- nodes and assembly ------------------------------------------------------
 
 
-def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dict[str, Any]:
-    """One materialized node keyed the way `then.graph` keys one.
+def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dict[str, Any] | None:
+    """One materialized node keyed the way `then.graph` keys one, or ``None``
+    where the row's stored state left the position unhydratable.
+
+    A classified position keeps its place in the ordered result and publishes no
+    value where none could be produced without inventing one (`m-snapshot-read`
+    *Invalid stored data*); `then.graph` carries ``null`` there and the diagnosis
+    rides `then.storedDataIssues`.
 
     A graph leaf is keyed by the DECLARED member name (`m-case-format` *Graph
     keys*), while a read row arrives keyed by its physical column, so the
@@ -77,6 +83,8 @@ def graph_node(case: Case, entity: Entity, row: materialize.PublishedRow) -> dic
     declarations fill what that position cannot name — never overriding what it
     can.
     """
+    if materialize.is_unavailable(row):
+        return None
     model = case.model
     concrete = materialize.variant_entity(model, entity, row)
     node = materialize.materialize_variant_owner_node(case, entity, row)
@@ -93,7 +101,7 @@ def assemble_graph(
     steps: list[includes.FetchStep],
     root_rows: Sequence[materialize.PublishedRow],
     children_by_step: dict[includes.HopKey, dict[Any, list[materialize.PublishedRow]]],
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, list[dict[str, Any] | None]]:
     """Build the root-keyed object graph following the deep-fetch paths.
 
     Each path is walked hop by hop; at each hop the child rows for a given parent are
@@ -124,9 +132,11 @@ def assemble_graph(
                 return attribute["name"]
         return entity.attributes[0]["name"]
 
-    registry: dict[tuple[str, str, Any], dict[str, Any]] = {}
+    registry: dict[tuple[str, str, Any], dict[str, Any] | None] = {}
 
-    def node_for(view: str, entity: Entity, raw_row: materialize.PublishedRow) -> dict[str, Any]:
+    def node_for(
+        view: str, entity: Entity, raw_row: materialize.PublishedRow
+    ) -> dict[str, Any] | None:
         pk_col = includes.column_of(entity, pk_attr(entity))
         key = (view, entity.name, coerce_identity_key(raw_row[pk_col]))
         if key not in registry:
@@ -142,7 +152,10 @@ def assemble_graph(
 
     for path in includes.deepfetch_paths_raw(query):
         root_source = resolve_root_source_set(family, root_position, path)
-        parent_nodes = root_nodes
+        # A position whose stored state left it unhydratable publishes no value, so
+        # it carries no relationship view either: it holds its place in the ordered
+        # result and nothing hangs off it (m-snapshot-read *Invalid stored data*).
+        parent_nodes = [node for node in root_nodes if node is not None]
         parent_hop: includes.HopKey | None = None
         for index, segment in enumerate(path["segments"]):
             hop = includes.resolve_hop(
@@ -158,7 +171,11 @@ def assemble_graph(
                 # correlation member is addressed by name rather than by column.
                 parent_key = coerce_identity_key(parent_node.get(step.parent_attr))
                 matched = bucket.get(parent_key, [])
-                child_nodes = [node_for(step.view_key, step.child_entity, row) for row in matched]
+                child_nodes = [
+                    node
+                    for row in matched
+                    if (node := node_for(step.view_key, step.child_entity, row)) is not None
+                ]
                 if step.to_many:
                     parent_node[step.view_key] = child_nodes
                 else:
@@ -323,7 +340,7 @@ def assert_milestone_partition(
     case: Case,
     root_entity: Entity,
     root_rows: Sequence[dict[str, Any]],
-    nodes: Sequence[dict[str, Any]],
+    nodes: Sequence[dict[str, Any] | None],
     graph_specs: list[dict[str, Any]],
 ) -> None:
     """Assert ``then.graphs`` against milestone rows and the nodes built from them.

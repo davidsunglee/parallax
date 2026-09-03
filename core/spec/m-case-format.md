@@ -122,6 +122,7 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
 
 - **`given`** — the world-state established BEFORE the action: `fixtures` (whether
   the model's rows are pre-loaded), `apply` (out-of-band naive SQL run verbatim),
+  `corrupt` (stored state the model contradicts, written over the loaded fixtures),
   and `fault` (an injected fault kind). Optional — a case that starts from the
   model's default fixtures and injects nothing omits `given` entirely.
 - **`when`** — the action under test and how the client performs it. Exactly one
@@ -342,6 +343,7 @@ values.
 | `shape` | top-level | yes | the explicit shape discriminator — one of the nine shapes above; the schema `oneOf` keys on this `const` |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
+| `given.corrupt` | `given` | no | an ordered list of stored-state corruptions applied after the model's conforming fixtures load and before the action, admitted on `read` cases; each entry addresses one occurrence by `entity` + primary `key` + logical `member` path and states the raw stored `value` that replaces it (see *Corrupting stored state*, below) |
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
@@ -761,6 +763,88 @@ distinguishes a collapsed value from an absent one, and `issues` is the closed
 diagnosis set that position carries — deduplicated within the position and repeated
 in every position that reaches the same invalid node. A conforming read authors the
 key not at all.
+
+A **streamed** read states the key exactly as its eager peer does. A delivery
+classifies the same positions at the same ordinals — a page size decides nothing
+about which roots contradict the model — so the observation is the delivery's own
+and never a second eager read's.
+
+An issue names its `code`, `entity`, `member`, and `objectKey` and deliberately
+states **no rejected value and no occurrence path**. Both are part of the public
+diagnosis (`m-snapshot-read` *Evidence a public issue carries*), and neither is
+statable here as one comparison: a rejected structured value is a detached
+read-only mapping whose equality is object-key-order-insensitive and whose
+absent-member marker is a language singleton, and a path addresses array
+positions a `member` identity cannot. What a case CAN state portably is which
+occurrence earned which verdict, which the four fields already fix — and
+`given.corrupt` states the rejected value on the other side of the same case, so
+a corpus case that corrupts a location and asserts a diagnosis at it already
+pins the pairing the evidence fields would restate. The evidence values
+themselves are graded per language, against the same stored states.
+
+#### Corrupting stored state
+
+A case that needs storage its own model contradicts names the corruption rather
+than authoring a fixture wrong. **`given.corrupt`** is an ordered list applied
+after the model's conforming fixtures load and before the action, and each entry
+addresses one occurrence with the vocabulary `then.storedDataIssues` reports one
+in:
+
+```yaml
+given:
+  corrupt:
+    - entity: parallax.compatibility.StreamCoordinate
+      key: 102
+      member: [day]
+      value: "0000-13-99"
+```
+
+`entity` is the canonical Entity spelling, `key` the row's model primary-key value
+(`m-metamodel` admits no composite primary key, so one value addresses one row),
+`member` the entity-relative logical path — declared member names, with an integer
+for an array position — and `value` the raw stored value written there, authored
+as the JSON it becomes and never re-encoded. Sharing the addressing with
+`StoredDataIssue.path` is what makes a case read as one sentence: corrupt this
+location, expect a diagnosis at this location. Nothing is translated between the
+setup and the assertion, so a disagreement between them is a defect the case
+exposes rather than absorbs.
+
+Each adapter realizes the step in its own way — the case states what is wrong
+once, portably. Raw post-load SQL would be authored per dialect, which is
+tolerable where `given.apply`'s statements arrange timing but not here, where the
+corrupt value is the subject of the assertion and must mean the same thing on
+every provider and in every language target.
+
+**The corrupt value bypasses the canonical-literal oracle, and only it.** A
+fixture leaf is authored in canonical Wire output and re-decoded at authoring
+time, which is why the six issue codes below the document level cannot be seeded
+from a fixture at all; a corruption is stated as raw storage and written as
+authored. Canonical fixtures and ordinary writes therefore stay conforming by
+construction, and relaxing the authoring oracle — which protects every fixture —
+is never traded for the few deliberately broken rows.
+
+**An addressed member MUST be document-resident.** A Structured Column holds any
+JSON value, so every corruption a case can state is storable on both dialects
+without touching DDL. A typed, constrained Column can be made to hold a
+non-conforming value only by first removing the constraint that forbids it, and a
+case that altered its schema would no longer be reading the model it declares. Two
+consequences are deliberate and permanent: `stored-data-primary-key-null` and
+`stored-data-primary-key-undecodable` have no corpus expression, because a model
+primary key holds a direct-column role under either Storage Layout
+(`m-storage-layout` *Direct roles and document residency*), and neither does a
+`stored-data-family-tag-unknown`, whose discriminator is framework-owned and names
+no declared member. Those three stay graded per language, against rows built
+directly, and the corpus grades the six a document can carry.
+
+**A corrupted Continuation Order member stays reportable.** A streamed page rebinds
+each coordinate carrier in the form its own expression compares (`m-sql`
+*Continuation coordinates*), so a text-compared document extraction reports the
+stored text itself and a casting extraction reports the database's own cast result,
+which is in the declared value space by construction. A case may therefore corrupt
+a member the Continuation Order names and still author that page's binds — and the
+two values it then shows are deliberately different things: `given.corrupt` states
+the logical value the read rejects, and the page's coordinate bind states what the
+database's own `ORDER BY` expression evaluated.
 
 ### `then.statements`, `then.referenceSql`, `then.rows` (the oracle question)
 

@@ -247,6 +247,13 @@ _CANONICAL_ENTITY_SPELLING_READS: Final[frozenset[str]] = frozenset({"m-predicat
 # as it grades every other, plus the delivered event stream the run lane grades
 # on top of it.
 _EXECUTION_LIFECYCLE_READS: Final[frozenset[str]] = frozenset({"m-execution-lifecycle-001"})
+# The corrupt-stored-state read (`m-snapshot-read-049`): an ordinary ordered
+# instance-form read over a Relational Document Layout, whose golden this lane
+# grades as it grades every other. Compilation is independent of what the rows
+# hold — `given.corrupt` changes the storage the RUN lane observes and not the
+# statement — so a case whose subject is a stored-data verdict still owes its
+# golden here.
+_CORRUPT_STORED_STATE_READS: Final[frozenset[str]] = frozenset({"m-snapshot-read-049"})
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _DOCUMENT_CODEC_READS
@@ -271,6 +278,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _STORAGE_LAYOUT_DOCUMENT_AND_TWIN_READS
     | _CANONICAL_ENTITY_SPELLING_READS
     | _EXECUTION_LIFECYCLE_READS
+    | _CORRUPT_STORED_STATE_READS
 )
 
 # Keyed, non-temporal unit-of-work writes graded byte-exact across `m-unit-work`,

@@ -25,13 +25,19 @@ def provision(case: Case, db: DatabaseProvider) -> None:
     """Put *db* into *case*'s declared starting state, discarding whatever it held.
 
     Destructive and complete: the database is reset, the model's derived DDL is
-    applied to the empty schema, and the model's fixtures are loaded. A lane whose
-    case builds its own history from its own ordered DML wants
-    :func:`provision_empty` instead.
+    applied to the empty schema, the model's fixtures are loaded, and the case's
+    own ``given.corrupt`` entries are written over them. A lane whose case builds
+    its own history from its own ordered DML wants :func:`provision_empty`
+    instead.
+
+    Corruption rides with the load rather than following it as a second pass: the
+    stored state a case declares is what the read must observe, and writing it as
+    the fixtures land reaches it on every provider without a dialect-specific
+    document update (`m-case-format` *Corrupting stored state*).
     """
     db.reset()
     db.apply_ddl(ddl_for(case.model, db.dialect))
-    load_model(case.model, db)
+    load_model(case.model, db, case.corrupt)
 
 
 def provision_empty(case: Case, db: DatabaseProvider) -> None:

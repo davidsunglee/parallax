@@ -13,12 +13,30 @@
 # classification, at both positions a root can carry it. Position
 # 0 is invalid through an INCLUDED node (child 11), position 1 at the ROOT itself,
 # and position 2 through both at once, which is what shows one record carrying the
-# diagnoses of every node its own include tree reached. Position 3 conforms and
-# publishes no record at all. Every diagnosis names the concrete Entity it was found
+# diagnoses of every node its own include tree reached. Position 3 is the
+# corruption below. Every diagnosis names the concrete Entity it was found
 # on, the member path inside the occurrence, and the affected object's own key.
+#
+# Position 3 no longer conforms: `given.corrupt` writes a JSON null over its own
+# `profile.street` once the conforming fixtures have loaded, which is the stored
+# state a fixture cannot author at all — a null at a required leaf is refused by the
+# canonical-literal oracle before a case runs. It hydrates too, through the normative
+# NULL collapse rather than the absence one, and the difference is observable: the
+# published occurrence carries `street` as null where an omitted one carries no key,
+# so `stored-data-required-member-null` and `stored-data-required-member-absent` are
+# told apart by what the value looks like and not only by the code. Both halves of
+# this pair state the corruption identically, because what it names is a logical
+# location and a stored value — the layout decides where that lands and changes
+# neither the verdict nor the published shape.
 model: models/classification-transparency-layout-twin-columns.yaml
 tags: [m-storage-layout, m-snapshot-read, m-document-codec, read, layout-twin, columns, slice-snapshot-1]
 shape: read
+given:
+  corrupt:
+    - entity: parallax.compatibility.ClassificationTwinItem
+      key: 4
+      member: [profile, street]
+      value: null
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
@@ -58,7 +76,7 @@ then:
         children:
           - { id: 13, itemId: 3, profile: { city: Oslo } }
       - id: 4
-        profile: { street: 4 Main, city: Boston }
+        profile: { street: null, city: Boston }
         children:
           - { id: 14, itemId: 4, profile: { street: 14 Main, city: null } }
   storedDataIssues:
@@ -87,4 +105,11 @@ then:
           entity: parallax.compatibility.ClassificationTwinItem
           member: parallax.compatibility.ClassificationTwinItem.profile.street
           objectKey: { entity: parallax.compatibility.ClassificationTwinItem, key: { id: 3 } }
+    - ordinal: 3
+      hydrated: true
+      issues:
+        - code: stored-data-required-member-null
+          entity: parallax.compatibility.ClassificationTwinItem
+          member: parallax.compatibility.ClassificationTwinItem.profile.street
+          objectKey: { entity: parallax.compatibility.ClassificationTwinItem, key: { id: 4 } }
   roundTrips: 2

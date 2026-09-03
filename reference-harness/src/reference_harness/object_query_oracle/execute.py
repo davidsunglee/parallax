@@ -575,3 +575,30 @@ def bind_value_equal(
     except portable_literal.PortableLiteralError:
         return False
     return scalars_equal(left_wire, right_wire, None)
+
+
+def coordinate_bind_equal(authored: Any, derived: Any, neutral_type: str) -> bool:
+    """Compare one Continuation Order coordinate bind under its term's declaration.
+
+    A coordinate is the only bind whose carrier the declared type may not admit: a
+    delivery continuing past storage the model contradicts rebinds what its own
+    ordering expression evaluated, and reports it in the form it bound it in
+    (`m-sql` *Continuation coordinates*). Where the type admits neither side there
+    is no canonical projection to compare, so the two are compared as the text
+    they are — never one projected against one unprojected, which would report a
+    difference the two spellings do not have. Every other bind is a value some
+    declaration admits, and :func:`bind_value_equal` refuses a noncanonical one.
+    """
+    if bind_value_equal(authored, derived, neutral_type):
+        return True
+    return not any(
+        _declarable(carrier, neutral_type) for carrier in (authored, derived)
+    ) and scalars_equal(authored, derived, None)
+
+
+def _declarable(value: Any, neutral_type: str) -> bool:
+    try:
+        _canonical_declared_bind(value, neutral_type, allow_temporal_infinity=True)
+    except portable_literal.PortableLiteralError:
+        return False
+    return True
