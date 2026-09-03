@@ -144,18 +144,18 @@ def test_a_held_session_opens_at_each_declared_isolation(provider) -> None:
         assert observed == expected, f"{provider.dialect} session at {level} reported {observed!r}"
 
 
-def test_mariadb_turns_snapshot_isolation_on_for_repeatable_read_alone(provider) -> None:
+def test_mariadb_runs_repeatable_read_with_snapshot_isolation_on(provider) -> None:
     # MariaDB's Repeatable Read forbids the lost update only with
-    # `innodb_snapshot_isolation`, so the provider sets it there and nowhere else:
-    # Serializable forbids the same anomaly through shared locking reads and range
-    # protection, which do not work from the read view the variable governs.
+    # `innodb_snapshot_isolation`, so what a session opened at that level is
+    # RUNNING with is asserted against a real server rather than inferred from the
+    # statements the provider issued.
     #
-    # The two halves read differently depending on what the booted image defaults
-    # to. Where the default is already ON, the Repeatable Read half pins that the
-    # level's own set succeeded rather than that it was needed, and the Serializable
-    # half that the level issues no set of its own; where the default is OFF — as
-    # every 11.4-series release the graded floor admits has it — the pair separates
-    # the two levels outright.
+    # This half is live and image-dependent: on an image whose own default is ON,
+    # a Repeatable Read session reports the flag on whether or not the provider
+    # set it, and a Serializable session reports that same default whether or not
+    # the provider wrongly set it too. Which levels carry the setting is therefore
+    # pinned where a server default cannot mask it — `test_dialect_seam.py`, over
+    # the provider's own per-level statements.
     if provider.dialect != "mariadb":
         pytest.skip("innodb_snapshot_isolation is a MariaDB setting")
     probe = "select @@innodb_snapshot_isolation as flag"

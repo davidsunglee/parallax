@@ -29,6 +29,8 @@ def test_every_level_of_the_vocabulary_is_returned_unchanged(level: str) -> None
         "",
         None,
         3,
+        [],  # unhashable: a set membership test alone would raise TypeError here
+        {"level": "serializable"},
     ],
 )
 def test_anything_outside_the_vocabulary_is_refused_by_naming_the_whole_set(value: object) -> None:

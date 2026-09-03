@@ -2,10 +2,10 @@
 
 These pin the localization claim: adding MariaDB as the second dialect touches
 ONLY the dialect seam — the normalizer's dialect mapping + read-lock rendering,
-the DDL type table, and the provider's infinity / instant adapters — never the
-spec prose or the fixtures. The end-to-end execution against a real MariaDB
-container is exercised by the compatibility suite (``-k dialect``); these tests
-cover the seam logic that needs no database.
+the DDL type table, and the provider's infinity / instant adapters and per-level
+session statements — never the spec prose or the fixtures. The end-to-end
+execution against a real MariaDB container is exercised by the compatibility
+suite (``-k dialect``); these tests cover the seam logic that needs no database.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from reference_harness.case import Case, Model, load_model
 from reference_harness.ddl_builder import _column_type, ddl_for, quote_identifier
 from reference_harness.providers.mariadb import (
     _INFINITY_SENTINEL,
+    _ISOLATION,
     _from_db_value,
     _is_boolean_field,
     _to_db_bind,
@@ -174,6 +175,28 @@ def test_both_dialects_render_the_same_selected_slots_and_nullability() -> None:
         assert "primary key (id)" in create
     assert "amount numeric(18,2) not null" in rendered["postgres"]
     assert "amount decimal(18,2) not null" in rendered["mariadb"]
+
+
+# --- the per-level session statements (the isolation seam) -------------------
+
+
+def test_only_repeatable_read_opens_with_snapshot_isolation_set() -> None:
+    # MariaDB's Repeatable Read forbids the lost update only with
+    # `innodb_snapshot_isolation`, so that level sets it explicitly rather than
+    # inheriting whatever the booted server defaults to. Serializable forbids the
+    # same anomaly through shared locking reads and range protection, which do not
+    # work from the read view the variable governs, so it must leave the setting
+    # alone; Read Committed never promised the anomaly away at all.
+    #
+    # Which levels carry it is pinned here rather than against a live server
+    # because a server whose own default is ON reports the flag on for every
+    # level, masking both a level that stopped setting it and one that started.
+    carrying = {
+        level
+        for level, statements in _ISOLATION.items()
+        if any("innodb_snapshot_isolation" in statement for statement in statements)
+    }
+    assert carrying == {"repeatable-read"}
 
 
 # --- the infinity / instant adapters (the max-sentinel fallback) -------------

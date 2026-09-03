@@ -1,11 +1,11 @@
 """Postgres adapter internal-seam unit tests (Docker-free).
 
-The public export is ``PostgresAdapter`` alone (§8 topology); psycopg bind
-mechanics stay internal. The bind-adaptation seam — the neutral ``JsonDocument``
-carrier becoming a psycopg ``Jsonb`` at the adapter boundary — and the
-`m-db-error` port-boundary re-raise (every psycopg exception translated to a
-neutral ``DatabaseError``) are both pure and proven here without a container; the
-end-to-end deadlock witness lives in the provider lane.
+The public exports are ``PostgresAdapter`` and ``isolation_spelling`` (§8
+topology); psycopg bind mechanics stay internal. The bind-adaptation seam — the
+neutral ``JsonDocument`` carrier becoming a psycopg ``Jsonb`` at the adapter
+boundary — and the `m-db-error` port-boundary re-raise (every psycopg exception
+translated to a neutral ``DatabaseError``) are both pure and proven here without
+a container; the end-to-end deadlock witness lives in the provider lane.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def test_public_surface_is_the_adapter_and_this_engines_isolation_spelling() -> 
 def test_every_portable_level_has_exactly_one_postgres_spelling() -> None:
     # The map is keyed by the port's own vocabulary, so a level added there with no
     # spelling here — or a spelling for a level the vocabulary does not name — is a
-    # gap the adapter would meet as a KeyError at the boundary it was opening.
+    # gap a caller meets as a KeyError on the level it asked for.
     spellings = {level: isolation_spelling(isolation_level(level)) for level in ISOLATION_LEVELS}
     assert spellings == {
         "read_committed": "read committed",
