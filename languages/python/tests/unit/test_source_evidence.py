@@ -6,8 +6,8 @@ these tests measure is what a value carries, how long it lives, what survives an
 edit or a copy, and what a conversion strips.
 
 The seam's own mechanics — which rows retain what, and under which state key —
-live in `test_write_inputs.py`; what lives here is the choreography a caller
-actually performs.
+live in `test_write_observation_retention.py`; what lives here is the
+choreography a caller actually performs.
 """
 
 from __future__ import annotations
