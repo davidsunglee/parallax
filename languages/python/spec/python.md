@@ -3129,8 +3129,9 @@ identity a caller may copy or pickle across a boundary of their own.
   `AttributeIdentity` tuple the coordinates were measured against), `coordinate`
   (an inert `tuple[object, ...]`, never a cursor), and `ordinal` (the delivery
   position of the first undeliverable root). It is frozen by hand exactly as
-  `InvalidDataError` is, so `add_note` and chaining work while every other
-  assignment or deletion raises; `coordinate` is reachable by attribute access
+  `InvalidDataError` is — the same writable interpreter-owned names, and the same
+  bypass boundary stated there — so `add_note` and chaining work while every
+  other attribute assignment or deletion raises; `coordinate` is reachable by attribute access
   alone, and stays out of the message, the default repr, lifecycle events, and
   default logging. `m-snapshot-read` *Ending a delivery at a tie* settles when it
   is raised and what precedes it.
@@ -3219,14 +3220,25 @@ identity a caller may copy or pickle across a boundary of their own.
 - **The published shapes**, exported from `parallax.snapshot`. None of the three
   accepts attribute assignment after construction: the two records are frozen and
   slotted, and `InvalidDataError` settles its read-only report and the message
-  derived from it in its constructor, then refuses every later assignment or
-  deletion — including the inherited `args` the message lives in. The error is
+  derived from it in its constructor, then refuses every later attribute
+  assignment or deletion — including the inherited `args` the message lives in.
+  The error is
   frozen by hand rather than as a frozen dataclass, because that spelling also
   refuses `add_note` on a `BaseException` subclass and `__slots__` restricts
   nothing there — the base always carries an instance dictionary. The hand-written
   refusal leaves exactly the state the interpreter owns (`__cause__`,
   `__context__`, `__notes__`, `__suppress_context__`, `__traceback__`) writable,
-  so chaining, tracebacks, and notes behave as on any exception:
+  so chaining, tracebacks, and notes behave as on any exception.
+
+  **The freeze is the type's own `__setattr__` / `__delattr__`, so it binds
+  attribute assignment and deletion and nothing else.** Writing into the instance
+  dictionary, calling `object.__setattr__`, and declaring a subclass that
+  replaces those two methods all reach past it — and reach past
+  `dataclass(frozen=True)`, slotted spelling included, in exactly the same way,
+  so no representation an instance carries its own state in is stronger. They are
+  deliberate bypasses, outside the contract as `object.__new__` is for a sentinel
+  class, and nothing short of one makes an instance Parallax raised report state
+  it was not constructed with:
 
   ```python
   class StoredDataIssue:

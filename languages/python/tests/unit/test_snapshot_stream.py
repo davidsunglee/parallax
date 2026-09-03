@@ -1000,6 +1000,42 @@ def test_the_refusal_is_frozen_and_keeps_its_coordinate_out_of_what_it_reports()
     assert not hasattr(refusal, "__notes__")
 
 
+def test_every_name_the_refusal_carries_refuses_assignment_and_deletion() -> None:
+    # The freeze is the type's own `__setattr__` / `__delattr__`, so what it
+    # binds is every attribute assignment and deletion — the reported names, the
+    # backing fields they read, the class-level `code`, the inherited `args`, and
+    # a name the class never declared — with only the five the interpreter owns
+    # left writable. `object.__setattr__`, an instance-dictionary write, and a
+    # subclass replacing those two methods reach past this refusal exactly as
+    # they reach past `dataclass(frozen=True)`, and are outside the contract.
+    with (
+        _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
+        pytest.raises(SnapshotStreamContinuationError) as raised,
+    ):
+        list(stream)
+    refusal = raised.value
+    carried = (
+        "terms",
+        "coordinate",
+        "ordinal",
+        "code",
+        "args",
+        "_terms",
+        "_coordinate",
+        "_ordinal",
+    )
+    for name in (*carried, "undeclared"):
+        with pytest.raises(AttributeError, match="frozen; cannot assign"):
+            setattr(refusal, name, "rewritten")
+    for name in carried:
+        with pytest.raises(AttributeError, match="frozen; cannot delete"):
+            delattr(refusal, name)
+    assert refusal.terms and refusal.coordinate == (2,) and refusal.ordinal == 1
+    assert refusal.code == "snapshot-stream-continuation-order-not-total"
+    refusal.__cause__ = ValueError("chaining stays interpreter-owned")
+    assert isinstance(refusal.__cause__, ValueError)
+
+
 def test_a_limit_leaves_a_tie_at_its_own_boundary_undetected() -> None:
     # The one boundary the guard does not cover, and deliberately: an authored
     # limit is a hard database-read boundary, so the final page reads only what is
