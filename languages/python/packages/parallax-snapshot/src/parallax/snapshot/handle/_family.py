@@ -2,12 +2,12 @@
 
 Every question of the form "what shape does this entity's FAMILY declare?"
 answers here off the accepted Metamodel and its facets: the declaring root
-(:func:`declaring`), the temporal axes (:func:`tx_time_axis` /
-:func:`valid_time_axis`), the optimistic-lock version attribute
-(:func:`version_attribute`), and the family-effective primary key
-(:func:`family_primary_key`), plus the small ``Class.member`` reference split
-(:func:`assignment_member`) that resolves an authored assignment against the
-entity's members.
+(:func:`declaring`), whether the family is temporal at all (:func:`is_temporal`)
+and which axes it declares (:func:`tx_time_axis` / :func:`valid_time_axis`), the
+optimistic-lock version attribute (:func:`version_attribute`), and the
+family-effective primary key (:func:`family_primary_key`), plus the small
+``Class.member`` reference split (:func:`assignment_member`) that resolves an
+authored assignment against the entity's members.
 
 Every PHYSICAL answer instead comes from the Storage Layout Facet, entered
 through :func:`entity_layout`: the row-owning Entity's canonical slot selection.
@@ -58,6 +58,7 @@ __all__ = [
     "entity_layout",
     "entity_of",
     "family_primary_key",
+    "is_temporal",
     "members",
     "placed_members",
     "slot_column",
@@ -113,6 +114,18 @@ def declaring(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
         return entity
     root = model.entity(position.root)
     return entity if root is None else root
+
+
+def is_temporal(declaring_entity: EntityMetadata) -> bool:
+    """Whether ``declaring_entity``'s family is TEMPORAL — whether it declares
+    any As-Of Axis at all.
+
+    Temporality is family-wide and root-owned (ADR 0026), so resolve through
+    :func:`declaring` first: a descendant declares no axis of its own, and asking
+    one directly would answer for a temporal family as though it were not. This
+    is the guard the two axis accessors have none of their own — both raise when
+    their axis is absent, and a caller that must not raise asks this first."""
+    return bool(declaring_entity.declared_as_of_axes)
 
 
 def tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:

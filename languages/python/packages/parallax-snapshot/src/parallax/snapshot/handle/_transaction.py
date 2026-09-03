@@ -205,16 +205,14 @@ class Transaction:
         Transaction-Time-Only or non-temporal target takes none (no Valid-Time dimension to
         bound)."""
         refuse_reentry(self._lifecycle)
-        record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
-            instance, "insert", valid_from
-        )
+        record, valid_from_literal, _ = self._prepare_keyed_write(instance, "insert", valid_from)
         self._buffer(
             "insert",
             record.identity,
             self._codec.full_row(instance),
             valid_from=valid_from_literal,
         )
-        self._record_buffered_insert(record, declaring, instance)
+        self._record_buffered_insert(record, instance)
 
     def insert_until(
         self, instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
@@ -233,7 +231,7 @@ class Transaction:
         path derives every interval bound itself (`python.md` §2), which is why
         the Entity constructor refuses an authored one outright."""
         refuse_reentry(self._lifecycle)
-        record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
+        record, valid_from_literal, until_literal = self._prepare_keyed_write(
             instance, "insertUntil", valid_from, until
         )
         self._buffer(
@@ -243,7 +241,7 @@ class Transaction:
             valid_from=valid_from_literal,
             until=until_literal,
         )
-        self._record_buffered_insert(record, declaring, instance)
+        self._record_buffered_insert(record, instance)
 
     def update(self, copy: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
@@ -275,9 +273,7 @@ class Transaction:
         :func:`validate_window`: a Transaction-Time-Only or non-temporal target
         takes none (no Valid-Time dimension to bound)."""
         refuse_reentry(self._lifecycle)
-        record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
-            copy, "update", valid_from
-        )
+        record, valid_from_literal, _ = self._prepare_keyed_write(copy, "update", valid_from)
         authored = self._authored_assignments(record, copy, "update")
         if authored is None:
             return
@@ -287,7 +283,7 @@ class Transaction:
             record.identity,
             row,
             valid_from=valid_from_literal,
-            claim=self._resolve_evidence(record, declaring, copy, "update"),
+            claim=self._resolve_evidence(record, copy, "update"),
             restorations=restorations,
         )
 
@@ -305,9 +301,7 @@ class Transaction:
             "delete",
             record.identity,
             self._codec.identity_row(node_or_instance),
-            claim=self._resolve_evidence(
-                record, declaring_of(self._model.meta, record), node_or_instance, "delete"
-            ),
+            claim=self._resolve_evidence(record, node_or_instance, "delete"),
         )
 
     # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
@@ -329,7 +323,7 @@ class Transaction:
         instant, mirrors ``terminate_where``'s own
         :func:`validate_window`)."""
         refuse_reentry(self._lifecycle)
-        record, declaring, valid_from_literal, _ = self._prepare_keyed_write(
+        record, valid_from_literal, _ = self._prepare_keyed_write(
             node_or_instance, "terminate", valid_from
         )
         self._buffer(
@@ -337,7 +331,7 @@ class Transaction:
             record.identity,
             self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
-            claim=self._resolve_evidence(record, declaring, node_or_instance, "terminate"),
+            claim=self._resolve_evidence(record, node_or_instance, "terminate"),
         )
 
     def update_until(
@@ -358,7 +352,7 @@ class Transaction:
         change set (once the window is confirmed valid) issues no DML at all,
         exactly like keyed ``update``."""
         refuse_reentry(self._lifecycle)
-        record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
+        record, valid_from_literal, until_literal = self._prepare_keyed_write(
             copy, "updateUntil", valid_from, until
         )
         authored = self._authored_assignments(record, copy, "updateUntil")
@@ -371,7 +365,7 @@ class Transaction:
             row,
             valid_from=valid_from_literal,
             until=until_literal,
-            claim=self._resolve_evidence(record, declaring, copy, "updateUntil"),
+            claim=self._resolve_evidence(record, copy, "updateUntil"),
             restorations=restorations,
         )
 
@@ -387,7 +381,7 @@ class Transaction:
         call, before any buffering (:func:`validate_window`, `python.md`
         §5)."""
         refuse_reentry(self._lifecycle)
-        record, declaring, valid_from_literal, until_literal = self._prepare_keyed_write(
+        record, valid_from_literal, until_literal = self._prepare_keyed_write(
             node_or_instance, "terminateUntil", valid_from, until
         )
         self._buffer(
@@ -396,7 +390,7 @@ class Transaction:
             self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
             until=until_literal,
-            claim=self._resolve_evidence(record, declaring, node_or_instance, "terminateUntil"),
+            claim=self._resolve_evidence(record, node_or_instance, "terminateUntil"),
         )
 
     def _prepare_keyed_write(
@@ -405,7 +399,7 @@ class Transaction:
         mutation: KeyedMutation,
         valid_from: dt.datetime | None,
         until: dt.datetime | None = None,
-    ) -> tuple[EntityMetadata, EntityMetadata, dt.datetime | None, dt.datetime | None]:
+    ) -> tuple[EntityMetadata, dt.datetime | None, dt.datetime | None]:
         """The keyed-verb prep every verb above (``delete`` excepted — it takes
         no Valid-Time bound) opens with: resolve the written instance's own
         accepted Metadata and its family's DECLARING entity (the entity that
@@ -425,10 +419,11 @@ class Transaction:
         rather than leaving a ``*Until`` verb to add its own ``until`` step
         afterwards: a bounded window is a PAIR, and asking half of it first is
         what let an absent half be reported as something other than the missing
-        bound it is. Returns the record (``_buffer``'s own entity-name
-        argument), the declaring entity (the evidence resolution below needs
-        it), and the two managed normalized instants (``None`` where the target
-        or the verb states no such bound)."""
+        bound it is. Returns the record (``_buffer``'s own entity-name argument)
+        and the two managed normalized instants (``None`` where the target or the
+        verb states no such bound). The declaring entity stays this step's own
+        working value: every family answer a later step needs resolves from the
+        accepted Metamodel itself."""
         record = metadata_of_instance(self._model.meta, node_or_instance)
         declaring = declaring_of(self._model.meta, record)
         validate_source_pin(record.identity, source_pin(node_or_instance))
@@ -436,10 +431,10 @@ class Transaction:
             record.identity,
             node_or_instance,
             mutation,
-            inserted_here=lambda: self._has_buffered_insert(record, declaring, node_or_instance),
+            inserted_here=lambda: self._has_buffered_insert(record, node_or_instance),
         )
         valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
-        return record, declaring, valid_from_literal, until_literal
+        return record, valid_from_literal, until_literal
 
     def _authored_assignments(
         self, record: EntityMetadata, copy: EntityBase, mutation: KeyedMutation
@@ -468,9 +463,7 @@ class Transaction:
             return None
         return self._codec.identity_row(copy), restorations
 
-    def _record_buffered_insert(
-        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
-    ) -> None:
+    def _record_buffered_insert(self, record: EntityMetadata, instance: EntityBase) -> None:
         """Record the object this transaction just buffered an insert of — the
         read-your-own-writes exemption's whole state.
 
@@ -478,11 +471,9 @@ class Transaction:
         through a derived row, because the exemption is asked on a branch that
         must not derive one.
         """
-        self._inserted_objects.record(written_object(record, declaring, instance))
+        self._inserted_objects.record(written_object(record, self._model.meta, instance))
 
-    def _has_buffered_insert(
-        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
-    ) -> bool:
+    def _has_buffered_insert(self, record: EntityMetadata, instance: EntityBase) -> bool:
         """Whether THIS transaction already buffered an insert of the object
         ``instance`` names — the read-your-own-writes half of the provenance
         rule.
@@ -497,12 +488,11 @@ class Transaction:
         """
         if not self._inserted_objects:
             return False
-        return self._inserted_objects.holds(written_object(record, declaring, instance))
+        return self._inserted_objects.holds(written_object(record, self._model.meta, instance))
 
     def _resolve_evidence(
         self,
         record: EntityMetadata,
-        declaring: EntityMetadata,
         instance: EntityBase,
         mutation: KeyedMutation,
     ) -> SettledEvidence | None:
@@ -536,7 +526,7 @@ class Transaction:
         `m-opt-lock` fixes: a no-op is dropped before any observation concern)
         and AFTER window validation (the window rejects first).
         """
-        if self._has_buffered_insert(record, declaring, instance):
+        if self._has_buffered_insert(record, instance):
             return None
         hint = source_hint_of(instance)
         return resolve_write_evidence(
@@ -547,7 +537,9 @@ class Transaction:
             object_key=(
                 hint.object_key
                 if hint is not None
-                else written_object_key(record, declaring, self._codec.identity_row(instance))
+                else written_object_key(
+                    record, self._model.meta, self._codec.identity_row(instance)
+                )
             ),
             preference=self._uow.settings.concurrency,
             participation=self._uow.participation,
