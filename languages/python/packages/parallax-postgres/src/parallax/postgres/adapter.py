@@ -108,7 +108,7 @@ def translate_driver_error(dialect: Dialect, exc: psycopg.Error) -> DatabaseErro
     category interpretation to ``m-db-error`` (which consults ``dialect``'s own
     code table). This module-internal seam is the psycopg half of the
     normalize-at-boundary contract; it is not part of the ``parallax.postgres``
-    public export (``PostgresAdapter`` alone — §8).
+    public exports (``PostgresAdapter`` and ``isolation_spelling`` — §8).
 
     Each call builds its own error, which is what satisfies the port's
     failure-identity rule (``m-db-port``): no two invocations share an instance,
@@ -150,8 +150,8 @@ def translating_driver_errors(dialect: Dialect) -> Generator[None]:
 def adapt_binds(binds: Sequence[object]) -> list[object]:
     """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
 
-    Module-internal seam (not part of the ``parallax.postgres`` public export,
-    which is ``PostgresAdapter`` alone — §8).
+    Module-internal seam (not part of the ``parallax.postgres`` public exports,
+    which are ``PostgresAdapter`` and ``isolation_spelling`` — §8).
 
     A :class:`~parallax.core.db_port.JsonDocument` (the neutral ``json`` /
     value-object carrier) becomes a psycopg ``Jsonb``; every other bind passes

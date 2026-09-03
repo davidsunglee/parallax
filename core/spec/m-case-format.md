@@ -350,7 +350,7 @@ values.
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
-| `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
+| `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary) |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
@@ -1921,7 +1921,10 @@ rather than forking a new one for the same primary key).
   partition, so the harness exercises the interface the language implementations
   build, not a harness-only shortcut.
 
-A node's step declares its `kind`, and one of them is **`commit`**: the node
+A node's step takes one of two forms. A **statement step** carries the golden
+`statements` its node runs that round; on an `error` case it declares no `kind` at
+all, and on a `concurrencySuccess` case it declares the `read` / `write` kind that
+shape requires. The second form is **`kind: commit`**: the node
 commits its own held transaction at that round. It is legal on the two shapes that
 carry `when.concurrency` — `error` and `concurrencySuccess` — carries no
 `statements` and no `expectRows`, and **MUST be that node's last step**, because a

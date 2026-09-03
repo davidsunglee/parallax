@@ -19,8 +19,8 @@ def isolation_spelling(level: IsolationLevel) -> str:
     """Postgres' name for ``level``, as `transaction_isolation` accepts it.
 
     Postgres forbids each portable level's anomalies under its own name for it, so
-    the mapping is a rename; what makes it worth stating once is that both the
-    adapter's boundary statement and a raw session's `set transaction isolation
-    level` need it, and a level spelled twice could be spelled differently twice.
+    the mapping is a rename; what makes it worth stating once is that every caller
+    opening a transaction at a declared level needs it, and a level spelled at each
+    of those sites could be spelled differently at each of them.
     """
     return _SPELLING[level]

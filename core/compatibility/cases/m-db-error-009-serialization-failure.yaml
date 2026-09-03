@@ -11,7 +11,8 @@
 #   round 1 : A writes gauge 1, B writes gauge 2 — each writing the row the peer
 #             read, so no serial order of the two produces this pair of outcomes
 #   round 2 : each node COMMITS its own held transaction (`kind: commit`), the
-#             moment the refusal can surface at
+#             latest moment a refusal can surface at — and the only one on an
+#             engine that lets both rounds above run unblocked
 #
 # Postgres reaches it optimistically: SSI takes SIREAD predicate locks, nothing
 # blocks, and the cycle is detected at commit as `40001`. MariaDB reaches it

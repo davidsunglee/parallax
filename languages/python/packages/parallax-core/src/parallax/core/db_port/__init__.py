@@ -72,9 +72,11 @@ def isolation_level(value: object) -> IsolationLevel:
 
     The vocabulary is closed, so a name outside it names no guarantee any adapter
     could map — which makes it the caller's mistake rather than a database's
-    refusal, reportable before anything opens.
+    refusal, reportable before anything opens. Every value outside it is refused
+    the one way, including one no set can be asked about (an unhashable value),
+    which membership alone would raise a ``TypeError`` for.
     """
-    if value not in ISOLATION_LEVELS:
+    if not isinstance(value, str) or value not in ISOLATION_LEVELS:
         raise ValueError(f"isolation must be one of {sorted(ISOLATION_LEVELS)}, got {value!r}")
     return cast("IsolationLevel", value)
 

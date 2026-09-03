@@ -517,8 +517,8 @@ def test_run_rounds_issues_the_declared_level_first_in_the_engines_own_spelling(
 
 def test_run_rounds_commits_where_the_choreography_authors_a_commit_step() -> None:
     # The commit is a round of the case's own, so it is issued exactly where
-    # the case put it and nowhere else -- and a clean commit records no
-    # outcome, leaving its round's dict empty.
+    # the case put it and nowhere else -- and a clean commit is recorded on that
+    # round like any other step, as an outcome carrying no error.
     a, b = _FakeSession(), _FakeSession()
     peers = iter([a, b])
     rounds = _rounds(

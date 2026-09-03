@@ -2849,16 +2849,19 @@ def _assert_error_concurrency(case: Case, db: DatabaseProvider) -> None:
     statement raises. A thread that catches an error ROLLS BACK immediately
     (releasing its locks so the peer can proceed) then meets the barrier.
 
-    A **serialization-failure** case is a different mechanism: there is NO lock
-    contention -- under a level that forbids serialization anomalies both
-    transactions read one row and write ANOTHER (a read/write dependency cycle),
-    so nothing blocks and nothing raises mid-round, and the dangerous structure
-    surfaces only at COMMIT. Such a case declares ``when.uow.isolation`` (the
-    level both sessions open at, applied by the provider) and AUTHORS the commits
-    as a final round of ``kind: commit`` steps, so the moment each transaction
-    ends is part of the choreography rather than a mode the runner infers. A
-    commit-time raise is that node's contention signal exactly as a mid-round
-    raise is.
+    A **serialization-failure** case is a different trigger: under a level that
+    forbids serialization anomalies both transactions read one row and write
+    ANOTHER (a read/write dependency cycle), so neither node is waiting on a row
+    lock the other holds. WHERE the refusal lands is the engine's own and this
+    runner assumes neither: an engine reaching the level optimistically (Postgres
+    SSI) blocks nothing mid-round and detects the cycle at COMMIT, while one
+    reaching it by turning the reads into shared locks (MariaDB Serializable)
+    refuses in the crossed-write round exactly as ordinary contention does. Such
+    a case declares ``when.uow.isolation`` (the level both sessions open at,
+    applied by the provider) and AUTHORS the commits as a final round of
+    ``kind: commit`` steps, so the moment each transaction ends is part of the
+    choreography rather than a mode the runner infers. A commit-time raise is
+    that node's contention signal exactly as a mid-round raise is.
 
     The single raised error is classified. Sessions are rolled back + closed in a
     finally.

@@ -130,7 +130,7 @@
       ]
     },
     {
-      "description": "A concurrency-success case (m-read-lock behavioral read-lock): barrier-separated `when.concurrency` rounds on two held non-autocommit sessions asserting NO error is raised. Every PRESENT step declares an explicit `kind`: a read step (`kind: read`) carries `rows` it MUST return on its HELD session; a write step (`kind: write`) omits it and asserts only that it did not block/raise. The `not: then.errorClass` guard keeps the shape distinct from an error/concurrency case. The nested `rounds.items.properties.{A,B}.required: [kind]` forces a PRESENT success step to declare its kind structurally, without forcing A/B to exist.",
+      "description": "A concurrency-success case (m-read-lock behavioral read-lock): barrier-separated `when.concurrency` rounds on two held non-autocommit sessions asserting NO error is raised. Every PRESENT step declares an explicit `kind`: a read step (`kind: read`) carries the `expectRows` it MUST return on its HELD session; a write step (`kind: write`) omits them and asserts only that it did not block/raise; a commit step (`kind: commit`) carries neither those nor `statements`, and ends that node's held transaction. The `not: then.errorClass` guard keeps the shape distinct from an error/concurrency case. The nested `rounds.items.properties.{A,B}.required: [kind]` forces a PRESENT success step to declare its kind structurally, without forcing A/B to exist.",
       "required": ["shape", "when"],
       "properties": {
         "shape": { "const": "concurrencySuccess" },
@@ -880,7 +880,7 @@
           }
         },
         "concurrency": {
-          "description": "The two-connection choreography for deadlock / lockWaitTimeout error cases and the concurrency-success read-lock cases. Ordered, barrier-separated rounds; each round names the statements nodes A and B run that round (a node absent from a round is idle). Each node step carries `statements` (dialect-keyed golden SQL entries), mirroring a coherence step. The runner runs each node on its own non-autocommit session, synchronizes rounds with a barrier, and (for an error case) classifies the error raised in the contention round.",
+          "description": "The two-connection choreography for deadlock / lockWaitTimeout error cases and the concurrency-success read-lock cases. Ordered, barrier-separated rounds; each round names the statements nodes A and B run that round (a node absent from a round is idle). Each node step carries `statements` (dialect-keyed golden SQL entries), mirroring a coherence step — except a `kind: commit` step, which carries none because what it performs is that node's own commit rather than authored SQL. The runner runs each node on its own non-autocommit session, synchronizes rounds with a barrier, and (for an error case) classifies the error raised in the contention round.",
           "type": "object",
           "required": ["rounds"],
           "additionalProperties": false,
