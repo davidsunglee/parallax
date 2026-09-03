@@ -58,7 +58,6 @@ __all__ = [
     "Write",
     "WriteCall",
     "body_outcome",
-    "paged_reads",
 ]
 
 
@@ -133,26 +132,6 @@ class Read:
     rows: Sequence[Mapping[str, object]] = ()
     raises: DatabaseError | None = None
     times: int = 1
-
-
-def paged_reads(rows: Sequence[Mapping[str, object]], *, size: int) -> list[Read]:
-    """The root statements a streamed delivery of ``rows`` at page size ``size``
-    issues, in order.
-
-    A page asks for one root MORE than it may deliver, so each entry is a page's
-    own batch plus the first root of the page that follows it — read to prove a
-    further page exists, discarded, and returned again by that page's own
-    statement. The delivery ends on the first page that comes back short, so a
-    result filling its last page exactly costs no terminal statement.
-    """
-    reads: list[Read] = []
-    start = 0
-    while True:
-        page = list(rows[start : start + size + 1])
-        reads.append(Read(rows=page))
-        if len(page) <= size:
-            return reads
-        start += size
 
 
 @dataclass(frozen=True, slots=True)

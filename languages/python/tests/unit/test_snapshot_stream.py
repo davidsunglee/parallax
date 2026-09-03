@@ -33,6 +33,7 @@ from decimal import Decimal
 from typing import Any, Final, cast
 
 import pytest
+from _stream_page_support import paged_reads
 from _transact_support import ACCOUNT, db_for
 
 from _support.db_port import (
@@ -41,7 +42,6 @@ from _support.db_port import (
     RefusingPort,
     ScriptedPort,
     Transact,
-    paged_reads,
 )
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import (
@@ -618,6 +618,33 @@ def test_the_default_view_still_stops_at_the_first_invalid_root(position: int, s
         for root in stream:
             delivered.append(root)
     assert len(delivered) == position
+
+
+def test_a_throwing_delivery_refuses_with_the_record_the_eager_read_refuses_with() -> None:
+    # A page IS an eager read, so the REFUSAL is too: the report a throwing
+    # delivery raises carries the same enriched record — evidence, path, and the
+    # result ordinal the root stands at — as the one the throwing eager read of
+    # the same rows raises. `qty` is outside this query's Continuation Order, so
+    # the eager read reaches every root and the two reports are comparable.
+    rows = [_order_row(1), {**_order_row(2), "qty": "many"}, _order_row(3)]
+    with pytest.raises(InvalidDataError) as eager:
+        _orders(ScriptedPort(Read(rows=rows))).find(_all_orders()).results()
+    with (
+        _orders(ScriptedPort(*paged_reads(rows, size=2))).stream(
+            _all_orders(), batch_size=2
+        ) as stream,
+        pytest.raises(InvalidDataError) as streamed,
+    ):
+        list(stream)
+    assert streamed.value.invalid_data == eager.value.invalid_data
+    (record,) = streamed.value.invalid_data
+    (issue,) = record.issues
+    assert (record.ordinal, issue.code, issue.path, issue.stored_value) == (
+        1,
+        "stored-data-leaf-undecodable",
+        (),
+        "many",
+    )
 
 
 def test_a_root_whose_primary_key_did_not_decode_is_delivered_and_placed_last() -> None:

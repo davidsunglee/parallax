@@ -26,6 +26,7 @@ from typing import Any, cast
 
 import _mixed_strategy_model as mx
 import pytest
+from _stream_page_support import paged_reads
 from _transact_support import account_db, db_for, deadlock
 
 from _support import mirrored_models as mm
@@ -39,7 +40,6 @@ from _support.db_port import (
     Transact,
     Write,
     WriteCall,
-    paged_reads,
 )
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import POSITION_MODEL, Position

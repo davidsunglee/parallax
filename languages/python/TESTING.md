@@ -56,7 +56,8 @@ Support code only one surface uses stays inside that surface —
 `_layout_twin_document.py`, `_lifecycle_cost_support.py`,
 `_metamodel_support.py`, `_mixed_strategy_model.py`,
 `_second_dialect.py`, `_snapshot_graph_support.py`,
-`_source_inventory_support.py`, `_transact_support.py`,
+`_source_inventory_support.py`, `_stream_page_support.py`,
+`_transact_support.py`,
 `tests/unit/memory_instruments.py`,
 `tests/unit/observation_models.py`, and
 `tests/unit/value_object_bad_models.py`.
