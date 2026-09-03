@@ -16,11 +16,10 @@ the import-side DAG exemption), so there is exactly one write-lowering seam.
 This module defines nothing: every name below is defined in a private
 sibling and re-exported here, and no runtime orchestration remains at this level.
 The private modules are implementation rather than seams — the public surface is
-the re-export list below, and a direct importer of a private sibling is this
-package, the conformance family under its import-side exemption, or a unit suite
-testing that module itself — so a name's ``__module__`` reports its private
-defining module, which no specification or public-surface check promises. Where
-the exported names live:
+the re-export list below, and no private sibling's name, contents, or placement
+belongs to it — so a name's ``__module__`` reports its private defining module,
+which no specification or public-surface check promises. Where the exported names
+live:
 
 - :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
   :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
