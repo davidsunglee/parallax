@@ -1289,7 +1289,7 @@ def dialect_executed_cases(compatibility_root: Path) -> list[Case]:
     ]
 
 
-def corrupt_temporal_entity(entity: str) -> str:
+def temporal_corruption_refusal(entity: str) -> str:
     """Why a `given.corrupt` entry addressing *entity* is refused.
 
     One sentence, so the corpus's static validation, the harness loader, and

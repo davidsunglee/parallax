@@ -386,6 +386,11 @@ def _apply_given_corrupt(case: case_format.Case, model: AcceptedMetamodel, port:
     it, and the value is stored exactly as authored: it is what the model
     contradicts, so passing it back through the codec that spells a conforming
     one would refuse it.
+
+    The whole list is judged before any of it is applied, exactly as the
+    reference harness judges it before any row lands: an address this grammar
+    does not admit makes the CASE ungradeable, so a legal entry standing before
+    it must not have written a row by the time it is refused.
     """
     given = case.document.get("given")
     if not isinstance(given, Mapping):
@@ -393,8 +398,25 @@ def _apply_given_corrupt(case: case_format.Case, model: AcceptedMetamodel, port:
     entries = cast("Mapping[str, object]", given).get("corrupt")
     if not isinstance(entries, list):
         return
-    for entry in cast("list[Mapping[str, object]]", entries):
+    corruptions = cast("list[Mapping[str, object]]", entries)
+    _refuse_temporal_corruptions(case, model, corruptions)
+    for entry in corruptions:
         _corrupt_stored_state(case, model, port, entry)
+
+
+def _refuse_temporal_corruptions(
+    case: case_format.Case, model: AcceptedMetamodel, entries: Sequence[Mapping[str, object]]
+) -> None:
+    """Refuse every entry addressing a temporal Entity, before any entry applies.
+
+    A temporal Entity's rows are keyed by the model key plus each axis's end
+    instant, so one ``key`` value there addresses a milestone chain and names no
+    row in it (`m-case-format` *Corrupting stored state*).
+    """
+    for entry in entries:
+        entity = case_entity(model, cast("str", entry["entity"]))
+        if _is_temporal(model, entity):
+            raise EngineError(f"{case.path.name}: {_temporal_corruption_refusal(entity)}")
 
 
 def _corrupt_stored_state(
@@ -411,8 +433,6 @@ def _corrupt_stored_state(
     view = storage_layout.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - a corrupted Entity owns rows
         raise EngineError(f"{case.path.name}: {entity.identity.canonical} owns no table")
-    if _is_temporal(model, entity):
-        raise EngineError(f"{case.path.name}: {_corrupt_temporal_entity(entity)}")
     member = tuple(cast("list[object]", entry["member"]))
     column, path = _corruption_target(case, model, entity, member)
     key_column, key = _corruption_key(case, model, entity, entry["key"])
@@ -446,7 +466,7 @@ def _is_temporal(model: AcceptedMetamodel, entity: EntityMetadata) -> bool:
     return root is not None and bool(root.declared_as_of_axes)
 
 
-def _corrupt_temporal_entity(entity: EntityMetadata) -> str:
+def _temporal_corruption_refusal(entity: EntityMetadata) -> str:
     """Why a corruption addressing ``entity`` is refused.
 
     Spelled exactly as the corpus's own static validation and the reference
@@ -536,7 +556,11 @@ def _corruption_key(
     case: case_format.Case, model: AcceptedMetamodel, entity: EntityMetadata, key: object
 ) -> tuple[str, object]:
     """The primary-key Column one corruption addresses its row by, and the managed
-    value it binds (`m-metamodel` admits no composite primary key)."""
+    value it binds.
+
+    `m-metamodel` admits no composite primary key, and the addressed Entity is
+    non-temporal by then, so this one Column IS the row's physical key.
+    """
     view = storage_layout.view(model).entity(entity.identity)
     family = inheritance.view(model).entity(entity.identity)
     attributes = () if family is None else family.applicable_attributes
