@@ -8,9 +8,10 @@
 # arrived through must not change what it licenses. The unit of work reads
 # every account twice as a paged delivery and writes account 1 after each reading,
 # naming the delivery its value came from.
-#   step 0 stream: `batchSize: 2` over three accounts — page 1 returns {1, 2} and
-#                  page 2 seeks past id 2 and returns {3}, one root short of the
-#                  two it asked for, which is what ends the delivery. Account 1
+#   step 0 stream: `batchSize: 2` over three accounts — page 1 asks for three, the
+#                  lookahead root included, and delivers {1, 2}; page 2 seeks past
+#                  id 2 and comes back with {3} alone, short of the three it asked
+#                  for, which is what ends the delivery. Account 1
 #                  arrives on the FIRST page, so by the time step 1 runs the page
 #                  it came on is long gone: a page is not the scope its evidence
 #                  hangs on.
@@ -51,7 +52,7 @@ when:
       stream:
         batchSize: 2
       roundTrips: 2
-      note: the first delivery — two pages, the second one root short of the size it asked for
+      note: the first delivery — two pages, the second short of the size it asked for
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
