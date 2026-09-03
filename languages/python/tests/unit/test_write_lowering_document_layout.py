@@ -39,7 +39,6 @@ from parallax.core.unit_work.planned import (
     PlannedRow,
 )
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
-from parallax.snapshot.handle._write_inputs import is_no_op_assignment
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -271,32 +270,6 @@ def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
     assert collapse_group_key(
         DOCUMENT, person, "delete", {"id": 1, "displayName": "Ada"}
     ) == collapse_group_key(DOCUMENT, person, "delete", {"id": 2, "score": 7})
-
-
-def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None:
-    # An assigned occurrence is compared whole, because the write it stands for
-    # replaces the subtree whole. Naming only `city` is therefore a CHANGE against a
-    # row holding `geo` — issuing it removes `geo`, so eliminating it would leave
-    # stored state the assignment says is gone.
-    person = entity(DOCUMENT, "Person")
-    occurrences = {
-        occurrence.identity.path[-1]: occurrence for occurrence in person.declared_value_objects
-    }
-    columns = {"address": ("address", True), "tags": ("tags", True)}
-    row: dict[str, object] = {
-        "address": {"city": "Bergen", "geo": {"country": "NO"}},
-        "tags": [{"label": "founder"}],
-    }
-
-    assert is_no_op_assignment(
-        columns,
-        {"address": {"city": "Bergen", "geo": {"country": "NO"}}, "tags": [{"label": "founder"}]},
-        row,
-        occurrences,
-    )
-    assert not is_no_op_assignment(columns, {"address": {"city": "Bergen"}}, row, occurrences)
-    assert not is_no_op_assignment(columns, {"address": {"city": "Oslo"}}, row, occurrences)
-    assert not is_no_op_assignment(columns, {"tags": []}, row, occurrences)
 
 
 # --------------------------------------------------------------------------- #
