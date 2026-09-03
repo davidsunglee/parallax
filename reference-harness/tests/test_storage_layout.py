@@ -1326,6 +1326,64 @@ def test_fixture_load_derives_each_variant_discriminator_through_its_view() -> N
     assert variants == [("kind", "card"), ("kind", "cash")]
 
 
+def _corrupted_cells(model_rel: str, table: str, *corruptions: Any) -> list[Any]:
+    """The first row *table* loads with, after *corruptions* are written into it."""
+    provider = _RecordingProvider()
+    load_fixture_rows(
+        load_model(_COMPATIBILITY_ROOT, model_rel), cast("Any", provider), list(corruptions)
+    )
+    ((_table, _columns, rows),) = [entry for entry in provider.loads if entry[0] == table]
+    return rows[0]
+
+
+def test_a_corruption_replaces_a_whole_occurrence_under_columns() -> None:
+    # `[profile]` addresses the occurrence itself, whose own Structured Column
+    # holds the whole stored value — the address consumed everything, so what it
+    # names is that value rather than a member inside it.
+    cells = _corrupted_cells(
+        "models/classification-transparency-layout-twin-columns.yaml",
+        "classification_twin",
+        {
+            "entity": "parallax.compatibility.ClassificationTwinItem",
+            "key": 1,
+            "member": ["profile"],
+            "value": "not-an-object",
+        },
+    )
+    assert "not-an-object" in cells
+
+
+def test_a_corruption_indexes_an_array_backed_structured_column() -> None:
+    # A top-level `many` occurrence stores an ARRAY at the root of its own
+    # Structured Column under `Columns`, so the address's first position indexes
+    # the column's whole value.
+    cells = _corrupted_cells(
+        "models/write-transparency-layout-twin-columns.yaml",
+        "write_twin",
+        {
+            "entity": "parallax.compatibility.WriteTwinItem",
+            "key": 1,
+            "member": ["marks", 0, "code"],
+            "value": 7,
+        },
+    )
+    assert [{"code": 7}, {"code": "B"}] in cells
+
+
+def test_a_corruption_addressing_a_member_of_its_own_column_is_refused() -> None:
+    with pytest.raises(ValueError, match="does not place inside a Structured Column"):
+        _corrupted_cells(
+            "models/write-transparency-layout-twin-columns.yaml",
+            "write_twin",
+            {
+                "entity": "parallax.compatibility.WriteTwinItem",
+                "key": 1,
+                "member": ["label", 0],
+                "value": 7,
+            },
+        )
+
+
 def test_a_fixture_row_naming_the_discriminator_is_not_an_authorable_member() -> None:
     model = _storage_layout_model()
     rows = {

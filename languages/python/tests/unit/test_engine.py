@@ -7970,6 +7970,62 @@ def test_given_corrupt_descends_into_a_value_object_document() -> None:
     assert cast("JsonDocument", port.writes[0][1][0]).value == {"street": 7, "city": "Boston"}
 
 
+def test_given_corrupt_replaces_a_whole_occurrence_under_columns() -> None:
+    # `[profile]` addresses the occurrence itself, whose Structured Column holds
+    # the whole stored value — which is how a case authors the wrong-KIND verdict
+    # for a top-level Value Object under either layout.
+    port = _corrupting(
+        "m-storage-layout-027",
+        {"street": "4 Main", "city": "Boston"},
+        {
+            "entity": "parallax.compatibility.ClassificationTwinItem",
+            "key": 4,
+            "member": ["profile"],
+            "value": "not-an-object",
+        },
+    )
+    assert cast("JsonDocument", port.writes[0][1][0]).value == "not-an-object"
+
+
+def test_given_corrupt_indexes_an_array_backed_structured_column() -> None:
+    # A top-level `many` occurrence under `Columns` stores an ARRAY at the root of
+    # its own Structured Column, so the address's first position indexes the
+    # column's whole value rather than a member of a document.
+    port = _corrupting(
+        "m-storage-layout-029",
+        [{"code": "A"}, {"code": "B"}],
+        {
+            "entity": "parallax.compatibility.WriteTwinItem",
+            "key": 1,
+            "member": ["marks", 0, "code"],
+            "value": 7,
+        },
+    )
+    assert cast("JsonDocument", port.writes[0][1][0]).value == [{"code": 7}, {"code": "B"}]
+
+
+def test_given_corrupt_addresses_an_inherited_member_by_its_declaration() -> None:
+    # `Book` inherits `Publication.title`, whose placement stays keyed by the
+    # declaring identity, so a corruption addressing the concrete row Entity has
+    # to resolve the declaration rather than an identity that Entity would own.
+    port = _corrupting(
+        "m-inheritance-126",
+        {"title": "Dune", "detail": "hardback", "pages": 412},
+        {
+            "entity": "parallax.compatibility.Book",
+            "key": 1,
+            "member": ["title"],
+            "value": 7,
+        },
+    )
+    assert "from publication_book where id = %s" in port.reads[0][0]
+    assert cast("JsonDocument", port.writes[0][1][0]).value == {
+        "title": 7,
+        "detail": "hardback",
+        "pages": 412,
+    }
+
+
 def test_given_corrupt_refuses_a_member_kept_in_a_column_of_its_own() -> None:
     with pytest.raises(engine.EngineError, match="does not place inside a Structured Column"):
         _corrupting(

@@ -1432,6 +1432,30 @@ def test_schema_accepts_a_streamed_read_case() -> None:
     assert _is_valid(_streamed_read_case())
 
 
+def _corruption() -> dict[str, Any]:
+    return {"entity": "Order", "key": 1, "member": ["profile", "city"], "value": 7}
+
+
+def test_schema_accepts_a_read_case_corrupting_its_stored_state() -> None:
+    doc = _read_case()
+    doc["given"] = {"corrupt": [_corruption()]}
+    assert _is_valid(doc)
+
+
+def _corrupt_on_a_write_sequence() -> dict[str, Any]:
+    # Only a read lane applies `given.corrupt`, so every other shape declaring it
+    # asserts a verdict about storage its own execution never produced.
+    doc = _write_sequence_case()
+    doc["given"] = {"corrupt": [_corruption()]}
+    return doc
+
+
+def _corrupt_on_a_scenario() -> dict[str, Any]:
+    doc = _scenario_case()
+    doc["given"] = {"corrupt": [_corruption()]}
+    return doc
+
+
 def _streamed_without_page_size() -> dict[str, Any]:
     doc = _streamed_read_case()
     doc["when"]["stream"] = {}
@@ -1606,6 +1630,8 @@ REJECTED_CASES = {
     "streamed-step-stating-relationship-contents": _streamed_step_stating_relationship_contents,
     "streamed-step-zero-page-size": _streamed_step_zero_page_size,
     "streamed-step-naming-a-representation": _streamed_step_naming_a_representation,
+    "corrupt-on-a-write-sequence": _corrupt_on_a_write_sequence,
+    "corrupt-on-a-scenario": _corrupt_on_a_scenario,
 }
 
 
