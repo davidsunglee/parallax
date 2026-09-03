@@ -25,9 +25,10 @@ through ``uow.buffer`` directly and never reaches back into ``Transaction``.
 
 Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
 attribute, and the layout member-to-column map),
-:mod:`parallax.snapshot.handle._write_inputs` (window validation and the per-row
-column contributions), :mod:`parallax.snapshot.handle._retention` (the one
-payload extraction a resolved row's Predecessor Row shares with a real find's),
+:mod:`parallax.snapshot.handle._write_inputs` for the one keyed step a
+predicate write also runs (:func:`~parallax.snapshot.handle._write_inputs.
+validate_window`), :mod:`parallax.snapshot.handle._retention` (the one payload
+extraction a resolved row's Predecessor Row shares with a real find's),
 and :mod:`parallax.snapshot.handle._read` for both
 :func:`~parallax.snapshot.handle._read.execute_read` and
 :func:`~parallax.snapshot.handle._read.stage_publishable_rows` — the resolving
@@ -50,6 +51,7 @@ from typing import Any, Final, cast
 from parallax.core import deep_fetch, inheritance
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import LockMode
+from parallax.core.document_codec import occurrence_shape, reduce_declared_members
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
@@ -59,13 +61,14 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
+    ValueObjectMetadata,
     entity_by_name,
 )
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
 from parallax.core.object_query._validated import latest_temporal_selections
 from parallax.core.predicate import QueryDefinitionError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
-from parallax.core.storage_layout import DocumentPath
+from parallax.core.storage_layout import DocumentPath, EntityLayoutView
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     SELECTION_INTENT,
@@ -114,12 +117,7 @@ from parallax.snapshot.handle._read import (
     stage_publishable_rows,
 )
 from parallax.snapshot.handle._retention import row_payload
-from parallax.snapshot.handle._write_inputs import (
-    is_no_op_assignment,
-    key_column_values,
-    normalize_assignment_values,
-    validate_window,
-)
+from parallax.snapshot.handle._write_inputs import validate_window
 from parallax.snapshot.materialize import observable_columns
 
 # The predicate mutations that carry Assignments; the rest take none at all and
@@ -467,7 +465,7 @@ def _materialize_predicate_write(
     # separate audit-only merge.
     #
     # COMPARISON need: an assignment-bearing verb's per-row no-op
-    # elimination (below, `is_no_op_assignment`)
+    # elimination (below, `_is_no_op_assignment`)
     # compares each assigned member's new value against the resolved
     # row's own — a value-object member's comparison can only ever see
     # the managed occurrence decoded from storage when this read actually
@@ -485,7 +483,7 @@ def _materialize_predicate_write(
     occurrences = {
         occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
     }
-    comparison_assignments = normalize_assignment_values(assignments, occurrences)
+    comparison_assignments = _normalize_assignment_values(assignments, occurrences)
 
     # The resolve is a Read of its own (`m-execution-lifecycle`: every
     # statement-reaching operation belongs to exactly one Read, Write Batch, or
@@ -549,7 +547,7 @@ def _materialize_predicate_write(
 
     def append_key(row: Row) -> None:
         for builder, value in zip(
-            key_builders, key_column_values(pk_attrs, layout, row), strict=True
+            key_builders, _key_column_values(pk_attrs, layout, row), strict=True
         ):
             builder.append(value)
 
@@ -557,14 +555,14 @@ def _materialize_predicate_write(
     selected: list[ObservedStateKey] = []
 
     def select_state(row: Row, observation: WriteObservation) -> None:
-        keys = zip(key_attributes, key_column_values(pk_attrs, layout, row), strict=True)
+        keys = zip(key_attributes, _key_column_values(pk_attrs, layout, row), strict=True)
         object_key = ObjectKey(entity.identity, tuple(keys))
         selected.append(observed_state_key(object_key, observation, declaring_entity))
 
     if version_attr is not None:
         version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
         for row in rows:
-            if assignment_bearing and is_no_op_assignment(
+            if assignment_bearing and _is_no_op_assignment(
                 member_columns, comparison_assignments, row, occurrences
             ):
                 continue  # per-row no-op elimination (assignment-bearing verbs only)
@@ -592,7 +590,7 @@ def _materialize_predicate_write(
     value_object_builders = {name: ChunkedColumnBuilder[object]() for name in value_object_names}
     document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
     for materialized, row in zip(resolved, rows, strict=True):
-        if assignment_bearing and is_no_op_assignment(
+        if assignment_bearing and _is_no_op_assignment(
             member_columns, comparison_assignments, row, occurrences
         ):
             continue  # per-row no-op elimination (assignment-bearing verbs only)
@@ -627,6 +625,115 @@ def _materialize_predicate_write(
         )
     )
     _claim_selected_states(uow, selected)
+
+
+# --------------------------------------------------------------------------- #
+# The per-row column contributions `_materialize_predicate_write` streams into #
+# its Materialized Write Group, in the order it runs them. Each is a pure      #
+# function of one resolved row of the write's OWN resolving read — never an    #
+# implicit read of its own, and never a merged per-row dict of its own —       #
+# except `_normalize_assignment_values`, which decodes the authored side once  #
+# for the whole write so every row's comparison reads the same operand.        #
+# --------------------------------------------------------------------------- #
+def _normalize_assignment_values(
+    assignments: Mapping[str, object],
+    occurrences: Mapping[str, ValueObjectMetadata] | None = None,
+) -> dict[str, object]:
+    """Decode each encoded occurrence assignment once into its managed value.
+
+    Scalar assignments already carry managed values. An occurrence decodes to the
+    complete document the assignment would STORE — presence preserved, so a member
+    the author omits contributes no key exactly as an unstored one does — because
+    assigning an occurrence replaces its subtree whole and the comparison below is
+    against a resolved row's own reduction of what it holds. A nested ``many`` is
+    the one member presence preservation leaves alone, because it has no absence to
+    preserve: the stored document carries ``[]`` there whichever of the three zero
+    spellings was written, and so does the document this assignment would store, so
+    the reduction answers ``[]`` for an omitted one rather than dropping the key
+    and calling a stored zero a change. The returned mapping is reusable across
+    every row resolved by one predicate write.
+    """
+    occurrence_index: Mapping[str, ValueObjectMetadata] = (
+        cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
+    )
+    normalized: dict[str, object] = {}
+    for member, value in assignments.items():
+        occurrence = occurrence_index.get(member)
+        if occurrence is None:
+            normalized[member] = value
+            continue
+        shape = occurrence_shape(occurrence)
+        if occurrence.multiplicity is Multiplicity.MANY:
+            encoded = list(cast("tuple[object, ...]", value)) if isinstance(value, tuple) else value
+            normalized[member] = [
+                reduce_declared_members(shape, element, preserve_presence=True)
+                for element in cast("Sequence[object]", encoded)
+            ]
+        else:
+            normalized[member] = reduce_declared_members(shape, value, preserve_presence=True)
+    return normalized
+
+
+def _is_no_op_assignment(
+    member_columns: Mapping[str, tuple[str, bool]],
+    assignments: Mapping[str, object],
+    row: Row,
+    occurrences: Mapping[str, ValueObjectMetadata] | None = None,
+) -> bool:
+    """Whether EVERY assigned member's new value already equals ``row``'s own
+    (`m-opt-lock` per-row no-op elimination — structural equality, the SAME
+    comparison a keyed no-op's effective-change-set test uses).
+
+    ``row`` is one resolved row of the write's own resolving read, after that
+    read's row transform: a document-mapped member is compared against the value
+    the fan-out decoded, in its declared Neutral Type, rather than against a
+    fragment of the raw Structured Column. An absent Document Path and an
+    explicit JSON null both decode to ``None``, which is the one logical
+    not-present state a NULL Column also carries, so a member assigned ``None``
+    is a no-op in either spelling.
+
+    ``assignments`` has already crossed :func:`_normalize_assignment_values` once
+    for the whole predicate write, so an occurrence arrives as the complete
+    document the assignment would store and is compared against the row's whole
+    decoded occurrence, without decoding either side again. Nothing is masked by
+    the members the author named: assigning an occurrence replaces its subtree,
+    so an omitted declared member the row does hold is a change like any other,
+    and eliminating that write would leave stored state the assignment removes.
+    A nested ``many`` is the one omission that removes nothing — both sides read
+    it as the empty collection the store holds either way — so an occurrence
+    authored short of one is a no-op rather than a change.
+
+    This is the ONE narrow result-dependent normalization a materializing
+    resolve performs while streaming: a resolved row an assignment-bearing
+    verb would leave unchanged never joins its Materialized Write Group.
+    ``delete`` / ``terminate`` / ``terminateUntil`` have no assignments to
+    compare and therefore never call this — every resolved row is retained.
+    """
+    occurrence_index: Mapping[str, ValueObjectMetadata] = (
+        cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
+    )
+    for member, value in assignments.items():
+        stored = row.get(member_columns[member][0])
+        occurrence = occurrence_index.get(member)
+        compared = (
+            list(cast("tuple[object, ...]", stored))
+            if occurrence is not None
+            and occurrence.multiplicity is Multiplicity.MANY
+            and isinstance(stored, tuple)
+            else stored
+        )
+        if value != compared:
+            return False
+    return True
+
+
+def _key_column_values(
+    pk_attrs: Sequence[AttributeMetadata], layout: EntityLayoutView, row: Row
+) -> tuple[object, ...]:
+    """One resolved row's aligned primary-key value tuple, in ``pk_attrs``
+    order — a Materialized Write Group's own per-row key-column contribution.
+    """
+    return tuple(row[slot_column(layout, attr.identity)] for attr in pk_attrs)
 
 
 def _predecessor_payload(

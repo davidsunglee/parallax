@@ -7,6 +7,12 @@ dispatch for an unversioned non-temporal target, and materialization — the
 resolving read's need-sensitive projection, per-row no-op elimination, and
 atomic-unit buffering (ADR 0014) — across audit-only, bitemporal, and versioned
 non-temporal targets.
+
+No-op elimination is covered from both sides: through a whole write's emitted
+statements, and through the lane's own comparison helpers driven directly off
+hand-built rows, under `Columns` layout and Relational Document Layout alike.
+This is the one suite reaching those private helpers, so the seam has a single
+place to move from.
 """
 
 from __future__ import annotations
@@ -19,6 +25,8 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
+from _document_layout_support import document_model
+from _document_layout_support import entity as document_layout_entity
 from _transact_support import (
     ACCOUNT,
     BALANCE,
@@ -82,12 +90,9 @@ from parallax.core.unit_work.write_planner import (
 )
 from parallax.snapshot import QueryTargetError, SnapshotDecodingError
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
-
-# The buffering seam below every write ingress, driven directly by the case that
-# pins its own refusals.
-from parallax.snapshot.handle._write_inputs import (
-    is_no_op_assignment,
-    normalize_assignment_values,
+from parallax.snapshot.handle._predicate_writes import (
+    _is_no_op_assignment,  # pyright: ignore[reportPrivateUsage] - the lane's own per-row no-op comparison, driven off hand-built rows so a normalization defect names itself rather than surfacing as a missing statement
+    _normalize_assignment_values,  # pyright: ignore[reportPrivateUsage] - the lane's own once-per-write assignment decoding, driven directly so each encoded spelling is proved rather than inferred from the SQL a whole write emitted
 )
 
 
@@ -1310,11 +1315,38 @@ def test_no_op_comparison_normalizes_production_encoded_one_and_many_assignments
     columns = {"details": ("details", True), "entries": ("entries", True)}
     row: Row = {"details": managed, "entries": [managed]}
 
-    assignments = normalize_assignment_values(
+    assignments = _normalize_assignment_values(
         {"details": encoded, "entries": [encoded]}, occurrences
     )
 
-    assert is_no_op_assignment(columns, assignments, row, occurrences)
+    assert _is_no_op_assignment(columns, assignments, row, occurrences)
+
+
+def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None:
+    # An assigned occurrence is compared whole, because the write it stands for
+    # replaces the subtree whole. Naming only `city` is therefore a CHANGE against a
+    # row holding `geo` — issuing it removes `geo`, so eliminating it would leave
+    # stored state the assignment says is gone. The target declares Relational
+    # Document Layout, so both sides of every comparison are document-resident.
+    person = document_layout_entity(document_model(), "Person")
+    occurrences = {
+        occurrence.identity.path[-1]: occurrence for occurrence in person.declared_value_objects
+    }
+    columns = {"address": ("address", True), "tags": ("tags", True)}
+    row: Row = {
+        "address": {"city": "Bergen", "geo": {"country": "NO"}},
+        "tags": [{"label": "founder"}],
+    }
+
+    assert _is_no_op_assignment(
+        columns,
+        {"address": {"city": "Bergen", "geo": {"country": "NO"}}, "tags": [{"label": "founder"}]},
+        row,
+        occurrences,
+    )
+    assert not _is_no_op_assignment(columns, {"address": {"city": "Bergen"}}, row, occurrences)
+    assert not _is_no_op_assignment(columns, {"address": {"city": "Oslo"}}, row, occurrences)
+    assert not _is_no_op_assignment(columns, {"tags": []}, row, occurrences)
 
 
 def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op() -> None:

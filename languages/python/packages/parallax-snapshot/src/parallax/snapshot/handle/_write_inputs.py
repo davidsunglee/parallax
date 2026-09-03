@@ -20,12 +20,9 @@ two representations:
   a decision taken BEFORE any row derivation has to use;
 * the resolution a keyed verb runs over the write evidence its source value
   carries (:func:`source_hint_of`, :func:`resolve_write_evidence`,
-  :class:`WriteEvidenceError`, :data:`WRITE_EVIDENCE_CODES`), the claim that verb
-  then takes at the scope it settles against (:func:`admit_write_claim`,
-  :class:`ClaimLedger`), plus the per-row column contributions a materializing
-  predicate-write resolve streams into its
-  :class:`~parallax.core.unit_work.MaterializedWriteGroup`
-  (:func:`is_no_op_assignment`, :func:`key_column_values`);
+  :class:`WriteEvidenceError`, :data:`WRITE_EVIDENCE_CODES`), and the claim that
+  verb then takes at the scope it settles against (:func:`admit_write_claim`,
+  :class:`ClaimLedger`);
 * the keyed seam itself, in the order every ingress runs it: the canonical
   single-row instruction a verb holding a value builds
   (:func:`keyed_instruction`), the whole judgement it is then measured by
@@ -60,29 +57,23 @@ developer catches from ``parallax.snapshot`` itself.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Sequence
-from typing import Final, Literal, Protocol, cast
+from collections.abc import Callable, Mapping
+from typing import Final, Literal, Protocol
 
 from parallax.core import opt_lock
 from parallax.core.base import InstantError, normalize_instant
-from parallax.core.db_port import Row
-from parallax.core.document_codec import occurrence_shape, reduce_declared_members
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.metamodel import (
-    AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    Multiplicity,
     TemporalDimension,
-    ValueObjectMetadata,
     entity_by_name,
 )
 from parallax.core.object_query import Latest
-from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     BOUNDED_MUTATIONS,
@@ -109,11 +100,7 @@ from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle._family import (
-    family_primary_key,
-    is_temporal,
-    slot_column,
-)
+from parallax.snapshot.handle._family import family_primary_key, is_temporal
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
@@ -129,11 +116,8 @@ __all__ = [
     "admit_write_claim",
     "cancels_a_pending_assignment",
     "instruction_identity",
-    "is_no_op_assignment",
-    "key_column_values",
     "keyed_instruction",
     "metadata_of_instance",
-    "normalize_assignment_values",
     "resolve_write_evidence",
     "source_hint_of",
     "source_pin",
@@ -700,15 +684,11 @@ def _refuse_consumed(
 
 
 # --------------------------------------------------------------------------- #
-# Predicate-write materialization (m-opt-lock                                 #
-# "Predicate-selected writes materialize when observations are needed";       #
-# ADR 0014) — plus the build-time window/no-op validators every keyed AND     #
-# `_where` temporal verb shares (`validate_window`).                          #
-# `is_no_op_assignment` and `key_column_values` below are pure per-row         #
-# functions the SOLE caller                                                   #
-# (`_predicate_writes._materialize_predicate_write`) drives against its OWN   #
-# resolved rows while streaming them into column builders — never an         #
-# implicit read of their own, and never a merged per-row dict of their own.   #
+# Build-time validation, run off what the caller supplied and before any row  #
+# is derived from it: the source-pin and value-provenance refusals every      #
+# keyed verb runs on the instance it was handed, and the Valid-Time window     #
+# `validate_window` judges for every keyed AND `_where` temporal verb —       #
+# the one step of this library the predicate-selected lane also runs.         #
 # --------------------------------------------------------------------------- #
 def source_pin(instance: object) -> Pin | None:
     """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
@@ -986,107 +966,6 @@ def _validate_until(
             f"(python.md §5) — got valid_from={valid_from!r}, until={until!r}"
         )
     return until_normalized
-
-
-def normalize_assignment_values(
-    assignments: Mapping[str, object],
-    occurrences: Mapping[str, ValueObjectMetadata] | None = None,
-) -> dict[str, object]:
-    """Decode each encoded occurrence assignment once into its managed value.
-
-    Scalar assignments already carry managed values. An occurrence decodes to the
-    complete document the assignment would STORE — presence preserved, so a member
-    the author omits contributes no key exactly as an unstored one does — because
-    assigning an occurrence replaces its subtree whole and the comparison below is
-    against a resolved row's own reduction of what it holds. A nested ``many`` is
-    the one member presence preservation leaves alone, because it has no absence to
-    preserve: the stored document carries ``[]`` there whichever of the three zero
-    spellings was written, and so does the document this assignment would store, so
-    the reduction answers ``[]`` for an omitted one rather than dropping the key
-    and calling a stored zero a change. The returned mapping is reusable across
-    every row resolved by one predicate write.
-    """
-    occurrence_index: Mapping[str, ValueObjectMetadata] = (
-        cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
-    )
-    normalized: dict[str, object] = {}
-    for member, value in assignments.items():
-        occurrence = occurrence_index.get(member)
-        if occurrence is None:
-            normalized[member] = value
-            continue
-        shape = occurrence_shape(occurrence)
-        if occurrence.multiplicity is Multiplicity.MANY:
-            encoded = list(cast("tuple[object, ...]", value)) if isinstance(value, tuple) else value
-            normalized[member] = [
-                reduce_declared_members(shape, element, preserve_presence=True)
-                for element in cast("Sequence[object]", encoded)
-            ]
-        else:
-            normalized[member] = reduce_declared_members(shape, value, preserve_presence=True)
-    return normalized
-
-
-def is_no_op_assignment(
-    member_columns: Mapping[str, tuple[str, bool]],
-    assignments: Mapping[str, object],
-    row: Row,
-    occurrences: Mapping[str, ValueObjectMetadata] | None = None,
-) -> bool:
-    """Whether EVERY assigned member's new value already equals ``row``'s own
-    (`m-opt-lock` per-row no-op elimination — structural equality, the SAME
-    comparison a keyed no-op's effective-change-set test uses).
-
-    ``row`` is one resolved row of the write's own resolving read, after that
-    read's row transform: a document-mapped member is compared against the value
-    the fan-out decoded, in its declared Neutral Type, rather than against a
-    fragment of the raw Structured Column. An absent Document Path and an
-    explicit JSON null both decode to ``None``, which is the one logical
-    not-present state a NULL Column also carries, so a member assigned ``None``
-    is a no-op in either spelling.
-
-    ``assignments`` has already crossed :func:`normalize_assignment_values` once
-    for the whole predicate write, so an occurrence arrives as the complete
-    document the assignment would store and is compared against the row's whole
-    decoded occurrence, without decoding either side again. Nothing is masked by
-    the members the author named: assigning an occurrence replaces its subtree,
-    so an omitted declared member the row does hold is a change like any other,
-    and eliminating that write would leave stored state the assignment removes.
-    A nested ``many`` is the one omission that removes nothing — both sides read
-    it as the empty collection the store holds either way — so an occurrence
-    authored short of one is a no-op rather than a change.
-
-    This is the ONE narrow result-dependent normalization a materializing
-    resolve performs while streaming: a resolved row an assignment-bearing
-    verb would leave unchanged never joins its Materialized Write Group.
-    ``delete`` / ``terminate`` / ``terminateUntil`` have no assignments to
-    compare and therefore never call this — every resolved row is retained.
-    """
-    occurrence_index: Mapping[str, ValueObjectMetadata] = (
-        cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
-    )
-    for member, value in assignments.items():
-        stored = row.get(member_columns[member][0])
-        occurrence = occurrence_index.get(member)
-        compared = (
-            list(cast("tuple[object, ...]", stored))
-            if occurrence is not None
-            and occurrence.multiplicity is Multiplicity.MANY
-            and isinstance(stored, tuple)
-            else stored
-        )
-        if value != compared:
-            return False
-    return True
-
-
-def key_column_values(
-    pk_attrs: Sequence[AttributeMetadata], layout: EntityLayoutView, row: Row
-) -> tuple[object, ...]:
-    """One resolved row's aligned primary-key value tuple, in ``pk_attrs``
-    order — a Materialized Write Group's own per-row key-column contribution.
-    """
-    return tuple(row[slot_column(layout, attr.identity)] for attr in pk_attrs)
 
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:
