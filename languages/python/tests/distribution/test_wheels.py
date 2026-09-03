@@ -18,6 +18,21 @@ def _names(wheelhouse: Wheelhouse, package: str) -> list[str]:
         return archive.namelist()
 
 
+def _modules_directly_in(wheelhouse: Wheelhouse, package: str, directory: str) -> set[str]:
+    """Every module the wheel ships directly inside ``directory``, nested ones excluded.
+
+    An exact set is what a completeness claim needs. Hatch discovers the tree
+    rather than enumerating modules, so a required-path list grades only what a
+    split was expected to produce and stays green over whatever else the tree
+    happens to carry — the under-coverage that let a module ship unnamed.
+    """
+    return {
+        name
+        for name in _names(wheelhouse, package)
+        if name.startswith(directory) and name.endswith(".py") and "/" not in name[len(directory) :]
+    }
+
+
 def test_no_namespace_root_init_in_any_wheel(wheelhouse: Wheelhouse) -> None:
     # PEP 420: the shared `parallax` namespace root must never carry __init__.py.
     for package in wheelhouse.wheels:
@@ -49,51 +64,57 @@ def test_core_wheel_contains_spine_scopes(wheelhouse: Wheelhouse) -> None:
 
 
 def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
-    # Same idiom, same reasoning as the handle package below: Hatch discovers the
-    # tree rather than enumerating modules, so the ABSENT `sql_gen/compile.py` is
-    # the load-bearing half — every required path below would still pass against a
-    # tree that kept the old single-file compiler beside the split, which is
-    # exactly what a stale build or a half-applied split looks like. This is the
-    # complete package — the five private modules plus the
-    # re-exporting interface, and nothing else.
-    names = _names(wheelhouse, "parallax-core")
-    assert "parallax/core/sql_gen/__init__.py" in names
-    assert "parallax/core/sql_gen/_compile.py" in names
-    assert "parallax/core/sql_gen/_context.py" in names
-    assert "parallax/core/sql_gen/_inheritance.py" in names
-    assert "parallax/core/sql_gen/_navigation.py" in names
-    assert "parallax/core/sql_gen/_predicate.py" in names
-    assert "parallax/core/sql_gen/compile.py" not in names
+    # Same idiom, same reasoning as the handle package below: the shipped set is
+    # asserted whole, so a module the split never meant to ship fails here as
+    # loudly as a missing one. The ABSENT `sql_gen/compile.py` is the half an
+    # exact set would not otherwise reach — the old single-file compiler sits
+    # beside the package rather than inside it, which is what a stale build or a
+    # half-applied split looks like.
+    assert _modules_directly_in(wheelhouse, "parallax-core", "parallax/core/sql_gen/") == {
+        "parallax/core/sql_gen/__init__.py",
+        "parallax/core/sql_gen/_compile.py",
+        "parallax/core/sql_gen/_context.py",
+        "parallax/core/sql_gen/_inheritance.py",
+        "parallax/core/sql_gen/_navigation.py",
+        "parallax/core/sql_gen/_predicate.py",
+        "parallax/core/sql_gen/_seek.py",
+        "parallax/core/sql_gen/_write.py",
+    }
+    assert "parallax/core/sql_gen/compile.py" not in _names(wheelhouse, "parallax-core")
 
 
 def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # The checks above see `parallax/snapshot` only at the top-package prefix, so
-    # they cannot tell a handle.py from a handle/ directory. Hatch discovers the
-    # tree rather than enumerating modules, which makes the absent old path the
-    # load-bearing half: it is what would catch a stale build or a half-applied
-    # split. This is the complete package — the eighteen private
-    # modules plus the re-exporting interface.
-    names = _names(wheelhouse, "parallax-snapshot")
-    assert "parallax/snapshot/handle/__init__.py" in names
-    assert "parallax/snapshot/handle/_database.py" in names
-    assert "parallax/snapshot/handle/_errors.py" in names
-    assert "parallax/snapshot/handle/_family.py" in names
-    assert "parallax/snapshot/handle/_features.py" in names
-    assert "parallax/snapshot/handle/_keyed_sql.py" in names
-    assert "parallax/snapshot/handle/_materializer.py" in names
-    assert "parallax/snapshot/handle/_page.py" in names
-    assert "parallax/snapshot/handle/_planning.py" in names
-    assert "parallax/snapshot/handle/_predicate_writes.py" in names
-    assert "parallax/snapshot/handle/_preflight.py" in names
-    assert "parallax/snapshot/handle/_read.py" in names
-    assert "parallax/snapshot/handle/_retention.py" in names
-    assert "parallax/snapshot/handle/_stream.py" in names
-    assert "parallax/snapshot/handle/_transaction.py" in names
-    assert "parallax/snapshot/handle/_wire.py" in names
-    assert "parallax/snapshot/handle/_wire_writes.py" in names
-    assert "parallax/snapshot/handle/_write_inputs.py" in names
-    assert "parallax/snapshot/handle/_write_lowering.py" in names
-    assert "parallax/snapshot/handle.py" not in names
+    # they cannot tell a handle.py from a handle/ directory. This is the complete
+    # package — the eighteen private modules plus the re-exporting interface — and
+    # the set is compared whole so it stays that claim: Hatch discovers the tree
+    # rather than enumerating modules, so a required-path list would have gone on
+    # passing over a module nobody named, which is how `_page.py` shipped
+    # ungraded. The absent old path is the half no set over the directory reaches:
+    # `handle.py` sits beside the package, and a wheel carrying it is a stale
+    # build or a half-applied split.
+    assert _modules_directly_in(wheelhouse, "parallax-snapshot", "parallax/snapshot/handle/") == {
+        "parallax/snapshot/handle/__init__.py",
+        "parallax/snapshot/handle/_database.py",
+        "parallax/snapshot/handle/_errors.py",
+        "parallax/snapshot/handle/_family.py",
+        "parallax/snapshot/handle/_features.py",
+        "parallax/snapshot/handle/_keyed_sql.py",
+        "parallax/snapshot/handle/_materializer.py",
+        "parallax/snapshot/handle/_page.py",
+        "parallax/snapshot/handle/_planning.py",
+        "parallax/snapshot/handle/_predicate_writes.py",
+        "parallax/snapshot/handle/_preflight.py",
+        "parallax/snapshot/handle/_read.py",
+        "parallax/snapshot/handle/_retention.py",
+        "parallax/snapshot/handle/_stream.py",
+        "parallax/snapshot/handle/_transaction.py",
+        "parallax/snapshot/handle/_wire.py",
+        "parallax/snapshot/handle/_wire_writes.py",
+        "parallax/snapshot/handle/_write_inputs.py",
+        "parallax/snapshot/handle/_write_lowering.py",
+    }
+    assert "parallax/snapshot/handle.py" not in _names(wheelhouse, "parallax-snapshot")
 
 
 def test_snapshot_wheel_ships_the_materialize_package(wheelhouse: Wheelhouse) -> None:
