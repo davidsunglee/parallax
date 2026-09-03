@@ -270,6 +270,14 @@ decides the Entity read's shared-lock participation, the write's evidence
 requirement, and whether the Planned Write is gated.
 _Avoid_: Concurrency Preference, entity override, mutation-specific mode
 
+**Isolation Level**:
+The portable Read Committed, Repeatable Read, or Serializable guarantee a
+Transaction Invocation requests for every Transaction Attempt it owns, each
+defined by the anomalies it forbids and mapped by the adapter to the concrete
+database. Omission requests nothing and keeps the adapter's default; a joined
+invocation may omit or repeat the outer level but never name a different one.
+_Avoid_: isolation string, session isolation, vendor level, transaction mode
+
 **Audit Metadata**:
 The family-wide, root-owned association between an audited Entity's provenance
 semantics and explicitly declared Attribute Identities. Every descendant
