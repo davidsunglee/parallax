@@ -387,10 +387,12 @@ def _apply_given_corrupt(case: case_format.Case, model: AcceptedMetamodel, port:
     contradicts, so passing it back through the codec that spells a conforming
     one would refuse it.
 
-    The whole list is judged before any of it is applied, exactly as the
-    reference harness judges it before any row lands: an address this grammar
-    does not admit makes the CASE ungradeable, so a legal entry standing before
-    it must not have written a row by the time it is refused.
+    Every entry's Entity is judged for temporality before any entry applies, as
+    the reference harness judges it before any row lands: that refusal is about
+    the CASE, so a legal entry standing before a temporal one must not have
+    written a row by the time the list is refused. A refusal only one entry's own
+    address resolution reaches leaves earlier entries' writes standing, which the
+    case's ungradeability makes harmless.
     """
     given = case.document.get("given")
     if not isinstance(given, Mapping):

@@ -821,8 +821,12 @@ value there addresses a milestone CHAIN and names no single row in it. Left
 admitted, the same address would mean two different things — every milestone of
 the key corrupted, or none — so it is refused instead: by every adapter, in the
 same terms, and by the corpus's own static validation before any adapter runs.
-An adapter judges the whole list before it applies any of it, so a legal entry
-standing before a refused one leaves no corrupted state behind.
+This refusal is about the CASE rather than about one entry, so an adapter judges
+every entry's Entity before it applies any entry: a legal entry standing before a
+temporal one leaves no corrupted state behind. Every other refusal this grammar
+states is reached by resolving one entry's own address, so it MAY follow earlier
+entries' writes; the case is ungradeable either way, and no adapter is required
+to undo them.
 
 The consequence is deliberate and bounded: a temporal Entity's document-resident
 state has no corpus expression, and giving it one means adding a per-milestone
