@@ -7,8 +7,9 @@ materializers — so what these assert is what a streamed read answers.
 Four claims bound the suite. The state table IS the enforcement, so every one of
 its cells is graded rather than only the reachable ones. Statement accounting is
 what makes "a page is an eager read" observable: each nonempty page costs the
-same `1 + L` a whole eager read costs, and a full final page costs one more root
-statement returning nothing unless a declared ``limit`` was already delivered.
+same `1 + L` a whole eager read costs, and the lookahead root a page reads past
+its batch is what ends the delivery without a terminal root statement, even where
+the delivered roots fill the final page exactly.
 Identity is root-local, which is a NARROWING of what an eager read happens to do
 rather than a second identity rule, so the within-root half is asserted to agree
 with ``find`` and the cross-root half to diverge from it, in both namespaces.

@@ -111,7 +111,8 @@ class PagePlan:
     """How one delivery pages: its page nodes and the two counts bounding them.
 
     All three are fixed for a delivery's whole life and mean nothing apart —
-    ``batch_size`` is how many roots a page asks for, ``limit`` is the authored
+    ``batch_size`` is how many roots a page may DELIVER — what its statement
+    asks for is :meth:`page_request`'s answer — ``limit`` is the authored
     cap the delivery may never read past, and ``plan`` is what turns either into
     a node. Carrying them as one value is what leaves the stream holding a
     position and nothing else.

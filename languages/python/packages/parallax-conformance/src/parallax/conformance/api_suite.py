@@ -1105,9 +1105,10 @@ _MILESTONE_SET_GRAPH_SIBLING_REASON: Final[str] = (
 
 _STREAMED_DELIVERY_REASON: Final[str] = (
     "the corpus's streamed-delivery lane, whose claim is the PAGE PARTITION rather than "
-    "the values published: the size each page asks for, the Continuation Order coordinates "
-    "each later page seeks from, and the statement a full final page costs to prove "
-    "exhaustion. An idiomatic story publishes roots and never statements, so one over "
+    "the values published: the size each page asks for, lookahead root included, the "
+    "Continuation Order coordinates each later page seeks from, and the page that came "
+    "back short of what it asked for and so ended the delivery. An idiomatic story "
+    "publishes roots and never statements, so one over "
     "`db.stream` would grade the graph its eager sibling already grades and nothing that "
     "makes the case a streamed one. Both halves are graded for real elsewhere: the run "
     "sweep drives `db.wire.stream` itself against real Postgres, compares every statement "

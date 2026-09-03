@@ -663,8 +663,11 @@ authoring form.
 Three properties of that list are graded independently of the SQL text:
 
 - **The page size is honored.** A page's root statement binds its requested size,
-  which is `batchSize` — or, under a declared `limit`, whatever of it is still
-  undelivered — and the page returns at most that many roots.
+  which is `batchSize` plus the one **lookahead** root a page reads past its batch
+  and never delivers — or, where a declared `limit` leaves no more than a batch
+  undelivered, exactly that remainder, which carries no lookahead because the
+  limit is a read boundary rather than a filter. The page delivers at most
+  `batchSize` roots either way.
 - **The continuation is the previous page's own last root.** A page after the
   first binds the Continuation Order coordinates of the root the previous page
   delivered last — one per term of that order. This is what makes a streamed case
@@ -674,9 +677,11 @@ Three properties of that list are graded independently of the SQL text:
   instant, bound in the canonical instant spelling every other instant bind
   carries.
 - **Exhaustion is proven, not assumed.** A page shorter than the size it
-  requested ends the delivery. A **full** final page does not, so it is followed
-  by one more root statement that returns nothing — unless a declared `limit` was
-  already delivered in full, which ends the delivery without it.
+  requested ends the delivery; one that came back full proves another page
+  follows. The lookahead root is what decides that, so exhaustion costs **no**
+  terminal statement of its own, not even where the delivered roots fill the
+  final page exactly. A final page the declared `limit` capped ends the delivery
+  on the limit alone, having read nothing the limit excludes.
 
 The result member is the one the same Object Query carries unstreamed, stating
 the same thing: `batchSize` changes neither membership nor order nor what a root
