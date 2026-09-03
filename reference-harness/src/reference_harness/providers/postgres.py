@@ -31,7 +31,7 @@ from ._binds import adapt_document_scalar_binds
 if TYPE_CHECKING:
     from . import Node
 
-# Pinned at the latest stable Postgres major (m-case-format/DQ15). Refresh on new majors.
+# The provisioning seam pins a stable Postgres major (m-case-format/DQ15).
 POSTGRES_IMAGE = "postgres:18"
 
 # Postgres keys on the SQLSTATE string; a code absent here is `errors.UNKNOWN`, so
