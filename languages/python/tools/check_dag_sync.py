@@ -741,6 +741,11 @@ def parse_support_scope_table(text: str) -> dict[str, frozenset[str]]:
         scopes = _row_scopes(scope_cell, owner)
         grants = _row_grants(deps_cell, scopes[0])
         for scope in scopes:
+            if scope in declared:
+                raise ValueError(
+                    f"§7's prose rows declare support scope {scope!r} more than once; "
+                    "a second row would replace the first before parity compares it"
+                )
             declared[scope] = grants
     return declared
 
@@ -750,10 +755,12 @@ def parse_child_scope_marks(text: str) -> dict[str, dict[str, str]]:
 
     Keyed by the mark, then by scope, valued by the parent that row declares the
     scope a child OF. Both halves are compared in
-    :func:`check_child_scope_marks`, because a mark names a relationship rather
-    than a scope: what an isolated scope is withheld from and what a sealed scope
-    may not reach are both the parent package, so a row naming the wrong parent
-    declares a different guarantee from the one enforced.
+    :func:`check_child_scope_marks`: a mark names a relationship rather than a
+    scope, and §7 states each mark's guarantee against the parent the row names,
+    so a row naming the wrong parent declares a different guarantee from the one
+    enforced. §7 declares each mark exactly once, so a repeated declaration is
+    rejected rather than resolved — silently keeping the last would erase a
+    contradiction the comparison exists to catch.
     """
     marked: dict[str, dict[str, str]] = {mark: {} for mark in ("isolated", "sealed")}
     for module, owner, scope_cell, _deps, _rule in _table_rows(text):
@@ -762,6 +769,12 @@ def parse_child_scope_marks(text: str) -> dict[str, dict[str, str]]:
         for match in _CHILD_MARK.finditer(module):
             mark, parent = match.group(1), match.group(2)
             for scope in _row_scopes(scope_cell, owner):
+                previous = marked[mark].get(scope)
+                if previous is not None:
+                    raise ValueError(
+                        f"§7 declares {scope!r} a {mark} child more than once: "
+                        f"of {previous!r} and of {parent!r}"
+                    )
                 marked[mark][scope] = parent
     return marked
 
@@ -827,13 +840,15 @@ def check_child_scope_marks(marked: Mapping[str, Mapping[str, str]]) -> None:
     :data:`SEALED_CHILD_SCOPES` is the whole of it — so without this comparison
     the spec could call a scope sealed while the tool no longer sealed it: every
     contract still generated, every check still green, and one declaration still
-    promising a one-way guarantee nothing graded. Isolation does reach the
-    generated rows, so losing it there is loud, but only for whoever regenerates
-    and reads a diff over the target set of nearly every contract.
+    promising a guarantee nothing graded. Dropping isolation does move the
+    generated rows, so the default check already fails on it; this comparison is
+    what makes that failure name the disagreement with §7 rather than report
+    unexplained contract drift.
 
     The parent each mark names is compared with :data:`CHILD_SCOPE_PARENT` for
-    the same reason the scope is: it is the package the guarantee is stated
-    against, and the ownership walk takes it from that table rather than from §7.
+    the same reason the scope is: §7 states each mark's guarantee against the
+    parent the row names, and the ownership walk takes that parent from that
+    table rather than from §7.
     """
     for mark, declared in (("isolated", ISOLATED_CHILD_SCOPES), ("sealed", SEALED_CHILD_SCOPES)):
         in_spec = marked.get(mark, {})

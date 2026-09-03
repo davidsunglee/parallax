@@ -711,7 +711,8 @@ def test_a_child_granted_its_own_sibling_needs_no_exception() -> None:
     # What the generator gives up here it does not merely lose: emitting nothing
     # means the row permits every module of that package, so the scope is
     # declared SEALED and `tools/check_scope_ownership.py` refuses the imports
-    # this contract cannot — the two halves are what make the grant complete.
+    # into that package no granted scope covers — the two halves are what make
+    # the grant complete.
     assert "parallax.core.entity._instance_state" in dag.SEALED_CHILD_SCOPES
 
 
@@ -761,10 +762,10 @@ def test_a_mark_dropped_by_the_spec_alone_fails_generation(
 def test_a_mark_naming_another_parent_fails_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A mark constrains a relationship, not a scope: what a sealed scope may not
-    # reach is its parent package, and the ownership walk takes that package from
-    # CHILD_SCOPE_PARENT. A row naming a different one promises a guarantee
-    # nothing enforces while every scope set still matches.
+    # A mark constrains a relationship, not a scope: §7 states each mark's
+    # guarantee against the parent the row names, and the ownership walk takes
+    # that parent from CHILD_SCOPE_PARENT. A row naming a different one promises
+    # a guarantee nothing enforces while every scope set still matches.
     tampered = tmp_path / "python.md"
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
@@ -777,6 +778,52 @@ def test_a_mark_naming_another_parent_fails_generation(
     monkeypatch.setattr(dag, "PYTHON_MD", tampered)
 
     with pytest.raises(ValueError, match=re.escape("a sealed child of 'parallax.core.entity'")):
+        dag.generate()
+
+
+def test_a_mark_declared_twice_for_one_scope_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # §7 declares each mark exactly once, so a second declaration for the same
+    # scope is a contradiction rather than a restatement. Keeping the last would
+    # let a wrong parent stand in the spec while the comparison — reading only
+    # what survived — matched CHILD_SCOPE_PARENT and passed.
+    tampered = tmp_path / "python.md"
+    original = dag.PYTHON_MD.read_text()
+    edited = original.replace(
+        "(support, sealed child of `parallax.snapshot.handle`)",
+        "(support, sealed child of `parallax.core.entity`, sealed child of "
+        "`parallax.snapshot.handle`)",
+        1,
+    )
+    assert edited != original
+    tampered.write_text(edited)
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    with pytest.raises(ValueError, match="a sealed child more than once"):
+        dag.generate()
+
+
+def test_a_support_scope_declared_by_two_prose_rows_fails_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The prose rows are one of three declarations of the support-scope graph,
+    # so a second row for the same scope is a contradiction the parity check
+    # never sees: the later grants would replace the earlier ones, and agreeing
+    # with the fence would clear a row that disagrees with it.
+    original = dag.PYTHON_MD.read_text()
+    row = next(
+        line
+        for line in original.splitlines()
+        if line.startswith("| Snapshot write-observation retention (support")
+    )
+    contradiction = row.replace("`m-metamodel`", "`m-sql`", 1)
+    assert contradiction != row
+    tampered = tmp_path / "python.md"
+    tampered.write_text(original.replace(row, f"{contradiction}\n{row}", 1))
+    monkeypatch.setattr(dag, "PYTHON_MD", tampered)
+
+    with pytest.raises(ValueError, match="more than once"):
         dag.generate()
 
 
