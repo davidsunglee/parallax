@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-89**.
+Entry numbering is continuous and never reused. The next new number is **D-90**.
 
 ## Entries
 
@@ -799,6 +799,41 @@ all select t0.id, t0.payload, 'Film' family_variant from publication_film t0` as
 `u`, project `u.id, not u.payload is null, u.payload, u.family_variant` plus the
 two capture cells, and the second conjoins the ordinary branch tree over
 `jsonb_extract_path_text(u.payload, ?)` and `u.id` binding `Frames` and `20`.
+
+### D-89 — `given.corrupt` cannot address one milestone, so a temporal Entity's stored state has no corpus expression
+
+*Medium — a whole Entity class the corruption grammar deliberately refuses.*
+Relates to `parallax.conformance.engine._corrupt_stored_state`,
+`reference_harness.data_loader._refuse_temporal_corruptions`,
+`reference_harness.schema_validate._validate_corruptions`,
+`core/spec/m-case-format.md` *Corrupting stored state*.
+
+**What.** A corruption names its row by the model primary key alone. That
+addresses one row only where the physical key IS that key; a temporal Entity's
+rows are keyed by the model key together with each As-Of Axis's end instant, so
+one value addresses a milestone CHAIN. The grammar therefore refuses a temporal
+Entity outright, in the same words from all three places above, and the corpus
+refuses such a case statically before any executor runs. The consequence is that
+no case can state a stored-data verdict over a temporal Entity's
+document-resident state — the classification itself works there, but nothing can
+author the storage that produces it.
+
+**Why it is deferred rather than fixed.** Giving it an expression means adding a
+per-milestone locator to the grammar — an optional `edge`
+(`{validFrom, transactionFrom}`), which the COR-114 design sketched and Phase 6
+dropped. That is a specification change before it is an adapter change: it
+reaches `m-case-format`, `compatibility-case.schema.json`, the harness loader
+(which matches corruptions at fixture load, where a milestone's identity is the
+fixture row it came from), and the Python engine's `where` clause. Nothing needs
+it today — the five corrupting cases in the corpus all address non-temporal
+Entities — so the restriction was taken instead of the locator, deliberately and
+with the refusal graded on both sides.
+
+**When.** With the first case that wants a temporal stored-data verdict. Landing
+it is the prerequisite for such a case, and the refusal's own tests
+(`reference-harness/tests/test_corrupt_addressing.py`,
+`tests/unit/test_engine.py::test_given_corrupt_refuses_a_temporal_entity_before_reading_anything`)
+are what have to change first, since they pin the restriction this entry lifts.
 
 ## Forwarding pointers
 

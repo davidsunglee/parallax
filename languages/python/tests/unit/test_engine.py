@@ -8040,7 +8040,37 @@ def test_given_corrupt_refuses_a_member_kept_in_a_column_of_its_own() -> None:
         )
 
 
-def test_given_corrupt_refuses_a_row_the_fixtures_do_not_hold() -> None:
+def test_given_corrupt_refuses_a_temporal_entity_before_reading_anything() -> None:
+    # A temporal Entity's rows are keyed by the model key plus each axis's end
+    # instant, so one `key` value addresses a milestone CHAIN. The address is
+    # refused rather than resolved to whichever milestone a select happened to
+    # answer with, and refused before any statement is issued.
+    port = _CorruptionPort({})
+    case = _load_case("m-bitemp-write-001")
+    document = dict(case.document)
+    document["given"] = {
+        "corrupt": [
+            {
+                "entity": "parallax.compatibility.Position",
+                "key": 1,
+                "member": ["val"],
+                "value": "not-a-decimal",
+            }
+        ]
+    }
+    with pytest.raises(engine.EngineError, match="a temporal Entity: its model primary key"):
+        engine._apply_given_corrupt(  # pyright: ignore[reportPrivateUsage] - the engine's own realization
+            dataclasses.replace(case, document=document),
+            models.accepted_model_of(engine.load_case_domain_model(case)),
+            port,
+        )
+    assert port.reads == [] and port.writes == []
+
+
+def test_given_corrupt_reports_how_many_rows_its_key_answered_with() -> None:
+    # The count is reported rather than assumed to be zero: a key that selected
+    # too many rows is a different fault from one that selected none, and reading
+    # "the fixtures do not hold it" for either would misdescribe one of them.
     class _Empty(_CorruptionPort):
         def execute(
             self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
@@ -8048,7 +8078,7 @@ def test_given_corrupt_refuses_a_row_the_fixtures_do_not_hold() -> None:
             return []
 
     case = _load_case("m-snapshot-read-049")
-    with pytest.raises(engine.EngineError, match="the loaded fixtures do not hold"):
+    with pytest.raises(engine.EngineError, match="answer with 0 row\\(s\\) rather than one"):
         engine._apply_given_corrupt(  # pyright: ignore[reportPrivateUsage] - the engine's own realization
             case, models.accepted_model_of(engine.load_case_domain_model(case)), _Empty({})
         )

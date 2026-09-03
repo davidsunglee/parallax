@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ._declared_contributor import DeclaredContributor
-from .case import Entity, Model
+from .case import Entity, Model, corrupt_temporal_entity
 from .ddl_builder import declared_contributors
 from .document_codec import encode_leaf
 from .inheritance import assert_no_abstract_fixture_rows
@@ -25,6 +25,7 @@ from .storage_layout import (
     RelationalDocument,
     ValueObjectContributor,
 )
+from .temporality import temporal_axes
 
 if TYPE_CHECKING:
     from .providers import DatabaseProvider
@@ -266,6 +267,20 @@ def _tag_value(view: EntityLayoutView) -> str:
     return view.discriminator.value
 
 
+def _refuse_temporal_corruptions(model: Model, corruptions: Sequence[Mapping[str, Any]]) -> None:
+    """Refuse before any row loads, so the address is judged rather than applied.
+
+    A temporal Entity's rows are keyed by the model key plus each axis's end
+    instant, so matching on the model key alone would silently corrupt every
+    milestone of the chain.
+    """
+    by_name = {entity.canonical_name: entity for entity in model.entities}
+    for entry in corruptions:
+        entity = by_name.get(str(entry["entity"]))
+        if entity is not None and temporal_axes(entity.runtime_facts):
+            raise ValueError(corrupt_temporal_entity(entity.canonical_name))
+
+
 def load_model(
     model: Model, db: DatabaseProvider, corruptions: Sequence[Mapping[str, Any]] = ()
 ) -> None:
@@ -280,6 +295,7 @@ def load_model(
     reason rather than failing.
     """
     assert_no_abstract_fixture_rows(model)
+    _refuse_temporal_corruptions(model, corruptions)
     layout = model.storage_layout
     declarations = declared_contributors(model)
     applied: set[int] = set()

@@ -411,6 +411,8 @@ def _corrupt_stored_state(
     view = storage_layout.view(model).entity(entity.identity)
     if view is None:  # pragma: no cover - a corrupted Entity owns rows
         raise EngineError(f"{case.path.name}: {entity.identity.canonical} owns no table")
+    if _is_temporal(model, entity):
+        raise EngineError(f"{case.path.name}: {_corrupt_temporal_entity(entity)}")
     member = tuple(cast("list[object]", entry["member"]))
     column, path = _corruption_target(case, model, entity, member)
     key_column, key = _corruption_key(case, model, entity, entry["key"])
@@ -423,12 +425,40 @@ def _corrupt_stored_state(
     if len(rows) != 1:
         raise EngineError(
             f"{case.path.name}: given.corrupt addresses {entity.identity.canonical} "
-            f"{entry['key']!r}, which the loaded fixtures do not hold"
+            f"{entry['key']!r}, which the loaded fixtures answer with {len(rows)} row(s) "
+            "rather than one"
         )
     document = _replaced_at(_stored_value(rows[0][column]), path, entry["value"])
     port.execute_write(
         dialect.to_driver_sql(f"update {table} set {dialect.quote(column)} = ? {where}"),
         [JsonDocument(document), key],
+    )
+
+
+def _is_temporal(model: AcceptedMetamodel, entity: EntityMetadata) -> bool:
+    """Whether ``entity``'s family declares an As-Of Axis.
+
+    Temporality is family-wide and root-owned, so the question is asked of the
+    family root's own declaration; a descendant declares none of its own.
+    """
+    position = inheritance.view(model).entity(entity.identity)
+    root = entity if position is None else model.entity(position.root)
+    return root is not None and bool(root.declared_as_of_axes)
+
+
+def _corrupt_temporal_entity(entity: EntityMetadata) -> str:
+    """Why a corruption addressing ``entity`` is refused.
+
+    Spelled exactly as the corpus's own static validation and the reference
+    harness spell it, so a case reaching for a temporal Entity is told the same
+    thing wherever it is refused: its rows are keyed by the model key plus each
+    axis's end instant, so one ``key`` value addresses a milestone chain and
+    names no row in it (`m-case-format` *Corrupting stored state*).
+    """
+    return (
+        f"given.corrupt addresses {entity.identity.canonical}, a temporal Entity: its "
+        "model primary key addresses a milestone chain rather than one row "
+        "(m-case-format *Corrupting stored state*)"
     )
 
 

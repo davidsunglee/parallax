@@ -804,8 +804,7 @@ given:
       value: "0000-13-99"
 ```
 
-`entity` is the canonical Entity spelling, `key` the row's model primary-key value
-(`m-metamodel` admits no composite primary key, so one value addresses one row),
+`entity` is the canonical Entity spelling, `key` the row's model primary-key value,
 `member` the entity-relative logical path — declared member names, with an integer
 for an array position — and `value` the raw stored value written there, authored
 as the JSON it becomes and never re-encoded. Sharing the addressing with
@@ -813,6 +812,19 @@ as the JSON it becomes and never re-encoded. Sharing the addressing with
 location, expect a diagnosis at this location. Nothing is translated between the
 setup and the assertion, so a disagreement between them is a defect the case
 exposes rather than absorbs.
+
+**An addressed Entity MUST be non-temporal.** `m-metamodel` admits no composite
+primary key, so one `key` value addresses one row — but only where the row's
+PHYSICAL key is that model key. A temporal Entity's rows are keyed by the model
+key together with each As-Of Axis's end instant (`m-storage-layout`), so one
+value there addresses a milestone CHAIN and names no single row in it. Left
+admitted, the same address would mean two different things — every milestone of
+the key corrupted, or none — so it is refused instead: by every adapter, in the
+same terms, and by the corpus's own static validation before any adapter runs.
+The consequence is deliberate and bounded: a temporal Entity's document-resident
+state has no corpus expression, and giving it one means adding a per-milestone
+locator to this grammar first, which is a specification change and the
+prerequisite for the first case that wants a temporal stored-data verdict.
 
 The address is **logical**, so it names one occurrence under either Storage
 Layout and stops wherever the case means it to. One that stops at a top-level
