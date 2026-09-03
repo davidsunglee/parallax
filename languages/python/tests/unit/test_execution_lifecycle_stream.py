@@ -26,6 +26,7 @@ from decimal import Decimal
 from typing import Any, Final
 
 import pytest
+from _stream_page_support import paged_reads
 from _transact_support import ACCOUNT, account_db
 
 from _support import mirrored_models as mm
@@ -37,7 +38,6 @@ from _support.db_port import (
     ScriptedPort,
     Transact,
     Write,
-    paged_reads,
 )
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core.db_error import DatabaseError
