@@ -432,6 +432,42 @@ def _error_case() -> dict[str, Any]:
     }
 
 
+def _error_concurrency_case() -> dict[str, Any]:
+    """The two-connection error trigger: barrier-separated rounds on two held
+    sessions, whose only assertion is the classified error.
+
+    Its steps are the shape's two legal forms — a `kind`-less statement step and a
+    `kind: commit` step ending that node's held transaction."""
+    return {
+        "model": "models/error-cases.yaml",
+        "tags": ["m-db-error"],
+        "shape": "error",
+        "given": {"fixtures": True},
+        "when": {
+            "uow": {"isolation": "serializable"},
+            "concurrency": {
+                "rounds": [
+                    {
+                        "A": {
+                            "statements": [
+                                {
+                                    "sql": {"postgres": "update gauge set v = ? where id = ?"},
+                                    "binds": [9, 1],
+                                }
+                            ]
+                        },
+                        "B": {"kind": "commit"},
+                    }
+                ]
+            },
+        },
+        "then": {
+            "errorClass": "deadlock",
+            "nativeCode": {"postgres": "40001", "mariadb": 1213},
+        },
+    }
+
+
 def _concurrency_success_case() -> dict[str, Any]:
     return {
         "model": "models/account.yaml",
@@ -752,6 +788,7 @@ VALID_CASES = {
     "conflict-retry": _conflict_retry_case,
     "coherence": _coherence_case,
     "error": _error_case,
+    "error-concurrency": _error_concurrency_case,
     "concurrencySuccess": _concurrency_success_case,
     "boundary": _boundary_case,
     "read-graphs": _graphs_read_case,
@@ -1466,6 +1503,26 @@ def _commit_step_on_a_scenario() -> dict[str, Any]:
     return doc
 
 
+def _error_step_declaring_a_write_kind() -> dict[str, Any]:
+    # An error choreography's statement step declares no `kind` at all: `read` and
+    # `write` are the concurrency-success form's grading vocabulary, and an error
+    # case grades only the classified error. A step naming one would run
+    # differently per runner while nothing on the shape observes the difference.
+    doc = _error_concurrency_case()
+    doc["when"]["concurrency"]["rounds"][0]["A"]["kind"] = "write"
+    return doc
+
+
+def _error_step_declaring_a_read_kind() -> dict[str, Any]:
+    # The same refusal for the graded half of that vocabulary, carrying the
+    # `expectRows` a read step requires — so what refuses it is the error branch's
+    # own narrowing rather than the step def's read/`expectRows` pairing.
+    doc = _error_concurrency_case()
+    doc["when"]["concurrency"]["rounds"][0]["A"]["kind"] = "read"
+    doc["when"]["concurrency"]["rounds"][0]["A"]["expectRows"] = [{"id": 1}]
+    return doc
+
+
 def _isolation_on_a_scenario_step() -> dict[str, Any]:
     # A level is the whole case's, declared once under `when.uow`; a step naming its
     # own would leave one scenario's groups running at levels nothing states together.
@@ -1652,6 +1709,8 @@ REJECTED_CASES = {
     "corrupt-on-a-scenario": _corrupt_on_a_scenario,
     "commit-step-on-a-scenario": _commit_step_on_a_scenario,
     "isolation-on-a-scenario-step": _isolation_on_a_scenario_step,
+    "error-step-declaring-a-write-kind": _error_step_declaring_a_write_kind,
+    "error-step-declaring-a-read-kind": _error_step_declaring_a_read_kind,
 }
 
 
