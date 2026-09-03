@@ -1,4 +1,4 @@
-"""Evidence retention unit tests (`parallax.snapshot.handle._write_inputs`).
+"""Write-observation retention unit tests (`parallax.snapshot.handle._write_inputs`).
 
 Drives :class:`ReadObservations` and :func:`retain_evidence` directly, off
 hand-written physical-column rows rather than through a `Transaction.find`: which
@@ -6,6 +6,10 @@ of the two mutually exclusive branches a row takes (a versioned row's observed
 version, a temporal row's whole predecessor milestone), which rows retain no
 evidence at all, what the retained state is keyed by, and what a hint carries
 when there is no state behind it.
+
+Everything a collector holds is asserted through the Source Hints the retention
+answers, never off its own storage: the accumulator is an internal seam, and a
+proof that crosses it would pin an arrangement no caller can observe.
 
 The whole-choreography proofs — a real find licensing or refusing a later write —
 stay in `test_transaction_reads.py` and `test_transaction_writes.py`; what lives
@@ -41,7 +45,12 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.snapshot.handle import build_write_planner
-from parallax.snapshot.handle._write_inputs import ReadObservations, retain_evidence
+from parallax.snapshot.handle._family import entity_layout, members, placed_members
+from parallax.snapshot.handle._write_inputs import (
+    ReadObservations,
+    predecessor_payload,
+    retain_evidence,
+)
 
 _MODELS = models.load_models()
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -87,6 +96,28 @@ def _balance_columns(*, id_: int = 1) -> Mapping[str, object]:
     }
 
 
+# A Transaction-Time-Only row under Relational Document Layout, as the fan-out
+# leaves it: every member under its own column name, occurrences decoded to their
+# declared shape, and the raw Structured Column riding beside them.
+def _voyage_columns() -> dict[str, object]:
+    return {
+        "id": 7,
+        "title": "Northbound",
+        "crew": 12,
+        "manifest": {"cargo": "grain"},
+        "legs": ({"port": "Oslo"}, {"port": "Bergen"}),
+        "in_z": _TX_START,
+        "out_z": _INFINITY,
+    }
+
+
+_VOYAGE_DOCUMENT: Mapping[str, object] = {
+    "title": "Northbound",
+    "manifest": {"cargo": "grain"},
+    "charterCode": "NB-118",
+}
+
+
 def _standalone(
     model: AcceptedMetamodel, observations: ReadObservations
 ) -> Mapping[int, SourceHint]:
@@ -112,32 +143,30 @@ def _in_transaction[T](model: AcceptedMetamodel, body: Callable[[UnitOfWork], T]
 
 
 # --------------------------------------------------------------------------- #
-# The collector: what it retains, and that it retains it by copy.             #
+# What a collector hands the retention: nothing, or a copy.                   #
 # --------------------------------------------------------------------------- #
-def test_a_fresh_collector_holds_no_rows() -> None:
-    assert list(ReadObservations().rows) == []
+def test_a_collector_that_observed_nothing_retains_no_sources() -> None:
+    # A read that materialized no row — or whose every row was non-hydrating —
+    # hands the retention an empty collector, and every value it publishes
+    # carries no hint rather than a hint over nothing.
+    assert _standalone(_accepted("account"), ReadObservations()) == {}
 
 
-def test_the_collector_copies_the_columns_it_is_handed() -> None:
-    # The seam accepts any caller-owned `Mapping`, so the collector snapshots its
-    # input: a later edit to the mapping it was handed cannot reach what a write
-    # will read.
-    handed: dict[str, object] = {"id": 1, "owner": "Ada"}
+def test_an_edit_to_the_observed_columns_reaches_nothing_the_retention_answered() -> None:
+    # The seam accepts any caller-owned `Mapping`, and a read observes each row
+    # while that row is still live, so the collector snapshots what it was
+    # handed. The copy protects the OUTPUT: an edit afterwards reaches neither
+    # the object a hint names nor the state it retained.
+    handed: dict[str, object] = dict(_account_columns())
     observations = ReadObservations()
     observations.observe_row(0, corpus_entity("Account"), handed, None)
+    handed["id"] = 2
     handed["owner"] = "Grace"
     handed["version"] = 9
-    assert dict(observations.rows[0].columns) == {"id": 1, "owner": "Ada"}
-
-
-def test_rows_accumulate_in_the_order_they_are_observed() -> None:
-    observations = ReadObservations()
-    observations.observe_row(0, corpus_entity("Order"), {"id": 1}, None)
-    observations.observe_row(1, corpus_entity("OrderItem"), {"id": 11}, None)
-    assert [row.entity for row in observations.rows] == [
-        corpus_entity("Order"),
-        corpus_entity("OrderItem"),
-    ]
+    hint = _hint(_accepted("account"), observations)
+    assert hint.object_key == corpus_object_key("Account", ("id", 1))
+    assert hint.observation is not None
+    assert hint.observation.evidence == VersionObservation(observed_version=4)
 
 
 # --------------------------------------------------------------------------- #
@@ -193,6 +222,35 @@ def test_a_temporal_row_retains_its_whole_predecessor_milestone() -> None:
     }
     assert observation.predecessor.document is None
     assert hint.observation.key == _BALANCE_STATE
+
+
+def test_a_retained_predecessor_is_the_extraction_a_predicate_write_also_streams() -> None:
+    # A real find's Predecessor Row and the one a materializing predicate write
+    # contributes per resolved row are ONE extraction over the row's applicable
+    # members, not two that happen to agree: `retain_evidence` and
+    # `predecessor_payload` reach the same payload rule, value-object
+    # occurrences included. Two extractions that drifted would chain successors
+    # carrying different rows forward from the same stored state.
+    model = _accepted("document-layout")
+    entity = model.entity(corpus_entity("Voyage"))
+    assert entity is not None
+    layout = entity_layout(model, entity)
+    assert layout is not None
+    columns = _voyage_columns()
+
+    observations = ReadObservations()
+    observations.observe_row(0, corpus_entity("Voyage"), columns, _VOYAGE_DOCUMENT)
+    hint = _hint(model, observations)
+    assert hint.observation is not None
+    observation = hint.observation.evidence
+    assert isinstance(observation, TemporalObservation)
+
+    streamed = predecessor_payload(members(placed_members(model, entity, layout)), columns)
+    assert {"manifest", "legs"} <= streamed.keys()
+    assert dict(observation.predecessor.members) == streamed
+    # The Structured Column rides BESIDE the members either way, so the shared
+    # extraction is over the members alone.
+    assert observation.predecessor.document == _VOYAGE_DOCUMENT
 
 
 # --------------------------------------------------------------------------- #
