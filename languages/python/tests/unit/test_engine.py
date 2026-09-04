@@ -1632,9 +1632,10 @@ def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_sc
 
 def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() -> None:
     # Three `uow` groups, one of them non-contiguous: a TWO-group interleave is
-    # the ONLY shape `run_interleaved_scenario_case` supports (pinned semantics
-    # #4, "scope honestly") — anything beyond it raises loudly rather than
-    # silently mis-executing a THIRD concurrent session no seam here provides.
+    # the ONLY shape `run_interleaved_scenario_case` supports: it opens exactly
+    # ONE peer connection beside the caller's port — anything beyond it raises
+    # loudly rather than silently mis-executing a THIRD concurrent session no
+    # seam here provides.
     steps: list[dict[str, object]] = [
         {
             "uow": "a",

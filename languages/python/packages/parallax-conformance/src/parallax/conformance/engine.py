@@ -4273,8 +4273,9 @@ def _scenario_uow_spans(
     alike) is signaled by returning ``None``: :func:`run_scenario_case`
     cannot execute that shape itself (no engine function here constructs a
     connection of its own, and an interleaved choreography genuinely needs a
-    SECOND, peer-backed session) — the caller routes to
-    :func:`run_interleaved_scenario_case` instead. Anything BEYOND a clean
+    SECOND, peer-backed session) — :func:`run_interleaved_scenario_case` is
+    the entry point that can, on the cases its OWN guards admit. What this
+    function reports is the SHAPE; it admits no case. Anything BEYOND a clean
     TWO-group interleave — three or more interleaved groups, or a
     non-contiguous group that is not part of one — raises loudly rather than
     silently mis-executing it (scope honestly: support the interleaving the
@@ -4901,8 +4902,12 @@ def _run_uow_group(
 
 # --------------------------------------------------------------------------- #
 # Interleaved `uow` groups — the two-group shapes: the optimistic-lock race    #
-# (`m-opt-lock-012`) and the Isolation Level scenarios. `_run_uow_group`       #
-# above runs                                                                   #
+# (`m-opt-lock-012`) and the Isolation Level scenarios whose every step states #
+# ROWS. A step stating `expectGraph` is REFUSED below for lack of a            #
+# `stepGraphs` channel, and which of the rest a sweep routes here is its own   #
+# to say (`test_run_sweep._INTERLEAVED_RUNNER_CASES`) — a choreography whose   #
+# window a real unit of work does not have runs here and asserts nothing.      #
+# `_run_uow_group` above runs                                                  #
 # ONE contiguous group on the main connection; a genuinely interleaved case    #
 # needs TWO groups held open CONCURRENTLY over TWO real sessions (the          #
 # `Provisioner.peer` seam) — a DIFFERENT consumer of that seam than the        #
@@ -5559,7 +5564,10 @@ def run_interleaved_scenario_case(
     peer_factory: Callable[[], _PeerConnection],
 ) -> tuple[list[Emission], int, int | None, list[list[Mapping[str, object]]]]:
     """Run a two-group interleaved-`uow`-group scenario — the optimistic-lock
-    race (`m-opt-lock-012`) and the Isolation Level scenarios alike: the
+    race (`m-opt-lock-012`) and the Isolation Level scenarios whose every step
+    states rows alike (one stating `expectGraph` is REFUSED here: this entry
+    point carries no `stepGraphs` channel, so that oracle would go unasserted):
+    the
     FIRST-declared group on the caller's own ``port``, the second on a
     SECOND, peer-backed connection (``peer_factory``
     — this function constructs no connection itself), each a REAL
@@ -5695,8 +5703,8 @@ def run_interleaved_scenario_case(
         if "write" in step:  # pragma: no cover - no witnessed ungrouped write is doomed-adjacent
             raise EngineError(
                 f"{case.path.name}: an ungrouped write step ({index}) beside an "
-                "interleaved uow race is unsupported — m-opt-lock-012's own ungrouped "
-                "step is a trailing verify find only"
+                "interleaved uow race is unsupported — every witnessed case's own "
+                "ungrouped step is a trailing verify find only"
             )
         read, read_observed = _run_standalone_find(port, domain, concurrency, step, lifecycle)
         rows_by_index[index] = _graph_rows(
