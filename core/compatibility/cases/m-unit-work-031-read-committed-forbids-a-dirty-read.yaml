@@ -26,7 +26,7 @@
 # `read-committed` permits nonrepeatable reads and phantoms, and a case must not
 # require one to occur merely because the level allows it. roundTrips = 5.
 model: models/account.yaml
-tags: [m-unit-work, m-db-error, isolation, read-committed, dirty-read, scenario, slice-snapshot-1, slice-managed-1]
+tags: [m-unit-work, isolation, read-committed, dirty-read, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
 compileEligibility:
   mode: run-only

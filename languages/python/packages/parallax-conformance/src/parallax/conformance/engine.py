@@ -4269,16 +4269,16 @@ def _scenario_uow_spans(
     Every group whose OWN steps are CONTIGUOUS gets its ordinary span, and
     :func:`_run_uow_group` runs each on the MAIN connection. Exactly TWO
     groups whose steps INTERLEAVE (`m-case-format`'s own "two groups MAY
-    interleave" — the classic optimistic-lock race, `m-opt-lock-012`'s own
-    shape) is signaled by returning ``None``: :func:`run_scenario_case`
+    interleave" — the optimistic-lock race and the Isolation Level scenarios
+    alike) is signaled by returning ``None``: :func:`run_scenario_case`
     cannot execute that shape itself (no engine function here constructs a
-    connection of its own, and an interleaved race genuinely needs a SECOND,
-    peer-backed session) — the caller routes to
-    :func:`run_interleaved_scenario_case` instead. Anything BEYOND that one
-    witnessed shape — three or more interleaved
-    groups, or a non-contiguous group that is not part of a clean two-group
-    interleave — raises loudly rather than silently mis-executing it (scope
-    honestly: support what `m-opt-lock-012` needs, refuse the rest)."""
+    connection of its own, and an interleaved choreography genuinely needs a
+    SECOND, peer-backed session) — the caller routes to
+    :func:`run_interleaved_scenario_case` instead. Anything BEYOND a clean
+    TWO-group interleave — three or more interleaved groups, or a
+    non-contiguous group that is not part of one — raises loudly rather than
+    silently mis-executing it (scope honestly: support the interleaving the
+    corpus witnesses, refuse the rest)."""
     groups = _scenario_group_step_indices(steps)
     spans = {label: (indices[0], indices[-1]) for label, indices in groups.items()}
     noncontiguous = {
@@ -4295,10 +4295,9 @@ def _scenario_uow_spans(
         if interleaved:
             return None
     raise EngineError(
-        f"{case_name}: uow group(s) {sorted(noncontiguous)} interleave beyond the one "
-        "witnessed two-group optimistic-lock race shape (m-opt-lock-012, "
-        "run_interleaved_scenario_case) — the engine's scenario run lane supports "
-        "exactly that interleaving, not an arbitrary one"
+        f"{case_name}: uow group(s) {sorted(noncontiguous)} interleave beyond the "
+        "witnessed TWO-group shape (run_interleaved_scenario_case) — the engine's "
+        "scenario run lane supports exactly that interleaving, not an arbitrary one"
     )
 
 
@@ -4352,14 +4351,16 @@ class _CaseContext:
 
     The isolation is the case's own `when.uow.isolation`, carried beside the
     concurrency preference because both are `db.transact` arguments a held group
-    opens at rather than anything a step's translation reads.
+    opens at rather than anything a step's translation reads. It has no default:
+    a level the case declared and no lane propagated is invisible, so every
+    construction states it — ``None`` for a case declaring none.
     """
 
     domain: DomainModel
     model: AcceptedMetamodel
     concurrency: Concurrency
     shadow: TemporalShadow
-    isolation: IsolationLevel | None = None
+    isolation: IsolationLevel | None
 
 
 def _empty_published() -> list[handle.WireEntity]:
@@ -4899,8 +4900,9 @@ def _run_uow_group(
 
 
 # --------------------------------------------------------------------------- #
-# Interleaved `uow` groups — the two-group optimistic-lock race                #
-# (`m-opt-lock-012`). `_run_uow_group` above runs                              #
+# Interleaved `uow` groups — the two-group shapes: the optimistic-lock race    #
+# (`m-opt-lock-012`) and the Isolation Level scenarios. `_run_uow_group`       #
+# above runs                                                                   #
 # ONE contiguous group on the main connection; a genuinely interleaved case    #
 # needs TWO groups held open CONCURRENTLY over TWO real sessions (the          #
 # `Provisioner.peer` seam) — a DIFFERENT consumer of that seam than the        #
@@ -4910,13 +4912,15 @@ def _run_uow_group(
 # steps in AUTHORED order across two worker threads — deterministic (never a   #
 # genuine race at the Python level) because optimistic mode's own reads take   #
 # no lock and the choreography hands off control explicitly at each step, so   #
-# there is nothing to race.                                                    #
+# there is nothing to race. A step hands off only once it is WHOLE: a streamed #
+# read step's every page is drained before the turnstile advances, so a peer's #
+# commit lands BETWEEN two deliveries and never inside one.                    #
 # --------------------------------------------------------------------------- #
 @runtime_checkable
 class _PeerConnection(DbPort, Protocol):
     """A `DbPort` peer connection (`Provisioner.peer`) with its own closeable
     lifecycle: the interleaved-group runner opens a SECOND, independent
-    session for the `concurrent` group and MUST close it itself once the
+    session for the second-declared group and MUST close it itself once the
     choreography finishes (successfully or not) — this module constructs no
     connection itself otherwise, so the CALLER threads the factory in
     explicitly (`run_interleaved_scenario_case`'s own `peer_factory`
@@ -5015,7 +5019,8 @@ def _run_interleaved_group(
     run_with_retry` surfaces it after exactly one attempt). Unlike
     :func:`_run_uow_group`'s own OWN ``doomed``/``rollback: true`` convention
     (an authored, EXPLICIT abort signal independent of any real conflict),
-    this lane's ONE witness (`m-opt-lock-012`) authors ``rollback: true``
+    this lane's ONE conflicting witness (`m-opt-lock-012`) authors
+    ``rollback: true``
     ONLY on the step whose OWN flush already conflicts — the CONFLICT itself
     is what dooms the group, so no separate explicit-rollback trigger exists
     here; a genuinely non-conflict-driven interleaved abort is unwitnessed
@@ -5027,12 +5032,12 @@ def _run_interleaved_group(
     observe that commit for real, never a same-process illusion of one.
 
     ``session`` is passed beside the shared ``context`` rather than read out of
-    it because the two groups run on two connections: the `concurrent` group's
+    it because the two groups run on two connections: the peer group's
     steps execute on, and lower in the spelling of, its own peer session.
 
     ``context`` carries the SAME single :class:`TemporalShadow` every group
-    shares (`_run_uow_group`'s own convention) — safe here ONLY because
-    `m-opt-lock-012`'s own witnessed model is entirely NON-temporal (the
+    shares (`_run_uow_group`'s own convention) — safe here ONLY because every
+    model this lane witnesses is entirely NON-temporal (the
     tracker is never mutated for these instructions, so two threads never
     contend on it, and this group's own abort has nothing to discard). A
     genuinely temporal interleaved case would need its own per-group tracking
@@ -5043,8 +5048,9 @@ def _run_interleaved_group(
     scenario step index): the caller's own
     oracle for that step's authored ``expectRows`` — without this, a grouped
     find's own DML is graded but its OBSERVATION never is, so a broken abort
-    that left a doomed group's writes durable would report well-formed SQL
-    and still pass. Keeping them is the one thing this runner does with a step's
+    that left a doomed group's writes durable, or a group opened at the wrong
+    Isolation Level, would report well-formed SQL and still pass. Keeping them
+    is the one thing this runner does with a step's
     result that the contiguous runner does not.
     """
     lowered: dict[int, _LoweredStep] = {}
@@ -5552,21 +5558,22 @@ def run_interleaved_scenario_case(
     port: DbPort,
     peer_factory: Callable[[], _PeerConnection],
 ) -> tuple[list[Emission], int, int | None, list[list[Mapping[str, object]]]]:
-    """Run the ONE witnessed interleaved-`uow`-group scenario shape
-    (`m-opt-lock-012`'s two-group optimistic-lock race): the ``ours`` group
-    on the caller's own ``port``, a
-    ``concurrent`` group on a SECOND, peer-backed connection (``peer_factory``
+    """Run a two-group interleaved-`uow`-group scenario — the optimistic-lock
+    race (`m-opt-lock-012`) and the Isolation Level scenarios alike: the
+    FIRST-declared group on the caller's own ``port``, the second on a
+    SECOND, peer-backed connection (``peer_factory``
     — this function constructs no connection itself), each a REAL
     ``db.transact`` (production routing) whose steps lower in the dialect its
     OWN connection declares, steps sequenced across
     the two in AUTHORED order (:class:`_Turnstile`). Any ungrouped step
-    (`m-opt-lock-012`'s own trailing verify find) runs AFTER both groups have
-    resolved, on the caller's ``port``.
+    (each witnessed case's own trailing verify find) runs AFTER both groups
+    have resolved, on the caller's ``port``.
 
     Reports the ordered emissions, total round trips, and — when a group's
     own last write step conflicted — the conflict's ``actual`` affected-row
     count (`then.affectedRows`, the scenario shape's own EXTRA top-level
-    assertion this ONE case authors; ``None`` when no group conflicted), and
+    assertion only the optimistic-lock race authors; ``None`` when no group
+    conflicted), and
     EVERY find step's own observed rows (grouped or ungrouped, in scenario
     step order): the caller's own oracle for
     every authored `expectRows`, the SAME observable the ordinary scenario
@@ -5597,10 +5604,9 @@ def run_interleaved_scenario_case(
         )
     groups = _scenario_group_step_indices(steps)
     if len(groups) != 2:
-        raise EngineError(  # pragma: no cover - defensive: only m-opt-lock-012 reaches this entry
+        raise EngineError(  # pragma: no cover - defensive: every case reaching this entry has two
             f"{case.path.name}: run_interleaved_scenario_case supports exactly the "
-            "two-group optimistic-lock race shape (m-opt-lock-012), not "
-            f"{len(groups)} uow groups"
+            f"TWO-group interleaved shape, not {len(groups)} uow groups"
         )
     ungrouped = [i for i in range(len(steps)) if i not in {j for js in groups.values() for j in js}]
     (label_a, indices_a), (label_b, indices_b) = groups.items()
@@ -5754,9 +5760,9 @@ def run_scenario_case(
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
         raise EngineError(
-            f"{case.path.name}: interleaved uow groups (the two-group optimistic-lock "
-            "race shape, m-opt-lock-012) need a second, peer-backed connection this "
-            "function does not construct — call run_interleaved_scenario_case instead"
+            f"{case.path.name}: interleaved uow groups need a second, peer-backed "
+            "connection this function does not construct — call "
+            "run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
     context = _CaseContext(domain, model, concurrency, shadow, case_format.uow_isolation(case))

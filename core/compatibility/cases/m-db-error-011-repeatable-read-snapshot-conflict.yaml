@@ -1,4 +1,5 @@
-# Repeatable Read refuses a write over a row the transaction did not read, and the
+# Repeatable Read refuses a write over a generation of a row the transaction never
+# observed — the row itself is one it read, at an older generation — and the
 # refusal classifies to the retriable `deadlock` category on both engines
 # (m-db-error). What the case grades is the portable promise of
 # `when.uow.isolation: repeatable-read` — that a nonrepeatable read cannot happen,

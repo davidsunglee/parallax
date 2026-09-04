@@ -310,8 +310,10 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
 # `uow` groups (`engine._scenario_uow_spans`; a genuinely interleaved group needs a
 # SECOND, independent connection this test's ordinary single-`DbPort` seam does not
 # hold open), so every one of them stays OUT of `_WRITE_CASES`/
-# `test_write_run_sweep`. Membership here is a routing exclusion alone; what runs
-# each of them is `_INTERLEAVED_RUNNER_CASES` below.
+# `test_write_run_sweep`. Membership here is a routing exclusion alone;
+# `_INTERLEAVED_RUNNER_CASES` below is the SUBSET this test drives through the
+# interleaved runner, and names per case why it leaves the rest to the reference
+# harness.
 _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-012",
@@ -325,24 +327,29 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 
 # The interleaved cases `test_interleaved_uow_group_run_sweep` drives through
 # `engine.run_interleaved_scenario_case` over the `Provisioner.peer` seam:
-# `m-opt-lock-012`'s optimistic-lock race, and `m-unit-work-032`'s Repeatable Read
-# proof — two units of work reading and writing one row, whose second read is
-# graded against the first. The isolation arm is what makes the level reach a HELD
-# group through the shipped `db.transact` at all, so its own `expectRows` is this
-# lane's only grading of `engine._CaseContext.isolation`.
+# `m-opt-lock-012`'s optimistic-lock race, and the two Repeatable Read proofs
+# `m-unit-work-032` (a plain object find) and `m-unit-work-034` (a streamed
+# delivery) — two units of work reading and writing one row, whose second read is
+# graded against the first. The isolation arms are what make the level reach a HELD
+# group through the shipped `db.transact` at all, so their `expectRows` is this
+# lane's only grading of `engine._CaseContext.isolation`. A streamed arm belongs
+# here because the turnstile hands off per authored STEP and a step's delivery is
+# drained WHOLE before it does: the peer's commit lands between the two deliveries,
+# exactly where the case authors it.
 #
-# The other three isolation scenarios are graded by the reference harness alone, on
+# The other two isolation scenarios are graded by the reference harness alone, on
 # both engines, and are named here rather than left to be rediscovered:
 # `m-unit-work-031`'s reader must face state its peer wrote and has not committed,
 # and a unit of work BUFFERS its writes until its own flush edge, so the peer's DML
 # is not on the wire when the reader's step runs — the window the case authors is
 # one the harness's verbatim per-step execution has and a real unit of work does
-# not;
+# not, so running it here would assert nothing about any level; and
 # `m-unit-work-033` states `expectGraph`, an oracle
 # `run_interleaved_scenario_case` refuses outright for lack of a `stepGraphs`
-# channel; and `m-unit-work-034`'s reads are streamed deliveries whose pages the
-# turnstile advances per STEP, not per page.
-_INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset({"m-opt-lock-012", "m-unit-work-032"})
+# channel.
+_INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset(
+    {"m-opt-lock-012", "m-unit-work-032", "m-unit-work-034"}
+)
 
 
 def _case_uses_uow_grouping(case: case_format.Case) -> bool:
@@ -932,10 +939,13 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     differs per case. For `m-opt-lock-012` a broken abort that left the doomed
     group's buffered insert durable would still emit well-formed DML and a
     correct `affectedRows`, and its trailing verify find would observe account
-    9. For `m-unit-work-032`'s Repeatable Read arm the emissions and the count
-    are identical whatever level the groups opened at, and the reader's second
-    find is the ONLY thing that differs: at the connection's own default it
-    answers the peer's committed 999.00 rather than the 250.00 it read first.
+    9. For the Repeatable Read arms `m-unit-work-032` and `-034` the emissions
+    and the count are identical whatever level the groups opened at, and the
+    reader's SECOND read is the ONLY thing that differs: at the connection's own
+    default it answers the peer's committed 999.00 rather than the 250.00 it
+    read first — for `-034` on the second DELIVERY, every page of which is
+    issued after the peer committed, so nothing narrower than the transaction
+    can hold the roots fixed.
     """
     model = engine.load_case_metamodel(case)
     profile_run.reset(model, case_fixtures(case))
