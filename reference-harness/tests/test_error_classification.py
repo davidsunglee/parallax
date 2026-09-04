@@ -73,7 +73,11 @@ def test_mariadb_errnos_map_to_categories() -> None:
     provider = MariaDbProvider.__new__(MariaDbProvider)
     assert provider.dialect == "mariadb"
     assert provider.native_error_code(_FakeMariaError(1062)) == 1062
-    assert provider.classify_error(_FakeMariaError(1062)) == errors.UNIQUE_VIOLATION
+    # The duplicate-key condition carries a different errno per detecting path and
+    # the same SQLSTATE 23000 for all of them, so the table keys on the errno and
+    # must name each one; an unlisted path would classify as UNKNOWN.
+    for errno in (1062, 1022, 1169, 1586):
+        assert provider.classify_error(_FakeMariaError(errno)) == errors.UNIQUE_VIOLATION
     assert provider.classify_error(_FakeMariaError(1213)) == errors.DEADLOCK
     # ER_CHECKREAD: the snapshot-isolation write/write conflict, rolled back like
     # a deadlock and therefore retriable in the same category.

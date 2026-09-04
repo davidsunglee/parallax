@@ -53,10 +53,19 @@ if TYPE_CHECKING:
 # suite asserts the booted server against that floor.
 MARIADB_IMAGE = "mariadb:12.3"
 
-# MariaDB keys on the vendor errno; a code absent here is `errors.UNKNOWN`, so an
-# unclassified error fails an assertion loudly rather than passing silently.
+# MariaDB keys on the vendor errno rather than on SQLSTATE, because the states are
+# not discriminating: every duplicate-key errno below reports `23000` and both
+# `1020` and `1205` report the catch-all `HY000`. A code absent here is
+# `errors.UNKNOWN`, so an unclassified error fails an assertion loudly rather than
+# passing silently.
 _CODES: dict[int, str] = {
+    # The duplicate-key condition, one errno per detecting path. The corpus reaches
+    # it through ER_DUP_ENTRY alone; the rest are here so an unusual path reports the
+    # category instead of `errors.UNKNOWN`.
     1062: errors.UNIQUE_VIOLATION,  # ER_DUP_ENTRY
+    1022: errors.UNIQUE_VIOLATION,  # ER_DUP_KEY
+    1169: errors.UNIQUE_VIOLATION,  # ER_DUP_UNIQUE
+    1586: errors.UNIQUE_VIOLATION,  # ER_DUP_ENTRY_WITH_KEY_NAME
     1213: errors.DEADLOCK,  # ER_LOCK_DEADLOCK
     1205: errors.LOCK_WAIT_TIMEOUT,  # ER_LOCK_WAIT_TIMEOUT
     # ER_CHECKREAD: a snapshot-isolation write/write conflict at Repeatable Read,
@@ -72,6 +81,11 @@ _CODES: dict[int, str] = {
 # property of the session rather than of whichever release the image tag resolves to.
 # Serializable never sets it: that level forbids the anomaly through shared locking
 # reads and range protection instead, and the read view is not what it works from.
+# The omission is load-bearing rather than merely redundant, because the variable also
+# makes a session open its read view eagerly: a Serializable session carrying it can
+# have a conflict refused against that read view as `1020` before any lock wait forms,
+# in place of the `1213` its locking reads would otherwise deadlock on and a case
+# asserts.
 _ISOLATION: dict[str, tuple[str, ...]] = {
     "read-committed": ("set session transaction isolation level read committed",),
     "repeatable-read": (
