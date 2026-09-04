@@ -1,0 +1,66 @@
+# Boundary case (m-execution-lifecycle x m-db-port): session setup that fails
+# opens NO boundary — the callback never runs, no Transaction Attempt begins, and
+# the failure is terminal — `api-conformance` lane.
+#
+# The body asks for `serializable` and the session setup that would open the
+# boundary at it fails. An adapter that cannot open a boundary at the requested
+# level reports a boundary failure rather than opening one at a different level,
+# because a request silently downgraded is indistinguishable from one honored.
+#
+# The stream states three things at once, and it is the only place all three are
+# visible together. The outer invocation carries `isolation: serializable` — the
+# level was REQUESTED, whatever became of it. No `transactionAttemptStarted`
+# follows it: an attempt begins only once the boundary has begun, so a boundary
+# that never opened ran no attempt, which is a different fact from an attempt that
+# ran and was undone. And the invocation finishes `failed` with `attribution:
+# direct`, naming no cause, because there is no child activity beneath it to name.
+#
+# `roundTrips: 0` is the same fact counted. Setting the level is boundary
+# mechanics like begin, commit, and rollback and constructs no Database Call, so
+# nothing this invocation did reached the database as a counted round trip — and a
+# callback that never ran issued nothing either.
+#
+# The failure is terminal however retriable an error's own category might be: no
+# attempt ran, so there is nothing to re-execute, which is why `retries` is left at
+# its default and one invocation is the whole stream.
+#
+# `lane: api-conformance`: a failed session setup is injected at the database-port
+# seam and observed as a boundary that never opened — neither an authored statement
+# nor a single-connection harness reaches it.
+model: models/account.yaml
+tags: [m-execution-lifecycle, m-unit-work, m-api-conformance, isolation, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: isolation-setup-failure
+when:
+  uow:
+    isolation: serializable
+  boundary:
+    - action: read
+      note: the callback never runs, so this observation never happens
+then:
+  outcome: boundary-failed
+  roundTrips: 0
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+              isolation: serializable
+          - sequence: 2
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: failed, attribution: direct }

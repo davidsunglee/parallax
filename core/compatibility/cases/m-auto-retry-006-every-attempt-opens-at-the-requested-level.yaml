@@ -1,0 +1,150 @@
+# Boundary case (m-auto-retry x m-db-port isolation): a retried invocation states
+# its requested Isolation Level ONCE, on the outer invocation, and both physical
+# attempts run under it — `api-conformance` lane.
+#
+# An injected `deadlock` makes the first attempt's write fail retriably, so the
+# boundary re-executes the whole closure and the second attempt commits. The
+# stream below is what that costs and what it states: ONE outer invocation
+# carrying `isolation: repeatable-read`, and TWO Transaction Attempts under it,
+# neither carrying a level of its own.
+#
+# That placement is the assertion. A level is requested by an invocation and
+# applied by the adapter for exactly one attempt, so an attempt that restated it
+# would read as a level it chose, and an attempt that omitted it from a stream
+# where the invocation omitted it too would leave a retried callback's guarantee
+# unstated. Stating it once, above every attempt, is what says both attempts open
+# at the same requested level rather than the second silently opening weaker.
+#
+# Setting the level is boundary mechanics like begin, commit, and rollback: it
+# constructs no Database Call and appears nowhere in this stream, which is why
+# `roundTrips: 4` is the same count `m-auto-retry-002`'s retried pair costs — each
+# attempt's observing read plus its write, the failed one included.
+#
+# `lane: api-conformance`: an injected transient and a re-executed closure are
+# observables a single-connection harness cannot provoke. No golden SQL is
+# authored, so each Database Call omits its `statement` index.
+model: models/account.yaml
+tags: [m-auto-retry, m-execution-lifecycle, m-api-conformance, isolation, transient, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: deadlock
+when:
+  uow:
+    concurrency: optimistic
+    isolation: repeatable-read
+  boundary:
+    - action: read
+      note: observe the versioned row
+    - action: update
+      note: the first attempt's write raises an injected deadlock — auto-retried
+then:
+  outcome: committed
+  roundTrips: 4
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+              isolation: repeatable-read
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 4
+            activity: 4
+            parent: 3
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 5
+            activity: 4
+            parent: 3
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 6
+            activity: 3
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 7
+            activity: 5
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 8
+            activity: 6
+            parent: 5
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 9
+            activity: 6
+            parent: 5
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 10
+            activity: 5
+            parent: 2
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 6 }
+          - sequence: 11
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: pre-commit
+              retryEligible: true
+              attribution: caused
+              cause: 5
+          - sequence: 12
+            activity: 7
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 13
+            activity: 8
+            parent: 7
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 14
+            activity: 9
+            parent: 8
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 15
+            activity: 9
+            parent: 8
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 16
+            activity: 8
+            parent: 7
+            readFinished: { outcome: completed }
+          - sequence: 17
+            activity: 10
+            parent: 7
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 18
+            activity: 11
+            parent: 10
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 19
+            activity: 11
+            parent: 10
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 20
+            activity: 10
+            parent: 7
+            writeBatchFinished: { outcome: completed }
+          - sequence: 21
+            activity: 7
+            parent: 1
+            transactionAttemptFinished: { outcome: committed }
+          - sequence: 22
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: committed }

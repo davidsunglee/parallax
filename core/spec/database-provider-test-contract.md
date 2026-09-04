@@ -66,6 +66,14 @@ For every supported adapter, the smoke suite covers:
   fails to undo the empty transaction, which is discarded. Proved against the
   driver seam rather than against a real refusal, because a conforming mapping
   sends only levels its own engine accepts
+- a **connection whose own default Isolation Level is below Read Committed**,
+  refused as a connection error when the adapter takes it — once per connection,
+  not per boundary and not per attempt — and one at or above the floor, kept as
+  it is. An engine with no level below Read Committed meets the floor by
+  construction and refuses nothing, which is the whole of its obligation here;
+  an engine that honors a weaker default owes the refusal, because a caller who
+  named no level asked for the adapter's default and must not silently receive a
+  guarantee the portable vocabulary does not admit
 - a bytes write round trip through the dialect bind seam
 - affected-row semantics for matched and unmatched DML
 - feasible transient classification through the portable database error surface
@@ -73,6 +81,30 @@ For every supported adapter, the smoke suite covers:
 When a transient proof would be impractical for a specific database in local
 tooling, the language spec must record the gap and name the deeper suite that
 proves the same classification.
+
+An adapter whose engine forbids a level's anomalies only with **session state**,
+rather than with a boundary keyword alone, owes two further proofs — both about
+that state's whole life rather than about the statement that sets it, because
+`m-db-port` makes the option boundary-scoped while the state is the connection's.
+MariaDB's Repeatable Read is the case that specification states, and the proofs
+are: the saved value is restored after the attempt commits or rolls back, and the
+save, set, and restore happen again for **every** attempt of a retried
+invocation, so an invocation neither leaves the variable changed behind it nor
+opens its second attempt without it; and a **restore that fails** preserves the
+outcome already reached — the work committed or did not, and a failed restore
+does not change that — while **discarding the connection** rather than returning
+it. That second proof is the same shape as the failed-rollback discard above, for
+the same reason: what the connection would run next would run under session state
+nothing states. Both are driven against the driver seam, as that discard is. An
+adapter whose engine needs no such state owes neither.
+
+The rest of these obligations are portable and are stated by the corpus instead:
+that a joining call may not name a second level, that one requested level stands
+over every attempt of a retried invocation, that a connection's default is judged
+at intake, and that a failed session setup opens no boundary are `boundary`-shape
+cases each language's API Conformance Suite executes. A failed restore is the one
+that has no corpus expression at all — it happens below the seam a case can reach
+— which is why it is written here.
 
 Each adapter must also prove its **dialect binding** (`m-db-port`). Neither half
 needs a database. The adapter states its dialect as metadata reachable without a

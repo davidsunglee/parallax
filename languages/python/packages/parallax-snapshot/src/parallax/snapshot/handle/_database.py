@@ -736,6 +736,7 @@ class Database:
             concurrency=options.concurrency,
             retries=options.retries,
             retry_optimistic_conflicts=options.retry_optimistic_conflicts,
+            isolation=options.isolation,
             extra_retriable=extra_retriable,
         )
 

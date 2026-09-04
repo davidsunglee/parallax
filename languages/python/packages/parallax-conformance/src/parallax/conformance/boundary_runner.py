@@ -3,23 +3,26 @@
 A `boundary` case (`m-auto-retry` / `m-opt-lock`, `m-case-format` "Boundary
 cases") proves a unit-of-work loop-mechanics branch a single-connection
 harness cannot provoke: it carries no golden SQL, only a portable
-`when.boundary` action list, an OPTIONAL `given.fault`, its retry
-configuration (`when.uow`), and the portable `then.outcome`. This module
+`when.boundary` action list, an OPTIONAL `given.fault` and `given.sessionDefault`,
+its retry configuration (`when.uow`), and the portable `then.outcome`. This module
 hosts the machinery ONE parametrized runner drives against EVERY reachable
 boundary case — never a per-case hand function (the hand-mirroring this runner
 exists to end):
 
-- :func:`boundary_uow` / :func:`boundary_actions` parse a case's own
+- :func:`boundary_uow` / :func:`boundary_steps` parse a case's own
   `when.uow` / `when.boundary` (schema camelCase -> the Python `db.transact`
-  snake_case options).
+  snake_case options), and :func:`outcome` resolves a `then.outcome` that
+  differs by engine against the dialect actually running.
 - :func:`run_boundary_actions` is the ONE deterministic action -> verb
   mapping every boundary case shares (every corpus witness targets
   `models/account.yaml`'s versioned `Account` row).
 - :class:`FaultInjectingPort` is the fault-injecting `m-db-port` DECORATOR
-  (wraps a REAL adapter): it SIMULATES the case's `given.fault` at the write
-  seam; the real classification / retry-loop / optimistic-gate machinery
-  does the classifying, never this module, and how many attempts ran is read
-  off the delivered lifecycle events rather than counted here.
+  (wraps a REAL adapter): it SIMULATES the case's `given.fault` at the seam
+  that fault belongs to — the write seam for one the WORK meets, and the
+  boundary seam for a session setup that fails before any work; the real
+  classification / retry-loop / optimistic-gate machinery does the classifying,
+  never this module, and how many attempts ran is read off the delivered
+  lifecycle events rather than counted here.
 - :func:`expected_attempts` derives the authored attempt count from the
   SAME fields `m-auto-retry.md` / `m-opt-lock.md` fix the retriability rules
   from (never a per-case hand table).
@@ -41,6 +44,7 @@ from parallax.conformance import case_format, sweep
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    BeginFailed,
     DbPort,
     DocumentReadOrdinals,
     IsolationLevel,
@@ -54,15 +58,17 @@ from parallax.snapshot.handle import Database, Transaction
 __all__ = [
     "TARGET_ID",
     "BoundaryAbort",
+    "BoundaryStep",
     "BoundaryUow",
     "FaultInjectingPort",
-    "boundary_actions",
+    "boundary_steps",
     "boundary_uow",
     "expected_attempts",
     "fault_kind",
     "outcome",
     "reachable_boundary_cases",
     "run_boundary_actions",
+    "session_default",
     "translated_fault",
 ]
 
@@ -114,6 +120,7 @@ class BoundaryUow:
     concurrency: Concurrency | None
     retries: int | None
     retry_optimistic_conflicts: bool | None
+    isolation: IsolationLevel | None
 
 
 def boundary_uow(case: case_format.Case) -> BoundaryUow:
@@ -123,14 +130,33 @@ def boundary_uow(case: case_format.Case) -> BoundaryUow:
         concurrency=cast("Concurrency | None", uow.get("concurrency")),
         retries=cast("int | None", uow.get("retries")),
         retry_optimistic_conflicts=cast("bool | None", uow.get("retryOptimisticConflicts")),
+        isolation=case_format.uow_isolation(case),
     )
 
 
-def boundary_actions(case: case_format.Case) -> list[str]:
-    """The case's own `when.boundary` ordered action list (`m-case-format`)."""
+@dataclass(frozen=True, slots=True)
+class BoundaryStep:
+    """One `when.boundary` step: the portable action, and the Isolation Level a
+    `join` names for the boundary it joins.
+
+    ``isolation`` is ``None`` on every other action and on a `join` that names
+    none, which is the omission that INHERITS the active level (`m-unit-work`).
+    """
+
+    action: str
+    isolation: IsolationLevel | None
+
+
+def boundary_steps(case: case_format.Case) -> list[BoundaryStep]:
+    """The case's own `when.boundary` ordered step list (`m-case-format`)."""
     when = cast("dict[str, Any]", case.document.get("when") or {})
     steps = cast("list[dict[str, Any]]", when.get("boundary") or [])
-    return [cast("str", step["action"]) for step in steps]
+    return [BoundaryStep(cast("str", step["action"]), _join_isolation(step)) for step in steps]
+
+
+def _join_isolation(step: dict[str, Any]) -> IsolationLevel | None:
+    declared = cast("str | None", step.get("isolation"))
+    return None if declared is None else case_format.isolation_literal(declared)
 
 
 def fault_kind(case: case_format.Case) -> str | None:
@@ -141,13 +167,32 @@ def fault_kind(case: case_format.Case) -> str | None:
     return cast("str | None", fault) if isinstance(fault, str) else None
 
 
-def outcome(case: case_format.Case) -> str:
+def session_default(case: case_format.Case) -> str | None:
+    """The case's OPTIONAL `given.sessionDefault` — the Isolation Level the
+    connection already defaults to when the adapter takes it."""
+    given = cast("dict[str, Any]", case.document.get("given") or {})
+    declared = given.get("sessionDefault")
+    return cast("str | None", declared) if isinstance(declared, str) else None
+
+
+def outcome(case: case_format.Case, dialect: Dialect) -> str | None:
+    """The portable outcome ``dialect`` must produce, or ``None`` where the case
+    does not apply to it.
+
+    A dialect-keyed `then.outcome` states an outcome that differs by engine, and
+    a dialect the map omits is one the case makes no claim about — the same rule
+    `then.sql` and `then.nativeCode` already carry, so a nonportable engine floor
+    is graded where it holds and skipped where it does not.
+    """
     then = cast("dict[str, Any]", case.document.get("then") or {})
-    return cast("str", then["outcome"])
+    declared = then["outcome"]
+    if isinstance(declared, str):
+        return declared
+    return cast("str | None", cast("dict[str, Any]", declared).get(dialect.name))
 
 
 def run_boundary_actions(
-    tx: Transaction, actions: Sequence[str], *, database: Database | None = None
+    tx: Transaction, steps: Sequence[BoundaryStep], *, database: Database | None = None
 ) -> Account | None:
     """The ONE deterministic `when.boundary` action -> verb mapping every
     boundary case shares (never a per-case hand function): every
@@ -165,13 +210,15 @@ def run_boundary_actions(
       range 1-3) — no reachable corpus witness authors this action, but the
       mapping is total, not partial.
     - ``delete`` removes the last-read row.
-    - ``join`` opens a joined unit of work through ``database`` and runs every
-      REMAINING action inside it, carrying the row already observed. A joined
-      call shares the outer transaction (`m-unit-work`), so its closure receives
-      the same :class:`Transaction` and its buffered writes reach the database
-      in the OUTER boundary's own pre-commit batch — which is exactly what
-      `m-execution-lifecycle-006` asserts. It needs the ``Database`` that opened the
-      boundary, since only that object joins.
+    - ``join`` opens a joined unit of work through ``database``, at the level
+      the step names, and runs every REMAINING action inside it, carrying the
+      row already observed. A joined call shares the outer transaction
+      (`m-unit-work`), so its closure receives the same :class:`Transaction` and
+      its buffered writes reach the database in the OUTER boundary's own
+      pre-commit batch — which is exactly what `m-execution-lifecycle-006`
+      asserts. It needs the ``Database`` that opened the boundary, since only
+      that object joins. A level the boundary was not opened with is refused
+      there rather than here: the refusal under test is production's own.
     - ``terminate`` has no legal target on this NON-temporal model — a loud
       refusal (no reachable corpus witness authors it either).
 
@@ -179,16 +226,17 @@ def run_boundary_actions(
     value — `then.outcome: committed`'s "callback value returned" half),
     ``None`` after a ``delete``.
     """
-    return _run_actions(tx, list(actions), None, database)
+    return _run_actions(tx, list(steps), None, database)
 
 
 def _run_actions(
     tx: Transaction,
-    actions: list[str],
+    steps: list[BoundaryStep],
     current: Account | None,
     database: Database | None,
 ) -> Account | None:
-    for index, action in enumerate(actions):
+    for index, step in enumerate(steps):
+        action = step.action
         if action == "read":
             current = tx.find(Account.where(Account.id == TARGET_ID)).result()
         elif action == "update":
@@ -211,9 +259,10 @@ def _run_actions(
                     "object joins it (`python.md` §5)"
                 )
             return database.transact(
-                lambda joined, rest=actions[index + 1 :], seen=current: _run_actions(
+                lambda joined, rest=steps[index + 1 :], seen=current: _run_actions(
                     joined, rest, seen, database
-                )
+                ),
+                isolation=step.isolation,
             )
         elif action == "terminate":
             raise AssertionError(
@@ -241,6 +290,13 @@ def translated_fault(kind: str) -> DatabaseError:
         return DatabaseError(
             category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
         )
+    if kind == "isolation-setup-failure":
+        # Uncategorized on purpose: a refused session setup is a request the
+        # engine would not honor, not a contention the classifier has a neutral
+        # category for, so nothing above may read it as retriable.
+        return DatabaseError(
+            category=None, native_code="22023", message="invalid isolation level request"
+        )
     raise ValueError(f"unrecognized fault kind {kind!r}")  # pragma: no cover - schema-closed enum
 
 
@@ -260,9 +316,13 @@ class _FaultState:
 
 class FaultInjectingPort:
     """A pass-through ``m-db-port`` DECORATOR over a REAL adapter, injecting
-    ``fault`` at the write seam: the decorator SIMULATES the fault —
-    the real classification / retry-loop / optimistic-gate machinery does
-    the rest, end to end.
+    ``fault`` at the seam that fault belongs to: the decorator SIMULATES the
+    fault — the real classification / retry-loop / optimistic-gate machinery
+    does the rest, end to end.
+
+    Every kind but one is a failure the WORK meets, injected at the write seam.
+    ``isolation-setup-failure`` is the exception: it is the boundary failing to
+    open, so it is answered at the boundary seam as ``BeginFailed``.
 
     ``persistent`` fires the fault on EVERY attempt's write (a case whose
     `then.outcome` is a failure kind needs this — an outcome OTHER than
@@ -303,16 +363,27 @@ class FaultInjectingPort:
         return self._inner.execute(sql, binds, document_reads)
 
     def execute_write(self, sql: str, binds: Any) -> int:
-        if self._fault is not None and (self._persistent or not self._state.fired):
+        fault = self._fault
+        if fault is not None and fault != "isolation-setup-failure" and self._fires():
             self._state.fired = True
-            if self._fault == "optimistic-lock-conflict":
+            if fault == "optimistic-lock-conflict":
                 return 0
-            raise translated_fault(self._fault)
+            raise translated_fault(fault)
         return self._inner.execute_write(sql, binds)
 
     def transaction[T](
         self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
+        # A session setup that fails is a boundary that never opened, so this
+        # ANSWERS `BeginFailed` instead of raising and never reaches the inner
+        # port: the callback does not run, no attempt begins, and the handle's
+        # own rule surfaces the error terminally (`m-db-port` "Mapping
+        # obligations"). A fault the WORK meets fires at the write seam above
+        # instead, which is where every other kind belongs.
+        fault = self._fault
+        if fault == "isolation-setup-failure" and self._fires():
+            self._state.fired = True
+            return BeginFailed(translated_fault(fault))
         inner = self
 
         def wrapped(conn: DbPort) -> T:
@@ -323,6 +394,9 @@ class FaultInjectingPort:
             )
 
         return self._inner.transaction(wrapped, isolation=isolation)
+
+    def _fires(self) -> bool:
+        return self._fault is not None and (self._persistent or not self._state.fired)
 
 
 def expected_attempts(
@@ -342,6 +416,11 @@ def expected_attempts(
     a retriable fault that PERSISTS to a failure-kind outcome exhausts the
     bound (`retries` re-executions, so ``bound + 1`` total attempts).
 
+    An `isolation-setup-failure` answers ZERO: a boundary that never opened ran
+    no attempt at all, which is a different count from an attempt that ran and
+    failed, and it is the count that separates "the callback never ran" from
+    "the callback ran and was undone".
+
     This is the ONE place the retry defaults an omitting case inherits are
     restated, because an oracle needs the resolved numbers: ``None`` retries
     means 10 (`m-auto-retry.md` "The bound is configurable with a default of
@@ -349,6 +428,8 @@ def expected_attempts(
     """
     if fault is None:
         return 1
+    if fault == "isolation-setup-failure":
+        return 0
     if fault == "optimistic-lock-conflict":
         retriable = bool(retry_optimistic_conflicts)
     elif fault == "lock-wait-timeout":

@@ -34,6 +34,7 @@ __all__ = [
     "load_cases",
     "safe_load_yaml",
     "select",
+    "serialized_isolation",
     "uow_isolation",
 ]
 
@@ -195,6 +196,17 @@ def isolation_literal(value: str) -> IsolationLevel:
     string a runner passes on.
     """
     return isolation_level(value.replace("-", "_"))
+
+
+def serialized_isolation(level: IsolationLevel) -> str:
+    """The core serialized spelling of ``level`` — the inverse of
+    :func:`isolation_literal`.
+
+    An observation a case grades is compared against the case's own document, so
+    a level leaving the language reaches that comparison spelled as the corpus
+    spells it.
+    """
+    return level.replace("_", "-")
 
 
 def uow_isolation(case: Case) -> IsolationLevel | None:

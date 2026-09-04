@@ -439,6 +439,18 @@ def load_fixtures(model_ref: str) -> dict[str, object]:
     return dict(cast("Mapping[str, object]", loaded))
 
 
+# The engine's own spelling of each `given.sessionDefault` a case may declare.
+# `read-uncommitted` is outside the portable vocabulary on purpose: it is the
+# default an adapter must refuse rather than upgrade, and Postgres executes it
+# as Read Committed, which is what makes the floor met here and the case's
+# expected outcome dialect-keyed.
+_SESSION_DEFAULTS: Mapping[str, str] = {
+    "read-uncommitted": (
+        "set session characteristics as transaction isolation level read uncommitted"
+    ),
+}
+
+
 class Provisioner:  # pragma: no cover - exercised by the Docker provider / conformance lanes
     """A session-scoped Testcontainers Postgres with the simple per-case reset path."""
 
@@ -499,6 +511,25 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         peer = self.adapter().connect(self._conninfo, autocommit=autocommit)
         self._peers.append(peer)
         return peer
+
+    def taken_at_session_default(self, level: str) -> PostgresAdapter:
+        """The adapter over a connection whose OWN default isolation is ``level``.
+
+        ``m-db-port`` puts the default's check at INTAKE — an adapter inspects
+        the connection it is handed once, when it takes it — so the default is
+        established on the connection first and the adapter constructed over it
+        second. Opening the connection through the adapter's own ``connect`` and
+        then taking it again is what expresses that order: ``connect`` takes a
+        connection it opened itself, which carries no default a case chose.
+
+        Tracked for teardown through the adapter that is returned, since both
+        adapters hold the one connection.
+        """
+        opened = self.adapter().connect(self._conninfo, autocommit=True)
+        opened.execute_write(_SESSION_DEFAULTS[level], [])
+        taken = self.adapter()(opened.connection)
+        self._peers.append(taken)
+        return taken
 
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
         """Reset the schema, apply the model-derived DDL, and load the fixtures.

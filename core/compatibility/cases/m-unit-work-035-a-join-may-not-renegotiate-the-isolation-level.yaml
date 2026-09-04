@@ -1,0 +1,50 @@
+# Boundary case (m-unit-work join rule, m-db-port isolation vocabulary): a joining
+# unit of work inherits the level or repeats it, and naming a different one is
+# refused — `api-conformance` lane.
+#
+# The boundary opens at `repeatable-read`. Three joining calls then exercise the
+# whole rule in one body: the first NAMES NO level and inherits, the second names
+# the SAME level and is accepted, and the third names `serializable` and is
+# refused. Isolation joins on exactly the terms the other three unit-of-work
+# options do, because a level is a property of a boundary at the moment it opens
+# and a joining call opens none — accepting a second level would mean the same
+# physical transaction ran under two guarantees.
+#
+# The refusal is a REFUSAL OF THE CALL rather than an outcome of the work: it is
+# raised before the joined callback runs at all. The `update` buffered by the
+# first joined scope therefore never reaches the database, and the whole boundary
+# unwinds — which is what makes `then.outcome: option-conflict` a statement about
+# the arrangement rather than about the write.
+#
+# `roundTrips: 1` is that same fact counted: the observing read is the one call
+# that reached the database, and the buffered write's pre-commit batch never ran.
+#
+# `lane: api-conformance`: a joined boundary is an API arrangement with no wire
+# spelling, and an option conflict is a refusal no golden SQL can express.
+model: models/account.yaml
+tags: [m-unit-work, m-api-conformance, isolation, join, slice-snapshot-1, slice-managed-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection unit-of-work boundary intent (shape:boundary)"
+when:
+  uow:
+    isolation: repeatable-read
+  boundary:
+    - action: read
+      note: the outer body observes the row it will write
+    - action: join
+      note: a joining call naming no level inherits the boundary's own
+    - action: update
+      note: the joined body buffers a write onto the shared unit of work
+    - action: join
+      isolation: repeatable-read
+      note: a joining call repeating the boundary's own level is accepted
+    - action: join
+      isolation: serializable
+      note: a joining call naming a different level is refused before its callback runs
+then:
+  outcome: option-conflict
+  roundTrips: 1

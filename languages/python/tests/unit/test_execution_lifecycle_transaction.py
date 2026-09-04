@@ -174,7 +174,7 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     ]
     started = root.events[0]
     assert isinstance(started, TransactionInvocationStarted)
-    assert started.invocation == OuterInvocation("optimistic", RetryPolicy(10, False))
+    assert started.invocation == OuterInvocation("optimistic", RetryPolicy(10, False), None)
     assert _finished(root) == OuterInvocationCommitted()
     assert _attempt_outcomes(root) == [AttemptCommitted()]
 
@@ -220,12 +220,47 @@ def test_each_batch_names_the_trigger_that_forced_it() -> None:
 def test_the_resolved_policy_the_caller_asked_for_is_what_the_invocation_reports() -> None:
     recorder = RecordingLifecycleProvider()
     _db(ScriptedPort(Transact()), recorder).transact(
-        lambda _tx: None, retries=3, concurrency="locking", retry_optimistic_conflicts=True
+        lambda _tx: None,
+        retries=3,
+        concurrency="locking",
+        retry_optimistic_conflicts=True,
+        isolation="serializable",
     )
 
     started = _only(recorder).events[0]
     assert isinstance(started, TransactionInvocationStarted)
-    assert started.invocation == OuterInvocation("locking", RetryPolicy(3, True))
+    assert started.invocation == OuterInvocation("locking", RetryPolicy(3, True), "serializable")
+
+
+def test_an_invocation_naming_no_level_reports_none_rather_than_a_default() -> None:
+    # The level is the one option with no resolved form here: a call naming none
+    # runs at whatever the adapter defaults to, which nothing above the port
+    # knows, so the descriptor reports absence rather than inventing that value.
+    recorder = RecordingLifecycleProvider()
+    _db(ScriptedPort(Transact()), recorder).transact(lambda _tx: None)
+
+    started = _only(recorder).events[0]
+    assert isinstance(started, TransactionInvocationStarted)
+    assert started.invocation == OuterInvocation("optimistic", RetryPolicy(10, False), None)
+
+
+def test_a_joined_invocation_states_no_level_of_its_own() -> None:
+    # A joined boundary renegotiates none of the four options, so it carries no
+    # level either — the one it runs under was resolved by the invocation it
+    # joined.
+    recorder = RecordingLifecycleProvider()
+    db = _db(ScriptedPort(Transact()), recorder)
+    db.transact(lambda _tx: db.transact(lambda _inner: None), isolation="repeatable_read")
+
+    joined = [
+        event.invocation
+        for event in _only(recorder).events
+        if isinstance(event, TransactionInvocationStarted)
+    ]
+    assert joined == [
+        OuterInvocation("optimistic", RetryPolicy(10, False), "repeatable_read"),
+        JoinedInvocation(),
+    ]
 
 
 def test_an_empty_buffer_opens_no_write_batch_at_all() -> None:

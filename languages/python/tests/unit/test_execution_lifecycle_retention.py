@@ -723,6 +723,7 @@ def _begun_attempt(
             concurrency="optimistic",
             retries=1,
             retry_optimistic_conflicts=False,
+            isolation=None,
             extra_retriable=None,
         )
     )

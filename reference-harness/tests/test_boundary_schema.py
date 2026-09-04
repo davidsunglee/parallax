@@ -77,3 +77,73 @@ def test_schema_rejects_boundary_case_with_golden_sql() -> None:
     assert list(_case_validator().iter_errors(case)), (
         "Schema should reject a boundary case that carries golden SQL"
     )
+
+
+def test_schema_accepts_a_join_step_naming_its_own_isolation() -> None:
+    case = _valid_boundary_case()
+    case["when"]["boundary"] = [
+        {"action": "read"},
+        {"action": "join", "isolation": "serializable"},
+    ]
+    assert list(_case_validator().iter_errors(case)) == []
+
+
+def test_schema_rejects_isolation_on_an_action_that_opens_no_boundary() -> None:
+    """Only a `join` opens a boundary, so only a `join` may name a level for one."""
+    case = _valid_boundary_case()
+    case["when"]["boundary"] = [{"action": "read", "isolation": "serializable"}]
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject an isolation on an action that opens no boundary"
+    )
+
+
+def test_schema_accepts_a_dialect_keyed_outcome() -> None:
+    case = _valid_boundary_case()
+    case["then"]["outcome"] = {"postgres": "committed", "mariadb": "connection-refused"}
+    assert list(_case_validator().iter_errors(case)) == []
+
+
+def test_schema_rejects_an_outcome_map_keyed_by_an_unknown_dialect() -> None:
+    case = _valid_boundary_case()
+    case["then"]["outcome"] = {"sqlite": "committed"}
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject an outcome keyed by a dialect the corpus does not name"
+    )
+
+
+def test_schema_rejects_an_outcome_map_value_outside_the_vocabulary() -> None:
+    """A keyed map's values are the SAME closed outcome vocabulary a bare one is."""
+    case = _valid_boundary_case()
+    case["then"]["outcome"] = {"postgres": "rolled-back"}
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject an outcome map value outside the closed vocabulary"
+    )
+
+
+def test_schema_accepts_a_session_default_on_a_boundary_case() -> None:
+    case = _valid_boundary_case()
+    case["given"] = {"sessionDefault": "read-uncommitted"}
+    assert list(_case_validator().iter_errors(case)) == []
+
+
+def test_schema_rejects_a_session_default_inside_the_portable_vocabulary() -> None:
+    """The field names the default an adapter must REFUSE, so a portable level is
+    not a value it can carry."""
+    case = _valid_boundary_case()
+    case["given"] = {"sessionDefault": "repeatable-read"}
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject a sessionDefault naming a portable Isolation Level"
+    )
+
+
+def test_schema_admits_zero_round_trips_only_for_a_boundary_that_never_opened() -> None:
+    unopened = _valid_boundary_case()
+    unopened["given"] = {"fault": "isolation-setup-failure"}
+    unopened["then"] = {"outcome": "boundary-failed", "roundTrips": 0}
+    assert list(_case_validator().iter_errors(unopened)) == []
+
+    opened = _valid_boundary_case()
+    opened["then"]["roundTrips"] = 0
+    assert list(_case_validator().iter_errors(opened)), (
+        "Schema should reject zero round trips for a boundary that did open"
+    )

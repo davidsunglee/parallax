@@ -313,6 +313,32 @@ def test_an_outer_invocation_omitting_the_resolved_policy_is_refused_by_both_sch
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
+def test_an_outer_invocation_may_state_the_level_it_requested() -> None:
+    root = _write_root()
+    root["events"][0]["transactionInvocationStarted"]["isolation"] = "repeatable-read"
+    assert _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
+    assert _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
+
+
+def test_a_joined_invocation_naming_a_level_is_refused_by_both_schemas() -> None:
+    # A joined boundary renegotiates none of the four options, so a level on one
+    # is the same defect a restated retry policy is.
+    root = _write_root()
+    root["events"][0]["transactionInvocationStarted"] = {
+        "invocation": "joined",
+        "isolation": "serializable",
+    }
+    assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
+    assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
+
+
+def test_an_invocation_naming_an_unportable_level_is_refused_by_both_schemas() -> None:
+    root = _write_root()
+    root["events"][0]["transactionInvocationStarted"]["isolation"] = "read-uncommitted"
+    assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
+    assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
+
+
 # --- correlation that describes a tree ---------------------------------------
 
 
@@ -1101,9 +1127,11 @@ def test_an_envelope_reporting_no_lifecycle_has_nothing_to_walk() -> None:
 
 
 def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
-    """Every case authoring the oracle, named: the seven `m-execution-lifecycle`
-    cases and the one optimistic-lock success whose resolving read makes it the
-    corpus witness for a Database Call that names no golden statement."""
+    """Every case authoring the oracle, named: the eight `m-execution-lifecycle`
+    cases, the one optimistic-lock success whose resolving read makes it the
+    corpus witness for a Database Call that names no golden statement, and the
+    auto-retry case whose stream is the only place one requested Isolation Level
+    is seen standing over two attempts."""
     authored = []
     for case_path in sorted(_CASES.glob("**/*.y*ml")):
         case = read_corpus_yaml(case_path)
@@ -1114,6 +1142,7 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
             authored.append(case_path.name)
         assert validate_execution(case) == [], case_path.name
     assert authored == [
+        "m-auto-retry-006-every-attempt-opens-at-the-requested-level.yaml",
         "m-execution-lifecycle-001-standalone-read.yaml",
         "m-execution-lifecycle-002-pre-commit-batch.yaml",
         "m-execution-lifecycle-003-read-dependency.yaml",
@@ -1121,5 +1150,6 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-execution-lifecycle-005-retry-exhaustion.yaml",
         "m-execution-lifecycle-006-joined-invocation.yaml",
         "m-execution-lifecycle-007-streamed-delivery.yaml",
+        "m-execution-lifecycle-008-isolation-setup-failure-opens-no-boundary.yaml",
         "m-opt-lock-006-success.yaml",
     ]

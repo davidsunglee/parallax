@@ -30,7 +30,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot.handle import Transaction, TransactionOptionConflictError
 
 _CASES = boundary_runner.reachable_boundary_cases()
 _CASE_IDS = [case.case_id for case in _CASES]
@@ -46,10 +46,10 @@ _FAILURE_CATEGORY: dict[str, str] = {
 
 
 def _make_body(
-    actions: list[str], *, raise_after: bool, db: Any
+    steps: list[boundary_runner.BoundaryStep], *, raise_after: bool, db: Any
 ) -> Any:  # Callable[[Transaction], Account | None]
     def body(tx: Transaction) -> Account | None:
-        result = boundary_runner.run_boundary_actions(tx, actions, database=db)
+        result = boundary_runner.run_boundary_actions(tx, steps, database=db)
         if raise_after:
             raise BoundaryAbort("scripted abort — no injected fault (m-unit-work-004)")
         return result
@@ -61,16 +61,27 @@ def _make_body(
 def test_boundary_case_runs_through_the_shipped_surface(
     case: case_format.Case, profile_run: Any
 ) -> None:
+    dialect = profile_run.port.dialect
+    outcome = boundary_runner.outcome(case, dialect)
+    if outcome is None:
+        # A dialect the case's own outcome map omits is one it makes no claim
+        # about (`m-case-format`), so there is nothing here to grade — the same
+        # rule a dialect-keyed `then.sql` already carries.
+        pytest.skip(f"{case.case_id} states no outcome for {dialect.name}")
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
     meta = MODELS[Path(case.model).stem]
 
     uow = boundary_runner.boundary_uow(case)
-    actions = boundary_runner.boundary_actions(case)
+    steps = boundary_runner.boundary_steps(case)
     fault = boundary_runner.fault_kind(case)
-    outcome = boundary_runner.outcome(case)
     persistent = fault is not None and outcome != "committed"
 
-    port = FaultInjectingPort(profile_run.port, fault=fault, persistent=persistent)
+    # A case declaring `given.sessionDefault` runs through a connection carrying
+    # that default when the adapter takes it, which is the intake seam the
+    # obligation names; every other case runs through the provisioned port.
+    default = boundary_runner.session_default(case)
+    adapter = profile_run.port if default is None else profile_run.taken_at_session_default(default)
+    port = FaultInjectingPort(adapter, fault=fault, persistent=persistent)
     # What the boundary did is observable only WHILE it runs: a failing
     # invocation answers no result, and nothing it returns describes what its
     # attempts did (`m-execution-lifecycle` — observability is transient and
@@ -86,7 +97,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # and driving it through the SAME `port` would arm the fault against it.
     verify_db = connect(profile_run.port, meta)
     raise_after = fault is None and outcome == "aborted"
-    body = _make_body(actions, raise_after=raise_after, db=db)
+    body = _make_body(steps, raise_after=raise_after, db=db)
 
     def run() -> Account | None:
         return db.transact(
@@ -94,6 +105,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
             retries=uow.retries,
             concurrency=uow.concurrency,
             retry_optimistic_conflicts=uow.retry_optimistic_conflicts,
+            isolation=uow.isolation,
         )
 
     if outcome == "committed":
@@ -116,6 +128,22 @@ def test_boundary_case_runs_through_the_shipped_surface(
     elif outcome == "optimistic-lock-conflict":
         with pytest.raises(OptimisticLockConflictError):
             run()
+    elif outcome == "option-conflict":
+        with pytest.raises(TransactionOptionConflictError):
+            run()
+        verify = verify_db.transact(
+            lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
+        )
+        assert verify.balance == Decimal("250.00"), (
+            "a refused joining option dooms the boundary it tried to renegotiate"
+        )
+    elif outcome == "boundary-failed":
+        # The boundary never opened, so what surfaces is the error the port made
+        # rather than a classified failure of the work: nothing above may read a
+        # refused session setup as a contention worth retrying.
+        with pytest.raises(DatabaseError) as unopened:
+            run()
+        assert unopened.value.category is None, (case.case_id, unopened.value)
     else:
         category = _FAILURE_CATEGORY[outcome]
         with pytest.raises(DatabaseError) as excinfo:
@@ -155,13 +183,13 @@ def test_boundary_case_runs_through_the_shipped_surface(
         )
 
 
-def test_reachable_boundary_cases_cover_the_expected_eleven() -> None:
+def test_reachable_boundary_cases_cover_the_expected_fifteen() -> None:
     # Grep-verified complete set (the corpus's complete boundary
-    # population): `m-auto-retry-001..005`, `m-opt-lock-010/011`,
-    # `m-unit-work-004`, and the three `m-execution-lifecycle` spine cases whose
-    # observables need an injected fault or a joined boundary — never a hand list
-    # at the RUNNER level (the corpus itself drives `_CASES` above); this is a
-    # coverage assertion only.
+    # population): `m-auto-retry-001..006`, `m-opt-lock-010/011`,
+    # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, and the four
+    # `m-execution-lifecycle` spine cases whose observables need an injected
+    # fault or a joined boundary — never a hand list at the RUNNER level (the
+    # corpus itself drives `_CASES` above); this is a coverage assertion only.
     assert _CASE_IDS
     assert set(_CASE_IDS) == {
         "m-auto-retry-001",
@@ -169,10 +197,14 @@ def test_reachable_boundary_cases_cover_the_expected_eleven() -> None:
         "m-auto-retry-003",
         "m-auto-retry-004",
         "m-auto-retry-005",
+        "m-auto-retry-006",
         "m-execution-lifecycle-004",
         "m-execution-lifecycle-005",
         "m-execution-lifecycle-006",
+        "m-execution-lifecycle-008",
         "m-opt-lock-010",
         "m-opt-lock-011",
         "m-unit-work-004",
+        "m-unit-work-035",
+        "m-unit-work-036",
     }

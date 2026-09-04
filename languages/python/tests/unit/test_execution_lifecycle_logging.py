@@ -369,7 +369,11 @@ def test_an_outer_invocation_states_the_policy_it_resolved(
         caplog,
         [
             TransactionInvocationStarted(
-                TRANSACTION.id, 1, 1, None, OuterInvocation("locking", RetryPolicy(10, True))
+                TRANSACTION.id,
+                1,
+                1,
+                None,
+                OuterInvocation("locking", RetryPolicy(10, True), "serializable"),
             ),
             TransactionInvocationStarted(TRANSACTION.id, 2, 3, 2, JoinedInvocation()),
         ],
@@ -379,8 +383,33 @@ def test_an_outer_invocation_states_the_policy_it_resolved(
     assert outer.fields["concurrency"] == "locking"
     assert outer.fields["retries"] == 10
     assert outer.fields["retry_optimistic_conflicts"] is True
+    assert outer.fields["isolation"] == "serializable"
     assert joined.fields["invocation"] == "joined"
     assert "concurrency" not in joined.fields, "a joined call resolved no policy of its own"
+    assert "isolation" not in joined.fields, "a joined call may not renegotiate the level"
+
+
+def test_an_invocation_that_requested_no_level_omits_the_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Omit-the-key, like `cause_activity`: the field's PRESENCE asserts that this
+    # invocation named a level, and a null would read as a boundary that ran at
+    # no isolation — which no boundary does.
+    (outer,) = _records(
+        caplog,
+        [
+            TransactionInvocationStarted(
+                TRANSACTION.id,
+                1,
+                1,
+                None,
+                OuterInvocation("optimistic", RetryPolicy(10, False), None),
+            )
+        ],
+        execution=TRANSACTION,
+    )
+    assert outer.fields["concurrency"] == "optimistic"
+    assert "isolation" not in outer.fields
 
 
 def test_every_invocation_and_batch_outcome_has_its_own_spelling(
@@ -568,7 +597,7 @@ def test_a_transition_the_logger_would_drop_is_never_described() -> None:
         collected = _Collecting()
         logger.addHandler(collected)
         policy = _CountingPolicy()
-        invocation = OuterInvocation("locking", RetryPolicy(3, False))
+        invocation = OuterInvocation("locking", RetryPolicy(3, False), None)
         object.__setattr__(invocation, "retry_policy", policy)
         handler = LoggingLifecycleProvider(logger).open(TRANSACTION)
         assert handler is not None
