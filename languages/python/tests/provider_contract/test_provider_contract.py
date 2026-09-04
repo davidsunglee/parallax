@@ -27,14 +27,17 @@ from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
+    ISOLATION_LEVELS,
     BeginFailed,
     CallbackRaised,
     CommitFailed,
     Committed,
     RollbackFailed,
     RolledBack,
+    isolation_level,
 )
 from parallax.postgres import adapter as adapter_module
+from parallax.postgres import isolation_spelling
 
 
 def _grade_case() -> Any:
@@ -101,52 +104,31 @@ def test_transaction_commits_and_reports_the_body_value(profile_run: Any) -> Non
     assert row["label"] == "committed"
 
 
-def _after(_port: Any) -> str:
-    return "after"
-
-
-def test_a_boundary_opens_at_the_requested_isolation(profile_run: Any) -> None:
-    # The passthrough proved on the shipped adapter path rather than on a fake
-    # connection: the level the caller named is the level the database reports
-    # for the transaction the callback is running in. What no level MEANS is
-    # deliberately not proved here — `m-db-port` defines no vocabulary and grades
-    # no semantics, so this asserts only that the request arrived.
+def test_every_portable_level_opens_the_boundary_at_its_spelling(profile_run: Any) -> None:
+    # The mapping proved on the shipped adapter path rather than on a fake
+    # connection: for each portable level, the level the database reports for the
+    # transaction the callback is running in is this engine's own name for the
+    # one that was asked for. A rename is the whole of Postgres' mapping, so a
+    # mapping that dropped a level, or crossed two of them, is what this catches;
+    # what a level then FORBIDS is graded by the corpus, not here.
     observed: list[str] = []
 
     def body(port: Any) -> None:
         (row,) = port.execute("show transaction_isolation", [])
         observed.append(str(row["transaction_isolation"]))
 
-    assert profile_run.port.transaction(body, isolation="serializable") == Committed(None)
+    for level in sorted(ISOLATION_LEVELS):
+        assert profile_run.port.transaction(body, isolation=isolation_level(level)) == Committed(
+            None
+        )
+    # An omitted level asks for nothing, so the boundary after three explicit
+    # ones reports the connection's own default rather than the last request:
+    # the setting is the boundary's and outlives none of them.
     assert profile_run.port.transaction(body) == Committed(None)
-    assert observed == ["serializable", "read committed"]
-
-    # The value is delimited rather than composed into the statement, so a
-    # string carrying further transaction modes is one value Postgres refuses
-    # instead of a clause it honours: the boundary never opens, and the level
-    # the next one reports is untouched by it.
-    injected = profile_run.port.transaction(body, isolation="serializable, read only")
-    assert isinstance(injected, BeginFailed)
-    assert profile_run.port.transaction(body) == Committed(None)
-    assert observed == ["serializable", "read committed", "read committed"]
-
-
-def test_a_refused_isolation_reports_a_boundary_that_never_opened(profile_run: Any) -> None:
-    # A boundary that could not open as asked opens at no other level: the
-    # callback never runs, so nothing was attempted, and the connection is still
-    # usable for the next boundary — which is what separates this outcome from
-    # every other unhappy one.
-    ran: list[str] = []
-
-    def never_runs(_port: Any) -> None:
-        ran.append("body")
-
-    outcome = profile_run.port.transaction(never_runs, isolation="not a level")
-    assert isinstance(outcome, BeginFailed)
-    assert isinstance(outcome.error, DatabaseError)
-    assert outcome.error.native_code == "22023"
-    assert ran == []
-    assert profile_run.port.transaction(_after) == Committed("after")
+    assert observed == [
+        *(isolation_spelling(isolation_level(level)) for level in sorted(ISOLATION_LEVELS)),
+        "read committed",
+    ]
 
 
 def test_exec_rolled_back_leaves_no_effect(profile_run: Any) -> None:

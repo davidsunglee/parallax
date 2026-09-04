@@ -43,9 +43,11 @@ from parallax.core.db_port import (
     BeginFailed,
     Committed,
     DbPort,
+    IsolationLevel,
     RollbackFailed,
     RolledBack,
     TransactionOutcome,
+    isolation_level,
 )
 
 # Sibling implementation modules. None of these names carries a leading
@@ -269,16 +271,18 @@ class _ResolvedOptions:
 
     ``isolation`` is the one option with no resolved default of its own: it
     stays whatever the call named, because ``None`` here is a request for
-    nothing rather than a stand-in for a value Parallax would supply. Every
-    physical attempt of this boundary asks the port for the same level, so a
-    retry re-opens at the isolation the invocation asked for rather than at the
-    database's default.
+    nothing rather than a stand-in for a value Parallax would supply. It is the
+    vocabulary's own spelling of that request rather than the caller's object,
+    so what a joining call is compared against, and what every adapter keys its
+    per-level mapping by, is a plain level. Every physical attempt of this
+    boundary asks the port for the same one, so a retry re-opens at the
+    isolation the invocation asked for rather than at the database's default.
     """
 
     retries: int
     concurrency: Concurrency
     retry_optimistic_conflicts: bool
-    isolation: str | None
+    isolation: IsolationLevel | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -609,7 +613,7 @@ class Database:
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
-        isolation: str | None = None,
+        isolation: IsolationLevel | None = None,
     ) -> T:
         """Run ``fn(tx)`` in a transaction, returning its value only after commit.
 
@@ -622,13 +626,17 @@ class Database:
         to the shared read lock, so one transaction mixes both (`m-unit-work`
         "Strategy selection"). ``retries`` bounds re-executions rather than total
         attempts, and a negative bound is a deterministic refusal raised before
-        any transaction is opened or observed. ``isolation`` is the one option
-        Parallax carries rather than interprets: an explicit value reaches
-        :meth:`~parallax.core.db_port.DbPort.transaction` unchanged, in the
-        database's own vocabulary, and omitting it asks for nothing and leaves
-        whatever the adapter or its driver defaults to. No level's behavior is
-        promised here — only that the request arrived — and every physical
-        attempt of one invocation opens at the same requested level. A call
+        any transaction is opened or observed. ``isolation`` names one of the
+        three portable Isolation Levels (:data:`~parallax.core.db_port.
+        IsolationLevel`), each defined by the anomalies it forbids and mapped by
+        the adapter to its own database; omitting it asks for nothing and leaves
+        whatever the adapter or its driver defaults to. Any other value is a
+        deterministic :class:`ValueError`, raised — like a negative retry bound —
+        before any transaction is opened or observed, and before this call is
+        even compared against an active boundary, so a joining call naming a
+        level outside the vocabulary is refused as invalid rather than as a
+        conflict. Every physical attempt of one invocation opens at the same
+        requested level, and `tx.stream` inherits it. A call
         while a transaction is active on the current thread joins it, but only
         through the exact ``Database`` that opened the boundary — any other
         handle raises :class:`TransactionOwnershipError` before every later
@@ -653,6 +661,11 @@ class Database:
         was delivered while it ran (`m-execution-lifecycle`).
         """
         refuse_reentry(self._lifecycle)
+        # Ahead of the join comparison below, because a level outside the
+        # vocabulary is the CALL's own defect: comparing it first would report a
+        # nonsense level as a disagreement with the active boundary, which reads
+        # as though naming it correctly would have been accepted.
+        requested = None if isolation is None else isolation_level(isolation)
         active = active_unit_of_work()
         if active is not None:
             demarcation = active.companion
@@ -673,7 +686,7 @@ class Database:
                 retries=retries,
                 concurrency=concurrency,
                 retry_optimistic_conflicts=retry_optimistic_conflicts,
-                isolation=isolation,
+                isolation=requested,
             )
             # The join path returns immediately and ignores these arguments in
             # favor of the active transaction's own (m-unit-work); rollback-only
@@ -698,7 +711,7 @@ class Database:
             retry_optimistic_conflicts=(
                 retry_optimistic_conflicts if retry_optimistic_conflicts is not None else False
             ),
-            isolation=isolation,
+            isolation=requested,
         )
         # The last deterministic refusal, and it belongs here rather than at the
         # retry loop's own entry: the loop runs inside the root opened below, so
@@ -862,7 +875,7 @@ def _check_join_options(
     retries: int | None,
     concurrency: Concurrency | None,
     retry_optimistic_conflicts: bool | None,
-    isolation: str | None,
+    isolation: IsolationLevel | None,
 ) -> None:
     """Refuse a joining call's explicit option that conflicts with the boundary.
 

@@ -43,6 +43,7 @@ from parallax.core.db_port import (
     Committed,
     DbPort,
     DocumentReadOrdinals,
+    IsolationLevel,
     JsonDocument,
     RollbackFailed,
     RollbackTrigger,
@@ -52,6 +53,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.wire import loads
+from parallax.postgres._isolation import isolation_spelling
 
 __all__ = ["PostgresAdapter"]
 
@@ -279,7 +281,7 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
             return cursor.rowcount
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         """Run ``body`` in one transaction and report which boundary phase decided
         the outcome.
@@ -312,20 +314,24 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         part of the work inside it: it is applied to the transaction just begun,
         before the body sees a port, so it governs this transaction alone and
         leaves the connection's own default untouched for the next one. Postgres
-        is the authority on the value — this adapter neither validates the level
-        nor maps it, and carries it as a bound VALUE rather than composing it
-        into SQL text — so a level it will not accept ends the boundary
+        forbids each portable level's anomalies under its own name for it, so
+        this adapter maps the request to that name and asks for it; a level
+        Postgres nonetheless refuses ends the boundary
         :class:`~parallax.core.db_port.BeginFailed`: no work of the caller's was
         attempted, and a request silently downgraded to a level the caller did
         not ask for is worse than one refused.
         """
+        # Resolved before the physical transaction exists, so a level outside the
+        # vocabulary — a type violation the handle's own check would have caught —
+        # cannot leave an empty transaction open on the connection.
+        spelling = None if isolation is None else isolation_spelling(isolation)
         boundary = self._connection.transaction()
         try:
             boundary.__enter__()
         except psycopg.Error as exc:
             return BeginFailed(boundary_failure(self.dialect, exc))
-        if isolation is not None:
-            unopened = self._at_isolation(isolation, boundary=boundary)
+        if spelling is not None:
+            unopened = self._at_isolation(spelling, boundary=boundary)
             if unopened is not None:
                 return unopened
         try:
@@ -340,27 +346,21 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
 
     def _at_isolation(
         self,
-        isolation: str,
+        spelling: str,
         *,
         boundary: contextlib.AbstractContextManager[psycopg.Transaction],
     ) -> BeginFailed | None:
-        """Ask the transaction just begun for ``isolation``, or report it unopened.
+        """Ask the transaction just begun for ``spelling``, or report it unopened.
 
         Postgres accepts a level only as a transaction's first statement, which
         is what makes this part of opening the boundary rather than of the work
-        inside it. The level is the caller's own spelling and reaches the
-        database unexamined: the port promises that the requested value arrived
-        and nothing about what any value means, so the database is what accepts
-        or refuses it.
+        inside it.
 
-        It arrives as the bound VALUE of the transaction-scoped setting rather
-        than as SQL text the level name is composed into. The port defines no
-        vocabulary of levels, so this adapter has no list to hold a caller's
-        string against — and a string reaching the statement as text would let
-        one append transaction modes the boundary was never asked to open, or
-        end the statement and start another. Delimited as a value, anything
-        Postgres does not know as a level is a value it refuses, which is the
-        same authority over the request that a rejected level name is.
+        The mapped name arrives as the bound VALUE of the transaction-scoped
+        setting rather than as SQL text it is composed into, so what the
+        statement can express is one level and never a second transaction mode
+        or a second statement — a property of the request's SHAPE, which holds
+        however the mapping above is later spelled.
 
         A refusal leaves a transaction that began and did nothing. Undoing it is
         this adapter's business rather than the caller's, and the outcome
@@ -370,7 +370,7 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         discarded rather than handed back, since what it would run next is
         unknown.
         """
-        request = SQL("set local transaction_isolation = {}").format(Literal(isolation))
+        request = SQL("set local transaction_isolation = {}").format(Literal(spelling))
         try:
             with self._connection.cursor() as cursor:
                 cursor.execute(request)

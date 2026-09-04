@@ -58,6 +58,7 @@ from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order, OrderStatus
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import LATEST, DomainModel, ObjectQuery
+from parallax.core.db_port import IsolationLevel
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError, ValueObject, to_document
 from parallax.core.entity._model import model_of
@@ -197,7 +198,7 @@ class _CountingDatabase(Database):
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
-        isolation: str | None = None,
+        isolation: IsolationLevel | None = None,
     ) -> T:
         return self._counted(
             lambda: super(_CountingDatabase, self).transact(

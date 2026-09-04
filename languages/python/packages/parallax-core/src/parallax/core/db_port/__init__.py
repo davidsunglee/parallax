@@ -227,7 +227,7 @@ class DbPort(Protocol):
         ...
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         """Run ``body`` inside one database transaction and report how it ended.
 
@@ -238,14 +238,15 @@ class DbPort(Protocol):
         trustworthy. No boundary failure is raised; the caller consumes the outcome
         and decides what its own caller sees.
 
-        ``isolation`` is the transaction isolation the caller asked this boundary
-        to open at, named in the concrete database's own vocabulary and carried
-        through unchanged; ``None`` asks for nothing and leaves whatever the
-        adapter or its driver already defaults to. The port neither validates the
-        value nor promises what any value means, so an implementation that cannot
-        open a boundary as asked reports that failure rather than opening one at
-        another level. The setting is the BOUNDARY's rather than the connection's:
-        it governs this transaction alone and no later one on the same connection.
+        ``isolation`` is the portable :data:`IsolationLevel` this boundary is
+        asked to open at, carried across unchanged; ``None`` asks for nothing and
+        leaves whatever the adapter or its driver already defaults to. An
+        implementation MAPS it to whatever its own database needs to forbid that
+        level's anomalies for this attempt, and one that cannot forbid them
+        reports a boundary failure rather than opening at a level it can — a
+        request silently weakened is indistinguishable from one honored. The
+        setting is the BOUNDARY's rather than the connection's: it governs this
+        transaction alone and no later one on the same connection.
         """
         ...
 

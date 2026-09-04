@@ -1,0 +1,128 @@
+# Repeatable Read forbids a nonrepeatable read on a DEEP FETCH's own child level
+# (m-unit-work / m-deep-fetch / m-db-port): a unit of work opened at
+# `when.uow.isolation: repeatable-read` fans out to an included relationship twice
+# and materializes the same graph both times, across a peer transaction that
+# committed a change to the included row in between.
+#
+# Two interleaved `uow` groups over the orders model. The `reader` group
+# materializes line item 11 WITH its owning order, the `writer` group rewrites that
+# order's name and COMMITS while the reader is still open, and the reader then
+# re-issues the same deep fetch.
+#   step 0 find  : `reader` materializes item 11 and, through
+#                  `includes: OrderItem.order`, order 1 (name `Ada`) — the ordinary
+#                  1 + L deep fetch, one statement per level
+#   step 1 write : `writer` updates order 1's name to `Rewritten`. Order is an
+#                  unversioned Non-Temporal target, so its keyed update is ungated
+#                  (the mandatory Locking fallback). The group COMMITS after this,
+#                  its last step.
+#   step 2 find  : `reader` re-issues the SAME deep fetch — `expectGraph` states the
+#                  whole materialized graph, and the included order's name is still
+#                  `Ada`. This is the teeth, and it is stated on the CHILD level
+#                  deliberately: the item the root read returns was never written,
+#                  so a view that covered only the statement which opened the
+#                  transaction's would leave the root right and the include wrong.
+#                  The group COMMITS after this, its last step.
+#   step 3 find  : UNGROUPED, after both groups resolved — order 1 reads
+#                  `Rewritten`, which is what makes step 2's answer a fixed view
+#                  rather than a write that never happened.
+# The second of three cases varying only the READ that is repeated (m-unit-work-032
+# a plain object find, m-unit-work-034 a streamed delivery). roundTrips = 6.
+model: models/orders.yaml
+tags: [m-unit-work, m-deep-fetch, isolation, repeatable-read, nonrepeatable-read, relationship, scenario, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "include level - the OrderItem.order parent IN-list binds are the distinct order keys gathered from each root read, so the child emission depends on a query result"
+when:
+  uow:
+    isolation: repeatable-read
+  scenario:
+    - uow: reader
+      objectQuery:
+        target: parallax.compatibility.OrderItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.OrderItem.id
+            value: 11
+        includes:
+          - segments:
+              - rel: parallax.compatibility.OrderItem.order
+      roundTrips: 2
+      note: the reading unit of work materializes item 11 with its owning order (name Ada)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+            mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+          binds: [11]
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+          binds: [1]
+      expectGraph:
+        OrderItem:
+          - id: 11
+            orderId: 1
+            sku: A-100
+            quantity: 2
+            shippedOn: null
+            order: { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05 }
+    - uow: writer
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Order
+          rows:
+            - { id: 1, name: Rewritten }
+      roundTrips: 1
+      note: an ungated update of the INCLUDED row — Order is unversioned, so the mandatory Locking fallback emits no gate; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: update orders set name = ? where id = ?
+            mariadb: update orders set name = ? where id = ?
+          binds: [Rewritten, 1]
+    - uow: reader
+      objectQuery:
+        target: parallax.compatibility.OrderItem
+        predicate:
+          eq:
+            attr: parallax.compatibility.OrderItem.id
+            value: 11
+        includes:
+          - segments:
+              - rel: parallax.compatibility.OrderItem.order
+      roundTrips: 2
+      note: the SAME deep fetch again MUST materialize the same graph — the included order's name is still Ada; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+            mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
+          binds: [11]
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+          binds: [1]
+      expectGraph:
+        OrderItem:
+          - id: 11
+            orderId: 1
+            sku: A-100
+            quantity: 2
+            shippedOn: null
+            order: { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, orderedOn: 2024-01-05 }
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 1
+      roundTrips: 1
+      note: UNGROUPED, after both groups resolved — the peer's write is durable, order 1 reads Rewritten
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+            mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, name: Rewritten, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }
+then:
+  roundTrips: 6

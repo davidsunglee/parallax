@@ -40,7 +40,13 @@ from typing import Any, Final, cast
 from parallax.conformance import case_format, sweep
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import (
+    DbPort,
+    DocumentReadOrdinals,
+    IsolationLevel,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import Dialect
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot.handle import Database, Transaction
@@ -305,7 +311,7 @@ class FaultInjectingPort:
         return self._inner.execute_write(sql, binds)
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         inner = self
 

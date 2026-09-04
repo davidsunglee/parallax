@@ -1,0 +1,55 @@
+# A locking object find still holds its shared row lock when the unit of work asks
+# for Repeatable Read (m-read-lock / m-unit-work). Round 1: transaction A, opened
+# at `when.uow.isolation: repeatable-read`, issues the in-transaction shared read
+# lock (`for share of t0` / `lock in share mode`) on account 2 and HOLDS. Round 2:
+# transaction B updates account 2, blocks on A's shared lock, and raises
+# lockWaitTimeout on the session's lowered lock-wait budget.
+#
+# m-read-lock-006 proves the same blocking with no level declared, which is the
+# engines' own defaults — Read Committed on Postgres, Repeatable Read on MariaDB.
+# The pair is what makes the level's contribution legible: locking participation is
+# `when.uow.concurrency`'s, not the level's, and asking for a stronger level
+# neither adds a lock nor takes one away. That matters because MariaDB's Repeatable
+# Read is choreographed rather than named — the provider also sets
+# `innodb_snapshot_isolation` — and Postgres' takes a transaction-wide snapshot at
+# the first statement; on either engine a locking read that stopped locking, or one
+# whose lock the snapshot let a writer step around, would leave B's update
+# succeeding here.
+#
+# The first of three cases varying only the READ that holds the lock — this one a
+# plain object find, m-read-lock-014 a deep fetch's own child level, m-read-lock-015
+# a streamed page — because a Repeatable Read guarantee that held for one read form
+# and not the others would be a guarantee about a statement rather than about the
+# transaction. Neutral category lockWaitTimeout; native PG 55P03 / MariaDB 1205.
+model: models/account.yaml
+tags: [m-read-lock, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? lock in share mode
+              binds: [2]
+      - B:
+          statements:
+            - sql:
+                postgres: update account set balance = ? where id = ?
+                mariadb: update account set balance = ? where id = ?
+              binds: ["999.00", 2]
+then:
+  errorClass: lockWaitTimeout
+  nativeCode:
+    postgres: "55P03"
+    mariadb: 1205

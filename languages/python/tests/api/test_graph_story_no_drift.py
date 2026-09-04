@@ -48,7 +48,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order, OrderStatus
 from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
-from parallax.core.db_port import Bind, DbPort, Row, TransactionOutcome
+from parallax.core.db_port import Bind, DbPort, IsolationLevel, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.unit_work import Clock, Concurrency
@@ -590,7 +590,7 @@ class _RecordingDatabase(Database):
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
-        isolation: str | None = None,
+        isolation: IsolationLevel | None = None,
     ) -> T:
         def recording(tx: Transaction) -> T:
             return fn(cast("Transaction", _RecordingTransaction(tx, self.queries)))

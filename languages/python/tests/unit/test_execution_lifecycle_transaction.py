@@ -49,6 +49,7 @@ from parallax.core.db_port import (
     Committed,
     DbPort,
     DocumentReadOrdinals,
+    IsolationLevel,
     RolledBack,
     Row,
     TransactionOutcome,
@@ -176,6 +177,26 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     assert started.invocation == OuterInvocation("optimistic", RetryPolicy(10, False))
     assert _finished(root) == OuterInvocationCommitted()
     assert _attempt_outcomes(root) == [AttemptCommitted()]
+
+
+def test_a_requested_isolation_opens_no_activity_of_its_own() -> None:
+    # Asking for a level is boundary mechanics, like the begin and the commit it
+    # rides between: the statement an adapter issues to open at it is not the
+    # caller's work, so it constructs no Database Call and moves no count. The
+    # proof is the whole tree rather than a count — a level that opened an
+    # activity ANYWHERE would change the shape here.
+    def observed(level: IsolationLevel | None) -> list[tuple[str, int, int | None]]:
+        recorder = RecordingLifecycleProvider()
+        port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write()))
+
+        def body(tx: Transaction) -> None:
+            tx.find(mm.Account.where(mm.Account.id == 7)).result()
+            tx.insert(new_account())
+
+        _db(port, recorder).transact(body, isolation=level)
+        return _tree(_only(recorder).events)
+
+    assert observed("serializable") == observed(None)
 
 
 def test_each_batch_names_the_trigger_that_forced_it() -> None:

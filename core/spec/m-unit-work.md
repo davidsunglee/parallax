@@ -1129,6 +1129,45 @@ Lock Facet, settles each Planned Write's gate or explicit `Ungated` decision, an
 retains neither the preference nor the Effective Concurrency Strategy in the
 Write Plan.
 
+### The Isolation Level beside it — what the transaction READS
+
+A unit of work resolves a second, independent boundary option: the **Isolation
+Level** (`m-db-port`), which the port carries and each adapter maps. The two are
+not alternatives and neither substitutes for the other. The Concurrency
+Preference decides what a participating read LOCKS and what a write GATES on —
+mechanisms this module owns, applied per Entity. The level decides what a read
+SEES, uniformly for the whole boundary, and is graded by the anomalies it
+forbids:
+
+| Level | Forbidden | Still permitted |
+|---|---|---|
+| Read Committed | dirty reads | nonrepeatable reads, phantoms, serialization anomalies |
+| Repeatable Read | dirty reads, nonrepeatable reads | phantoms, serialization anomalies such as write skew |
+| Serializable | all of the above | a retryable failure rather than eventual success |
+
+**Permitted is not required.** A stronger engine forbids more than the level
+promises, and neither a caller nor a compatibility case may require an anomaly to
+occur merely because the level allows it. Serializable protects the committed
+outcome only among transactions that ALL request it, and promises neither
+identical blocking behavior across engines nor eventual success.
+
+The forbidden anomalies are forbidden for every read form the boundary runs —
+a plain object find, a deep fetch's own included levels, and a streamed
+delivery's pages — because the guarantee belongs to the transaction rather than
+to a statement. A read taking the shared lock is no exception: the lock and the
+level compose, so a Locking read inside a Repeatable Read boundary both holds its
+lock and reads at the level.
+
+Omission requests nothing and keeps the adapter's own default. A joining boundary
+inherits the resolved level and may not renegotiate it, on the same terms as the
+Concurrency Preference: omitting inherits, naming the same level is accepted, and
+naming a different one is refused before the joined callback runs. Because a
+boundary opened without a level is active at none, a joining call NAMING one
+conflicts with it — an isolation is a property of a boundary only at the moment
+it opens. Levels are exact options rather than an ordered substitution rule: a
+join naming Read Committed under a Serializable boundary is a conflict, not a
+weakening the boundary already satisfies.
+
 ## What the suite pins down
 
 `m-unit-work`'s observable rules are expressed as **scenario** cases — ordered
@@ -1141,6 +1180,14 @@ operation steps, each with a declared round-trip count — and plain write cases
 | fk-ordering / flush cases | buffered writes flush ordered by foreign-key dependency |
 | insert-then-update coalescing (`m-unit-work-008`, `m-txtime-write-008`, `m-bitemp-write-014`) | a same-transaction insert-then-update flushes as one write with the final value — no intermediate milestone (non-temporal / Transaction-Time-Only / Bitemporal) |
 | insert-then-delete cancellation (`m-unit-work-010`) | a same-transaction insert-then-delete cancels — the flush emits no DML for that object |
+| dirty-read refusal (`m-unit-work-031`) | at Read Committed, a reading unit of work observes the committed row while a concurrent one holds an uncommitted write to it |
+| nonrepeatable-read refusal (`m-unit-work-032`, `-033`, `-034`) | at Repeatable Read, a unit of work's second read answers what its first did across a peer's committed write — for a plain find, a deep fetch's own included level, and a streamed delivery's pages |
+
+Each isolation scenario declares `when.uow.isolation` and holds TWO units of work
+open at once, labelled `reader` and `writer`, so that what the reading one
+observes is graded WHILE the writing one is live. Each closes with an ungrouped
+find stating only what both engines have committed: what the level permits is not
+what it requires, so no step may assert a phantom or a write skew.
 
 A scenario's declared round-trip counts **MUST** be internally consistent with
 the golden SQL it lists: each step's `roundTrips` equals the number of golden SQL

@@ -1,0 +1,56 @@
+# A deep fetch's CHILD level still holds its shared row lock when the unit of work
+# asks for Repeatable Read (m-read-lock / m-deep-fetch / m-unit-work). Round 1:
+# transaction A, opened at `when.uow.isolation: repeatable-read`, issues
+# m-read-lock-004's own two statements — the locking root read of every order item
+# and the locking include read of the orders they belong to — and HOLDS. Round 2:
+# transaction B updates order 1, a row only the SECOND statement touched, blocks on
+# that statement's shared lock, and raises lockWaitTimeout.
+#
+# m-read-lock-004 is the `api-conformance` half: it pins that a runtime deep fetch
+# inside a locking unit of work emits the lock suffix on every level. What no
+# single-connection lane can show is that the CHILD level's lock is a real lock, and
+# the writer here targets the child table alone, so a root-only lock leaves B's
+# update succeeding. Declaring the level is what distinguishes this from an
+# ordinary blocking proof: a transaction reading at a fixed snapshot might plausibly
+# be excused from taking or keeping locks on the levels it fanned out to, and it is
+# not — the level fixes what a read SEES, the Concurrency Preference fixes what it
+# LOCKS, and the two compose rather than trade off.
+#
+# The second of three cases varying only the READ that holds the lock
+# (m-read-lock-013 a plain object find, m-read-lock-015 a streamed page). Neutral
+# category lockWaitTimeout; native PG 55P03 / MariaDB 1205.
+model: models/orders.yaml
+tags: [m-read-lock, m-deep-fetch, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, lockWaitTimeout, slice-managed-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 for share of t0
+                mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 lock in share mode
+            - sql:
+                postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) for share of t0
+                mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?, ?, ?) lock in share mode
+              binds: [1, 2, 42]
+      - B:
+          statements:
+            - sql:
+                postgres: update orders set name = ? where id = ?
+                mariadb: update orders set name = ? where id = ?
+              binds: [Rewritten, 1]
+then:
+  errorClass: lockWaitTimeout
+  nativeCode:
+    postgres: "55P03"
+    mariadb: 1205

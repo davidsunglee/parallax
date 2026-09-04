@@ -73,12 +73,16 @@ into the shared neutral vocabulary above.
 ## What the suite pins down
 
 The compatibility suite exercises all three classes on both dialects (cases
-`m-db-error-001`–`m-db-error-010`): a case triggers a real error and asserts the
+`m-db-error-001`–`m-db-error-011`): a case triggers a real error and asserts the
 neutral category, the per-dialect native code, and the call-site predicate
 partition. `uniqueViolation` cases trigger single-connection (a duplicate insert /
 colliding update whose final statement raises); `deadlock` and `lockWaitTimeout`
 cases trigger two-connection (a `concurrency` choreography of barrier-separated
-rounds). MariaDB's duplicate-key errnos other than `1062` are graded by no case
+rounds). `m-db-error-011` is where `1020` is reached: a choreography declaring
+`when.uow.isolation: repeatable-read` in which one node reads a row, the peer
+updates it and COMMITS mid-choreography, and the first node's own update is then
+refused — `40001` on Postgres and `1020` on MariaDB, one authored choreography
+and one neutral category. MariaDB's duplicate-key errnos other than `1062` are graded by no case
 and need none: every duplicate the corpus authors is detected on the path that
 raises `1062`, so listing the others changes nothing a case observes — it changes
 only what the seam answers if a deployment ever meets one, which is the violation

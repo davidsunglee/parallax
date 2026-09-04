@@ -54,13 +54,18 @@ For every supported adapter, the smoke suite covers:
 - a transaction callback that commits on success and reports `Committed(value)`
 - distinct `BeginFailed`, callback- and commit-triggered `RolledBack`, and
   callback- and commit-triggered `RollbackFailed` boundary outcomes
-- a boundary opened at a **requested isolation**, which the callback observes as
-  the level the database reports for its own transaction, and a level the
-  database refuses, which reports `BeginFailed` and runs no callback. What is
-  proved is the passthrough and the refusal — that the requested value reached
-  the database and that a boundary which could not open as asked opened at no
-  other level — never what any level means, which `m-db-port` deliberately does
-  not define
+- a boundary opened at **each portable Isolation Level**, which the callback
+  observes as the level the database reports for its own transaction. What is
+  proved is the MAPPING: that every level of the closed vocabulary reaches the
+  database as that engine's own name for it, and that a boundary opening at no
+  level after those reports the connection's own default rather than the last
+  request. The whole vocabulary rather than one level, because a mapping that
+  crossed two levels or dropped one is exactly what a single-level proof admits
+- a **session setup that fails**, which reports `BeginFailed`, runs no callback,
+  and leaves the port usable for the next boundary; and a connection that also
+  fails to undo the empty transaction, which is discarded. Proved against the
+  driver seam rather than against a real refusal, because a conforming mapping
+  sends only levels its own engine accepts
 - a bytes write round trip through the dialect bind seam
 - affected-row semantics for matched and unmatched DML
 - feasible transient classification through the portable database error surface

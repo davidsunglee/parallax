@@ -1,0 +1,134 @@
+# Repeatable Read forbids a nonrepeatable read across a STREAMED delivery
+# (m-unit-work / m-snapshot-read / m-db-port): a unit of work opened at
+# `when.uow.isolation: repeatable-read` pages the same query twice and delivers the
+# same roots both times, across a peer transaction that committed a change to one of
+# them in between.
+#
+# A stream is the read form where the guarantee is least obvious: m-snapshot-read
+# promises stability PER PAGE and nothing wider on its own, so what makes a second
+# delivery repeat the first is the transaction the pages run in rather than the
+# delivery. Two interleaved `uow` groups over the account model.
+#   step 0 stream: `reader` delivers every account at `batchSize: 2` — page 1 asks
+#                  for three, the lookahead root included, and delivers {1, 2};
+#                  page 2 seeks past id 2 and comes back with {3} alone, short of
+#                  the three it asked for, which is what ends the delivery
+#   step 1 find  : `writer` observes account 2, its own gate's evidence
+#   step 2 write : `writer` updates it to 999.00, advancing the OBSERVED version
+#                  1 -> 2. The group COMMITS after this, its last step.
+#   step 3 stream: `reader` re-issues the SAME delivery — account 2 is still 250.00
+#                  at version 1. This is the teeth, and a delivery is where an
+#                  implementation could most easily fail it: the second page is a
+#                  second statement issued after the peer's commit, so a per-page
+#                  view that did not extend to the transaction would answer 250.00
+#                  on page 1 and 999.00 for any root that moved onto page 2. The
+#                  group COMMITS after this, its last step.
+#   step 4 find  : UNGROUPED, after both groups resolved — 999.00 at version 2,
+#                  which is what makes step 3's answer a fixed view rather than a
+#                  write that never happened.
+# The third of three cases varying only the READ that is repeated (m-unit-work-032 a
+# plain object find, m-unit-work-033 a deep fetch). Every page binds the primary key
+# of the root the page before it delivered last, so the case is
+# `compileEligibility: run-only` (query-result-dependent). roundTrips = 7.
+model: models/account.yaml
+tags: [m-unit-work, m-snapshot-read, isolation, repeatable-read, nonrepeatable-read, stream, streamed-delivery, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "a streamed delivery's keyset seek binds the previous page's last root, and the write's gate binds the version its own group's observing find returned"
+when:
+  uow:
+    isolation: repeatable-read
+  scenario:
+    - uow: reader
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          all: {}
+      stream:
+        batchSize: 2
+      roundTrips: 2
+      note: the reading unit of work's first delivery — two pages, the second short of the size it asked for
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+          binds: [3]
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where (t0.id > ? or t0.id is null) order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
+          binds: [2, 3]
+      referenceSql: select id, owner, balance, version from account
+      expectRows:
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+    - uow: writer
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: the writing unit of work observes account 2 before gating on it
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    - uow: writer
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 2, balance: "999.00" }
+      roundTrips: 1
+      note: the gated update advancing the OBSERVED version 1 -> 2; the group COMMITS after this, its last step, while the reader is still open
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+            mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: ["999.00", 2, 2, 1]
+    - uow: reader
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          all: {}
+      stream:
+        batchSize: 2
+      roundTrips: 2
+      note: the SAME delivery again MUST deliver the same roots — account 2 still 250.00 at version 1 across both pages; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ?
+          binds: [3]
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where (t0.id > ? or t0.id is null) order by t0.id asc limit ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 where t0.id > ? order by t0.id asc limit ?
+          binds: [2, 3]
+      referenceSql: select id, owner, balance, version from account
+      expectRows:
+        - { id: 1, owner: Ada, balance: "100.00", version: 1 }
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+        - { id: 3, owner: Grace, balance: "10.00", version: 1 }
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: UNGROUPED, after both groups resolved — the peer's write is durable, 999.00 at version 2
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "999.00", version: 2 }
+then:
+  roundTrips: 7

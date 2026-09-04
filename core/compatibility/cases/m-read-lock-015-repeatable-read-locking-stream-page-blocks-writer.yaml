@@ -1,0 +1,51 @@
+# A streamed page's roots still hold their shared row lock when the unit of work
+# asks for Repeatable Read (m-read-lock / m-snapshot-read / m-unit-work). Round 1:
+# transaction A, opened at `when.uow.isolation: repeatable-read`, issues the first
+# keyset page of a transactional stream over every account — the ordered, capped
+# read a page is, carrying the locking suffix its unit of work's Concurrency
+# Preference derives — and HOLDS. Round 2: transaction B updates account 1, a root
+# that page delivered, blocks on the page's shared lock, and raises
+# lockWaitTimeout.
+#
+# A page is where a stream and a lock could most plausibly come apart: the delivery
+# is per-page while the transaction outlives it, so a lock that ended with the page
+# would leave a transaction that had read rows it no longer protects, and one that
+# was never taken would make a locking stream a locking read in name only. The page
+# here asks for one more root than its batch size, so its lock spans exactly the
+# roots it delivered plus the lookahead — B's target among them.
+#
+# The third of three cases varying only the READ that holds the lock
+# (m-read-lock-013 a plain object find, m-read-lock-014 a deep fetch's child level).
+# Neutral category lockWaitTimeout; native PG 55P03 / MariaDB 1205.
+model: models/account.yaml
+tags: [m-read-lock, m-snapshot-read, m-unit-work, m-dialect, m-db-error, isolation, concurrency, locking-mode, stream, lockWaitTimeout, slice-snapshot-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: locking
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ? for share of t0
+                mariadb: select t0.id, t0.owner, t0.balance, t0.version, t0.id parallax_seek_0 from account t0 order by t0.id asc limit ? lock in share mode
+              binds: [3]
+      - B:
+          statements:
+            - sql:
+                postgres: update account set balance = ? where id = ?
+                mariadb: update account set balance = ? where id = ?
+              binds: ["999.00", 1]
+then:
+  errorClass: lockWaitTimeout
+  nativeCode:
+    postgres: "55P03"
+    mariadb: 1205

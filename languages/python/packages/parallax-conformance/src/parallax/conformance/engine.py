@@ -64,6 +64,7 @@ from parallax.core.db_port import (
     Committed,
     DbPort,
     DocumentReadOrdinals,
+    IsolationLevel,
     JsonDocument,
     RollbackFailed,
     RolledBack,
@@ -1337,7 +1338,7 @@ class _AbortingPort:
         return self._inner.execute_write(sql, binds)
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         def aborting(conn: DbPort) -> T:
             body(conn)
@@ -2750,7 +2751,9 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     model = models.accepted_model_of(domain)
     concurrency = _concurrency(case)
     dialect = dialect_for(dialect_name)
-    context = _CaseContext(domain, model, concurrency, TemporalShadow())
+    context = _CaseContext(
+        domain, model, concurrency, TemporalShadow(), case_format.uow_isolation(case)
+    )
     _seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
@@ -3063,7 +3066,9 @@ def _run_snapshot_scenario(
     group."""
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
-    context = _CaseContext(domain, model, _concurrency(case), TemporalShadow())
+    context = _CaseContext(
+        domain, model, _concurrency(case), TemporalShadow(), case_format.uow_isolation(case)
+    )
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
@@ -4344,12 +4349,17 @@ class _CaseContext:
     session. Each lowering therefore reads it off the port about to execute the
     statement (:class:`_GroupSession` for a group, the unit's own port
     otherwise), so this record can travel beside any of them.
+
+    The isolation is the case's own `when.uow.isolation`, carried beside the
+    concurrency preference because both are `db.transact` arguments a held group
+    opens at rather than anything a step's translation reads.
     """
 
     domain: DomainModel
     model: AcceptedMetamodel
     concurrency: Concurrency
     shadow: TemporalShadow
+    isolation: IsolationLevel | None = None
 
 
 def _empty_published() -> list[handle.WireEntity]:
@@ -4870,7 +4880,9 @@ def _run_uow_group(
                 step_graphs.append(observed)
 
     with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
-        session.database.transact(body, concurrency=context.concurrency)
+        session.database.transact(
+            body, concurrency=context.concurrency, isolation=context.isolation
+        )
     # The group's writes reach the wire in ONE flush at its boundary, so a step's
     # own plan is reconciled against the group's whole delivery rather than
     # against a flush of its own: what the transaction wrote is every write
@@ -5054,7 +5066,9 @@ def _run_interleaved_group(
 
     committed = False
     try:
-        session.database.transact(body, concurrency=context.concurrency)
+        session.database.transact(
+            body, concurrency=context.concurrency, isolation=context.isolation
+        )
         committed = True
     except OptimisticLockConflictError as exc:
         result.conflict_actual = exc.actual
@@ -5600,7 +5614,7 @@ def run_interleaved_scenario_case(
     lifecycle = LifecycleRun()
     observed_a = lifecycle.observation()
     observed_b = lifecycle.observation()
-    context = _CaseContext(domain, model, concurrency, shadow)
+    context = _CaseContext(domain, model, concurrency, shadow, case_format.uow_isolation(case))
     session_a = _GroupSession(port, context, instant, observed_a)
     peer_connection = peer_factory()
     try:
@@ -5745,7 +5759,7 @@ def run_scenario_case(
             "function does not construct — call run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
-    context = _CaseContext(domain, model, concurrency, shadow)
+    context = _CaseContext(domain, model, concurrency, shadow, case_format.uow_isolation(case))
     lowered: list[_LoweredStep] = []
     round_trips = 0
     try:
@@ -5865,7 +5879,9 @@ def run_write_sequence_case(
     domain = load_case_domain_model(case)
     model = models.accepted_model_of(domain)
     lifecycle = lifecycle_run(lifecycle)
-    context = _CaseContext(domain, model, _concurrency(case), TemporalShadow())
+    context = _CaseContext(
+        domain, model, _concurrency(case), TemporalShadow(), case_format.uow_isolation(case)
+    )
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0

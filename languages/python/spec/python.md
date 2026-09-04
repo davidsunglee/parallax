@@ -21,7 +21,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 31 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; a portable isolation vocabulary and graded isolation semantics (§5 passes a requested level through unexamined); handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
 ```json
@@ -3393,7 +3393,7 @@ identity a caller may copy or pickle across a boundary of their own.
 ## 5. Transactions and writes
 
 - **Demarcation construct.** Callback-only:
-  `db.transact(fn, *, retries: int | None = None, concurrency: Literal["locking", "optimistic"] | None = None, retry_optimistic_conflicts: bool | None = None, isolation: str | None = None)`.
+  `db.transact(fn, *, retries: int | None = None, concurrency: Literal["locking", "optimistic"] | None = None, retry_optimistic_conflicts: bool | None = None, isolation: IsolationLevel | None = None)`.
   Every option is **sentinel-backed** so an omitted option is distinguishable
   from an explicitly passed value: `None` (the default) means *apply the
   outermost defaults when this call opens the transaction — `retries=10`,
@@ -3652,31 +3652,45 @@ These feature tests do not claim the deferred `benchmark` command or general
   back to the dialect's shared read lock. `locking` forces that shared-lock,
   ungated strategy for every lockable Entity. One transaction may therefore use
   optimistic concurrency for one Entity and Locking for another.
-- **`isolation` is carried, never interpreted.** `db.transact(...,
-  isolation=...)` names the isolation the outermost boundary opens at, in the
-  concrete database's own vocabulary, and the value reaches
-  `DbPort.transaction` unchanged; omitting it requests nothing and leaves the
+- **`isolation` is a closed vocabulary, refused here and mapped by the
+  adapter.** `db.transact(..., isolation=...)` names one of the three portable
+  Isolation Levels — `parallax.core.db_port.IsolationLevel`, a `Literal` of
+  `"read_committed"`, `"repeatable_read"`, `"serializable"` — each defined by
+  the anomalies it forbids (`m-unit-work`, `m-db-port`) rather than by any
+  database's own spelling; omitting it requests nothing and leaves the
   connection at whatever the adapter or its driver already defaults to (READ
-  COMMITTED on Postgres), which is what every call that names no level gets.
-  The parameter is an unvalidated `str` rather than a `Literal` on purpose: a
-  closed set of names would BE the portable vocabulary this target defers (§1),
-  so Parallax promises that the requested value arrived and nothing about what
-  any value means. The database is the authority — a level it will not accept
-  fails the boundary, which is terminal for the same reason any begin failure
-  is. The level is a property of a boundary at the moment it opens, so it joins
-  on the same terms as the other three options — omit to inherit, repeat the
+  COMMITTED on Postgres). The value reaches `DbPort.transaction` unchanged and
+  `PostgresAdapter` maps it to this engine's name for it
+  (`parallax.postgres.isolation_spelling`), so what Parallax promises is the
+  GUARANTEE rather than a string's arrival, and a `Literal` is what makes the
+  promise expressible.
+
+  A value outside the vocabulary raises a plain `ValueError` naming the three,
+  raised where a negative `retries` bound is: at the outer call, before any
+  transaction is opened or observed, before a lifecycle event, and before this
+  call is compared against an active boundary — so a joining call naming an
+  invalid level is refused as INVALID rather than as a conflict. The check
+  compares rather than tests set membership, so a value of any type is refused
+  the one way. An engine's own spelling of a level Parallax does carry
+  (`"repeatable read"`) is refused on the same terms as a level it does not
+  (`"read uncommitted"`): being spelled for one database is what makes a name
+  unportable.
+
+  The level is a property of a boundary at the moment it opens, so it joins on
+  the same terms as the other three options — omit to inherit, repeat the
   active value to be accepted, name a different one for
   `TransactionOptionConflictError` before the joined callback runs — and a
   boundary opened with no level refuses a joining call that names one. Every
   physical attempt of one invocation opens at the same requested level, so a
-  retried callback never silently runs at a weaker one. There is no
-  handle-level, connection-level, or environment default: the setting is
-  transaction-scoped, because a connection setting is only a default for later
-  transactions and a long read is exactly the case wanting a different level
-  from the rest of an application. `tx.stream` therefore inherits its
-  transaction's level and `db.stream` carries no isolation option at all — a
-  caller wanting one database snapshot across a whole delivery streams inside
-  `db.transact`.
+  retried callback never silently runs at a weaker one; a serialization failure
+  or deadlock still retries under `m-auto-retry`'s own bound, and no new error
+  class or retry policy comes with the vocabulary. There is no handle-level,
+  connection-level, or environment default: the setting is transaction-scoped,
+  because a connection setting is only a default for later transactions and a
+  long read is exactly the case wanting a different level from the rest of an
+  application. `tx.stream` therefore inherits its transaction's level and
+  `db.stream` carries no isolation option at all — a caller wanting one
+  database snapshot across a whole delivery streams inside `db.transact`.
 - **Buffering, flush, and read-your-own-writes.** Writes buffer in the unit of
   work and flush at commit, combined and batched per `m-batch-write` (multi-row
   INSERT collapse, per-key UPDATE batching, IN-list DELETE collapse) and
