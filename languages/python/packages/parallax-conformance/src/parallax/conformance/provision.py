@@ -440,11 +440,12 @@ def load_fixtures(model_ref: str) -> dict[str, object]:
 
 
 # The Postgres SQL establishing each session default this provisioner can hand
-# an adapter, keyed by the portable spelling. It sets the CONNECTION's own
-# default rather than one transaction's level, which is what an adapter inspects
-# when it takes the connection. Postgres has no level below Read Committed and
-# runs a Read Uncommitted transaction as Read Committed, so a connection this
-# statement configures still meets the floor here.
+# an adapter, keyed by the Isolation Level name `given.sessionDefault` declares.
+# It sets the CONNECTION's own default rather than one transaction's level,
+# which is what an adapter inspects when it takes the connection. Postgres has
+# no level below Read Committed and runs a Read Uncommitted transaction as Read
+# Committed, so a connection this statement configures still meets the floor
+# here.
 _SESSION_DEFAULTS: Mapping[str, str] = {
     "read-uncommitted": (
         "set session characteristics as transaction isolation level read uncommitted"
