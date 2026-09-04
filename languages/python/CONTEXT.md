@@ -78,6 +78,13 @@ checks, value conversion, serialization, and descriptor-specific errors while
 depending inward on the common Python runtime.
 _Avoid_: model method, core descriptor module, serialization registry, runtime plugin
 
+**Domain Model Provider**:
+The Python realization of the core Metamodel Provider: the protocol a Database
+consults to obtain the Domain Model and Model Edition it currently serves. A
+Domain Model handed directly to a Database is served through a provider whose
+answer never changes.
+_Avoid_: model registry, model factory, model loader, DomainModel holder
+
 **Class Index**:
 The immutable bidirectional association between core Entity Identities and the
 Python Entity Classes that realize them, held by a class-backed Domain Model and

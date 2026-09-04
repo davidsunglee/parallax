@@ -79,7 +79,7 @@ _Avoid_: Index ID, index column, global index name
 The self-identifying local physical-index view: one Index Identity, a nonempty
 declaration-ordered sequence of Attribute Identities, and its uniqueness flag.
 An Entity carries its derived primary-key index first, then every index it
-authors. Indexes are never inherited and contain no duplicated column names.
+authors. Indices are never inherited and contain no duplicated column names.
 _Avoid_: index record, column list, effective index
 
 **Relationship Identity**:
@@ -493,6 +493,98 @@ Relational Document Layout one shared Structured Column is the document root
 for every document-resident member in its Table, and compilation gives that
 Column one physical Column Slot.
 _Avoid_: payload column, entity JSON column, document root column, JSON blob
+
+### Model Evolution
+
+**Metamodel Provider**:
+The one seam through which a Parallax Handle obtains the accepted Metamodel it
+serves, answering every request with the current Model Edition; a static model
+is a provider whose answer never changes. How and when a provider re-reads its
+own source is its private policy.
+_Avoid_: model registry, model loader, schema registry, model reloader, ambient model
+
+**Model Edition**:
+The opaque, equality-only token a Metamodel Provider attaches to one accepted
+Metamodel so that a Parallax Handle can tell whether the model it currently
+serves is the one the provider now answers. Editions are compared for equality
+only and never ordered.
+_Avoid_: model version, schema version, revision, model hash, generation
+
+**Adopted Edition**:
+The single Model Edition a Parallax Transaction or a standalone read serves for
+its whole life, chosen when it opens; a joining nested transaction inherits it
+and a retried attempt chooses afresh.
+_Avoid_: pinned model, bound model, transaction model version, current model
+
+**Edition Overlap**:
+The interval during which transactions serving different Model Editions of one
+tenant coexist, within one process or across the processes of one tenant.
+_Avoid_: rollout window, migration window, swap race
+
+**Model Evolution**:
+The total, ordered description of how an earlier accepted Metamodel, or no
+model, differs from a later accepted Metamodel, expressed as Evolution
+Operations at model altitude and bound to both endpoints. Evolution from no
+model is provisioning.
+_Avoid_: change set, model diff, schema diff, migration, delta
+
+**Evolution Operation**:
+One entry of a Model Evolution naming a model-level change: an Entity,
+Attribute, Relationship, As-Of Axis, Index, Concrete Subtype, or Value Object
+occurrence or Attribute added, removed, or altered in a named way.
+_Avoid_: DDL operation, column operation, migration step, alter
+
+**Unilateral Evolution**:
+A Model Evolution that can be introduced without coordinated changes to
+previously valid model-authored operations or destructive schema or data
+transformation. It preserves those operations' addressed identities, input
+shapes, target types, and result shapes, but may change their outcomes;
+application of its Schema Delta still precedes publication.
+_Avoid_: backward-compatible change, additive evolution, safe migration,
+non-breaking change
+
+**Coordinated Evolution**:
+A Model Evolution that requires a coordinated change to model-authored
+operations, stored data, or the rollout mechanism because it reshapes a
+previous operation surface or needs destructive transformation. It is described
+completely but cannot produce a Schema Delta through the unilateral path.
+_Avoid_: non-additive evolution, invalid evolution, unsupported change,
+breaking migration
+
+**Overlap-Visible Operation**:
+An Evolution Operation of a Unilateral Evolution that lets a later edition store a value an
+earlier Adopted Edition can select but cannot admit, so the earlier read reports
+invalid stored data. It covers nullability and String-length widening and a
+Concrete Subtype added to a shared table-per-hierarchy family, not every
+behavioral difference or constraint failure during Edition Overlap.
+_Avoid_: unsafe additive change, breaking widening, grade-two change
+
+**Behavioral Impact**:
+An endpoint-wide, structured description of one notable observable consequence
+of a Model Evolution, carrying its earlier and later facts and the nonempty
+ordered set of Evolution Operations that caused it. It informs rollout without
+prescribing policy, severity, or remediation and makes no claim that current
+stored data exercises the consequence.
+_Avoid_: invariant transition, migration warning, risk score
+
+**Schema Delta**:
+The application-facing result that carries a physical schema from one
+satisfying an earlier Metamodel to one satisfying a later: ordered
+dialect-specific statements plus the provenance of newly created physical
+Indices. It is derived from a Unilateral Evolution resolved against its later
+Metamodel's Storage Layout, every successfully applied statement prefix leaves
+the earlier edition operable without destroying domain data, and it never
+applies itself.
+_Avoid_: migration script, DDL diff, alter script, migration
+
+**Physical Index Name**:
+The `m-dialect`-owned physical-identifier value assigned to one model Index as
+realized on one physical Table. `m-schema-delta` derives it deterministically
+with a readable base and a stable fingerprint of ordered components and
+uniqueness. Schema Delta provenance and structured database-error diagnostics
+retain the same value so a violation can be correlated with a rollout without
+consulting the Metamodel Provider.
+_Avoid_: authored index name, constraint alias, generated key
 
 ### Expressions And Reads
 
