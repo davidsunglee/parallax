@@ -1,10 +1,10 @@
 """``parallax.snapshot.handle._database`` — demarcation and the flush edge (spec §5).
 
 The composition root's own module: :meth:`Database.connect` wires a concrete
-``m-db-port`` adapter to a metamodel, :meth:`Database.find` runs the shared read
-executor once outside any transaction, :meth:`Database.read_rows` runs the values
-lane's own entry for a caller that wants the transformed row itself, and
-:meth:`Database.transact` is the
+``m-db-port`` adapter to a metamodel, :meth:`Database.find` and
+:meth:`Database.read_rows` delegate to the one
+:class:`~parallax.snapshot.handle._read_scope.ReadScope` this connection owns —
+which the Wire view it answers shares — and :meth:`Database.transact` is the
 callback demarcation — sentinel-backed options, join with the option-conflict
 check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
 into the unit of work.
@@ -19,7 +19,7 @@ classification branch (``_optimistic_conflict_retriable``) is composed here too.
 
 This is the TOP of the package's internal graph: it imports
 :mod:`parallax.snapshot.handle._read`, :mod:`~parallax.snapshot.handle._transaction`,
-:mod:`~parallax.snapshot.handle._preflight` for the shared read gate,
+:mod:`~parallax.snapshot.handle._read_scope` for the read composition it owns one of,
 :mod:`~parallax.snapshot.handle._write_lowering` and
 :mod:`~parallax.snapshot.handle._planning` for the one Write Planner it builds
 once per connected Metamodel, and nothing in the package imports it except
@@ -60,12 +60,10 @@ from parallax.core.db_port import (
 # rows, so it needs both facts out of a Domain Model.
 from parallax.core.entity import (
     DomainModel,
-    EntityGraphConstruction,
     EntityRowCodec,
     graph_construction_of,
     row_codec_of,
 )
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import cataloged_model, class_index
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -77,7 +75,6 @@ from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
     WriteBatchActivity,
     installed_lifecycle,
-    open_read_root,
     open_snapshot_stream_root,
     open_transaction_root,
     refuse_reentry,
@@ -85,7 +82,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
-from parallax.core.temporal_read import scans_validated_axis
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -107,17 +103,14 @@ from parallax.core.unit_work import (
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._planning import build_write_planner
-from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
     ResultPublication,
     RowsResult,
     Snapshot,
-    find,
-    find_history,
-    find_rows,
     typed_publication,
     wire_publication,
 )
+from parallax.snapshot.handle._read_scope import SelectedReadModel, standalone_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import WireDatabaseView
@@ -213,50 +206,6 @@ class _UnattemptedBoundary(Exception):
 
 
 @dataclass(frozen=True, slots=True)
-class _ConnectedModel:
-    """The model one ``Database`` serves: the cataloged model every read
-    resolves and converts against, the Entity Row Codec every write derives its
-    rows through, and — for a class-backed model — the Entity Graph Construction
-    collaboration that materializes rows into instances of the classes it
-    composed.
-
-    Owned by the Database rather than by any query value, and carrying no
-    identity of its own — two Databases over one Domain Model serve the same
-    model and neither is preferred, because each is answered that model's own
-    retained record and capabilities, and a cataloged record a race published
-    beside it compares equal to the first — while a query built from classes
-    this model never composed is refused by target resolution rather than by
-    ownership. Holding the construction rather than the raw class index keeps
-    materialization capability behind ONE seam: there is no second capability
-    bag to widen when a new entry point (a Session) reaches the same
-    materializer.
-
-    The accepted metadata and the member layouts derived from it are composed
-    rather than held apart, because a layout that came from another model would
-    be a state nothing downstream could detect; the read lanes take that one
-    value and never its halves. The codec and the construction stay separate
-    references: neither is a function of the other, a second source over one
-    model reads neither, and only the construction can be absent at all — a row
-    and a member layout are both derived from accepted metadata alone, so a
-    descriptor-backed model reaches a fully functional codec and catalog while
-    reaching no materializer.
-    """
-
-    model: CatalogedModel
-    codec: EntityRowCodec
-    construction: EntityGraphConstruction | None
-
-    def materializing(self) -> EntityGraphConstruction:
-        """The graph construction a modeled read needs, or refuse before any I/O."""
-        if self.construction is None:
-            raise SnapshotConnectionError(
-                "this Database was connected to a model that composed no Entity Class, so it "
-                "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
-            )
-        return self.construction
-
-
-@dataclass(frozen=True, slots=True)
 class _ResolvedOptions:
     """The outermost boundary's resolved ``db.transact`` options.
 
@@ -311,10 +260,12 @@ class Database:
 
     __slots__ = (
         "_clock",
-        "_connected",
+        "_codec",
         "_lifecycle",
         "_planner",
         "_port",
+        "_reads",
+        "_selected",
     )
 
     def __init__(
@@ -340,11 +291,16 @@ class Database:
                 "one a descriptor produced; a bare accepted Metamodel names no model a "
                 "connection can serve (snapshot-class-backed-model-required)"
             )
-        self._connected = _ConnectedModel(
+        # The read half and the write half stay separate references: neither is
+        # a function of the other, and only the construction can be absent at
+        # all — a row and a member layout are both derived from accepted
+        # metadata alone, so a descriptor-backed model reaches a fully
+        # functional codec and catalog while reaching no materializer.
+        self._selected = SelectedReadModel(
             model=cataloged_model(model),
-            codec=row_codec_of(model),
             construction=(None if class_index(model) is None else graph_construction_of(model)),
         )
+        self._codec: EntityRowCodec = row_codec_of(model)
         self._port = port
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
@@ -356,10 +312,16 @@ class Database:
         # be made inside it for an operation coming back OUT of the Provider to
         # be refusable.
         self._lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
+        # The one Read Scope every read of this connection runs through — its
+        # own Typed verbs and the Wire view it answers alike (spec §5 "Private
+        # read composition").
+        self._reads = standalone_read_scope(
+            lifecycle=self._lifecycle, selected=self._selected, port=port
+        )
         # One Write Planner per connected Metamodel, reused across every
         # `transact()` attempt (`m-unit-work`: the planner is constructed once
         # per accepted Metamodel with its strategy adapters already wired).
-        self._planner: WritePlanner = build_write_planner(self._connected.model.meta)
+        self._planner: WritePlanner = build_write_planner(self._selected.model.meta)
 
     @classmethod
     def connect(
@@ -421,18 +383,7 @@ class Database:
         it to, or the queried Entity itself — so a narrowed find yields the
         narrowed rows' type without a caller-side annotation.
         """
-        # Re-entry is refused first of all: a call that arrived from inside one
-        # of this handle's own lifecycle contexts is refused before this
-        # connection's capability, this query's shape, or anything downstream of
-        # them is even consulted (`m-execution-lifecycle`).
-        refuse_reentry(self._lifecycle)
-        # The connection refusal precedes preflight, exactly as it does on
-        # `Transaction.find`: a Database that cannot materialize a Snapshot at
-        # all answers that before it answers anything about this query, so the
-        # two entry points refuse a classless connection in the same order.
-        construction = self._connected.materializing()
-        node = object_query_node(query)
-        return self._read(node, typed_publication(self._connected.model.meta, construction))
+        return self._reads.find(query)
 
     def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time, in the Continuation Order,
@@ -455,10 +406,10 @@ class Database:
         that can materialize no Snapshot at all, then this call's own arguments.
         """
         refuse_reentry(self._lifecycle)
-        construction = self._connected.materializing()
+        construction = self._selected.materializing()
         return self._stream(
             object_query_node(query),
-            typed_publication(self._connected.model.meta, construction),
+            typed_publication(self._selected.model.meta, construction),
             batch_size,
         )
 
@@ -474,14 +425,13 @@ class Database:
         return WireDatabaseView(self._wire_find, self._wire_stream)
 
     def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
-        """One Wire read: :meth:`_read` under the wire publication.
+        """One Wire read: the Read Scope's own Wire verb.
 
         The view ``db.wire`` answers holds this method rather than the handle,
         so this — not the property that built the view — is where a Wire read
-        enters and where re-entry is refused.
+        enters; re-entry is refused at the scope's first line.
         """
-        refuse_reentry(self._lifecycle)
-        return self._read(node, wire_publication(self._connected.model.meta))
+        return self._reads.wire_find(node)
 
     def _wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
         """One Wire stream: :meth:`_stream` under the wire publication.
@@ -491,7 +441,7 @@ class Database:
         enters and where re-entry is refused.
         """
         refuse_reentry(self._lifecycle)
-        return self._stream(node, wire_publication(self._connected.model.meta), batch_size)
+        return self._stream(node, wire_publication(self._selected.model.meta), batch_size)
 
     def _stream(
         self, node: ObjectQueryNode, publication: ResultPublication, batch_size: int
@@ -508,7 +458,7 @@ class Database:
         check_batch_size(batch_size)
         return SnapshotStream(
             node,
-            self._connected.model,
+            self._selected.model,
             publication,
             self._page,
             self._stream_root,
@@ -537,46 +487,7 @@ class Database:
         opens where the page begins.
         """
         with batch as calls:
-            return read_stream_page(page_plan, at, self._connected.model, self._port, calls=calls)
-
-    def _read(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
-        """One non-transactional read of ``node``, published through
-        ``publication`` — the whole composition both read interfaces run.
-
-        The gate, the milestone-set dispatch, and the executor entry are the
-        read; which materializer publishes its result is decided only after
-        execution has finished. Non-transactional in the same three ways for
-        both: no read lock, no Concurrency Preference, and no participation
-        stamped on the values it publishes. Their evidence is their own: a
-        standalone read retains the state each row observed exactly as a
-        participating one does, and differs only in the license that carries.
-
-        The Root Execution opens AFTER the gate and spans through publication:
-        the gate is deterministic and reaches no port, so a refused read creates
-        no root and calls no Provider, while planning, lowering, every Database
-        Call, conversion, and materialization are all inside the Read activity.
-        """
-        validated = preflight(node, model=self._connected.model.meta, form="graph")
-        with open_read_root(
-            self._lifecycle, target=node.target, interface=publication.interface
-        ) as read:
-            if scans_validated_axis(validated.temporal):
-                return publication.from_history(
-                    find_history(
-                        validated,
-                        self._connected.model,
-                        self._port,
-                        read=read,
-                    )
-                )
-            return publication.from_find(
-                find(
-                    validated,
-                    self._connected.model,
-                    self._port,
-                    calls=read,
-                )
-            )
+            return read_stream_page(page_plan, at, self._selected.model, self._port, calls=calls)
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Execute ``query`` exactly once outside any transaction and return its
@@ -595,16 +506,7 @@ class Database:
         row-form read, no retained evidence at all. It opens its own Read root
         after the same gate the graph form crosses.
         """
-        refuse_reentry(self._lifecycle)
-        validated = preflight(query, model=self._connected.model.meta, form="rows")
-        root = open_read_root(self._lifecycle, target=query.target, interface="ROWS")
-        with root as read:
-            return find_rows(
-                validated,
-                self._connected.model,
-                self._port,
-                read=read,
-            )
+        return self._reads.read_rows(query)
 
     def transact[T](
         self,
@@ -721,10 +623,8 @@ class Database:
 
         # The unit of work plans against the accepted model the ``Database`` already
         # holds; a joining call inherits the active unit of work's own.
-        meta = self._connected.model.meta
+        meta = self._selected.model.meta
 
-        construction = self._connected.construction
-        codec = self._connected.codec
         extra_retriable = (
             _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
         )
@@ -756,9 +656,8 @@ class Database:
                             tx = Transaction(
                                 uow,
                                 conn,
-                                self._connected.model,
-                                construction,
-                                codec,
+                                self._selected,
+                                self._codec,
                                 physical,
                                 self._lifecycle,
                             )

@@ -11,23 +11,29 @@ claim cannot absorb is refused. That seam is `_write_inputs`' rather than this
 class's, because the Wire verbs reach it too: one ingress per representation, one
 judgement and one buffer for both.
 
-It also owns the row-form read (:meth:`Transaction.read_rows`), which the
+It also carries the row-form read (:meth:`Transaction.read_rows`), which the
 conformance harness reaches and no developer surface does. It is not a second
 lifecycle: the read enters the same force-flush and lock derivation ``find``
 does, and opens its own Read under this transaction's attempt exactly as every
 participating read here does.
+
+The read COMPOSITION is not owned here either. :meth:`Transaction.find`,
+:meth:`Transaction.read_rows`, and the Wire read the ``tx.wire`` view answers
+all delegate to the one participating
+:class:`~parallax.snapshot.handle._read_scope.ReadScope` this transaction
+constructs, which is the same object and the same ladder a ``Database``'s
+standalone reads run.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn)`` into
 :mod:`parallax.snapshot.handle._predicate_writes`, which buffers through
 ``uow.buffer`` and never reaches back into this class.
 
-Depends on :mod:`parallax.snapshot.handle._preflight` (the shared read gate
-``find`` passes before touching the unit of work),
-:mod:`parallax.snapshot.handle._read` (the shared find executor plus
-the pin / result-conversion helpers ``find`` needs),
-:mod:`parallax.snapshot.handle._write_inputs` (verb-input validation and the
-evidence machinery), and
+Depends on :mod:`parallax.snapshot.handle._read_scope` (the read composition
+every read verb here delegates to),
+:mod:`parallax.snapshot.handle._read` (the publication factories and the result
+surface), :mod:`parallax.snapshot.handle._write_inputs` (verb-input validation
+and the evidence machinery), and
 :mod:`parallax.snapshot.handle._predicate_writes`. Demarcation — ``Database``,
 ``_Demarcation``, and ``TransactionOptionConflictError`` — lives in
 :mod:`parallax.snapshot.handle._database`, which imports this module, never the
@@ -43,11 +49,9 @@ from typing import Any
 from parallax.core.db_port import DbPort
 from parallax.core.entity import (
     AttributeAssignment,
-    EntityGraphConstruction,
     EntityRowCodec,
 )
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     StreamBatchActivity,
@@ -57,8 +61,6 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
-from parallax.core.object_query._validated import ValidatedObjectQuery
-from parallax.core.temporal_read import scans_validated_axis
 from parallax.core.unit_work import (
     KeyedMutation,
     SettledEvidence,
@@ -71,24 +73,20 @@ from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPre
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
-from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
     ResultPublication,
     RowsResult,
     Snapshot,
-    find,
-    find_history,
-    find_rows,
     typed_publication,
     wire_publication,
 )
+from parallax.snapshot.handle._read_scope import SelectedReadModel, participating_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
 from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._wire_writes import WireWriteLane, buffer_prepared_keyed_write
@@ -150,10 +148,11 @@ class Transaction:
         "_attempt",
         "_codec",
         "_conn",
-        "_construction",
         "_inserted_objects",
         "_lifecycle",
         "_model",
+        "_reads",
+        "_selected",
         "_uow",
     )
 
@@ -161,16 +160,18 @@ class Transaction:
         self,
         uow: UnitOfWork,
         conn: DbPort,
-        model: CatalogedModel,
-        construction: EntityGraphConstruction | None,
+        selected: SelectedReadModel,
         codec: EntityRowCodec,
         attempt: TransactionAttemptActivity,
         lifecycle: InstalledLifecycle | None,
     ) -> None:
         self._uow = uow
         self._conn = conn
-        self._model = model
-        self._construction = construction
+        self._selected = selected
+        # The write verbs' own metadata, which is the read selection's cataloged
+        # half: a write names Entities and derives rows, so it needs the catalog
+        # without the materialization capability beside it.
+        self._model = selected.model
         self._codec = codec
         # The physical attempt every activity this transaction opens hangs
         # under: a read, the dependency batch that precedes it, and the
@@ -183,6 +184,12 @@ class Transaction:
         # refused here on exactly the state the handle refuses on
         # (`m-execution-lifecycle`).
         self._lifecycle = lifecycle
+        # The one Read Scope every read of this transaction runs through — its
+        # own Typed verbs and the Wire view it answers alike (spec §5 "Private
+        # read composition").
+        self._reads = participating_read_scope(
+            lifecycle=lifecycle, selected=selected, uow=uow, conn=conn, attempt=attempt
+        )
         # What THIS transaction buffered an insert of — a same-transaction insert
         # IS the provenance a subsequent keyed write builds on, so both
         # read-your-own-writes exemptions (the value-provenance refusal and the
@@ -574,14 +581,7 @@ class Transaction:
         retains no evidence at all: its roots stand at coordinates no keyed
         write may address.
         """
-        # The classless-connection refusal precedes the read seam deliberately:
-        # the gate and the force-flush it stands in front of both live below
-        # here, so a Transaction that cannot materialize a Snapshot refuses
-        # before either runs.
-        refuse_reentry(self._lifecycle)
-        construction = _materializing(self._construction)
-        node = object_query_node(query)
-        return self._read(node, typed_publication(self._model.meta, construction))
+        return self._reads.find(query)
 
     @property
     def wire(self) -> WireTransactionView:
@@ -616,10 +616,9 @@ class Transaction:
         themselves — each Entity node carries its own Source Hint — so the read
         answers the result and nothing beside it. The view ``tx.wire`` answers
         holds this method rather than the transaction, so this is where a Wire
-        read enters and where re-entry is refused.
+        read enters; re-entry is refused at the Read Scope's first line.
         """
-        refuse_reentry(self._lifecycle)
-        return self._read(node, wire_publication(self._model.meta))
+        return self._reads.wire_find(node)
 
     def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time inside this transaction, as
@@ -637,7 +636,7 @@ class Transaction:
         callback opens a fresh stream and may observe them again.
         """
         refuse_reentry(self._lifecycle)
-        construction = _materializing(self._construction)
+        construction = self._selected.materializing()
         return self._streamed(
             object_query_node(query),
             typed_publication(self._model.meta, construction),
@@ -700,52 +699,6 @@ class Transaction:
                 calls=calls,
             )
 
-    def _read(self, node: ObjectQueryNode, publication: ResultPublication) -> Snapshot[Any]:
-        """One participating read of ``node``, published through ``publication`` —
-        the whole composition both read interfaces run.
-
-        The gate precedes the force-flush ``uow.read`` performs, so a refused
-        read flushes nothing, and each level derives its own lock from this unit
-        of work's Concurrency Preference and that level's own Entity. A
-        milestone-set read retains no evidence at all: its roots stand at
-        coordinates no keyed write may address.
-
-        The Read activity opens INSIDE the force-flush, which is what makes the
-        dependency batch this read forces out an ordered SIBLING of it rather
-        than a scope containing it (`m-execution-lifecycle`), and it spans
-        through publication exactly as a standalone read's does.
-        """
-        validated = preflight(node, model=self._model.meta, form="graph")
-        return self._uow.read(lambda: self._published(node, validated, publication))
-
-    def _published(
-        self,
-        node: ObjectQueryNode,
-        validated: ValidatedObjectQuery,
-        publication: ResultPublication,
-    ) -> Snapshot[Any]:
-        """One participating read's own activity: execute, convert, publish."""
-        with self._attempt.read(node.target, publication.interface) as read:
-            if scans_validated_axis(validated.temporal):
-                return publication.from_history(
-                    find_history(
-                        validated,
-                        self._model,
-                        self._conn,
-                        read=read,
-                    )
-                )
-            return publication.from_find(
-                find(
-                    validated,
-                    self._model,
-                    self._conn,
-                    preference=self._uow.settings.concurrency,
-                    ledger=self._uow,
-                    calls=read,
-                )
-            )
-
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Run a PARTICIPATING row-form read and return its published rows.
 
@@ -762,25 +715,7 @@ class Transaction:
         evidence reads the graph form, which is what :meth:`find` and
         ``tx.wire.find`` always run.
         """
-        refuse_reentry(self._lifecycle)
-        # The gate precedes `uow.read` deliberately, exactly as `find`'s does:
-        # that read force-flushes pending buffered writes, so a refused read must
-        # be refused before it or a refusal turns into a write.
-        validated = preflight(query, model=self._model.meta, form="rows")
-        return self._uow.read(lambda: self._published_rows(query, validated))
-
-    def _published_rows(
-        self, query: ObjectQueryNode, validated: ValidatedObjectQuery
-    ) -> RowsResult:
-        """One participating row-form read's own activity."""
-        with self._attempt.read(query.target, "ROWS") as read:
-            return find_rows(
-                validated,
-                self._model,
-                self._conn,
-                preference=self._uow.settings.concurrency,
-                read=read,
-            )
+        return self._reads.read_rows(query)
 
     def _buffer(
         self,
@@ -991,20 +926,3 @@ def buffer_prepared_wire_keyed_write(
         observed,
         assigned_members,
     )
-
-
-def _materializing(
-    construction: EntityGraphConstruction | None,
-) -> EntityGraphConstruction:
-    """The graph construction a modeled read needs, or refuse before ``uow.read``.
-
-    Absent exactly for a descriptor-backed Domain Model, which composes no Entity
-    Class and therefore serves the Wire and write lanes while materializing
-    nothing.
-    """
-    if construction is None:
-        raise SnapshotConnectionError(
-            "this Transaction's Database was connected to a model that composed no Entity "
-            "Class, so it cannot materialize a Snapshot (snapshot-class-backed-model-required)"
-        )
-    return construction
