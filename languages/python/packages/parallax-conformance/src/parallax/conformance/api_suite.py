@@ -926,10 +926,10 @@ _READ_LOCK_PARTITIONED_GOLDEN_REASON: Final[str] = (
     "developer Concurrency Preference surface, while this case isolates SQL shape"
 )
 # The read-lock module's two-session behavioral proofs
-# (`m-read-lock-006`/`-007`/`-011`/`-012`) cover a genuine two-connection
-# concurrency property (a shared lock blocking/admitting a writer or a second
-# reader) no single-session idiomatic example can demonstrate — graded by the
-# case-driven `when.concurrency` rounds runner instead.
+# (`m-read-lock-006`/`-007`/`-011`/`-012`/`-013`/`-015`) cover a genuine
+# two-connection concurrency property (a shared lock blocking/admitting a writer or
+# a second reader) no single-session idiomatic example can demonstrate — graded by
+# the case-driven `when.concurrency` rounds runner instead.
 _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
     "the two-session behavioral proof (a Locking-strategy reader's shared lock "
     "blocking/admitting a writer or a second reader) is graded end-to-end by the "
@@ -938,6 +938,22 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
     "`test_run_sweep.test_read_lock_concurrency_rounds`) — a genuine two-connection "
     "concurrency property no single-session idiomatic example can demonstrate; the "
     "reference harness remains its own independent cross-check"
+)
+# The isolation scenarios (`m-unit-work-031`/`-032`/`-034`) each hold TWO units of
+# work open at once and grade what the reading one observes across the writing
+# one's commit. There is no single-callback developer expression of two concurrent
+# units of work, exactly as `_OPT_LOCK_INTERLEAVED_RACE_REASON` records for the
+# optimistic-lock race. What differs between them is which OTHER lane grades them:
+# the run sweep's interleaved-group runner drives `-032`, and names per case why it
+# drives neither of the others (`test_run_sweep._INTERLEAVED_RUNNER_CASES`).
+_ISOLATION_SCENARIO_REASON: Final[str] = (
+    "the guarantee a portable Isolation Level makes to a READING unit of work while a "
+    "concurrent one writes: two units of work held open at once, which has no "
+    "single-callback developer expression and therefore no idiomatic example. The "
+    "reference harness grades it on both engines, which is also the only place the "
+    "MariaDB half of the promise is observable at all; `m-unit-work-032` is the arm "
+    "the run sweep's interleaved-group runner drives against real Postgres through "
+    "the shipped `db.transact`"
 )
 # `m-pk-gen-014` composes a non-temporal sequence-registry update with an
 # Transaction-Time-Only insert in one write sequence and two transactions. It is graded
@@ -1435,6 +1451,12 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-010": _READ_LOCK_PARTITIONED_GOLDEN_REASON,
     "m-read-lock-011": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-012": _READ_LOCK_TWO_SESSION_REASON,
+    "m-read-lock-013": _READ_LOCK_TWO_SESSION_REASON,
+    "m-read-lock-015": _READ_LOCK_TWO_SESSION_REASON,
+    # -- m-unit-work: the isolation scenarios ------------------------------- #
+    "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
+    "m-unit-work-032": _ISOLATION_SCENARIO_REASON,
+    "m-unit-work-034": _ISOLATION_SCENARIO_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #
     "m-batch-write-004": _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON,
     # -- m-pk-gen: temporal composition -------------------------------------- #

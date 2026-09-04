@@ -440,39 +440,27 @@ def test_a_boundary_asked_for_no_isolation_sends_no_level_statement() -> None:
     assert connection.executed == []
 
 
-def test_a_requested_isolation_is_the_boundarys_first_statement() -> None:
+@pytest.mark.parametrize("level", sorted(ISOLATION_LEVELS))
+def test_each_portable_level_opens_the_boundary_at_its_postgres_spelling(level: str) -> None:
     # Postgres accepts a level only as the transaction's first statement, which
     # is what makes this part of opening the boundary rather than of the work
-    # inside it. The level is the caller's own spelling, sent unexamined.
+    # inside it. What it is asked for is Postgres' OWN name for the portable
+    # level, delimited as the setting's value, so the whole statement is one
+    # level and never a second transaction mode or a second statement.
+    requested = isolation_level(level)
     connection = _FakeConnection()
     outcome = _adapter(connection).transaction(
-        lambda port: port.execute("select 1", []), isolation="repeatable read"
+        lambda port: port.execute("select 1", []), isolation=requested
     )
     assert isinstance(outcome, Committed)
     assert _sent(connection) == [
-        "set local transaction_isolation = 'repeatable read'",
+        f"set local transaction_isolation = '{isolation_spelling(requested)}'",
         "select 1",
     ]
 
 
-def test_a_requested_isolation_reaches_the_database_as_a_value_not_as_sql() -> None:
-    # The level is a public API string, so what a caller spells is not
-    # constrained by anything above this seam. It is delimited as the setting's
-    # VALUE rather than composed into the statement, so a string that would
-    # otherwise append transaction modes the boundary was never asked for — or
-    # end the statement and start another — arrives as one quoted value for
-    # Postgres to refuse.
-    connection = _FakeConnection()
-    _adapter(connection).transaction(
-        lambda _port: None, isolation="serializable, read only'; drop table grade --"
-    )
-    assert _sent(connection) == [
-        "set local transaction_isolation = 'serializable, read only''; drop table grade --'"
-    ]
-
-
 def test_a_refused_isolation_reports_a_boundary_that_never_opened() -> None:
-    # A level the database will not take leaves a transaction that began and did
+    # A boundary whose level statement the database refuses has begun and done
     # nothing. The body never runs, the empty transaction is undone here rather
     # than by the caller, and the outcome is the one for a boundary that never
     # opened — nothing to retry, nothing to undo.
@@ -481,7 +469,7 @@ def test_a_refused_isolation_reports_a_boundary_that_never_opened() -> None:
     )
     ran: list[str] = []
     outcome = _adapter(connection).transaction(
-        lambda _port: ran.append("body"), isolation="not a level"
+        lambda _port: ran.append("body"), isolation="serializable"
     )
     assert isinstance(outcome, BeginFailed)
     assert _translated(outcome.error).native_code == "22023"
@@ -498,7 +486,7 @@ def test_a_connection_that_cannot_undo_a_refused_isolation_is_discarded() -> Non
         cursor_error=errors.InvalidParameterValue("invalid value for parameter"),
         rollback_error=errors.OperationalError("the connection is closed"),
     )
-    outcome = _adapter(connection).transaction(lambda _port: None, isolation="not a level")
+    outcome = _adapter(connection).transaction(lambda _port: None, isolation="serializable")
     assert isinstance(outcome, BeginFailed)
     assert _translated(outcome.error).native_code == "22023"
     assert connection.closed

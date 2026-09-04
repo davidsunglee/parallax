@@ -1,0 +1,116 @@
+# Read Committed forbids a dirty read (m-unit-work / m-db-port): a unit of work
+# opened at `when.uow.isolation: read-committed` never observes another unit of
+# work's uncommitted write.
+#
+# Two interleaved `uow` groups over account 2. The `writer` group observes it,
+# buffers a gated update to 999.00, and stays open; the `reader` group then finds
+# the same row and MUST observe the fixture value 250.00 at version 1 — the state
+# the database has committed, not the one the peer transaction is holding. Only
+# after that does the `writer` group's own dependent find read its own uncommitted
+# write back (read-your-own-writes, which is a property of the writing transaction
+# and not of any level) and commit; the trailing UNGROUPED find then observes
+# 999.00 at version 2.
+#   step 0 find  : `writer` observes account 2 (Linus, 250.00, version 1)
+#   step 1 write : `writer` buffers the gated update to 999.00, advancing the
+#                  observed version 1 -> 2; NOT the group's last step, so the
+#                  transaction stays open and the write stays uncommitted
+#   step 2 find  : `reader` observes account 2 — 250.00 at version 1. This is the
+#                  teeth: an implementation whose reader saw 999.00 read data no
+#                  transaction had committed, and would then have read a value
+#                  that never became durable had the writer aborted. The group
+#                  COMMITS after this, its last step.
+#   step 3 find  : `writer` observes its OWN buffered write, 999.00 at version 2.
+#                  The group COMMITS after this, its last step.
+#   step 4 find  : UNGROUPED, after both groups resolved — 999.00 at version 2.
+# The trailing find deliberately states only what both engines have committed:
+# `read-committed` permits nonrepeatable reads and phantoms, and a case must not
+# require one to occur merely because the level allows it. roundTrips = 5.
+model: models/account.yaml
+tags: [m-unit-work, m-db-error, isolation, read-committed, dirty-read, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the versioned write's version bind is the framework-owned advance of the version its own group's observing find returned — a query result (m-opt-lock)"
+when:
+  uow:
+    isolation: read-committed
+  scenario:
+    - uow: writer
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: the writing unit of work observes account 2 (250.00, version 1) before its update
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    - uow: writer
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 2, balance: "999.00" }
+      roundTrips: 1
+      note: the gated update advancing the OBSERVED version 1 -> 2; the group does not close here, so the write stays uncommitted across the reader's find below
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+            mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: ["999.00", 2, 2, 1]
+    - uow: reader
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: the reading unit of work MUST observe the COMMITTED 250.00 at version 1, never the peer's uncommitted 999.00; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    - uow: writer
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: the writer reads its OWN write back inside its own transaction; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "999.00", version: 2 }
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: UNGROUPED, after both groups resolved — the committed 999.00 at version 2
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "999.00", version: 2 }
+then:
+  roundTrips: 5

@@ -303,19 +303,46 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
             compare_graph(observed_entry["graph"], expected_entry["graph"], CollectionKinds(model))
 
 
-# `m-opt-lock-012`'s scenario ALSO declares `compileEligibility: run-only` and
-# ALSO uses `uow` grouping (:func:`_case_uses_uow_grouping`), but its two groups
-# INTERLEAVE (the classic optimistic-lock race — one unit of work's observing
-# find, a CONCURRENT unit of work's own observe-and-commit, then back to the
-# first) — `run_scenario_case`/`adapter.run_case` execute only CONTIGUOUS `uow`
-# groups (`engine._scenario_uow_spans`; a genuinely interleaved group needs a
-# SECOND, independent connection this test's ordinary single-`DbPort` seam does
-# not hold open). It stays OUT of `_WRITE_CASES`/`test_write_run_sweep`;
-# `test_interleaved_uow_group_run_sweep` below is its own dedicated entry point
-# (`engine.run_interleaved_scenario_case`, over the
-# `Provisioner.peer` seam) — a routing exclusion, not a deferral, since the
-# case IS run-lane exercised now, just through a different function.
-_INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset({"m-opt-lock-012"})
+# The scenario cases that ALSO declare `compileEligibility: run-only` and ALSO use
+# `uow` grouping (:func:`_case_uses_uow_grouping`) but whose groups INTERLEAVE —
+# one unit of work's read, a CONCURRENT unit of work's own write-and-commit, then
+# back to the first. `run_scenario_case`/`adapter.run_case` execute only CONTIGUOUS
+# `uow` groups (`engine._scenario_uow_spans`; a genuinely interleaved group needs a
+# SECOND, independent connection this test's ordinary single-`DbPort` seam does not
+# hold open), so every one of them stays OUT of `_WRITE_CASES`/
+# `test_write_run_sweep`. Membership here is a routing exclusion alone; what runs
+# each of them is `_INTERLEAVED_RUNNER_CASES` below.
+_INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
+    {
+        "m-opt-lock-012",
+        "m-unit-work-031",
+        "m-unit-work-032",
+        "m-unit-work-033",
+        "m-unit-work-034",
+    }
+)
+
+
+# The interleaved cases `test_interleaved_uow_group_run_sweep` drives through
+# `engine.run_interleaved_scenario_case` over the `Provisioner.peer` seam:
+# `m-opt-lock-012`'s optimistic-lock race, and `m-unit-work-032`'s Repeatable Read
+# proof — two units of work reading and writing one row, whose second read is
+# graded against the first. The isolation arm is what makes the level reach a HELD
+# group through the shipped `db.transact` at all, so its own `expectRows` is this
+# lane's only grading of `engine._CaseContext.isolation`.
+#
+# The other three isolation scenarios are graded by the reference harness alone, on
+# both engines, and are named here rather than left to be rediscovered:
+# `m-unit-work-031`'s reader must face state its peer wrote and has not committed,
+# and a unit of work BUFFERS its writes until its own flush edge, so the peer's DML
+# is not on the wire when the reader's step runs — the window the case authors is
+# one the harness's verbatim per-step execution has and a real unit of work does
+# not;
+# `m-unit-work-033` states `expectGraph`, an oracle
+# `run_interleaved_scenario_case` refuses outright for lack of a `stepGraphs`
+# channel; and `m-unit-work-034`'s reads are streamed deliveries whose pages the
+# turnstile advances per STEP, not per page.
+_INTERLEAVED_RUNNER_CASES: Final[frozenset[str]] = frozenset({"m-opt-lock-012", "m-unit-work-032"})
 
 
 def _case_uses_uow_grouping(case: case_format.Case) -> bool:
@@ -876,7 +903,7 @@ def _assert_layout_shaped_table_state(
 def _reachable_interleaved_uow_group_cases() -> list[case_format.Case]:
     from parallax.conformance import sweep
 
-    return [c for c in sweep.reachable_cases() if c.case_id in _INTERLEAVED_UOW_GROUP_CASES]
+    return [c for c in sweep.reachable_cases() if c.case_id in _INTERLEAVED_RUNNER_CASES]
 
 
 _INTERLEAVED_CASES = _reachable_interleaved_uow_group_cases()
@@ -884,8 +911,8 @@ _INTERLEAVED_CASES = _reachable_interleaved_uow_group_cases()
 
 @pytest.mark.parametrize("case", _INTERLEAVED_CASES, ids=[c.case_id for c in _INTERLEAVED_CASES])
 def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: Any) -> None:
-    """`m-opt-lock-012`'s own dedicated entry point:
-    the two-group optimistic-lock race, run over a REAL peer connection
+    """The two-connection interleaved-group entry point: two units of work held
+    open at once over a REAL peer connection
     (`engine.run_interleaved_scenario_case`), never through `adapter.run_case`
     (which cannot hold a second session open).
 
@@ -893,17 +920,22 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     ordinary scenario — the ordered per-step golden DML (flattened across
     both interleaved groups plus the trailing ungrouped verify find, in
     AUTHORED step order), `then.roundTrips`, and every find step's own
-    observed rows against its authored `expectRows` (grouped steps 0/1's own
-    observing finds AND the trailing
-    ungrouped verify at step 4, the SAME `compare_rows` comparator/
+    observed rows against its authored `expectRows` (the grouped observing
+    finds AND the trailing
+    ungrouped verify, the SAME `compare_rows` comparator/
     canonicalization the ordinary lane uses, never a forked row-equality) —
-    PLUS the scenario shape's own extra top-level assertion,
-    `then.affectedRows`: the doomed group's own conflicting write's actual
-    affected-row count (`0`, the stale-version gate mismatch that dooms the
-    whole unit of work). The `expectRows` grade is the case's own teeth: a
-    broken abort that left the doomed group's buffered insert durable would
-    still emit well-formed DML and a correct `affectedRows`, but step 4's
-    verify find would observe account 9 — this is what catches it.
+    PLUS the scenario shape's own extra top-level assertion where a case
+    authors one, `then.affectedRows`: a conflicting write's actual
+    affected-row count, and `None` for a case in which no group conflicts.
+
+    The `expectRows` grade is each case's own teeth, and what it catches
+    differs per case. For `m-opt-lock-012` a broken abort that left the doomed
+    group's buffered insert durable would still emit well-formed DML and a
+    correct `affectedRows`, and its trailing verify find would observe account
+    9. For `m-unit-work-032`'s Repeatable Read arm the emissions and the count
+    are identical whatever level the groups opened at, and the reader's second
+    find is the ONLY thing that differs: at the connection's own default it
+    answers the peer's committed 999.00 rather than the 250.00 it read first.
     """
     model = engine.load_case_metamodel(case)
     profile_run.reset(model, case_fixtures(case))
@@ -920,7 +952,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
 
     then = case_document(case)["then"]
     assert round_trips == then["roundTrips"], case.case_id
-    assert conflict_actual == then["affectedRows"], case.case_id
+    assert conflict_actual == then.get("affectedRows"), case.case_id
 
     expected_per_find = _scenario_expect_rows(case)
     assert len(find_rows) == len(expected_per_find), (case.case_id, find_rows)

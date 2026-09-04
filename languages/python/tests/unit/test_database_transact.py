@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable
 from decimal import Decimal
+from typing import Any, cast
 
 import pytest
 from _transact_support import (
@@ -49,7 +50,14 @@ from _support.db_port import (
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, RollbackFailed, RolledBack, TransactionOutcome
+from parallax.core.db_port import (
+    ISOLATION_LEVELS,
+    DbPort,
+    IsolationLevel,
+    RollbackFailed,
+    RolledBack,
+    TransactionOutcome,
+)
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import (
     CardinalityCorruptionError,
@@ -169,7 +177,7 @@ def test_join_with_a_conflicting_explicit_option_raises(
 
 
 # --------------------------------------------------------------------------- #
-# Isolation: carried to the port, never interpreted.                          #
+# Isolation: a closed vocabulary, refused here and mapped by the adapter.      #
 # --------------------------------------------------------------------------- #
 def test_an_omitted_isolation_asks_the_port_for_nothing() -> None:
     # The sentinel is a request for nothing rather than a value Parallax would
@@ -179,17 +187,47 @@ def test_an_omitted_isolation_asks_the_port_for_nothing() -> None:
     assert port.calls == [BeginCall(None), CommitCall()]
 
 
-@pytest.mark.parametrize(
-    "level", ["serializable", "repeatable read", "whatever this adapter takes"]
-)
-def test_an_explicit_isolation_reaches_the_port_unchanged(level: str) -> None:
-    # An unvalidated `str`: Parallax defines no portable vocabulary of levels and
-    # grades no level's behavior, so the value the caller named is the value the
-    # port is handed — including one no database would accept, which the adapter
-    # and its database settle rather than this handle.
+@pytest.mark.parametrize("level", sorted(ISOLATION_LEVELS))
+def test_every_level_of_the_vocabulary_reaches_the_port(level: str) -> None:
+    # Every member of the closed vocabulary crosses the seam, and crosses it as
+    # itself: the handle refuses what is outside the vocabulary and interprets
+    # nothing inside it, leaving the mapping to the adapter that owns an engine.
     port = ScriptedPort(Transact())
-    account_db(port).transact(lambda _tx: "ok", isolation=level)
-    assert port.calls == [BeginCall(level), CommitCall()]
+    account_db(port).transact(lambda _tx: "ok", isolation=cast("IsolationLevel", level))
+    assert port.calls == [BeginCall(cast("IsolationLevel", level)), CommitCall()]
+
+
+@pytest.mark.parametrize(
+    "level", ["read uncommitted", "repeatable read", "SERIALIZABLE", "", 3, None.__class__]
+)
+def test_a_level_outside_the_vocabulary_is_refused_before_the_port_is_asked(level: object) -> None:
+    # A name outside the vocabulary names no guarantee any adapter could map, so
+    # it is the caller's mistake rather than a database's refusal: raised where a
+    # negative retry bound is, before anything opens. An engine's own spelling of
+    # a level Parallax does carry is refused on the same terms as a level it does
+    # not — being spelled for one database is what makes it unportable.
+    port = ScriptedPort()
+    with pytest.raises(ValueError, match="isolation must be one of"):
+        account_db(port).transact(_must_not_run, isolation=cast("Any", level))
+    assert port.calls == []
+
+
+def test_a_joined_call_naming_a_level_outside_the_vocabulary_is_refused_as_invalid() -> None:
+    # The refusal precedes the join comparison, so what a caller is told is that
+    # the level does not exist — never that it disagrees with the active
+    # boundary, which would read as though spelling it correctly would have been
+    # accepted when the same level was already active.
+    port = ScriptedPort(Transact())
+    db = account_db(port)
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(ValueError, match="isolation must be one of") as refusal:
+            db.transact(_must_not_run, isolation=cast("Any", "repeatable read"))
+        assert not isinstance(refusal.value, TransactionOptionConflictError)
+        return "survived"
+
+    assert db.transact(outer, isolation="repeatable_read") == "survived"
+    assert port.calls == [BeginCall("repeatable_read"), CommitCall()]
 
 
 def test_every_retry_of_one_invocation_opens_at_the_requested_isolation() -> None:
@@ -220,7 +258,7 @@ def test_a_join_naming_a_different_isolation_raises_before_its_callback_runs() -
 
     def outer(_tx: Transaction) -> str:
         with pytest.raises(TransactionOptionConflictError, match="isolation"):
-            db.transact(_must_not_run, isolation="repeatable read")
+            db.transact(_must_not_run, isolation="repeatable_read")
         return "survived"
 
     assert db.transact(outer, isolation="serializable") == "survived"

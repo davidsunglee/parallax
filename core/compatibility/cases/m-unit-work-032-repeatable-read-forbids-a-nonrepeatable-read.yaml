@@ -1,0 +1,116 @@
+# Repeatable Read forbids a nonrepeatable read (m-unit-work / m-db-port): a unit of
+# work opened at `when.uow.isolation: repeatable-read` observes the same row twice
+# and gets the same answer, across a peer transaction that committed a change to it
+# in between.
+#
+# Two interleaved `uow` groups over account 2. The `reader` group observes it, the
+# `writer` group observes it, updates it, and COMMITS while the reader is still
+# open, and the reader then re-issues its own find. The second find MUST answer
+# exactly what the first one did.
+#   step 0 find  : `reader` observes account 2 (Linus, 250.00, version 1)
+#   step 1 find  : `writer` observes the same row, its own gate's evidence
+#   step 2 write : `writer` updates it to 999.00, advancing the OBSERVED version
+#                  1 -> 2. The group COMMITS after this, its last step, so what the
+#                  reader faces next is durable and visible to every new reader.
+#   step 3 find  : `reader` re-issues its own find — still 250.00 at version 1.
+#                  This is the teeth: the answer must come from the state the
+#                  reader's own transaction reads at, not from the newest committed
+#                  state, or the reader's two answers disagree about one row and
+#                  every conclusion it drew from the first is stale. The group
+#                  COMMITS after this, its last step.
+#   step 4 find  : UNGROUPED, after both groups resolved — 999.00 at version 2,
+#                  which is what makes step 3's answer a fixed view rather than a
+#                  write that never happened.
+# The first of three cases varying only the READ that is repeated — this one a plain
+# object find, m-unit-work-033 a deep fetch, m-unit-work-034 a streamed delivery —
+# because a level's guarantee holds for a transaction rather than for a statement
+# form. roundTrips = 5.
+model: models/account.yaml
+tags: [m-unit-work, isolation, repeatable-read, nonrepeatable-read, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the versioned write's version bind is the framework-owned advance of the version its own group's observing find returned — a query result (m-opt-lock)"
+when:
+  uow:
+    isolation: repeatable-read
+  scenario:
+    - uow: reader
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: the reading unit of work observes account 2 (250.00, version 1)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    - uow: writer
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: the writing unit of work observes the same row before gating on it
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    - uow: writer
+      write:
+        - mutation: update
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 2, balance: "999.00" }
+      roundTrips: 1
+      note: the gated update advancing the OBSERVED version 1 -> 2; the group COMMITS after this, its last step, while the reader is still open
+      statements:
+        - sql:
+            postgres: update account set balance = ?, version = ? where id = ? and version = ?
+            mariadb: update account set balance = ?, version = ? where id = ? and version = ?
+          binds: ["999.00", 2, 2, 1]
+    - uow: reader
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: the SAME find again MUST observe 250.00 at version 1, unchanged by the peer's committed write; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "250.00", version: 1 }
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
+      roundTrips: 1
+      note: UNGROUPED, after both groups resolved — the peer's write is durable, 999.00 at version 2
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+            mariadb: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+          binds: [2]
+      expectRows:
+        - { id: 2, owner: Linus, balance: "999.00", version: 2 }
+then:
+  roundTrips: 5

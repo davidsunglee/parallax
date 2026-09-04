@@ -551,13 +551,20 @@ Each page is an ordinary read taking its own view of the data, and nothing
 between two pages holds the roots a later one will reach — so a root that
 changed after the page that would have delivered it was read is a change the
 delivery never sees. A unit of work open around the delivery does not widen
-this by itself: what a boundary adds is whatever the DATABASE's own isolation
-adds, and at an ordinary per-statement default that is nothing, leaving a
-participating delivery exactly as skewed as a standalone one. A shared row lock
-closes no part of it either — it holds roots already read and says nothing about
-roots not yet reached, and locking every root of an unbounded delivery is a
-different problem. A caller who needs more asks the database for it; this
-contract states per-page stability and grades no isolation's behavior.
+this by itself: what a boundary adds is whatever its Isolation Level adds
+(`m-db-port`), and at an ordinary per-statement default that is nothing, leaving
+a participating delivery exactly as skewed as a standalone one. A participating
+delivery INHERITS the level its transaction was opened at rather than requesting
+one of its own — a standalone delivery has no boundary to name a level for, so
+there is no isolation option on one — and a transaction opened at Repeatable
+Read therefore carries that level's guarantee across every page it pages: the
+nonrepeatable read the level forbids is forbidden for a delivery's rows exactly
+as it is for a find's. Phantoms are permitted at that level, so what a caller
+still does not get is one coherent predicate result across the pages. A shared
+row lock closes no part of it either — it holds roots already read and says
+nothing about roots not yet reached, and locking every root of an unbounded
+delivery is a different problem. This contract states per-page stability; what
+a level adds on top of it is `m-db-port`'s.
 
 What per-page stability admits is stated against the delivery's **position** —
 the Continuation Order coordinate the last delivered root stood at, which is

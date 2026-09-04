@@ -6,6 +6,10 @@ session, an ungrouped one on the provider's autocommit connection — and a grou
 closes at its own declared last step. What a read then observes is
 :mod:`.reads`'.
 
+Every session a step holds opens at the case's declared `when.uow.isolation`,
+the provider mapping that portable level to its own engine; an ungrouped step on
+the autocommit connection is one statement and takes the server's own default.
+
 A step carrying the OPTIONAL `uow` grouping key (`m-case-format`) executes on a
 HELD session shared with every other step of the SAME label: a grouped write
 applies through the session (never committed per-step) and a grouped find reads
@@ -57,7 +61,7 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
             session: Any = None
             if state is not None:
                 if state.session is None:
-                    state.session = stack.enter_context(execution.open_session())
+                    state.session = stack.enter_context(execution.open_session(case.isolation))
                 session = state.session
 
             with reported_against(case, step.index):
@@ -112,7 +116,7 @@ def _apply_ungrouped_write(
         for statement, binds in pairs:
             execution.execute(statement, binds)
         return
-    with execution.open_session() as session:
+    with execution.open_session(scenario.case.isolation) as session:
         executed: list[tuple[str, int]] = []
         for statement, binds in pairs:
             executed.append((statement, session.execute(statement, binds)))

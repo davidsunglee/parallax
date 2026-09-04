@@ -30,6 +30,7 @@ from parallax.core.db_port import (
     DbPort,
     DeclaresDialect,
     DocumentReadOrdinals,
+    IsolationLevel,
     Row,
     TransactionOutcome,
 )
@@ -79,7 +80,7 @@ class _NoProvisioningPort:
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a rejected-case run must not open a transaction")
 

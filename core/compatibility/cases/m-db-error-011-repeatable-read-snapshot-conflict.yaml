@@ -1,0 +1,66 @@
+# Repeatable Read refuses a write over a row the transaction did not read, and the
+# refusal classifies to the retriable `deadlock` category on both engines
+# (m-db-error). What the case grades is the portable promise of
+# `when.uow.isolation: repeatable-read` — that a nonrepeatable read cannot happen,
+# which forces a transaction whose peer committed underneath it to be refused
+# rather than to write over a generation it never observed.
+#
+# The choreography is a lost update, distinct from the lock-cycle deadlock cases
+# (m-db-error-004/005), where two transactions wait on each other, and from the
+# write skew of m-db-error-009, where neither writes a row the other read:
+#   round 0 : A reads gauge 1, fixing the generation its transaction will see
+#   round 1 : B updates that same row, uncontended — A holds no lock, because a
+#             Repeatable Read read is not a locking read
+#   round 2 : B COMMITS (`kind: commit`), so the row A read now has a newer
+#             committed generation
+#   round 3 : A updates gauge 1 — the write that would otherwise land on B's row
+#             while A still reads its own, which is the anomaly the level forbids
+#
+# Exactly one node is refused, and it is always A: B's transaction is over before
+# A's write is attempted. Postgres refuses it as `40001`, having found that the
+# row's newest version is outside A's transaction snapshot. MariaDB refuses it as
+# `1020` (`ER_CHECKREAD`), the write/write conflict InnoDB reports when a
+# statement would lock a record absent from the session's read view — the
+# provider's own mapping of Repeatable Read is what puts the session in that
+# state, and an engine that let A's write proceed would leave A observing a value
+# it never read. Neither native code is portable and the neutral category is: both
+# are the retriable class, so `m-auto-retry` re-executes the invocation.
+model: models/error-cases.yaml
+tags: [m-db-error, isolation, deadlock, lost-update, slice-snapshot-1, slice-managed-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (when.concurrency)"
+given:
+  fixtures: true
+when:
+  uow:
+    isolation: repeatable-read
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.v from gauge t0 where t0.id = ?
+                mariadb: select t0.id, t0.v from gauge t0 where t0.id = ?
+              binds: [1]
+      - B:
+          statements:
+            - sql:
+                postgres: update gauge set v = ? where id = ?
+                mariadb: update gauge set v = ? where id = ?
+              binds: [11, 1]
+      - B:
+          kind: commit
+      - A:
+          statements:
+            - sql:
+                postgres: update gauge set v = ? where id = ?
+                mariadb: update gauge set v = ? where id = ?
+              binds: [21, 1]
+then:
+  errorClass: deadlock
+  nativeCode:
+    postgres: "40001"
+    mariadb: 1020

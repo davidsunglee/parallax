@@ -37,6 +37,7 @@ from parallax.core.db_port import (
     Committed,
     DbPort,
     DocumentReadOrdinals,
+    IsolationLevel,
     RollbackFailed,
     RolledBack,
     Row,
@@ -102,7 +103,7 @@ class WriteCall:
 class BeginCall:
     """A transaction boundary opened, carrying the isolation the caller asked for."""
 
-    isolation: str | None = None
+    isolation: IsolationLevel | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,7 +273,7 @@ class ScriptedPort:
         return entry.affected
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         entry = self._scopes[-1].take(Transact, f"isolation={isolation!r}")
         self.calls.append(BeginCall(isolation))
@@ -347,7 +348,7 @@ class RefusingPort:
         raise AssertionError("no write expected — this port refuses the database")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         del body, isolation
         raise AssertionError("no transaction expected — this port refuses the database")
