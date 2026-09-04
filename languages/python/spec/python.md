@@ -3145,10 +3145,14 @@ identity a caller may copy or pickle across a boundary of their own.
   page DELIVERS: the statement asks for one more, which is the lookahead root
   `m-snapshot-read` prices, so `limit ?` binds `batch_size + 1` on every page a
   declared `limit` does not cap.
-- **Refusal order matches `find`'s.** Re-entry is refused first, then a
-  connection over a model that composes no Entity Class (Typed only), then this
-  call's own arguments; the read gate and the deferred-Feature refusal follow at
-  context entry, before any I/O.
+- **Refusal order matches `find`'s, and one order covers every read entry.**
+  Typed `find` and `stream`, Wire `find` and `stream`, and `read_rows` refuse in
+  the same sequence: re-entry first, then a connection over a model that
+  composes no Entity Class (Typed only), then this call's own arguments —
+  including, on a Wire entry, lowering its three accepted spellings to the
+  canonical Object Query, which is an argument of the call and not a step above
+  the refusal. The read gate and the deferred-Feature refusal follow, at context
+  entry for a stream and at the call for every other entry, before any I/O.
 - **Stability is per page, and a `tx.stream` loop that writes can be its own
   concurrent writer.** `m-snapshot-read` states the whole rule; what it means
   for this surface is that a loop mutating the member its query ordered by moves
@@ -3417,6 +3421,39 @@ identity a caller may copy or pickle across a boundary of their own.
   one transaction-invocation Root Execution spanning every physical retry and
   joined invocation; a joined call emits a child Transaction Invocation under
   the current attempt and creates no additional root or attempt.
+
+### Private read composition
+
+- **Each Handle owns one Read Scope.** A `Database` and a `Transaction` each
+  construct exactly one private Read Scope. Their Typed `find`, `stream`, and
+  `read_rows` entries, and the same Handle's Wire `find` and `stream` entries,
+  delegate to that scope. A Wire view retains the scope itself rather than bound
+  Handle methods. The Read Scope is an implementation boundary, not a public
+  extension point.
+- **The selected read model enters through execution policy.** The Read Scope
+  obtains the operation's selected read model from its private execution
+  adapter, inside the read boundary and after re-entry has been refused; the
+  `Database` or `Transaction` does not select it before delegating. That
+  immutable value carries the cataloged model and, when available, graph
+  construction — never the write codec. Standalone execution may select per
+  operation; participating execution returns the Transaction's fixed selection.
+  The adapter may reuse an unchanged value, but the Read Scope assumes no
+  Database-lifetime model. One stream retains one selection through all of its
+  pages.
+- **Execution variation stays below the verbs.** One concrete Read Scope owns
+  preflight, eager execution, stream construction and paging, and result
+  publication. Its private execution adapter supplies four explicit
+  capabilities: begin a read, run an eager read, open stream activity, and run
+  one stream page. The package constructs the scope through standalone and
+  participating factories; it exposes neither an inheritance hierarchy nor a
+  closed mode union.
+- **Call-owned choices remain call-owned.** Typed or Wire result publication is
+  selected for each call, after re-entry refusal, and is not configuration
+  retained by the Read Scope. `batch_size` remains a `stream` argument and is
+  validated at the call in the refusal order already specified above. Deferred
+  Feature classification remains package-wide and crosses the existing preflight
+  seam. Moving this composition changes neither public refusal order nor the
+  rule that a refused participating read force-flushes nothing.
 
 ### Execution lifecycle observability
 
@@ -4835,6 +4872,22 @@ never pulls the typed surface in, and one that wants the typed surface names thi
 module. That is what keeps the widening contained rather than leaking through the
 package.
 
+`parallax.snapshot.handle._read_scope` is the read composition both Handles
+delegate to, scoped apart from its package so its row states what a read ladder
+reaches and what it does not: the query and temporal vocabulary it lowers
+through, the page plan a stream is delivered against, the read result it
+publishes, the Database Port, the unit of work, and the lifecycle activities it
+opens — and none of batch writes, Transaction-Time writes, or Bitemporal writes,
+which nothing in that closure names. Bounded automatic retry is deliberately NOT
+among the exclusions, and the row does not claim it: `modules.md` declares
+`m-execution-lifecycle --> m-auto-retry`, and a forbidden row is the complement
+of a closure, so a scope granted the lifecycle module it needs for the re-entry
+gate and the read roots carries retry with it whatever the composition itself
+imports. What the row says about retry is that this scope inherits it, not that
+it is forbidden. Write lowering is a child scope of the same parent, which the
+general target set excludes, so not importing it is the only exclusion available
+there.
+
 A behavioral module maps to the scope that needs its whole edge set.
 `m-execution-lifecycle` is owned by `parallax.core.execution_lifecycle`, while
 the Snapshot handle is the composition scope that publishes snapshot reads and
@@ -4935,6 +4988,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Snapshot row-to-graph conversion and the sealed graph (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
+| Snapshot read composition (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._read_scope` | `parallax.snapshot.handle._read_scope` | `parallax.core.entity`, `parallax.core.continuation`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-read-lock`, `m-opt-lock`, `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Snapshot handle write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | Snapshot write-observation retention (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts + `tools/check_scope_ownership.py` |
@@ -5068,6 +5122,17 @@ parallax.snapshot.handle._materializer --> parallax.core.temporal_read
 parallax.snapshot.handle._preflight --> parallax.core.metamodel
 parallax.snapshot.handle._preflight --> parallax.core.predicate
 parallax.snapshot.handle._preflight --> parallax.core.object_query
+parallax.snapshot.handle._read_scope --> parallax.core.entity
+parallax.snapshot.handle._read_scope --> parallax.core.continuation
+parallax.snapshot.handle._read_scope --> parallax.snapshot._read_result
+parallax.snapshot.handle._read_scope --> parallax.snapshot._inspection
+parallax.snapshot.handle._read_scope --> parallax.core.object_query
+parallax.snapshot.handle._read_scope --> parallax.core.temporal_read
+parallax.snapshot.handle._read_scope --> parallax.core.db_port
+parallax.snapshot.handle._read_scope --> parallax.core.unit_work
+parallax.snapshot.handle._read_scope --> parallax.core.read_lock
+parallax.snapshot.handle._read_scope --> parallax.core.opt_lock
+parallax.snapshot.handle._read_scope --> parallax.core.execution_lifecycle
 parallax.snapshot.handle._errors --> (none)
 parallax.snapshot.handle._family --> parallax.core.base
 parallax.snapshot.handle._family --> parallax.core.wire

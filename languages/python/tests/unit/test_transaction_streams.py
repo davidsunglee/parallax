@@ -27,7 +27,7 @@ from typing import Any, cast
 import _mixed_strategy_model as mx
 import pytest
 from _stream_page_support import paged_reads
-from _transact_support import account_db, db_for, deadlock
+from _transact_support import account_db, db_for, deadlock, new_account
 
 from _support import mirrored_models as mm
 from _support.db_port import (
@@ -126,6 +126,23 @@ def _observation(node: object) -> Any:
 # --------------------------------------------------------------------------- #
 # Participation is per page: the flush happens once per page, not once at entry.#
 # --------------------------------------------------------------------------- #
+def test_a_write_buffered_before_the_delivery_flushes_on_its_first_page() -> None:
+    # The first page is not special, and nothing branches on it. Entering the
+    # scope opens the stream's activity and reads nothing, so the page that
+    # follows runs the same force-flush every later page runs — which is what
+    # makes read-your-own-writes hold from the first root rather than from the
+    # second, without a flush at entry to arrange it.
+    port = ScriptedPort(Transact(Write(), Read(rows=[_account_row(2)])))
+
+    def fn(tx: Transaction) -> None:
+        tx.insert(new_account())
+        with tx.stream(_accounts(), batch_size=1) as stream:
+            assert [account.id for account in stream] == [2]
+
+    account_db(port).transact(fn)
+    assert _kinds(port) == [BeginCall, WriteCall, ReadCall, CommitCall]
+
+
 def test_a_write_buffered_mid_delivery_reaches_the_database_before_the_next_page() -> None:
     # Read-your-own-writes at every page rather than intermittently: the page
     # after a buffered write force-flushes it, so the statement that would

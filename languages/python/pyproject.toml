@@ -1718,6 +1718,7 @@ forbidden_modules = [
     "parallax.snapshot.handle._keyed_sql",
     "parallax.snapshot.handle._materializer",
     "parallax.snapshot.handle._preflight",
+    "parallax.snapshot.handle._read_scope",
     "parallax.snapshot.handle._retention",
     "parallax.snapshot.handle._write_lowering",
     "parallax.snapshot.materialize",
@@ -1828,6 +1829,21 @@ forbidden_modules = [
     "parallax.snapshot._inspection",
     "parallax.snapshot._read_result",
     "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.snapshot.handle._read_scope may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.snapshot.handle._read_scope"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.execution_lifecycle.testing",
+    "parallax.core.pk_gen",
+    "parallax.core.txtime_write",
+    "parallax.descriptor",
+    "parallax.postgres",
 ]
 
 [[tool.importlinter.contracts]]

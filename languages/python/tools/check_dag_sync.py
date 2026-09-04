@@ -361,6 +361,38 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.object_query",
         }
     ),
+    # The read composition both Handles delegate to, scoped apart from its
+    # package so the generated contract carries what a read ladder reaches: the
+    # query it lowers, the plan a stream is delivered against, the result it
+    # publishes, the port it executes over, the unit of work a participating
+    # read force-flushes, and the lifecycle activities it opens. Batch writes,
+    # Transaction-Time writes and Bitemporal writes fall outside this closure,
+    # which is the exclusion the row is FOR — the parent scope is granted all
+    # three.
+    #
+    # Two grants a reader might expect to be absent are load-bearing.
+    # `parallax.snapshot._inspection` closes the chain the read executor opens
+    # through the materializer child, which the row would otherwise report at
+    # its far end; and `m-execution-lifecycle` carries `m-auto-retry`,
+    # `m-sql` and `m-db-error` into the closure through `modules.md`'s own
+    # edges, so retry and SQL generation are inherited here rather than
+    # forbidden. Write lowering is a sibling child scope, which the general
+    # target set excludes, so no row can name it either way.
+    "parallax.snapshot.handle._read_scope": frozenset(
+        {
+            "parallax.core.entity",
+            "parallax.core.continuation",
+            "parallax.snapshot._read_result",
+            "parallax.snapshot._inspection",
+            "parallax.core.object_query",
+            "parallax.core.temporal_read",
+            "parallax.core.db_port",
+            "parallax.core.unit_work",
+            "parallax.core.read_lock",
+            "parallax.core.opt_lock",
+            "parallax.core.execution_lifecycle",
+        }
+    ),
     # The refusal leaf's emptiness IS its contract: `_preflight` and `_family`
     # raise one error class while their scopes grant disjoint dependencies, so
     # either naming the other would drag in a scope the importer may not reach.
@@ -472,6 +504,7 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._read_scope": "parallax.snapshot.handle",
     "parallax.snapshot.handle._errors": "parallax.snapshot.handle",
     "parallax.snapshot.handle._family": "parallax.snapshot.handle",
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",

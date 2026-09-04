@@ -65,6 +65,7 @@ from parallax.core.unit_work import (
     OptimisticLockConflictError,
 )
 from parallax.snapshot import DeferredFeatureError, InvalidData, QueryTargetError
+from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import (
     Database,
     FindResult,
@@ -634,6 +635,43 @@ def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
     statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
     snapshot = db.transact(lambda tx: tx.find(statement))
     assert len(snapshot.results()) == 2
+
+
+def _retained_evidence(node: object) -> object | None:
+    """The Source Hint ``node`` carries, read off its own lifecycle state.
+
+    Read through the node-inspection surface rather than the keyed verbs' own
+    private reader, because the claim is about what the READ left on the value.
+    """
+    state = snapshot_state_of(node)
+    assert state is not None, "a published root always carries lifecycle state"
+    return state.source
+
+
+def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> None:
+    # The write-side consequence of "a milestone-set read retains no evidence",
+    # asserted rather than read off `HistoryFindResult`'s missing sources field.
+    # A pinned participating read of the same row leaves a Source Hint on its
+    # root; every root of the `.history()` read carries none, and each stands at
+    # its own milestone's from-instant — a finite Transaction-Time coordinate the
+    # keyed verbs refuse to write through, so no DML is derived at all.
+    port = ScriptedPort(
+        Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))])),
+        Transact(Read(rows=_balance_history_rows())),
+    )
+    db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
+    pinned = db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
+    assert _retained_evidence(pinned) is not None
+
+    def fn(tx: Transaction) -> None:
+        statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
+        milestones = tx.find(statement).results()
+        assert [_retained_evidence(root) for root in milestones] == [None, None]
+        tx.update(milestones[-1].edit(value=Decimal("9.00")))
+
+    with pytest.raises(TransactionTimePinReadOnlyError):
+        db.transact(fn)
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 # --------------------------------------------------------------------------- #
