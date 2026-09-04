@@ -1582,7 +1582,7 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
 
 
 def test_scenario_uow_spans_signals_the_two_group_interleave_with_none() -> None:
-    # `m-opt-lock-012`'s own shape (two `uow` groups whose steps interleave):
+    # The interleaved shape (two `uow` groups whose steps interleave):
     # `_scenario_uow_spans` returns `None` rather than raising — the caller
     # routes to `run_interleaved_scenario_case` instead, which needs a
     # second, peer-backed connection this
@@ -1631,11 +1631,10 @@ def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_sc
 
 
 def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() -> None:
-    # Three `uow` groups, one of them non-contiguous: `m-opt-lock-012`'s own
-    # two-group interleave is the ONLY shape `run_interleaved_scenario_case`
-    # supports (pinned semantics #4, "scope honestly") — anything beyond it
-    # raises loudly rather than silently mis-executing a THIRD concurrent
-    # session no seam here provides.
+    # Three `uow` groups, one of them non-contiguous: a TWO-group interleave is
+    # the ONLY shape `run_interleaved_scenario_case` supports (pinned semantics
+    # #4, "scope honestly") — anything beyond it raises loudly rather than
+    # silently mis-executing a THIRD concurrent session no seam here provides.
     steps: list[dict[str, object]] = [
         {
             "uow": "a",
@@ -1663,7 +1662,7 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
             "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 1}]}],
         },
     ]
-    with pytest.raises(engine.EngineError, match="interleave beyond the one witnessed"):
+    with pytest.raises(engine.EngineError, match="interleave beyond the witnessed"):
         engine._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             "m-unit-work-999-synthetic.yaml", steps
         )

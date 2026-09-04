@@ -944,16 +944,17 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
 # one's commit. There is no single-callback developer expression of two concurrent
 # units of work, exactly as `_OPT_LOCK_INTERLEAVED_RACE_REASON` records for the
 # optimistic-lock race. What differs between them is which OTHER lane grades them:
-# the run sweep's interleaved-group runner drives `-032`, and names per case why it
-# drives neither of the others (`test_run_sweep._INTERLEAVED_RUNNER_CASES`).
+# the run sweep's interleaved-group runner drives `-032` and `-034`, and names why
+# it drives neither `-031` nor `-033`
+# (`test_run_sweep._INTERLEAVED_RUNNER_CASES`).
 _ISOLATION_SCENARIO_REASON: Final[str] = (
     "the guarantee a portable Isolation Level makes to a READING unit of work while a "
     "concurrent one writes: two units of work held open at once, which has no "
     "single-callback developer expression and therefore no idiomatic example. The "
     "reference harness grades it on both engines, which is also the only place the "
-    "MariaDB half of the promise is observable at all; `m-unit-work-032` is the arm "
-    "the run sweep's interleaved-group runner drives against real Postgres through "
-    "the shipped `db.transact`"
+    "MariaDB half of the promise is observable at all; `m-unit-work-032` and `-034` "
+    "are the arms the run sweep's interleaved-group runner drives against real "
+    "Postgres through the shipped `db.transact`"
 )
 # `m-pk-gen-014` composes a non-temporal sequence-registry update with an
 # Transaction-Time-Only insert in one write sequence and two transactions. It is graded

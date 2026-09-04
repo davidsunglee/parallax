@@ -19,8 +19,10 @@
 #                  whole materialized graph, and the included order's name is still
 #                  `Ada`. This is the teeth, and it is stated on the CHILD level
 #                  deliberately: the item the root read returns was never written,
-#                  so a view that covered only the statement which opened the
-#                  transaction's would leave the root right and the include wrong.
+#                  so an implementation whose view is fixed per STATEMENT rather
+#                  than per TRANSACTION still answers the root correctly and gets
+#                  only the include wrong — the include is the one level of this
+#                  graph where the level's promise is observable at all.
 #                  The group COMMITS after this, its last step.
 #   step 3 find  : UNGROUPED, after both groups resolved — order 1 reads
 #                  `Rewritten`, which is what makes step 2's answer a fixed view
