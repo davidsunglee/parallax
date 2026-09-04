@@ -1,0 +1,24 @@
+# Adding a whole Entity (m-model-evolution): unilateral, and its members are
+# SUPPRESSED.
+#
+# `Crate` arrives with two required members and an authored Index, and the one
+# `EntityAdded` describes all three: a parent addition suppresses every operation
+# for the declarations it contains. That is also why required members are
+# unilateral here while the same members added to an existing Entity would not be
+# — a wholly new Entity creates a complete empty Table, so nothing has to be
+# satisfied by rows that already exist. It holds no Behavioral Impact either,
+# because impacts hold on scopes present in the earlier endpoint.
+tags: [m-model-evolution, evolution, entity, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-entity-v1.yaml
+    later: models/evolution-entity-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      [{ kind: EntityAdded, entity: parallax.compatibility.Crate }]
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

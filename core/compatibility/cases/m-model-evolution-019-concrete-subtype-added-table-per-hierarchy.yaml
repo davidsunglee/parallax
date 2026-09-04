@@ -1,0 +1,31 @@
+# Adding a concrete subtype under TABLE-PER-HIERARCHY (m-model-evolution):
+# unilateral and Overlap-Visible.
+#
+# `Future` joins a family whose every concrete position shares one Table, so a
+# later writer can place a new discriminator value in that shared Table which an
+# earlier reader cannot admit — which is exactly what Overlap-Visible names. The
+# subtype's own member is suppressed by its addition. The root's predicate-free
+# selection now denotes a concrete set it did not before, so the addition causes
+# one `QueryResultMembershipChanged` on `Deal` and none on the subtype itself.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-hierarchy-v1.yaml
+    later: models/evolution-hierarchy-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      [{ kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Future }]
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Deal }
+        earlier: { concreteEntities: [parallax.compatibility.Swap], axes: [] }
+        later:
+          concreteEntities: [parallax.compatibility.Future, parallax.compatibility.Swap]
+          axes: []
+        causedBy: [{ kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Future }]
+    overlapVisibleOperations:
+      [{ kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Future }]
+    coordinationRequirements: []

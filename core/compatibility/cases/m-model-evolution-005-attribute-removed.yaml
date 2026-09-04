@@ -1,0 +1,25 @@
+# Removing a member (m-model-evolution): coordinated, for the authoring surface
+# alone.
+#
+# This is m-model-evolution-003 read backwards, and the classification does not
+# invert with it: removing a model-facing declaration invalidates a previously
+# valid authored operation, whatever its nullability. The reason set is
+# `AuthoringSurfaceChangeRequired` alone, because the physical Column the earlier
+# edition addressed may simply be left in place — destructive means destructive to
+# domain data or compatibility-bearing schema, not merely a `DROP` verb.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-nullable-member-v2.yaml
+    later: models/evolution-nullable-member-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      [{ kind: AttributeRemoved, attribute: parallax.compatibility.Note.summary }]
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation: { kind: AttributeRemoved, attribute: parallax.compatibility.Note.summary }
+        reasons: [AuthoringSurfaceChangeRequired]

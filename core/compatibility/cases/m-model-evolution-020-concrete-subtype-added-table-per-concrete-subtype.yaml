@@ -1,0 +1,29 @@
+# Adding a concrete subtype under TABLE-PER-CONCRETE-SUBTYPE (m-model-evolution):
+# unilateral and NOT Overlap-Visible.
+#
+# This is the twin of m-model-evolution-019 under the other supported strategy.
+# The classification is the same and the overlap fact is not: `Tanker` occupies a
+# separate Table the earlier edition never reads, so no earlier reader can meet a
+# row it cannot admit. The membership impact on the root is identical either way,
+# because it is a model-altitude fact rather than a physical one.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-concrete-subtype-tables-v1.yaml
+    later: models/evolution-concrete-subtype-tables-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      [{ kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Tanker }]
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Vessel }
+        earlier: { concreteEntities: [parallax.compatibility.Barge], axes: [] }
+        later:
+          concreteEntities: [parallax.compatibility.Barge, parallax.compatibility.Tanker]
+          axes: []
+        causedBy: [{ kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Tanker }]
+    overlapVisibleOperations: []
+    coordinationRequirements: []

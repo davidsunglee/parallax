@@ -1,0 +1,66 @@
+# Gaining and losing an explicit optimistic version (m-model-evolution): one
+# evolution, both directions of the ownership boundary.
+#
+# `Balance.version` becomes the family's explicit version, which turns a
+# caller-authored member into a framework-owned one and so needs
+# `AuthoringSurfaceChangeRequired`; `Register.revision` stops being one, which
+# returns an input to the caller and is unilateral. Each Entity's behavior under
+# the `optimistic` Concurrency Preference moves between `LockingFallback` and
+# `VersionGated`, and each member's input capability moves between
+# `CallerInsertAndUpdate` and `FrameworkOwned`.
+tags: [m-model-evolution, evolution, write-surface, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-optimistic-locking-v1.yaml
+    later: models/evolution-optimistic-locking-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Balance.version
+        deltas: [{ kind: OptimisticLockingChanged, earlier: false, later: true }]
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Register.revision
+        deltas: [{ kind: OptimisticLockingChanged, earlier: true, later: false }]
+    behavioralImpacts:
+      - kind: ConcurrencyControlChanged
+        scope: { entity: parallax.compatibility.Balance }
+        earlier: { gate: LockingFallback }
+        later: { gate: VersionGated, attribute: parallax.compatibility.Balance.version }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Balance.version
+            deltas: [{ kind: OptimisticLockingChanged, earlier: false, later: true }]
+      - kind: ConcurrencyControlChanged
+        scope: { entity: parallax.compatibility.Register }
+        earlier: { gate: VersionGated, attribute: parallax.compatibility.Register.revision }
+        later: { gate: LockingFallback }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Register.revision
+            deltas: [{ kind: OptimisticLockingChanged, earlier: true, later: false }]
+      - kind: WriteCapabilityChanged
+        scope: { attribute: parallax.compatibility.Balance.version }
+        earlier: CallerInsertAndUpdate
+        later: FrameworkOwned
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Balance.version
+            deltas: [{ kind: OptimisticLockingChanged, earlier: false, later: true }]
+      - kind: WriteCapabilityChanged
+        scope: { attribute: parallax.compatibility.Register.revision }
+        earlier: FrameworkOwned
+        later: CallerInsertAndUpdate
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Register.revision
+            deltas: [{ kind: OptimisticLockingChanged, earlier: true, later: false }]
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Balance.version
+          deltas: [{ kind: OptimisticLockingChanged, earlier: false, later: true }]
+        reasons: [AuthoringSurfaceChangeRequired]

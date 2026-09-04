@@ -1,0 +1,32 @@
+# Depot and Crate (v2): the later endpoint of the WHOLE ENTITY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `Crate`
+# carries two REQUIRED members and an authored Index, all of which the Entity's
+# own addition describes: a wholly new Entity creates a complete empty Table, so
+# nothing about it has to be satisfied by rows that already exist.
+entities:
+  - name: Depot
+    namespace: parallax.compatibility
+    table: evolution_depot
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: name
+        type: string
+        maxLength: 64
+  - name: Crate
+    namespace: parallax.compatibility
+    table: evolution_crate
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: label
+        type: string
+        maxLength: 32
+      - name: weight
+        type: int64
+    indices:
+      - name: evolution_crate_label
+        attributes: [label]

@@ -1,0 +1,52 @@
+# Narrowing a String maximum length (m-model-evolution): coordinated, both when
+# the bound shrinks and when one is introduced.
+#
+# This is m-model-evolution-009 read backwards. Existing values may be longer than
+# the later model admits, so each operation needs `DatabaseMigrationRequired`;
+# introducing a bound where none existed contracts the domain exactly as
+# shrinking one does.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-string-bound-v2.yaml
+    later: models/evolution-string-bound-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Digest.body
+        deltas: [{ kind: MaximumLengthChanged, earlier: null, later: 64 }]
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Digest.title
+        deltas: [{ kind: MaximumLengthChanged, earlier: 128, later: 32 }]
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Digest.body }
+        earlier: { type: string, nullable: false, maxLength: null }
+        later: { type: string, nullable: false, maxLength: 64 }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Digest.body
+            deltas: [{ kind: MaximumLengthChanged, earlier: null, later: 64 }]
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Digest.title }
+        earlier: { type: string, nullable: false, maxLength: 128 }
+        later: { type: string, nullable: false, maxLength: 32 }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Digest.title
+            deltas: [{ kind: MaximumLengthChanged, earlier: 128, later: 32 }]
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Digest.body
+          deltas: [{ kind: MaximumLengthChanged, earlier: null, later: 64 }]
+        reasons: [DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Digest.title
+          deltas: [{ kind: MaximumLengthChanged, earlier: 128, later: 32 }]
+        reasons: [DatabaseMigrationRequired]

@@ -1,0 +1,18 @@
+# Digest (v2): the WIDE end of the String maximum-length scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-string-bound-v1.yaml with `title` bounded larger and `body`
+# unbounded.
+entity:
+  name: Digest
+  namespace: parallax.compatibility
+  table: evolution_digest
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: title
+      type: string
+      maxLength: 128
+    - name: body
+      type: string

@@ -1,0 +1,31 @@
+# Archive and Journal (v1): the earlier endpoint of the PERSISTENCE MODE
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The two
+# Entities move in opposite directions in v2, so one pair witnesses both
+# directions of the asymmetric boundary. `Archive.note` additionally becomes
+# read-only there, which is the member-level impact the Entity-level withdrawal
+# of writes dominates. Declaring nothing is the canonical spelling of the
+# read-write default, so the writable Entity of each endpoint declares no mode.
+entities:
+  - name: Archive
+    namespace: parallax.compatibility
+    table: evolution_archive
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: note
+        type: string
+        maxLength: 64
+  - name: Journal
+    namespace: parallax.compatibility
+    table: evolution_journal
+    persistence: read-only
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: entry
+        type: string
+        maxLength: 64

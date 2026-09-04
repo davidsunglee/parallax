@@ -1,0 +1,16 @@
+# Parcel (v1): the COLUMNS end of the Storage Layout scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json.
+# Declaring no layout is the only spelling of conventional Columns storage, so
+# the accepted layout is absent here and a Relational Document Layout in v2.
+entity:
+  name: Parcel
+  namespace: parallax.compatibility
+  table: evolution_parcel
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: label
+      type: string
+      maxLength: 64

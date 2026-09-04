@@ -12,10 +12,32 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.inheritance import InheritanceEntityView
+from parallax.core.inheritance import view as inheritance_view
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+)
 from parallax.evolution.model_evolution._values import Absent
 
-__all__ = ["Matching", "Paired", "match"]
+__all__ = ["EntityFacts", "Matching", "Paired", "match"]
+
+
+@dataclass(frozen=True, slots=True)
+class EntityFacts:
+    """One Entity's accepted declaration beside its family-effective view.
+
+    Both answer at one key because both are needed at once: a field delta
+    reports the accepted declaration, while classification and the Behavioral
+    Impacts compare the effective ancestry, physical facts, and Persistence Mode
+    the family's root fixes.
+    """
+
+    declaration: EntityMetadata
+    family: InheritanceEntityView
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +59,8 @@ class Matching:
 
     earlier: Metamodel | None
     later: Metamodel
-    entities: Paired[EntityIdentity, EntityMetadata]
+    entities: Paired[EntityIdentity, EntityFacts]
+    attributes: Paired[AttributeIdentity, AttributeMetadata]
 
 
 def pair[I, D](earlier: Sequence[tuple[I, D]], later: Sequence[tuple[I, D]]) -> Paired[I, D]:
@@ -76,8 +99,32 @@ def match(earlier: Metamodel | Absent, later: Metamodel) -> Matching:
         earlier=earlier_model,
         later=later,
         entities=pair(() if earlier_model is None else _entities(earlier_model), _entities(later)),
+        attributes=pair(
+            () if earlier_model is None else _attributes(earlier_model), _attributes(later)
+        ),
     )
 
 
-def _entities(model: Metamodel) -> tuple[tuple[EntityIdentity, EntityMetadata], ...]:
-    return tuple((entity.identity, entity) for entity in model.entities)
+def _entities(model: Metamodel) -> tuple[tuple[EntityIdentity, EntityFacts], ...]:
+    facet = inheritance_view(model)
+    paired: list[tuple[EntityIdentity, EntityFacts]] = []
+    for entity in model.entities:
+        family = facet.entity(entity.identity)
+        if family is None:  # pragma: no cover - the facet covers every accepted Entity
+            continue
+        paired.append((entity.identity, EntityFacts(entity, family)))
+    return tuple(paired)
+
+
+def _attributes(model: Metamodel) -> tuple[tuple[AttributeIdentity, AttributeMetadata], ...]:
+    """Every declared scalar Attribute, keyed by its own Identity.
+
+    Declared rather than applicable: an inherited member belongs to the ancestor
+    that introduced it, so pairing the applicable sequences would describe one
+    declaration once per descendant.
+    """
+    return tuple(
+        (attribute.identity, attribute)
+        for entity in model.entities
+        for attribute in entity.declared_attributes
+    )
