@@ -1,0 +1,20 @@
+# Notice (v2): the later endpoint of the READ-ONLY member scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-read-only-v1.yaml with the two members' read-only
+# declarations exchanged.
+entity:
+  name: Notice
+  namespace: parallax.compatibility
+  table: evolution_notice
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: headline
+      type: string
+      maxLength: 64
+      readOnly: true
+    - name: slug
+      type: string
+      maxLength: 32

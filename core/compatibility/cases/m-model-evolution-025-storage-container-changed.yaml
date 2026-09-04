@@ -1,0 +1,35 @@
+# Changing the Storage Container (m-model-evolution): coordinated, for the
+# database alone.
+#
+# `Vault` keeps every logical declaration and maps to a different Table. Like the
+# member-level Storage Location change in m-model-evolution-012, the two editions
+# cannot address both physical locations through one compiled operation surface,
+# so the reason is `DatabaseMigrationRequired` and the authoring surface is
+# untouched.
+tags: [m-model-evolution, evolution, entity, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-storage-container-v1.yaml
+    later: models/evolution-storage-container-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Vault
+        deltas:
+          - kind: StorageContainerChanged
+            earlier: evolution_vault
+            later: evolution_vault_archive
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Vault
+          deltas:
+            - kind: StorageContainerChanged
+              earlier: evolution_vault
+              later: evolution_vault_archive
+        reasons: [DatabaseMigrationRequired]

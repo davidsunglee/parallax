@@ -1,0 +1,37 @@
+# Contracting a value domain (m-model-evolution): coordinated, and never
+# Overlap-Visible.
+#
+# This is m-model-evolution-007 read backwards. Rows the earlier edition stored
+# may hold the NULL the later model refuses, so the transition needs
+# `DatabaseMigrationRequired`. A Coordinated Evolution names no Overlap-Visible
+# Operation at all — it is not applied through the unilateral path — while it
+# still carries the same `ValueAdmissibilityChanged` the expansion did.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-nullability-v2.yaml
+    later: models/evolution-nullability-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Reading.note
+        deltas: [{ kind: NullabilityChanged, earlier: true, later: false }]
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Reading.note }
+        earlier: { type: string, nullable: true, maxLength: 64 }
+        later: { type: string, nullable: false, maxLength: 64 }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Reading.note
+            deltas: [{ kind: NullabilityChanged, earlier: true, later: false }]
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Reading.note
+          deltas: [{ kind: NullabilityChanged, earlier: true, later: false }]
+        reasons: [DatabaseMigrationRequired]

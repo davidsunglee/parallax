@@ -1,0 +1,30 @@
+# Changing an accepted Storage Location (m-model-evolution): coordinated, for the
+# database alone.
+#
+# The surviving `Placard.caption` keeps its identity, its type, and its whole
+# caller contract and moves to a different Column, so the reason is
+# `DatabaseMigrationRequired`: the two editions cannot address both locations
+# through one compiled operation surface. The delta reports the accepted Storage
+# Location, which is why the earlier value is the Column the derived default
+# produced rather than the absence the descriptor authored.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-attribute-column-v1.yaml
+    later: models/evolution-attribute-column-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Placard.caption
+        deltas: [{ kind: StorageChanged, earlier: caption, later: headline }]
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Placard.caption
+          deltas: [{ kind: StorageChanged, earlier: caption, later: headline }]
+        reasons: [DatabaseMigrationRequired]

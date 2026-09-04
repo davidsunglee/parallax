@@ -1,0 +1,26 @@
+# Voucher and Coupon (v2): the later endpoint of the PRIMARY KEY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json.
+# `Voucher`'s key is `code` instead of `id`, and `Coupon.id` is allocated from
+# the stored maximum instead of being supplied by the application.
+entities:
+  - name: Voucher
+    namespace: parallax.compatibility
+    table: evolution_voucher
+    attributes:
+      - name: id
+        type: int64
+      - name: code
+        type: string
+        primaryKey: true
+        maxLength: 16
+  - name: Coupon
+    namespace: parallax.compatibility
+    table: evolution_coupon
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+        pkGeneration: max
+      - name: face
+        type: decimal(18,2)

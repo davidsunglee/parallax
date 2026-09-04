@@ -1,0 +1,17 @@
+# Note (v1): the earlier endpoint of the NULLABLE member scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is the
+# Entity before the nullable Attribute exists, so the pair reads in both
+# directions: v1 to v2 adds a member existing rows need no value for, and v2 to
+# v1 removes one a previously valid query addressed.
+entity:
+  name: Note
+  namespace: parallax.compatibility
+  table: evolution_note
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: body
+      type: string
+      maxLength: 256
