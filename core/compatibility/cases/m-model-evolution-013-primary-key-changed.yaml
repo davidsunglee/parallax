@@ -1,0 +1,98 @@
+# Changing the primary key (m-model-evolution): membership and generation are two
+# facts with two reason sets.
+#
+# `Voucher` moves its key from `id` to `code`, which is one member joining the key
+# and one leaving it: both change the physical constraint as well as the lookup
+# and insert shape, so both carry BOTH reasons. `Coupon.id` keeps its membership
+# and is allocated from the stored maximum instead of being supplied by the
+# application: nothing physical changes, so `AuthoringSurfaceChangeRequired` stands
+# alone. All three change what caller input the Attribute admits, so each causes
+# its own `WriteCapabilityChanged`.
+tags: [m-model-evolution, evolution, write-surface, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-primary-key-v1.yaml
+    later: models/evolution-primary-key-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Coupon.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier: { generation: application-assigned }
+            later: { generation: max }
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Voucher.code
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier: false
+            later: { generation: application-assigned }
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Voucher.id
+        deltas:
+          - kind: PrimaryKeyChanged
+            earlier: { generation: application-assigned }
+            later: false
+    behavioralImpacts:
+      - kind: WriteCapabilityChanged
+        scope: { attribute: parallax.compatibility.Coupon.id }
+        earlier: CallerInsertOnly
+        later: FrameworkOwned
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Coupon.id
+            deltas:
+              - kind: PrimaryKeyChanged
+                earlier: { generation: application-assigned }
+                later: { generation: max }
+      - kind: WriteCapabilityChanged
+        scope: { attribute: parallax.compatibility.Voucher.code }
+        earlier: CallerInsertAndUpdate
+        later: CallerInsertOnly
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Voucher.code
+            deltas:
+              - kind: PrimaryKeyChanged
+                earlier: false
+                later: { generation: application-assigned }
+      - kind: WriteCapabilityChanged
+        scope: { attribute: parallax.compatibility.Voucher.id }
+        earlier: CallerInsertOnly
+        later: CallerInsertAndUpdate
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Voucher.id
+            deltas:
+              - kind: PrimaryKeyChanged
+                earlier: { generation: application-assigned }
+                later: false
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Coupon.id
+          deltas:
+            - kind: PrimaryKeyChanged
+              earlier: { generation: application-assigned }
+              later: { generation: max }
+        reasons: [AuthoringSurfaceChangeRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Voucher.code
+          deltas:
+            - kind: PrimaryKeyChanged
+              earlier: false
+              later: { generation: application-assigned }
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Voucher.id
+          deltas:
+            - kind: PrimaryKeyChanged
+              earlier: { generation: application-assigned }
+              later: false
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

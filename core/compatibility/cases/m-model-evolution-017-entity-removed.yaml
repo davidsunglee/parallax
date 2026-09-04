@@ -1,0 +1,24 @@
+# Removing a whole Entity (m-model-evolution): coordinated, and its members are
+# SUPPRESSED.
+#
+# This is m-model-evolution-016 read backwards. One `EntityRemoved` describes the
+# Entity, its two members, and its authored Index, and needs
+# `AuthoringSurfaceChangeRequired` because every previously valid operation
+# addressing `Crate` stops resolving. Its Table may simply be left in place, so no
+# migration is required of the database.
+tags: [m-model-evolution, evolution, entity, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-entity-v2.yaml
+    later: models/evolution-entity-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      [{ kind: EntityRemoved, entity: parallax.compatibility.Crate }]
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation: { kind: EntityRemoved, entity: parallax.compatibility.Crate }
+        reasons: [AuthoringSurfaceChangeRequired]

@@ -1,0 +1,27 @@
+# Ledger (v1): the earlier endpoint of the INTERPOSED abstract subtype scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `Entry`
+# extends the root directly here and extends a new abstract position under the
+# same root in v2, with every physical fact of the family unchanged.
+entities:
+  - name: Ledger
+    namespace: parallax.compatibility
+    table: evolution_ledger
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Entry
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Ledger
+      tagValue: entry
+    attributes:
+      - name: amount
+        type: decimal(18,2)

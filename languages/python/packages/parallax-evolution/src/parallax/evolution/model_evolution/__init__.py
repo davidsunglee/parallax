@@ -281,7 +281,7 @@ def _assemble(
     otherwise the overlap-visible operations are collected in the same order.
     """
     classifications = classify(matching, operations)
-    behavioral_impacts = impacts(matching, operations)
+    behavioral_impacts = impacts(earlier, matching, operations)
     requirements = tuple(
         CoordinationRequirement(operation=operation, reasons=classification.reasons)
         for operation, classification in zip(operations, classifications, strict=True)

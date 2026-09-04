@@ -266,8 +266,11 @@ declarations:
   requires coordination.
 - **Write surface.** Making an editable Attribute read-only, or a caller-authored
   Attribute framework-owned, requires coordination; the inverses are unilateral
-  where they need no destructive transformation. Changing optimistic-locking
-  behavior alone does not require coordination. Persistence Mode follows the same
+  where they need no destructive transformation. The gating behavior an
+  optimistic version brings with it is not a second reason of its own: an
+  Entity's concurrency control changing is a Behavioral Impact behind the
+  preserved surface, and it is the member's own move between caller-authored and
+  framework-owned that decides coordination. Persistence Mode follows the same
   directional rule over the whole family — `ReadWrite` to `ReadOnly` requires
   coordination, `ReadOnly` to `ReadWrite` is unilateral — and the root-owned
   change is reported once rather than repeated per descendant.

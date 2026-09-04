@@ -542,6 +542,13 @@ MIRRORED: list[tuple[str, DomainModel]] = [
 ]
 """Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
 
+_EVOLUTION_ENDPOINT = (
+    "endpoint-only model: it exists as one end of a described evolution, a pure comparison of "
+    "two accepted models that no developer surface builds or executes, and it varies exactly "
+    "one declaration of a shape the mirrored families already carry"
+)
+"""Why an evolution endpoint pair is unmirrored, shared by every one of them."""
+
 UNMIRRORED: Mapping[str, str] = MappingProxyType(
     {
         "appliance": (
@@ -554,6 +561,42 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "focused predicate-write runtime model and gives the independent compatibility "
             "oracle the same recursive refusal witness"
         ),
+        "evolution-attribute-column-v1": _EVOLUTION_ENDPOINT,
+        "evolution-attribute-column-v2": _EVOLUTION_ENDPOINT,
+        "evolution-attribute-type-v1": _EVOLUTION_ENDPOINT,
+        "evolution-attribute-type-v2": _EVOLUTION_ENDPOINT,
+        "evolution-branch-move-v1": _EVOLUTION_ENDPOINT,
+        "evolution-branch-move-v2": _EVOLUTION_ENDPOINT,
+        "evolution-concrete-subtype-tables-v1": _EVOLUTION_ENDPOINT,
+        "evolution-concrete-subtype-tables-v2": _EVOLUTION_ENDPOINT,
+        "evolution-entity-v1": _EVOLUTION_ENDPOINT,
+        "evolution-entity-v2": _EVOLUTION_ENDPOINT,
+        "evolution-hierarchy-v1": _EVOLUTION_ENDPOINT,
+        "evolution-hierarchy-v2": _EVOLUTION_ENDPOINT,
+        "evolution-interposed-subtype-v1": _EVOLUTION_ENDPOINT,
+        "evolution-interposed-subtype-v2": _EVOLUTION_ENDPOINT,
+        "evolution-nullability-v1": _EVOLUTION_ENDPOINT,
+        "evolution-nullability-v2": _EVOLUTION_ENDPOINT,
+        "evolution-nullable-member-v1": _EVOLUTION_ENDPOINT,
+        "evolution-nullable-member-v2": _EVOLUTION_ENDPOINT,
+        "evolution-optimistic-locking-v1": _EVOLUTION_ENDPOINT,
+        "evolution-optimistic-locking-v2": _EVOLUTION_ENDPOINT,
+        "evolution-persistence-v1": _EVOLUTION_ENDPOINT,
+        "evolution-persistence-v2": _EVOLUTION_ENDPOINT,
+        "evolution-primary-key-v1": _EVOLUTION_ENDPOINT,
+        "evolution-primary-key-v2": _EVOLUTION_ENDPOINT,
+        "evolution-read-only-v1": _EVOLUTION_ENDPOINT,
+        "evolution-read-only-v2": _EVOLUTION_ENDPOINT,
+        "evolution-rename-v1": _EVOLUTION_ENDPOINT,
+        "evolution-rename-v2": _EVOLUTION_ENDPOINT,
+        "evolution-required-member-v1": _EVOLUTION_ENDPOINT,
+        "evolution-required-member-v2": _EVOLUTION_ENDPOINT,
+        "evolution-storage-container-v1": _EVOLUTION_ENDPOINT,
+        "evolution-storage-container-v2": _EVOLUTION_ENDPOINT,
+        "evolution-storage-layout-v1": _EVOLUTION_ENDPOINT,
+        "evolution-storage-layout-v2": _EVOLUTION_ENDPOINT,
+        "evolution-string-bound-v1": _EVOLUTION_ENDPOINT,
+        "evolution-string-bound-v2": _EVOLUTION_ENDPOINT,
         "evolution-widget-v1": (
             "endpoint-only model: it exists as one end of a described evolution, which is a "
             "pure comparison of two accepted models that no developer surface builds or "

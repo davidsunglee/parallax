@@ -1,0 +1,32 @@
+# Removing a concrete subtype (m-model-evolution): coordinated, and its Behavioral
+# Impact is retained.
+#
+# This is m-model-evolution-019 read backwards. Removing a model-facing
+# declaration needs `AuthoringSurfaceChangeRequired`, and the shared Table's rows
+# may simply be left in place. A Coordinated Evolution is a complete description
+# rather than a refusal, so it carries the same `QueryResultMembershipChanged` the
+# unilateral direction did — alongside its requirement, and with no Overlap-Visible
+# Operation.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-hierarchy-v2.yaml
+    later: models/evolution-hierarchy-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      [{ kind: ConcreteSubtypeRemoved, entity: parallax.compatibility.Future }]
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Deal }
+        earlier:
+          concreteEntities: [parallax.compatibility.Future, parallax.compatibility.Swap]
+          axes: []
+        later: { concreteEntities: [parallax.compatibility.Swap], axes: [] }
+        causedBy: [{ kind: ConcreteSubtypeRemoved, entity: parallax.compatibility.Future }]
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation: { kind: ConcreteSubtypeRemoved, entity: parallax.compatibility.Future }
+        reasons: [AuthoringSurfaceChangeRequired]

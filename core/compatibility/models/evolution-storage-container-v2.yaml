@@ -1,0 +1,14 @@
+# Vault (v2): the later endpoint of the STORAGE CONTAINER scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-storage-container-v1.yaml mapped to a different Table.
+entity:
+  name: Vault
+  namespace: parallax.compatibility
+  table: evolution_vault_archive
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: holding
+      type: decimal(18,2)

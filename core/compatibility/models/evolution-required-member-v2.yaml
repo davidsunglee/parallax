@@ -1,0 +1,19 @@
+# Ticket (v2): the later endpoint of the REQUIRED member scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-required-member-v1.yaml plus a REQUIRED `queue`: every
+# existing row would have to carry a value the earlier model never stored.
+entity:
+  name: Ticket
+  namespace: parallax.compatibility
+  table: evolution_ticket
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: subject
+      type: string
+      maxLength: 128
+    - name: queue
+      type: string
+      maxLength: 32

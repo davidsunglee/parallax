@@ -1,0 +1,17 @@
+# Label (v2): the later endpoint of the RENAME scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-rename-v1.yaml with `label` spelled `caption` and nothing
+# else changed, so the difference between the two is describable only as one
+# removal and one addition.
+entity:
+  name: Label
+  namespace: parallax.compatibility
+  table: evolution_label
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: caption
+      type: string
+      maxLength: 64

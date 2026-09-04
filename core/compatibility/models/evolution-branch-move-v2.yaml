@@ -1,0 +1,65 @@
+# Filing and Docket (v2): the later endpoint of the BRANCH MOVE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-branch-move-v1.yaml with `Motion` extending `Docket` instead
+# of `Filing`; nothing else differs.
+entities:
+  - name: Filing
+    namespace: parallax.compatibility
+    table: evolution_filing
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: filedOn
+        type: date
+  - name: Brief
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Filing
+      tagValue: brief
+    attributes:
+      - name: pages
+        type: int64
+        nullable: true
+  - name: Motion
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Docket
+      tagValue: motion
+    attributes:
+      - name: relief
+        type: string
+        maxLength: 64
+        nullable: true
+  - name: Docket
+    namespace: parallax.compatibility
+    table: evolution_docket
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: openedOn
+        type: date
+  - name: Summons
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Docket
+      tagValue: summons
+    attributes:
+      - name: served
+        type: boolean
+        nullable: true

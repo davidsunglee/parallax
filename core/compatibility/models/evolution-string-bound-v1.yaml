@@ -1,0 +1,20 @@
+# Digest (v1): the NARROW end of the String maximum-length scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Two
+# bounded Strings carry the two shapes a bound can change in: `title` moves to a
+# larger bound and `body` loses its bound entirely, so one pair witnesses both
+# widening and removal in each direction.
+entity:
+  name: Digest
+  namespace: parallax.compatibility
+  table: evolution_digest
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: title
+      type: string
+      maxLength: 32
+    - name: body
+      type: string
+      maxLength: 64

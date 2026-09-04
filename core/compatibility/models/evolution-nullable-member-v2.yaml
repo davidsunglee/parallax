@@ -1,0 +1,21 @@
+# Note (v2): the later endpoint of the NULLABLE member scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-nullable-member-v1.yaml plus one NULLABLE `summary`, appended
+# after the surviving members so the addition is an insertion at the end rather
+# than a reordering of what both endpoints declare.
+entity:
+  name: Note
+  namespace: parallax.compatibility
+  table: evolution_note
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: body
+      type: string
+      maxLength: 256
+    - name: summary
+      type: string
+      maxLength: 64
+      nullable: true

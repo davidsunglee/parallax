@@ -1,0 +1,16 @@
+# Ticket (v1): the earlier endpoint of the REQUIRED member scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Its rows
+# are the existing stored shape a required member would have to be satisfied by,
+# which is what makes the addition in v2 coordinated rather than unilateral.
+entity:
+  name: Ticket
+  namespace: parallax.compatibility
+  table: evolution_ticket
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: subject
+      type: string
+      maxLength: 128

@@ -1,0 +1,14 @@
+# Meter (v2): the later endpoint of the NEUTRAL TYPE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-attribute-type-v1.yaml with `reading` declared int64.
+entity:
+  name: Meter
+  namespace: parallax.compatibility
+  table: evolution_meter
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: reading
+      type: int64

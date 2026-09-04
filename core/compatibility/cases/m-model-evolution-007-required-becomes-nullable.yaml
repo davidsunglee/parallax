@@ -1,0 +1,35 @@
+# Expanding a value domain (m-model-evolution): unilateral, Overlap-Visible, and a
+# Behavioral Impact.
+#
+# Within one unchanged Neutral Type, expanding the admitted domain of a surviving
+# member is unilateral. It is also Overlap-Visible, which is the narrower fact:
+# while two editions run against one database, a later writer can store the NULL
+# an earlier reader cannot admit. The admissibility of the surviving path changed
+# too, so the same operation causes one `ValueAdmissibilityChanged`.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-nullability-v1.yaml
+    later: models/evolution-nullability-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Reading.note
+        deltas: [{ kind: NullabilityChanged, earlier: false, later: true }]
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Reading.note }
+        earlier: { type: string, nullable: false, maxLength: 64 }
+        later: { type: string, nullable: true, maxLength: 64 }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Reading.note
+            deltas: [{ kind: NullabilityChanged, earlier: false, later: true }]
+    overlapVisibleOperations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Reading.note
+        deltas: [{ kind: NullabilityChanged, earlier: false, later: true }]
+    coordinationRequirements: []

@@ -1,0 +1,32 @@
+# Deal (v1): the earlier endpoint of the TABLE-PER-HIERARCHY subtype scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# whole family shares the `evolution_deal` Table discriminated by the root's
+# `kind` tag Column, which is what makes a later concrete subtype visible to an
+# earlier reader of that Table. The pair reads in both directions: v1 to v2 adds
+# a concrete subtype and v2 to v1 removes one.
+entities:
+  - name: Deal
+    namespace: parallax.compatibility
+    table: evolution_deal
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: notional
+        type: decimal(18,2)
+  - name: Swap
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Deal
+      tagValue: swap
+    attributes:
+      - name: tenor
+        type: int64
+        nullable: true
