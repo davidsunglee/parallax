@@ -20,9 +20,13 @@
 # nothing this invocation did reached the database as a counted round trip — and a
 # callback that never ran issued nothing either.
 #
-# The failure is terminal however retriable an error's own category might be: no
-# attempt ran, so there is nothing to re-execute, which is why `retries` is left at
-# its default and one invocation is the whole stream.
+# The error the setup fails with carries NO `m-db-error` category: a request the
+# engine would not honor is not a contention, so nothing above the port may read
+# it as retriable. The stream shows the bound going unspent on it — `retries`
+# stands at its default of 10, and one invocation with no attempt beneath it is
+# the whole of it. Whether a begin failure carrying a retriable category would be
+# terminal too is `m-execution-lifecycle`'s own rule; no observable here
+# distinguishes it, because this failure carries no category to be judged by.
 #
 # `lane: api-conformance`: a failed session setup is injected at the database-port
 # seam and observed as a boundary that never opened — neither an authored statement

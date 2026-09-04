@@ -1129,9 +1129,10 @@ def test_an_envelope_reporting_no_lifecycle_has_nothing_to_walk() -> None:
 def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
     """Every case authoring the oracle, named: the eight `m-execution-lifecycle`
     cases, the one optimistic-lock success whose resolving read makes it the
-    corpus witness for a Database Call that names no golden statement, and the
+    corpus witness for a Database Call that names no golden statement, the
     auto-retry case whose stream is the only place one requested Isolation Level
-    is seen standing over two attempts."""
+    is seen standing over two attempts, and the join case whose stream is the
+    only place an accepted join and a refused one are told apart."""
     authored = []
     for case_path in sorted(_CASES.glob("**/*.y*ml")):
         case = read_corpus_yaml(case_path)
@@ -1152,4 +1153,5 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-execution-lifecycle-007-streamed-delivery.yaml",
         "m-execution-lifecycle-008-isolation-setup-failure-opens-no-boundary.yaml",
         "m-opt-lock-006-success.yaml",
+        "m-unit-work-035-a-join-may-not-renegotiate-the-isolation-level.yaml",
     ]

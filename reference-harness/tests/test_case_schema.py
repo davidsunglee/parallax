@@ -1493,6 +1493,54 @@ def _corrupt_on_a_scenario() -> dict[str, Any]:
     return doc
 
 
+def _fault_on_a_read() -> dict[str, Any]:
+    # A fault is injected at the database-port seam by the API Conformance
+    # Suite, which executes no shape but `boundary`: a read declaring one names
+    # a failure its own run never provokes and would still be reported as
+    # satisfied.
+    doc = _read_case()
+    doc["given"] = {"fault": "deadlock"}
+    return doc
+
+
+def _isolation_setup_failure_on_a_read() -> dict[str, Any]:
+    doc = _read_case()
+    doc["given"] = {"fault": "isolation-setup-failure"}
+    return doc
+
+
+def _session_default_on_a_read() -> dict[str, Any]:
+    # A connection's own default isolation is established before the adapter
+    # takes it, which only the API Conformance Suite arranges.
+    doc = _read_case()
+    doc["given"] = {"sessionDefault": "read-uncommitted"}
+    return doc
+
+
+def _outcome_on_a_read() -> dict[str, Any]:
+    # `then.outcome` is the verdict on a unit of work, and no other shape runs
+    # one to a verdict.
+    doc = _read_case()
+    doc["then"]["outcome"] = "option-conflict"
+    return doc
+
+
+def _dialect_keyed_outcome_on_a_read() -> dict[str, Any]:
+    doc = _read_case()
+    doc["then"]["outcome"] = {"postgres": "committed"}
+    return doc
+
+
+def _read_costing_nothing_by_claiming_an_unopened_boundary() -> dict[str, Any]:
+    # The zero-round-trip relaxation rides `then.outcome: boundary-failed`, so
+    # confining the outcome is what keeps a case asserting golden SQL from
+    # declaring it cost nothing.
+    doc = _read_case()
+    doc["then"]["outcome"] = "boundary-failed"
+    doc["then"]["roundTrips"] = 0
+    return doc
+
+
 def _commit_step_on_a_scenario() -> dict[str, Any]:
     # A `kind: commit` step commits a node's own held session, which only the two
     # shapes carrying `when.concurrency` have. A scenario commits each `uow` group
@@ -1717,6 +1765,14 @@ REJECTED_CASES = {
     "streamed-step-naming-a-representation": _streamed_step_naming_a_representation,
     "corrupt-on-a-write-sequence": _corrupt_on_a_write_sequence,
     "corrupt-on-a-scenario": _corrupt_on_a_scenario,
+    "fault-on-a-read": _fault_on_a_read,
+    "isolation-setup-failure-on-a-read": _isolation_setup_failure_on_a_read,
+    "session-default-on-a-read": _session_default_on_a_read,
+    "outcome-on-a-read": _outcome_on_a_read,
+    "dialect-keyed-outcome-on-a-read": _dialect_keyed_outcome_on_a_read,
+    "read-costing-nothing-by-claiming-an-unopened-boundary": (
+        _read_costing_nothing_by_claiming_an_unopened_boundary
+    ),
     "commit-step-on-a-scenario": _commit_step_on_a_scenario,
     "isolation-on-a-scenario-step": _isolation_on_a_scenario_step,
     "error-step-declaring-a-write-kind": _error_step_declaring_a_write_kind,

@@ -35,10 +35,10 @@ split every other engine-adjacent module in this package already follows.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 
 from parallax.conformance import case_format, sweep
 from parallax.conformance.story_models import Account
@@ -274,30 +274,86 @@ def _run_actions(
     return current
 
 
+@dataclass(frozen=True, slots=True)
+class _Fault:
+    """One `given.fault` kind, in the three terms this module ever asks about it.
+
+    ``seam`` is where the kind is simulated, and it settles the attempt count
+    too: a ``work`` fault is a failure the work meets at the write seam, inside
+    an attempt that ran, while a ``boundary`` fault stops the boundary from
+    opening, so no attempt runs at all. ``retriable`` is `m-auto-retry` /
+    `m-opt-lock`'s verdict on the kind, ``opt-in`` where
+    `retryOptimisticConflicts` decides it. ``error`` builds the translated
+    :class:`DatabaseError` the real adapter's own classification would produce,
+    and is ``None`` for the one kind that raises nothing: an optimistic conflict
+    is simulated as the gated update's zero-row shortfall.
+
+    Every seam reads this record rather than testing the kind itself, so a kind
+    added here is injected, classified, and counted from one declaration.
+    """
+
+    seam: Literal["work", "boundary"]
+    retriable: Literal["always", "never", "opt-in"]
+    error: Callable[[], DatabaseError] | None
+
+
+_FAULTS: Final[Mapping[str, _Fault]] = {
+    "serialization-failure": _Fault(
+        seam="work",
+        retriable="always",
+        error=lambda: DatabaseError(
+            category="deadlock", native_code="40001", message="serialization failure"
+        ),
+    ),
+    "deadlock": _Fault(
+        seam="work",
+        retriable="always",
+        error=lambda: DatabaseError(
+            category="deadlock", native_code="40P01", message="deadlock detected"
+        ),
+    ),
+    "lock-wait-timeout": _Fault(
+        seam="work",
+        retriable="never",
+        error=lambda: DatabaseError(
+            category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
+        ),
+    ),
+    "optimistic-lock-conflict": _Fault(seam="work", retriable="opt-in", error=None),
+    # Uncategorized on purpose: a refused session setup is a request the engine
+    # would not honor, not a contention the classifier has a neutral category
+    # for, so nothing above may read it as retriable.
+    "isolation-setup-failure": _Fault(
+        seam="boundary",
+        retriable="never",
+        error=lambda: DatabaseError(
+            category=None, native_code="22023", message="invalid isolation level request"
+        ),
+    ),
+}
+
+
+def _fault(kind: str) -> _Fault:
+    try:
+        return _FAULTS[kind]
+    except KeyError as unknown:  # pragma: no cover - `given.fault` is a closed enum
+        raise ValueError(f"unrecognized fault kind {kind!r}") from unknown
+
+
 def translated_fault(kind: str) -> DatabaseError:
     """The SAME translated :class:`DatabaseError` the real adapter's own
-    classification would produce for a transient `given.fault` kind
-    (`m-db-error` vocabulary) — the decorator SIMULATES the failure; the
-    real retry loop still classifies it via `DatabaseError.category` /
-    `.is_retriable`, never a value this module invents."""
-    if kind == "serialization-failure":
-        return DatabaseError(
-            category="deadlock", native_code="40001", message="serialization failure"
-        )
-    if kind == "deadlock":
-        return DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
-    if kind == "lock-wait-timeout":
-        return DatabaseError(
-            category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
-        )
-    if kind == "isolation-setup-failure":
-        # Uncategorized on purpose: a refused session setup is a request the
-        # engine would not honor, not a contention the classifier has a neutral
-        # category for, so nothing above may read it as retriable.
-        return DatabaseError(
-            category=None, native_code="22023", message="invalid isolation level request"
-        )
-    raise ValueError(f"unrecognized fault kind {kind!r}")  # pragma: no cover - schema-closed enum
+    classification would produce for a `given.fault` kind (`m-db-error`
+    vocabulary) — the decorator SIMULATES the failure; the real retry loop
+    still classifies it via `DatabaseError.category` / `.is_retriable`, never a
+    value this module invents.
+
+    :class:`ValueError` for a kind that raises no error at all, which the write
+    seam answers with a zero-row shortfall instead.
+    """
+    build = _fault(kind).error
+    if build is None:  # pragma: no cover - only the conflict kind, simulated as a shortfall
+        raise ValueError(f"{kind!r} is simulated as a zero-row shortfall, not a raised error")
+    return build()
 
 
 @dataclass(slots=True)
@@ -320,9 +376,10 @@ class FaultInjectingPort:
     fault — the real classification / retry-loop / optimistic-gate machinery
     does the rest, end to end.
 
-    Every kind but one is a failure the WORK meets, injected at the write seam.
-    ``isolation-setup-failure`` is the exception: it is the boundary failing to
-    open, so it is answered at the boundary seam as ``BeginFailed``.
+    Which seam a kind belongs to is the kind's own declaration (:data:`_FAULTS`)
+    rather than a test made here: a ``work`` fault is a failure the work meets at
+    the write seam, and a ``boundary`` fault is the boundary failing to open,
+    answered as ``BeginFailed``.
 
     ``persistent`` fires the fault on EVERY attempt's write (a case whose
     `then.outcome` is a failure kind needs this — an outcome OTHER than
@@ -363,27 +420,26 @@ class FaultInjectingPort:
         return self._inner.execute(sql, binds, document_reads)
 
     def execute_write(self, sql: str, binds: Any) -> int:
-        fault = self._fault
-        if fault is not None and fault != "isolation-setup-failure" and self._fires():
+        armed = self._armed_at("work")
+        if armed is not None:
             self._state.fired = True
-            if fault == "optimistic-lock-conflict":
+            if armed.error is None:
                 return 0
-            raise translated_fault(fault)
+            raise armed.error()
         return self._inner.execute_write(sql, binds)
 
     def transaction[T](
         self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
-        # A session setup that fails is a boundary that never opened, so this
-        # ANSWERS `BeginFailed` instead of raising and never reaches the inner
-        # port: the callback does not run, no attempt begins, and the handle's
-        # own rule surfaces the error terminally (`m-db-port` "Mapping
-        # obligations"). A fault the WORK meets fires at the write seam above
-        # instead, which is where every other kind belongs.
-        fault = self._fault
-        if fault == "isolation-setup-failure" and self._fires():
+        # A boundary-seam fault is a boundary that never opened, so this ANSWERS
+        # `BeginFailed` instead of raising and never reaches the inner port: the
+        # callback does not run, no attempt begins, and the handle's own rule
+        # surfaces the error terminally (`m-db-port` "Mapping obligations"). A
+        # fault the WORK meets fires at the write seam above instead.
+        armed = self._armed_at("boundary")
+        if armed is not None and armed.error is not None:
             self._state.fired = True
-            return BeginFailed(translated_fault(fault))
+            return BeginFailed(armed.error())
         inner = self
 
         def wrapped(conn: DbPort) -> T:
@@ -395,8 +451,13 @@ class FaultInjectingPort:
 
         return self._inner.transaction(wrapped, isolation=isolation)
 
-    def _fires(self) -> bool:
-        return self._fault is not None and (self._persistent or not self._state.fired)
+    def _armed_at(self, seam: Literal["work", "boundary"]) -> _Fault | None:
+        """The case's own fault where ``seam`` is the one it belongs to and this
+        chain has not already spent a one-shot injection."""
+        if self._fault is None or not (self._persistent or not self._state.fired):
+            return None
+        armed = _fault(self._fault)
+        return armed if armed.seam == seam else None
 
 
 def expected_attempts(
@@ -416,10 +477,14 @@ def expected_attempts(
     a retriable fault that PERSISTS to a failure-kind outcome exhausts the
     bound (`retries` re-executions, so ``bound + 1`` total attempts).
 
-    An `isolation-setup-failure` answers ZERO: a boundary that never opened ran
-    no attempt at all, which is a different count from an attempt that ran and
+    A BOUNDARY-seam fault answers ZERO: a boundary that never opened ran no
+    attempt at all, which is a different count from an attempt that ran and
     failed, and it is the count that separates "the callback never ran" from
     "the callback ran and was undone".
+
+    Which seam a kind belongs to and whether it is retriable are read off
+    :data:`_FAULTS` rather than tested here, so one kind's declaration answers
+    the injection point and the count together.
 
     This is the ONE place the retry defaults an omitting case inherits are
     restated, because an oracle needs the resolved numbers: ``None`` retries
@@ -428,14 +493,14 @@ def expected_attempts(
     """
     if fault is None:
         return 1
-    if fault == "isolation-setup-failure":
+    kind = _fault(fault)
+    if kind.seam == "boundary":
         return 0
-    if fault == "optimistic-lock-conflict":
-        retriable = bool(retry_optimistic_conflicts)
-    elif fault == "lock-wait-timeout":
-        retriable = False
-    else:  # serialization-failure / deadlock — always retriable (m-auto-retry.md)
-        retriable = True
+    retriable = (
+        bool(retry_optimistic_conflicts)
+        if kind.retriable == "opt-in"
+        else kind.retriable == "always"
+    )
     if not retriable:
         return 1
     bound = retries if retries is not None else 10

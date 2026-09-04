@@ -147,3 +147,29 @@ def test_schema_admits_zero_round_trips_only_for_a_boundary_that_never_opened() 
     assert list(_case_validator().iter_errors(opened)), (
         "Schema should reject zero round trips for a boundary that did open"
     )
+
+
+def test_schema_admits_zero_round_trips_for_a_dialect_keyed_unopened_boundary() -> None:
+    """The relaxation follows the OUTCOME, not the form it is stated in: a case
+    whose every named dialect fails to open costs zero on each of them."""
+    for outcome in (
+        {"mariadb": "boundary-failed"},
+        {"postgres": "boundary-failed", "mariadb": "boundary-failed"},
+    ):
+        case = _valid_boundary_case()
+        case["given"] = {"fault": "isolation-setup-failure"}
+        case["then"] = {"outcome": outcome, "roundTrips": 0}
+        assert list(_case_validator().iter_errors(case)) == [], outcome
+
+
+def test_schema_rejects_zero_round_trips_where_one_dialect_opened_its_boundary() -> None:
+    """One count answers for every dialect the case claims anything about, so a
+    map naming a dialect whose boundary DID open states a case costing more."""
+    case = _valid_boundary_case()
+    case["then"] = {
+        "outcome": {"postgres": "committed", "mariadb": "boundary-failed"},
+        "roundTrips": 0,
+    }
+    assert list(_case_validator().iter_errors(case)), (
+        "Schema should reject zero round trips where a named dialect's boundary opened"
+    )
