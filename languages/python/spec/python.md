@@ -3691,6 +3691,14 @@ These feature tests do not claim the deferred `benchmark` command or general
   application. `tx.stream` therefore inherits its transaction's level and
   `db.stream` carries no isolation option at all — a caller wanting one
   database snapshot across a whole delivery streams inside `db.transact`.
+
+  An installed lifecycle Provider observes the level on the outer invocation's
+  Started transition and nowhere else (`m-execution-lifecycle`): the requested
+  value, or nothing at all where the call named none, because the default an
+  omitting call keeps is the adapter's own and Parallax does not infer it. A
+  joined invocation reports none, and neither does a Transaction Attempt — the
+  level belongs to the invocation that requested it, and every attempt opens at
+  that same one.
 - **Buffering, flush, and read-your-own-writes.** Writes buffer in the unit of
   work and flush at commit, combined and batched per `m-batch-write` (multi-row
   INSERT collapse, per-key UPDATE batching, IN-list DELETE collapse) and

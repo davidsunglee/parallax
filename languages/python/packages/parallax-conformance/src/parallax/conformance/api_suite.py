@@ -1398,6 +1398,18 @@ _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON: Final[str] = (
     "idiomatic spelling distinct from what that runner already exercises directly"
 )
 
+_ISOLATION_BOUNDARY_RUNNER_REASON: Final[str] = (
+    "a portable Isolation Level's own boundary obligation — a joining call refused for "
+    "naming a second level, one requested level standing over every attempt of a retried "
+    "invocation, a connection whose default the adapter judges at intake, and a session "
+    "setup that fails before the boundary opens — graded end-to-end by the case-driven "
+    "boundary runner (`tests/api/test_boundary_run.py`), which drives the REAL "
+    "`db.transact` against the provisioned database. None has a single-callback idiomatic "
+    "spelling that adds anything: the developer surface is the `isolation=` argument the "
+    "usage guide's transaction examples already show, and what these cases assert is what "
+    "the boundary does with it"
+)
+
 _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON: Final[str] = (
     "the m-execution-lifecycle spine's streamed arm: its `then.executionLifecycle` oracle is "
     "graded end-to-end by the run sweep (`tests/compatibility/test_run_sweep.py`) against the "
@@ -1458,6 +1470,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-031": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-032": _ISOLATION_SCENARIO_REASON,
     "m-unit-work-034": _ISOLATION_SCENARIO_REASON,
+    # -- the isolation boundary obligations, whichever module states each ---- #
+    "m-auto-retry-006": _ISOLATION_BOUNDARY_RUNNER_REASON,
+    "m-execution-lifecycle-008": _ISOLATION_BOUNDARY_RUNNER_REASON,
+    "m-unit-work-035": _ISOLATION_BOUNDARY_RUNNER_REASON,
+    "m-unit-work-036": _ISOLATION_BOUNDARY_RUNNER_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #
     "m-batch-write-004": _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON,
     # -- m-pk-gen: temporal composition -------------------------------------- #

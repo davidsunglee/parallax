@@ -252,14 +252,24 @@ def _database_call_started_fields(
 def _invocation_started_fields(
     event: TransactionInvocationStarted, _detail: LifecycleLogDetail
 ) -> dict[str, object]:
+    """An invocation's own resolved policy, and the isolation it asked for.
+
+    ``isolation`` is omitted rather than nulled when none was requested, for the
+    reason ``cause_activity`` is: its PRESENCE asserts that this invocation named
+    a level, and a null would read as "the boundary ran at no isolation" — which
+    no boundary does, since one requesting none runs at the adapter's own default.
+    """
     match event.invocation:
-        case OuterInvocation(concurrency=concurrency, retry_policy=policy):
-            return {
+        case OuterInvocation(concurrency=concurrency, retry_policy=policy, isolation=isolation):
+            fields: dict[str, object] = {
                 "invocation": "outer",
                 "concurrency": concurrency,
                 "retries": policy.retries,
                 "retry_optimistic_conflicts": policy.retry_optimistic_conflicts,
             }
+            if isolation is not None:
+                fields["isolation"] = isolation
+            return fields
         case JoinedInvocation():
             return {"invocation": "joined"}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard

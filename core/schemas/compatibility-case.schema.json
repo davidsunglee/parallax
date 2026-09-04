@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags", "shape"],
@@ -313,10 +313,25 @@
       }
     },
     {
-      "description": "`then.roundTrips` may declare ZERO only for the two shapes that can cost nothing: a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way), and a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero. Every other shape asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
+      "description": "`then.roundTrips` may declare ZERO only where a case can cost nothing: a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way); a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero; and a case whose `then.outcome` is `boundary-failed`, whose boundary never opened — the callback never ran, and begin, commit, and rollback are no Database Call, so nothing it did reached the database as a counted round trip. Every other case asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises, a boundary case's own body — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
       "if": {
-        "required": ["shape"],
-        "properties": { "shape": { "not": { "enum": ["scenario", "rejected"] } } }
+        "allOf": [
+          {
+            "required": ["shape"],
+            "properties": { "shape": { "not": { "enum": ["scenario", "rejected"] } } }
+          },
+          {
+            "not": {
+              "required": ["then"],
+              "properties": {
+                "then": {
+                  "required": ["outcome"],
+                  "properties": { "outcome": { "const": "boundary-failed" } }
+                }
+              }
+            }
+          }
+        ]
       },
       "then": {
         "properties": { "then": { "properties": { "roundTrips": { "minimum": 1 } } } }
@@ -396,7 +411,7 @@
       }
     },
     "given": {
-      "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, the stored state to corrupt once they are loaded, and any injected fault. Optional — a case that starts from the model's default fixtures and injects nothing omits `given` entirely.",
+      "description": "Ambient world-state established BEFORE the action under test: the model fixtures to load, out-of-band SQL to apply verbatim, the stored state to corrupt once they are loaded, the Isolation Level the connection already defaults to, and any injected fault. Optional — a case that starts from the model's default fixtures and injects nothing omits `given` entirely.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -439,13 +454,18 @@
           }
         },
         "fault": {
-          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). Absent when the case exercises only loop configuration (`retries: 0`, the callback-withheld-on-abort case).",
+          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). `isolation-setup-failure` is the one kind that is not a failure of the WORK: the session setup opening the boundary at the requested Isolation Level fails, so the boundary never opens, no attempt runs, and the callback is never called (m-db-port *Mapping obligations*). Absent when the case exercises only loop configuration (`retries: 0`, the callback-withheld-on-abort case).",
           "enum": [
             "serialization-failure",
             "deadlock",
             "lock-wait-timeout",
-            "optimistic-lock-conflict"
+            "optimistic-lock-conflict",
+            "isolation-setup-failure"
           ]
+        },
+        "sessionDefault": {
+          "description": "boundary cases only. The Isolation Level the connection the adapter is handed already defaults to, configured on that connection BEFORE the adapter takes it — the intake seam where `m-db-port` requires the default to be checked once per connection. `read-uncommitted` is the only value, and it is deliberately outside the portable vocabulary: it is the default an adapter must refuse as a connection error rather than silently upgrade, on an engine that would honor it. An engine executing it as Read Committed meets the floor and keeps it, which is why a case declaring it states its expected outcome per dialect.",
+          "enum": ["read-uncommitted"]
         }
       }
     },
@@ -935,11 +955,25 @@
                 "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.executionLifecycle` rather than the list's shape.",
                 "enum": ["read", "create", "update", "terminate", "delete", "join"]
               },
+              "isolation": {
+                "description": "The portable Isolation Level THIS joining call names, spelled as `when.uow.isolation` is. A joining call may not renegotiate the boundary (m-unit-work): omitting the level inherits, naming the level the boundary opened at is accepted, and naming any other is the option conflict `then.outcome: option-conflict` states. Legal on a `join` step alone — every other action runs inside a boundary that is already open and has no level of its own to name.",
+                "enum": ["read-committed", "repeatable-read", "serializable"]
+              },
               "note": {
                 "description": "Optional human-readable description of the action's role in the loop scenario.",
                 "type": "string"
               }
-            }
+            },
+            "allOf": [
+              {
+                "description": "Only a `join` step opens a boundary, so only a `join` step may name a level for one.",
+                "if": {
+                  "required": ["action"],
+                  "properties": { "action": { "not": { "const": "join" } } }
+                },
+                "then": { "not": { "required": ["isolation"] } }
+              }
+            ]
           }
         },
         "attempts": {
@@ -1197,14 +1231,15 @@
           "minProperties": 1
         },
         "outcome": {
-          "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value), or a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled). The concrete per-language error type stays language-local; this is the neutral kind the suite asserts.",
-          "enum": [
-            "committed",
-            "aborted",
-            "optimistic-lock-conflict",
-            "deadlock",
-            "serialization-failure",
-            "lock-wait-timeout"
+          "description": "boundary cases only. The portable expected outcome: `committed` (the unit of work eventually commits — the injected fault was auto-retried away), `aborted` (the closure threw and the boundary rolled back, withholding the callback's return value), a surfaced error kind the caller observes (`optimistic-lock-conflict` when a conflict is not opted into retry; `deadlock` / `serialization-failure` / `lock-wait-timeout` when a transient exhausts the bound or the loop is disabled), or one of the three refusals a boundary OPTION produces: `option-conflict` (a joining call named an option the boundary it joined was not opened with, refused before the joined callback runs), `boundary-failed` (the boundary never opened — its session setup failed, so no attempt ran and the callback was never called), and `connection-refused` (the adapter refused the connection it was handed, before any boundary). The concrete per-language error type stays language-local; this is the neutral kind the suite asserts. A DIALECT-KEYED map states an outcome that differs by engine — the same form `then.nativeCode` and `then.sql` use, and with the same rule that a dialect absent from the map means the case does not apply there, which is how a nonportable engine floor is graded without claiming the other engine reaches it.",
+          "oneOf": [
+            { "$ref": "#/$defs/boundaryOutcome" },
+            {
+              "type": "object",
+              "propertyNames": { "enum": ["postgres", "mariadb"] },
+              "additionalProperties": { "$ref": "#/$defs/boundaryOutcome" },
+              "minProperties": 1
+            }
           ]
         },
         "rejectedRule": {
@@ -1450,8 +1485,22 @@
         }
       ]
     },
+    "boundaryOutcome": {
+      "description": "One portable boundary outcome, in either of the two places `then.outcome` admits one: stated directly, or as a dialect-keyed map's value.",
+      "enum": [
+        "committed",
+        "aborted",
+        "optimistic-lock-conflict",
+        "deadlock",
+        "serialization-failure",
+        "lock-wait-timeout",
+        "option-conflict",
+        "boundary-failed",
+        "connection-refused"
+      ]
+    },
     "lifecycleInvocationStarted": {
-      "description": "One call to callback demarcation opened, as exactly one of the two invocation kinds. An `outer` invocation opened the boundary and is therefore the root activity, so it states the RESOLVED Concurrency Preference and retry policy it runs under — resolved values only, never whether the caller supplied them. A `joined` invocation shares the outer root, unit of work, and transaction, runs no Transaction Attempt of its own, and states neither: both were resolved by the invocation it joined, which a joined boundary may not renegotiate.",
+      "description": "One call to callback demarcation opened, as exactly one of the two invocation kinds. An `outer` invocation opened the boundary and is therefore the root activity, so it states the RESOLVED Concurrency Preference and retry policy it runs under — resolved values only, never whether the caller supplied them — plus the Isolation Level it REQUESTED, which has no resolved form above the port: a boundary naming no level runs at whatever the adapter defaults to, so `isolation` is stated when one was named and absent otherwise rather than reporting a default nothing here established. A `joined` invocation shares the outer root, unit of work, and transaction, runs no Transaction Attempt of its own, and states none of the four: all were resolved by the invocation it joined, which a joined boundary may not renegotiate.",
       "type": "object",
       "additionalProperties": false,
       "required": ["invocation"],
@@ -1459,18 +1508,20 @@
         "invocation": {"enum": ["outer", "joined"]},
         "concurrency": {"enum": ["locking", "optimistic"]},
         "retries": {"type": "integer", "minimum": 0},
-        "retryOptimisticConflicts": {"type": "boolean"}
+        "retryOptimisticConflicts": {"type": "boolean"},
+        "isolation": {"enum": ["read-committed", "repeatable-read", "serializable"]}
       },
       "allOf": [
         {
-          "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states all three, and a joined one states none, because restating an inherited value would read as a renegotiation.",
+          "description": "The resolved policy belongs to the invocation that resolved it: an outer invocation states all three, and a joined one states none, because restating an inherited value would read as a renegotiation. The requested isolation is OPTIONAL on an outer invocation — a boundary may name none — and forbidden on a joined one for the same reason the other three are.",
           "if": {"required": ["invocation"], "properties": {"invocation": {"const": "outer"}}},
           "then": {"required": ["concurrency", "retries", "retryOptimisticConflicts"]},
           "else": {
             "allOf": [
               {"not": {"required": ["concurrency"]}},
               {"not": {"required": ["retries"]}},
-              {"not": {"required": ["retryOptimisticConflicts"]}}
+              {"not": {"required": ["retryOptimisticConflicts"]}},
+              {"not": {"required": ["isolation"]}}
             ]
           }
         }

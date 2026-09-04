@@ -36,7 +36,7 @@ from typing import ClassVar, Final, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
 from parallax.core.auto_retry import retriable_failure
-from parallax.core.db_port import CommitFailed, RollbackTrigger
+from parallax.core.db_port import CommitFailed, IsolationLevel, RollbackTrigger
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
     CausedFailure,
@@ -1626,6 +1626,7 @@ def open_transaction_root(
     concurrency: Concurrency,
     retries: int,
     retry_optimistic_conflicts: bool,
+    isolation: IsolationLevel | None,
     extra_retriable: Callable[[BaseException], bool] | None,
 ) -> TransactionInvocationActivity:
     """The Transaction Invocation root activity for one outermost ``transact``
@@ -1652,6 +1653,6 @@ def open_transaction_root(
         return INERT
     return _LiveOuterInvocation(
         _Publisher(execution.id, installed, handler),
-        OuterInvocation(concurrency, RetryPolicy(retries, retry_optimistic_conflicts)),
+        OuterInvocation(concurrency, RetryPolicy(retries, retry_optimistic_conflicts), isolation),
         extra_retriable,
     )

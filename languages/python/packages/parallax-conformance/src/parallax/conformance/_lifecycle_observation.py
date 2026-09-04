@@ -27,6 +27,7 @@ from collections.abc import Collection, Generator, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
+from parallax.conformance.case_format import serialized_isolation
 from parallax.core.execution_lifecycle import (
     AttemptCommitted,
     AttemptFailure,
@@ -540,13 +541,16 @@ def _database_call_outcome(
 
 def _invocation(invocation: OuterInvocation | JoinedInvocation) -> dict[str, object]:
     match invocation:
-        case OuterInvocation(concurrency=concurrency, retry_policy=policy):
-            return {
+        case OuterInvocation(concurrency=concurrency, retry_policy=policy, isolation=isolation):
+            observed: dict[str, object] = {
                 "invocation": "outer",
                 "concurrency": concurrency,
                 "retries": policy.retries,
                 "retryOptimisticConflicts": policy.retry_optimistic_conflicts,
             }
+            if isolation is not None:
+                observed["isolation"] = serialized_isolation(isolation)
+            return observed
         case JoinedInvocation():
             return {"invocation": "joined"}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard

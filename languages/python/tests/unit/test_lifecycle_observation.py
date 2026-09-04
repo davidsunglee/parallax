@@ -217,7 +217,7 @@ def test_a_database_call_outcome_carries_its_own_count_or_its_category() -> None
 
 
 def test_an_outer_invocation_states_the_policy_a_joined_one_inherits() -> None:
-    outer = OuterInvocation("locking", RetryPolicy(3, True))
+    outer = OuterInvocation("locking", RetryPolicy(3, True), None)
     assert _transition(TransactionInvocationStarted(_EXECUTION, 1, 1, None, outer)) == {
         "transactionInvocationStarted": {
             "invocation": "outer",
@@ -229,6 +229,23 @@ def test_an_outer_invocation_states_the_policy_a_joined_one_inherits() -> None:
     assert _transition(
         TransactionInvocationStarted(_EXECUTION, 1, 1, None, JoinedInvocation())
     ) == {"transactionInvocationStarted": {"invocation": "joined"}}
+
+
+def test_a_requested_level_is_observed_in_the_spelling_the_corpus_uses() -> None:
+    # A case grades this against its own document, so the level leaves the
+    # language spelled as the corpus spells it — the inverse of the conversion
+    # case ingress makes. An invocation that requested none states nothing, which
+    # the test above already pins.
+    outer = OuterInvocation("optimistic", RetryPolicy(10, False), "repeatable_read")
+    assert _transition(TransactionInvocationStarted(_EXECUTION, 1, 1, None, outer)) == {
+        "transactionInvocationStarted": {
+            "invocation": "outer",
+            "concurrency": "optimistic",
+            "retries": 10,
+            "retryOptimisticConflicts": False,
+            "isolation": "repeatable-read",
+        }
+    }
 
 
 def test_an_invocation_outcome_tells_the_boundary_from_the_nested_callback() -> None:

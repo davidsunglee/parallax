@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
+from parallax.core.db_port import IsolationLevel
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
     DatabaseFailureDiagnostic,
@@ -229,10 +230,17 @@ class OuterInvocation:
     """The invocation that opened the boundary, and therefore the root activity.
 
     It contains every physical attempt and every joined invocation beneath them.
+
+    ``isolation`` is the Isolation Level this invocation REQUESTED, and ``None``
+    where it requested none. It is not the level the database went on to use: a
+    request naming none leaves the adapter's own default, which nothing above
+    the port knows, so reporting that default here would state a fact this
+    invocation never established.
     """
 
     concurrency: Concurrency
     retry_policy: RetryPolicy
+    isolation: IsolationLevel | None
 
 
 @dataclass(frozen=True, slots=True)

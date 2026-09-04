@@ -222,7 +222,10 @@ Statement presented to the port and is repeated on Finished. It is borrowed for
 synchronous delivery: core does not copy its text or binds, and a Handler must
 not retain it. `durationNs` is monotonic elapsed time around the port invocation
 alone; Handler time is outside it. A failed call still counts one round trip.
-Transaction begin, commit, and rollback are not Database Calls and count none.
+Transaction begin, commit, and rollback are not Database Calls and count none,
+and neither is whatever an adapter runs to open a boundary at a requested
+Isolation Level: applying the level is part of opening the boundary, so it
+belongs to the same demarcation the count already excludes.
 
 Every statement-reaching operation belongs to exactly one Read, Write Batch, or
 Stream Batch. A call is its direct child. No other activity kind owns a call.
@@ -233,9 +236,17 @@ A **Transaction Invocation** is one call to callback demarcation. Its Started
 transition carries exactly one invocation value:
 
 ```text
-OuterInvocation(concurrency, retryPolicy)
+OuterInvocation(concurrency, retryPolicy, isolation)
 JoinedInvocation()
 ```
+
+`isolation` is the Isolation Level this invocation **requested**, in the
+`m-db-port` portable vocabulary, and is **absent** when it requested none. It is
+not the level the database used: a boundary naming none opens at whatever its
+adapter defaults to, and that default is the adapter's own knowledge, so an
+implementation MUST NOT infer or report it here. Every attempt of one invocation
+opens at the same requested level, so the level belongs to the invocation and no
+attempt restates it.
 
 An Outer Invocation is the root activity. It spans every physical attempt and
 finishes exactly once as:

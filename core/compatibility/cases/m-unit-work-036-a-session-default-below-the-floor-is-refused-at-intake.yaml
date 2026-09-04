@@ -1,0 +1,48 @@
+# Boundary case (m-db-port connection intake): a connection whose OWN default
+# isolation is below Read Committed is refused when the adapter TAKES it, and one
+# whose engine meets the floor anyway is kept — `api-conformance` lane.
+#
+# The connection this body runs through defaults to Read Uncommitted, set before
+# the adapter took it, and the body itself names no level at all. Omitting a level
+# asks for nothing and keeps the adapter's default — but only where that default
+# is at least Read Committed, because a caller who named nothing asked for the
+# adapter's default and would otherwise silently get a weaker guarantee than the
+# vocabulary admits. The check belongs at intake, once per connection: a per-
+# boundary check would re-answer a question about the connection on every call,
+# and a silent upgrade would hide a misconfiguration the deployment owns.
+#
+# What the two engines then do is the divergence `then.outcome` carries per
+# dialect. Postgres HAS no level below Read Committed — it executes a Read
+# Uncommitted request as Read Committed — so the floor is met, the connection is
+# kept, and the unit of work commits. MariaDB honors Read Uncommitted, so the same
+# connection is refused as a connection error and the boundary never opens.
+#
+# The case declares no `then.roundTrips`: what it costs is the divergence itself
+# (two calls where the connection is kept, none where it is refused), and the
+# count has no dialect-keyed form to state that in. The outcome is the whole
+# oracle.
+#
+# `lane: api-conformance`: a connection's own default is established outside every
+# statement a case could author, and a refusal at intake reaches no boundary at
+# all. Each language's suite configures the connection and hands it to its
+# adapter; the MariaDB half is graded when a MariaDB adapter exists.
+model: models/account.yaml
+tags: [m-unit-work, m-api-conformance, isolation, session-default, slice-snapshot-1, slice-managed-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection unit-of-work boundary intent (shape:boundary)"
+given:
+  sessionDefault: read-uncommitted
+when:
+  boundary:
+    - action: read
+      note: observe the row — the body names no Isolation Level of its own
+    - action: update
+      note: the write commits on an engine whose default meets the floor
+then:
+  outcome:
+    postgres: committed
+    mariadb: connection-refused

@@ -125,6 +125,7 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
             concurrency="optimistic",
             retries=10,
             retry_optimistic_conflicts=False,
+            isolation=None,
             extra_retriable=None,
         ) as invocation,
         invocation.attempt() as attempt,

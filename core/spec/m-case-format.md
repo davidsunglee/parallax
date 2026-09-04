@@ -345,13 +345,14 @@ values.
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.corrupt` | `given` | no | an ordered list of stored-state corruptions applied after the model's conforming fixtures load and before the action, admitted on `read` cases; each entry addresses one occurrence by `entity` + primary `key` + logical `member` path and states the raw stored `value` that replaces it (see *Corrupting stored state*, below) |
-| `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
+| `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop, or `isolation-setup-failure` — the session setup opening the boundary at its requested level failing, so the boundary never opens |
+| `given.sessionDefault` | `given` | boundary | the Isolation Level the connection ALREADY defaults to when the adapter takes it (`read-uncommitted`), established before intake — the seam `m-db-port` puts the once-per-connection floor check at |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit |
-| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary) |
+| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming the `isolation` THAT joining call requests) |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
@@ -372,10 +373,10 @@ values.
 | `then.affectedRows` | `then` | conflict | the number of rows the golden write must affect (`0` = the zero-row shortfall — a gated conflict, or the ungated stale write only a temporal close can author, `1` = success) |
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
-| `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
+| `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind / a refused boundary option — `option-conflict`, `boundary-failed`, `connection-refused`), stated directly or as a dialect-keyed map whose omitted dialect the case makes no claim about |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
+| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two shapes and one outcome are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run — and every other case asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 #### How a case spells an Entity
@@ -1943,23 +1944,49 @@ A **boundary** case proves the unit-of-work **bounded automatic retry** contract
 (`m-auto-retry`, `m-opt-lock` *Retry contract*): a loop-mechanics branch
 whose observable — a retriable failure auto-retried away, a conflict surfaced
 without the opt-in, a disabled loop (`retries: 0`), an exhausted bound, a callback
-value withheld on abort — a **single-connection** harness cannot provoke, because
-it needs an **injected transient failure** and a re-executed closure. It carries a
+value withheld on abort, a boundary option refused — a **single-connection**
+harness cannot provoke, because it needs an **injected failure**, a re-executed
+closure, or a connection configured before the adapter took it. It carries a
 portable `when.boundary` (the ordered unit-of-work actions), an OPTIONAL
 `given.fault` (a portable fault kind — `serialization-failure` / `deadlock` /
-`lock-wait-timeout` / `optimistic-lock-conflict`, aligned with the `m-db-error`
-`errorClass` vocabulary), a `then.outcome` (the portable outcome — `committed`, or
-a surfaced error kind), and its retry configuration under `when.uow` (`retries` /
-`retryOptimisticConflicts`). It carries **no** golden SQL — the concrete DML and
-error types stay per-language. Every boundary case is on the `api-conformance`
-lane.
+`lock-wait-timeout` / `optimistic-lock-conflict` / `isolation-setup-failure`, the
+first four aligned with the `m-db-error` `errorClass` vocabulary), an OPTIONAL
+`given.sessionDefault`, a `then.outcome` (the portable outcome — `committed`, a
+surfaced error kind, or a refused boundary option), and its unit-of-work
+configuration under `when.uow` (`retries` / `retryOptimisticConflicts` /
+`isolation`). It carries **no** golden SQL — the concrete DML and error types stay
+per-language. Every boundary case is on the `api-conformance` lane.
 
 The action list also spells the **joined** boundary (`m-unit-work`): a `join`
 action opens a unit of work that shares the current one rather than a nested
 boundary of its own, and every action after it runs inside that joined scope.
 The list stays flat because the arrangement is one linear body; what a case
 asserts about the sharing rides `then.outcome` and `then.executionLifecycle`, never the
-list's shape.
+list's shape. A `join` step MAY carry its own `isolation`, which is the level
+**that joining call names**: omitted it inherits, equal to the boundary's own it
+is accepted, and different it is refused. No other action may carry one, because
+every other action runs inside a boundary that is already open.
+
+Four elements of the grammar exist for the isolation obligations an adapter owes
+above the wire (`m-db-port` *Mapping obligations*), and all four are portable:
+
+- `given.sessionDefault` is the Isolation Level the connection **already defaults
+  to** when the adapter takes it, established on that connection before intake.
+  Its one value, `read-uncommitted`, is deliberately outside the portable
+  vocabulary: it is the default an adapter must refuse rather than silently
+  upgrade, on an engine that honors it.
+- `given.fault: isolation-setup-failure` is the session setup that opens a
+  boundary at a level failing, so the boundary **never opens**: no attempt runs
+  and the callback is never called.
+- `then.outcome` adds `option-conflict` (a joining call named an option the
+  boundary it joined was not opened with, refused before the joined callback
+  runs), `boundary-failed` (the boundary never opened), and `connection-refused`
+  (the adapter refused the connection it was handed, before any boundary).
+- `then.outcome` also admits a **dialect-keyed map**, the same form `then.sql` and
+  `then.nativeCode` use and with the same rule: a dialect the map omits is one the
+  case makes no claim about. That is how a nonportable engine floor is graded
+  where it holds without asserting anything about an engine that meets it another
+  way.
 
 ### The execution lifecycle oracle (`m-execution-lifecycle`)
 
@@ -1985,6 +2012,14 @@ of the KIND its own statement is — a query by a read, DML by a write — so a
 resolving read carrying a golden DML index leaves the write that ran it absent
 from a record whose coverage is otherwise complete. `then.statements` remains
 the sole SQL and bind oracle, and `then.roundTrips` the sole count oracle.
+
+An `outer` `transactionInvocationStarted` states the resolved Concurrency
+Preference and retry policy it runs under, and — where one was named — the
+`isolation` it **requested**, spelled as `when.uow.isolation` is. That field is
+optional there because a boundary may name no level, and forbidden on a `joined`
+invocation for the reason the other three are: a joined boundary renegotiates
+none of them. It is stated once, above every Transaction Attempt, because every
+attempt of one invocation opens at the same requested level.
 
 The shape is a case assertion format, not a public serialization contract. The
 compatibility harness validates `then.executionLifecycle` without producing

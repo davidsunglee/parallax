@@ -147,6 +147,11 @@ class ProvisionedRun(ProfileRun):
         """An independent second connection to the same database (provider `peer`)."""
         return self._provisioner.peer(autocommit=autocommit)
 
+    def taken_at_session_default(self, level: str) -> DbPort:  # pragma: no cover - Docker
+        """A port over a connection whose own default isolation is ``level``,
+        established before the adapter took it (`m-db-port` connection intake)."""
+        return self._provisioner.taken_at_session_default(level)
+
     def close(self) -> None:  # pragma: no cover - Docker
         """Close the provisioning this run opened."""
         self._provisioner.close()
