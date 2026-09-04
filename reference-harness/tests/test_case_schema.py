@@ -1523,6 +1523,16 @@ def _error_step_declaring_a_read_kind() -> dict[str, Any]:
     return doc
 
 
+def _error_statement_step_grading_rows() -> dict[str, Any]:
+    # The `kind`-less statement step is the error shape's own form, so nothing about
+    # its kind refuses it — yet an error case asserts only the classified error, and
+    # both runners would ignore rows authored here. The branch refuses `expectRows`
+    # on every step rather than let a case state an assertion nothing grades.
+    doc = _error_concurrency_case()
+    doc["when"]["concurrency"]["rounds"][0]["A"]["expectRows"] = [{"id": 1}]
+    return doc
+
+
 def _isolation_on_a_scenario_step() -> dict[str, Any]:
     # A level is the whole case's, declared once under `when.uow`; a step naming its
     # own would leave one scenario's groups running at levels nothing states together.
@@ -1711,6 +1721,7 @@ REJECTED_CASES = {
     "isolation-on-a-scenario-step": _isolation_on_a_scenario_step,
     "error-step-declaring-a-write-kind": _error_step_declaring_a_write_kind,
     "error-step-declaring-a-read-kind": _error_step_declaring_a_read_kind,
+    "error-statement-step-grading-rows": _error_statement_step_grading_rows,
 }
 
 

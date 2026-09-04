@@ -111,7 +111,7 @@
       }
     },
     {
-      "description": "An error-classification case (m-db-error): triggers a real DB error and asserts the neutral category it classifies to (`then.errorClass`) plus the per-dialect native code (`then.nativeCode`). A case MUST declare a trigger: top-level `then.statements` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `when.concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds). A choreography MAY declare `when.uow.isolation`, the portable level both held sessions open at. A step here takes one of exactly two forms: a statement step declaring NO `kind` at all, or a `kind: commit` step ending that node's held transaction where the choreography needs it to end. The nested `rounds.items.properties.{A,B}.kind: {const: commit}` is what refuses the third form: `read` / `write` are the concurrency-success shape's grading vocabulary, and a step declaring one here would name a distinction nothing on this shape grades while dispatching differently per runner.",
+      "description": "An error-classification case (m-db-error): triggers a real DB error and asserts the neutral category it classifies to (`then.errorClass`) plus the per-dialect native code (`then.nativeCode`). A case MUST declare a trigger: top-level `then.statements` (single-connection, uniqueViolation — ordered DML whose final statement raises) OR a `when.concurrency` choreography (two-connection, deadlock / lockWaitTimeout — barrier-separated rounds). A choreography MAY declare `when.uow.isolation`, the portable level both held sessions open at. A step here takes one of exactly two forms: a statement step declaring NO `kind` at all, or a `kind: commit` step ending that node's held transaction where the choreography needs it to end. The nested `rounds.items.properties.{A,B}` is what refuses everything else: `kind: {const: commit}` refuses the third form, since `read` / `write` are the concurrency-success shape's grading vocabulary and a step declaring one here would name a distinction nothing on this shape grades while dispatching differently per runner; `not: {required: [expectRows]}` refuses the rows themselves on EVERY step, `kind`-less ones included, because this shape's only assertion is the classified error and both runners would silently ignore an authored `expectRows`.",
       "required": ["shape", "then"],
       "properties": {
         "shape": { "const": "error" },
@@ -123,8 +123,14 @@
                 "rounds": {
                   "items": {
                     "properties": {
-                      "A": { "properties": { "kind": { "const": "commit" } } },
-                      "B": { "properties": { "kind": { "const": "commit" } } }
+                      "A": {
+                        "properties": { "kind": { "const": "commit" } },
+                        "not": { "required": ["expectRows"] }
+                      },
+                      "B": {
+                        "properties": { "kind": { "const": "commit" } },
+                        "not": { "required": ["expectRows"] }
+                      }
                     }
                   }
                 }
@@ -1775,7 +1781,7 @@
       "additionalProperties": { "$ref": "write-instruction.schema.json#/$defs/writeRowValue" }
     },
     "concurrencyStep": {
-      "description": "One node's step within a `when.concurrency` round. A statement step carries its golden SQL as `statements` ({sql, binds} entries, dialect-keyed map form); a `kind: commit` step carries none, because committing that node's held transaction is boundary mechanics rather than authored SQL. On the concurrency-SUCCESS shape a step additionally declares an explicit `read` / `write` kind: a `read` step is fetched on its HELD session and its `expectRows` graded; a `write` step is executed and asserts only that it did not block/raise. `kind` is optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries none on its statement steps; the concurrency-success root branch requires it on every present step, and the error root branch narrows it, when present, to `commit`.",
+      "description": "One node's step within a `when.concurrency` round. A statement step carries its golden SQL as `statements` ({sql, binds} entries, dialect-keyed map form); a `kind: commit` step carries none, because committing that node's held transaction is boundary mechanics rather than authored SQL. On the concurrency-SUCCESS shape a step additionally declares an explicit `read` / `write` kind: a `read` step is fetched on its HELD session and its `expectRows` graded; a `write` step is executed and asserts only that it did not block/raise. `kind` is optional in this base def so the error/concurrency shape — whose only assertion is the classified error — carries none on its statement steps; the concurrency-success root branch requires it on every present step, and the error root branch narrows it, when present, to `commit` while refusing `expectRows` on every step.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1788,7 +1794,7 @@
           "enum": ["read", "write", "commit"]
         },
         "expectRows": {
-          "description": "concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error. A full-scalar shared read observes the object (INSTANCE-FORM / the object lane); every concurrency-success case reads the value-object-free `account`.",
+          "description": "concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error and whose root branch refuses it on every step, `kind`-less ones included. A full-scalar shared read observes the object (INSTANCE-FORM / the object lane); every concurrency-success case reads the value-object-free `account`.",
           "type": "array",
           "items": { "type": "object" }
         }
