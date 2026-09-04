@@ -4902,10 +4902,12 @@ def _run_uow_group(
 
 # --------------------------------------------------------------------------- #
 # Interleaved `uow` groups — the two-group shapes: the optimistic-lock race    #
-# (`m-opt-lock-012`) and the Isolation Level scenarios whose every step states #
-# ROWS. A step stating `expectGraph` is REFUSED below for lack of a            #
-# `stepGraphs` channel, and which of the rest a sweep routes here is its own   #
-# to say (`test_run_sweep._INTERLEAVED_RUNNER_CASES`) — a choreography whose   #
+# (`m-opt-lock-012`) and the Isolation Level scenarios alike, admitted by ONE  #
+# guard on ORACLE SHAPE: a step stating `expectGraph` is REFUSED below for     #
+# lack of a `stepGraphs` channel to answer it, so read oracles here are        #
+# row-valued only — a write step, stating no oracle of its own, is asked for   #
+# nothing. Which of the rest a sweep routes here is its own to say             #
+# (`test_run_sweep._INTERLEAVED_RUNNER_CASES`) — a choreography whose          #
 # window a real unit of work does not have runs here and asserts nothing.      #
 # `_run_uow_group` above runs                                                  #
 # ONE contiguous group on the main connection; a genuinely interleaved case    #
@@ -5564,9 +5566,11 @@ def run_interleaved_scenario_case(
     peer_factory: Callable[[], _PeerConnection],
 ) -> tuple[list[Emission], int, int | None, list[list[Mapping[str, object]]]]:
     """Run a two-group interleaved-`uow`-group scenario — the optimistic-lock
-    race (`m-opt-lock-012`) and the Isolation Level scenarios whose every step
-    states rows alike (one stating `expectGraph` is REFUSED here: this entry
-    point carries no `stepGraphs` channel, so that oracle would go unasserted):
+    race (`m-opt-lock-012`) and the Isolation Level scenarios alike, whose ONE
+    admission guard is on ORACLE SHAPE (a step stating `expectGraph` is REFUSED
+    here: this entry point carries no `stepGraphs` channel, so that oracle would
+    go unasserted — read oracles are row-valued only, and a write step, stating
+    no oracle of its own, is asked for nothing):
     the
     FIRST-declared group on the caller's own ``port``, the second on a
     SECOND, peer-backed connection (``peer_factory``
