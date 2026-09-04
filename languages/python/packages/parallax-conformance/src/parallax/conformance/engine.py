@@ -4907,9 +4907,13 @@ def _run_uow_group(
 # lack of a `stepGraphs` channel to answer it, so read oracles here are        #
 # row-valued only — a write step, stating no oracle of its own, is asked for   #
 # nothing. Which of the rest a sweep routes here is its own to say             #
-# (`test_run_sweep._INTERLEAVED_RUNNER_CASES`) — a choreography whose          #
-# window a real unit of work does not have runs here and asserts nothing.      #
-# `_run_uow_group` above runs                                                  #
+# (`test_run_sweep._INTERLEAVED_RUNNER_CASES`) — a choreography needing a      #
+# peer's DML on the wire BEFORE that peer's own flush edge is left out, not    #
+# for want of a channel here: this lane would run it, reconcile its delivered  #
+# statements, and report its emissions, round trips and rows for the sweep to  #
+# grade. A real unit of work buffers to its boundary, so that window never     #
+# opens and those oracles hold at EVERY level — a pass asserting nothing about #
+# isolation. `_run_uow_group` above runs                                       #
 # ONE contiguous group on the main connection; a genuinely interleaved case    #
 # needs TWO groups held open CONCURRENTLY over TWO real sessions (the          #
 # `Provisioner.peer` seam) — a DIFFERENT consumer of that seam than the        #
