@@ -35,17 +35,25 @@ errno below reports `23000`, and both `1020` and `1205` report the catch-all
 
 | Category | Postgres (`SQLSTATE`) | MariaDB (errno) |
 |---|---|---|
-| `uniqueViolation` | `23505` | `1062`, `1022`, `1169`, `1586` |
+| `uniqueViolation` | `23505` | `1062`, `1022`, `1169`, `1859` |
 | `deadlock` | `40P01`, `40001` | `1213`, `1020` |
 | `lockWaitTimeout` | `55P03` | `1205` |
 
-MariaDB reports one duplicate-key condition under four errnos, chosen by which
-path detected it: `1062` (`ER_DUP_ENTRY`), `1022` (`ER_DUP_KEY`), `1169`
-(`ER_DUP_UNIQUE`), and `1586` (`ER_DUP_ENTRY_WITH_KEY_NAME`, the same condition
-as `1062` with the index named rather than numbered). All four are the same
-neutral category, so all four are listed: a lookup keyed on the errno classifies
-only what it names, and an unnamed one would surface as unclassified rather than
-as the violation it is.
+MariaDB reports a duplicate on a table's own unique index under four errnos,
+chosen by which path detected it: `1062` (`ER_DUP_ENTRY`) when the offending key
+is identified, `1022` (`ER_DUP_KEY`) when the engine names no usable key,
+`1169` (`ER_DUP_UNIQUE`) when the engine reports the collision against a unique
+constraint and names only the table,
+and `1859` (`ER_DUP_UNKNOWN_IN_INDEX`) when an index built online is committed
+after a concurrent duplicate reached it. All four are the same neutral category,
+so all four are listed: a lookup keyed on the errno classifies only what it
+names, and an unnamed one would surface as unclassified rather than as the
+violation it is. `1586` (`ER_DUP_ENTRY_WITH_KEY_NAME`) is deliberately absent:
+it is the message template MariaDB formats a named-index duplicate with while
+still reporting errno `1062`, so no client ever receives it as a code. So are
+`1761`/`1762`, which report a duplicate a foreign-key action would cause in
+another table — a different failure from the writing statement colliding on its
+own index, and not what `violatesUniqueIndex` answers for.
 
 MariaDB's `1020` (`ER_CHECKREAD`) is the write/write conflict InnoDB raises under
 `innodb_snapshot_isolation` when a transaction tries to lock a row that changed

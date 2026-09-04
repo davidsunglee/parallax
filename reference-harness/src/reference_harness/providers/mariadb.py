@@ -55,17 +55,16 @@ MARIADB_IMAGE = "mariadb:12.3"
 
 # MariaDB keys on the vendor errno rather than on SQLSTATE, because the states are
 # not discriminating: every duplicate-key errno below reports `23000` and both
-# `1020` and `1205` report the catch-all `HY000`. A code absent here is
-# `errors.UNKNOWN`, so an unclassified error fails an assertion loudly rather than
-# passing silently.
+# `1020` and `1205` report the catch-all `HY000`. An errno absent here classifies as
+# `errors.UNKNOWN`.
 _CODES: dict[int, str] = {
-    # The duplicate-key condition, one errno per detecting path. The corpus reaches
-    # it through ER_DUP_ENTRY alone; the rest are here so an unusual path reports the
-    # category instead of `errors.UNKNOWN`.
+    # A duplicate on a table's own unique index, one errno per detecting path.
+    # ER_DUP_ENTRY_WITH_KEY_NAME (1586) is not among them: it is the message template
+    # a named-index duplicate is formatted with, reported under 1062.
     1062: errors.UNIQUE_VIOLATION,  # ER_DUP_ENTRY
     1022: errors.UNIQUE_VIOLATION,  # ER_DUP_KEY
     1169: errors.UNIQUE_VIOLATION,  # ER_DUP_UNIQUE
-    1586: errors.UNIQUE_VIOLATION,  # ER_DUP_ENTRY_WITH_KEY_NAME
+    1859: errors.UNIQUE_VIOLATION,  # ER_DUP_UNKNOWN_IN_INDEX
     1213: errors.DEADLOCK,  # ER_LOCK_DEADLOCK
     1205: errors.LOCK_WAIT_TIMEOUT,  # ER_LOCK_WAIT_TIMEOUT
     # ER_CHECKREAD: a snapshot-isolation write/write conflict at Repeatable Read,
@@ -84,8 +83,7 @@ _CODES: dict[int, str] = {
 # The omission is load-bearing rather than merely redundant, because the variable also
 # makes a session open its read view eagerly: a Serializable session carrying it can
 # have a conflict refused against that read view as `1020` before any lock wait forms,
-# in place of the `1213` its locking reads would otherwise deadlock on and a case
-# asserts.
+# in place of the `1213` its locking reads would otherwise deadlock on.
 _ISOLATION: dict[str, tuple[str, ...]] = {
     "read-committed": ("set session transaction isolation level read committed",),
     "repeatable-read": (
