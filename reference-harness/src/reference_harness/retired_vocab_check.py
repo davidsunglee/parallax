@@ -14,8 +14,8 @@ transient event stream a Provider receives, never a record a result retains, and
 the module that owned the retained record is retired in favor of
 `m-execution-lifecycle`. Only the IDENTIFIER-shaped spellings are retired — the
 module slug, its scope name, and the camel type — because the compound names one
-retired subject wherever it is written, unlike the two families below whose stems
-are ordinary English.
+retired subject wherever it is written, unlike the temporal family below whose
+stems are ordinary English.
 
 **Temporal.** The root glossary's `_Avoid_` registry retires the
 Reladomo-derived temporal spellings — business time/date, processing time/date,
@@ -24,43 +24,24 @@ favor of Valid Time / Transaction Time, and retires the camelCase dimension
 spellings `validTime` / `transactionTime` in favor of the kebab-case enumerated
 values `valid-time` / `transaction-time`.
 
-**Query.** A read is an Object Query carrying a Predicate; neither is an
-*operation*. Every spelling that names a query, its grammar, its wire form, or
-the machinery that reads one an *operation* is retired: the module
-`m-op-algebra`, the package `op_algebra`, the schema `operation.schema.json`,
-the read envelope's sibling `targetEntity` field, and the `FindQuery` /
-`LoweredFindQuery` pair. Predicate, Object Query, Includes, Deep Fetch, Subtype
-Selection, Temporal Selection, and Sort Key are the accepted names.
+The temporal deny-list matches whole retired PHRASES rather than bare words,
+because its stems are ordinary English. What makes a phrase retired depends on
+where it is written:
 
-The temporal and query deny-lists match whole retired PHRASES rather than bare
-words, because both of those retired stems are ordinary English. What makes a
-phrase retired depends on where it is written:
-
-- in prose, the stem counts only beside a listed noun — a temporal noun for
-  business/processing, a query-surface noun for operation — so "business key",
-  "business/developer name", "operation processing", "write operation", and
-  "database operation boundary" stay while "operation tree" and "operation
-  schema" do not;
-- an identifier or path component the stem OPENS names its subject an
-  operation whatever word follows, so `op_algebra`, `op_root`, `operation_model`,
-  and `core/op/nodes.py` count without their second word being listed;
+- in prose, the stem counts only beside a listed temporal noun, so "business
+  key" and "business/developer name" stay while "business date" and "the
+  business/processing dimension pair" do not;
+- a handful of position words are retired only where `-` or `_` joins them to
+  the stem, since their spaced forms are ordinary English: `business-from` and
+  `processing-latest` are names, "separates the business from" is a sentence;
 - a camelCase hump bounds a word the way punctuation does, so a capitalized stem
-  counts wherever it sits inside an identifier: `myOperationTree`,
-  `buildOperationsSchema`, and `parseOperationDocument` are the compound their
-  hump spells, as are `entityBusinessDate` and `opTree`.
+  counts wherever it sits inside an identifier: `entityBusinessDate` and
+  `businessFromValue` are the compound their hump spells.
 
-Three things the compound rules deliberately do not decide, each because this
-repository spells the same shape for a live subject:
-
-- the bare stem in prose, which stays legal in every sense that is not a query
-  ("a write operation", "the business key");
-- the full stem hyphenated, or sitting deeper inside a snake_case name, where the
-  compound is as likely prose as a name and nothing says which word opens it —
-  `operation-buffered`, `operation-specific`, `#2-operation-vocabulary`, and
-  `scope_operation_and_qualifier` are all ordinary, so those positions fall back
-  to the surface-noun rule;
-- `op` in trailing position, which is the navigation filter's inner operand on
-  the wire (`Exists.op`, `inner_op`, `root_op`) rather than a query.
+What the compound rules deliberately do not decide is the bare stem in prose,
+because this repository spells the same word for live subjects: it stays legal
+in every sense that is not temporal ("the business key", "processing continues
+with the next statement").
 
 A retired phrase counts across the line break a wrapped document puts in the
 middle of it.
@@ -70,13 +51,10 @@ Allow-list (explicitly labeled historical / prior-art / rejection text):
 - ``docs/research/reladomo/**`` — prior-art notes keep the vocabulary of the
   system they describe (other research documents are active prose and are
   scanned);
-- every ``adr`` directory, for the two SUPERSEDED families — temporal and
-  execution log. A decision record states the vocabulary current when it was
-  written, and one that supersedes another has to name what it replaced: ADR
-  0055's whole subject is the retained Execution Log. The query deny-list still
-  applies there, because that family retired a wrong NAME for live machinery
-  rather than a design, so a decision record naming it names something live
-  by the wrong name;
+- every ``adr`` directory. A decision record states the vocabulary current when
+  it was written, and one that supersedes another has to name what it replaced:
+  ADR 0055's whole subject is the retained Execution Log. Both retired families
+  are superseded designs, so neither is scanned there;
 - ``core/compatibility/descriptor-errors/`` — negative-test fixtures exist to
   spell the retired forms so serde provably rejects them;
 - glossary ``_Avoid_`` lines, the labeled ``Prior art:`` paragraph, and a table
@@ -85,8 +63,6 @@ Allow-list (explicitly labeled historical / prior-art / rejection text):
 - the URL text of every host outside this repository, which no edit here can
   change; a URL under the repository's own host is scanned, because a canonical
   schema ``$id`` is a name this repository chooses;
-- the handful of LIVE spellings a compound rule reads as retired ones, listed in
-  ``_LIVE_SPELLING_WORDS``;
 - this module's own test file, whose fixtures spell the retired phrases.
 """
 
@@ -176,12 +152,6 @@ _CAMEL_WORDS = "|".join(word.capitalize() for word in _TEMPORAL_NOUN_WORDS + _JO
 _LEFT = r"(?<![A-Za-z0-9])"
 _RIGHT = r"(?![A-Za-z0-9])"
 
-# Where a whole word or identifier starts. The second lookbehind is what makes
-# it a START: snake_case and kebab_case carry no signal for which of their words
-# opens a compound, so an occurrence one joiner deep (`mixed_op_flush`,
-# `scope_operation_and_qualifier`) is a continuation of the name around it.
-_TOKEN_START = rf"{_LEFT}(?<![A-Za-z0-9][_-])"
-
 # The retired camelCase spellings of the temporal dimension vocabulary, whose
 # accepted forms are the kebab-case enumerated values `valid-time` and
 # `transaction-time`. Matched case-sensitively on the lowercase-initial form:
@@ -196,153 +166,16 @@ _RETIRED_DIMENSION_SPELLINGS = ("validTime", "transactionTime")
 # IS a boundary (`businessFromValue` still carries the retired compound).
 _CAMEL_RIGHT = r"(?![a-z0-9])"
 
-# The camel compound's continuation: the rest of the word the stem's hump opens,
-# however that word is cased, so `OperationTree`, `OperationURL`, and
-# `OperationTreeBuilder` each report the whole compound they spell.
-_CAMEL_TAIL = r"[A-Z][A-Za-z0-9]*"
-
 
 def _camel_first_word(word: str) -> str:
     """*word* where a camelCase compound begins.
 
     A hump bounds a word the way punctuation does, so the capitalized spelling
-    opens a compound wherever it sits inside an identifier (`myOperationTree`);
+    opens a compound wherever it sits inside an identifier (`entityBusinessDate`);
     the lowercase spelling opens one only where the identifier itself starts.
     """
     return f"(?:{_LEFT}[{word[0]}{word[0].upper()}]|{word[0].upper()}){word[1:]}"
 
-
-# Nouns that make an `operation` / `op` compound a retired QUERY phrase. Each
-# names the query, its grammar, or the machinery that reads one, so the compound
-# credits the retired representation; the bare stem stays legal, which is what
-# keeps "write operation", "database operation boundary", and `m-op-list` out of
-# the deny-list.
-_QUERY_SURFACE_WORDS = (
-    "algebra",
-    "algebras",
-    "tree",
-    "trees",
-    "wrapper",
-    "wrappers",
-    "node",
-    "nodes",
-    "spine",
-    "spines",
-    "union",
-    "unions",
-    "grammar",
-    "grammars",
-    "envelope",
-    "envelopes",
-    "document",
-    "documents",
-    "schema",
-    "schemas",
-    "serde",
-    "clause",
-    "clauses",
-    "directive",
-    "directives",
-    "field",
-    "fields",
-    "builder",
-    "builders",
-    "lowering",
-    "validate",
-    "validation",
-    "validator",
-    "reference",
-    "references",
-    "query",
-    "queries",
-    "predicate",
-    "predicates",
-    "backed",
-    "error",
-    "errors",
-    "url",
-    "urls",
-    "dispatch",
-    "narrow",
-    "narrows",
-    "narrowing",
-    "mix",
-    "mixes",
-    "drift",
-    "plan",
-    "plans",
-    "cache",
-    "caches",
-    "caching",
-    "spelling",
-    "spellings",
-    "model",
-    "models",
-    "runtime",
-    "runtimes",
-    "ast",
-    "ir",
-)
-_QUERY_SURFACE = "|".join(_QUERY_SURFACE_WORDS)
-
-# One connective the retired compound may carry between the stem and its surface
-# noun, so `operation no-drift` and `operation-to-result` read as the single
-# phrases they are.
-_QUERY_CONNECTIVE_WORDS = ("to", "no")
-_QUERY_CONNECTIVE = rf"(?:(?:{'|'.join(_QUERY_CONNECTIVE_WORDS)}){_JOIN})?"
-
-# Words retired only when `-` or `_` joins them to the stem, in either order.
-# The spaced form is ordinary English — "the write operation rejected the row",
-# a write tree's root operation, "transactions and operation results" — while
-# the joined form is an identifier, where the only thing being named is a query.
-_QUERY_JOINED_WORD_LIST = ("rejected", "root", "inner", "embedded", "result", "results")
-_QUERY_JOINED_WORDS = "|".join(_QUERY_JOINED_WORD_LIST)
-
-# The retired stems themselves, longest first. `op` is included because the
-# retired module, package, and schema all abbreviate it; `m-op-list` (a live
-# module) stays legal because the abbreviation there opens no name of its own
-# and `list` is no surface noun.
-_QUERY_STEM_WORDS = ("operations", "operation", "op")
-_QUERY_STEMS = "|".join(_QUERY_STEM_WORDS)
-
-# The trailing-position patterns use these instead, because a bare `op` after a
-# position word is the navigation filter's inner operand (`inner_op`,
-# `Exists.op`) — a live wire spelling — not a query named as an operation.
-_QUERY_FULL_STEM_WORDS = ("operations", "operation")
-_QUERY_FULL_STEMS = "|".join(_QUERY_FULL_STEM_WORDS)
-
-# The joiner that makes an identifier out of the stem the compound opens. `-`
-# rides along only for the abbreviation, which never appears in prose: the full
-# stem's hyphenated forms are ordinary English ("operation-buffered mutation",
-# "operation-specific roles"), while `op-` opens no English word at all.
-_QUERY_OPENED_IDENTIFIER = r"(?:op[_/-]|operations?[_/])"
-
-# Words that make the REVERSE order a retired query phrase — a query, or the act
-# of judging one, named as an operation. This list is deliberately narrower than
-# the surface-noun list above, because most words preceding "operation" qualify a
-# genuine one: `blocking_operations`, "database operation boundary", "document
-# operations", and the gate grammar's own `non-canonical-operation` all stay.
-_QUERY_SUBJECT_WORDS = (
-    "query",
-    "find",
-    "validate",
-    "validation",
-    "validator",
-    "malformed",
-    "equal",
-)
-_QUERY_SUBJECTS = "|".join(_QUERY_SUBJECT_WORDS)
-
-
-# camelCase compounds, derived from the SAME word lists as the spaced and joined
-# patterns so the camel coverage can never drift from them. The stems keep their
-# plural, so `OperationsTree` is caught alongside `OperationTree`.
-_QUERY_CAMEL_FULL_STEMS = "|".join(_camel_first_word(stem) for stem in _QUERY_FULL_STEM_WORDS)
-_QUERY_CAMEL_ABBREVIATED_STEM = _camel_first_word("op")
-_QUERY_CAMEL_CONNECTIVE = rf"(?:{'|'.join(word.capitalize() for word in _QUERY_CONNECTIVE_WORDS)})?"
-_QUERY_CAMEL_SURFACE = "|".join(word.capitalize() for word in _QUERY_SURFACE_WORDS)
-_QUERY_CAMEL_JOINED = "|".join(_camel_first_word(word) for word in _QUERY_JOINED_WORD_LIST)
-_QUERY_CAMEL_SUBJECTS = "|".join(_camel_first_word(word) for word in _QUERY_SUBJECT_WORDS)
 
 _RETIRED_TEMPORAL_PATTERNS = (
     re.compile(
@@ -359,58 +192,12 @@ _RETIRED_TEMPORAL_PATTERNS = (
     re.compile(rf"{_LEFT}(?:{'|'.join(_RETIRED_DIMENSION_SPELLINGS)}){_RIGHT}"),
 )
 
-_RETIRED_QUERY_PATTERNS = (
-    re.compile(
-        rf"{_LEFT}(?:{_QUERY_STEMS}){_JOIN}{_QUERY_CONNECTIVE}(?:{_QUERY_SURFACE}){_RIGHT}",
-        re.IGNORECASE,
-    ),
-    re.compile(rf"{_LEFT}(?:{_QUERY_SUBJECTS}){_JOIN}(?:{_QUERY_STEMS}){_RIGHT}", re.IGNORECASE),
-    re.compile(
-        rf"{_LEFT}(?:{_QUERY_FULL_STEMS})[_-](?:(?:{'|'.join(_QUERY_CONNECTIVE_WORDS)})[_-])?"
-        rf"(?:{_QUERY_JOINED_WORDS}){_RIGHT}",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"{_LEFT}(?:{_QUERY_JOINED_WORDS})[_-](?:{_QUERY_FULL_STEMS}){_RIGHT}", re.IGNORECASE
-    ),
-    # An identifier or path component the stem OPENS: whatever word follows, the
-    # thing being named is called an operation.
-    re.compile(rf"{_TOKEN_START}{_QUERY_OPENED_IDENTIFIER}[A-Za-z0-9]+", re.IGNORECASE),
-    # The same rule in camelCase, where the hump supplies the joiner. The full
-    # stem carries it wherever it sits in an identifier; the abbreviation only
-    # where the identifier starts, since a trailing `Op` is the wire operand.
-    re.compile(rf"(?:{_QUERY_CAMEL_FULL_STEMS}){_CAMEL_TAIL}"),
-    re.compile(rf"{_LEFT}[oO]p{_CAMEL_TAIL}"),
-    # An `Op` hump deeper in an identifier therefore still needs a surface noun.
-    re.compile(
-        rf"(?:{_QUERY_CAMEL_ABBREVIATED_STEM}){_QUERY_CAMEL_CONNECTIVE}"
-        rf"(?:{_QUERY_CAMEL_SURFACE}){_CAMEL_RIGHT}"
-    ),
-    re.compile(rf"(?:{_QUERY_CAMEL_SUBJECTS})(?:Op|Operations?){_CAMEL_RIGHT}"),
-    re.compile(rf"(?:{_QUERY_CAMEL_JOINED})(?:Operations?){_CAMEL_RIGHT}"),
-    # The retired schema filename, whose `.` joiner is deliberately not in the
-    # general compound pattern: an ordinary sentence break before a capitalized
-    # "Schema" would otherwise match.
-    re.compile(rf"{_LEFT}operation\.schema\.json", re.IGNORECASE),
-    # The retired read envelope's sibling entity field. Only the identifier
-    # spellings are retired — the prose phrase "target entity" describes a
-    # relationship's far side and stays.
-    re.compile(rf"(?:{_camel_first_word('target')})(?:Entity|_entity){_RIGHT}"),
-    # The retired fluent query type, in its identifier spellings only: the
-    # spaced form is ordinary English ("the trailing find queries the open
-    # set"), so only the joined and camel spellings are denied. The camel
-    # pattern carries no left boundary, which is what catches
-    # `LoweredFindQuery` as well as the bare name.
-    re.compile(rf"{_LEFT}find[_-]quer(?:y|ies){_RIGHT}", re.IGNORECASE),
-    re.compile(rf"FindQuer(?:y|ies){_CAMEL_RIGHT}"),
-)
-
 # The retired execution-log vocabulary: the module ADR 0060 superseded, its
-# Python scope, and the record type it owned. One pattern is enough where the
-# temporal and query families need many, because the compound is a NAME rather
-# than an English phrase — `execution` opens it and `log` closes it, in prose,
-# in a slug, in snake_case, and across a wrapped line alike. The live spelling
-# it makes room for is `execution lifecycle`, which shares only the first word.
+# Python scope, and the record type it owned. Two patterns suffice where the
+# temporal family needs many, because the compound is a NAME rather than an
+# English phrase — `execution` opens it and `log` closes it, in prose, in a
+# slug, in snake_case, and across a wrapped line alike. The live spelling it
+# makes room for is `execution lifecycle`, which shares only the first word.
 _RETIRED_EXECUTION_LOG_PATTERNS = (
     re.compile(rf"{_LEFT}execution{_JOIN}logs?{_RIGHT}", re.IGNORECASE),
     re.compile(rf"ExecutionLogs?{_CAMEL_RIGHT}"),
@@ -418,7 +205,6 @@ _RETIRED_EXECUTION_LOG_PATTERNS = (
 
 _RETIRED_FAMILIES = (
     ("temporal", _RETIRED_TEMPORAL_PATTERNS),
-    ("query", _RETIRED_QUERY_PATTERNS),
     ("execution log", _RETIRED_EXECUTION_LOG_PATTERNS),
 )
 
@@ -437,22 +223,6 @@ _URL = re.compile(
     rf"\b[a-z][a-z0-9+.-]*://"
     rf"(?!(?i:(?:[a-z0-9-]+\.)*{re.escape(_REPOSITORY_HOST)})(?![A-Za-z0-9.-]))"
     rf"[^\s<>()\[\]\"'`]+"
-)
-
-# Spellings a compound rule reads as retired ones although each names something
-# live: the `m-op-list` module's Python scope `parallax.core.op_list`, the
-# command graph's own operation vocabulary in `gate_graph`, and the .NET
-# exception name that session research cites. Masked the way a URL is.
-#
-# Each entry is one identifier with one spelling, so the mask is case-sensitive
-# and carries the same identifier boundary on BOTH sides. A longer name that
-# merely ENDS with one of these is a different name, and blanking its tail would
-# erase whatever the characters before it spell — `query_op_list` and
-# `operation_op_list` name a query an operation whatever suffix follows.
-_LIVE_SPELLING_WORDS = ("op_list", "_OPERATION_TOKENS", "InvalidOperationException")
-_LIVE_SPELLING_EDGE = r"[A-Za-z0-9_-]"
-_LIVE_SPELLINGS = re.compile(
-    rf"(?<!{_LIVE_SPELLING_EDGE})(?:{'|'.join(_LIVE_SPELLING_WORDS)})(?!{_LIVE_SPELLING_EDGE})"
 )
 
 # The masking character. It is not alphanumeric, so it bounds a phrase the same
@@ -478,11 +248,9 @@ _EXEMPT_TREES = ("docs/research/reladomo", "core/compatibility/descriptor-errors
 
 # A directory whose documents state the vocabulary current when they were
 # written, and — where one decision supersedes another — the vocabulary of what
-# it replaced. The two SUPERSEDED families are exempt there; the query family is
-# not, because it retired a wrong name for machinery that is still live, and the
-# name of a live guard, module, or type is current prose.
-_SUPERSEDED_EXEMPT_DIR_NAME = "adr"
-_SUPERSEDED_FAMILIES = frozenset({"temporal", "execution log"})
+# it replaced. Every retired family names a superseded design, so none of them
+# applies there.
+_DECISION_RECORD_DIR_NAME = "adr"
 
 # Repo-root-relative files exempt because they exist to spell the retired
 # phrases: this module (whose deny-list and examples name them) and its test
@@ -529,11 +297,8 @@ def scanned_files(root: Path) -> Iterator[Path]:
             yield path
 
 
-def _applicable_families(relative_path: str) -> tuple[tuple[str, tuple[re.Pattern[str], ...]], ...]:
-    directories = relative_path.split("/")[:-1]
-    if _SUPERSEDED_EXEMPT_DIR_NAME in directories:
-        return tuple(entry for entry in _RETIRED_FAMILIES if entry[0] not in _SUPERSEDED_FAMILIES)
-    return _RETIRED_FAMILIES
+def _is_decision_record(relative_path: str) -> bool:
+    return _DECISION_RECORD_DIR_NAME in relative_path.split("/")[:-1]
 
 
 def _blanked(match: re.Match[str]) -> str:
@@ -541,7 +306,7 @@ def _blanked(match: re.Match[str]) -> str:
 
 
 def _masked(text: str) -> str:
-    """*text* with every exempt line, foreign URL, and live spelling ``_MASK``ed.
+    """*text* with every exempt line and foreign URL ``_MASK``ed.
 
     Masking rather than dropping keeps every offset, so a match's position still
     identifies the line it was written on.
@@ -561,16 +326,15 @@ def _masked(text: str) -> str:
         if exempt:
             masked.append(_MASK * len(line))
         else:
-            masked.append(_LIVE_SPELLINGS.sub(_blanked, _URL.sub(_blanked, line)))
+            masked.append(_URL.sub(_blanked, line))
     return "\n".join(masked)
 
 
 def _retired_spellings(patterns: tuple[re.Pattern[str], ...], text: str) -> Iterator[re.Match[str]]:
     """Each retired spelling *patterns* finds in *text*, once per site.
 
-    Several patterns of one family read the same compound from different sides —
-    the identifier rule and the surface-noun rule both name `op_algebra` — and
-    one site is one violation.
+    Patterns of one family read the same compound from different sides, and one
+    site is one violation however many of them name it.
     """
     seen: set[tuple[int, int]] = set()
     for pattern in patterns:
@@ -583,20 +347,23 @@ def _retired_spellings(patterns: tuple[re.Pattern[str], ...], text: str) -> Iter
 def check_text(relative_path: str, text: str) -> list[str]:
     """Every retired-vocabulary violation in *text* (empty ⇒ clean).
 
-    A ``_Avoid_`` line, every line of a paragraph opening ``Prior art:``, every
-    row of a table whose first header cell is ``Retired``, every foreign URL, and
-    every live spelling are masked before matching: each names something this
-    repository does not choose or has not retired. Matching runs over the whole
-    document rather than line by line, so a phrase wrapped across a line break is
-    caught at the line it starts on.
+    A decision record is exempt outright. Within every other document a
+    ``_Avoid_`` line, every line of a paragraph opening ``Prior art:``, every row
+    of a table whose first header cell is ``Retired``, and every foreign URL are
+    masked before matching: each names something this repository does not choose
+    or has not retired. Matching runs over the whole document rather than line by
+    line, so a phrase wrapped across a line break is caught at the line it starts
+    on.
     """
+    if _is_decision_record(relative_path):
+        return []
     scanned = _masked(text)
     line_starts = [0]
     for index, character in enumerate(scanned):
         if character == "\n":
             line_starts.append(index + 1)
     violations: list[str] = []
-    for family, patterns in _applicable_families(relative_path):
+    for family, patterns in _RETIRED_FAMILIES:
         for match in _retired_spellings(patterns, scanned):
             lineno = bisect.bisect_right(line_starts, match.start())
             phrase = " ".join(match.group(0).split())
@@ -609,10 +376,13 @@ def check_path(relative_path: str) -> list[str]:
 
     A module, a schema, and a corpus case name their subject in the filename, so
     the path is vocabulary surface in its own right and a retired spelling can
-    survive there while every line of the file is clean.
+    survive there while every line of the file is clean. A decision record is
+    exempt, exactly as its text is.
     """
+    if _is_decision_record(relative_path):
+        return []
     violations: list[str] = []
-    for family, patterns in _applicable_families(relative_path):
+    for family, patterns in _RETIRED_FAMILIES:
         for match in _retired_spellings(patterns, relative_path):
             violations.append(
                 f"{relative_path}: retired {family} vocabulary {match.group(0)!r} in the path"
