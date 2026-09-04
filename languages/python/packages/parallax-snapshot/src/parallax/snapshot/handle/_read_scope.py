@@ -1,8 +1,8 @@
 """``parallax.snapshot.handle._read_scope`` — the Read Scope both Handles share.
 
-A ``Database`` and a ``Transaction`` run one read ladder: re-entry is refused,
-the operation's selected read model is obtained, a classless connection is
-refused, the query is lowered, the shared gate runs, the activity opens, the
+A ``Database``'s eager reads and a ``Transaction``'s run one ladder: re-entry is
+refused, the operation's selected read model is obtained, a classless connection
+is refused, the query is lowered, the shared gate runs, the activity opens, the
 executor runs, and the result is published. Only the bracket around execution
 differs between a standalone read and one participating in a transaction, so the
 ladder belongs here once and the difference belongs below it, behind a private
@@ -27,8 +27,12 @@ the parent scope is granted all three; bounded automatic retry does not, because
 ``m-execution-lifecycle`` — which the re-entry gate and the read roots require —
 declares an edge to it.
 
-Every name here is spelled bare: privacy is carried by this MODULE's leading
-underscore and by the package's frozen ``__all__``, not by per-name underscores.
+Every name this module publishes is spelled bare: privacy from the package
+outwards is carried by this MODULE's leading underscore and by the package's
+frozen ``__all__``, not by per-name underscores. A leading underscore here marks
+the narrower thing: what stays inside this module even so — the execution policy
+and its two adapters, which only the factories below construct, and each class's
+own internals.
 """
 
 from __future__ import annotations
@@ -182,15 +186,15 @@ class _ReadExecution(Protocol):
 
 
 class ReadScope:
-    """One Handle's whole read composition: the verbs its Typed surface and its
-    Wire view both delegate to.
+    """One Handle's eager read composition: the whole-result and row-form verbs
+    its Typed surface and its Wire view both delegate to.
 
-    Every verb owns its refusal ladder from its own first line, which is what
-    makes re-entry completeness structural: there is one module to read for all
-    of it, rather than one call site per public door. Below the ladder the shared
-    gate, the milestone-set dispatch, and the executor entry are written once for
-    both interfaces and both lanes; which materializer publishes a result is
-    chosen per call and is never scope state.
+    Every verb owns its refusal ladder from its own first line, so a read that
+    arrives here refuses re-entry in one module rather than at one call site per
+    public door. Below the ladder the shared gate, the milestone-set dispatch,
+    and the executor entry are written once for both interfaces and both lanes;
+    which materializer publishes a result is chosen per call and is never scope
+    state.
     """
 
     __slots__ = ("_execution", "_lifecycle")
@@ -393,7 +397,6 @@ def standalone_read_scope(
     selected: SelectedReadModel,
     port: DbPort,
 ) -> ReadScope:
-    """The Read Scope a ``Database`` owns: standalone execution over ``port``."""
     return ReadScope(
         lifecycle, _StandaloneExecution(lifecycle, selected, ReadInputs(port, None, None))
     )
@@ -407,8 +410,6 @@ def participating_read_scope(
     conn: DbPort,
     attempt: TransactionAttemptActivity,
 ) -> ReadScope:
-    """The Read Scope a ``Transaction`` owns: participating execution over the
-    attempt's own connection, unit of work, and activity."""
     return ReadScope(
         lifecycle,
         _ParticipatingExecution(

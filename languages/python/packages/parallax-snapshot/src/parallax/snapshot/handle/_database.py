@@ -4,7 +4,7 @@ The composition root's own module: :meth:`Database.connect` wires a concrete
 ``m-db-port`` adapter to a metamodel, :meth:`Database.find` and
 :meth:`Database.read_rows` delegate to the one
 :class:`~parallax.snapshot.handle._read_scope.ReadScope` this connection owns —
-which the Wire view it answers shares — and :meth:`Database.transact` is the
+the same scope the Wire find it answers runs — and :meth:`Database.transact` is the
 callback demarcation — sentinel-backed options, join with the option-conflict
 check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
 into the unit of work.
@@ -312,7 +312,7 @@ class Database:
         # be made inside it for an operation coming back OUT of the Provider to
         # be refusable.
         self._lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
-        # The one Read Scope every read of this connection runs through — its
+        # The one Read Scope this connection's eager reads run through — its
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
         # read composition").
         self._reads = standalone_read_scope(
@@ -449,11 +449,11 @@ class Database:
         """One non-transactional stream of ``node``, published through
         ``publication`` — the whole composition both read interfaces run.
 
-        Non-transactional in the same three ways :meth:`_read` is: no read lock,
-        no Concurrency Preference, and no participation stamped on the values it
-        publishes. Constructing a stream reaches nothing: the gate, the page
-        plan, and every statement are the entered scope's, so a stream nobody
-        enters is inert.
+        Non-transactional in the same three ways this connection's eager reads
+        are: no read lock, no Concurrency Preference, and no participation
+        stamped on the values it publishes. Constructing a stream reaches
+        nothing: the gate, the page plan, and every statement are the entered
+        scope's, so a stream nobody enters is inert.
         """
         check_batch_size(batch_size)
         return SnapshotStream(
