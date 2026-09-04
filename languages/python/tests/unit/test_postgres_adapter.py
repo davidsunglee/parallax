@@ -464,18 +464,28 @@ def test_a_refused_isolation_reports_a_boundary_that_never_opened() -> None:
     # nothing. The body never runs, the empty transaction is undone here rather
     # than by the caller, and the outcome is the one for a boundary that never
     # opened — nothing to retry, nothing to undo.
+    #
+    # What separates this outcome from every other unhappy one is that the port
+    # is still usable, so the proof runs to a NEXT boundary on the same adapter:
+    # it begins, its body runs a statement through the port, and it commits. A
+    # connection merely left unclosed would satisfy a weaker assertion while
+    # carrying an abandoned transaction no later boundary could open through.
     connection = _FakeConnection(
         cursor_error=errors.InvalidParameterValue("invalid value for parameter")
     )
+    adapter = _adapter(connection)
     ran: list[str] = []
-    outcome = _adapter(connection).transaction(
-        lambda _port: ran.append("body"), isolation="serializable"
-    )
+    outcome = adapter.transaction(lambda _port: ran.append("body"), isolation="serializable")
     assert isinstance(outcome, BeginFailed)
     assert _translated(outcome.error).native_code == "22023"
     assert ran == []
     assert connection.rollbacks == 1
     assert not connection.closed
+
+    connection.cursor_error = None
+    assert adapter.transaction(lambda port: port.execute("select 1", [])) == Committed([])
+    assert connection.begins == 2
+    assert _sent(connection)[-1] == "select 1"
 
 
 def test_a_connection_that_cannot_undo_a_refused_isolation_is_discarded() -> None:
