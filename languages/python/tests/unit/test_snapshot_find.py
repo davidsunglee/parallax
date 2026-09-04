@@ -53,7 +53,7 @@ from parallax.snapshot import (
     StoredDataIssue,
     handle,
 )
-from parallax.snapshot.handle import _database, _read
+from parallax.snapshot.handle import _read, _read_scope
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
     InvalidRootInput,
@@ -741,7 +741,7 @@ def test_every_execution_reads_the_querys_own_canonical_node(
         nodes.append(node)
         return node
 
-    monkeypatch.setattr(_database, "object_query_node", recording)
+    monkeypatch.setattr(_read_scope, "object_query_node", recording)
     query = mm.Person.where(mm.Person.id == 1)
     db = handle.Database.connect(QueuePort([[], []]), PERSON)
     db.find(query)

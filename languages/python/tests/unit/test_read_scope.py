@@ -1,0 +1,417 @@
+"""The Read Scope's ladder, graded against a recording execution policy.
+
+What the public read verbs cannot state is what this suite is for: that the
+scope refuses re-entry before it asks its policy for anything, that it selects
+the model before it refuses a classless one, that a refused query reaches no
+capability at all, that one scope chooses its publication per call rather than
+holding one, and that the body it hands the policy takes its port, its
+Concurrency Preference, and its observation ledger from the inputs it was handed
+rather than from anything it closed over.
+
+The recording policy here is the third adapter beside the two production ones:
+it answers a fixed selection, records every capability call, and runs each body
+with INERT activities over whichever :class:`ReadInputs` the case names. That is
+what lets each claim be stated once, for both lanes and both interfaces, rather
+than once per handle. What each production adapter DOES inside its own bracket
+is `test_read_execution.py`'s subject, and what a whole read answers stays the
+public-surface suites'.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Final
+
+import pytest
+from _transact_support import ACCOUNT, BALANCE, NEW_ROW, balance_row
+
+from _support import mirrored_models as mm
+from _support.db_port import Read, ReadCall, RefusingPort, ScriptedPort
+from parallax.core import LATEST, TX_TIME
+from parallax.core.db_port import DbPort
+from parallax.core.entity import graph_construction_of
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import cataloged_model
+from parallax.core.execution_lifecycle import ExecutionLifecycleReentryError, ReadInterface
+from parallax.core.execution_lifecycle._activity import (
+    INERT,
+    ActivityTarget,
+    DatabaseCallScope,
+    InstalledLifecycle,
+    ReadActivity,
+    SnapshotStreamActivity,
+    StreamBatchActivity,
+    installed_lifecycle,
+)
+from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
+from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.object_query._fluent import object_query_node
+from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
+from parallax.snapshot import QueryTargetError, SnapshotConnectionError
+from parallax.snapshot._read_result import FindResult, HistoryFindResult, RowsResult
+from parallax.snapshot.handle import _read as handle_read
+from parallax.snapshot.handle import _read_scope as read_scope_module
+from parallax.snapshot.handle._read_scope import (
+    ReadInputs,
+    ReadScope,
+    SelectedReadModel,
+)
+from parallax.snapshot.handle._retention import ObservationLedger
+
+_ACCOUNT_ROWS: Final = (NEW_ROW,)
+
+
+def _selection(model: Any = ACCOUNT, *, materializing: bool = True) -> SelectedReadModel:
+    cataloged: CatalogedModel = cataloged_model(model)
+    return SelectedReadModel(
+        model=cataloged,
+        construction=graph_construction_of(model) if materializing else None,
+    )
+
+
+def _typed_query() -> Any:
+    return mm.Account.where(mm.Account.id == 7)
+
+
+def _wire_node() -> ObjectQueryNode:
+    return deserialize_query(
+        {"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}}
+    )
+
+
+def _rows_node() -> ObjectQueryNode:
+    return object_query_node(_typed_query())
+
+
+def _balance_node(temporal: dict[str, object]) -> ObjectQueryNode:
+    return deserialize_query(
+        {
+            "target": "Balance",
+            "predicate": {"eq": {"attr": "Balance.id", "value": 1}},
+            "temporal": temporal,
+        }
+    )
+
+
+class _Ledger:
+    """The two things an observing read asks a transaction for, and nothing else.
+
+    A stand-in rather than a unit of work, because what this suite grades is
+    WHICH ledger the body was handed, never what a real one does with what it
+    receives.
+    """
+
+    def __init__(self) -> None:
+        self.retained: list[RetainedObservation] = []
+        self._participation = ParticipationToken()
+
+    @property
+    def participation(self) -> ParticipationToken:
+        return self._participation
+
+    def retain(self, observation: RetainedObservation, /) -> RetainedObservation:
+        self.retained.append(observation)
+        return observation
+
+
+class _Recording:
+    """A recording ``_ReadExecution``: every capability call, in order.
+
+    Each body runs immediately, with INERT activities and the fixed inputs this
+    policy was built with, so a case reads what the scope DID rather than what
+    it would have done.
+    """
+
+    def __init__(self, selected: SelectedReadModel, inputs: ReadInputs) -> None:
+        self._selected = selected
+        self._inputs = inputs
+        self.calls: list[str] = []
+        self.eager_calls: list[tuple[ActivityTarget, ReadInterface]] = []
+        self.stream_calls: list[tuple[ActivityTarget, ReadInterface, int]] = []
+
+    def begin(self) -> SelectedReadModel:
+        self.calls.append("begin")
+        return self._selected
+
+    def eager[T](
+        self,
+        target: ActivityTarget,
+        interface: ReadInterface,
+        body: Callable[[ReadActivity, ReadInputs], T],
+        /,
+    ) -> T:
+        self.calls.append("eager")
+        self.eager_calls.append((target, interface))
+        return body(INERT, self._inputs)
+
+    def open_stream(
+        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+    ) -> SnapshotStreamActivity:
+        self.calls.append("open_stream")
+        self.stream_calls.append((target, interface, batch_size))
+        return INERT
+
+    def page[T](
+        self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
+    ) -> T:
+        self.calls.append("page")
+        return body(INERT, self._inputs)
+
+    @property
+    def interfaces(self) -> list[ReadInterface]:
+        return [interface for _, interface in self.eager_calls]
+
+
+@dataclass(frozen=True, slots=True)
+class _Executed:
+    """One executor call the scope's body made, by name and by what it threaded."""
+
+    executor: str
+    port: DbPort
+    preference: Concurrency | None
+    ledger: ObservationLedger | None
+
+
+def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
+    """Which executor each body dispatched to, and the three inputs it threaded.
+
+    Spelled with each executor's full signature rather than ``*args``, so a
+    rename or a move to a positional parameter fails here rather than silently
+    recording ``None`` forever.
+    """
+    executed: list[_Executed] = []
+
+    def recording_find(
+        query: ValidatedObjectQuery,
+        model: CatalogedModel,
+        port: DbPort,
+        *,
+        preference: Concurrency | None = None,
+        ledger: ObservationLedger | None = None,
+        calls: DatabaseCallScope = INERT,
+    ) -> FindResult:
+        executed.append(_Executed("find", port, preference, ledger))
+        return handle_read.find(
+            query, model, port, preference=preference, ledger=ledger, calls=calls
+        )
+
+    def recording_find_history(
+        query: ValidatedObjectQuery,
+        model: CatalogedModel,
+        port: DbPort,
+        *,
+        read: ReadActivity = INERT,
+    ) -> HistoryFindResult:
+        executed.append(_Executed("find_history", port, None, None))
+        return handle_read.find_history(query, model, port, read=read)
+
+    def recording_find_rows(
+        query: ValidatedObjectQuery,
+        model: CatalogedModel,
+        port: DbPort,
+        *,
+        preference: Concurrency | None = None,
+        read: ReadActivity = INERT,
+    ) -> RowsResult:
+        executed.append(_Executed("find_rows", port, preference, None))
+        return handle_read.find_rows(query, model, port, preference=preference, read=read)
+
+    patch.setattr(read_scope_module, "find", recording_find)
+    patch.setattr(read_scope_module, "find_history", recording_find_history)
+    patch.setattr(read_scope_module, "find_rows", recording_find_rows)
+    return executed
+
+
+def _delivering() -> InstalledLifecycle:
+    """A handle installation currently inside one of its own lifecycle contexts."""
+    installed = installed_lifecycle(RecordingLifecycleProvider())
+    assert installed is not None
+    installed.delivering.active = True
+    return installed
+
+
+def _scope(
+    port: DbPort,
+    *,
+    selected: SelectedReadModel | None = None,
+    lifecycle: InstalledLifecycle | None = None,
+    preference: Concurrency | None = None,
+    ledger: ObservationLedger | None = None,
+) -> tuple[ReadScope, _Recording]:
+    resolved = selected if selected is not None else _selection()
+    execution = _Recording(resolved, ReadInputs(port, preference, ledger))
+    return ReadScope(lifecycle, execution), execution
+
+
+# --------------------------------------------------------------------------- #
+# Re-entry is the first line of every verb                                     #
+# --------------------------------------------------------------------------- #
+def test_every_verb_refuses_re_entry_before_it_asks_its_policy_for_anything() -> None:
+    # The refusal precedes model selection, the classless check, the query's own
+    # judgement, and every capability — which is what makes re-entry
+    # completeness a property of this module rather than of a matrix.
+    port = RefusingPort()
+    scope, execution = _scope(port, lifecycle=_delivering())
+
+    for verb in (
+        lambda: scope.find(_typed_query()),
+        lambda: scope.read_rows(_rows_node()),
+        lambda: scope.wire_find(_wire_node()),
+    ):
+        with pytest.raises(ExecutionLifecycleReentryError):
+            verb()
+
+    assert execution.calls == []
+
+
+# --------------------------------------------------------------------------- #
+# Selection sits inside the boundary, ahead of the classless refusal           #
+# --------------------------------------------------------------------------- #
+def test_find_selects_its_model_before_it_refuses_a_classless_one() -> None:
+    # The record the policy answers is what carries the refusal, so selection
+    # has to have happened for the refusal to be possible at all — and nothing
+    # below `begin` runs once it fires.
+    port = ScriptedPort()
+    scope, execution = _scope(port, selected=_selection(materializing=False))
+
+    with pytest.raises(SnapshotConnectionError) as caught:
+        scope.find(_typed_query())
+
+    assert caught.value.code == "snapshot-class-backed-model-required"
+    assert execution.calls == ["begin"]
+    assert port.calls == []
+
+
+def test_the_wire_and_row_form_verbs_cross_no_classless_refusal() -> None:
+    # Neither publishes an Entity Class instance, so neither needs the graph
+    # construction the Typed lane refuses without — and both run to completion
+    # under the same selection `find` was refused under.
+    port = ScriptedPort(Read(rows=list(_ACCOUNT_ROWS)), Read(rows=list(_ACCOUNT_ROWS)))
+    scope, execution = _scope(port, selected=_selection(materializing=False))
+
+    published = scope.wire_find(_wire_node()).result()
+    rows = scope.read_rows(_rows_node())
+
+    assert published == {"id": 7, "owner": "Newton", "balance": "5.00", "version": 1}
+    assert len(rows.rows) == 1
+    assert execution.calls == ["begin", "eager", "begin", "eager"]
+
+
+# --------------------------------------------------------------------------- #
+# The gate precedes the bracket                                                #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "verb_name",
+    ["find", "read_rows", "wire_find"],
+)
+def test_a_query_the_gate_refuses_reaches_no_execution_capability(verb_name: str) -> None:
+    # A refused read opens no activity and runs no body, which is what leaves a
+    # participating one's buffer untouched: the flush lives inside `eager`, and
+    # `eager` is never reached.
+    unknown = deserialize_query({"target": "Balance", "predicate": {"all": {}}})
+    port = RefusingPort()
+    scope, execution = _scope(port)
+    verbs: dict[str, Callable[[], object]] = {
+        "find": lambda: scope.find(mm.Balance.where(mm.Balance.id == 1)),
+        "read_rows": lambda: scope.read_rows(unknown),
+        "wire_find": lambda: scope.wire_find(unknown),
+    }
+
+    with pytest.raises(QueryTargetError) as caught:
+        verbs[verb_name]()
+
+    assert caught.value.code == "query-target-not-in-model"
+    assert execution.calls == ["begin"]
+
+
+# --------------------------------------------------------------------------- #
+# Publication is the call's, never the scope's                                 #
+# --------------------------------------------------------------------------- #
+def test_one_scope_chooses_its_publication_per_call() -> None:
+    # Three reads through ONE scope, published three ways: the publication is
+    # built after the refusal each time and is never retained, so a Handle and
+    # its Wire view sharing one scope is not a Handle sharing one result format.
+    port = ScriptedPort(*[Read(rows=list(_ACCOUNT_ROWS)) for _ in range(3)])
+    scope, execution = _scope(port)
+
+    scope.find(_typed_query()).result()
+    scope.wire_find(_wire_node()).result()
+    scope.read_rows(_rows_node())
+
+    assert execution.interfaces == ["TYPED", "WIRE", "ROWS"]
+
+
+# --------------------------------------------------------------------------- #
+# One graph tail serves both interfaces and both temporal shapes               #
+# --------------------------------------------------------------------------- #
+def test_the_graph_tail_dispatches_the_milestone_set_read_for_both_interfaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The history branch is written once, below both read interfaces, so which
+    # executor runs is decided by the validated query and by nothing about the
+    # caller — which is what keeps "a milestone-set read retains no evidence" a
+    # property of one dispatch rather than of four call sites.
+    in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = ScriptedPort(*[Read(rows=[balance_row(in_z=in_z)]) for _ in range(4)])
+    scope, _ = _scope(port, selected=_selection(BALANCE))
+    executed = _recorded(monkeypatch)
+
+    scope.find(mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=LATEST)).result()
+    scope.find(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)).result()
+    scope.wire_find(_balance_node({"transaction-time": {"asOf": "latest"}})).result()
+    scope.wire_find(_balance_node({"transaction-time": {"history": {}}})).result()
+
+    assert [call.executor for call in executed] == [
+        "find",
+        "find_history",
+        "find",
+        "find_history",
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# The body reads its lane off the inputs it is handed                          #
+# --------------------------------------------------------------------------- #
+def test_every_body_threads_the_port_preference_and_ledger_it_was_handed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The scope holds no port, no preference, and no ledger: all three arrive
+    # with the body's own invocation, which is what lets one ladder serve a
+    # standalone read and a participating one without a mode flag between them.
+    standalone_port = ScriptedPort(Read(rows=list(_ACCOUNT_ROWS)))
+    participating_port = ScriptedPort(Read(rows=list(_ACCOUNT_ROWS)))
+    ledger = _Ledger()
+    standalone, _ = _scope(standalone_port)
+    participating, _ = _scope(participating_port, preference="locking", ledger=ledger)
+    executed = _recorded(monkeypatch)
+
+    standalone.find(_typed_query()).result()
+    participating.find(_typed_query()).result()
+
+    first, second = executed
+    assert (first.port, first.preference, first.ledger) == (standalone_port, None, None)
+    assert (second.port, second.preference) == (participating_port, "locking")
+    assert second.ledger is ledger
+
+
+def test_the_row_form_body_threads_the_preference_and_files_into_no_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The values lane locks like the graph lane and observes nothing: its
+    # executor takes no ledger at all, so a preference reaching it while no
+    # evidence does is a property of the one body that calls it.
+    port = ScriptedPort(Read(rows=list(_ACCOUNT_ROWS)))
+    ledger = _Ledger()
+    scope, _ = _scope(port, preference="locking", ledger=ledger)
+    executed = _recorded(monkeypatch)
+
+    scope.read_rows(_rows_node())
+
+    (call,) = executed
+    assert (call.executor, call.port, call.preference) == ("find_rows", port, "locking")
+    assert ledger.retained == []
+    assert [type(op) for op in port.calls] == [ReadCall]

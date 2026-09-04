@@ -9,18 +9,18 @@ holding grants can define it for both. A module that reaches nothing at all is
 the only place left, which is why this one imports nothing but the standard
 library.
 
-The other two are raised from the parent ``parallax.snapshot.handle`` scope
-alone — :class:`SnapshotConnectionError` from ``_database`` and
-``_transaction``, :class:`SnapshotMaterializationError` from ``_read`` — so
-nothing about their raise sites compels this module, and their membership is a
-placement decision rather than a structural one. Only the first of the two lacks
-a single home of its own: class-backed capability is checked at both read doors,
-so either module defining it would have the other import a sibling for a class
-neither owns. The second has one raiser and one deciding surface — the
-materialization boundary ``_read`` translates at — and is here for one reason
-only, which is that the scope's three developer-facing refusals are then read in
-one place. Nothing structural rules on it, and moving it beside its surface
-would cost this module nothing.
+The other two have raisers whose scopes this leaf's presence does not decide —
+:class:`SnapshotConnectionError` from ``_database`` at the connection door and
+``_read_scope`` at the read one, :class:`SnapshotMaterializationError` from
+``_read`` — so nothing about their raise sites compels this module, and their
+membership is a placement decision rather than a structural one. Only the first
+of the two is raised from two scopes at once: the connection door and the read
+door refuse the same missing capability, so either module defining it would have
+the other import a sibling for a class neither owns. The second has one raiser
+and one deciding surface — the materialization boundary ``_read`` translates at
+— and is here for one reason only, which is that the scope's three
+developer-facing refusals are then read in one place. Nothing structural rules
+on it, and moving it beside its surface would cost this module nothing.
 
 The package's other developer-facing refusals are declared with the surface
 that decides them: ``DeferredFeatureError`` by the Feature inventory it reports

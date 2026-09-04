@@ -62,8 +62,8 @@ from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, QueryTargetError, SnapshotMaterializationError
-from parallax.snapshot.handle import _database as database_module
 from parallax.snapshot.handle import _read as read_module
+from parallax.snapshot.handle import _read_scope as read_scope_module
 
 _ORDER_ROW: Row = {
     "id": 1,
@@ -502,7 +502,7 @@ def _recorded_openings(
         recorded.append((target, interface))
         return open_read_root(installed, target=target, interface=interface)
 
-    monkeypatch.setattr(database_module, "open_read_root", recording)
+    monkeypatch.setattr(read_scope_module, "open_read_root", recording)
     return recorded
 
 

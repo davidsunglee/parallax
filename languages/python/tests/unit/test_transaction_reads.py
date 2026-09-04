@@ -72,9 +72,8 @@ from parallax.snapshot.handle import (
     Transaction,
     TransactionTimePinReadOnlyError,
 )
-from parallax.snapshot.handle import _database as database_module
 from parallax.snapshot.handle import _read as handle_read
-from parallax.snapshot.handle import _transaction as transaction_module
+from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._retention import ObservationLedger
 
 
@@ -134,7 +133,7 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
     port = ScriptedPort(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(database_module, "find", _recording_find(calls))
+        patch.setattr(read_scope_module, "find", _recording_find(calls))
         db.find(mm.Balance.where(mm.Balance.id == 1)).result()
     (call,) = calls
     assert call.participation is None
@@ -153,7 +152,7 @@ def test_a_participating_find_stamps_its_transactions_own_participation() -> Non
     )
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(transaction_module, "find", _recording_find(calls))
+        patch.setattr(read_scope_module, "find", _recording_find(calls))
         db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
     (call,) = calls
     (hint,) = call.result.sources.values()
@@ -176,7 +175,7 @@ def test_a_non_hydrating_find_retains_no_evidence() -> None:
         assert root.data is None
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(transaction_module, "find", _recording_find(calls))
+        patch.setattr(read_scope_module, "find", _recording_find(calls))
         account_db(port).transact(fn)
     assert [dict(call.result.sources) for call in calls] == [{}]
 
@@ -207,7 +206,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
     port = ScriptedPort(Transact(Read(rows=[policy_row]), Read(rows=[coverage_row])))
     db = db_for(POLICY_MODEL, port)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(transaction_module, "find", _recording_find(calls))
+        patch.setattr(read_scope_module, "find", _recording_find(calls))
         db.transact(
             lambda tx: tx.find(
                 Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
