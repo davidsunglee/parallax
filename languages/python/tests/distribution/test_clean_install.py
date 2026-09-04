@@ -1,6 +1,6 @@
 """Clean-install production topology proofs (§8 / §10 `clean_install` marker).
 
-Each of the four §8 selective topologies is installed into a fresh uv venv
+Each of the five §8 selective topologies is installed into a fresh uv venv
 from the locally built wheels, and the installed distribution list + import
 space are probed to prove that unselected interchange, lifecycles, the driver,
 and the dev-only conformance tooling are all absent.
@@ -76,12 +76,14 @@ def test_core_alone(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     # absent — the Descriptor Frontend and both of the dependencies it alone
     # declares included, so `parallax-core`'s manifest really is `pydantic` only.
     assert not _import_ok(python, "parallax.descriptor")
+    assert not _import_ok(python, "parallax.evolution")
     assert not _import_ok(python, "parallax.snapshot")
     assert not _import_ok(python, "parallax.postgres")
     assert not _import_ok(python, "parallax.conformance")
     assert not _import_ok(python, "yaml")
     assert not _import_ok(python, "jsonschema")
     assert not _dist_installed(python, "parallax-descriptor")
+    assert not _dist_installed(python, "parallax-evolution")
     assert not _dist_installed(python, "pyyaml")
     assert not _dist_installed(python, "jsonschema")
     assert not _dist_installed(python, "psycopg")
@@ -138,10 +140,12 @@ print(json.dumps({{"schema": schema, "document": export_json(from_yaml)}}))
     assert answered["schema"] == authoritative
     assert json.loads(answered["document"]) == document
 
-    # No sibling lifecycle, adapter, driver, or conformance harness.
+    # No sibling lifecycle, evolution, adapter, driver, or conformance harness.
+    assert not _import_ok(python, "parallax.evolution")
     assert not _import_ok(python, "parallax.snapshot")
     assert not _import_ok(python, "parallax.postgres")
     assert not _import_ok(python, "parallax.conformance")
+    assert not _dist_installed(python, "parallax-evolution")
     assert not _dist_installed(python, "psycopg")
     assert not _dist_installed(python, "testcontainers")
     assert not _dist_installed(python, "parallax-conformance")
@@ -154,11 +158,13 @@ def test_core_and_snapshot(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     assert _import_ok(python, "parallax.core")
     assert _import_ok(python, "parallax.snapshot")
     # No Descriptor Frontend, descriptor parser, schema validator, sibling
-    # adapter/driver, or conformance harness.
+    # evolution/adapter/driver, or conformance harness.
     assert not _import_ok(python, "parallax.descriptor")
+    assert not _import_ok(python, "parallax.evolution")
     assert not _import_ok(python, "parallax.postgres")
     assert not _import_ok(python, "parallax.conformance")
     assert not _dist_installed(python, "parallax-descriptor")
+    assert not _dist_installed(python, "parallax-evolution")
     assert not _dist_installed(python, "pyyaml")
     assert not _dist_installed(python, "jsonschema")
     assert not _dist_installed(python, "psycopg")
@@ -172,10 +178,36 @@ def test_core_snapshot_and_postgres(tmp_path: Path, wheelhouse: Wheelhouse) -> N
     assert _import_ok(python, "parallax.snapshot")
     assert _import_ok(python, "parallax.postgres")
     assert _dist_installed(python, "psycopg")
-    # The optional Descriptor Frontend, the dev-only conformance tooling, and the
-    # container tooling all stay out.
+    # The optional Descriptor Frontend, the evolution wheel, the dev-only
+    # conformance tooling, and the container tooling all stay out.
     assert not _import_ok(python, "parallax.descriptor")
+    assert not _import_ok(python, "parallax.evolution")
     assert not _import_ok(python, "parallax.conformance")
     assert not _dist_installed(python, "parallax-descriptor")
+    assert not _dist_installed(python, "parallax-evolution")
+    assert not _dist_installed(python, "testcontainers")
+    assert not _dist_installed(python, "parallax-conformance")
+
+
+def test_core_and_evolution(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
+    python = _make_venv(tmp_path / "venv")
+    _install(python, wheelhouse, "parallax-evolution")
+
+    assert _import_ok(python, "parallax.core")
+    assert _import_ok(python, "parallax.evolution")
+    # The scope resolves out of the installed wheel, not merely off the source
+    # tree: a private module missing from the built package, or a cycle among the
+    # private modules, fails here and nowhere else in the clean-install lane.
+    assert _import_ok(python, "parallax.evolution.model_evolution")
+    # No Descriptor Frontend, descriptor parser, schema validator, sibling
+    # lifecycle, adapter, driver, or conformance harness.
+    assert not _import_ok(python, "parallax.descriptor")
+    assert not _import_ok(python, "parallax.snapshot")
+    assert not _import_ok(python, "parallax.postgres")
+    assert not _import_ok(python, "parallax.conformance")
+    assert not _dist_installed(python, "parallax-descriptor")
+    assert not _dist_installed(python, "pyyaml")
+    assert not _dist_installed(python, "jsonschema")
+    assert not _dist_installed(python, "psycopg")
     assert not _dist_installed(python, "testcontainers")
     assert not _dist_installed(python, "parallax-conformance")

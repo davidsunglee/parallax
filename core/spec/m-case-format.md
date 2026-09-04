@@ -136,15 +136,15 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
   `roundTrips`), the classified `storedDataIssues`, the portable boundary
-  `outcome`, the execution-provenance `execution`, and the numeric-comparison
-  `tolerance`.
+  `outcome`, the described `evolution` and its per-dialect `schema`, the
+  execution-provenance `execution`, and the numeric-comparison `tolerance`.
 
 `model` / `tags` / `lane` stay top-level because they are routing/discovery fields
 read by the coverage gate and the language gate; grouping them buys no readability.
 
 #### Case shapes
 
-A case is one of **nine shapes**, named by the required top-level `shape`:
+A case is one of **ten shapes**, named by the required top-level `shape`:
 
 - **`read`** — a queryable `when.objectQuery` naming its own `target`,
   asserting `then.rows` or a deep-fetch `then.graph`; a `when.stream` context
@@ -180,6 +180,11 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
   `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-unit-work` negative
   validation, carrying no golden SQL —
   see *Rejected cases*, below).
+- **`evolution`** — the complete difference between the two accepted models
+  `when.evolve` names, asserted in `then.evolution` and — for a unilateral
+  expectation — in `then.schema` keyed by Dialect Identity (`m-model-evolution`,
+  carrying no top-level `model` and no golden SQL — see *Evolution cases*,
+  below).
 
 #### The statement entry
 
@@ -338,10 +343,10 @@ values.
 
 | Field | Group | Required | Meaning |
 |---|---|---|---|
-| `model` | top-level | yes | path (relative to `core/compatibility/`) to the model descriptor |
+| `model` | top-level | every shape but `evolution` | path (relative to `core/compatibility/`) to the model descriptor. An `evolution` case names two endpoints under `when.evolve` instead, and carries no top-level `model` beside them; its LATER endpoint is the model every per-case check reads |
 | `tags` | top-level | yes | module/feature tags (e.g. `["m-predicate", "eq"]`); drive coverage + test selection |
 | `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
-| `shape` | top-level | yes | the explicit shape discriminator — one of the nine shapes above; the schema `oneOf` keys on this `const` |
+| `shape` | top-level | yes | the explicit shape discriminator — one of the ten shapes above; the schema `oneOf` keys on this `const` |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.corrupt` | `given` | no | an ordered list of stored-state corruptions applied after the model's conforming fixtures load and before the action, admitted on `read` cases; each entry addresses one occurrence by `entity` + primary `key` + logical `member` path and states the raw stored `value` that replaces it (see *Corrupting stored state*, below) |
@@ -357,6 +362,7 @@ values.
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
+| `when.evolve` | `when` | evolution | the two accepted models the case evolves between: `earlier`, a model descriptor path or the explicit fresh-provisioning sentinel `null`, and `later`, a model descriptor path. It is an `evolution` case's ONLY `when` member (see *Evolution cases*, below) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`, `isolation`) the action runs under; `concurrency` is the resolved Concurrency Preference, not a claim that every Entity uses one strategy; descriptive apart from `isolation` |
 | `when.uow.isolation` | `when.uow` | no | the portable Isolation Level (`m-db-port`) every held session or `uow` group the case opens is opened at — `read-committed` \| `repeatable-read` \| `serializable`, the core serialized values. **Prescriptive**: the harness opens each held session at it through the provider seam, and an API Conformance Suite passes it to each group's own transaction. Omitted means the case requests nothing and keeps whatever the adapter defaults to. A case never names an engine's own level or a session variable |
 | `when.stream` | `when` or a scenario read step | no | the streamed delivery of a `read` case (`{batchSize}`) — its presence makes the read streamed rather than eager, and its `batchSize` is the page size in ROOT positions; admitted only beside `then.graph`, and in its second placement on a `uow`-grouped scenario read step whose own `statements` are the delivery's pages (see *Streamed reads* and *Streamed read steps*, below) |
@@ -375,8 +381,10 @@ values.
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind / a refused boundary option — `option-conflict`, `boundary-failed`, `connection-refused`), stated directly or as a dialect-keyed map whose omitted dialect the case makes no claim about |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
+| `then.evolution` | `then` | evolution | the COMPLETE Evolution `evolve` returns for the two endpoints — its `kind`, `operations`, `behavioralImpacts`, `overlapVisibleOperations`, and `coordinationRequirements`, every member authored even when empty (see *Evolution cases*, below) |
+| `then.schema` | `then` | no | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). Admitted on a UNILATERAL `evolution` expectation alone: a Coordinated Evolution is not an accepted input to schema generation, so a coordinated expectation is dialect-independent and MUST omit it |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
-| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two shapes and one outcome are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about — and every other case asserts one operation that reaches the database |
+| `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes and one outcome are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about — and every other case asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 #### How a case spells an Entity
@@ -2407,6 +2415,67 @@ inheritance family, the **Subtype-write** rules above run **first**
 and over the family-effective member set, so an inherited required member is
 required of a subtype write.
 
+### Evolution cases (`m-model-evolution`)
+
+An **evolution** case is the corpus's one **pure** shape over two models. It
+names both accepted endpoints under `when.evolve` — `earlier`, a model descriptor
+path or the explicit fresh-provisioning sentinel `null`, and `later`, a model
+descriptor path — and so carries no top-level `model`. The later endpoint IS the
+case's model: every per-case check written against one model keeps holding, and
+an evolution case's Entity spellings resolve against it.
+
+```yaml
+tags: [m-model-evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: null                       # or models/<scenario>-v1.yaml
+    later: models/<scenario>-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: EntityAdded, entity: parallax.compatibility.Widget }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+```
+
+`then.evolution` asserts the **complete** value together — kind, ordered
+operations, ordered Behavioral Impacts, ordered Overlap-Visible Operations, and
+Coordination Requirements — with every member authored even when empty. Splitting
+one transition across classification-only or operation-only cases is **not
+conforming**, because the returned Evolution is one internally consistent value.
+The closed vocabularies each member draws from are `m-model-evolution`'s and are
+pinned to the case schema's enums by `case_format_vocab_check`.
+
+An operation names its position by the identity kind its own `kind` fixes —
+`entity`, `attribute`, `relationship`, `valueObject`, `valueObjectAttribute`,
+`index`, or an `entity` plus `dimension` pair for an As-Of Axis — in the
+`identity.schema.json` grammars, canonically spelled. A Behavioral Impact instead
+names a single-key `scope` object, because one dotted spelling is a legal
+Attribute, Relationship, and Value Object reference alike and the impact's own
+kind does not decide which.
+
+A **unilateral** expectation additionally carries `then.schema`, keyed by Dialect
+Identity. Each cell is the closed choice of `delta` — that dialect's complete
+ordered `statements` as plain strings, plus its `createdIndices` provenance — or
+`unsupported`, the complete ordered physical operations that dialect cannot
+render. Statement count and support may differ between dialects, which is why
+evolution DDL does **not** use the dialect-keyed statement entry every DML golden
+uses. The keys under `then.schema` MUST equal the complete supported Dialect
+catalog: an omitted dialect is never an implicit skip, so adding a Dialect makes
+every unilateral evolution case incomplete until its cell is authored. A
+**coordinated** expectation MUST omit `then.schema` entirely.
+
+Describing two accepted models reaches no database and emits no DML, so an
+evolution case carries **no** golden SQL, costs `0` round trips, and is graded
+once rather than once per dialect. The harness checks the authored Evolution
+structurally — closed vocabularies, every identity resolving in the endpoint that
+must hold it, and every ordered sequence actually ordered — and a language
+implementation grades the value itself through the conformance adapter's
+`evolution` observation.
+
 ## Case-header house style
 
 Every case opens with a **header comment** — the only comments a case carries.
@@ -2463,6 +2532,12 @@ satisfies it:
   `boundary`-shape case is `api-conformance`; the read-lock matrix reads (locking
   object find, locking deep fetch, optimistic object find) are `read`-shape
   `api-conformance` cases.
+
+Two shapes reach no database on the `harness` lane at all — a `rejected` case,
+refused pre-SQL, and an `evolution` case, which describes two accepted models —
+so each is executed once by its own dialect-independent runner rather than once
+per available dialect. That is a property of the shape, not a second lane: both
+stay `harness`-lane cases the harness itself satisfies.
 
 ## Compile eligibility
 

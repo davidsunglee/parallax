@@ -253,7 +253,14 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
 #
 # The descriptor record graph is NOT here: the adapter composes corpus models
 # through the public `domain_model_from_*` doors and reads the accepted model's
-# own vocabulary, so no `parallax.descriptor` private module is reached at all.
+# own vocabulary, so no descriptor RECORD is reached at all. The one
+# `parallax.descriptor` private module the tree does reach is `_type_spelling`,
+# and it is reached for the opposite reason: a described evolution's Neutral Type
+# fact is spelled in the corpus exactly as a model descriptor spells it, which is
+# `m-descriptor`'s own contract. Naming its formatter is what keeps the corpus
+# spelling ONE rule; the alternative — a second formatter beside the encoder, or
+# widening the descriptor's developer surface to serve a dev-only consumer —
+# would put the same contract in two places.
 #
 # `cataloged_model` is one of the second-frontend fixture's two additions, and it
 # subsumes `model_of` there: it drives the production find executor, which
@@ -296,6 +303,10 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"ObjectQuery", "object_query_node"}
     ),
     ("parallax.conformance.models", "parallax.core.entity._model"): frozenset({"model_of"}),
+    (
+        "parallax.conformance.evolution_wire",
+        "parallax.descriptor._type_spelling",
+    ): frozenset({"format_type_spelling"}),
 }
 
 

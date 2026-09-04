@@ -668,25 +668,32 @@ def test_rejected_case_is_refused_pre_sql_db_free(case: Case) -> None:
     run_case(case, None)  # type: ignore[arg-type]
 
 
-def test_rejected_and_dialect_executed_cases_partition_the_harness_lane() -> None:
+def test_the_dialect_free_and_dialect_executed_cases_partition_the_harness_lane() -> None:
     # Each side is the selection its runner really parametrizes over — this module's
-    # `_rejected_cases`, and `dialect_executed_cases`, which is what the
+    # `_rejected_cases`, the evolution runner's own selection, and
+    # `dialect_executed_cases`, which is what the
     # dialect-parametrized runner collects. The lane they must cover is recomputed
-    # here from `discover_cases`, so an exclusion added to either selection strands
+    # here from `discover_cases`, so an exclusion added to any selection strands
     # the cases it drops instead of shrinking both sides of the comparison at once.
-    harness_lane = {
-        c.path for c in discover_cases(_COMPATIBILITY_ROOT) if c.lane != "api-conformance"
-    }
+    discovered = discover_cases(_COMPATIBILITY_ROOT)
+    harness_lane = {c.path for c in discovered if c.lane != "api-conformance"}
     rejected = {c.path for c in _rejected_cases()}
+    evolution = {c.path for c in discovered if c.is_evolution}
     dialect_executed = {c.path for c in dialect_executed_cases(_COMPATIBILITY_ROOT)}
 
     assert rejected, "no rejected cases discovered under core/compatibility/cases"
+    assert evolution, "no evolution cases discovered under core/compatibility/cases"
     assert dialect_executed, "no dialect-executed cases discovered under core/compatibility/cases"
     assert rejected <= harness_lane, (
         "a rejected case outside the harness lane would be run here and nowhere else"
     )
+    assert evolution <= harness_lane, (
+        "an evolution case outside the harness lane would be run here and nowhere else"
+    )
     assert rejected.isdisjoint(dialect_executed)
-    assert rejected | dialect_executed == harness_lane
+    assert evolution.isdisjoint(dialect_executed)
+    assert rejected.isdisjoint(evolution)
+    assert rejected | evolution | dialect_executed == harness_lane
 
 
 # --- the validators ACCEPT valid inputs (no false rejections) ---------------

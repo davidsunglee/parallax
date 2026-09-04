@@ -570,6 +570,16 @@
       "valueObject": {}
     }
   },
+  "models/evolution-widget-v1.yaml": {
+    "parallax.compatibility.Widget": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/grade.yaml": {
     "parallax.compatibility.Grade": {
       "attribute": {

@@ -1,0 +1,21 @@
+# Widget: the one-Entity model the structural evolution cases name at both ends.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is the
+# smallest accepted model that still exercises every declaration a provisioning
+# evolution has to describe: a primary key, an ordinary bounded String, and one
+# authored non-unique secondary Index. It declares no fixtures, because an
+# evolution case reaches no database and observes no row.
+entity:
+  name: Widget
+  namespace: parallax.compatibility
+  table: evolution_widget
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: label
+      type: string
+      maxLength: 64
+  indices:
+    - name: evolution_widget_label
+      attributes: [label]

@@ -65,7 +65,7 @@ _CATALOG_HEADING = "the module catalog"
 _CATALOG_STATUSES = frozenset({"active", "deferred"})
 _CATALOG_COVERAGES = frozenset({"cases", "contract"})
 
-# The eight case shapes the schema `oneOf` keys on, read directly from each case's
+# The ten case shapes the schema `oneOf` keys on, read directly from each case's
 # explicit top-level `shape` field (cases are self-describing; no key-sniffing).
 _CASE_SHAPES = frozenset(
     {
@@ -78,8 +78,14 @@ _CASE_SHAPES = frozenset(
         "concurrencySuccess",
         "boundary",
         "rejected",
+        "evolution",
     }
 )
+
+# The shapes whose observable is reached without a database, and which therefore
+# carry no golden SQL at all: a rejected case is refused pre-SQL, and an evolution
+# case describes two accepted models without executing anything.
+_NO_GOLDEN_SHAPES = frozenset({"rejected", "evolution"})
 
 # A slice is selected by a single well-formed slice tag on each included case;
 # the canonical describe claims that declare each slice's boundaries live in
@@ -773,11 +779,12 @@ def _claim_errors(slice_tag: str, capabilities: dict, cases: list[tuple[Path, di
         # matrix reads) is NOT executed by the harness, so it need not carry a
         # Postgres golden — its observable is proven by the language's API
         # Conformance Suite. A `rejected` case asserts a pre-SQL refusal (it never
-        # reaches SQL), so it deliberately carries no golden either. Every other
-        # harness-lane case must carry one.
+        # reaches SQL), and an `evolution` case asserts a pure description of two
+        # accepted models, so neither reaches a database and neither carries a
+        # golden. Every other harness-lane case must carry one.
         if (
             shape is not None
-            and shape != "rejected"
+            and shape not in _NO_GOLDEN_SHAPES
             and doc.get("lane") != "api-conformance"
             and not _has_postgres_golden(doc, shape)
         ):

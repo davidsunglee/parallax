@@ -1,10 +1,11 @@
-"""Docker-free tests for the case-format prose <-> schema vocabulary check.
+"""Docker-free tests for the spec-prose <-> schema vocabulary check.
 
 Guards the normative property `case_format_vocab_check` exists to prove: each
-closed vocabulary `core/spec/m-case-format.md` documents in prose — the
-`rejectedRule` rule set and a scenario step's `expectError` code set — is
-EXACTLY the `enum` `core/schemas/compatibility-case.schema.json` declares for
-it, and neither side may drift from the other. The drift is silent and
+closed vocabulary a `core/spec` module specification documents in prose — the
+`rejectedRule` rule set, a scenario step's `expectError` code set, and the five
+`m-model-evolution.md` vocabularies an `evolution` case spells — is EXACTLY the
+`enum` `core/schemas/compatibility-case.schema.json` declares for it, and
+neither side may drift from the other. The drift is silent and
 safety-critical: a schema `enum` missing a value the prose documents makes a
 case pinning that value fail schema validation regardless of whether every
 implementation classifies it correctly.
@@ -19,11 +20,14 @@ from typing import Any, cast
 import pytest
 
 from reference_harness.case_format_vocab_check import (
+    EVOLUTION_VOCABULARIES,
     VocabMismatch,
     check,
     main,
+    prose_evolution_vocabulary,
     prose_expect_errors,
     prose_rejected_rules,
+    schema_enum,
     schema_expect_errors,
     schema_rejected_rules,
 )
@@ -37,12 +41,16 @@ def _real_markdown() -> str:
     return (_SPEC_DIR / "m-case-format.md").read_text(encoding="utf-8")
 
 
+def _real_evolution_markdown() -> str:
+    return (_SPEC_DIR / "m-model-evolution.md").read_text(encoding="utf-8")
+
+
 def _real_schema() -> dict[str, object]:
     return json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
 
 
 def test_real_prose_and_schema_vocabularies_match() -> None:
-    assert check(_real_markdown(), _real_schema()) == []
+    assert check(_real_markdown(), _real_evolution_markdown(), _real_schema()) == []
 
 
 def test_real_prose_vocabulary_is_the_full_fifty_two_rule_set() -> None:
@@ -153,7 +161,7 @@ def test_missing_schema_entry_is_reported() -> None:
     schema = _real_schema()
     enum = schema["properties"]["then"]["properties"]["rejectedRule"]["enum"]  # type: ignore[index]
     enum.remove("inheritance-temporality-not-root-owned")
-    errors = check(_real_markdown(), schema)
+    errors = check(_real_markdown(), _real_evolution_markdown(), schema)
     assert len(errors) == 1
     assert "inheritance-temporality-not-root-owned" in errors[0]
     assert "absent from the schema enum" in errors[0]
@@ -164,7 +172,7 @@ def test_missing_schema_expect_error_entry_is_reported() -> None:
     # drops a code the prose still documents.
     schema = _real_schema()
     _schema_expect_error_enum(schema).remove("write-value-foreign-lifecycle")
-    errors = check(_real_markdown(), schema)
+    errors = check(_real_markdown(), _real_evolution_markdown(), schema)
     assert len(errors) == 1
     assert "expectError" in errors[0]
     assert "write-value-foreign-lifecycle" in errors[0]
@@ -175,7 +183,7 @@ def test_missing_prose_expect_error_entry_is_reported() -> None:
     # The reverse drift: the schema declares a code the prose no longer names.
     markdown = _real_markdown().replace(_FOREIGN_LIFECYCLE_BULLET, "")
     assert "write-value-foreign-lifecycle" not in prose_expect_errors(markdown)
-    errors = check(markdown, _real_schema())
+    errors = check(markdown, _real_evolution_markdown(), _real_schema())
     assert len(errors) == 1
     assert "expectError" in errors[0]
     assert "write-value-foreign-lifecycle" in errors[0]
@@ -211,10 +219,57 @@ def test_missing_prose_entry_is_reported() -> None:
         "",
     )
     assert "abstract-write-target" not in prose_rejected_rules(markdown)
-    errors = check(markdown, _real_schema())
+    errors = check(markdown, _real_evolution_markdown(), _real_schema())
     assert len(errors) == 1
     assert "abstract-write-target" in errors[0]
     assert "undocumented in m-case-format.md" in errors[0]
+
+
+def test_real_evolution_vocabularies_match_their_schema_enums() -> None:
+    # A sanity floor beneath the set comparison the check runs: the five
+    # vocabularies are the sizes ADR 0063 fixes, so a drifted fence anchor
+    # shrinking one to nothing fails here rather than passing vacuously.
+    schema = _real_schema()
+    markdown = _real_evolution_markdown()
+    sizes = {
+        "evolutionOperationKind": 24,
+        "declarationCollection": 6,
+        "evolutionFieldDeltaKind": 22,
+        "coordinationReason": 2,
+        "behavioralImpactKind": 7,
+    }
+    for heading, pointer in EVOLUTION_VOCABULARIES.items():
+        prose = prose_evolution_vocabulary(markdown, heading)
+        assert prose == schema_enum(schema, pointer), pointer
+        assert len(prose) == sizes[pointer], pointer
+
+
+def test_a_reordered_evolution_vocabulary_is_reported() -> None:
+    # Two of the five vocabularies are ORDERED contracts — the Behavioral Impact
+    # variant order and the fixed Coordination Requirement reason order — so this
+    # check compares sequences, and a listing that merely permutes the names
+    # states a different contract rather than the same one.
+    schema = _real_schema()
+    enum = cast("list[str]", schema["$defs"]["behavioralImpactKind"]["enum"])  # type: ignore[index]
+    enum[0], enum[1] = enum[1], enum[0]
+    errors = check(_real_markdown(), _real_evolution_markdown(), schema)
+    assert len(errors) == 1
+    assert "behavioralImpactKind" in errors[0]
+
+
+def test_an_evolution_vocabulary_moved_out_of_its_heading_is_rejected() -> None:
+    # The fence relocates under another heading: the extractor fails loudly
+    # rather than silently reporting an empty vocabulary.
+    markdown = _real_evolution_markdown().replace(
+        "### Behavioral Impact vocabulary", "### Behavioral Impact listing", 1
+    )
+    with pytest.raises(VocabMismatch, match="Behavioral Impact vocabulary"):
+        prose_evolution_vocabulary(markdown, "Behavioral Impact vocabulary")
+
+
+def test_the_evolution_enum_extractor_rejects_a_missing_pointer() -> None:
+    with pytest.raises(VocabMismatch, match="no enum"):
+        schema_enum(_real_schema(), "notAVocabulary")
 
 
 def test_main_reports_success_on_the_real_corpus() -> None:
@@ -226,5 +281,7 @@ def test_main_rejects_a_missing_spec_dir_argument() -> None:
     assert main(["a", "b"]) == 2
 
 
-def test_main_rejects_a_nonexistent_case_format_file(tmp_path: Path) -> None:
+def test_main_rejects_a_directory_missing_either_spec(tmp_path: Path) -> None:
+    assert main([str(tmp_path)]) == 2
+    (tmp_path / "m-case-format.md").write_text("", encoding="utf-8")
     assert main([str(tmp_path)]) == 2
