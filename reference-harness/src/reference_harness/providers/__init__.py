@@ -118,6 +118,13 @@ class DatabaseProvider(Protocol):
         ...
 
 
+# The supported Dialect catalog `m-dialect` declares, which is what a case's
+# dialect-keyed expectation is judged complete against. Independent of both the
+# provider registry below and `PARALLAX_DATABASES`: a run selecting one database
+# still grades every authored cell's presence, so an omitted dialect is a static
+# failure rather than a run that quietly proved less.
+DIALECT_CATALOG: tuple[str, ...] = ("postgres", "mariadb")
+
 # Registry of dialect -> provider factory. Providers register themselves on
 # import; selection is by the PARALLAX_DATABASES env var (comma-separated),
 # defaulting to all registered providers.

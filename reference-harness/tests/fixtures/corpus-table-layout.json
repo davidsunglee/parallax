@@ -1504,6 +1504,35 @@
       ]
     }
   },
+  "models/evolution-widget-v1.yaml": {
+    "evolution_widget": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Widget"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Widget.id",
+          "declaringOwner": "parallax.compatibility.Widget",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Widget"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Widget.label",
+          "declaringOwner": "parallax.compatibility.Widget",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/grade.yaml": {
     "grade": {
       "columns": [

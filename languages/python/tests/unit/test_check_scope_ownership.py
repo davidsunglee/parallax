@@ -78,6 +78,7 @@ def test_the_conformance_tree_is_out_of_scope() -> None:
     assert {p.split("/")[0] for p in walked} == {
         "parallax-core",
         "parallax-descriptor",
+        "parallax-evolution",
         "parallax-postgres",
         "parallax-snapshot",
     }

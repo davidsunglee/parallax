@@ -130,6 +130,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-validtime-only` | Valid-Time-Only temporal formation (deferred) | deferred | cases |
 | `m-detach` | Object lifecycle & detach / merge-back | active | cases |
 | `m-opt-lock` | Optimistic locking | active | cases |
+| `m-model-evolution` | Model-altitude description of the difference between two accepted Metamodels | active | cases |
 | `m-case-format` | Compatibility case format | active | cases |
 | `m-conformance-adapter` | Conformance-adapter contract | active | cases |
 | `m-api-conformance` | API Conformance Suite contract | active | cases |
@@ -258,6 +259,11 @@ m-opt-lock --> m-temporal-read
 m-opt-lock --> m-metamodel
 m-opt-lock --> m-model-formation
 m-opt-lock --> m-inheritance
+m-model-evolution --> m-metamodel
+m-model-evolution --> m-inheritance
+m-model-evolution --> m-relationship
+m-model-evolution --> m-temporal-read
+m-model-evolution --> m-opt-lock
 m-case-format --> m-core
 m-conformance-adapter --> m-case-format
 m-api-conformance --> m-case-format
@@ -456,6 +462,17 @@ construction it may reference any behavioral module it harnesses.
 - **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
   optimistic-lock version analogue is derived from `txStart` / physical `in_z`, so
   an optimistic close references the milestoning read model.
+- **`m-model-evolution --> m-metamodel` / `m-inheritance` / `m-relationship` /
+  `m-temporal-read` / `m-opt-lock`.** An Evolution is described in the model's own
+  terms, so it pairs declarations by the structured identities and canonical
+  Model Location order `m-metamodel` owns. Classification and Behavioral Impacts
+  compare EFFECTIVE facts, not raw declarations: family role, strategy, and the
+  concrete set a position selects (`m-inheritance`), the symmetric relationship
+  facet a preserved identity's target and result shape are read from
+  (`m-relationship`), the Temporal Shape a selection and a write surface carry
+  (`m-temporal-read`), and the optimistic key an Entity resolves to
+  (`m-opt-lock`). Each is read through its owner's compiled facet and re-derived
+  nowhere.
 - **Aggregation is deferred through two modules.** `m-agg` (algebra) and
   `m-sql-agg` (lowering) are both deferred; core SQL generation (`m-sql`) never
   references aggregation constructs.

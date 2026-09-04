@@ -326,7 +326,9 @@ def _run(
     that step published, which is what the run sweep grades against each step's
     ``expectRows``). A rejected run touches no database and no port: it reports
     the classified ``rejectedRule`` with ``roundTrips: 0`` (m-conformance-
-    adapter).
+    adapter), and an evolution run reports the complete described ``evolution``
+    the same way, for the same reason — describing the difference between two
+    accepted models is pure.
     """
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
@@ -363,22 +365,29 @@ def _run(
     if case.shape == "rejected":
         rule = engine.run_rejected_case(case)
         return [], {"rejectedRule": rule, "roundTrips": 0}
+    if case.shape == "evolution":
+        return [], {"evolution": engine.run_evolution_case(case), "roundTrips": 0}
     result = _read_observations(case, port, lifecycle)
     return result["emissions"], result["observations"]
 
 
-def _rejected_shape_run_only(adapter: Adapter) -> Envelope:
-    # A `rejected` case carries no golden SQL BY CONSTRUCTION (`then.statements` is
-    # disallowed, m-case-format): it is implicitly run-graded, a shape-intrinsic
-    # rule needing no per-case `compileEligibility` authoring (m-conformance-adapter)
-    # — unlike the query-result-dependent run-only cases above.
+# The shapes that carry no golden SQL BY CONSTRUCTION (`then.statements` is
+# disallowed, m-case-format), and are therefore implicitly run-graded — a
+# shape-intrinsic rule needing no per-case `compileEligibility` authoring
+# (m-conformance-adapter), unlike the query-result-dependent run-only cases.
+_RUN_GRADED_SHAPES: Final[Mapping[str, str]] = {
+    "rejected": "a rejected case carries no golden SQL by construction",
+    "evolution": "an evolution case carries no golden SQL by construction",
+}
+
+
+def _shape_run_only(shape: str, adapter: Adapter) -> Envelope:
     return _non_ok(
         "compile",
         "run-only",
         Diagnostic(
             "compile-run-only",
-            "a rejected case carries no golden SQL by construction; it is implicitly "
-            "run-graded (m-conformance-adapter)",
+            f"{_RUN_GRADED_SHAPES[shape]}; it is implicitly run-graded (m-conformance-adapter)",
         ),
         adapter,
     )
@@ -396,16 +405,16 @@ def compile_case(
     ``run-only`` status with a ``compile-run-only`` diagnostic; a compile-eligible
     claimed read case returns ``ok`` with its ordered ``emissions`` and round
     trips. Compilation touches no database — the refusing port never sees a row
-    request from a well-declared read. A `rejected` case answers the same
-    ``run-only`` envelope unconditionally — its run-only status is shape-intrinsic,
-    not authored per-case (see :func:`_rejected_shape_run_only`).
+    request from a well-declared read. A `rejected` and an `evolution` case
+    answer the same ``run-only`` envelope unconditionally — their run-only status
+    is shape-intrinsic, not authored per-case (see :data:`_RUN_GRADED_SHAPES`).
     """
     case = case_format.load_case(Path(case_path))
     diagnostic = classify("compile", dialect, case, claim)
     if diagnostic is not None:
         return _non_ok("compile", "unsupported", diagnostic, adapter)
-    if case.shape == "rejected":
-        return _echo(_rejected_shape_run_only(adapter), case, dialect)
+    if case.shape in _RUN_GRADED_SHAPES:
+        return _echo(_shape_run_only(case.shape, adapter), case, dialect)
     run_only = engine.eligibility(case)
     if run_only is not None:
         envelope = _non_ok(

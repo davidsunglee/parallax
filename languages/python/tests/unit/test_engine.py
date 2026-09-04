@@ -5346,6 +5346,40 @@ def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Evolution — the two accepted endpoints a described difference names.         #
+# --------------------------------------------------------------------------- #
+def _evolution_case(document: dict[str, object]) -> case_format.Case:
+    return case_format.Case(
+        path=Path("m-model-evolution-999-synthetic.yaml"),
+        case_id="m-model-evolution-999",
+        shape="evolution",
+        tags=("m-model-evolution", "slice-snapshot-1"),
+        model="",
+        document=document,
+    )
+
+
+def test_an_evolution_case_without_its_endpoints_is_rejected() -> None:
+    with pytest.raises(engine.EngineError, match=r"when\.evolve"):
+        engine.run_evolution_case(_evolution_case({"when": {}}))
+
+
+def test_an_evolution_case_without_a_later_endpoint_is_rejected() -> None:
+    with pytest.raises(engine.EngineError, match=r"when\.evolve\.later"):
+        engine.run_evolution_case(_evolution_case({"when": {"evolve": {"earlier": None}}}))
+
+
+def test_an_evolution_case_whose_earlier_endpoint_is_neither_a_path_nor_null_is_rejected() -> None:
+    # `null` is the fresh-provisioning SENTINEL, so the member is a string path or
+    # that one value; anything else names an endpoint nothing can load.
+    bad = _evolution_case(
+        {"when": {"evolve": {"earlier": 7, "later": "models/evolution-widget-v1.yaml"}}}
+    )
+    with pytest.raises(engine.EngineError, match=r"when\.evolve\.earlier"):
+        engine.run_evolution_case(bad)
+
+
+# --------------------------------------------------------------------------- #
 # Rejected — the pre-SQL model-aware validation lane.                          #
 # Three-way `when` dispatch, and a three-form `when.write` inside it.          #
 # --------------------------------------------------------------------------- #

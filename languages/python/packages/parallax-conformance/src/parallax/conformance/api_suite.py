@@ -588,6 +588,15 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "conformance lanes (or the run lane alone for the materializing ones, "
         "query-result-dependent)"
     ),
+    "m-model-evolution": (
+        "describing the difference between two accepted models has no developer surface "
+        "at all in this slice: nothing an application builds, connects, or executes "
+        "reaches `evolve`, and an evolution case names no query, no write, and no "
+        "database. Its cases are graded as VALUES by the database-free evolution run "
+        "sweep (`tests/compatibility/test_evolution_sweep.py`), which compares the whole "
+        "described Evolution against the case's own `then.evolution` through a refusing "
+        "port, and structurally by the reference harness beside it"
+    ),
     "m-storage-layout": (
         "canonical physical composition has no standalone developer surface. Its "
         "positive witnesses (shared-table applicability and effective physical "

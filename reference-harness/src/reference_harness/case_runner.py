@@ -70,6 +70,7 @@ from .ddl_builder import (
     quote_identifier,
 )
 from .document_codec import decode_stored, encode_document, encode_leaf
+from .evolution_validate import validate_evolution
 from .inheritance import (
     MODEL_REJECTED_RULES,
     PREDICATE_REJECTED_RULES,
@@ -279,6 +280,11 @@ def _assert_schema(case: Case) -> None:
                 f"when.objectQuery / when.write / when.model (one invalid input); found "
                 f"{present or 'none'}."
             )
+    elif case.is_evolution:
+        if case.evolve_later is None:
+            raise CaseFailure(f"{case.path.name}: evolution case names no later endpoint")
+        if not isinstance(case.expected_evolution, dict):
+            raise CaseFailure(f"{case.path.name}: evolution case missing then.evolution")
     elif "objectQuery" not in case.when:
         raise CaseFailure(f"{case.path.name}: missing objectQuery")
     if not case.model.class_name:
@@ -3262,6 +3268,18 @@ def _assert_coherence_identity(
 # --- entry point ------------------------------------------------------------
 
 
+def _assert_evolution(case: Case) -> None:
+    """Layer 1 for an evolution case: the authored Evolution could be one.
+
+    Closed vocabularies, every identity resolving in the endpoint that must hold
+    it, and every ordered sequence actually ordered — canonical operation order,
+    fixed field-delta order, closed impact-variant order, and fixed reason order.
+    """
+    findings = validate_evolution(case)
+    if findings:
+        raise CaseFailure("\n".join(findings))
+
+
 def run_case(case: Case, db: DatabaseProvider) -> None:
     """Run all available assertion layers for *case* against *db*."""
     if case.lane == "api-conformance":
@@ -3279,6 +3297,17 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
             # round-trips its query + descriptor through the serde seam.
             _assert_serde(case)
             _assert_equivalent_encodings(case)
+        return
+
+    if case.is_evolution:
+        # A model evolution (m-model-evolution) is a pure description of two accepted
+        # models: no dialect, no provisioning, no execution. It runs identically on
+        # every dialect, so branch here before the dialect is even read. The
+        # authored Evolution is a golden the harness grades STRUCTURALLY — a
+        # language implementation grades the value itself through the conformance
+        # adapter, exactly as it grades golden SQL against a run.
+        _assert_schema(case)
+        _assert_evolution(case)
         return
 
     if case.is_rejected:

@@ -84,6 +84,26 @@ def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:
     assert "parallax/core/sql_gen/compile.py" not in _names(wheelhouse, "parallax-core")
 
 
+def test_evolution_wheel_ships_the_model_evolution_scope(wheelhouse: Wheelhouse) -> None:
+    # Same idiom, same reasoning as the packages below: the shipped set is
+    # asserted whole, so a private module nobody named fails as loudly as a
+    # missing one, and the absent `model_evolution.py` beside the package is what
+    # a stale build or a half-applied split looks like.
+    assert _modules_directly_in(
+        wheelhouse, "parallax-evolution", "parallax/evolution/model_evolution/"
+    ) == {
+        "parallax/evolution/model_evolution/__init__.py",
+        "parallax/evolution/model_evolution/_classify.py",
+        "parallax/evolution/model_evolution/_diff.py",
+        "parallax/evolution/model_evolution/_impacts.py",
+        "parallax/evolution/model_evolution/_matching.py",
+        "parallax/evolution/model_evolution/_values.py",
+    }
+    names = _names(wheelhouse, "parallax-evolution")
+    assert "parallax/evolution/__init__.py" in names
+    assert "parallax/evolution/model_evolution.py" not in names
+
+
 def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # The checks above see `parallax/snapshot` only at the top-package prefix, so
     # they cannot tell a handle.py from a handle/ directory. This is the complete

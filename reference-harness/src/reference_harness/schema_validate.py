@@ -58,6 +58,7 @@ from .predicate_write_validate import (
     validate_predicate_write,
     validate_predicate_write_materialization,
 )
+from .providers import DIALECT_CATALOG
 from .query_references import collect_query_reference_classes
 from .schemas import build_registry, load_schemas
 from .storage_layout import validate_storage_layout
@@ -857,6 +858,55 @@ def _edit_refusal(judged: list[tuple[Entity, str | None]], assignments: dict[str
     return f"{closest[1]} — no concrete the edited node may be ({answered}) admits the whole set"
 
 
+def _evolve(case: Any) -> dict[str, Any]:
+    """A case's ``when.evolve`` endpoints, empty for every other shape."""
+    when = case.get("when") if isinstance(case, dict) else None
+    evolve = when.get("evolve") if isinstance(when, dict) else None
+    return evolve if isinstance(evolve, dict) else {}
+
+
+def _case_model(case: Any) -> str | None:
+    """The one model a case is read against.
+
+    An evolution case names two endpoints instead of a top-level ``model``, and
+    its LATER endpoint is that model, so every model-aware check below keeps
+    holding without knowing the shape.
+    """
+    if not isinstance(case, dict):
+        return None
+    named = case.get("model")
+    if isinstance(named, str):
+        return named
+    later = _evolve(case).get("later")
+    return later if isinstance(later, str) else None
+
+
+def _case_models(case: dict[str, Any]) -> list[str]:
+    """Every model path a case names, in the order it names them."""
+    evolve = _evolve(case)
+    named = [case.get("model"), evolve.get("earlier"), evolve.get("later")]
+    return [path for path in named if isinstance(path, str)]
+
+
+def _schema_matrix_problems(case: dict[str, Any]) -> list[str]:
+    """``then.schema`` states one cell per supported Dialect, or is absent.
+
+    An omitted dialect is never an implicit skip (m-case-format): adding a
+    Dialect makes every unilateral evolution case incomplete until its cell is
+    authored, which is a static failure here rather than a quieter run later.
+    """
+    then = case.get("then")
+    matrix = then.get("schema") if isinstance(then, dict) else None
+    if not isinstance(matrix, dict):
+        return []
+    if set(matrix) != set(DIALECT_CATALOG):
+        return [
+            f"then.schema names {sorted(matrix)}, and the supported Dialect catalog is "
+            f"{sorted(DIALECT_CATALOG)}"
+        ]
+    return []
+
+
 def validate_tree(compatibility_root: Path) -> list[str]:
     """Validate every schema and every fixture; return a list of error strings."""
     compatibility_root = compatibility_root.resolve()
@@ -902,7 +952,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     cases_dir = compatibility_root / "cases"
     for case_path in sorted(cases_dir.glob("**/*.y*ml")):
         case = _load_yaml(case_path)
-        model_rel = case.get("model") if isinstance(case, dict) else None
+        model_rel = _case_model(case)
         model_name = Path(model_rel).name if isinstance(model_rel, str) else None
         family = families.get(model_name) if model_name is not None else None
         # The execution oracle's referential and arithmetic checks read members the
@@ -1014,11 +1064,16 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                 f"case {case_path.name}",
                 errors,
             )
-        # The referenced model must exist.
-        if isinstance(case, dict) and isinstance(case.get("model"), str):
-            referenced = compatibility_root / case["model"]
-            if not referenced.is_file():
-                errors.append(f"case {case_path.name}: model {case['model']} does not exist")
+        # Every model a case names must exist — the one model most shapes carry,
+        # and BOTH endpoints an evolution case names, since an unreadable earlier
+        # endpoint would otherwise read as the provisioning sentinel.
+        if isinstance(case, dict):
+            for named in _case_models(case):
+                if not (compatibility_root / named).is_file():
+                    errors.append(f"case {case_path.name}: model {named} does not exist")
+            errors.extend(
+                f"case {case_path.name}: {problem}" for problem in _schema_matrix_problems(case)
+            )
 
     return errors
 

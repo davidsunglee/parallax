@@ -138,6 +138,12 @@ EXEMPTIONS: Mapping[str, str] = {
         "surface across the entity, predicate and temporal-read scopes, so no single "
         "scope owns it"
     ),
+    "parallax-evolution/src/parallax/evolution/__init__.py": (
+        "distribution package interface: re-exports the §8 `parallax.evolution` surface "
+        "(`evolve`, `ABSENT`, and the closed evolution vocabulary) across the "
+        "`parallax.evolution.model_evolution` and `parallax.evolution.schema_delta` "
+        "scopes, so no single scope owns it"
+    ),
     "parallax-snapshot/src/parallax/snapshot/__init__.py": (
         "distribution package interface: re-exports the §8 `parallax.snapshot` surface "
         "(`connect`, `Snapshot`, the node-inspection surface, the arity errors) from "
