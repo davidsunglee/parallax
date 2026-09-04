@@ -31,6 +31,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-execution-lifecycle",
         "m-inheritance",
         "m-metamodel",
+        "m-model-evolution",
         "m-model-formation",
         "m-navigate",
         "m-object-query",
@@ -143,16 +144,38 @@ def test_storage_layout_rejected_witnesses_pin_distinct_issue_namespaces() -> No
     ] == ["first_id", "second_id"]
 
 
+# The base case shapes both lifecycle slices claim, in claim order. Only the
+# plain-value slice adds the `evolution` shape, whose cases describe two accepted
+# models rather than either lifecycle.
+_BASE_CASE_SHAPES = [
+    "read",
+    "writeSequence",
+    "scenario",
+    "conflict",
+    "boundary",
+    "error",
+    "concurrencySuccess",
+    "rejected",
+]
+
+
 @pytest.mark.parametrize(
-    ("slice_tag", "lifecycle_module", "excluded_module", "prerequisites"),
+    ("slice_tag", "lifecycle_module", "excluded_module", "prerequisites", "case_shapes"),
     [
         (
             "slice-snapshot-1",
             "m-snapshot-read",
             "m-identity-map",
             ["m-db-port"],
+            [*_BASE_CASE_SHAPES, "evolution"],
         ),
-        ("slice-managed-1", "m-identity-map", "m-snapshot-read", ["m-db-port"]),
+        (
+            "slice-managed-1",
+            "m-identity-map",
+            "m-snapshot-read",
+            ["m-db-port"],
+            _BASE_CASE_SHAPES,
+        ),
     ],
 )
 def test_json_report_derives_each_lifecycle_slice(
@@ -160,6 +183,7 @@ def test_json_report_derives_each_lifecycle_slice(
     lifecycle_module: str,
     excluded_module: str,
     prerequisites: list[str],
+    case_shapes: list[str],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     rc = main(
@@ -176,16 +200,7 @@ def test_json_report_derives_each_lifecycle_slice(
     assert report["slice"] == slice_tag
     assert report["canonicalClaim"]["capabilities"]["caseTags"] == {"include": [slice_tag]}
     assert report["supported"] == {
-        "caseShapes": [
-            "read",
-            "writeSequence",
-            "scenario",
-            "conflict",
-            "boundary",
-            "error",
-            "concurrencySuccess",
-            "rejected",
-        ],
+        "caseShapes": case_shapes,
         "commands": ["describe", "compile", "run"],
         "dialects": ["postgres"],
     }

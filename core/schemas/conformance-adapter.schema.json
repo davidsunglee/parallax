@@ -105,7 +105,7 @@
     },
     "caseShape": {
       "type": "string",
-      "enum": ["read", "writeSequence", "scenario", "conflict", "coherence", "error", "concurrencySuccess", "boundary", "rejected"]
+      "enum": ["read", "writeSequence", "scenario", "conflict", "coherence", "error", "concurrencySuccess", "boundary", "rejected", "evolution"]
     },
     "moduleTag": {
       "type": "string",
@@ -605,6 +605,363 @@
       "required": ["roots"],
       "properties": {"roots": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleRoot"}}}
     },
+    "evolutionOperationKind": {
+      "description": "The closed Evolution Operation algebra (m-model-evolution). The generic Entity add/remove variants exclude concrete-subtype add/remove; a surviving concrete subtype uses `EntityAltered`. There is no rename variant: a rename is one removal and one addition.",
+      "enum": [
+        "EntityAdded",
+        "EntityRemoved",
+        "EntityAltered",
+        "ConcreteSubtypeAdded",
+        "ConcreteSubtypeRemoved",
+        "AttributeAdded",
+        "AttributeRemoved",
+        "AttributeAltered",
+        "ValueObjectOccurrenceAdded",
+        "ValueObjectOccurrenceRemoved",
+        "ValueObjectOccurrenceAltered",
+        "ValueObjectAttributeAdded",
+        "ValueObjectAttributeRemoved",
+        "ValueObjectAttributeAltered",
+        "RelationshipAdded",
+        "RelationshipRemoved",
+        "RelationshipAltered",
+        "AsOfAxisAdded",
+        "AsOfAxisRemoved",
+        "AsOfAxisAltered",
+        "IndexAdded",
+        "IndexRemoved",
+        "IndexAltered",
+        "DeclarationOrderChanged"
+      ]
+    },
+    "evolutionFieldDeltaKind": {
+      "description": "The closed field-delta vocabulary an alteration carries (m-model-evolution). Each name carries one value type wherever it appears, so one spelling serves every declaration kind that owns it.",
+      "enum": [
+        "StorageContainerChanged",
+        "PersistenceChanged",
+        "StorageLayoutChanged",
+        "InheritanceChanged",
+        "TypeChanged",
+        "StorageChanged",
+        "PrimaryKeyChanged",
+        "NullabilityChanged",
+        "MaximumLengthChanged",
+        "ReadOnlyChanged",
+        "OptimisticLockingChanged",
+        "MultiplicityChanged",
+        "DeclarationFormChanged",
+        "CardinalityChanged",
+        "JoinChanged",
+        "ReverseOfChanged",
+        "DependencyChanged",
+        "OrderingChanged",
+        "StartAttributeChanged",
+        "EndAttributeChanged",
+        "ComponentsChanged",
+        "UniquenessChanged"
+      ]
+    },
+    "behavioralImpactKind": {
+      "description": "The closed Behavioral Impact vocabulary (m-model-evolution), in the fixed order impacts are reported in.",
+      "enum": [
+        "UniquenessEnforcementChanged",
+        "ValueAdmissibilityChanged",
+        "DeletePropagationChanged",
+        "ConcurrencyControlChanged",
+        "QueryResultMembershipChanged",
+        "QueryResultOrderingChanged",
+        "WriteCapabilityChanged"
+      ]
+    },
+    "coordinationReason": {
+      "description": "The closed reason vocabulary a Coordination Requirement draws from (m-model-evolution), in fixed reason order.",
+      "enum": ["AuthoringSurfaceChangeRequired", "DatabaseMigrationRequired"]
+    },
+    "declarationCollection": {
+      "description": "The closed set of local collections one `DeclarationOrderChanged` operation describes (m-model-evolution).",
+      "enum": [
+        "entityAttributes",
+        "entityRelationships",
+        "entityValueObjects",
+        "entityIndices",
+        "valueObjectAttributes",
+        "nestedValueObjects"
+      ]
+    },
+    "evolutionFieldDelta": {
+      "description": "One field change at one logical location: its closed `kind` plus the earlier and later accepted values, spelled as the model descriptor spells them. Both endpoints are always present, including where the value is absent, which a `null` states.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "earlier", "later"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/evolutionFieldDeltaKind"},
+        "earlier": {"description": "The earlier endpoint's accepted value."},
+        "later": {"description": "The later endpoint's accepted value."}
+      }
+    },
+    "evolutionOperation": {
+      "description": "One Evolution Operation: its closed `kind`, the structured identity it names in the `identity.schema.json` grammars, and — for an alteration — its nonempty field deltas in fixed field order. The kind fixes which identity member the operation carries, so the `oneOf` below admits exactly that member set and no operation names two positions. An add or remove resolves its full declaration through the retained endpoint rather than repeating it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/evolutionOperationKind"},
+        "entity": {
+          "description": "An Entity Identity, in the `entityName` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*$"
+        },
+        "attribute": {
+          "description": "An Attribute Identity, in the `attributeRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+        },
+        "relationship": {
+          "description": "A Relationship Identity, in the `relationshipRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+        },
+        "valueObject": {
+          "description": "A Value Object occurrence Identity, in the `valueObjectRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)+$"
+        },
+        "valueObjectAttribute": {
+          "description": "A Value Object Attribute Identity, in the `nestedRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*(\\.[a-z][A-Za-z0-9_]*)+$"
+        },
+        "index": {
+          "description": "An authored Index Identity, in the `indexRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+        },
+        "dimension": {
+          "description": "The Temporal Dimension an As-Of Axis operation names.",
+          "enum": ["valid-time", "transaction-time"]
+        },
+        "deltas": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evolutionFieldDelta"}},
+        "collection": {"$ref": "#/$defs/declarationCollection"},
+        "owner": {
+          "description": "The Entity or Value Object occurrence owning the collection.",
+          "anyOf": [
+            {
+              "description": "An Entity Identity, in the `entityName` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+              "type": "string",
+              "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*$"
+            },
+            {
+              "description": "A Value Object occurrence Identity, in the `valueObjectRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+              "type": "string",
+              "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)+$"
+            }
+          ]
+        },
+        "earlier": {
+          "description": "The surviving declaration identities in the earlier endpoint's order.",
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "later": {
+          "description": "The same identities in the later endpoint's order, which differs.",
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "enum": ["EntityAdded", "EntityRemoved", "ConcreteSubtypeAdded", "ConcreteSubtypeRemoved"]
+            }
+          },
+          "required": ["kind", "entity"],
+          "propertyNames": {"enum": ["kind", "entity"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["EntityAltered"]}},
+          "required": ["kind", "entity", "deltas"],
+          "propertyNames": {"enum": ["kind", "entity", "deltas"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["AttributeAdded", "AttributeRemoved"]}},
+          "required": ["kind", "attribute"],
+          "propertyNames": {"enum": ["kind", "attribute"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["AttributeAltered"]}},
+          "required": ["kind", "attribute", "deltas"],
+          "propertyNames": {"enum": ["kind", "attribute", "deltas"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["ValueObjectOccurrenceAdded", "ValueObjectOccurrenceRemoved"]}},
+          "required": ["kind", "valueObject"],
+          "propertyNames": {"enum": ["kind", "valueObject"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["ValueObjectOccurrenceAltered"]}},
+          "required": ["kind", "valueObject", "deltas"],
+          "propertyNames": {"enum": ["kind", "valueObject", "deltas"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["ValueObjectAttributeAdded", "ValueObjectAttributeRemoved"]}},
+          "required": ["kind", "valueObjectAttribute"],
+          "propertyNames": {"enum": ["kind", "valueObjectAttribute"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["ValueObjectAttributeAltered"]}},
+          "required": ["kind", "valueObjectAttribute", "deltas"],
+          "propertyNames": {"enum": ["kind", "valueObjectAttribute", "deltas"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["RelationshipAdded", "RelationshipRemoved"]}},
+          "required": ["kind", "relationship"],
+          "propertyNames": {"enum": ["kind", "relationship"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["RelationshipAltered"]}},
+          "required": ["kind", "relationship", "deltas"],
+          "propertyNames": {"enum": ["kind", "relationship", "deltas"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["AsOfAxisAdded", "AsOfAxisRemoved"]}},
+          "required": ["kind", "entity", "dimension"],
+          "propertyNames": {"enum": ["kind", "entity", "dimension"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["AsOfAxisAltered"]}},
+          "required": ["kind", "entity", "dimension", "deltas"],
+          "propertyNames": {"enum": ["kind", "entity", "dimension", "deltas"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["IndexAdded", "IndexRemoved"]}},
+          "required": ["kind", "index"],
+          "propertyNames": {"enum": ["kind", "index"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["IndexAltered"]}},
+          "required": ["kind", "index", "deltas"],
+          "propertyNames": {"enum": ["kind", "index", "deltas"]}
+        },
+        {
+          "properties": {"kind": {"enum": ["DeclarationOrderChanged"]}},
+          "required": ["kind", "collection", "owner", "earlier", "later"],
+          "propertyNames": {"enum": ["kind", "collection", "owner", "earlier", "later"]}
+        }
+      ]
+    },
+    "evolutionScope": {
+      "description": "The position a Behavioral Impact reports on, named by the KIND of identity it is. The member key discriminates because one dotted spelling is a legal Attribute, Relationship, and Value Object reference alike.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "entity": {
+          "description": "An Entity Identity, in the `entityName` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*$"
+        },
+        "attribute": {
+          "description": "An Attribute Identity, in the `attributeRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+        },
+        "relationship": {
+          "description": "A Relationship Identity, in the `relationshipRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+        },
+        "valueObject": {
+          "description": "A Value Object occurrence Identity, in the `valueObjectRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)+$"
+        },
+        "valueObjectAttribute": {
+          "description": "A Value Object Attribute Identity, in the `nestedRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*(\\.[a-z][A-Za-z0-9_]*)+$"
+        }
+      }
+    },
+    "behavioralImpact": {
+      "description": "One endpoint-wide continuity fact: its closed `kind`, the surviving scope it holds on, that scope's earlier and later facts, and every causal Evolution Operation in canonical order. An impact prescribes no severity, remediation, or retry, and is derived from the two models alone.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "scope", "earlier", "later", "causedBy"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/behavioralImpactKind"},
+        "scope": {"$ref": "#/$defs/evolutionScope"},
+        "earlier": {"description": "The earlier endpoint's facts for this scope."},
+        "later": {"description": "The later endpoint's facts for this scope."},
+        "causedBy": {
+          "description": "All and only the operations whose changed facts contribute to this impact, deduplicated and in canonical operation order.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/evolutionOperation"}
+        }
+      }
+    },
+    "coordinationRequirement": {
+      "description": "One coordinated operation and the nonempty, fixed-order reasons unilateral application is unavailable for. An operation needing both reasons appears once.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "reasons"],
+      "properties": {
+        "operation": {"$ref": "#/$defs/evolutionOperation"},
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/coordinationReason"}
+        }
+      }
+    },
+    "evolutionResult": {
+      "description": "The COMPLETE Evolution the two endpoints produce, asserted as one value: its kind, its operations in canonical Model Location order, its Behavioral Impacts in closed variant order, its Overlap-Visible Operations, and its Coordination Requirements. Every member is authored even when empty, because splitting one transition across classification-only or operation-only assertions is not conforming.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "operations",
+        "behavioralImpacts",
+        "overlapVisibleOperations",
+        "coordinationRequirements"
+      ],
+      "properties": {
+        "kind": {
+          "description": "`unilateral` — applicable to a live tenant through the schema path; `coordinated` — an equally complete description whose application needs authoring, data, or rollout coordination.",
+          "enum": ["unilateral", "coordinated"]
+        },
+        "operations": {"type": "array", "items": {"$ref": "#/$defs/evolutionOperation"}},
+        "behavioralImpacts": {"type": "array", "items": {"$ref": "#/$defs/behavioralImpact"}},
+        "overlapVisibleOperations": {
+          "description": "The operations that may let the later edition store a value an earlier edition cannot admit.",
+          "type": "array",
+          "items": {"$ref": "#/$defs/evolutionOperation"}
+        },
+        "coordinationRequirements": {"type": "array", "items": {"$ref": "#/$defs/coordinationRequirement"}}
+      },
+      "allOf": [
+        {
+          "description": "A Unilateral Evolution can carry no Coordination Requirement.",
+          "if": {"required": ["kind"], "properties": {"kind": {"const": "unilateral"}}},
+          "then": {"properties": {"coordinationRequirements": {"maxItems": 0}}}
+        },
+        {
+          "description": "A Coordinated Evolution carries at least one requirement and names no Overlap-Visible Operation, which is a Unilateral Evolution's payload alone.",
+          "if": {"required": ["kind"], "properties": {"kind": {"const": "coordinated"}}},
+          "then": {
+            "properties": {
+              "overlapVisibleOperations": {"maxItems": 0},
+              "coordinationRequirements": {"minItems": 1}
+            }
+          }
+        }
+      ]
+    },
     "observations": {
       "type": "object",
       "additionalProperties": false,
@@ -680,6 +1037,10 @@
         "executionLifecycle": {
           "description": "The transient execution lifecycle the run delivered (m-execution-lifecycle), compared against the case's `then.executionLifecycle`. Optional and additive — an adapter that installs no Provider omits it, and existing run outputs stay valid — but an adapter claiming `m-execution-lifecycle` MUST report it for every case authoring the oracle.",
           "$ref": "#/$defs/executionLifecycleObservation"
+        },
+        "evolution": {
+          "description": "The complete Evolution an evolution-case run described for the two accepted endpoints `when.evolve` names, compared against the case's `then.evolution` whole. An adapter whose claim includes the `evolution` caseShape MUST report this observation on an evolution-case run, with `roundTrips: 0` and no provisioning or dialect: describing a difference between two accepted models reaches no database. Optional and additive at the schema layer — only evolution-shape runs report it, and existing run outputs stay valid.",
+          "$ref": "#/$defs/evolutionResult"
         },
         "rejectedRule": {
           "description": "The classified normative rule identifier a rejected-case run refused the input with (m-predicate / m-navigate / m-value-object / m-inheritance), compared against the case's `then.rejectedRule`. An adapter whose claim includes the `rejected` caseShape MUST report this observation on a rejected-case run, with `roundTrips: 0` and no provisioning or dialect. Optional and additive at the schema layer — only rejected-shape runs report it, and existing run outputs stay valid.",

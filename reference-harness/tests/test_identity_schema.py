@@ -102,6 +102,16 @@ _VECTORS: dict[str, list[tuple[str, bool]]] = {
         ("Order.Items", False),
         ("", False),
     ],
+    "indexRef": [
+        ("Order.byCustomer", True),
+        ("parallax.compatibility.Order.byCustomer", True),
+        ("Order.order_pk", True),
+        ("Order", False),  # the index name is required
+        ("order.byCustomer", False),
+        ("Order.ByCustomer", False),
+        ("Order.byCustomer.extra", False),
+        ("", False),
+    ],
     "nestedRef": [
         ("Customer.address.city", True),
         ("Customer.address.geo.lat", True),
@@ -218,6 +228,50 @@ def test_no_consuming_schema_redefines_an_identity_grammar() -> None:
                 assert node.get("$ref", "").startswith("identity.schema.json#"), (
                     f"{name} `{pointer}` must reference identity.schema.json"
                 )
+
+
+# --- the deliberate duplication in the mirrored evolution vocabulary -----------
+
+# The evolution `$defs` that address a model position, and so copy a grammar.
+_EVOLUTION_COPYING_DEFS = ("evolutionOperation", "evolutionScope", "createdIndex")
+
+_MIRRORING_SCHEMAS = ("compatibility-case.schema.json", "conformance-adapter.schema.json")
+
+
+def _patterns(node: Any) -> set[str]:
+    if isinstance(node, dict):
+        own = {node["pattern"]} if isinstance(node.get("pattern"), str) else set()
+        return own.union(*(_patterns(value) for value in node.values()), set())
+    if isinstance(node, list):
+        return set().union(*(_patterns(item) for item in node), set())
+    return set()
+
+
+def test_the_evolution_vocabulary_copies_only_canonical_identity_grammars() -> None:
+    """The evolution defs duplicate identity grammars on purpose.
+
+    They are MIRRORED into `conformance-adapter.schema.json`, which stays
+    consumable as one self-contained document and so may reach no other file, and
+    a mirrored definition has to be identical on both sides. The duplication is
+    guarded here instead: every pattern either copy carries is one
+    `identity.schema.json` owns, and between them they copy every grammar an
+    Evolution Operation can address a position with.
+    """
+    canonical = {node["pattern"] for node in _IDENTITY["$defs"].values()}
+    addressed = {
+        _IDENTITY["$defs"][pointer]["pattern"]
+        for pointer in ("entityName", "attributeRef", "nestedRef", "valueObjectRef")
+    }
+    for schema_name in _MIRRORING_SCHEMAS:
+        defs = _SCHEMAS[schema_name]["$defs"]
+        copied: set[str] = set()
+        for pointer in _EVOLUTION_COPYING_DEFS:
+            if pointer in defs:
+                copied |= _patterns(defs[pointer])
+        assert copied <= canonical, (
+            f"{schema_name} invents an identity grammar: {copied - canonical}"
+        )
+        assert addressed <= copied, f"{schema_name} copies no {addressed - copied}"
 
 
 # --- the deliberate duplication in metamodel.schema.json -----------------------

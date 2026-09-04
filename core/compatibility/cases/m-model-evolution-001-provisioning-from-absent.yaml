@@ -1,0 +1,24 @@
+# Provisioning (m-model-evolution): the evolution from an ABSENT earlier endpoint
+# is one entity-level addition per target Entity, and nothing else.
+#
+# `when.evolve.earlier` is `null` — the explicit fresh-provisioning sentinel,
+# never inferred from an empty accepted model or from inspecting a database.
+# Provisioning is always unilateral, and the parent addition SUPPRESSES every
+# operation for the members it contains: `Widget`'s two Attributes and its
+# authored Index are described by `EntityAdded` alone rather than by four
+# operations. It carries no Behavioral Impact and no Overlap-Visible Operation
+# either, because no earlier scope survives for one to hold on.
+tags: [m-model-evolution, evolution, provisioning, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: null
+    later: models/evolution-widget-v1.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: EntityAdded, entity: parallax.compatibility.Widget }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

@@ -38,6 +38,7 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     lifecycle_run,
 )
+from parallax.conformance.evolution_wire import evolution_observation
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import (
     batch_write,
@@ -143,6 +144,7 @@ from parallax.descriptor import (
     domain_model_from_document,
     validate_inheritance_families,
 )
+from parallax.evolution.model_evolution import ABSENT, evolve
 from parallax.snapshot import handle
 from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
@@ -171,6 +173,7 @@ __all__ = [
     "read_table_state",
     "run_conflict_case",
     "run_error_case",
+    "run_evolution_case",
     "run_graph_case",
     "run_graphs_case",
     "run_interleaved_scenario_case",
@@ -314,6 +317,10 @@ def _case_model_path(case: case_format.Case) -> Path:
     model_ref = case.document.get("model")
     if not isinstance(model_ref, str):
         raise EngineError(f"{case.path.name}: `model` must be a string path")
+    return _model_path(model_ref)
+
+
+def _model_path(model_ref: str) -> Path:
     return case_format.find_repo_root() / "core" / "compatibility" / model_ref
 
 
@@ -7199,6 +7206,36 @@ def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> s
             f"`oneOf`); found {present!r}"
         )
     return present[0]
+
+
+def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
+    """Describe the evolution between an `evolution` case's two endpoints.
+
+    `when.evolve.earlier` is a model descriptor path or the explicit
+    fresh-provisioning sentinel `null`, which reaches `evolve` as `ABSENT` rather
+    than as an empty model. Both endpoints form through the same public door
+    every other corpus model does, so a case cannot describe an evolution between
+    models this implementation would not otherwise accept.
+
+    The run touches no database and no port: describing the difference between
+    two accepted models is pure, which is what makes an evolution case cost zero
+    round trips and carry no dialect.
+    """
+    when = case.document.get("when")
+    action = cast("Mapping[str, object]", when).get("evolve") if isinstance(when, Mapping) else None
+    if not isinstance(action, Mapping):
+        raise EngineError(f"{case.path.name}: evolution case carries no `when.evolve`")
+    named = cast("Mapping[str, object]", action)
+    later_ref = named.get("later")
+    if not isinstance(later_ref, str):
+        raise EngineError(f"{case.path.name}: `when.evolve.later` must be a string path")
+    earlier_ref = named.get("earlier")
+    if earlier_ref is not None and not isinstance(earlier_ref, str):
+        raise EngineError(
+            f"{case.path.name}: `when.evolve.earlier` is a string path or the null sentinel"
+        )
+    earlier = ABSENT if earlier_ref is None else models.load_model(_model_path(earlier_ref))
+    return evolution_observation(evolve(earlier, models.load_model(_model_path(later_ref))))
 
 
 def run_rejected_case(case: case_format.Case) -> str:

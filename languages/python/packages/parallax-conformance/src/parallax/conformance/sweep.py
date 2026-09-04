@@ -31,6 +31,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-pk-gen",
         "m-inheritance",
         "m-metamodel",
+        "m-model-evolution",
         "m-model-formation",
         "m-storage-layout",
         "m-value-object",

@@ -9,6 +9,7 @@ authors = [{ name = "Parallax" }]
 dependencies = [
     "parallax-core",
     "parallax-descriptor",
+    "parallax-evolution",
     "parallax-snapshot",
     "parallax-postgres",
     "testcontainers>=4.15.0",

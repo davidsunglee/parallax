@@ -1,0 +1,22 @@
+# Equal endpoints (m-model-evolution): evolving a model to itself is an EMPTY
+# Unilateral Evolution, not a third no-evolution result.
+#
+# `evolve` is total: two equal accepted models produce empty operations, empty
+# Behavioral Impacts, and empty Overlap-Visible Operations while still retaining
+# both endpoints, so a caller never branches on a nullable return or on a kind
+# outside the closed unilateral/coordinated choice. The same two endpoints named
+# here are the ones the provisioning case creates from absence, which is what
+# makes this the identity of that description rather than a separate shape.
+tags: [m-model-evolution, evolution, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-widget-v1.yaml
+    later: models/evolution-widget-v1.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations: []
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

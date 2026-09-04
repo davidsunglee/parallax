@@ -645,11 +645,18 @@ def names_earlier_step(source: int, step_index: int) -> bool:
 
 @dataclass(frozen=True)
 class Case:
-    """A parsed compatibility case bound to its model + fixtures."""
+    """A parsed compatibility case bound to its model + fixtures.
+
+    ``model`` is the one model the case is read against — for an evolution case,
+    the LATER endpoint, so every check written against it holds without knowing
+    the shape. ``earlier_model`` is that case's earlier endpoint, absent both for
+    every other shape and for the fresh-provisioning evolution from no model.
+    """
 
     path: Path
     raw: dict[str, Any]
     model: Model
+    earlier_model: Model | None = None
 
     # --- groups (given / when / then) --------------------------------------
 
@@ -1016,6 +1023,44 @@ class Case:
         return self.shape == "rejected"
 
     @property
+    def is_evolution(self) -> bool:
+        """True for a model-evolution case (m-model-evolution).
+
+        An ``evolution`` case names its two accepted endpoints under
+        ``when.evolve`` instead of one top-level ``model``, and asserts the
+        COMPLETE Evolution between them in ``then.evolution``. It reaches no
+        database — describing a difference between two accepted models is pure —
+        so it carries no golden SQL and :func:`case_runner.run_case` grades it
+        dialect-free.
+        """
+        return self.shape == "evolution"
+
+    @property
+    def evolve_earlier(self) -> str | None:
+        """The earlier endpoint's model path, or ``None`` for fresh provisioning.
+
+        ``None`` is the ABSENT sentinel the case authors explicitly as ``null``,
+        never an inference from an empty model.
+        """
+        earlier = self.when.get("evolve", {}).get("earlier")
+        return earlier if isinstance(earlier, str) else None
+
+    @property
+    def evolve_later(self) -> str | None:
+        """The later endpoint's model path — the model :attr:`model` carries."""
+        later = self.when.get("evolve", {}).get("later")
+        return later if isinstance(later, str) else None
+
+    @property
+    def expected_evolution(self) -> dict[str, Any] | None:
+        """The complete Evolution ``then.evolution`` asserts, or ``None``."""
+        return self.then.get("evolution")
+
+    def schema_cell(self, dialect: str) -> dict[str, Any] | None:
+        """This case's ``then.schema`` expectation for *dialect*, if it carries one."""
+        return (self.then.get("schema") or {}).get(dialect)
+
+    @property
     def rejected_rule(self) -> str | None:
         """The normative rule a ``rejected`` case expects the input to violate.
 
@@ -1149,15 +1194,16 @@ class Case:
         """The statements this case costs: what ``then.roundTrips`` declares, or
         the shape's own default where it is absent.
 
-        One for a shape that reaches the database, and ZERO for a ``rejected``
-        case, whose input a validator refuses before any statement is composed
-        (``m-conformance-adapter``: a rejected observation reports
-        ``roundTrips: 0``). The schema pins the declared value to ``0`` there, so
-        the shape-aware default is the same number a declaration would carry —
-        and it is the number every rejected case actually answers, since none of
-        them declares the field.
+        One for a shape that reaches the database, and ZERO for the two that do
+        not: a ``rejected`` case, whose input a validator refuses before any
+        statement is composed, and an ``evolution`` case, whose whole observable
+        is a pure description of two accepted models
+        (``m-conformance-adapter``: both report ``roundTrips: 0``). The schema
+        pins the declared value to ``0`` there, so the shape-aware default is the
+        same number a declaration would carry — and it is the number those cases
+        actually answer, since none of them declares the field.
         """
-        return self.then.get("roundTrips", 0 if self.is_rejected else 1)
+        return self.then.get("roundTrips", 0 if self.is_rejected or self.is_evolution else 1)
 
     @property
     def tolerance(self) -> Decimal | None:
@@ -1238,8 +1284,18 @@ def load_case(compatibility_root: Path, case_path: Path) -> Case:
         return cached
 
     raw = frozen_view(_load_yaml(resolved_case_path))
-    model = load_model(root, raw["model"])
-    case = Case(path=resolved_case_path, raw=raw, model=model)
+    evolve = raw.get("when", {}).get("evolve", {})
+    # An evolution case names its endpoints under `when.evolve` rather than a
+    # top-level `model`. Its LATER endpoint is the case's model, so every check
+    # written against `case.model` keeps holding without knowing the shape.
+    model = load_model(root, evolve.get("later") or raw["model"])
+    earlier = evolve.get("earlier")
+    case = Case(
+        path=resolved_case_path,
+        raw=raw,
+        model=model,
+        earlier_model=load_model(root, earlier) if isinstance(earlier, str) else None,
+    )
     _CASE_CACHE[key] = case
     return case
 
@@ -1276,6 +1332,11 @@ def discover_cases(compatibility_root: Path) -> list[Case]:
     return list(cached)
 
 
+# The shapes whose whole observable is reached without a database, and which are
+# therefore graded once rather than once per dialect.
+_DIALECT_FREE_SHAPES = frozenset({"rejected", "evolution"})
+
+
 def dialect_executed_cases(compatibility_root: Path) -> list[Case]:
     """The discovered cases a dialect-parametrized runner executes, one run per dialect.
 
@@ -1286,16 +1347,18 @@ def dialect_executed_cases(compatibility_root: Path) -> list[Case]:
     API Conformance Suite, so no harness runner executes it —
     :func:`case_runner.run_case` early-returns for that lane.
 
-    A ``rejected``-shape case is refused before the dialect is read, so a
-    dialect axis proves nothing about it: running one per available dialect
-    repeats an identical database-free assertion. Its own dialect-independent
-    runner owns it, and the two selections partition the harness lane — every
-    case outside the api-conformance lane belongs to exactly one of them.
+    A ``rejected``-shape case is refused before the dialect is read, and an
+    ``evolution``-shape case describes two accepted models without executing
+    anything, so a dialect axis proves nothing about either: running one per
+    available dialect repeats an identical database-free assertion. Their own
+    dialect-independent runners own them, and the selections partition the
+    harness lane — every case outside the api-conformance lane belongs to exactly
+    one of them.
     """
     return [
         case
         for case in discover_cases(compatibility_root)
-        if case.lane != "api-conformance" and case.shape != "rejected"
+        if case.lane != "api-conformance" and case.shape not in _DIALECT_FREE_SHAPES
     ]
 
 

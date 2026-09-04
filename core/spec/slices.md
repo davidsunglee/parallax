@@ -47,6 +47,9 @@ to the bitemporal rectangle split.
   slice claiming `m-execution-lifecycle`: transient execution observability is
   lifecycle-neutral, but its dedicated case spine is authored over the
   plain-value surface, so the managed slice claims it once cases carry that tag.
+  It is likewise the only slice claiming `m-model-evolution`: describing the
+  difference between two accepted models is lifecycle-neutral, and the
+  `evolution` case shape it brings with it is claimed here for the same reason.
 - **`slice-managed-1`** — the **managed-object** surface: reads materialize
   managed objects interned in the transaction-scoped identity map
   (`m-identity-map`), mutation buffers through the unit of work, objects detach
@@ -68,9 +71,9 @@ The canonical `describe` claim for `slice-snapshot-1`:
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-evolution", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
+    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected", "evolution"],
     "caseTags": { "include": ["slice-snapshot-1"] },
     "commands": ["describe", "compile", "run"],
     "provisioning": "self-managed"

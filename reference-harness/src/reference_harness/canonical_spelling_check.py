@@ -420,8 +420,8 @@ def _case_declarations(
     if not isinstance(document, Mapping):
         findings.append(f"{path}: <root>: case document is not a mapping")
         return None
-    reference = document.get("model")
-    if not isinstance(reference, str):
+    reference = _model_reference(document)
+    if reference is None:
         findings.append(f"{path}: model: case names no model")
         return None
     declarations = models.get(reference)
@@ -429,6 +429,22 @@ def _case_declarations(
         findings.append(f"{path}: model: {reference!r} is not a shared model of this corpus")
         return None
     return declarations
+
+
+def _model_reference(document: Mapping[str, Any]) -> str | None:
+    """The shared model a case's own spellings resolve against.
+
+    An evolution case names two endpoints under `when.evolve` instead of one
+    top-level `model`, and its LATER endpoint is the model it is read against —
+    the same one every other per-case check reads.
+    """
+    named = document.get("model")
+    if isinstance(named, str):
+        return named
+    when = document.get("when")
+    evolve = when.get("evolve") if isinstance(when, Mapping) else None
+    later = evolve.get("later") if isinstance(evolve, Mapping) else None
+    return later if isinstance(later, str) else None
 
 
 def _expects_ambiguity(document: Mapping[str, Any]) -> bool:

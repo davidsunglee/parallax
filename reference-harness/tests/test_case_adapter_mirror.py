@@ -43,6 +43,17 @@ _ADAPTER_DEFS: dict[str, Any] = _SCHEMAS["conformance-adapter.schema.json"]["$de
 
 MIRRORED_DEFS = frozenset(
     {
+        "behavioralImpact",
+        "behavioralImpactKind",
+        "coordinationReason",
+        "coordinationRequirement",
+        "declarationCollection",
+        "evolutionFieldDelta",
+        "evolutionFieldDeltaKind",
+        "evolutionOperation",
+        "evolutionOperationKind",
+        "evolutionResult",
+        "evolutionScope",
         "lifecycleRoot",
         "lifecycleEvent",
         "lifecycleNoFields",

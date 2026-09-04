@@ -554,6 +554,12 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "focused predicate-write runtime model and gives the independent compatibility "
             "oracle the same recursive refusal witness"
         ),
+        "evolution-widget-v1": (
+            "endpoint-only model: it exists as one end of a described evolution, which is a "
+            "pure comparison of two accepted models that no developer surface builds or "
+            "executes, and its declarations are the mirrored `wallet` family's key, bounded "
+            "String, and authored non-unique index"
+        ),
         "error-cases": (
             "behavioral-only model: it exists to provoke the m-db-error classes, and its only "
             "declaration beyond `account`'s is a non-primary-key unique index, which the "
