@@ -1,6 +1,6 @@
 # Boundary case (m-unit-work join rule, m-db-port isolation vocabulary): a joining
 # unit of work inherits the level or repeats it, and naming a different one is
-# refused — `api-conformance` lane.
+# refused before its callback runs — `api-conformance` lane.
 #
 # The boundary opens at `repeatable-read`. Three joining calls then exercise the
 # whole rule in one body: the first NAMES NO level and inherits, the second names
@@ -10,14 +10,25 @@
 # and a joining call opens none — accepting a second level would mean the same
 # physical transaction ran under two guarantees.
 #
-# The refusal is a REFUSAL OF THE CALL rather than an outcome of the work: it is
-# raised before the joined callback runs at all. The `update` buffered by the
-# first joined scope therefore never reaches the database, and the whole boundary
-# unwinds — which is what makes `then.outcome: option-conflict` a statement about
-# the arrangement rather than about the write.
+# The stream is what tells the three joins apart, and `then.outcome` alone cannot:
+# the same `option-conflict` would surface if an accepted join had been refused
+# instead. Under the one attempt are exactly TWO joined invocations — activity 5,
+# the join naming no level, and activity 6, the join repeating the boundary's own
+# — and a joined invocation opens only once the joining call has been accepted.
+# Their presence is therefore what says the inherit and the repeat were accepted
+# and their callbacks ran.
 #
-# `roundTrips: 1` is that same fact counted: the observing read is the one call
-# that reached the database, and the buffered write's pre-commit batch never ran.
+# A THIRD never appears, and that absence is the other half of the rule: the
+# refusal is a REFUSAL OF THE CALL rather than an outcome of the work, raised
+# before any activity opens for it, so the conflicting join leaves no invocation
+# in the stream at all — only the failure it caused, which the attempt names as
+# activity 6, the innermost scope the refusal unwound out through.
+#
+# The `update` buffered by the first joined scope never reaches the database:
+# no `writeBatchStarted` follows, the boundary unwinds, and `roundTrips: 1` is
+# that same fact counted — the observing read is the one call that reached the
+# database. Which is what makes `then.outcome: option-conflict` a statement about
+# the arrangement rather than about the write.
 #
 # `lane: api-conformance`: a joined boundary is an API arrangement with no wire
 # spelling, and an option conflict is a refusal no golden SQL can express.
@@ -48,3 +59,66 @@ when:
 then:
   outcome: option-conflict
   roundTrips: 1
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+              isolation: repeatable-read
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: {}
+          - sequence: 3
+            activity: 3
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 4
+            activity: 4
+            parent: 3
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 5
+            activity: 4
+            parent: 3
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 6
+            activity: 3
+            parent: 2
+            readFinished: { outcome: completed }
+          - sequence: 7
+            activity: 5
+            parent: 2
+            transactionInvocationStarted: { invocation: joined }
+          - sequence: 8
+            activity: 6
+            parent: 2
+            transactionInvocationStarted: { invocation: joined }
+          - sequence: 9
+            activity: 6
+            parent: 2
+            transactionInvocationFinished: { outcome: raised, attribution: direct }
+          - sequence: 10
+            activity: 5
+            parent: 2
+            transactionInvocationFinished: { outcome: raised, attribution: direct }
+          - sequence: 11
+            activity: 2
+            parent: 1
+            transactionAttemptFinished:
+              outcome: rolledBack
+              phase: callback
+              retryEligible: false
+              attribution: caused
+              cause: 6
+          - sequence: 12
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 }

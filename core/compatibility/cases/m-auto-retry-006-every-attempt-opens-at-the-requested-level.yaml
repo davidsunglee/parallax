@@ -1,6 +1,6 @@
 # Boundary case (m-auto-retry x m-db-port isolation): a retried invocation states
-# its requested Isolation Level ONCE, on the outer invocation, and both physical
-# attempts run under it — `api-conformance` lane.
+# its requested Isolation Level ONCE, on the outer invocation, and no attempt of
+# its own restates it — `api-conformance` lane.
 #
 # An injected `deadlock` makes the first attempt's write fail retriably, so the
 # boundary re-executes the whole closure and the second attempt commits. The
@@ -8,17 +8,22 @@
 # carrying `isolation: repeatable-read`, and TWO Transaction Attempts under it,
 # neither carrying a level of its own.
 #
-# That placement is the assertion. A level is requested by an invocation and
-# applied by the adapter for exactly one attempt, so an attempt that restated it
-# would read as a level it chose, and an attempt that omitted it from a stream
-# where the invocation omitted it too would leave a retried callback's guarantee
-# unstated. Stating it once, above every attempt, is what says both attempts open
-# at the same requested level rather than the second silently opening weaker.
+# That placement is the whole assertion, and a retry is what puts it under
+# pressure. A level is requested by an INVOCATION and the request stands over
+# every attempt beneath it (`m-execution-lifecycle`), so an attempt restating it
+# would read as a level that attempt chose, and an invocation omitting it would
+# leave the request unstated on the very shape where the closure runs twice.
 #
+# What no observable here shows is either attempt's EFFECTIVE database isolation.
 # Setting the level is boundary mechanics like begin, commit, and rollback: it
-# constructs no Database Call and appears nowhere in this stream, which is why
-# `roundTrips: 4` is the same count `m-auto-retry-002`'s retried pair costs — each
-# attempt's observing read plus its write, the failed one included.
+# constructs no Database Call and appears nowhere in this stream, and a boundary
+# case authors no SQL either. That both attempts open at the requested level
+# follows from the request being the invocation's rather than an attempt's — it
+# is not a distinction these observables discriminate.
+#
+# The same exclusion is why `roundTrips: 4` is the count `m-auto-retry-002`'s
+# retried pair costs — each attempt's observing read plus its write, the failed
+# one included.
 #
 # `lane: api-conformance`: an injected transient and a re-executed closure are
 # observables a single-connection harness cannot provoke. No golden SQL is

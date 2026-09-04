@@ -313,7 +313,7 @@
       }
     },
     {
-      "description": "`then.roundTrips` may declare ZERO only where a case can cost nothing: a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way); a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero; and a case whose `then.outcome` is `boundary-failed`, whose boundary never opened — the callback never ran, and begin, commit, and rollback are no Database Call, so nothing it did reached the database as a counted round trip. Every other case asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises, a boundary case's own body — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
+      "description": "`then.roundTrips` may declare ZERO only where a case can cost nothing: a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way); a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero; and a case whose `then.outcome` is `boundary-failed`, whose boundary never opened — the callback never ran, and begin, commit, and rollback are no Database Call, so nothing it did reached the database as a counted round trip. The outcome qualifies in BOTH forms it may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since a count states one number for every dialect the case claims anything about and a map naming one that opened states a case costing more there. Every other case asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises, a boundary case's own body — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
       "if": {
         "allOf": [
           {
@@ -326,7 +326,18 @@
               "properties": {
                 "then": {
                   "required": ["outcome"],
-                  "properties": { "outcome": { "const": "boundary-failed" } }
+                  "properties": {
+                    "outcome": {
+                      "anyOf": [
+                        { "const": "boundary-failed" },
+                        {
+                          "type": "object",
+                          "minProperties": 1,
+                          "additionalProperties": { "const": "boundary-failed" }
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             }
@@ -355,6 +366,36 @@
       },
       "then": {
         "properties": { "shape": { "const": "read" } }
+      }
+    },
+    {
+      "description": "`given.fault` belongs to the `boundary` shape alone (m-case-format field table). A fault is INJECTED at the database-port seam by the API Conformance Suite, which executes no other shape: every other shape's executor walks past the member, so a case declaring it elsewhere would name a failure its own run never provoked and would still be reported as satisfied. Confining the member confines its whole vocabulary with it — the `isolation-setup-failure` that stops a boundary from opening no more belongs to a read than the transients do.",
+      "if": {
+        "required": ["given"],
+        "properties": { "given": { "required": ["fault"] } }
+      },
+      "then": {
+        "properties": { "shape": { "const": "boundary" } }
+      }
+    },
+    {
+      "description": "`given.sessionDefault` belongs to the `boundary` shape alone (m-case-format field table). The Isolation Level a connection ALREADY defaults to is established on that connection before the adapter takes it, which only the API Conformance Suite arranges — every other shape's executor runs on a connection it did not configure, so the member would state a world state nothing established.",
+      "if": {
+        "required": ["given"],
+        "properties": { "given": { "required": ["sessionDefault"] } }
+      },
+      "then": {
+        "properties": { "shape": { "const": "boundary" } }
+      }
+    },
+    {
+      "description": "`then.outcome` belongs to the `boundary` shape alone (m-case-format field table). It is the portable verdict on a UNIT OF WORK — committed, aborted, a surfaced error kind, or a refused boundary option — and no other shape runs one to a verdict, so a case declaring it elsewhere would author an oracle its own executor never grades. Confining the member confines its whole vocabulary with it: the three refusals, the dialect-keyed form, and the zero-round-trip relaxation `boundary-failed` carries, which would otherwise let a case asserting golden SQL declare it cost nothing.",
+      "if": {
+        "required": ["then"],
+        "properties": { "then": { "required": ["outcome"] } }
+      },
+      "then": {
+        "properties": { "shape": { "const": "boundary" } }
       }
     }
   ],
@@ -1300,7 +1341,7 @@
           ]
         },
         "roundTrips": {
-          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way). A `rejected` case costs zero too: its input is refused pre-SQL, so the top-level `allOf` pins it to 0 rather than merely admitting it. Those two shapes are the whole of the relaxation — the same `allOf` keeps the minimum of 1 everywhere else — and the default of 1 below describes the shapes that reach the database, so a consumer deriving an effective count for an undeclared `rejected` case reads ZERO rather than that default.",
+          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way). A `rejected` case costs zero too: its input is refused pre-SQL, so the top-level `allOf` pins it to 0 rather than merely admitting it. A case whose `then.outcome` is `boundary-failed` costs zero as well, its boundary having never opened and its callback never run. Those two shapes and that one outcome are the whole of the relaxation — the same `allOf` keeps the minimum of 1 everywhere else — and the default of 1 below describes the shapes that reach the database, so a consumer deriving an effective count for an undeclared `rejected` case reads ZERO rather than that default.",
           "type": "integer",
           "minimum": 0,
           "default": 1
