@@ -510,6 +510,36 @@ def test_handle_scope_still_grants_navigate() -> None:
     assert "parallax.core.navigate" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
 
 
+def test_the_read_composition_row_forbids_every_write_policy_the_parent_grants() -> None:
+    # The exclusion the read scope exists for: a read ladder composes over the
+    # executor and reaches no write policy, which only a row narrower than the
+    # parent's can state — the parent is granted all three outright.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    scope = "parallax.snapshot.handle._read_scope"
+    writes = (
+        "parallax.core.batch_write",
+        "parallax.core.txtime_write",
+        "parallax.core.bitemp_write",
+    )
+    for policy in writes:
+        assert policy in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"], policy
+        assert policy not in forbidden["parallax.snapshot.handle"], policy
+        assert policy in forbidden[scope], policy
+
+
+def test_the_read_composition_row_inherits_retry_rather_than_forbidding_it() -> None:
+    # `modules.md` routes `m-auto-retry` through `m-execution-lifecycle`, which
+    # the re-entry gate and the read roots both require, and a forbidden row is
+    # the complement of a closure — so retry rides in and §7's prose records the
+    # closure fact instead of claiming an exclusion no row could carry.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    scope = "parallax.snapshot.handle._read_scope"
+    assert "parallax.core.execution_lifecycle" in adjacency[scope]
+    assert "parallax.core.auto_retry" in dag.transitive_closure(adjacency, scope)
+    assert "parallax.core.auto_retry" not in dag.compute_forbidden(adjacency)[scope]
+
+
 # --------------------------------------------------------------------------
 # Child scopes: contract sources, and forbidden targets in a sibling's
 # zero-grant row.
@@ -595,6 +625,7 @@ def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
         {
             "parallax.snapshot.handle._materializer",
             "parallax.snapshot.handle._preflight",
+            "parallax.snapshot.handle._read_scope",
             "parallax.snapshot.handle._family",
             "parallax.snapshot.handle._keyed_sql",
             "parallax.snapshot.handle._write_lowering",
@@ -659,6 +690,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
         {
             "parallax.snapshot.handle._materializer",
             "parallax.snapshot.handle._preflight",
+            "parallax.snapshot.handle._read_scope",
             "parallax.snapshot.handle._errors",
             "parallax.snapshot.handle._family",
             "parallax.snapshot.handle._keyed_sql",
@@ -1057,6 +1089,37 @@ def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports() -> Non
     # Two hops: the seam names the Domain Model, which names model formation.
     assert "parallax.snapshot.handle._preflight -> parallax.core.entity._model" in result.stdout
     assert "parallax.core.entity._model -> parallax.core._formation_profile" in result.stdout
+
+
+# --------------------------------------------------------------------------
+# Canary 5b: the read composition reaches no write policy, which the parent
+# scope's own row permits.
+# --------------------------------------------------------------------------
+def test_a_write_policy_import_in_the_read_composition_fails_lint_imports() -> None:
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    # `m-batch-write` IS in the parent handle grant row — the Write Planner's
+    # strategy adapters are wired there — so the broad contract permits this
+    # import and only the child row can reject it.
+    assert "parallax.core.batch_write" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_read_scope.py"
+    original = target.read_text()
+    target.write_text(
+        f"{original}import parallax.core.batch_write  # deliberate write-policy violation\n"
+    )
+    try:
+        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
+    finally:
+        target.write_text(original)
+
+    assert result.returncode != 0, result.stdout
+    reported = " ".join(result.stdout.split())
+    assert (
+        "parallax.snapshot.handle._read_scope may import only its permitted dependencies BROKEN"
+        in reported
+    )
+    assert "parallax.snapshot.handle._read_scope -> parallax.core.batch_write" in reported
 
 
 # --------------------------------------------------------------------------

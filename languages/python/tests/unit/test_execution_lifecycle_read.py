@@ -329,6 +329,19 @@ def test_a_read_refused_by_preflight_creates_no_root() -> None:
     assert port.calls == []
 
 
+def test_a_typed_read_refused_by_preflight_creates_no_root() -> None:
+    # The same claim at the Typed door, asserted rather than inferred from the
+    # shared gate: `Person` is a perfectly declared Entity of another model, so
+    # the connected model is what makes the query unanswerable — and it is
+    # answered before a root exists and before the port is reached.
+    recorder = RecordingLifecycleProvider()
+    port = ScriptedPort()
+    with pytest.raises(QueryTargetError):
+        _db(port, recorder).find(mm.Person.where(mm.Person.id == 1))
+    assert recorder.roots == ()
+    assert port.calls == []
+
+
 def test_the_default_path_constructs_nothing_lifecycle_shaped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

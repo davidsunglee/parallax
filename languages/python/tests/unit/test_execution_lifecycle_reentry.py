@@ -262,14 +262,20 @@ def test_the_state_is_cleared_however_a_lifecycle_context_is_left() -> None:
 def _database_entry_points(db: Database) -> dict[str, _Work]:
     """Every public operation a ``Database`` offers.
 
-    ``wire.find`` alone is handed a real query: the Wire view lowers its three
-    accepted spellings to the canonical node before delegating, and that
+    The two Wire reads alone are handed a real query: the Wire view lowers its
+    three accepted spellings to the canonical node before delegating, and that
     canonicalization — deterministic, reaching no state and no port — is above
     the line the refusal is drawn at.
+
+    A stream takes the sentinel and its default page size: the refusal precedes
+    the ``batch_size`` validation exactly as it precedes the query's own
+    judgement, so naming a size here would only pin a second verb's argument.
     """
     return {
         "find": lambda: db.find(UNUSED),
+        "stream": lambda: db.stream(UNUSED),
         "wire.find": lambda: db.wire.find(_query()),
+        "wire.stream": lambda: db.wire.stream(_query()),
         "read_rows": lambda: db.read_rows(UNUSED),
         "transact": lambda: db.transact(UNUSED),
     }
@@ -284,7 +290,9 @@ def _transaction_entry_points(tx: Transaction) -> dict[str, _Work]:
     """
     return {
         "find": lambda: tx.find(UNUSED),
+        "stream": lambda: tx.stream(UNUSED),
         "wire.find": lambda: tx.wire.find(_query()),
+        "wire.stream": lambda: tx.wire.stream(_query()),
         "read_rows": lambda: tx.read_rows(UNUSED),
         "insert": lambda: tx.insert(UNUSED),
         "insert_until": lambda: tx.insert_until(UNUSED, valid_from=FIXED, until=FIXED),
