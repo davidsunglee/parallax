@@ -419,9 +419,9 @@ construction it may reference any behavioral module it harnesses.
   `--> m-db-error`, `--> m-sql`.** Transient observability is a
   **composition-level publisher**: its event vocabulary names the statement a
   call executes, call and boundary outcomes, write-batch triggers, retry policy,
-  the Isolation Level a boundary was asked to open at, and classifier verdict. A composition root threads one publisher down as an
-  ordinary parameter; observed modules discover no Provider and retain no
-  lifecycle history.
+  the Isolation Level a boundary was asked to open at, and classifier verdict. A
+  composition root threads one publisher down as an ordinary parameter; observed
+  modules discover no Provider and retain no lifecycle history.
 - **`m-identity-map --> m-temporal-read`.** A temporal object's identity key
   includes its **lowered as-of coordinates** — a managed temporal object is a
   view pinned at a coordinate, so the identity module references the as-of read
