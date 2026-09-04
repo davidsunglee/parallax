@@ -1612,16 +1612,18 @@ exposes neither an Entity Runtime nor a class index. It is not
 `DeferredFeatureError(execution-feature-deferred)`, which is reserved for a
 valid query whose execution feature is explicitly deferred.
 
-After that narrowing, Snapshot constructs one private `_ConnectedModel` owned by
-the Database. It contains the accepted Metamodel and the exact-model layout
+After that narrowing, Snapshot derives the per-connection state the Database
+owns, in two halves that carry no identity. The read half is one private
+selected-read-model record: the accepted Metamodel and the exact-model layout
 catalog every read converts its rows against as ONE composed value, so a read
 lane resolves and converts against one model rather than against two references
-that could name two; the Entity Row Codec every write derives its rows through;
-the Entity Graph Construction Snapshot materialization requires — absent exactly
-for a descriptor-backed model, which is what makes a modeled read refusable
-before any I/O; and no identity. The codec and the construction stay separate
-references, because neither is derived from the other. It is handle state rather
-than a Core runtime value and is neither exported nor shared through the model.
+that could name two, together with the Entity Graph Construction Snapshot
+materialization requires — absent exactly for a descriptor-backed model, which
+is what makes a modeled read refusable before any I/O. The write half is the
+Entity Row Codec every write derives its rows through, held beside that record
+rather than inside it: a read never derives a row, and neither half is derived
+from the other. Both are handle state rather than Core runtime values, and
+neither is exported nor shared through the model.
 
 `Database(port, model)` takes the same `model: DomainModel` input and admits no
 bare accepted Metamodel. It refuses a value that is not a Domain Model with the
@@ -1653,7 +1655,7 @@ completed state is an empty set; every nonempty entry is
 an explicit, reviewable implementation deferral. A Feature claimed by the
 active Conformance Slice but not implemented is a defect and cannot be made
 permissible by listing it here. This set belongs neither to the connected
-provider, `_ConnectedModel`, `Dialect`, nor a leased `DbPort`.
+provider, a selected read model, `Dialect`, nor a leased `DbPort`.
 
 Target resolution always precedes this classification. An Object Query whose
 target the connected model does not declare raises

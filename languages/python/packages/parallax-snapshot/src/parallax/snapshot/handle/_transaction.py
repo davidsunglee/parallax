@@ -21,16 +21,16 @@ The read COMPOSITION is not owned here either. :meth:`Transaction.find`,
 :meth:`Transaction.read_rows`, and the Wire read the ``tx.wire`` view answers
 all delegate to the one participating
 :class:`~parallax.snapshot.handle._read_scope.ReadScope` this transaction
-constructs, which is the same object and the same ladder a ``Database``'s
-standalone reads run.
+constructs, which runs the same ladder a ``Database``'s standalone reads run,
+under a participating execution policy rather than a standalone one.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn)`` into
 :mod:`parallax.snapshot.handle._predicate_writes`, which buffers through
 ``uow.buffer`` and never reaches back into this class.
 
-Depends on :mod:`parallax.snapshot.handle._read_scope` (the read composition
-every read verb here delegates to),
+Depends on :mod:`parallax.snapshot.handle._read_scope` (the read composition the
+eager read verbs here delegate to),
 :mod:`parallax.snapshot.handle._read` (the publication factories and the result
 surface), :mod:`parallax.snapshot.handle._write_inputs` (verb-input validation
 and the evidence machinery), and
@@ -184,7 +184,7 @@ class Transaction:
         # refused here on exactly the state the handle refuses on
         # (`m-execution-lifecycle`).
         self._lifecycle = lifecycle
-        # The one Read Scope every read of this transaction runs through — its
+        # The one Read Scope this transaction's eager reads run through — its
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
         # read composition").
         self._reads = participating_read_scope(
