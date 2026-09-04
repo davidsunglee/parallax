@@ -97,6 +97,10 @@ def _balance_node(temporal: dict[str, object]) -> ObjectQueryNode:
     )
 
 
+class _LoweringReached(Exception):
+    """The marker a hostile query lowering raises, so a case can prove it ran."""
+
+
 class _Ledger:
     """The two things an observing read asks a transaction for, and nothing else.
 
@@ -284,6 +288,34 @@ def test_find_selects_its_model_before_it_refuses_a_classless_one() -> None:
     assert caught.value.code == "snapshot-class-backed-model-required"
     assert execution.calls == ["begin"]
     assert port.calls == []
+
+
+def test_find_refuses_a_classless_model_before_it_lowers_its_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The connection's capability is judged before this call's own arguments
+    # are, so a lowering that refuses everything it is handed never runs under a
+    # classless selection — and DOES run under a class-backed one, which is what
+    # proves the two rungs are ordered rather than merely both present.
+    lowered: list[object] = []
+
+    def refusing_lowering(query: object) -> ObjectQueryNode:
+        lowered.append(query)
+        raise _LoweringReached
+
+    monkeypatch.setattr(read_scope_module, "object_query_node", refusing_lowering)
+    port = RefusingPort()
+    classless, execution = _scope(port, selected=_selection(materializing=False))
+    class_backed, _ = _scope(port)
+
+    with pytest.raises(SnapshotConnectionError) as refused:
+        classless.find(_typed_query())
+    with pytest.raises(_LoweringReached):
+        class_backed.find(_typed_query())
+
+    assert refused.value.code == "snapshot-class-backed-model-required"
+    assert execution.calls == ["begin"]
+    assert len(lowered) == 1
 
 
 def test_the_wire_and_row_form_verbs_cross_no_classless_refusal() -> None:
