@@ -188,9 +188,12 @@ def test_only_repeatable_read_opens_with_snapshot_isolation_set() -> None:
     # work from the read view the variable governs, so it must leave the setting
     # alone; Read Committed never promised the anomaly away at all.
     #
-    # Which levels carry it is pinned here rather than against a live server
-    # because a server whose own default is ON reports the flag on for every
-    # level, masking both a level that stopped setting it and one that started.
+    # What this pins is the provider's own per-level mapping — which levels name the
+    # variable — and no behavior of a booted server. It is pinned here rather than
+    # against a live one because a server whose own default is ON reports the flag on
+    # for every level, masking both a level that stopped setting it and one that
+    # started. The assertion is over which statements mention the variable, so
+    # rewording a statement keeps it green.
     carrying = {
         level
         for level, statements in _ISOLATION.items()

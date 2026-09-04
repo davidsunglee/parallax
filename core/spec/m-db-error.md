@@ -28,20 +28,34 @@ The native code source **diverges**: Postgres keys on the **`SQLSTATE` string**,
 MariaDB on the **vendor errno**. This is load-bearing: `SQLSTATE 40001` is a
 *serialization failure* on Postgres (distinct from deadlock `40P01`) but the
 *deadlock* state on MariaDB (whose errno `1213` is what the seam matches) — so a
-naive cross-dialect `SQLSTATE` compare would misclassify. The mapping:
+naive cross-dialect `SQLSTATE` compare would misclassify. It is load-bearing
+within MariaDB too, where the state is not discriminating: every duplicate-key
+errno below reports `23000`, and both `1020` and `1205` report the catch-all
+`HY000`, so only the errno separates the categories. The mapping:
 
 | Category | Postgres (`SQLSTATE`) | MariaDB (errno) |
 |---|---|---|
-| `uniqueViolation` | `23505` | `1062` |
+| `uniqueViolation` | `23505` | `1062`, `1022`, `1169`, `1586` |
 | `deadlock` | `40P01`, `40001` | `1213`, `1020` |
 | `lockWaitTimeout` | `55P03` | `1205` |
 
-MariaDB's `1020` (`ER_CHECKREAD`, `SQLSTATE HY000`) is the write/write conflict
-InnoDB raises under `innodb_snapshot_isolation` when a transaction tries to lock
-a row that changed since its read view was taken. The server rolls that
-transaction back exactly as it does a deadlock, so it classifies and retries on
-the same terms — the MariaDB counterpart of the Postgres `40001` a snapshot
-conflict raises.
+MariaDB reports one duplicate-key condition under four errnos, chosen by which
+path detected it: `1062` (`ER_DUP_ENTRY`), `1022` (`ER_DUP_KEY`), `1169`
+(`ER_DUP_UNIQUE`), and `1586` (`ER_DUP_ENTRY_WITH_KEY_NAME`, the same condition
+as `1062` with the index named rather than numbered). All four are the same
+neutral category, so all four are listed: a lookup keyed on the errno classifies
+only what it names, and an unnamed one would surface as unclassified rather than
+as the violation it is.
+
+MariaDB's `1020` (`ER_CHECKREAD`) is the write/write conflict InnoDB raises under
+`innodb_snapshot_isolation` when a transaction tries to lock a row that changed
+since its read view was taken. The server rolls that transaction back exactly as
+it does a deadlock, so it classifies and retries on the same terms — the MariaDB
+counterpart of the Postgres `40001` a snapshot conflict raises. Its neighbour
+`1205` stays out of the category for the same reason `1020` is in it: the server
+discards the whole transaction for a snapshot conflict, while a lock-wait timeout
+by default ends only the blocked statement, which is not the retriable failure
+`isRetriable` names.
 
 Because the code source is a dialect decision, the table is not one shared
 lookup: each dialect strategy carries its own engine's codes — in the
@@ -56,7 +70,13 @@ neutral category, the per-dialect native code, and the call-site predicate
 partition. `uniqueViolation` cases trigger single-connection (a duplicate insert /
 colliding update whose final statement raises); `deadlock` and `lockWaitTimeout`
 cases trigger two-connection (a `concurrency` choreography of barrier-separated
-rounds). The classifier is a thin extraction and per-dialect lookup answering in
+rounds). MariaDB's duplicate-key errnos other than `1062` are graded by no case
+and need none: every duplicate the corpus authors is detected on the path that
+raises `1062`, so listing the others changes nothing a case observes — it changes
+only what the seam answers if a deployment ever meets one, which is the violation
+rather than an unclassified error.
+
+The classifier is a thin extraction and per-dialect lookup answering in
 the shared, DB-free category vocabulary + call-site predicates, so the harness
 exercises the interface the language implementations build, not a harness-only
 shortcut (`m-case-format`).
