@@ -3441,7 +3441,10 @@ identity a caller may copy or pickle across a boundary of their own.
   operation; participating execution returns the Transaction's fixed selection.
   The adapter may reuse an unchanged value, but the Read Scope assumes no
   Database-lifetime model. One stream retains one selection through all of its
-  pages.
+  pages. Because that selection rather than the Handle decides whether a
+  Snapshot can be materialized at all, the classless read refusal states one
+  message at every door, under the unchanged stable code
+  `snapshot-class-backed-model-required`.
 - **Execution variation stays below the verbs.** One concrete Read Scope owns
   preflight, eager execution, stream construction and paging, and result
   publication. Its private execution adapter supplies four explicit

@@ -206,6 +206,44 @@ def test_a_classless_transaction_writes_and_refuses_a_read_before_it_can_force_f
     assert [type(op) for op in port.calls] == [BeginCall, WriteCall, CommitCall]
 
 
+def test_every_typed_read_door_states_one_classless_refusal() -> None:
+    # What cannot materialize a Snapshot is the model the read is served under,
+    # not the Handle the caller reached it through, so all four Typed doors
+    # render ONE message under one stable code rather than a Database spelling
+    # beside a Transaction one. Each lands before its own statement: the
+    # standalone pair refuses a port that permits nothing at all, and the
+    # participating pair leaves an opened transaction with no read on it.
+    refusal = (
+        "this read is served under a model that composed no Entity Class, so it cannot "
+        "materialize a Snapshot (snapshot-class-backed-model-required)"
+    )
+    query = Gizmo.where(Gizmo.id == 1)
+    doors: list[SnapshotConnectionError] = []
+
+    standalone = Database(RefusingPort(), CLASSLESS, clock=FixedClock(FIXED))
+    with pytest.raises(SnapshotConnectionError) as eager:
+        standalone.find(query)
+    doors.append(eager.value)
+    with pytest.raises(SnapshotConnectionError) as streamed:
+        standalone.stream(query)
+    doors.append(streamed.value)
+
+    def read_inside(tx: Transaction) -> None:
+        with pytest.raises(SnapshotConnectionError) as participating_eager:
+            tx.find(query)
+        doors.append(participating_eager.value)
+        with pytest.raises(SnapshotConnectionError) as participating_stream:
+            tx.stream(query)
+        doors.append(participating_stream.value)
+
+    port = ScriptedPort(Transact())
+    Database(port, CLASSLESS, clock=FixedClock(FIXED)).transact(read_inside)
+
+    assert [str(door) for door in doors] == [refusal] * 4
+    assert [door.code for door in doors] == ["snapshot-class-backed-model-required"] * 4
+    assert [type(op) for op in port.calls] == [BeginCall, CommitCall]
+
+
 # --------------------------------------------------------------------------- #
 # One judgement, three callers                                                 #
 # --------------------------------------------------------------------------- #
