@@ -172,7 +172,12 @@ next would run under session state nothing states.
 ### Adapter profile — nonportable, per engine
 
 What each engine does with a level is stated here so it is documented rather than
-promised. None of it is a portable guarantee, and no case may assert it.
+promised. None of it is a portable guarantee: no case may assert any of it as
+portable behavior, and nothing above the adapter seam may depend on it. A case
+may still assert these facts **dialect-keyed**, where the assertion names the
+engine it holds for and claims nothing about any other — `m-db-error`'s
+per-dialect `nativeCode` is exactly that, and a conflict case asserts the codes
+this table lists.
 
 | Decision point | Postgres | MariaDB |
 |---|---|---|
