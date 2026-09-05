@@ -9,8 +9,8 @@ what is specific to the Python target and does not restate it.
 Read, in order: root `README.md`, `IMPLEMENTING.md`, `core/spec/00-overview.md`,
 `core/spec/modules.md`, `core/spec/slices.md`,
 `core/spec/m-conformance-adapter.md`, then this target's completed spec
-`spec/python.md`, this file, and the operational guide `GUIDE.md`. The spec is
-the binding product definition; nothing here overrides it.
+`spec/python.md`, this file, and `TESTING.md`. The spec is the binding product
+definition; nothing here overrides it.
 
 ## Binding constraint — no cross-implementation prior art
 
@@ -30,10 +30,10 @@ command owns which selection.
 
 ## Design decisions live in the spec
 
-Do not record design decisions here, in `GUIDE.md`, or in `TESTING.md`. They
-belong in `spec/python.md` and the ADRs under `docs/adr/`. Per-language
-operational docs are limited to milestones, executable commands, the test map,
-database setup, current status, and blockers.
+Do not record design decisions here or in `TESTING.md`. They belong in
+`spec/python.md` and the ADRs under `docs/adr/`. Executable commands live in the
+root `justfile`, whose recipe docs and `just show-gates <recipe>` are their own
+reference; `TESTING.md` is limited to the test map.
 
 ## Deferred-work ledger
 
@@ -49,13 +49,12 @@ full text of entries it no longer carries.
 
 ## Key commands
 
-All commands run against the uv workspace rooted at this directory.
+Every Python command is a `python-*` recipe in the root `justfile`; `just --list`
+prints the catalog and `just show-gates python-check` prints what the merge gate
+owns. Two steps have no recipe of their own:
 
-- `uv sync` — install the dev environment (all five workspace distributions
-  editable, plus the toolchain).
-- `just python-check-dbfree` — every database-free gate (§10).
-- `just python-check` — that plus the Docker-backed database gates.
-- `uv run python tools/check_dag_sync.py --write` — regenerate the import-linter
-  forbidden-edge complement after a `core/spec/modules.md` change.
-
-See `GUIDE.md` for the full milestone/command/status detail.
+- `cd languages/python && uv sync` — install the dev environment (all five
+  workspace distributions editable, plus the toolchain).
+- `cd languages/python && uv run python tools/check_dag_sync.py --write` —
+  regenerate the import-linter forbidden-edge complement after a
+  `core/spec/modules.md` change.

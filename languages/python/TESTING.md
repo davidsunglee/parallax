@@ -5,8 +5,8 @@ database, and which command owns which selection.
 
 The structural rules and the reasoning behind them belong to
 `core/spec/language-testing.md`. Quality policy — thresholds, matrices,
-exclusions, and required proof — belongs to `spec/python.md` §10. Milestones,
-status, and blockers belong to `GUIDE.md`. None of them is restated here.
+exclusions, and required proof — belongs to `spec/python.md` §10. Neither is
+restated here.
 
 ## Test root
 

@@ -70,8 +70,8 @@ tooling. Start with the document that matches what you want to learn:
   of the public API, generated from the API Conformance Suite.
 - [Completed Python language spec](languages/python/spec/python.md) — exact API,
   lifecycle, packaging, database, and quality-toolchain decisions.
-- [Python operational guide](languages/python/GUIDE.md) — layout, commands,
-  database setup, implementation status, and blockers.
+- [Python testing map](languages/python/TESTING.md) — where each test surface
+  lives, which fixtures reach a database, and which command owns which gate.
 
 ## How The Contract Fits Together
 

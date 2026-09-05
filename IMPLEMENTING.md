@@ -73,18 +73,16 @@ decision changes, update the completed language spec first.
 
 ## Implementation Journey
 
-The per-language operational guide or implementation plan should link to the
-completed language spec and contain only:
-
-- dependency-respecting milestones and current status;
-- commands for unit, boundary, conformance, API, packaging, and database checks;
-- local database setup and the selected reset/profile commands; and
-- deviations or blockers that require a language-spec decision to change.
+A language target's commands are documented recipes in the root `justfile`,
+its concrete test mapping is the testing map under its directory
+(`languages/<target>/TESTING.md`), and local database setup is in the root
+`README.md`. Milestones, status, and blockers belong to the work's own planning
+artifacts, not to a tracked document.
 
 Before the first milestone, confirm that the commands, paths, topology maps,
 selected lifecycle, canonical claim, and quality gates all come from the
 completed language spec. Do not copy the claim or its API and packaging
-decisions into the operational guide.
+decisions into the testing map or the recipe docs.
 
 ### Binding rules
 

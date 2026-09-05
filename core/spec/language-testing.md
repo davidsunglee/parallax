@@ -8,7 +8,7 @@ mechanism, and no command names.
 Rationale for these rules lives here and only here, in
 [Why this shape](#why-this-shape). A completed language spec records that
 language's quality policy — thresholds, matrices, exclusions, and required proof.
-An implementation's operational guide records that implementation's concrete
+An implementation's testing map records that implementation's concrete
 mapping — its directories, its classes, its commands, and its CI jobs. Neither
 restates the rules below.
 
@@ -112,7 +112,7 @@ module, not one language's local concern.
 
 An additional surface is permitted only for a genuinely distinct contract, and
 requires synchronized updates to the language spec, the implementation's
-operational guide, its commands, its CI jobs, and its drift enforcement.
+testing map, its commands, its CI jobs, and its drift enforcement.
 
 A tooling scope declares no semantic surface. It proves one subject rather than
 a portfolio of contracts, so the six-way split has nothing to classify, and the
@@ -138,8 +138,8 @@ Anything else MUST fail enforcement.
 A tooling scope has no canonical surface set, so it has no closed entry list to
 enforce. Its test root MAY stay flat, and it MAY group a coherent subject into
 its own directory when that directory is exactly what one focused test command
-selects. Which directories exist is its operational guide's fact to record, not
-this contract's to fix.
+selects. Which directories exist is its testing map's fact to record, not this
+contract's to fix.
 
 In every test root, a test module MUST NOT import a sibling test module. Shared
 symbols belong in a module that exists to be imported — `_support/` where a
