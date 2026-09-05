@@ -106,9 +106,14 @@ def translate_driver_error(dialect: Dialect, exc: psycopg.Error) -> DatabaseErro
     """The `m-db-error` re-raise target for a psycopg exception (port boundary).
 
     Extracts psycopg's driver-specific SQLSTATE (``exc.sqlstate`` — ``None`` for a
-    non-database failure such as a dropped connection) and message, then delegates
-    category interpretation to ``m-db-error`` (which consults ``dialect``'s own
-    code table). This module-internal seam is the psycopg half of the
+    non-database failure such as a dropped connection), its message, and the
+    structured constraint name libpq reports beside them, then delegates category
+    interpretation to ``m-db-error`` (which consults ``dialect``'s own code
+    table). libpq treats an index as a constraint whether or not it was created
+    with constraint syntax, so a bare ``create unique index`` reports its own
+    name there; the adapter forwards it and interprets nothing, and never reads
+    the message text. A non-database failure carries no diagnostics at all.
+    This module-internal seam is the psycopg half of the
     normalize-at-boundary contract; it is not part of the ``parallax.postgres``
     public exports (``PostgresAdapter`` and ``isolation_spelling`` — §8).
 
@@ -116,7 +121,13 @@ def translate_driver_error(dialect: Dialect, exc: psycopg.Error) -> DatabaseErro
     failure-identity rule (``m-db-port``): no two invocations share an instance,
     so the object a caller catches names the invocation that raised it.
     """
-    return classify_error(dialect, exc.sqlstate, str(exc))
+    diagnostic = getattr(exc, "diag", None)
+    return classify_error(
+        dialect,
+        exc.sqlstate,
+        str(exc),
+        constraint_name=None if diagnostic is None else diagnostic.constraint_name,
+    )
 
 
 def boundary_failure(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:

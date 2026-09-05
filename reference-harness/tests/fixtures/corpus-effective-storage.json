@@ -1250,6 +1250,16 @@
       "valueObject": {}
     }
   },
+  "models/evolution-long-names-v1.yaml": {
+    "parallax.compatibility.LongIdentifierTruncationWitness": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-nullability-v1.yaml": {
     "parallax.compatibility.Reading": {
       "attribute": {

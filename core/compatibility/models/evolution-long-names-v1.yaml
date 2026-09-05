@@ -1,0 +1,25 @@
+# LongIdentifierTruncationWitness: the endpoint whose derived Physical Index Name
+# does not fit either dialect's identifier limit.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Its table,
+# Entity, and Index names are long on purpose: the readable input they combine
+# into runs far past the budget the namespace, the two joining underscores, and
+# the never-truncated fingerprint leave, so the name a generator derives is cut
+# to exactly the limit — 63 bytes on Postgres, 64 on MariaDB. The 26th and 27th
+# characters of that readable input are both letters, which is what makes the two
+# cuts land one character apart instead of on the same separator run. It declares
+# no fixtures, because an evolution case reaches no database of its own.
+entity:
+  name: LongIdentifierTruncationWitness
+  namespace: parallax.compatibility
+  table: evolution_identifier_truncation
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: label
+      type: string
+      maxLength: 64
+  indices:
+    - name: evolution_identifier_truncation_label_lookup
+      attributes: [label]

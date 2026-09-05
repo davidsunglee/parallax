@@ -22,8 +22,9 @@ from typing import Any
 
 import pytest
 
-from parallax.conformance import engine, provision
+from parallax.conformance import engine, models, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
+from parallax.conformance.models import default_models_dir
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -36,6 +37,9 @@ from parallax.core.db_port import (
     RolledBack,
     isolation_level,
 )
+from parallax.core.dialect import POSTGRES
+from parallax.evolution.model_evolution import ABSENT, evolve
+from parallax.evolution.schema_delta import schema_delta
 from parallax.postgres import adapter as adapter_module
 from parallax.postgres import isolation_spelling
 
@@ -150,6 +154,69 @@ def test_exec_rolled_back_leaves_no_effect(profile_run: Any) -> None:
     assert isinstance(trigger.error, _Rollback)
     (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [2])
     assert row["label"] == "mid"
+
+
+# --------------------------------------------------------------------------- #
+# The two obligations only a real catalog and a real violation can discharge    #
+# (`database-provider-test-contract.md` §2): a derived Physical Index Name at   #
+# exactly this engine's identifier limit, kept byte for byte; and a duplicate   #
+# whose neutral error names the index it violated by that same name.            #
+# --------------------------------------------------------------------------- #
+def _provision(profile_run: Any, model_file: str) -> Any:
+    """Provision ``model_file``'s schema through the shipped generator, returning
+    the Unilateral Evolution the statements came from."""
+    model = models.load_model(default_models_dir() / model_file)
+    for statement in provision.reset_statements():
+        profile_run.port.execute_write(statement, [])
+    for statement in provision.schema_statements(model):
+        profile_run.port.execute_write(statement, [])
+    return evolve(ABSENT, model)
+
+
+def test_a_name_at_the_identifier_limit_is_stored_exactly_as_generated(
+    profile_run: Any,
+) -> None:
+    """The one proof a pure test cannot make: a name the generator shortened to
+    fit is what the server actually holds.
+
+    The readable half of this model's name runs far past the budget, so the
+    generator cut it to exactly 63 bytes — Postgres' own limit. A server that
+    truncated further, or normalized the name at all, would report something else
+    from its catalog, and the fingerprint the name is unique by would be the half
+    that lost characters.
+    """
+    delta = schema_delta(_provision(profile_run, "evolution-long-names-v1.yaml"), POSTGRES)
+    (created,) = delta.created_indices
+    assert len(created.physical_index_name.value.encode()) == POSTGRES.max_identifier_bytes
+
+    (row,) = profile_run.port.execute(
+        "select t0.indexname from pg_indexes t0 where t0.tablename = %s and t0.indexname = %s",
+        [created.physical_table.name, created.physical_index_name.value],
+    )
+    assert row["indexname"] == created.physical_index_name.value
+    # The fingerprint is the half truncation never touches, so it survives whole.
+    assert row["indexname"].endswith(created.physical_index_name.value[-32:])
+
+
+def test_a_duplicate_names_the_index_it_violated_by_its_created_name(
+    profile_run: Any,
+) -> None:
+    """A unique violation reaches the caller carrying the Physical Index Name the
+    rollout that created the index already recorded.
+
+    This is the whole correlation contract: the host holds `createdIndices` from
+    its own Schema Delta, catches a neutral ``DatabaseError``, and matches the two
+    without parsing a driver message or knowing a dialect.
+    """
+    delta = schema_delta(_provision(profile_run, "error-cases.yaml"), POSTGRES)
+    (created,) = [entry for entry in delta.created_indices if entry.unique]
+
+    profile_run.port.execute_write("insert into tag (id, name) values (%s, %s)", [1, "first"])
+    with pytest.raises(DatabaseError) as raised:
+        profile_run.port.execute_write("insert into tag (id, name) values (%s, %s)", [2, "first"])
+
+    assert raised.value.violates_unique_index
+    assert raised.value.violated_index == created.physical_index_name
 
 
 # --------------------------------------------------------------------------- #

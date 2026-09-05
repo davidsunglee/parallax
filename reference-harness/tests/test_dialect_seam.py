@@ -100,7 +100,7 @@ def test_mariadb_type_mappings() -> None:
 
 def test_mariadb_ddl_derives_from_descriptor() -> None:
     model = load_model(COMPATIBILITY_ROOT, "models/balance.yaml")
-    (create,) = ddl_for(model, "mariadb")
+    create, _index = ddl_for(model, "mariadb")
     # The temporal interval columns use DATETIME(6) (no native infinity); the
     # money column uses DECIMAL — both behind the seam, derived from the model.
     assert "in_z datetime(6)" in create

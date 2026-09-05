@@ -66,6 +66,7 @@ from .case_assertions import (
 )
 from .case_preflight import preflight_case_literals
 from .ddl_builder import (
+    ddl_for,
     declared_contributors,
     quote_identifier,
 )
@@ -97,7 +98,7 @@ from .predicate_write_validate import (
     requires_predicate_write_materialization,
     validate_predicate_write,
 )
-from .providers import DatabaseProvider
+from .providers import Catalog, DatabaseProvider
 from .provisioning import apply_given, provision, provision_empty
 from .sql_normalize import normalize
 from .storage_layout import (
@@ -3280,8 +3281,78 @@ def _assert_evolution(case: Case) -> None:
         raise CaseFailure("\n".join(findings))
 
 
-def run_case(case: Case, db: DatabaseProvider) -> None:
-    """Run all available assertion layers for *case* against *db*."""
+def _assert_evolution_schema(case: Case, db: DatabaseProvider) -> None:
+    """The authored ``delta`` cell really carries the earlier database to the later
+    model's physical schema.
+
+    A delta cell is a golden, so it is proved the way golden SQL is: by running
+    it on a real database and comparing the result against an INDEPENDENT
+    oracle — here the harness's own provisioning DDL for the later endpoint,
+    derived from the descriptor by a second implementation. What is compared is
+    the catalog each left behind rather than the statements either authored, so
+    two ways of spelling one schema agree and one schema short of it does not.
+
+    The earlier database is provisioned from the earlier endpoint, or is empty
+    when the case names the fresh-provisioning sentinel.
+    """
+    cell = case.schema_cell(db.dialect) or {}
+    delta = cell.get("delta")
+    if not isinstance(delta, dict):
+        return
+    tables = [layout.table for layout in case.model.storage_layout.tables]
+
+    db.reset()
+    if case.earlier_model is not None:
+        db.apply_ddl(ddl_for(case.earlier_model, db.dialect))
+    db.apply_ddl([str(statement) for statement in delta.get("statements") or []])
+    applied = db.catalog(tables)
+
+    db.reset()
+    db.apply_ddl(ddl_for(case.model, db.dialect))
+    provisioned = db.catalog(tables)
+
+    if applied != provisioned:
+        raise CaseFailure(
+            f"{case.path.name}: the {db.dialect} delta leaves a schema the later model's own "
+            f"DDL does not.\n  after the delta:    {applied}"
+            f"\n  after provisioning: {provisioned}"
+        )
+    _assert_created_indices(case, delta, applied)
+
+
+def _assert_created_indices(case: Case, delta: dict[str, Any], applied: Catalog) -> None:
+    """Every ``createdIndices`` entry names an index the database really holds.
+
+    This is what proves a derived Physical Index Name survives its round trip
+    byte for byte: an engine that truncated the name would report a shorter one
+    here, and the catalog comparison alone could not tell, because both sides
+    would have been truncated the same way.
+    """
+    held = {(table.name, index.name): index for table in applied.tables for index in table.indices}
+    for entry in delta.get("createdIndices") or []:
+        key = (str(entry["physicalTable"]), str(entry["physicalIndexName"]))
+        index = held.get(key)
+        if index is None:
+            raise CaseFailure(
+                f"{case.path.name}: createdIndices names {key[1]!r} on {key[0]!r}, which the "
+                f"database does not hold after the delta; it holds {sorted(n for _, n in held)}"
+            )
+        if index.unique != bool(entry.get("unique", False)):
+            raise CaseFailure(
+                f"{case.path.name}: createdIndices reports {key[1]!r} as "
+                f"unique={entry.get('unique', False)!r}, and the database holds it as "
+                f"unique={index.unique!r}"
+            )
+
+
+def run_case(case: Case, db: DatabaseProvider | None) -> None:
+    """Run all available assertion layers for *case* against *db*.
+
+    ``db`` is absent for a runner that binds no provider. Every shape whose whole
+    observable is database-free returns before it is read; an ``evolution`` case
+    is the one shape that runs either way, because its Evolution is graded
+    without a database and the Schema Delta beside it is graded with one.
+    """
     if case.lane == "api-conformance":
         # The api-conformance lane is schema-validated by the m-case-format harness but NOT
         # executed here — its observable (an injected transient, a retry-loop
@@ -3301,13 +3372,19 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
 
     if case.is_evolution:
         # A model evolution (m-model-evolution) is a pure description of two accepted
-        # models: no dialect, no provisioning, no execution. It runs identically on
-        # every dialect, so branch here before the dialect is even read. The
+        # models: no dialect, no provisioning, no execution. The
         # authored Evolution is a golden the harness grades STRUCTURALLY — a
         # language implementation grades the value itself through the conformance
         # adapter, exactly as it grades golden SQL against a run.
         _assert_schema(case)
         _assert_evolution(case)
+        # The Schema Delta beside it is not pure: an authored `delta` cell claims
+        # statements that carry a real database from one endpoint to the other,
+        # so it is executed and its result compared against the later model's own
+        # provisioning. A cell naming an unsupported operation has nothing to
+        # execute, and a Coordinated Evolution carries no cell at all.
+        if db is not None:
+            _assert_evolution_schema(case, db)
         return
 
     if case.is_rejected:
@@ -3321,6 +3398,11 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         return
 
     preflight_case_literals(case)
+    if db is None:
+        raise CaseFailure(
+            f"{case.path.name}: a {case.shape} case executes against a database, and this "
+            f"runner bound no provider"
+        )
     dialect = db.dialect
 
     if case.is_scenario:
