@@ -302,7 +302,7 @@ def buffer_predicate_instruction(
     :func:`~parallax.core.unit_work.instructions.prepare_typed_write` for the
     typed ``_where`` verbs, and
     :func:`~parallax.core.unit_work.instructions.prepare_wire_write` for the
-    Wire ones, the conformance engine included. EVERY
+    Wire ones, the conformance engine included. Nearly every
     model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_predicate`` vocabulary
     over the selecting predicate, the
@@ -312,7 +312,16 @@ def buffer_predicate_instruction(
     against verb or bound. That call establishes the CALLER ORDERING — one
     classification whichever ingress an instruction arrives through.
 
-    The two refusals repeated here — an inheritance-family target, and that same
+    Target/verb applicability is settled HERE, both converse halves of it, so a
+    ``_where`` verb a target does not take is refused at the verb whatever the
+    target's profile: a milestone verb aimed at a target deriving no As-Of Axis,
+    and ``delete_where`` aimed at one that does, which physically removes the
+    rows a temporal target milestones and is spelled ``terminate_where`` there.
+    The validator states only the first, so the second is this seam's alone;
+    without it a temporal ``delete_where`` would run its resolving read and hear
+    the flush's own planning refusal instead of a verb's.
+
+    The refusals repeated here — an inheritance-family target, and that same
     milestone-verb quadrant — are this seam's OWN contract, not duplicates of
     those rules. This entry point is reachable in-package without going through
     an ingress, so it takes nothing on faith: without its own refusal an
@@ -334,12 +343,17 @@ def buffer_predicate_instruction(
     declaring_entity = declaring(meta, entity)
     version_attr = version_attribute(meta, declaring_entity)
     temporal = is_temporal(declaring_entity)
-    if not temporal:
-        refusal = instructions.non_temporal_milestone_refusal(
+    applicability = (
+        instructions.temporal_delete_refusal(
             entity.identity.name, instruction.mutation, surface="predicate"
         )
-        if refusal is not None:
-            raise instructions.WriteInstructionError(refusal)
+        if temporal
+        else instructions.non_temporal_milestone_refusal(
+            entity.identity.name, instruction.mutation, surface="predicate"
+        )
+    )
+    if applicability is not None:
+        raise instructions.WriteInstructionError(applicability)
     if not temporal and version_attr is None:
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.
