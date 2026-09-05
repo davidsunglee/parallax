@@ -2,14 +2,14 @@
 
 The simple reset path — the only path in v1: one session-scoped
 Testcontainers Postgres pinned to :data:`~parallax.conformance.constants.POSTGRES_IMAGE`,
-and per case ``DROP SCHEMA … CASCADE`` → ``CREATE SCHEMA`` → DDL derived from
-the accepted model's compiled Table Layouts (``applyDdl``) → fixture rows in
-Entity Layout order (``loadFixtures``).
+and per case ``DROP SCHEMA … CASCADE`` → ``CREATE SCHEMA`` → the shipped
+generator's Schema Delta for the evolution from ABSENT (``applyDdl``) → fixture
+rows in Entity Layout order (``loadFixtures``).
 
-DDL and fixture *statement generation* is pure (``schema_statements`` /
-``fixture_statements``) and unit-tested without Docker; the container lifecycle
-and driver execution live behind :class:`Provisioner`, proven by the Docker
-provider / conformance lanes.
+Statement generation is pure and unit-tested without Docker — the DDL by
+`m-schema-delta`'s own suite, the fixtures by ``fixture_statements``' — while the
+container lifecycle and driver execution live behind :class:`Provisioner`, proven
+by the Docker provider / conformance lanes.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, cast
 from parallax.conformance import case_format
 from parallax.conformance._case_literal import normalize_case_literal
 from parallax.core import inheritance, storage_layout
-from parallax.core.base import JSON, STRING, TIMESTAMP, NeutralType
+from parallax.core.base import JSON, TIMESTAMP, NeutralType
 from parallax.core.db_port import DbPort, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.document_codec import (
@@ -39,26 +39,23 @@ from parallax.core.document_codec import (
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
-    Column,
     EntityIdentity,
-    IndexIdentity,
-    IndexMetadata,
     Metamodel,
     Multiplicity,
     TemporalDimension,
     ValueObjectIdentity,
     ValueObjectMetadata,
-    derive_primary_key_index,
 )
 from parallax.core.storage_layout import (
     ColumnSlot,
     DocumentPath,
     EntityLayoutView,
-    InheritanceDiscriminator,
     RelationalDocument,
     TableLayout,
 )
 from parallax.core.wire import WireValue, decode_wire, encode_wire
+from parallax.evolution.model_evolution import ABSENT, evolve
+from parallax.evolution.schema_delta import schema_delta
 
 if TYPE_CHECKING:
     from parallax.postgres import PostgresAdapter
@@ -78,44 +75,15 @@ def reset_statements() -> list[str]:
 
 
 def schema_statements(model: Metamodel, dialect: Dialect = POSTGRES) -> list[str]:
-    """``create table`` DDL for every compiled Table Layout, once per table.
+    """The shipped generator's provisioning DDL for ``model``.
 
-    `m-storage-layout` already composed each physical table: the layout's
-    ``columns`` are the sole physical order, ``effective_nullable`` is the sole
-    nullability answer, and ``physical_primary_key`` is the sole key. This path
-    therefore only renders those selected values through the dialect. DDL is not
-    asserted byte-exact anywhere in the corpus (`m-case-format`), so the
-    framework-owned discriminator's physical type is this path's own choice
-    rather than a golden.
+    Provisioning is the Unilateral Evolution from ``ABSENT``, so this path holds
+    no DDL of its own: every physical fact, every statement, and every Physical
+    Index Name is `m-schema-delta`'s, which is what makes the whole
+    database-backed suite a proof of the generator rather than of a second
+    composition that happens to agree with it.
     """
-    facet = storage_layout.view(model)
-    return [_table_ddl(model, layout, dialect) for layout in facet.tables]
-
-
-# A framework-owned discriminator is not a declared Attribute (m-inheritance),
-# so provisioning fixes its own physical type — wide enough for any authored
-# tagValue and never asserted byte-exact (no DDL golden, `m-case-format`).
-_TAG_COLUMN_TYPE = STRING
-_TAG_COLUMN_MAX_LENGTH = 32
-
-
-def _slot_type(model: Metamodel, slot: ColumnSlot, dialect: Dialect) -> str:
-    """The physical column type of one slot's contributor.
-
-    A top-level Value Object occupies one structured-document column
-    (m-value-object); nested occurrences and inner fields live inside it. A
-    Relational Document Layout's shared Structured Column is the same neutral
-    `json` type and carries the document-resident members of every governed row,
-    so both reach the dialect's own mapping rather than a spelling stated here.
-    Its `not null` comes from the slot's effective nullability, not from this.
-    """
-    contributor = slot.contributor
-    if isinstance(contributor, InheritanceDiscriminator):
-        return dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)
-    if isinstance(contributor, (ValueObjectIdentity, RelationalDocument)):
-        return dialect.column_type(JSON, None)
-    attribute = _declared_attribute(model, contributor)
-    return dialect.column_type(attribute.type, attribute.max_length)
+    return list(schema_delta(evolve(ABSENT, model), dialect).statements)
 
 
 def _declared_attribute(model: Metamodel, contributor: AttributeIdentity) -> AttributeMetadata:
@@ -124,89 +92,6 @@ def _declared_attribute(model: Metamodel, contributor: AttributeIdentity) -> Att
     if attribute is None:  # pragma: no cover - a slot names an accepted declaration
         raise ValueError(f"{contributor.entity.canonical}: no attribute {contributor.name!r}")
     return attribute
-
-
-def _column_ddl(model: Metamodel, slot: ColumnSlot, dialect: Dialect) -> str:
-    nullability = "" if slot.effective_nullable else " not null"
-    return f"{dialect.quote(slot.column.name)} {_slot_type(model, slot, dialect)}{nullability}"
-
-
-def _table_ddl(model: Metamodel, layout: TableLayout, dialect: Dialect) -> str:
-    """One layout's ``create table``, in complete canonical slot order.
-
-    Every constraint comes from an Index: the derived primary-key Index becomes
-    ``primary key (…)`` and each authored unique Index becomes ``unique (…)``.
-    The two sets are disjoint, so no constraint is redundant with another.
-    """
-    columns = [_column_ddl(model, slot, dialect) for slot in layout.columns]
-    key_columns = [dialect.quote(slot.column.name) for slot in layout.physical_primary_key]
-    if key_columns:
-        columns.append(f"primary key ({', '.join(key_columns)})")
-    columns.extend(_unique_constraints(model, layout, dialect))
-    return f"create table {dialect.quote(layout.table.name)} ({', '.join(columns)})"
-
-
-def _primary_key_indices(model: Metamodel) -> frozenset[IndexIdentity]:
-    """The Identity of every Entity's derived primary-key Index.
-
-    ``primary key (…)`` already emits it, so it is the one unique Index a table
-    constraint list leaves out.
-    """
-    derived = (
-        derive_primary_key_index(
-            entity=entity.identity,
-            container=entity.declared_container,
-            attributes=entity.declared_attributes,
-            as_of_axes=entity.declared_as_of_axes,
-        )
-        for entity in model.entities
-    )
-    return frozenset(index.identity for index in derived if index is not None)
-
-
-def _index_columns(layout: TableLayout, index: IndexMetadata) -> list[Column] | None:
-    """One Index's physical columns, or absent when it names another table.
-
-    Index Metadata stays an ordered declaration of local Attribute Identities
-    (`m-storage-layout`), so each component resolves through the layout's
-    contributor lookup. An Entity's whole local Attribute set reaches the same
-    tables, so a partially resolvable Index is a defect rather than a shape.
-    """
-    slots = [layout.contribution(attribute) for attribute in index.attributes]
-    if all(slot is None for slot in slots):
-        return None
-    if any(slot is None for slot in slots):  # pragma: no cover - defensive
-        raise ValueError(
-            f"index {index.identity.name!r} spans Table {layout.table.name!r} only partially"
-        )
-    return [cast("ColumnSlot", slot).column for slot in slots]
-
-
-def _unique_constraints(model: Metamodel, layout: TableLayout, dialect: Dialect) -> list[str]:
-    """``unique (…)`` constraints for every authored unique Index this table holds.
-
-    A unique Index may be declared on any Entity whose members reach the table —
-    a standalone Entity, an ancestor of a table-per-concrete-subtype concrete, or
-    any table-per-hierarchy family participant — so the layout's contributor
-    lookup, not an ancestry walk, decides membership. The derived primary-key
-    Index is left out because ``primary key (…)`` already emits it; what remains
-    are the true secondaries (a unique business column, a one-to-one FK column)
-    the `m-db-error` uniqueViolation triggers need. Each of those emits its own
-    constraint: no Index is suppressed for spanning the Columns another already
-    spans.
-    """
-    derived = _primary_key_indices(model)
-    constraints: list[str] = []
-    for entity in model.entities:
-        for index in entity.indices:
-            if not index.unique or index.identity in derived:
-                continue
-            resolved = _index_columns(layout, index)
-            if resolved is None:
-                continue
-            quoted = [dialect.quote(column.name) for column in resolved]
-            constraints.append(f"unique ({', '.join(quoted)})")
-    return constraints
 
 
 def _fixture_member(

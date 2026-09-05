@@ -21,6 +21,8 @@ and Behavioral Impacts compare; it re-derives none of those facets.
 
 from __future__ import annotations
 
+from typing import overload
+
 from parallax.core.metamodel import Metamodel
 from parallax.evolution.model_evolution._classify import classify
 from parallax.evolution.model_evolution._diff import diff
@@ -244,8 +246,20 @@ __all__ = [
 ]
 
 
+@overload
+def evolve(earlier: Absent, later: Metamodel) -> UnilateralEvolution: ...
+
+
+@overload
+def evolve(earlier: Metamodel, later: Metamodel) -> Evolution: ...
+
+
 def evolve(earlier: Metamodel | Absent, later: Metamodel) -> Evolution:
     """Describe every difference between two accepted Metamodels.
+
+    Provisioning is unilateral by TYPE: passing :data:`ABSENT` narrows the
+    result, so a consumer that only accepts a Unilateral Evolution — the schema
+    generator above all — needs no runtime check on that path.
 
     ``earlier`` is :data:`ABSENT` for fresh provisioning — an explicit sentinel,
     never inferred from an empty accepted model or from inspecting a physical

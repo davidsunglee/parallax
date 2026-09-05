@@ -95,6 +95,12 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.wire import WireEncodingError
+from parallax.evolution.model_evolution import EntityAdded
+from parallax.evolution.schema_delta import (
+    PhysicalLocation,
+    UnsupportedSchemaEvolutionError,
+    UnsupportedSchemaOperation,
+)
 from parallax.snapshot import DeferredFeatureError
 from parallax.snapshot.handle import WriteEvidenceError
 
@@ -8177,3 +8183,44 @@ def test_a_case_declaring_no_corruption_writes_nothing() -> None:
         port,
     )
     assert port.reads == [] and port.writes == []
+
+
+def test_a_dialect_that_cannot_render_an_operation_reports_an_unsupported_cell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Postgres renders every physical operation this algebra emits, so the arm
+    # that turns a refusal into a cell has no corpus witness until a dialect that
+    # refuses one ships. The engine must report the refusal AS the cell rather
+    # than letting it escape as a run failure.
+    def _refuse(evolution: object, dialect: object) -> object:
+        del evolution, dialect
+        raise UnsupportedSchemaEvolutionError(
+            "postgres",
+            (
+                UnsupportedSchemaOperation(
+                    kind="CreateIndex",
+                    location=PhysicalLocation(table=Table(name="evolution_widget")),
+                    reason="a refusing renderer",
+                    caused_by=(
+                        EntityAdded(entity=EntityIdentity("parallax.compatibility", "Widget")),
+                    ),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(engine, "schema_delta", _refuse)
+    observations = engine.run_evolution_case(_case("m-model-evolution-001"))
+    assert observations["schema"]["postgres"] == {
+        "unsupported": {
+            "operations": [
+                {
+                    "kind": "CreateIndex",
+                    "physicalLocation": {"table": "evolution_widget"},
+                    "causedBy": [
+                        {"kind": "EntityAdded", "entity": "parallax.compatibility.Widget"}
+                    ],
+                }
+            ]
+        }
+    }
+    assert observations["schema"]["mariadb"] == {"excluded": {"reason": "no-dialect"}}

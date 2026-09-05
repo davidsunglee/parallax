@@ -5,8 +5,9 @@ Table-driven over the concrete dialects (one row today: postgres), covering the
 row-limit rendering, optimizer fencing, shared-read-lock application, neutral-scalar column-type
 mapping (parametric decimals, bounded strings), the bytes projection shape and
 its projection-introduced bind, the structured-document extraction / typed-cast
-forms, canonical `?` -> `%s` placeholder translation, the infinity sentinel, and
-the native error-code classification predicates. Pure strategy, no driver I/O.
+forms, canonical `?` -> `%s` placeholder translation, the infinity sentinel, the
+native error-code classification predicates, and the DDL primitives a schema
+generator composes statements out of. Pure strategy, no driver I/O.
 
 Dual-marked ``unit`` so the pure strategy is covered by the branch-coverage gate
 and runs in the ``dbfree`` class.
@@ -34,11 +35,16 @@ from parallax.core.base import (
     PresentDocument,
 )
 from parallax.core.dialect import (
+    DIALECT_CATALOG,
     INFINITY,
     POSTGRES,
+    ColumnDdl,
     Dialect,
     DocumentLeafAssignment,
     DocumentValueAssignment,
+    IndexColumnDdl,
+    PhysicalIndexName,
+    Unsupported,
     dialect_for,
 )
 
@@ -324,5 +330,123 @@ def test_error_classification(dialect: Dialect) -> None:
 def test_infinity_sentinel_and_lookup() -> None:
     assert INFINITY == "infinity"
     assert dialect_for("postgres") is POSTGRES
+    with pytest.raises(ValueError, match="unsupported dialect"):
+        dialect_for("mariadb")
+
+
+# --- DDL primitives -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_identifier_byte_limit_is_declared(dialect: Dialect) -> None:
+    # Only a DERIVED identifier has to fit a budget, so the limit is a fact about
+    # the database rather than a rule applied to authored names here.
+    assert dialect.max_identifier_bytes == 63
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_create_table_renders_columns_then_the_inline_key(dialect: Dialect) -> None:
+    statement = dialect.create_table(
+        "widget",
+        [ColumnDdl("id", "bigint", False), ColumnDdl("label", "varchar(8)", True)],
+        ["id"],
+    )
+    assert (
+        statement == "create table widget (id bigint not null, label varchar(8), primary key (id))"
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_create_table_of_a_keyless_model_emits_no_key_clause(dialect: Dialect) -> None:
+    statement = dialect.create_table("widget", [ColumnDdl("label", "varchar(8)", True)], [])
+    assert statement == "create table widget (label varchar(8))"
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_add_column_carries_the_same_column_clause(dialect: Dialect) -> None:
+    assert (
+        dialect.add_column("widget", ColumnDdl("label", "varchar(8)", False))
+        == "alter table widget add column label varchar(8) not null"
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_expand_column_spells_each_widening_as_its_own_action(dialect: Dialect) -> None:
+    # Postgres factors a type change and a relaxed `not null` into two actions of
+    # one statement, which is why the primitive receives the whole change rather
+    # than one clause at a time.
+    narrower = ColumnDdl("label", "varchar(8)", False)
+    assert dialect.expand_column("widget", narrower, ColumnDdl("label", "text", False)) == (
+        "alter table widget alter column label type text"
+    )
+    assert dialect.expand_column("widget", narrower, ColumnDdl("label", "varchar(8)", True)) == (
+        "alter table widget alter column label drop not null"
+    )
+    assert dialect.expand_column("widget", narrower, ColumnDdl("label", "text", True)) == (
+        "alter table widget alter column label type text, alter column label drop not null"
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_create_index_spells_uniqueness_and_component_order(dialect: Dialect) -> None:
+    name = PhysicalIndexName("pxi_widget_label_0")
+    components = [
+        IndexColumnDdl("label", STRING, 8),
+        IndexColumnDdl("id", INT64, None),
+    ]
+    assert dialect.create_index("widget", name, components, unique=False) == (
+        "create index pxi_widget_label_0 on widget (label, id)"
+    )
+    assert dialect.create_index("widget", name, components, unique=True) == (
+        "create unique index pxi_widget_label_0 on widget (label, id)"
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_postgres_indexes_an_unbounded_string(dialect: Dialect) -> None:
+    # The refusal arm exists for a dialect that needs a key length; Postgres has
+    # no such requirement, so it answers with a statement for every component.
+    statement = dialect.create_index(
+        "widget",
+        PhysicalIndexName("pxi_widget_note_0"),
+        [IndexColumnDdl("note", STRING, None)],
+        unique=False,
+    )
+    assert not isinstance(statement, Unsupported)
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_drop_index_names_the_index_alone(dialect: Dialect) -> None:
+    assert dialect.drop_index("widget", PhysicalIndexName("pxi_widget_label_0")) == (
+        "drop index pxi_widget_label_0"
+    )
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_ddl_identifiers_are_quoted_by_the_same_rule_as_every_other(dialect: Dialect) -> None:
+    # A DDL primitive receives already-quoted table and column strings, so the one
+    # identifier it quotes itself is the Index name it is handed as a value.
+    assert (
+        dialect.create_index(
+            "widget", PhysicalIndexName("order"), [IndexColumnDdl("label", STRING, 8)], unique=False
+        )
+        == 'create index "order" on widget (label)'
+    )
+
+
+def test_a_physical_index_name_is_a_nonempty_identifier() -> None:
+    # The value validates nothing else: a name read back off a driver diagnostic
+    # is as legitimate as a generated one, and the byte limit is the generating
+    # rule's concern rather than this value's.
+    assert PhysicalIndexName("widget_pkey").value == "widget_pkey"
+    with pytest.raises(ValueError, match="nonempty identifier"):
+        PhysicalIndexName("")
+
+
+def test_the_supported_dialect_catalog_is_the_specification_s() -> None:
+    # The catalog names every Dialect the specification supports, whether or not
+    # this implementation ships a strategy for it, so a consumer enumerating it
+    # reports the gap rather than narrowing the matrix to what it happens to have.
+    assert DIALECT_CATALOG == ("postgres", "mariadb")
     with pytest.raises(ValueError, match="unsupported dialect"):
         dialect_for("mariadb")
