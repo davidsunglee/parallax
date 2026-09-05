@@ -40,7 +40,7 @@ own internals.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -60,7 +60,7 @@ from parallax.core.execution_lifecycle._activity import (
     open_snapshot_stream_root,
     refuse_reentry,
 )
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import ObjectQueryNode, deserialize
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_validated_axis
 from parallax.core.unit_work import Concurrency, UnitOfWork
@@ -89,9 +89,37 @@ __all__ = [
     "ReadInputs",
     "ReadScope",
     "SelectedReadModel",
+    "WireQuery",
     "participating_read_scope",
     "standalone_read_scope",
+    "wire_query_node",
 ]
+
+type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
+"""What a Wire read accepts: the canonical Object Query mapping, the canonical
+node itself, or — on a class-backed model — the Typed authoring value."""
+
+
+def wire_query_node(query: WireQuery) -> ObjectQueryNode:
+    """``query`` as the one canonical Object Query node every read lowers through.
+
+    Accepting three spellings adds no query semantics: the mapping goes through
+    `m-object-query`'s own deserializer, the Typed value through the same
+    accessor ``db.find`` uses, and a node passes as itself. Nothing here
+    validates the query — the shared read gate does, after this resolution and
+    before any I/O — so all three spellings meet the same refusals.
+
+    It lives beside the verbs rather than beside the view because lowering IS an
+    argument of the call: a Wire read refuses re-entry before it looks at what it
+    was handed, so a mapping no deserializer could accept is refused as re-entry
+    when it arrives from inside a lifecycle context, exactly as an unusable Typed
+    query is.
+    """
+    if isinstance(query, ObjectQueryNode):
+        return query
+    if isinstance(query, Mapping):
+        return deserialize(query)
+    return object_query_node(query)
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,17 +300,29 @@ class ReadScope:
 
         return self._execution.eager(node.target, "ROWS", published)
 
-    def wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
-        """One Wire whole-result read, published as frozen Wire nodes."""
-        refuse_reentry(self._lifecycle)
-        selected = self._execution.begin()
-        return self._graph(selected, node, wire_publication(selected.model.meta))
+    def wire_find(self, query: WireQuery) -> Snapshot[Any]:
+        """One Wire whole-result read, published as frozen Wire nodes.
 
-    def wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
-        """One Wire streamed read, delivered as frozen Wire nodes."""
+        The refusal order is :meth:`find`'s without its classless rung — no Wire
+        node is an Entity Class instance, so none needs a materializer: re-entry,
+        then the selection, then this call's own argument, which for a Wire entry
+        is the spelling it was handed lowered to the canonical node.
+        """
         refuse_reentry(self._lifecycle)
         selected = self._execution.begin()
-        return self._streamed(selected, node, wire_publication(selected.model.meta), batch_size)
+        return self._graph(selected, wire_query_node(query), wire_publication(selected.model.meta))
+
+    def wire_stream(self, query: WireQuery, batch_size: int) -> SnapshotStream[Any]:
+        """One Wire streamed read, delivered as frozen Wire nodes.
+
+        :meth:`wire_find`'s ladder with the page size judged among this call's
+        own arguments, after the query it was named beside.
+        """
+        refuse_reentry(self._lifecycle)
+        selected = self._execution.begin()
+        return self._streamed(
+            selected, wire_query_node(query), wire_publication(selected.model.meta), batch_size
+        )
 
     def open_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int

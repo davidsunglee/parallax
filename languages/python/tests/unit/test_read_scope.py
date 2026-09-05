@@ -1,12 +1,13 @@
 """The Read Scope's ladder, graded against a recording execution policy.
 
 What the public read verbs cannot state is what this suite is for: that the
-scope refuses re-entry before it asks its policy for anything, that it selects
-the model before it refuses a classless one, that a refused query reaches no
-capability at all, that one scope chooses its publication per call rather than
-holding one, and that the body it hands the policy takes its port, its
-Concurrency Preference, and its observation ledger from the inputs it was handed
-rather than from anything it closed over.
+scope refuses re-entry before it asks its policy for anything — a Wire spelling
+it cannot even lower included, since lowering is the call's own argument — that
+it selects the model before it refuses a classless one, that a refused query
+reaches no capability at all, that one scope chooses its publication per call
+rather than holding one, and that the body it hands the policy takes its port,
+its Concurrency Preference, and its observation ledger from the inputs it was
+handed rather than from anything it closed over.
 
 A delivery is the same ladder read from the other side, and gets the same
 treatment: that a stream verb refuses everything it can before it judges the page
@@ -52,7 +53,7 @@ from parallax.core.execution_lifecycle._activity import (
     installed_lifecycle,
 )
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
-from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import ObjectQueryError, ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._fluent import object_query_node
 from parallax.core.object_query._validated import ValidatedObjectQuery
@@ -322,6 +323,34 @@ def test_every_verb_refuses_re_entry_before_it_asks_its_policy_for_anything() ->
             verb()
 
     assert execution.calls == []
+
+
+def test_a_wire_verb_refuses_re_entry_before_it_lowers_what_it_was_handed() -> None:
+    # Lowering a Wire spelling is one of the CALL's own arguments rather than a
+    # step above the refusal, so a mapping no deserializer could accept is
+    # refused as re-entry from inside a lifecycle context and answers its own
+    # complaint outside one — reaching, in both cases, no capability that
+    # executes. Outside the context the selection is already made when the
+    # lowering fails, which is what orders those two rungs.
+    malformed: Any = {"target": "Account"}
+    delivering, refusing = _scope(RefusingPort(), lifecycle=_delivering())
+    quiet, lowering = _scope(RefusingPort())
+
+    for refused in (
+        lambda: delivering.wire_find(malformed),
+        lambda: delivering.wire_stream(malformed, _PAGE),
+    ):
+        with pytest.raises(ExecutionLifecycleReentryError):
+            refused()
+    for complaining in (
+        lambda: quiet.wire_find(malformed),
+        lambda: quiet.wire_stream(malformed, _PAGE),
+    ):
+        with pytest.raises(ObjectQueryError, match="missing required clause"):
+            complaining()
+
+    assert refusing.calls == []
+    assert lowering.calls == ["begin", "begin"]
 
 
 # --------------------------------------------------------------------------- #

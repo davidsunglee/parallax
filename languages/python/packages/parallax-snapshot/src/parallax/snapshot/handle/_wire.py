@@ -2,10 +2,12 @@
 
 ``db.wire`` and ``tx.wire`` are lightweight VIEWS over the same connected model
 and adapter their Typed peers use, never separate connections or transaction
-modes. A view holds the one entry point its owner already composed — read gate,
-force-flush, locking, evidence retention, activity bracket, unit of work,
-coalescing — so a Wire call and a Typed call differ in nothing but the
-representation their values are stated in. That is why the interfaces are two
+modes. A view retains the one
+:class:`~parallax.snapshot.handle._read_scope.ReadScope` its owner already
+composed — read gate, force-flush, locking, evidence retention, activity
+bracket, unit of work, coalescing — so a Wire call and a Typed call differ in
+nothing but the representation their values are stated in, and the view itself
+decides nothing and holds nothing else. That is why the interfaces are two
 objects rather than one ``format=`` argument: capability is what a caller holds,
 not a value it passes.
 
@@ -13,9 +15,11 @@ Both views accept the canonical Object Query mapping and, on a class-backed
 model, the Typed authoring value directly. A descriptor-backed caller therefore
 passes the mapping and never imports an Entity Class, an Entity Identity, or an
 Object Query node type; a class-backed caller passes the query it already built
-and needs no public serialization step. Both lower to the SAME canonical node
-before the shared read gate runs, so neither spelling can reach a different
-executor.
+and needs no public serialization step. All three spellings pass through
+untouched here and lower to the SAME canonical node inside the scope's own Wire
+verb, after that verb has refused re-entry and before the shared read gate runs
+— so neither spelling can reach a different executor, and none of them can reach
+a lowering step ahead of the refusal.
 
 ``tx.wire`` additionally carries the complete keyed and predicate WRITE families.
 The verbs here are the developer surface — signatures, defaults, and the
@@ -29,12 +33,10 @@ address in any signature.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Mapping
 
-from parallax.core.object_query import ObjectQueryNode, deserialize
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle._read import Snapshot
+from parallax.snapshot.handle._read_scope import ReadScope, WireQuery
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire_writes import (
     WireChanges,
@@ -50,33 +52,8 @@ __all__ = [
     "WireChanges",
     "WireDatabaseView",
     "WirePredicateTarget",
-    "WireQuery",
     "WireTransactionView",
-    "wire_query_node",
 ]
-
-type WireQuery = ObjectQuery[Any, Any] | ObjectQueryNode | Mapping[str, object]
-"""What a Wire read accepts: the canonical Object Query mapping, the canonical
-node itself, or — on a class-backed model — the Typed authoring value."""
-
-type _WireFind = Callable[[ObjectQueryNode], Snapshot[WireEntity]]
-type _WireStream = Callable[[ObjectQueryNode, int], SnapshotStream[WireEntity]]
-
-
-def wire_query_node(query: WireQuery) -> ObjectQueryNode:
-    """``query`` as the one canonical Object Query node every read lowers through.
-
-    Accepting three spellings adds no query semantics: the mapping goes through
-    `m-object-query`'s own deserializer, the Typed value through the same
-    accessor ``db.find`` uses, and a node passes as itself. Nothing here
-    validates the query — the shared read gate does, after this resolution and
-    before any I/O — so all three spellings meet the same refusals.
-    """
-    if isinstance(query, ObjectQueryNode):
-        return query
-    if isinstance(query, Mapping):
-        return deserialize(query)
-    return object_query_node(query)
 
 
 class WireDatabaseView:
@@ -87,11 +64,10 @@ class WireDatabaseView:
     own retained evidence an effective-Optimistic write may still settle against.
     """
 
-    __slots__ = ("_find", "_stream")
+    __slots__ = ("_reads",)
 
-    def __init__(self, find: _WireFind, stream: _WireStream) -> None:
-        self._find = find
-        self._stream = stream
+    def __init__(self, reads: ReadScope) -> None:
+        self._reads = reads
 
     def find(self, query: WireQuery) -> Snapshot[WireEntity]:
         """Execute ``query`` exactly once and return its Wire Snapshot.
@@ -102,7 +78,7 @@ class WireDatabaseView:
         :class:`~parallax.snapshot.materialize.InvalidData` record a root whose
         stored state contradicted the model publishes in its place.
         """
-        return self._find(wire_query_node(query))
+        return self._reads.wire_find(query)
 
     def stream(self, query: WireQuery, *, batch_size: int = 1000) -> SnapshotStream[WireEntity]:
         """Deliver ``query``'s roots one at a time, in the Continuation Order,
@@ -118,7 +94,7 @@ class WireDatabaseView:
         there, exactly as in the Typed namespace. :class:`SnapshotStream` states
         the one stored value outside that, for both namespaces.
         """
-        return self._stream(wire_query_node(query), batch_size)
+        return self._reads.wire_stream(query, batch_size)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -148,8 +124,8 @@ class WireTransactionView(WireDatabaseView):
 
     __slots__ = ("_writes",)
 
-    def __init__(self, find: _WireFind, stream: _WireStream, writes: WireWriteLane) -> None:
-        super().__init__(find, stream)
+    def __init__(self, reads: ReadScope, writes: WireWriteLane) -> None:
+        super().__init__(reads)
         self._writes = writes
 
     def insert(

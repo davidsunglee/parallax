@@ -71,14 +71,14 @@ __all__ = [
 class StreamExecution(Protocol):
     """The two things a delivery reaches outside itself, as one retained object.
 
-    A stream holds the composition that opened it rather than two callables cut
-    from it, so what a page runs inside and whose activity the stream is are one
-    answer given once. Which answer it is belongs to the composition, never to
-    the loop above: a standalone stream is a Root Execution of its own and its
-    pages read straight through, while a participating one is a child of the
-    current Transaction Attempt and every page of it runs inside its unit of
-    work's force-flush, so buffered writes reach the database before the page
-    that must see them.
+    A stream retains the ONE read composition that opened it, so what a page runs
+    inside and whose activity the stream is are one answer given once, by the
+    object that also served the eager reads beside it. Which answer it is belongs
+    to that composition and never to the loop above: a standalone stream is a
+    Root Execution of its own and its pages read straight through, while a
+    participating one is a child of the current Transaction Attempt and every
+    page of it runs inside its unit of work's force-flush, so buffered writes
+    reach the database before the page that must see them.
 
     A page is handed its own Stream Batch UNENTERED, because where that scope
     opens is part of the same answer: a participating page enters it after the

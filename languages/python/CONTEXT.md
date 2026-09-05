@@ -93,12 +93,16 @@ reachable only through a private first-party seam, and is what a Snapshot
 connection requires in order to materialize Entity Class instances.
 _Avoid_: Metamodel Binding, Entity Class Binding, bound model, runtime model, model context, metadata copy
 
-**Entity Runtime**:
-The narrow immutable first-party execution view a class-backed Domain Model
-supplies to Snapshot as one atomic value: its accepted Metamodel, Entity Graph
-Construction capability, and Entity Row Codec. No partial Entity Runtime exists;
-it exposes no Entity Class index and is absent for a descriptor-backed model.
-_Avoid_: raw binding, sealed model pair, runtime registry, capability bag
+**Selected Read Model**:
+The narrow immutable value one read is served under: the cataloged model it
+resolves, plans, and converts its rows against, together with the Entity Graph
+Construction that materializes them — present for a class-backed Domain Model
+and absent for a descriptor-backed one, which is what makes a modeled read
+refusable before any I/O under `snapshot-class-backed-model-required`. It never
+carries the Entity Row Codec, because a read derives no row, and it is a
+property of the operation rather than of the handle: one stream keeps the one it
+opened under through all of its pages.
+_Avoid_: Entity Runtime, connected model, raw binding, sealed model pair, runtime registry, capability bag
 
 ### Queries And Results
 
@@ -161,6 +165,17 @@ matches one of the installed implementation's Deferred Execution Features. It
 names every matching canonical Feature in sorted order and is neither a Query
 Definition Error nor a database-provider failure.
 _Avoid_: unsupported capability, invalid query, adapter limitation
+
+**Read Scope**:
+The one private read composition a `Database` or a `Transaction` owns and
+shares with its Wire view. Every Typed and Wire `find` and `stream`, and
+`read_rows`, delegates to it and runs its one ladder: re-entry refusal, the
+Selected Read Model, the query's own lowering and validation, execution, and
+publication. Only the bracket around execution varies, between a standalone
+read and one participating in a transaction. It is an implementation boundary
+rather than a public extension point, and no result, stream, or view answers it
+to a caller.
+_Avoid_: read session, read context, query executor, find service, read facade
 
 **Snapshot**:
 The fully materialized generic container returned by a Typed or Wire `find`,

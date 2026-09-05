@@ -262,20 +262,20 @@ def test_the_state_is_cleared_however_a_lifecycle_context_is_left() -> None:
 def _database_entry_points(db: Database) -> dict[str, _Work]:
     """Every public operation a ``Database`` offers.
 
-    The two Wire reads alone are handed a real query: the Wire view lowers its
-    three accepted spellings to the canonical node before delegating, and that
-    canonicalization — deterministic, reaching no state and no port — is above
-    the line the refusal is drawn at.
+    Every read takes the sentinel, the Wire pair included: a Wire view passes
+    the spelling it was handed straight through, and lowering it to the
+    canonical node is one of the call's own arguments the refusal precedes.
 
-    A stream takes the sentinel and its default page size: the refusal precedes
-    the ``batch_size`` validation exactly as it precedes the query's own
-    judgement, so naming a size here would only pin a second verb's argument.
+    A stream takes the sentinel and its default page size for the same reason:
+    the refusal precedes the ``batch_size`` validation exactly as it precedes
+    the query's own judgement, so naming a size here would only pin a second
+    verb's argument.
     """
     return {
         "find": lambda: db.find(UNUSED),
         "stream": lambda: db.stream(UNUSED),
-        "wire.find": lambda: db.wire.find(_query()),
-        "wire.stream": lambda: db.wire.stream(_query()),
+        "wire.find": lambda: db.wire.find(UNUSED),
+        "wire.stream": lambda: db.wire.stream(UNUSED),
         "read_rows": lambda: db.read_rows(UNUSED),
         "transact": lambda: db.transact(UNUSED),
     }
@@ -291,8 +291,8 @@ def _transaction_entry_points(tx: Transaction) -> dict[str, _Work]:
     return {
         "find": lambda: tx.find(UNUSED),
         "stream": lambda: tx.stream(UNUSED),
-        "wire.find": lambda: tx.wire.find(_query()),
-        "wire.stream": lambda: tx.wire.stream(_query()),
+        "wire.find": lambda: tx.wire.find(UNUSED),
+        "wire.stream": lambda: tx.wire.stream(UNUSED),
         "read_rows": lambda: tx.read_rows(UNUSED),
         "insert": lambda: tx.insert(UNUSED),
         "insert_until": lambda: tx.insert_until(UNUSED, valid_from=FIXED, until=FIXED),

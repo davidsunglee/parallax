@@ -1608,7 +1608,7 @@ with the exported `SnapshotConnectionError(ValueError)` under the sole stable
 code `snapshot-class-backed-model-required`. A Domain Model composing no Entity
 Class connects, because provenance decides capability rather than connectability;
 it is refused under that same code at every modeled read instead. The error
-exposes neither an Entity Runtime nor a class index. It is not
+exposes neither the selected read model nor a class index. It is not
 `DeferredFeatureError(execution-feature-deferred)`, which is reserved for a
 valid query whose execution feature is explicitly deferred.
 
