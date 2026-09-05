@@ -176,16 +176,21 @@ def buffer_predicate(
        against the connected model, so a query whose own target that model does
        not declare is named as the target failure it is rather than as a
        composition failure of every Assignment addressing it.
-    4. **Valid-Time-bound validation and normalization** — the ``*Until`` forms
-       state their window as a PAIR, and half of one is refused before either
-       bound is measured; a Bitemporal target then requires ``valid_from`` and a
-       Transaction-Time-Only or non-temporal target takes none; and
-       ``valid_from < until`` — an equal or reversed window rejects HERE, at
-       build, before any buffering (:func:`validate_window`, the one gate the
-       keyed verbs and both representations run). Typed-only: only
-       this ingress takes ``dt.datetime`` arguments. The gate normalizes each
-       bound to the managed UTC carrier retained by the prepared product;
-       canonical text belongs only to serialized Wire output.
+    4. **The bound-less destructive verb's applicability, then Valid-Time-bound
+       validation and normalization** — ``delete_where`` offers no bound ARGUMENT
+       at all, so a temporal target refuses the VERB before any bound is measured
+       (:func:`reject_temporal_delete`). Every other verb takes one, and the
+       window gate judges what the call passed: the ``*Until`` forms state their
+       window as a PAIR,
+       and half of one is refused before either bound is measured; a Bitemporal
+       target then requires ``valid_from`` and a Transaction-Time-Only or
+       non-temporal target takes none; and ``valid_from < until`` — an equal or
+       reversed window rejects HERE, at build, before any buffering
+       (:func:`validate_window`, the one gate the keyed verbs and both
+       representations run). The window half is typed-only: only this ingress
+       takes ``dt.datetime`` arguments. The gate normalizes each bound to the
+       managed UTC carrier retained by the prepared product; canonical text
+       belongs only to serialized Wire output.
     5. **Build + prepare the canonical instruction** (the typed peer of the
        Wire ingress's ``prepare_wire_write`` path). ``prepare_typed_write`` measures the selecting
        predicate with the whole ``validate_predicate`` vocabulary, then rejects
@@ -207,6 +212,7 @@ def buffer_predicate(
     entity = entity_of(meta, selection.target.canonical)
     _reject_uncomposable_assignments(meta, selection.target, mutation, assignments)
     declaring_entity = declaring(meta, entity)
+    reject_temporal_delete(entity, declaring_entity, mutation)
     valid_from_managed, until_managed = validate_window(
         declaring_entity, mutation, valid_from, until
     )
@@ -276,6 +282,38 @@ def _reject_uncomposable_assignments(
         seen.add(ref.attribute)
 
 
+def reject_temporal_delete(
+    entity: EntityMetadata, declaring_entity: EntityMetadata, mutation: PredicateMutation
+) -> None:
+    """Refuse ``delete_where`` aimed at a target that milestones its rows, at the
+    verb and before the window gate.
+
+    ``delete_where`` states no Valid-Time bound in either representation, so a
+    Bitemporal target has nothing to say about the window the caller passed —
+    it passed none, and the verb offers no argument for one. Reaching
+    :func:`~parallax.snapshot.handle._write_inputs.validate_window` first would
+    answer such a call by naming the ``valid_from`` a Bitemporal write requires,
+    which no spelling of this verb can supply; what is actually wrong is the
+    verb, and the target spells its removal ``terminate_where``.
+
+    The converse half of applicability — a milestone verb aimed at a target
+    deriving no As-Of Axis — is not hoisted with it, because the window gate
+    misdirects no milestone call. Those verbs all TAKE a bound: a call that
+    states one — either ``*_until_where`` form, or ``terminate_where`` handed a
+    ``valid_from`` — hears the gate refuse that bound, a true verdict on an
+    argument the caller can drop, and the keyed surface answers the same pairing
+    the same way; a boundless ``terminate_where`` clears the gate in silence and
+    reaches the quadrant prepared-write production states.
+    """
+    if not is_temporal(declaring_entity):
+        return
+    refusal = instructions.temporal_delete_refusal(
+        entity.identity.name, mutation, surface="predicate"
+    )
+    if refusal is not None:
+        raise instructions.WriteInstructionError(refusal)
+
+
 def buffer_predicate_instruction(
     uow: UnitOfWork,
     model: CatalogedModel,
@@ -302,7 +340,7 @@ def buffer_predicate_instruction(
     :func:`~parallax.core.unit_work.instructions.prepare_typed_write` for the
     typed ``_where`` verbs, and
     :func:`~parallax.core.unit_work.instructions.prepare_wire_write` for the
-    Wire ones, the conformance engine included. EVERY
+    Wire ones, the conformance engine included. Nearly every
     model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_predicate`` vocabulary
     over the selecting predicate, the
@@ -312,7 +350,18 @@ def buffer_predicate_instruction(
     against verb or bound. That call establishes the CALLER ORDERING — one
     classification whichever ingress an instruction arrives through.
 
-    The two refusals repeated here — an inheritance-family target, and that same
+    Target/verb applicability is settled HERE, both converse halves of it, so a
+    ``_where`` verb a target does not take is refused at the verb whatever the
+    target's profile: a milestone verb aimed at a target deriving no As-Of Axis,
+    and ``delete_where`` aimed at one that does, which physically removes the
+    rows a temporal target milestones and is spelled ``terminate_where`` there.
+    The validator states only the first, so the second is this seam's alone;
+    without it a temporal ``delete_where`` would run its resolving read and hear
+    the flush's own planning refusal instead of a verb's. Each ``_where`` ingress
+    settles that second half earlier still (:func:`reject_temporal_delete`),
+    ahead of the window gate a bound-less verb has no bound for.
+
+    The refusals repeated here — an inheritance-family target, and that same
     milestone-verb quadrant — are this seam's OWN contract, not duplicates of
     those rules. This entry point is reachable in-package without going through
     an ingress, so it takes nothing on faith: without its own refusal an
@@ -334,12 +383,17 @@ def buffer_predicate_instruction(
     declaring_entity = declaring(meta, entity)
     version_attr = version_attribute(meta, declaring_entity)
     temporal = is_temporal(declaring_entity)
-    if not temporal:
-        refusal = instructions.non_temporal_milestone_refusal(
-            entity.identity.name, instruction.mutation
+    applicability = (
+        instructions.temporal_delete_refusal(
+            entity.identity.name, instruction.mutation, surface="predicate"
         )
-        if refusal is not None:
-            raise instructions.WriteInstructionError(refusal)
+        if temporal
+        else instructions.non_temporal_milestone_refusal(
+            entity.identity.name, instruction.mutation, surface="predicate"
+        )
+    )
+    if applicability is not None:
+        raise instructions.WriteInstructionError(applicability)
     if not temporal and version_attr is None:
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.

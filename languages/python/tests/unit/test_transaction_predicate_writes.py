@@ -85,9 +85,7 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
-from parallax.core.unit_work.write_planner import (
-    assigned_many_path,
-)
+from parallax.core.unit_work.write_planner import assigned_many_path
 from parallax.snapshot import QueryTargetError, SnapshotDecodingError
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from parallax.snapshot.handle._predicate_writes import (
@@ -703,6 +701,54 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
         "infinity",
         dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     )
+
+
+# `delete_where` physically removes every row it resolved, and a target that
+# milestones its rows spells that removal `terminate_where`. Whether the target
+# takes the verb needs the model and nothing else, so the call is refused before
+# it resolves anything: the script holds no read at all, so a refusal deferred to
+# the buffered group's flush would fail at the read it would first have to make.
+#
+# BOTH temporal profiles are driven, because the verb's refusal has to beat the
+# window gate to be heard. `delete_where` states no bound in either spelling, so
+# a Bitemporal target reaching that gate first would answer with the `valid_from`
+# a bitemporal write requires — an argument neither `tx.delete_where` nor
+# `tx.wire.delete_where` offers, leaving the caller a refusal no call can
+# satisfy. A Transaction-Time-Only target reaches the same refusal without
+# needing the ordering, which is what makes the Bitemporal rows discriminating.
+@pytest.mark.parametrize(
+    ("model", "entity", "query"),
+    [
+        (BALANCE, "Balance", mm.Balance.where(mm.Balance.id == 1)),
+        (WHERE_POSITION_META, "WherePosition", WherePosition.where(WherePosition.id == 1)),
+    ],
+    ids=["transaction-time-only", "bitemporal"],
+)
+@pytest.mark.parametrize("representation", ["typed", "wire"])
+def test_delete_where_over_a_temporal_target_is_refused_at_the_verb(
+    model: DomainModel, entity: str, query: ObjectQuery[Any, Any], representation: str
+) -> None:
+    port = ScriptedPort(Transact())
+    target: dict[str, object] = {
+        "entity": f"parallax.compatibility.{entity}",
+        "predicate": {"eq": {"attr": f"parallax.compatibility.{entity}.id", "value": 1}},
+    }
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError) as refusal:
+            if representation == "typed":
+                tx.delete_where(query)
+            else:
+                tx.wire.delete_where(target)
+        assert str(refusal.value) == (
+            f"Temporal objects like {entity!r} do not support 'delete_where', which physically "
+            "removes rows. Use 'terminate_where' instead."
+        )
+        assert port.calls == [BeginCall()]
+        raise _Abandon
+
+    with pytest.raises(_Abandon):
+        Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
@@ -1977,7 +2023,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
     ("mutation", "message"),
     [
         ("updateUntil", "takes no valid_from"),
-        ("terminate", "temporal milestone verb"),
+        ("terminate", "do not support 'terminate_where'"),
         ("terminateUntil", "takes no valid_from"),
     ],
 )

@@ -4485,6 +4485,44 @@ These feature tests do not claim the deferred `benchmark` command or general
   reaches the same order for free, because `edit()` rejects an illegal assignment
   before `tx.update()` receives a value.
 
+  **The Keyed Write Validation Order is one order.** Every keyed write over a
+  source — every keyed verb but the two inserts — runs, Typed or Wire: reentry;
+  representation-only shape; source resolution and provenance; pin; window;
+  member names, values, assignment legality, and preparation; effective changes
+  and restorations with the no-op return; the buffered-insert exemption;
+  evidence; claim and buffer. One private ingress owns that order; each
+  representation answers only source facts through a private adapter, and a
+  conformance call enters the same ingress once. Reentry is refused once, as the
+  ingress's first executable line. Typed prepares before it resolves evidence, so
+  `terminate` against a target with no as-of axis hears the milestone-verb
+  refusal even when its evidence is also unusable. Verb applicability belongs to
+  that same stage, so BOTH halves of it are refused at the verb, in either
+  representation and whatever the source: a target with no as-of axis refuses a
+  milestone verb, and a temporal target refuses `delete`, which physically
+  removes rows and so has no temporal meaning — a temporal target spells its
+  removal `terminate` ("Write verbs and temporal spellings"). Each refusal names
+  the method the caller's own surface offers instead, keyed or `_where`. The
+  `delete` half precedes the window stage rather than sharing preparation's
+  place in the order, because no spelling of `delete` or `delete_where` offers a
+  Valid-Time argument at all: a bitemporal target reaching the window first would
+  answer them by naming the `valid_from` its other verbs require, which the
+  caller has no parameter to supply it through. The milestone half keeps
+  preparation's place, because the window gate misdirects no milestone call. A
+  call that states a bound — either `*_until` form, or `terminate` handed a
+  `valid_from` — hears the gate refuse that bound on a target declaring no
+  Valid-Time dimension, a true verdict on an argument the caller can drop; a
+  boundless `terminate` clears the gate in silence and reaches preparation's own
+  quadrant.
+
+  **An insert enters that ingress by its own door, with no source.** `insert` and
+  `insert_until` name a fresh value rather than one a read published, so there is
+  no source to resolve and none is invented: the door they enter runs reentry;
+  representation-only shape; the provenance the value itself states; window;
+  member names, values, and preparation; then buffer, recording the row it opened
+  in the one ledger the exemption above reads. An opening row observed nothing,
+  so it reduces no effective change set, resolves no evidence, and takes no
+  claim.
+
   **Which static refusal follows from whose rule was broken.**
   `WriteInstructionError` is the write verb's OWN verdict: input that states no
   well-formed write at all — a document position that is not a mapping of names

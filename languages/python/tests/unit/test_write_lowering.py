@@ -810,7 +810,7 @@ def test_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     # The temporal milestone verb set (terminate / *Until) stays refused on a
     # NON-temporal entity — permanently: `Account` has no Transaction-/Valid-Time
     # axis to close, so a milestone verb aimed at it is never sensible.
-    with pytest.raises(ValueError, match="temporal milestone verb"):
+    with pytest.raises(ValueError, match="do not support 'terminate'"):
         _lower(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 
@@ -1194,7 +1194,7 @@ def test_a_milestone_verb_on_a_non_temporal_entity_is_refused_at_finalization() 
     # A milestone verb opens, splits, or closes a milestone, and an Entity
     # declaring no as-of axis has none — refused where the target's family is
     # resolved, never rendered as an ordinary keyed write.
-    with pytest.raises(ValueError, match="declares no temporal dimension"):
+    with pytest.raises(ValueError, match="do not support 'terminate'"):
         _finalize(KeyedWrite("terminate", "Account", ({"id": 1},)), ACCOUNT)
 
 
@@ -1280,7 +1280,7 @@ def test_a_predicate_verb_with_no_readless_template_is_refused() -> None:
     # target materializes to keyed writes at buffer time, so no readless
     # statement shape exists for one — refused rather than settled into a step
     # no statement could render.
-    with pytest.raises(ValueError, match="temporal milestone verb"):
+    with pytest.raises(ValueError, match="do not support 'terminate_where'"):
         _finalize(PredicateWrite("terminate", PredicateSelection("Wallet", oa.All())), WALLET)
 
 

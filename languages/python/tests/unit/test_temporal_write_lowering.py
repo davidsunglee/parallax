@@ -425,8 +425,27 @@ def test_a_close_without_an_observation_is_a_finalization_error() -> None:
 
 def test_a_milestone_verb_on_a_non_temporal_entity_is_refused() -> None:
     terminate = KeyedWrite("terminate", "Account", ({"id": 1},))
-    with pytest.raises(ValueError, match="declares no temporal dimension"):
+    with pytest.raises(ValueError, match="do not support 'terminate'"):
         _finalize(terminate, _MODELS["account"], "2024-08-01T00:00:00+00:00")
+
+
+@pytest.mark.parametrize(
+    ("entity", "meta"),
+    [("Balance", BALANCE), ("Position", POSITION)],
+    ids=["txtime", "bitemporal"],
+)
+def test_a_delete_on_a_temporal_entity_is_refused(entity: str, meta: Metamodel) -> None:
+    # `delete` removes the row rather than closing its milestone, so a target
+    # that keeps history has no lowering for it and would otherwise erase the
+    # history it exists to keep. Refused where the target's family is resolved,
+    # naming the verb that target does take, on both temporal profiles.
+    delete = KeyedWrite("delete", entity, ({"id": 1},))
+    with pytest.raises(WritePlanningError) as raised:
+        _finalize(delete, meta, "2024-08-01T00:00:00+00:00")
+    assert str(raised.value) == (
+        f"Temporal objects like {entity!r} do not support 'delete', which physically "
+        "removes rows. Use 'terminate' instead."
+    )
 
 
 def test_audit_only_close_is_ungated_under_locking_regardless_of_observation() -> None:
