@@ -1310,6 +1310,34 @@ def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
         cast("dict[str, object]", address["geo"])["city"] = "Bonn"
 
 
+class _NoHash:
+    """Populates a key member with something the exemption's equality cannot ask
+    about, without being any particular container."""
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+@pytest.mark.parametrize(
+    "key", [{1}, {"a": 1}, bytearray(b"x"), _NoHash()], ids=["set", "dict", "bytearray", "no-hash"]
+)
+def test_a_key_member_naming_no_object_reaches_the_provenance_refusal(key: object) -> None:
+    # A value built without validation carries whatever its author put on a key
+    # member, and the buffered-insert exemption is read BEFORE the write judges
+    # that member against the declared type. Such a value names no object of this
+    # store, so every one of these reaches `write-value-not-stored` — the honest
+    # complaint about it — rather than failing the exemption's own question with
+    # a bare `TypeError` out of the ledger. The carriers are illustrative, not a
+    # closed set: the reading answers the property, not a list of types.
+    def fn(tx: Transaction) -> None:
+        tx.update(
+            mm.Account.model_construct(id=key, owner="Ada", balance=Decimal("100.00"), version=1)
+        )
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        account_db(ScriptedPort(Transact())).transact(fn)
+    assert refusal.value.code == "write-value-not-stored"
+
+
 def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
     # The refusal names the mistake itself — the row this value denotes is
     # already stored — rather than reporting a required attribute absent on a

@@ -285,19 +285,44 @@ def written_object_of_row(
     :class:`BufferedInserts` — which is what makes the exemption span both
     representations rather than one each.
 
-    ``None`` for a row short of a primary-key member, which names no object at
-    all. Defensive rather than reachable: a keyed write's identity row is the key
-    the source itself states, and an insert's is judged complete before this is
-    asked — a database-computed key leaves the row it opens unidentifiable, which
-    the insert door refuses to publish.
+    ``None`` for a row that names no object: one short of a primary-key member,
+    or one whose member carries something no object can be addressed BY. A row
+    short of a member is defensive rather than reachable — a keyed write's
+    identity row is the key the source itself states, and an insert's is judged
+    complete before this is asked. An unaddressable member is reachable, because
+    a source states its key members as its caller populated them and only the
+    write that follows judges them against the declared type; answering ``None``
+    is what leaves that value's own refusal standing instead of failing the
+    ledger's question about it.
     """
     pairs: list[tuple[str, object]] = []
     for attribute in family_primary_key(meta, record):
         name = attribute.identity.name
         if name not in row:  # pragma: no cover - every caller holds a complete key already
             return None
-        pairs.append((name, row[name]))
+        member = row[name]
+        if not _addresses_an_object(member):
+            return None
+        pairs.append((name, member))
     return (record.identity, tuple(pairs))
+
+
+def _addresses_an_object(member: object) -> bool:
+    """Whether an object can be addressed by ``member`` at all.
+
+    Addressing is by equality within :class:`BufferedInserts`, so a member no
+    hash is defined over addresses nothing there — and nothing there could have
+    been recorded under one, since an insert is validated against the declared
+    type before its row is recorded. Read as a property of the member rather
+    than a list of carriers: which containers a caller can smuggle past
+    validation is open-ended, and every one of them addresses no object for the
+    same reason.
+    """
+    try:
+        hash(member)
+    except TypeError:
+        return False
+    return True
 
 
 class ClaimLedger(Protocol):
@@ -331,8 +356,9 @@ class BufferedInserts:
     identity row, never a row and never an
     :class:`~parallax.core.unit_work.ObjectKey`: the provenance refusal that
     reads this is decided before any row is derived. ``None`` is a legitimate
-    member — a value whose own class can name no object — and it matches nothing,
-    which is exactly what leaves that value's provenance refusal standing.
+    member — every way a value can name no object arrives as one — and it matches
+    nothing, which is exactly what leaves that value's provenance refusal
+    standing.
     """
 
     __slots__ = ("_objects",)
