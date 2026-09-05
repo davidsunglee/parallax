@@ -2,35 +2,38 @@
 
 Everything a keyed write needs from the moment a verb is called to the moment
 the buffer holds it, including the write evidence it resolves off the source
-value it was handed, and nothing a read needs. Both keyed ingresses — the Typed
-verbs and ``tx.wire``'s — reach the whole of it, which is what keeps one
-judgement and one buffer behind two representations:
+value it was handed, and nothing a read needs. The keyed write ingress
+(:mod:`parallax.snapshot.handle._keyed_writes`) composes the whole of it in one
+order, and the predicate-selected lane reaches the two steps a ``_where`` verb
+shares with it, which is what keeps one judgement and one buffer behind every
+representation:
 
-* build-time window validation every keyed AND ``_where`` temporal verb shares
-  (:func:`validate_window`), the
+* the bound-less destructive verb's applicability
+  (:func:`reject_temporal_delete`) and build-time window validation
+  (:func:`validate_window`), both shared with the ``_where`` family; the
   finite-Transaction-Time-pin refusal every keyed verb runs on its source
   instance (:class:`TransactionTimePinReadOnlyError`,
-  :func:`validate_source_pin`, :func:`source_pin`), and the provenance refusal
+  :func:`validate_source_pin`, :func:`source_pin`); and the provenance refusal
   the value-taking keyed verbs run before any row is derived
   (:class:`KeyedWriteValueError`, :data:`KEYED_WRITE_VALUE_CODES`,
   :data:`Provenance`, :func:`validate_provenance`);
 * instance -> accepted-Metadata resolution (:func:`metadata_of_instance`), the
   object a written value addresses (:func:`written_object_key`), and the
-  codec-free reading of which object a value names (:func:`written_object`) that
-  a decision taken BEFORE any row derivation has to use;
+  codec-free reading of the identity row a value names
+  (:func:`source_identity_row`) that a decision taken BEFORE any row derivation
+  has to use;
 * the resolution a keyed verb runs over the write evidence its source value
   carries (:func:`source_hint_of`, :func:`resolve_write_evidence`,
   :class:`WriteEvidenceError`, :data:`WRITE_EVIDENCE_CODES`), and the claim that
   verb then takes at the scope it settles against (:func:`admit_write_claim`,
   :class:`ClaimLedger`);
-* the keyed seam itself, in the order every ingress runs it: the canonical
+* the keyed seam itself, in the order the ingress runs it: the canonical
   single-row instruction a verb holding a value builds
-  (:func:`keyed_instruction`), the whole judgement it is then measured by
-  (:func:`validate_keyed_instruction`), the claim-then-buffer step that ends it
+  (:func:`keyed_instruction`), the claim-then-buffer step that ends it
   (:func:`admit_and_buffer`, :func:`instruction_identity`), the question a
   wholly restoring edit asks before it decides whether it cancels anything
   (:func:`cancels_a_pending_assignment`), and the read-your-own-writes ledger
-  both ingresses record into and read (:class:`BufferedInserts`,
+  every ingress records into and reads (:class:`BufferedInserts`,
   :func:`written_object_of_row`).
 
 Family facts come from the accepted Metamodel and its facets, reached through
@@ -104,6 +107,7 @@ from parallax.snapshot.handle._family import family_primary_key, is_temporal
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
+    "UPDATE_MUTATIONS",
     "WRITE_EVIDENCE_CODES",
     "BufferedInserts",
     "ClaimLedger",
@@ -119,19 +123,19 @@ __all__ = [
     "instruction_identity",
     "keyed_instruction",
     "metadata_of_instance",
+    "reject_temporal_delete",
     "resolve_write_evidence",
     "source_hint_of",
+    "source_identity_row",
     "source_pin",
-    "validate_keyed_instruction",
     "validate_provenance",
     "validate_source_pin",
     "validate_window",
-    "written_object",
     "written_object_key",
     "written_object_of_row",
 ]
 
-_UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
+UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 """The keyed mutations that write against an existing row from a value's own
 effective changes — the family a value no managed read produced is refused for.
 :data:`~parallax.core.unit_work.INSERT_MUTATIONS` is the complementary family;
@@ -218,64 +222,66 @@ def written_object_key(
 
 
 type WrittenObject = tuple[EntityIdentity, tuple[tuple[str, object], ...]]
-"""Which object a written value names, as :func:`written_object` reads it — the
-equivalence a same-transaction insert is recognized by, never a row and never an
-:class:`~parallax.core.unit_work.ObjectKey`."""
+"""Which object a written row names, as :func:`written_object_of_row` reads it —
+the equivalence a same-transaction insert is recognized by, never a row and never
+an :class:`~parallax.core.unit_work.ObjectKey`."""
 
 
-def written_object(
+def source_identity_row(
     record: EntityMetadata, meta: Metamodel, value: EntityBase
-) -> WrittenObject | None:
-    """Which object ``value`` names, read straight off its primary-key members —
-    or ``None`` when its own class carries no attribute for one of them.
+) -> Mapping[str, object] | None:
+    """``value``'s primary-key members read straight off it — or ``None`` when
+    its own class carries no attribute for one of them.
 
-    The counterpart of :func:`written_object_key` for the one question that must
-    be answerable BEFORE a row exists: whether a value is one this transaction
-    already buffered an insert of, which is what exempts it from the NotStored
-    provenance refusal (`m-unit-work` *Write value provenance*). That refusal is
-    decided before any row is derived, so the question may not be asked through
-    the Entity Row Codec: a cross-model value whose class keys the same Entity by
-    other members has no identity row to derive, and deriving one would answer
-    the developer's mistaken provenance with an ``EntityRowError``. Such a value
-    is no object this transaction inserted, which is exactly what ``None`` says
-    and exactly what leaves the provenance refusal standing.
+    The Entity Row Codec's :meth:`~parallax.core.entity.EntityRowCodec.identity_row`
+    answers the same members and REFUSES that value instead, which is the
+    difference this reading exists for: the identity row is what names the object
+    to the buffered-insert ledger, and the ledger is consulted before the
+    provenance refusal that a value naming no object of this store has coming. A
+    cross-model value whose class keys the same Entity by other members must
+    therefore reach that refusal rather than an
+    :class:`~parallax.core.entity.EntityRowError` raised on its behalf, and
+    ``None`` — no object, so no insert of it was buffered — is what leaves it
+    standing. The codec's own refusal follows later, when the write goes to
+    derive the row it would actually buffer.
 
-    Both sides of every comparison are read here, so members are compared as the
-    value carries them rather than as a row would serialize them; nothing derived
-    here addresses a row or reaches a codec.
+    A primary key is Attributes alone, whose canonical form is the value itself,
+    so members are carried here exactly as a row would serialize them and a
+    reading of this row compares equal to a reading of the row an insert buffers.
     """
     names = wire_names_of(type(value))
-    pairs: list[tuple[str, object]] = []
+    row: dict[str, object] = {}
     for attribute in family_primary_key(meta, record):
         py_name = names.name_to_py.get(attribute.identity.name)
         if py_name is None:
             return None
-        pairs.append((attribute.identity.name, getattr(value, py_name)))
-    return (record.identity, tuple(pairs))
+        row[attribute.identity.name] = getattr(value, py_name)
+    return row
 
 
 def written_object_of_row(
     record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
 ) -> WrittenObject | None:
-    """Which object a written ROW names — :func:`written_object`'s peer for an
-    ingress holding a row rather than an Entity value.
+    """Which object a written ROW names.
 
-    A Wire verb never holds an instance, so the read-your-own-writes exemption
-    has to be answerable from the canonical row an insert buffers. Both readings
-    key by the SAME family-effective primary-key members in the SAME order and
-    carry the values as the caller supplied them, so a Typed insert and a Wire
-    update of one object name one member of :class:`BufferedInserts` — which is
-    what makes the exemption span both representations rather than one each.
+    The one reading, whatever produced the row: the identity row a source states
+    (:func:`source_identity_row`, an object key a read filed) and the canonical
+    row an insert buffers key by the SAME family-effective primary-key members in
+    the SAME order and carry the values as the caller supplied them, so a Typed
+    insert and a Wire update of one object name one member of
+    :class:`BufferedInserts` — which is what makes the exemption span both
+    representations rather than one each.
 
     ``None`` for a row short of a primary-key member, which names no object at
-    all. Defensive rather than reachable: an insert's row is judged complete
-    before this is asked, and a keyed write's identity row comes from the object
-    key its source's own read filed.
+    all. Defensive rather than reachable: a keyed write's identity row is the key
+    the source itself states, and an insert's is judged complete before this is
+    asked — a database-computed key leaves the row it opens unidentifiable, which
+    the insert door refuses to publish.
     """
     pairs: list[tuple[str, object]] = []
     for attribute in family_primary_key(meta, record):
         name = attribute.identity.name
-        if name not in row:  # pragma: no cover - both callers hold a complete key already
+        if name not in row:  # pragma: no cover - every caller holds a complete key already
             return None
         pairs.append((name, row[name]))
     return (record.identity, tuple(pairs))
@@ -308,8 +314,8 @@ class BufferedInserts:
     one ledger or the two verbs would disagree about what this transaction
     stores.
 
-    A member is the total reading :func:`written_object` (or
-    :func:`written_object_of_row`) answers for a value, never a row and never an
+    A member is the total reading :func:`written_object_of_row` answers for an
+    identity row, never a row and never an
     :class:`~parallax.core.unit_work.ObjectKey`: the provenance refusal that
     reads this is decided before any row is derived. ``None`` is a legitimate
     member — a value whose own class can name no object — and it matches nothing,
@@ -332,18 +338,6 @@ class BufferedInserts:
         transaction inserted.
         """
         return written is not None and written in self._objects
-
-    def __bool__(self) -> bool:
-        """Whether this transaction has buffered any insert at all — the cheap
-        answer that lets a caller skip deriving what a value names."""
-        return bool(self._objects)
-
-
-def validate_keyed_instruction(meta: Metamodel, instruction: KeyedWrite) -> PreparedKeyedWrite:
-    """Prepare one typed keyed instruction through Unit Work's sole judgment."""
-    prepared = instructions.prepare_typed_write(instruction, meta)
-    assert isinstance(prepared, PreparedKeyedWrite)
-    return prepared
 
 
 def keyed_instruction(
@@ -687,9 +681,10 @@ def _refuse_consumed(
 # --------------------------------------------------------------------------- #
 # Build-time validation, run off what the caller supplied and before any row  #
 # is derived from it: the source-pin and value-provenance refusals every      #
-# keyed verb runs on the instance it was handed, and the Valid-Time window     #
-# `validate_window` judges for every keyed AND `_where` temporal verb —       #
-# the one step of this library the predicate-selected lane also runs.         #
+# keyed verb runs on the instance it was handed, and the two steps the         #
+# predicate-selected lane also runs — the bound-less destructive verb's        #
+# applicability (`reject_temporal_delete`) and the Valid-Time window            #
+# `validate_window` judges for every temporal verb of either surface.          #
 # --------------------------------------------------------------------------- #
 def source_pin(instance: object) -> Pin | None:
     """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
@@ -781,13 +776,13 @@ def validate_provenance(
     refusal: a row this transaction inserted is a row it stores, so the update
     that follows carries the final value the flush writes rather than addressing
     nothing (`m-unit-work` "Insert-then-update coalesces in place"). It is
-    answered from what a value or a resolved identity row itself names
-    (:func:`written_object`, :func:`written_object_of_row`), never through a row
-    derived for the purpose, so a value whose class can key no row still reaches
-    THIS refusal rather than an
+    answered from what a source's own identity row names
+    (:func:`source_identity_row`, :func:`written_object_of_row`), never through a
+    row derived for the purpose, so a value whose class can key no row still
+    reaches THIS refusal rather than an
     :class:`~parallax.core.entity.EntityRowError` raised on its behalf.
     """
-    if mutation not in _UPDATE_MUTATIONS and mutation not in INSERT_MUTATIONS:
+    if mutation not in UPDATE_MUTATIONS and mutation not in INSERT_MUTATIONS:
         return
     if provenance == "none":
         if mutation in INSERT_MUTATIONS or inserted:
@@ -822,6 +817,39 @@ def validate_provenance(
             ),
             identity=identity,
         )
+
+
+def reject_temporal_delete(
+    entity: EntityMetadata,
+    declaring_entity: EntityMetadata,
+    mutation: str,
+    *,
+    surface: instructions.WriteSurface,
+) -> None:
+    """Refuse a ``delete`` aimed at a target that milestones its rows, at the
+    verb and before the window gate — on either surface, in either
+    representation.
+
+    ``delete`` states no Valid-Time bound in any of its spellings, so a
+    Bitemporal target has nothing to say about the window the caller passed: it
+    passed none, and no spelling of the verb offers an argument for one.
+    Reaching :func:`validate_window` first would answer such a call by naming the
+    ``valid_from`` a Bitemporal write requires, which the caller cannot supply;
+    what is actually wrong is the verb, and the target spells its removal
+    ``terminate``.
+
+    The converse half of applicability — a milestone verb aimed at a target
+    deriving no As-Of Axis — is not hoisted with it, because the window gate
+    misdirects no milestone call. Those verbs all TAKE a bound: a call that
+    states one hears the gate refuse that bound, a true verdict on an argument
+    the caller can drop; a boundless ``terminate`` clears the gate in silence and
+    reaches the quadrant prepared-write production states.
+    """
+    if not is_temporal(declaring_entity):
+        return
+    refusal = instructions.temporal_delete_refusal(entity.identity.name, mutation, surface=surface)
+    if refusal is not None:
+        raise instructions.WriteInstructionError(refusal)
 
 
 def _stated_instant(name: str, mutation: KeyedMutation, bound: str, value: object) -> dt.datetime:

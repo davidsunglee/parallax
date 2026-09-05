@@ -4528,11 +4528,17 @@ These feature tests do not claim the deferred `benchmark` command or general
   **An insert enters that ingress by its own door, with no source.** `insert` and
   `insert_until` name a fresh value rather than one a read published, so there is
   no source to resolve and none is invented: the door they enter runs reentry;
-  representation-only shape; the provenance the value itself states; window;
-  member names, values, and preparation; then buffer, recording the row it opened
-  in the one ledger the exemption above reads. An opening row observed nothing,
-  so it reduces no effective change set, resolves no evidence, and takes no
-  claim.
+  representation-only shape; the pin the value's own view carries; the provenance
+  the value itself states; window; member names, values, and preparation; then
+  buffer, recording the row it opened in the one ledger the exemption above
+  reads. An opening row observed nothing, so it reduces no effective change set,
+  resolves no evidence, and takes no claim. The pin precedes the provenance here
+  where the order above places it after, and the difference is which refusals can
+  stand over one value at once: a pinned value is one this store's own read
+  published, so an insert handed one has both refusals coming and the read-only
+  view is the more specific complaint, while a value a source-backed write's
+  provenance rule refuses came from no read of this store and so carries no view
+  to be pinned at all.
 
   **Which static refusal follows from whose rule was broken.**
   `WriteInstructionError` is the write verb's OWN verdict: input that states no

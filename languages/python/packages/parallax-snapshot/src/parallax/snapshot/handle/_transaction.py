@@ -3,13 +3,16 @@
 :class:`Transaction` is what a ``db.transact`` closure receives: a facade over
 the active unit of work and the transaction's own connection. It owns the
 keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
-temporal-window family), the participating :meth:`Transaction.find`, and the
-``_buffer`` seam every keyed verb shares — which ends at
-:func:`~parallax.snapshot.handle._write_inputs.admit_and_buffer`, where a write's
-claim at the scope it settles against is taken and an intent the buffer's existing
-claim cannot absorb is refused. That seam is `_write_inputs`' rather than this
-class's, because the Wire verbs reach it too: one ingress per representation, one
-judgement and one buffer for both.
+temporal-window family) and the participating :meth:`Transaction.find`.
+
+What a keyed verb here OWNS is one adapter and one call. The order every keyed
+write runs — re-entry, source, pin, window, preparation, effective changes,
+the buffered-insert exemption, evidence, claim, and buffer — belongs to
+:mod:`parallax.snapshot.handle._keyed_writes`, and what this module supplies is
+the Typed Keyed Write Source and Keyed Insert Source: what an Entity value, its
+Change Record, and its lifecycle answer that order, and nothing about the order
+itself. The Wire verbs supply their own and the two meet in one judgement and
+one buffer.
 
 It also carries the row-form read (:meth:`Transaction.read_rows`), which the
 conformance harness reaches and no developer surface does. It is not a second
@@ -38,8 +41,9 @@ eager read verbs here delegate to),
 surface), :mod:`parallax.snapshot.handle._keyed_writes` (the keyed write ingress,
 whose per-call context this transaction builds once and hands to its own keyed
 verbs, to ``tx.wire``'s, and to the conformance bridge alike),
-:mod:`parallax.snapshot.handle._write_inputs` (verb-input validation
-and the evidence machinery), and
+:mod:`parallax.snapshot.handle._write_inputs` (the steps the Typed sources
+themselves run — instance resolution, the source pin and identity row a value
+states, and the object a written row addresses), and
 :mod:`parallax.snapshot.handle._predicate_writes`. Demarcation — ``Database``,
 ``_Demarcation``, and ``TransactionOptionConflictError`` — lives in
 :mod:`parallax.snapshot.handle._database`, which imports this module, never the
@@ -64,15 +68,19 @@ from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
     refuse_reentry,
 )
-from parallax.core.metamodel import EntityIdentity, EntityMetadata
+from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.unit_work import (
     KeyedMutation,
-    SettledEvidence,
     UnitOfWork,
+    instructions,
 )
-from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
+from parallax.core.unit_work.instructions import (
+    PreparedKeyedWrite,
+    PreparedPredicateWrite,
+    PreparedTemporalBounds,
+)
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -80,8 +88,15 @@ from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPre
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle._family import declaring as declaring_of
-from parallax.snapshot.handle._keyed_writes import KeyedWriteContext, Provenance
+from parallax.snapshot.handle._keyed_writes import (
+    KeyedWriteContext,
+    PreparedSourceWrite,
+    Provenance,
+    ResolvedKeyedInsert,
+    ResolvedKeyedWriteSource,
+    keyed_insert,
+    keyed_write,
+)
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
@@ -92,19 +107,13 @@ from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._wire_writes import WireWriteLane, buffer_prepared_keyed_write
 from parallax.snapshot.handle._write_inputs import (
+    UPDATE_MUTATIONS,
     BufferedInserts,
-    admit_and_buffer,
-    cancels_a_pending_assignment,
     keyed_instruction,
     metadata_of_instance,
-    resolve_write_evidence,
     source_hint_of,
+    source_identity_row,
     source_pin,
-    validate_keyed_instruction,
-    validate_provenance,
-    validate_source_pin,
-    validate_window,
-    written_object,
     written_object_key,
 )
 
@@ -128,6 +137,168 @@ def provenance_of(value: EntityBase) -> Provenance:
     if snapshot_state_of(value) is None:
         return "foreign"
     return "this"
+
+
+def prepared_typed_write(
+    meta: Metamodel,
+    mutation: KeyedMutation,
+    entity: EntityMetadata,
+    row: Mapping[str, object],
+    bounds: PreparedTemporalBounds,
+) -> PreparedKeyedWrite:
+    """One authored single-row keyed instruction, measured by Unit Work's sole
+    typed judgment — member names, values, and assignment legality together.
+
+    The bounds ride the instruction's dimension-explicit fields rather than the
+    row (ADR 0010/0013): an As-Of Axis endpoint is framework-owned, so a
+    Valid-Time bound is never a member a caller could author.
+    """
+    prepared = instructions.prepare_typed_write(
+        keyed_instruction(
+            mutation, entity.identity, row, valid_from=bounds.valid_from, until=bounds.until
+        ),
+        meta,
+    )
+    assert isinstance(prepared, PreparedKeyedWrite)
+    return prepared
+
+
+class TypedKeyedWriteSource:
+    """The Typed Keyed Write Source: what an Entity value and its Change Record
+    answer the keyed write ingress.
+
+    Inert when constructed and private to one verb call, so nothing it can refuse
+    runs before the ingress refuses re-entry. :meth:`capture` judges nothing at
+    all — a Typed value's shape is fixed by its class, and ``edit()`` has already
+    judged every assignment its Change Record holds, which is why the authoring
+    refusals the Wire lane raises at its own capture reach a Typed caller before a
+    verb ever receives a value.
+
+    The mutation and the accepted Metamodel arrive at the phases the protocol
+    hands them to and are retained for :meth:`prepare`, which authors the
+    instruction and is handed neither.
+    """
+
+    __slots__ = ("_codec", "_meta", "_mutation", "_value")
+
+    def __init__(self, value: EntityBase, codec: EntityRowCodec) -> None:
+        self._value = value
+        self._codec = codec
+        self._meta: Metamodel | None = None
+        self._mutation: KeyedMutation | None = None
+
+    def capture(self, mutation: KeyedMutation, /) -> None:
+        return None
+
+    def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedWriteSource:
+        """The facts this value states about the state the write revises."""
+        self._meta = model
+        self._mutation = mutation
+        entity = metadata_of_instance(model, self._value)
+        return ResolvedKeyedWriteSource(
+            entity=entity,
+            pin=source_pin(self._value),
+            hint=source_hint_of(self._value),
+            identity_row=source_identity_row(entity, model, self._value),
+            provenance=provenance_of(self._value),
+        )
+
+    def prepare(
+        self, resolved: ResolvedKeyedWriteSource, bounds: PreparedTemporalBounds, /
+    ) -> PreparedSourceWrite:
+        """The instruction this value authors, beside its own originals.
+
+        Both sides run through the SAME producer: an update family verb measures
+        the Change Record's two halves — every touched member at the value it now
+        holds, and those same members at the value the chain first recorded — so
+        the ingress weighs effectiveness over canonical values on both sides
+        rather than over a serialized document on one. A destructive or close verb
+        names no member at all and authors its identity row alone, and so does an
+        update off a value whose chain touched nothing.
+
+        The object a refusal reports comes from the source's own hint where there
+        is one, and is derived from the authored row where there is not — the two
+        agree by construction, because a read keys its hint by the same rule a
+        written row is keyed by.
+        """
+        meta, mutation = self._retained()
+        authored = self._codec.authored_row(self._value) if mutation in UPDATE_MUTATIONS else None
+        if authored is None:
+            instruction = prepared_typed_write(
+                meta, mutation, resolved.entity, self._codec.identity_row(self._value), bounds
+            )
+            originals: Mapping[str, object] = {}
+        else:
+            touched = frozenset(authored.originals)
+            identity = {name: value for name, value in authored.row.items() if name not in touched}
+            instruction = prepared_typed_write(
+                meta, mutation, resolved.entity, authored.row, bounds
+            )
+            restored = prepared_typed_write(
+                meta, mutation, resolved.entity, {**identity, **authored.originals}, bounds
+            )
+            originals = {name: restored.rows[0][name] for name in touched}
+        return PreparedSourceWrite(
+            instruction=instruction,
+            object_key=(
+                resolved.hint.object_key
+                if resolved.hint is not None
+                else written_object_key(resolved.entity, meta, instruction.rows[0])
+            ),
+            originals=originals,
+        )
+
+    def _retained(self) -> tuple[Metamodel, KeyedMutation]:
+        # The ingress calls the three phases in order and nothing else calls any
+        # of them, so what `resolve` filed is always here by `prepare`.
+        assert self._meta is not None
+        assert self._mutation is not None
+        return self._meta, self._mutation
+
+
+class TypedKeyedInsertSource:
+    """The Typed Keyed Insert Source: what a fresh Entity instance answers the
+    ingress's insert door.
+
+    Narrower than its peer by exactly what an opening row has no answer for: no
+    hint, no identity row named ahead of the instruction, and no originals. What
+    it authors is the Create Payload — every member the instance actually SET —
+    rather than a change set, because there is no prior state for a change to be
+    against.
+    """
+
+    __slots__ = ("_codec", "_instance", "_meta", "_mutation")
+
+    def __init__(self, instance: EntityBase, codec: EntityRowCodec) -> None:
+        self._instance = instance
+        self._codec = codec
+        self._meta: Metamodel | None = None
+        self._mutation: KeyedMutation | None = None
+
+    def capture(self, mutation: KeyedMutation, /) -> None:
+        return None
+
+    def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
+        self._meta = model
+        self._mutation = mutation
+        return ResolvedKeyedInsert(
+            entity=metadata_of_instance(model, self._instance),
+            pin=source_pin(self._instance),
+            provenance=provenance_of(self._instance),
+        )
+
+    def prepare(
+        self, resolved: ResolvedKeyedInsert, bounds: PreparedTemporalBounds, /
+    ) -> PreparedKeyedWrite:
+        assert self._meta is not None  # the ingress resolves before it prepares
+        assert self._mutation is not None
+        return prepared_typed_write(
+            self._meta,
+            self._mutation,
+            resolved.entity,
+            self._codec.full_row(self._instance),
+            bounds,
+        )
 
 
 class Transaction:
@@ -239,15 +410,12 @@ class Transaction:
         own Bitemporal-only-required :func:`validate_window`: a
         Transaction-Time-Only or non-temporal target takes none (no Valid-Time dimension to
         bound)."""
-        refuse_reentry(self._lifecycle)
-        record, valid_from_literal, _ = self._prepare_keyed_write(instance, "insert", valid_from)
-        self._buffer(
+        keyed_insert(
+            self._keyed,
+            TypedKeyedInsertSource(instance, self._codec),
             "insert",
-            record.identity,
-            self._codec.full_row(instance),
-            valid_from=valid_from_literal,
+            valid_from=valid_from,
         )
-        self._record_buffered_insert(record, instance)
 
     def insert_until(
         self, instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
@@ -265,18 +433,13 @@ class Transaction:
         fields: an As-Of Axis endpoint is framework-owned and the temporal write
         path derives every interval bound itself (`python.md` §2), which is why
         the Entity constructor refuses an authored one outright."""
-        refuse_reentry(self._lifecycle)
-        record, valid_from_literal, until_literal = self._prepare_keyed_write(
-            instance, "insertUntil", valid_from, until
-        )
-        self._buffer(
+        keyed_insert(
+            self._keyed,
+            TypedKeyedInsertSource(instance, self._codec),
             "insertUntil",
-            record.identity,
-            self._codec.full_row(instance),
-            valid_from=valid_from_literal,
-            until=until_literal,
+            valid_from=valid_from,
+            until=until,
         )
-        self._record_buffered_insert(record, instance)
 
     def update(self, copy: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
@@ -307,19 +470,11 @@ class Transaction:
         Mirrors ``update_where``'s own bitemporal-only-required
         :func:`validate_window`: a Transaction-Time-Only or non-temporal target
         takes none (no Valid-Time dimension to bound)."""
-        refuse_reentry(self._lifecycle)
-        record, valid_from_literal, _ = self._prepare_keyed_write(copy, "update", valid_from)
-        authored = self._authored_assignments(record, copy, "update")
-        if authored is None:
-            return
-        row, restorations = authored
-        self._buffer(
+        keyed_write(
+            self._keyed,
+            TypedKeyedWriteSource(copy, self._codec),
             "update",
-            record.identity,
-            row,
-            valid_from=valid_from_literal,
-            claim=self._resolve_evidence(record, copy, "update"),
-            restorations=restorations,
+            valid_from=valid_from,
         )
 
     def delete(self, node_or_instance: EntityBase) -> None:
@@ -329,23 +484,15 @@ class Transaction:
         finite Transaction-Time instant is read-only and raises
         :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
         before any buffering, exactly as every other keyed verb does."""
-        refuse_reentry(self._lifecycle)
-        record = metadata_of_instance(self._model.meta, node_or_instance)
-        validate_source_pin(record.identity, source_pin(node_or_instance))
-        self._buffer(
-            "delete",
-            record.identity,
-            self._codec.identity_row(node_or_instance),
-            claim=self._resolve_evidence(record, node_or_instance, "delete"),
-        )
+        keyed_write(self._keyed, TypedKeyedWriteSource(node_or_instance, self._codec), "delete")
 
     # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
     # kind below is already a valid                                          #
     # ``KeyedMutation`` and already fully lowered (``bitemp_write`` /        #
     # ``txtime_write`` / ``planner``) — only the DEVELOPER-facing verb was    #
     # missing: a typed ``Transaction`` method that builds the SAME           #
-    # instruction through the SAME `_buffer` seam `insert`/`update`/`delete` #
-    # already share, so a hand-written program and the engine's corpus      #
+    # instruction through the SAME ingress `insert`/`update`/`delete`        #
+    # already enter, so a hand-written program and the engine's corpus       #
     # replay can never diverge in behavior.                                 #
     def terminate(
         self, node_or_instance: EntityBase, *, valid_from: dt.datetime | None = None
@@ -357,16 +504,11 @@ class Transaction:
         Bitemporal requires it (the mutation's own Valid-Time
         instant, mirrors ``terminate_where``'s own
         :func:`validate_window`)."""
-        refuse_reentry(self._lifecycle)
-        record, valid_from_literal, _ = self._prepare_keyed_write(
-            node_or_instance, "terminate", valid_from
-        )
-        self._buffer(
+        keyed_write(
+            self._keyed,
+            TypedKeyedWriteSource(node_or_instance, self._codec),
             "terminate",
-            record.identity,
-            self._codec.identity_row(node_or_instance),
-            valid_from=valid_from_literal,
-            claim=self._resolve_evidence(record, node_or_instance, "terminate"),
+            valid_from=valid_from,
         )
 
     def update_until(
@@ -386,22 +528,12 @@ class Transaction:
         edited copy's own Change Record nets to zero). An EMPTY effective
         change set (once the window is confirmed valid) issues no DML at all,
         exactly like keyed ``update``."""
-        refuse_reentry(self._lifecycle)
-        record, valid_from_literal, until_literal = self._prepare_keyed_write(
-            copy, "updateUntil", valid_from, until
-        )
-        authored = self._authored_assignments(record, copy, "updateUntil")
-        if authored is None:
-            return
-        row, restorations = authored
-        self._buffer(
+        keyed_write(
+            self._keyed,
+            TypedKeyedWriteSource(copy, self._codec),
             "updateUntil",
-            record.identity,
-            row,
-            valid_from=valid_from_literal,
-            until=until_literal,
-            claim=self._resolve_evidence(record, copy, "updateUntil"),
-            restorations=restorations,
+            valid_from=valid_from,
+            until=until,
         )
 
     def terminate_until(
@@ -415,170 +547,12 @@ class Transaction:
         ``valid_from < until`` (equal or reversed bounds) raises at THIS
         call, before any buffering (:func:`validate_window`, `python.md`
         §5)."""
-        refuse_reentry(self._lifecycle)
-        record, valid_from_literal, until_literal = self._prepare_keyed_write(
-            node_or_instance, "terminateUntil", valid_from, until
-        )
-        self._buffer(
+        keyed_write(
+            self._keyed,
+            TypedKeyedWriteSource(node_or_instance, self._codec),
             "terminateUntil",
-            record.identity,
-            self._codec.identity_row(node_or_instance),
-            valid_from=valid_from_literal,
-            until=until_literal,
-            claim=self._resolve_evidence(record, node_or_instance, "terminateUntil"),
-        )
-
-    def _prepare_keyed_write(
-        self,
-        node_or_instance: EntityBase,
-        mutation: KeyedMutation,
-        valid_from: dt.datetime | None,
-        until: dt.datetime | None = None,
-    ) -> tuple[EntityMetadata, dt.datetime | None, dt.datetime | None]:
-        """The keyed-verb prep every verb above (``delete`` excepted — it takes
-        no Valid-Time bound) opens with: resolve the written instance's own
-        accepted Metadata and its family's DECLARING entity (the entity that
-        actually carries the temporal/versioned shape), refuse a source view
-        pinned at a finite Transaction-Time instant
-        (:func:`validate_source_pin` — the Transaction-Time past is read-only,
-        and an edited copy of such a view carries that view's own pin, so
-        deriving one is no route past this refusal), refuse a value whose
-        provenance this mutation's verb does not accept
-        (:func:`validate_provenance` over :func:`provenance_of`'s answer, before
-        any row is derived — with the object this transaction already buffered an
-        insert for exempted, so an insert-then-update pair coalesces rather than
-        being refused), then
-        validate + render the whole Valid-Time window against that declaring
-        entity's own temporality (:func:`validate_window`, spec §5).
-
-        The window is validated HERE for every verb, bounded and plain alike,
-        rather than leaving a ``*Until`` verb to add its own ``until`` step
-        afterwards: a bounded window is a PAIR, and asking half of it first is
-        what let an absent half be reported as something other than the missing
-        bound it is. Returns the record (``_buffer``'s own entity-name argument)
-        and the two managed normalized instants (``None`` where the target or the
-        verb states no such bound). The declaring entity stays this step's own
-        working value: every family answer a later step needs resolves from the
-        accepted Metamodel itself."""
-        record = metadata_of_instance(self._model.meta, node_or_instance)
-        declaring = declaring_of(self._model.meta, record)
-        validate_source_pin(record.identity, source_pin(node_or_instance))
-        validate_provenance(
-            record.identity,
-            provenance_of(node_or_instance),
-            mutation,
-            inserted=self._has_buffered_insert(record, node_or_instance),
-        )
-        valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
-        return record, valid_from_literal, until_literal
-
-    def _authored_assignments(
-        self, record: EntityMetadata, copy: EntityBase, mutation: KeyedMutation
-    ) -> tuple[Mapping[str, object], frozenset[str]] | None:
-        """What an update verb buffers for ``copy``: its row and the members its
-        edit chain touched and put back — or ``None`` when it buffers nothing.
-
-        A chain with an effective change buffers that change, and rides its
-        restorations beside it so a later merge knows which members the author's
-        last word left alone. A chain that nets to zero normally buffers nothing
-        at all, which is the zero-round-trip no-op every net-zero edit has always
-        been. The exception is the one thing such a chain CAN do: cancel an
-        assignment this transaction has already buffered at the same claim
-        scope. There it buffers its identity row alone, carrying the
-        restorations that erase the pending assignment — and the merged write is
-        then eliminated exactly as a single net-zero edit is, so the outcome is
-        still no DML rather than a write of a value the caller took back.
-        """
-        row = self._codec.edited_row(copy)
-        restorations = self._codec.restored_members(copy)
-        if row is not None:
-            return row, restorations
-        if not restorations or not cancels_a_pending_assignment(
-            self._uow, self._model.meta, record, source_hint_of(copy), mutation
-        ):
-            return None
-        return self._codec.identity_row(copy), restorations
-
-    def _record_buffered_insert(self, record: EntityMetadata, instance: EntityBase) -> None:
-        """Record the object this transaction just buffered an insert of — the
-        read-your-own-writes exemption's whole state.
-
-        Read as the value itself names it (:func:`written_object`) rather than
-        through a derived row, because the exemption is asked on a branch that
-        must not derive one.
-        """
-        self._keyed.inserts.record(written_object(record, self._model.meta, instance))
-
-    def _has_buffered_insert(self, record: EntityMetadata, instance: EntityBase) -> bool:
-        """Whether THIS transaction already buffered an insert of the object
-        ``instance`` names — the read-your-own-writes half of the provenance
-        rule.
-
-        Asked on the branch that would otherwise refuse, so it derives nothing
-        from ``instance`` that could fail: a value whose class cannot even name
-        an object (:func:`written_object`) is no object this transaction
-        inserted, and answering ``False`` for it is what leaves the provenance
-        refusal — rather than an ``EntityRowError`` from a row nothing asked for
-        — as what the developer sees. A transaction that buffered no insert
-        answers without reading ``instance`` at all.
-        """
-        if not self._keyed.inserts:
-            return False
-        return self._keyed.inserts.holds(written_object(record, self._model.meta, instance))
-
-    def _resolve_evidence(
-        self,
-        record: EntityMetadata,
-        instance: EntityBase,
-        mutation: KeyedMutation,
-    ) -> SettledEvidence | None:
-        """What a keyed write against existing state settles against — resolved
-        once, here, off the value the verb was handed.
-
-        One resolution serves the address, the gate, the version advance, the
-        license, and the claim, which is what makes it impossible for them to
-        disagree. The evidence comes from the VALUE rather than from a transaction-wide slot:
-        the observation belongs to the source that observed it (`m-unit-work`
-        "Observation lifetime"), so a standalone ``db.find`` value carries its
-        own and a value that came from no read carries none. Which of those
-        licenses this write is
-        :func:`~parallax.snapshot.handle._write_inputs.resolve_write_evidence`'s
-        answer, under the target Entity's own Effective Concurrency Strategy.
-
-        The object a refusal reports comes from the source's own hint where there
-        is one, and is derived through the codec only where there is not — the
-        two agree by construction, because the read keys its hint by the same
-        rule the codec keys a written row by, and deriving it eagerly would cost
-        every accepted write an identity row it never uses.
-
-        An object this SAME transaction buffered an insert for is exempt
-        (read-your-own-writes: the buffered insert IS the provenance; the planner
-        coalesces or orders the pair, `m-unit-work`), and the write that follows
-        it settles bare and claims nothing, exactly as the insert does — the row
-        it revises is the one that insert opens, so there is no prior row for a
-        second intent to compete for and same-object coalescing is what combines
-        the pair. Callers invoke this AFTER a
-        sparse update's empty-change-set no-op return (the no-op-first ordering
-        `m-opt-lock` fixes: a no-op is dropped before any observation concern)
-        and AFTER window validation (the window rejects first).
-        """
-        if self._has_buffered_insert(record, instance):
-            return None
-        hint = source_hint_of(instance)
-        return resolve_write_evidence(
-            self._model.meta,
-            record,
-            hint,
-            mutation=mutation,
-            object_key=(
-                hint.object_key
-                if hint is not None
-                else written_object_key(
-                    record, self._model.meta, self._codec.identity_row(instance)
-                )
-            ),
-            preference=self._uow.settings.concurrency,
-            participation=self._uow.participation,
+            valid_from=valid_from,
+            until=until,
         )
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
@@ -670,49 +644,6 @@ class Transaction:
         ``tx.wire.find`` always run.
         """
         return self._reads.read_rows(query)
-
-    def _buffer(
-        self,
-        mutation: KeyedMutation,
-        entity: EntityIdentity,
-        row: Mapping[str, object],
-        *,
-        valid_from: dt.datetime | None = None,
-        until: dt.datetime | None = None,
-        claim: SettledEvidence | None = None,
-        restorations: frozenset[str] = frozenset(),
-    ) -> None:
-        # `claim` is what the verb resolved THIS write settles against, off the
-        # value it was handed, and is what `buffered_write` turns into the
-        # buffer variant it implies: an `ObservedKeyedWrite` carrying both the
-        # observation and the claim where a state was observed, an
-        # `ObjectClaimedWrite` where the object's own lock is the evidence, and
-        # the bare instruction where the write settles against nothing. Riding
-        # the buffered item is what keeps the evidence alive
-        # while the write is buffered and what has a successful flush spend
-        # exactly the claims its surviving writes carried. The observation is
-        # never an instruction field — a
-        # `WriteInstruction` is a durable, schema-validated document whose
-        # `deserialize` refuses the reserved observation control keys outright —
-        # so it rides beside the instruction rather than inside it, exactly as a
-        # Materialized Write Group's own observation columns do.
-        #
-        # The authored instruction is measured by `validate_keyed_instruction`,
-        # the SAME judgment in the SAME order every typed keyed ingress runs.
-        #
-        # `valid_from` / `until` extend this neutral seam for a TEMPORAL keyed
-        # write: a non-temporal or Transaction-Time-Only
-        # target's caller never passes them. The typed temporal developer verbs
-        # (``update``'s own optional Bitemporal ``valid_from``,
-        # ``terminate``, ``update_until``, ``terminate_until``; ``insert``'s own
-        # optional Bitemporal ``valid_from`` and ``insert_until``) and the
-        # conformance engine's own
-        # temporal write translation both pass them the SAME way (`m-txtime-write`
-        # / `m-bitemp-write` — the dimension-explicit `validFrom` / `until`
-        # instruction fields, never smuggled onto `row`, ADR 0010/0013).
-        instruction = keyed_instruction(mutation, entity, row, valid_from=valid_from, until=until)
-        instruction = validate_keyed_instruction(self._model.meta, instruction)
-        admit_and_buffer(self._uow, self._model.meta, instruction, claim, restorations=restorations)
 
     # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(

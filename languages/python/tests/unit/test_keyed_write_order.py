@@ -15,12 +15,11 @@ are Wire-only because ``edit()`` judges a Typed assignment before ``tx.update()`
 receives a value, and the Typed rows here assert that pre-emption over each
 provenance rather than leaving it unstated.
 
-Two shapes assert the outcome the specification names rather than the one the
-code produces, and carry an expected failure whose reason states that gap:
-`terminate` against a target with no as-of axis whose evidence is also unusable,
-which only the Typed lane answers wrongly, and `delete` against a temporal
-target, which neither lane refuses at the verb. Those marks are per
-representation, because the two lanes reach the specified answer separately.
+One shape still asserts the outcome the specification names rather than the one
+the code produces, and carries an expected failure whose reason states that gap:
+`delete` against a temporal target, which the Wire lane does not yet refuse at
+the verb. The mark is per representation, because the two lanes reach the
+specified answer separately and the Typed one already has.
 """
 
 from __future__ import annotations
@@ -59,18 +58,12 @@ from _keyed_write_drivers import (
 
 from _support.db_port import WriteCall
 
-# The Typed `delete` verb reaches no window gate and the Wire one does, so a
-# Bitemporal `delete` fails at different stages by representation and has no
-# shared answer to compare. `test_a_temporal_target_refuses_delete_at_the_verb`
+# The Typed lane refuses a temporal `delete` at the verb and the Wire lane does
+# not yet, so a temporal `delete` has no shared answer to compare until the Wire
+# verbs enter the ingress too. `test_a_temporal_target_refuses_delete_at_the_verb`
 # states the answer the specification names for both.
-_BITEMPORAL_DELETE: frozenset[tuple[str, str]] = frozenset({("position", "delete")})
-
-# `terminate` against a target with no as-of axis, when the source's evidence is
-# also unusable: the milestone-verb refusal and the evidence refusal are both
-# available, and the representations choose differently. The dual-defect row
-# `test_a_milestone_verb_on_a_non_temporal_target_...` states each answer.
-_MILESTONE_ON_NON_TEMPORAL: frozenset[tuple[str, str]] = frozenset(
-    {("account", "terminate"), ("person", "terminate")}
+_TEMPORAL_DELETE: frozenset[tuple[str, str]] = frozenset(
+    {("balance", "delete"), ("position", "delete")}
 )
 
 _SOURCE_VERBS: tuple[Verb, ...] = (
@@ -141,9 +134,7 @@ def _grid(
 # under both Concurrency Preferences. An invalid verb/temporality pair is a    #
 # refusal row rather than an omission.                                         #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(
-    "scenario", _grid(targets=_ALL_TARGETS, exempt=_BITEMPORAL_DELETE), ids=str
-)
+@pytest.mark.parametrize("scenario", _grid(targets=_ALL_TARGETS, exempt=_TEMPORAL_DELETE), ids=str)
 def test_one_verb_over_a_participating_source_answers_one_way(scenario: Scenario) -> None:
     _agrees(scenario)
 
@@ -177,7 +168,7 @@ def test_a_change_set_that_changes_nothing_answers_one_way(scenario: Scenario) -
     "scenario",
     _grid(
         verbs=_SOURCE_VERBS,
-        exempt=_BITEMPORAL_DELETE | _MILESTONE_ON_NON_TEMPORAL,
+        exempt=_TEMPORAL_DELETE,
         source="standalone",
     ),
     ids=str,
@@ -229,7 +220,7 @@ def test_a_reversed_window_answers_one_way(scenario: Scenario) -> None:
         for target in _ALL_TARGETS
         for verb in _SOURCE_VERBS
         for change in ("ordinary", "net_zero")
-        if (target.name, verb) not in _BITEMPORAL_DELETE
+        if (target.name, verb) not in _TEMPORAL_DELETE
     ),
     ids=str,
 )
@@ -252,7 +243,7 @@ def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
         for target in _ALL_TARGETS
         for verb in _SOURCE_VERBS
         for change in ("ordinary", "net_zero")
-        if (target.name, verb) not in _BITEMPORAL_DELETE
+        if (target.name, verb) not in _TEMPORAL_DELETE
     ),
     ids=str,
 )
@@ -488,30 +479,17 @@ def test_the_typed_lane_refuses_that_authoring_before_a_verb_receives_it(
 # --------------------------------------------------------------------------- #
 # `terminate` against a target with no as-of axis, when the source's evidence  #
 # is also unusable. The milestone-verb refusal is the static one and precedes  #
-# the evidence question, which is the answer the Wire lane gives; the Typed    #
-# lane resolves evidence first and gives the evidence refusal instead.         #
+# the evidence question, in both representations: preparation runs before      #
+# evidence resolves, so the caller hears which verb the target takes rather    #
+# than that the value it was handed proves nothing.                            #
 # --------------------------------------------------------------------------- #
 _MILESTONE_ROWS: tuple[Scenario, ...] = (
     Scenario(target=ACCOUNT_TARGET, verb="terminate", source="standalone", concurrency="locking"),
     Scenario(target=PERSON_TARGET, verb="terminate", source="standalone", concurrency="locking"),
 )
 
-_TYPED_PREPARES_LAST = pytest.mark.xfail(
-    reason=(
-        "the Typed verbs resolve evidence before they prepare, so this row hears "
-        "`write-evidence-unavailable` instead of the milestone-verb refusal until "
-        "the shared keyed-write ingress lands"
-    )
-)
 
-
-@pytest.mark.parametrize(
-    "representation",
-    (
-        "wire",
-        pytest.param("typed", marks=_TYPED_PREPARES_LAST),
-    ),
-)
+@pytest.mark.parametrize("representation", REPRESENTATIONS)
 @pytest.mark.parametrize("scenario", _MILESTONE_ROWS, ids=str)
 def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
     scenario: Scenario, representation: Representation
@@ -530,13 +508,12 @@ def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
 # `delete` against a temporal target. `delete` physically removes rows and     #
 # carries no temporal meaning, so a target that milestones its rows spells its #
 # removal `terminate` and refuses `delete` at the verb, whichever              #
-# representation asked and whatever the source (`python.md` §5). Neither       #
-# representation refuses it there: the Typed verb reaches no window gate at    #
-# all, the Wire one reaches a window gate that answers about `valid_from`, and #
-# a temporal `delete` of a row this unit of work inserted is accepted          #
-# outright, its insert cancelled and no DML emitted. Each lane carries its own #
-# expected failure, because each reaches the specified answer by its own       #
-# change and one mark over both would outlive the first of them.               #
+# representation asked and whatever the source (`python.md` §5). The Typed lane #
+# refuses it there; the Wire one still reaches a window gate that answers about #
+# `valid_from`, or the flush's own refusal, or — over a row this unit of work   #
+# inserted — nothing at all, its insert cancelled and no DML emitted. The mark  #
+# is per lane, because each reaches the specified answer by its own change and  #
+# one mark over both would have outlived the first of them.                     #
 # --------------------------------------------------------------------------- #
 _TEMPORAL_DELETE_SOURCES: tuple[tuple[Source, Concurrency, Representation | None], ...] = (
     ("participating", "optimistic", None),
@@ -556,13 +533,6 @@ _TEMPORAL_DELETE_ROWS: tuple[Scenario, ...] = tuple(
     for opener in REPRESENTATIONS
 )
 
-_TYPED_DELETE_IS_NOT_MEASURED = pytest.mark.xfail(
-    reason=(
-        "the Typed `delete` verb measures nothing about its target's temporality, "
-        "so this row hears the flush's refusal, the evidence refusal, or nothing at "
-        "all until the shared keyed-write ingress lands"
-    )
-)
 _WIRE_DELETE_IS_NOT_MEASURED = pytest.mark.xfail(
     reason=(
         "the Wire `delete` verb measures the window rather than the verb, so this "
@@ -575,11 +545,7 @@ _TEMPORAL_DELETE_CASES = tuple(
     pytest.param(
         scenario,
         representation,
-        marks=(
-            _TYPED_DELETE_IS_NOT_MEASURED
-            if representation == "typed"
-            else _WIRE_DELETE_IS_NOT_MEASURED
-        ),
+        marks=() if representation == "typed" else _WIRE_DELETE_IS_NOT_MEASURED,
         id=f"{scenario}-{representation}",
     )
     for scenario in _TEMPORAL_DELETE_ROWS
