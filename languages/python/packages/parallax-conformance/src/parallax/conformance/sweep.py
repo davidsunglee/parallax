@@ -33,6 +33,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-metamodel",
         "m-model-evolution",
         "m-model-formation",
+        "m-schema-delta",
         "m-storage-layout",
         "m-value-object",
         "m-wire",

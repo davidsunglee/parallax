@@ -62,6 +62,12 @@ def _expected(case: case_format.Case) -> dict[str, Any]:
     return cast("dict[str, Any]", case_document(case)["then"]["evolution"])
 
 
+def _expected_schema(case: case_format.Case) -> dict[str, Any] | None:
+    then = cast("dict[str, Any]", case_document(case)["then"])
+    matrix = then.get("schema")
+    return cast("dict[str, Any]", matrix) if matrix is not None else None
+
+
 @pytest.mark.parametrize(
     "case", _REACHABLE_EVOLUTION, ids=[c.case_id for c in _REACHABLE_EVOLUTION]
 )
@@ -74,6 +80,15 @@ def test_evolution_sweep(case: case_format.Case) -> None:
     observations = envelope["observations"]
     assert observations["roundTrips"] == 0
     assert observations["evolution"] == _expected(case)
+    expected_schema = _expected_schema(case)
+    if expected_schema is not None:
+        # A cell this implementation has no Dialect for is authored as the delta
+        # some implementation must produce; the run reports it as an explicit
+        # exclusion instead, which is a counted gap rather than a match.
+        graded = {
+            name: cell for name, cell in observations["schema"].items() if "excluded" not in cell
+        }
+        assert graded == {name: cell for name, cell in expected_schema.items() if name in graded}
 
 
 def test_reachable_evolution_population_is_non_empty() -> None:
@@ -88,6 +103,33 @@ def test_the_reachable_population_covers_both_earlier_endpoint_forms() -> None:
         case_document(case)["when"]["evolve"]["earlier"] is None for case in _REACHABLE_EVOLUTION
     }
     assert endpoints == {True, False}, endpoints
+
+
+def test_the_matrix_reports_every_catalog_dialect_and_excludes_the_missing_one() -> None:
+    # The supported Dialect catalog is the SPEC's, so the envelope answers for
+    # `mariadb` even though this implementation ships no strategy for it: the
+    # gap is named with its reason rather than left out of the matrix.
+    (provisioning,) = [
+        case for case in _REACHABLE_EVOLUTION if "provisioning" in case_document(case)["tags"]
+    ]
+    envelope = adapter.run_case(provisioning.path, _PROFILE.on_stand_in(_RefusingPort()))
+    matrix = envelope["observations"]["schema"]
+    assert sorted(matrix) == ["mariadb", "postgres"]
+    assert matrix["mariadb"] == {"excluded": {"reason": "no-dialect"}}
+    assert "delta" in matrix["postgres"]
+
+
+def test_a_coordinated_description_reports_no_schema_matrix() -> None:
+    # A Coordinated Evolution is not an input to schema generation at all, so
+    # there is no cell to report — not an empty one, and not an excluded one.
+    coordinated = [
+        case
+        for case in _REACHABLE_EVOLUTION
+        if case_document(case)["then"]["evolution"]["kind"] == "coordinated"
+    ]
+    assert coordinated, "the reachable population lost its coordinated cases"
+    envelope = adapter.run_case(coordinated[0].path, _PROFILE.on_stand_in(_RefusingPort()))
+    assert "schema" not in envelope["observations"]
 
 
 def test_an_evolution_case_compiles_as_run_only() -> None:

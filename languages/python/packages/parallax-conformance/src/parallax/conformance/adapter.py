@@ -328,7 +328,8 @@ def _run(
     the classified ``rejectedRule`` with ``roundTrips: 0`` (m-conformance-
     adapter), and an evolution run reports the complete described ``evolution``
     the same way, for the same reason — describing the difference between two
-    accepted models is pure.
+    accepted models is pure — together with the ``schema`` matrix a unilateral
+    description lowers to on every supported Dialect.
     """
     if _is_scenario_lane_dispatched(case):
         raise _scenario_lane_error(case)
@@ -366,7 +367,7 @@ def _run(
         rule = engine.run_rejected_case(case)
         return [], {"rejectedRule": rule, "roundTrips": 0}
     if case.shape == "evolution":
-        return [], {"evolution": engine.run_evolution_case(case), "roundTrips": 0}
+        return [], {**engine.run_evolution_case(case), "roundTrips": 0}
     result = _read_observations(case, port, lifecycle)
     return result["emissions"], result["observations"]
 

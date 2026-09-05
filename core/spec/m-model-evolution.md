@@ -449,6 +449,33 @@ coordinated hierarchy change can move a surviving Entity between effective
 families — and a Coordinated Evolution retains its Behavioral Impacts alongside
 its requirements.
 
+## Consumer contract
+
+**`m-schema-delta`.** Consumes a `UnilateralEvolution` and nothing else: it
+reads the operations, the later endpoint, and — through `m-storage-layout` — that
+endpoint's physical shape. It never re-derives the difference, never re-classifies
+an operation, and never asks whether an evolution "should" be applied; both
+questions are already answered by the value it is handed. A Coordinated Evolution
+is not one of its inputs, so a coordination reason is never a schema-generation
+concern, and a Behavioral Impact is never one either: an impact reports what
+changes behind the surface, which no statement expresses.
+
+The generator refusing a Dialect does not travel back here. Renderer support is a
+deployment capability rather than a model-semantic fact, so an unsupported
+physical operation leaves the Evolution unilateral.
+
+**A non-relational consumer.** Consumes the same operations and produces no
+statements at all — a schema-change surface showing a team what it is about to do
+in the words it authored, or an adapter for a store with no tables. That second
+consumer is the reason the description is at model altitude: a column-level change
+set would serve only the relational generator and would duplicate what the Storage
+Layout facet already knows.
+
+**Every consumer.** Resolves the identities an operation names in the endpoint the
+operation belongs to — the later endpoint for an addition or an alteration, the
+earlier one for a removal — using the endpoints the Evolution retains rather than
+a model of its own.
+
 ## Rule Set boundary
 
 `m-model-evolution` contributes no Model Formation Rule Set, no Issue Codes, no

@@ -199,6 +199,7 @@ def test_core_and_evolution(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
     # tree: a private module missing from the built package, or a cycle among the
     # private modules, fails here and nowhere else in the clean-install lane.
     assert _import_ok(python, "parallax.evolution.model_evolution")
+    assert _import_ok(python, "parallax.evolution.schema_delta")
     # No Descriptor Frontend, descriptor parser, schema validator, sibling
     # lifecycle, adapter, driver, or conformance harness.
     assert not _import_ok(python, "parallax.descriptor")
