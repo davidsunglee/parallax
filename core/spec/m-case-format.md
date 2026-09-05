@@ -2468,6 +2468,12 @@ catalog: an omitted dialect is never an implicit skip, so adding a Dialect makes
 every unilateral evolution case incomplete until its cell is authored. A
 **coordinated** expectation MUST omit `then.schema` entirely.
 
+An implementation that ships no dialect strategy for a catalog entry still
+answers for that cell: it reports an explicit **exclusion** naming its reason
+(`m-conformance-adapter`'s `schema` observation), never an omitted key and never
+a silent pass. The cell stays authored, so the day that dialect's strategy lands
+it is graded with no corpus change.
+
 Describing two accepted models reaches no database and emits no DML, so an
 evolution case carries **no** golden SQL, costs `0` round trips, and is graded
 once rather than once per dialect. The harness checks the authored Evolution

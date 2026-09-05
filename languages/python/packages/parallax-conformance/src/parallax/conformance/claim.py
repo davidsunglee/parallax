@@ -99,6 +99,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-predicate",
         "m-read-lock",
         "m-relationship",
+        "m-schema-delta",
         "m-snapshot-read",
         "m-sql",
         "m-storage-layout",

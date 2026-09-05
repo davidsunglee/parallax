@@ -38,7 +38,11 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     lifecycle_run,
 )
-from parallax.conformance.evolution_wire import evolution_observation
+from parallax.conformance.evolution_wire import (
+    evolution_observation,
+    schema_cell,
+    unsupported_cell,
+)
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import (
     batch_write,
@@ -73,7 +77,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.deep_fetch import ValidatedEntityQuery
-from parallax.core.dialect import Dialect, dialect_for
+from parallax.core.dialect import DIALECT_CATALOG, Dialect, dialect_for
 from parallax.core.entity import DomainModel
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -144,7 +148,8 @@ from parallax.descriptor import (
     domain_model_from_document,
     validate_inheritance_families,
 )
-from parallax.evolution.model_evolution import ABSENT, evolve
+from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
+from parallax.evolution.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
 from parallax.snapshot import handle
 from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
@@ -7209,7 +7214,7 @@ def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> s
 
 
 def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
-    """Describe the evolution between an `evolution` case's two endpoints.
+    """The observations an `evolution` case's two endpoints produce.
 
     `when.evolve.earlier` is a model descriptor path or the explicit
     fresh-provisioning sentinel `null`, which reaches `evolve` as `ABSENT` rather
@@ -7217,9 +7222,15 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
     every other corpus model does, so a case cannot describe an evolution between
     models this implementation would not otherwise accept.
 
+    A unilateral description additionally carries its Schema Delta for every
+    Dialect the specification names, reported as one whole matrix rather than one
+    cell per run: a Dialect this implementation ships no strategy for is an
+    explicit exclusion naming its reason, never a silently absent key.
+
     The run touches no database and no port: describing the difference between
-    two accepted models is pure, which is what makes an evolution case cost zero
-    round trips and carry no dialect.
+    two accepted models and lowering it to statements are both pure, which is
+    what makes an evolution case cost zero round trips and carry no dialect of
+    its own.
     """
     when = case.document.get("when")
     action = cast("Mapping[str, object]", when).get("evolve") if isinstance(when, Mapping) else None
@@ -7235,7 +7246,27 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
             f"{case.path.name}: `when.evolve.earlier` is a string path or the null sentinel"
         )
     earlier = ABSENT if earlier_ref is None else models.load_model(_model_path(earlier_ref))
-    return evolution_observation(evolve(earlier, models.load_model(_model_path(later_ref))))
+    evolution = evolve(earlier, models.load_model(_model_path(later_ref)))
+    observations: dict[str, Any] = {"evolution": evolution_observation(evolution)}
+    if isinstance(evolution, UnilateralEvolution):
+        observations["schema"] = _schema_matrix(evolution)
+    return observations
+
+
+def _schema_matrix(evolution: UnilateralEvolution) -> dict[str, Any]:
+    """One cell per Dialect the specification supports, in catalog order."""
+    return {name: _schema_matrix_cell(evolution, name) for name in DIALECT_CATALOG}
+
+
+def _schema_matrix_cell(evolution: UnilateralEvolution, name: str) -> dict[str, Any]:
+    try:
+        dialect = dialect_for(name)
+    except ValueError:
+        return {"excluded": {"reason": "no-dialect"}}
+    try:
+        return schema_cell(schema_delta(evolution, dialect))
+    except UnsupportedSchemaEvolutionError as refusal:
+        return unsupported_cell(refusal)
 
 
 def run_rejected_case(case: case_format.Case) -> str:

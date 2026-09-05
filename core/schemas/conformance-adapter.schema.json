@@ -962,6 +962,90 @@
         }
       ]
     },
+    "createdIndex": {
+      "description": "One newly created Index's provenance: the physical name a later database violation reports, the Table it sits on, the logical Index Identity it was derived from, and its uniqueness. The sole exceptional mapping out of the generator, because only a physical name lets a host correlate a violation with a rollout.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["physicalIndexName", "physicalTable", "logicalIndexIdentity", "unique"],
+      "properties": {
+        "physicalIndexName": {"type": "string", "minLength": 1},
+        "physicalTable": {"type": "string", "minLength": 1},
+        "logicalIndexIdentity": {
+          "description": "An authored Index Identity, in the `indexRef` grammar. The grammar is COPIED from `identity.schema.json` rather than referenced, because the adapter envelope this oracle mirrors is consumable as one self-contained document and a cross-file `$ref` would not resolve for its readers; the harness pins the copy against the canonical definition so the two cannot drift.",
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+        },
+        "unique": {"type": "boolean"}
+      }
+    },
+    "unsupportedSchemaOperation": {
+      "description": "One physical operation the selected Dialect's renderer cannot spell: its operation kind, the physical position it acts on, and its causal Evolution Operations in canonical order. Renderer support is a deployment capability, so an unsupported cell does not reclassify the dialect-independent Evolution as coordinated.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "physicalLocation", "causedBy"],
+      "properties": {
+        "kind": {"enum": ["CreateTable", "AddColumn", "ExpandColumnDomain", "CreateIndex", "DropIndex"]},
+        "physicalLocation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["table"],
+          "properties": {
+            "table": {"type": "string", "minLength": 1},
+            "column": {"type": "string", "minLength": 1},
+            "index": {"type": "string", "minLength": 1}
+          }
+        },
+        "causedBy": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evolutionOperation"}}
+      }
+    },
+    "schemaObservationCell": {
+      "description": "One Dialect's answer for a unilateral Evolution: EITHER the Schema Delta the run generated, OR the complete ordered set of physical operations that Dialect cannot render, OR an explicit exclusion naming why this adapter reported no answer at all. Exactly one of the three — never a partial delta beside a refusal, and never an omitted key, so a Dialect an adapter ships no strategy for is a counted gap rather than a hidden one.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "delta": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["statements", "createdIndices"],
+          "properties": {
+            "statements": {
+              "description": "The ordered dialect statements the run generated, as plain strings.",
+              "type": "array",
+              "items": {"type": "string", "minLength": 1}
+            },
+            "createdIndices": {"type": "array", "items": {"$ref": "#/$defs/createdIndex"}}
+          }
+        },
+        "unsupported": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operations"],
+          "properties": {
+            "operations": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"$ref": "#/$defs/unsupportedSchemaOperation"}
+            }
+          }
+        },
+        "excluded": {
+          "description": "The adapter reported no answer for this Dialect, and why. `no-dialect` means it ships no dialect strategy for that Dialect Identity at all, so the cell is an exclusion the grader counts rather than a silent skip.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reason"],
+          "properties": {"reason": {"enum": ["no-dialect"]}}
+        }
+      }
+    },
+    "schemaObservation": {
+      "description": "The Schema Delta an evolution-case run produced for every supported Dialect, keyed by Dialect Identity, compared against the case's `then.schema`. Reported only for a unilateral description, because a Coordinated Evolution is not an input to schema generation. An adapter reports the WHOLE matrix in one envelope rather than one cell per run, so no cell depends on a profile the adapter may not have.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"enum": ["postgres", "mariadb"]},
+      "additionalProperties": {"$ref": "#/$defs/schemaObservationCell"}
+    },
     "observations": {
       "type": "object",
       "additionalProperties": false,
@@ -1041,6 +1125,10 @@
         "evolution": {
           "description": "The complete Evolution an evolution-case run described for the two accepted endpoints `when.evolve` names, compared against the case's `then.evolution` whole. An adapter whose claim includes the `evolution` caseShape MUST report this observation on an evolution-case run, with `roundTrips: 0` and no provisioning or dialect: describing a difference between two accepted models reaches no database. Optional and additive at the schema layer — only evolution-shape runs report it, and existing run outputs stay valid.",
           "$ref": "#/$defs/evolutionResult"
+        },
+        "schema": {
+          "description": "The Schema Delta an evolution-case run lowered its unilateral description to, one cell per supported Dialect, compared against the case's `then.schema`. Optional and additive at the schema layer — only a unilateral evolution-shape run reports it, and existing run outputs stay valid.",
+          "$ref": "#/$defs/schemaObservation"
         },
         "rejectedRule": {
           "description": "The classified normative rule identifier a rejected-case run refused the input with (m-predicate / m-navigate / m-value-object / m-inheritance), compared against the case's `then.rejectedRule`. An adapter whose claim includes the `rejected` caseShape MUST report this observation on a rejected-case run, with `roundTrips: 0` and no provisioning or dialect. Optional and additive at the schema layer — only rejected-shape runs report it, and existing run outputs stay valid.",

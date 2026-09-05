@@ -40,16 +40,30 @@ from parallax.core.base import (
 )
 
 __all__ = [
+    "DIALECT_CATALOG",
     "INFINITY",
     "POSTGRES",
+    "ColumnDdl",
     "Dialect",
     "DocumentAssignment",
     "DocumentLeafAssignment",
     "DocumentValueAssignment",
+    "IndexColumnDdl",
     "LockMode",
+    "PhysicalIndexName",
+    "Unsupported",
     "dialect_for",
     "projection_result_key",
 ]
+
+DIALECT_CATALOG: Final[tuple[str, ...]] = ("postgres", "mariadb")
+"""Every Dialect Identity the specification supports, in canonical order.
+
+The catalog is the SPEC's, not this implementation's: a name is listed here
+whether or not :func:`dialect_for` can answer with a strategy for it, so a
+consumer enumerating the supported Dialects reports a missing one as an explicit
+gap rather than silently narrowing the matrix to what it happens to ship.
+"""
 
 LockMode = Literal["locking", "optimistic"]
 
@@ -157,6 +171,69 @@ def _document_value_bind(value: object) -> object:
 
 
 @dataclass(frozen=True, slots=True)
+class PhysicalIndexName:
+    """One physical Index name as a database holds it.
+
+    Validated as a nonempty identifier and nothing more: a name read back off a
+    driver diagnostic (`widget_pkey`) is as legitimate as a generated one, and
+    the Dialect's identifier byte limit is the generating rule's concern rather
+    than this value's.
+    """
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not self.value:
+            raise ValueError("a Physical Index Name is a nonempty identifier")
+
+
+@dataclass(frozen=True, slots=True)
+class ColumnDdl:
+    """One physical Column as a DDL primitive receives it.
+
+    ``column`` is already quoted for the dialect and ``type_sql`` is already its
+    concrete column type, so a primitive spells the STATEMENT around facts a
+    caller resolved rather than resolving a layout of its own.
+    """
+
+    column: str
+    type_sql: str
+    nullable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class IndexColumnDdl:
+    """One Index component: its quoted Column and the domain an index over it has.
+
+    A dialect's index admissibility depends on the component's value domain — an
+    unbounded String has no key length InnoDB can index — so the neutral type and
+    its bound travel with the Column rather than being re-derived from the
+    spelled type.
+    """
+
+    column: str
+    neutral_type: NeutralType
+    max_length: int | None
+
+
+def _column_clause(column: ColumnDdl) -> str:
+    """One Column's name, type, and nullability, as every DDL statement spells it."""
+    return f"{column.column} {column.type_sql}" + ("" if column.nullable else " not null")
+
+
+@dataclass(frozen=True, slots=True)
+class Unsupported:
+    """A DDL primitive's refusal: why this dialect cannot spell the statement.
+
+    ``reason`` is dialect-neutral prose a caller carries verbatim into its own
+    aggregated error. A primitive answering with the statement OR with why not is
+    what keeps a capability predicate from drifting away from its renderer.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class Dialect:
     """One database's pure SQL strings and parse rules (m-dialect)."""
 
@@ -168,6 +245,10 @@ class Dialect:
     quote_char: str
     # SQLSTATE / native code -> neutral m-db-error category.
     error_codes: dict[str, str]
+    # The longest identifier this database stores without truncating it. Only a
+    # DERIVED name has to fit a budget; an authored Table or Column name is the
+    # author's own and is spelled as declared.
+    max_identifier_bytes: int
 
     # -- identifiers ------------------------------------------------------- #
     def quote(self, identifier: str) -> str:
@@ -501,6 +582,71 @@ class Dialect:
             case Json():
                 return "jsonb"
 
+    # -- DDL statements ---------------------------------------------------- #
+    def create_table(
+        self, table: str, columns: Sequence[ColumnDdl], primary_key: Sequence[str]
+    ) -> str:
+        """``create table`` for one whole Table, keyed inline.
+
+        The caller supplies the complete physical column sequence and the key
+        columns in their own order; both are already quoted. An empty
+        ``primary_key`` emits no key clause, which is the keyless Table a model
+        declaring no primary key produces.
+        """
+        parts = [_column_clause(column) for column in columns]
+        if primary_key:
+            parts.append(f"primary key ({', '.join(primary_key)})")
+        return f"create table {table} ({', '.join(parts)})"
+
+    def add_column(self, table: str, column: ColumnDdl) -> str:
+        """``alter table … add column`` for one new physical Column."""
+        return f"alter table {table} add column {_column_clause(column)}"
+
+    def expand_column(self, table: str, earlier: ColumnDdl, later: ColumnDdl) -> str | Unsupported:
+        """Widen one Column's stored domain, or why this dialect cannot.
+
+        The whole earlier-to-later change arrives at once because the two
+        dialects factor it differently: Postgres spells a type change and a
+        dropped ``not null`` as separate actions of one ``alter table``, while
+        MariaDB restates the whole column with ``modify``. Only a widening is
+        ever asked for — relaxed nullability, a longer or removed String bound —
+        so no action here narrows a domain.
+        """
+        actions: list[str] = []
+        if earlier.type_sql != later.type_sql:
+            actions.append(f"alter column {later.column} type {later.type_sql}")
+        if earlier.nullable != later.nullable:
+            actions.append(f"alter column {later.column} drop not null")
+        return f"alter table {table} {', '.join(actions)}"
+
+    def create_index(
+        self,
+        table: str,
+        name: PhysicalIndexName,
+        columns: Sequence[IndexColumnDdl],
+        *,
+        unique: bool,
+    ) -> str | Unsupported:
+        """``create index`` for one authored Index, or why this dialect cannot.
+
+        Postgres indexes every column type this system spells, including an
+        unbounded ``text``, so it never refuses. Creating a unique Index is the
+        authoritative validation of the data already stored; no statement here
+        preflights it.
+        """
+        keyword = "create unique index" if unique else "create index"
+        components = ", ".join(column.column for column in columns)
+        return f"{keyword} {self.quote(name.value)} on {table} ({components})"
+
+    def drop_index(self, table: str, name: PhysicalIndexName) -> str:
+        """``drop index`` for one Index the later model no longer defines.
+
+        ``table`` is the Table the Index sits on, which Postgres does not name in
+        the statement and MariaDB does.
+        """
+        del table
+        return f"drop index {self.quote(name.value)}"
+
     # -- errors ------------------------------------------------------------ #
     def classify(self, code: str) -> str | None:
         """The neutral m-db-error category for a native code, or ``None``."""
@@ -523,6 +669,7 @@ POSTGRES: Final[Dialect] = Dialect(
         "40001": "deadlock",
         "55P03": "lockWaitTimeout",
     },
+    max_identifier_bytes=63,
 )
 
 

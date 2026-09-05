@@ -1,5 +1,6 @@
-# Provisioning (m-model-evolution): the evolution from an ABSENT earlier endpoint
-# is one entity-level addition per target Entity, and nothing else.
+# Provisioning (m-model-evolution, m-schema-delta): the evolution from an ABSENT
+# earlier endpoint is one entity-level addition per target Entity, and the
+# statements that carry an empty database to it.
 #
 # `when.evolve.earlier` is `null` — the explicit fresh-provisioning sentinel,
 # never inferred from an empty accepted model or from inspecting a database.
@@ -8,7 +9,16 @@
 # authored Index are described by `EntityAdded` alone rather than by four
 # operations. It carries no Behavioral Impact and no Overlap-Visible Operation
 # either, because no earlier scope survives for one to hold on.
-tags: [m-model-evolution, evolution, provisioning, slice-snapshot-1]
+#
+# `then.schema` is where that one operation becomes physical. The Table is
+# created with all of its target Columns and its derived primary key inline, and
+# the authored NON-unique Index follows as a separately named statement — the
+# form every Index takes, so a later violation names something a rollout can
+# correlate. Both dialects spell the same two statements; only the derived
+# Physical Index Name differs, because the readable prefix is truncated to each
+# dialect's own identifier limit (63 bytes for Postgres, 64 for MariaDB) while
+# the fingerprint is never touched.
+tags: [m-model-evolution, m-schema-delta, evolution, provisioning, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -22,3 +32,24 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create table evolution_widget (id bigint not null, label varchar(64) not null, primary key (id))
+          - create index pxi_evolution_widget_parallax_7753774cf2b102e91958001d642905d7 on evolution_widget (label)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_widget_parallax_7753774cf2b102e91958001d642905d7
+            physicalTable: evolution_widget
+            logicalIndexIdentity: parallax.compatibility.Widget.evolution_widget_label
+            unique: false
+    mariadb:
+      delta:
+        statements:
+          - create table evolution_widget (id bigint not null, label varchar(64) not null, primary key (id))
+          - create index pxi_evolution_widget_parallax_c_7753774cf2b102e91958001d642905d7 on evolution_widget (label)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_widget_parallax_c_7753774cf2b102e91958001d642905d7
+            physicalTable: evolution_widget
+            logicalIndexIdentity: parallax.compatibility.Widget.evolution_widget_label
+            unique: false

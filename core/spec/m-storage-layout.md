@@ -584,6 +584,13 @@ Identities. A DDL consumer resolves each index component through the applicable
 layout's contributor lookup. An index does not create another layout-owned
 column sequence.
 
+A DDL consumer creates **every** authored Index — unique and non-unique alike —
+as a separately named statement of its own, never as an inline table constraint
+and never suppressed for spanning Columns another Index already spans. Only the
+derived primary-key Index is inline, as the Table's key. That is what lets a
+uniqueness violation report a physical name the consumer can correlate with the
+Index it created; the naming rule is `m-schema-delta`'s.
+
 Under `Document`, an Index may name only direct-role Attributes, so every
 component still resolves to a Column and the resolution above is unchanged. An
 Index naming a document-resident Attribute is rejected by the Rule Set below.

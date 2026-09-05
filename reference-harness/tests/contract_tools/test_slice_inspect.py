@@ -40,6 +40,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-predicate",
         "m-read-lock",
         "m-relationship",
+        "m-schema-delta",
         "m-snapshot-read",
         "m-sql",
         "m-storage-layout",

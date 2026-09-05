@@ -1,4 +1,4 @@
-"""The corpus spelling of an Evolution: typed values to `then.evolution` JSON.
+"""The corpus spelling of an Evolution and its Schema Delta, as `then` JSON.
 
 `parallax.evolution` exports typed values and no serialization, because model
 altitude is the point — a host renders an Evolution in its own words. The JSON
@@ -113,8 +113,13 @@ from parallax.evolution.model_evolution import (
     WritesDisabled,
     WritesEnabled,
 )
+from parallax.evolution.schema_delta import (
+    PhysicalLocation,
+    SchemaDelta,
+    UnsupportedSchemaEvolutionError,
+)
 
-__all__ = ["evolution_observation"]
+__all__ = ["evolution_observation", "schema_cell", "unsupported_cell"]
 
 _DIMENSIONS: Final[dict[TemporalDimension, str]] = {
     TemporalDimension.VALID_TIME: "valid-time",
@@ -214,6 +219,54 @@ def evolution_observation(evolution: Evolution) -> dict[str, Any]:
             _requirement(requirement) for requirement in evolution.coordination_requirements
         ]
     return observation
+
+
+def schema_cell(delta: SchemaDelta) -> dict[str, Any]:
+    """``delta`` as the ``then.schema`` cell for the dialect that produced it."""
+    return {
+        "delta": {
+            "statements": list(delta.statements),
+            "createdIndices": [
+                {
+                    "physicalIndexName": created.physical_index_name.value,
+                    "physicalTable": created.physical_table.name,
+                    "logicalIndexIdentity": _index(created.logical_index_identity),
+                    "unique": created.unique,
+                }
+                for created in delta.created_indices
+            ],
+        }
+    }
+
+
+def unsupported_cell(error: UnsupportedSchemaEvolutionError) -> dict[str, Any]:
+    """A refusing Dialect's ``then.schema`` cell: every operation it cannot render.
+
+    The dialect-neutral reason each refusal carries is deliberately not spelled:
+    a cell asserts WHICH operations a dialect cannot render, and pinning a
+    renderer's prose would make a reworded message a corpus failure.
+    """
+    return {
+        "unsupported": {
+            "operations": [
+                {
+                    "kind": operation.kind,
+                    "physicalLocation": _physical_location(operation.location),
+                    "causedBy": [_operation(cause) for cause in operation.caused_by],
+                }
+                for operation in error.operations
+            ]
+        }
+    }
+
+
+def _physical_location(location: PhysicalLocation) -> dict[str, str]:
+    spelled = {"table": location.table.name}
+    if location.column is not None:
+        spelled["column"] = location.column.name
+    if location.index is not None:
+        spelled["index"] = location.index.value
+    return spelled
 
 
 # --------------------------------------------------------------------------- #

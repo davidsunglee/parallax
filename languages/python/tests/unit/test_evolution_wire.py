@@ -1,8 +1,9 @@
 """The corpus spelling of an Evolution, over the whole closed vocabulary.
 
 The JSON an `evolution` case asserts is a contract, and the corpus reaches only
-the operations its own cases carry. The vocabulary is closed and small, so the
-encoder is graded here against one value of every name it can be handed —
+the operations and the dialect answers its own cases carry. The vocabulary is
+closed and small, so the encoder is graded here against every name it can be
+handed —
 including the endpoint facts a delta carries, which are what a case author reads
 when comparing an authored expectation against a run.
 """
@@ -14,8 +15,14 @@ from typing import Any
 import pytest
 from _metamodel_support import identity
 
-from parallax.conformance.evolution_wire import EvolutionSpellingError, evolution_observation
+from parallax.conformance.evolution_wire import (
+    EvolutionSpellingError,
+    evolution_observation,
+    schema_cell,
+    unsupported_cell,
+)
 from parallax.core.base import STRING, Decimal
+from parallax.core.dialect import PhysicalIndexName
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     COLUMNS,
@@ -111,6 +118,13 @@ from parallax.evolution.model_evolution import (
     ValueObjectOccurrenceRemoved,
     VersionGated,
     WritesEnabled,
+)
+from parallax.evolution.schema_delta import (
+    CreatedIndex,
+    PhysicalLocation,
+    SchemaDelta,
+    UnsupportedSchemaEvolutionError,
+    UnsupportedSchemaOperation,
 )
 
 _ORDER = identity("Order")
@@ -673,3 +687,84 @@ def test_the_encoder_spells_every_endpoint_fact(fact: Any, expected: Any) -> Non
     assert spelled[0]["deltas"] == [
         {"kind": "NullabilityChanged", "earlier": expected, "later": expected}
     ]
+
+
+# --------------------------------------------------------------------------- #
+# The Schema Delta half of the same contract. Postgres renders every physical   #
+# operation, so the refusing cell has no corpus witness until a dialect that    #
+# refuses one ships; the spelling is graded here against a hand-built refusal.  #
+# --------------------------------------------------------------------------- #
+def test_a_delta_cell_carries_the_statements_and_the_created_index_provenance() -> None:
+    name = PhysicalIndexName("pxi_widget_label_0")
+    cell = schema_cell(
+        SchemaDelta(
+            statements=("create table widget (id bigint not null)",),
+            created_indices=(
+                CreatedIndex(
+                    physical_index_name=name,
+                    physical_table=Table(name="widget"),
+                    logical_index_identity=IndexIdentity(_ORDER, "widget_label"),
+                    unique=True,
+                ),
+            ),
+        )
+    )
+    assert cell == {
+        "delta": {
+            "statements": ["create table widget (id bigint not null)"],
+            "createdIndices": [
+                {
+                    "physicalIndexName": name.value,
+                    "physicalTable": "widget",
+                    "logicalIndexIdentity": f"{_ORDER_SPELLING}.widget_label",
+                    "unique": True,
+                }
+            ],
+        }
+    }
+
+
+def test_an_unsupported_cell_names_each_operation_its_place_and_its_causes() -> None:
+    # The physical location carries only the members the operation addresses, so
+    # a whole-Table refusal names no column and no index.
+    refusal = UnsupportedSchemaEvolutionError(
+        "mariadb",
+        (
+            UnsupportedSchemaOperation(
+                kind="CreateTable",
+                location=PhysicalLocation(table=Table(name="widget")),
+                reason="ignored by the corpus",
+                caused_by=(EntityAdded(entity=_ORDER),),
+            ),
+            UnsupportedSchemaOperation(
+                kind="CreateIndex",
+                location=PhysicalLocation(
+                    table=Table(name="widget"),
+                    column=Column(name="label"),
+                    index=PhysicalIndexName("pxi_widget_label_0"),
+                ),
+                reason="ignored by the corpus",
+                caused_by=(EntityAdded(entity=_ORDER),),
+            ),
+        ),
+    )
+    assert unsupported_cell(refusal) == {
+        "unsupported": {
+            "operations": [
+                {
+                    "kind": "CreateTable",
+                    "physicalLocation": {"table": "widget"},
+                    "causedBy": [{"kind": "EntityAdded", "entity": _ORDER_SPELLING}],
+                },
+                {
+                    "kind": "CreateIndex",
+                    "physicalLocation": {
+                        "table": "widget",
+                        "column": "label",
+                        "index": "pxi_widget_label_0",
+                    },
+                    "causedBy": [{"kind": "EntityAdded", "entity": _ORDER_SPELLING}],
+                },
+            ]
+        }
+    }

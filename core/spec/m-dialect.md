@@ -75,6 +75,8 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
 | **read-lock application** (`m-read-lock`) | locking-mode object find: `for share of t0` | locking-mode object find: **`lock in share mode`** (no `for share`; MDEV-17514) |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
+| **schema DDL primitives** (`m-schema-delta`) | `create table` / `alter table … add column` / `alter table … alter column …` / `create [unique] index … on …` / `drop index …` | the same statements, with `modify` restating a whole column and `drop index … on <table>` naming its Table (see below) |
+| **identifier byte limit** (`m-schema-delta`) | 63 | 64 |
 | typed bind normalization | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind | every declared-type bind remains its managed carrier; an open-upper-bound sentinel is an unannotated framework bind adapted to the max sentinel |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062`/`1022`/`1169`/`1859` duplicate, `1213`/`1020` deadlock, `1205` lock timeout |
@@ -486,6 +488,62 @@ those non-object Entity carriers, read materialization passes it to
 `m-document-codec`'s `locateEntityMember` operation and then its shared
 located-member classifier; the dialect neither rejects the row nor invents a
 provider-specific corruption result.
+
+### Schema DDL primitives (`m-schema-delta`)
+
+Rendering a schema change has an invariant half and a vendor half. Resolution —
+turning a Table Layout and its slots into Column names, Column types, effective
+nullability, and the physical primary key — needs the Metamodel and is the same
+for every vendor. Spelling varies. The seam sits between them, exactly as it does
+for DML: the generator composes over the layout and asks the `Dialect` only for
+statement fragments, so a `Dialect` never sees a layout type and `m-dialect` keeps
+its single edge to `m-core`.
+
+```text
+createTable(table, columns, primaryKey)                -> statement
+addColumn(table, column)                               -> statement
+expandColumn(table, earlier, later)                    -> statement | Unsupported
+createIndex(table, name, columns, unique)              -> statement | Unsupported
+dropIndex(table, name)                                 -> statement
+
+ColumnDdl        (column, typeSql, nullable)           already-quoted name, already-mapped type
+IndexColumnDdl   (column, neutralType, maxLength)      what index admissibility depends on
+Unsupported      (reason)                              a dialect-neutral reason, carried verbatim
+PhysicalIndexName(value)                               a nonempty physical identifier
+```
+
+Every primitive takes already-quoted identifier strings and Neutral Types. Only
+the two a known dialect can refuse carry the `Unsupported` arm; the signature
+itself states that creating a Table, adding a Column, and dropping an Index can
+never be unsupported. A primitive answers with **the statement or with why not**,
+which is what keeps a capability predicate from drifting away from the renderer it
+is supposed to describe.
+
+`expandColumn` receives the whole earlier-to-later Column change rather than one
+clause, because the dialects factor it differently: Postgres spells a type change
+and a relaxed `not null` as separate actions of one `alter table`, while MariaDB
+restates the whole Column with `modify`. Only a widening is ever asked for, so no
+action a caller can request narrows a stored domain.
+
+`createIndex` receives each component's Neutral Type and String bound beside its
+Column, because that is what index admissibility depends on: Postgres indexes
+every Column type this system spells, while InnoDB refuses an index over an
+unbounded String without a key length and therefore answers `Unsupported` for
+such a component. `dropIndex` receives the Table because MariaDB names it in the
+statement and Postgres does not.
+
+A `PhysicalIndexName` validates only that it is a nonempty identifier. A name read
+back off a driver diagnostic is as legitimate as a generated one, and the
+identifier byte limit is the generating rule's concern — `m-schema-delta`'s —
+rather than the value's.
+
+### Identifier byte limit
+
+`maxIdentifierBytes` is how many bytes of an identifier the database stores
+without truncating it: **63** on Postgres and **64** on MariaDB. It constrains
+DERIVED identifiers only. An authored Table or Column name is the author's own
+and is spelled as declared; the one identifier this system derives is a Physical
+Index Name, whose shortening rule is `m-schema-delta`'s.
 
 ### `NULL` ordering
 

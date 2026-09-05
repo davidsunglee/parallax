@@ -562,6 +562,8 @@
     "BehavioralImpact",
     "COORDINATION_REASON_ORDER",
     "CardinalityChanged",
+    "CollidingIndex",
+    "CollisionGroup",
     "ComponentsChanged",
     "ConcreteSubtypeAdded",
     "ConcreteSubtypeRemoved",
@@ -570,6 +572,7 @@
     "CoordinatedEvolution",
     "CoordinationReason",
     "CoordinationRequirement",
+    "CreatedIndex",
     "DeclarationCollection",
     "DeclarationFormChanged",
     "DeclarationIdentity",
@@ -592,6 +595,7 @@
     "IndexAdded",
     "IndexAltered",
     "IndexDelta",
+    "IndexPresence",
     "IndexRemoved",
     "InheritanceChanged",
     "JoinChanged",
@@ -604,6 +608,8 @@
     "OptimisticLockingChanged",
     "OrderingChanged",
     "PersistenceChanged",
+    "PhysicalIndexNameCollisionError",
+    "PhysicalLocation",
     "PrimaryKeyChanged",
     "QueryResultMembershipChanged",
     "QueryResultOrderingChanged",
@@ -616,6 +622,7 @@
     "RelationshipSelectionFacts",
     "ReverseOfChanged",
     "ScalarAdmissibility",
+    "SchemaDelta",
     "SelectionFacts",
     "SelectionScope",
     "StartAttributeChanged",
@@ -629,6 +636,8 @@
     "UniqueTuple",
     "UniquenessChanged",
     "UniquenessEnforcementChanged",
+    "UnsupportedSchemaEvolutionError",
+    "UnsupportedSchemaOperation",
     "VALUE_OBJECT_ATTRIBUTE_DELTA_ORDER",
     "VALUE_OBJECT_OCCURRENCE_DELTA_ORDER",
     "ValueAdmissibility",
@@ -650,7 +659,8 @@
     "WritesDisabled",
     "WritesEnabled",
     "canonical_operation_key",
-    "evolve"
+    "evolve",
+    "schema_delta"
   ],
   "parallax.evolution.model_evolution": [
     "ABSENT",
@@ -759,5 +769,17 @@
     "WritesEnabled",
     "canonical_operation_key",
     "evolve"
+  ],
+  "parallax.evolution.schema_delta": [
+    "CollidingIndex",
+    "CollisionGroup",
+    "CreatedIndex",
+    "IndexPresence",
+    "PhysicalIndexNameCollisionError",
+    "PhysicalLocation",
+    "SchemaDelta",
+    "UnsupportedSchemaEvolutionError",
+    "UnsupportedSchemaOperation",
+    "schema_delta"
   ]
 }

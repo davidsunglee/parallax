@@ -80,6 +80,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-model-formation": "parallax.core.model_formation",
     "m-descriptor": "parallax.descriptor",
     "m-model-evolution": "parallax.evolution.model_evolution",
+    "m-schema-delta": "parallax.evolution.schema_delta",
     "m-pk-gen": "parallax.core.pk_gen",
     "m-inheritance": "parallax.core.inheritance",
     "m-storage-layout": "parallax.core.storage_layout",
