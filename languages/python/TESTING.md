@@ -52,7 +52,8 @@ module.
 Support code only one surface uses stays inside that surface —
 `tests/unit/_authored_storage_support.py`,
 `tests/unit/_corpus_identity_support.py`, `_corpus_model_support.py`,
-`_document_layout_support.py`, `_layout_twin_columns.py`,
+`_document_layout_support.py`, `_keyed_write_drivers.py`,
+`_layout_twin_columns.py`,
 `_layout_twin_document.py`, `_lifecycle_cost_support.py`,
 `_metamodel_support.py`, `_mixed_strategy_model.py`,
 `_second_dialect.py`, `_snapshot_graph_support.py`,
