@@ -62,6 +62,8 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "evolution-departing-shape-v2",
     "evolution-hierarchy-v1",
     "evolution-hierarchy-v2",
+    "evolution-inherited-column-v1",
+    "evolution-inherited-column-v2",
     "evolution-interposed-subtype-v1",
     "evolution-interposed-subtype-v2",
     "evolution-position-role-v1",

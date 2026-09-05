@@ -1,0 +1,20 @@
+# Consignment (v2): the later endpoint of the ADDED VALUE OBJECT scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-added-value-object-v1.yaml with one nullable top-level
+# occurrence added; nothing else differs. Its two members are stored inside the
+# occurrence's own Structured Column rather than beside it.
+entity:
+  name: Consignment
+  namespace: parallax.compatibility
+  table: evolution_consignment
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: reference, type: string, maxLength: 64 }
+  valueObjects:
+    - name: origin
+      column: origin_doc
+      nullable: true
+      attributes:
+        - { name: city, type: string }
+        - { name: postcode, type: string }

@@ -8,7 +8,7 @@
 # — a wholly new Entity creates a complete empty Table, so nothing has to be
 # satisfied by rows that already exist. It holds no Behavioral Impact either,
 # because impacts hold on scopes present in the earlier endpoint.
-tags: [m-model-evolution, evolution, entity, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, entity, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -22,3 +22,24 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create table evolution_crate (id bigint not null, label varchar(32) not null, weight bigint not null, primary key (id))
+          - create index pxi_evolution_crate_parallax_c_31c02d713d89fc70ec8cd052e622f234 on evolution_crate (label)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_crate_parallax_c_31c02d713d89fc70ec8cd052e622f234
+            physicalTable: evolution_crate
+            logicalIndexIdentity: parallax.compatibility.Crate.evolution_crate_label
+            unique: false
+    mariadb:
+      delta:
+        statements:
+          - create table evolution_crate (id bigint not null, label varchar(32) not null, weight bigint not null, primary key (id))
+          - create index pxi_evolution_crate_parallax_co_31c02d713d89fc70ec8cd052e622f234 on evolution_crate (label)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_crate_parallax_co_31c02d713d89fc70ec8cd052e622f234
+            physicalTable: evolution_crate
+            logicalIndexIdentity: parallax.compatibility.Crate.evolution_crate_label
+            unique: false

@@ -6,7 +6,7 @@
 # Attribute addition and one nullable occurrence addition, both unilateral,
 # exactly as the same two additions read against a Columns model. A Storage
 # Layout is a physical fact, and this module describes the model.
-tags: [m-model-evolution, evolution, storage-layout, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, storage-layout, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -23,3 +23,12 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []

@@ -382,7 +382,7 @@ values.
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind / a refused boundary option — `option-conflict`, `boundary-failed`, `connection-refused`), stated directly or as a dialect-keyed map whose omitted dialect the case makes no claim about |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
 | `then.evolution` | `then` | evolution | the COMPLETE Evolution `evolve` returns for the two endpoints — its `kind`, `operations`, `behavioralImpacts`, `overlapVisibleOperations`, and `coordinationRequirements`, every member authored even when empty (see *Evolution cases*, below) |
-| `then.schema` | `then` | no | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). Admitted on a UNILATERAL `evolution` expectation alone: a Coordinated Evolution is not an accepted input to schema generation, so a coordinated expectation is dialect-independent and MUST omit it |
+| `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one: a Coordinated Evolution is not an accepted input, so a coordinated expectation is dialect-independent |
 | `then.executionLifecycle` | `then` | no | the transient execution-lifecycle oracle (`m-execution-lifecycle`) — normalized Root Executions and their ordered Started and Finished events (see *The execution lifecycle oracle*, below); disallowed on a `rejected` case, which reaches no database |
 | `then.roundTrips` | `then` | no | the DATABASE CALLS the case costs — every call that reached the database, a FAILED one included, with transaction demarcation (begin, commit, rollback) counting none, exactly as `m-execution-lifecycle` counts them, so a case authoring both this and `then.executionLifecycle` states one number twice and the two MUST agree. Default `1` for the shapes that reach the database, `0` for a `rejected` case and for an `evolution` case. For a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count PLUS the resolving reads the sequence owes (see *Resolving reads a write owes*, below); for a scenario the SUM of per-step round trips — `0` where every step costs none; for a RETRY-shaped case (a `when.attempts` conflict, or a `boundary` case whose fault is retried) the sum across EVERY attempt, not the last one's alone, each attempt's own resolving read included. A `rejected` case is refused pre-SQL and an `evolution` case describes two accepted models without executing anything, so each costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every such case in the corpus omits it. Those three shapes and one outcome are the whole of the relaxation — a case whose `then.outcome` is `boundary-failed` costs `0` too, its boundary having never opened and its callback never run, in either form that outcome may be stated in: directly, or as a dialect-keyed map whose EVERY named dialect fails to open, since one count answers for every dialect the case claims anything about — and every other case asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
@@ -2457,16 +2457,24 @@ names a single-key `scope` object, because one dotted spelling is a legal
 Attribute, Relationship, and Value Object reference alike and the impact's own
 kind does not decide which.
 
-A **unilateral** expectation additionally carries `then.schema`, keyed by Dialect
-Identity. Each cell is the closed choice of `delta` — that dialect's complete
-ordered `statements` as plain strings, plus its `createdIndices` provenance — or
-`unsupported`, the complete ordered physical operations that dialect cannot
-render. Statement count and support may differ between dialects, which is why
-evolution DDL does **not** use the dialect-keyed statement entry every DML golden
-uses. The keys under `then.schema` MUST equal the complete supported Dialect
-catalog: an omitted dialect is never an implicit skip, so adding a Dialect makes
-every unilateral evolution case incomplete until its cell is authored. A
-**coordinated** expectation MUST omit `then.schema` entirely.
+A **unilateral** expectation MUST carry `then.schema`, keyed by Dialect Identity.
+A Unilateral Evolution is exactly what schema generation accepts, so a case
+describing one and authoring no Schema Delta would leave the generator ungraded;
+that is a static failure rather than a quieter run later. Each cell is the closed
+choice of `delta` — that dialect's complete ordered `statements` as plain
+strings, plus its `createdIndices` provenance — or `unsupported`, the complete
+ordered physical operations that dialect cannot render. Statement count and
+support may differ between dialects, which is why evolution DDL does **not** use
+the dialect-keyed statement entry every DML golden uses. The keys under
+`then.schema` MUST equal the complete supported Dialect catalog: an omitted
+dialect is never an implicit skip, so adding a Dialect makes every unilateral
+evolution case incomplete until its cell is authored. A **coordinated**
+expectation MUST omit `then.schema` entirely.
+
+An evolution whose Schema Delta is empty authors that: both cells carry a `delta`
+with no statement and no created Index. Equal endpoints, and every unilateral
+change the physical schema is indifferent to, say so explicitly rather than by an
+absent member.
 
 An implementation that ships no dialect strategy for a catalog entry still
 answers for that cell: it reports an explicit **exclusion** naming its reason

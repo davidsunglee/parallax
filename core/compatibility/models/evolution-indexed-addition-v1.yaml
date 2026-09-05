@@ -1,0 +1,12 @@
+# Ticket (v1): the earlier endpoint of the INDEXED ADDITION scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# Attribute the later endpoint indexes does not exist here at all, so the pair
+# needs the Column and the Index over it to arrive in one evolution.
+entity:
+  name: Ticket
+  namespace: parallax.compatibility
+  table: evolution_ticket
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: subject, type: string, maxLength: 64 }

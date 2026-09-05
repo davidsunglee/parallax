@@ -4,7 +4,7 @@
 # uniqueness depends on, so the Entity gains one rule rather than two. Both
 # operations caused it, and both are named — `causedBy` carries all and only the
 # operations whose changed facts contribute.
-tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -33,3 +33,32 @@ then:
             index: parallax.compatibility.Tote.tote_by_region
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create unique index pxi_evolution_tote_parallax_co_99750a164f63cf5873a7f3016eeefd95 on evolution_tote (label, region)
+          - create unique index pxi_evolution_tote_parallax_co_c868b1fdc826986b8f1ef7d32d8df8fa on evolution_tote (region, label)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_tote_parallax_co_99750a164f63cf5873a7f3016eeefd95
+            physicalTable: evolution_tote
+            logicalIndexIdentity: parallax.compatibility.Tote.tote_by_label
+            unique: true
+          - physicalIndexName: pxi_evolution_tote_parallax_co_c868b1fdc826986b8f1ef7d32d8df8fa
+            physicalTable: evolution_tote
+            logicalIndexIdentity: parallax.compatibility.Tote.tote_by_region
+            unique: true
+    mariadb:
+      delta:
+        statements:
+          - create unique index pxi_evolution_tote_parallax_com_99750a164f63cf5873a7f3016eeefd95 on evolution_tote (label, region)
+          - create unique index pxi_evolution_tote_parallax_com_c868b1fdc826986b8f1ef7d32d8df8fa on evolution_tote (region, label)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_tote_parallax_com_99750a164f63cf5873a7f3016eeefd95
+            physicalTable: evolution_tote
+            logicalIndexIdentity: parallax.compatibility.Tote.tote_by_label
+            unique: true
+          - physicalIndexName: pxi_evolution_tote_parallax_com_c868b1fdc826986b8f1ef7d32d8df8fa
+            physicalTable: evolution_tote
+            logicalIndexIdentity: parallax.compatibility.Tote.tote_by_region
+            unique: true

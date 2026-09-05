@@ -1,0 +1,55 @@
+# Two expansions at one Column (m-schema-delta): one physical operation, however
+# many facts it widens.
+#
+# `Memo.body` becomes nullable and four times as long at once. Both moves widen
+# the stored domain, so they are one `ExpandColumnDomain` over one Column rather
+# than two operations that happen to name it — which is why each dialect spells
+# them in ONE statement: Postgres as two actions of a single `alter table`, and
+# MariaDB by restating the whole column. The two facts stay separate at model
+# altitude, where the alteration carries one delta each in the closed field
+# order, and one `ValueAdmissibilityChanged` reports the whole admitted domain
+# before and after.
+tags: [m-model-evolution, m-schema-delta, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-widened-domain-v1.yaml
+    later: models/evolution-widened-domain-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Memo.body
+        deltas:
+          - { kind: NullabilityChanged, earlier: false, later: true }
+          - { kind: MaximumLengthChanged, earlier: 32, later: 128 }
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Memo.body }
+        earlier: { type: string, nullable: false, maxLength: 32 }
+        later: { type: string, nullable: true, maxLength: 128 }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Memo.body
+            deltas:
+              - { kind: NullabilityChanged, earlier: false, later: true }
+              - { kind: MaximumLengthChanged, earlier: 32, later: 128 }
+    overlapVisibleOperations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Memo.body
+        deltas:
+          - { kind: NullabilityChanged, earlier: false, later: true }
+          - { kind: MaximumLengthChanged, earlier: 32, later: 128 }
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_memo alter column body type varchar(128), alter column body drop not null
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_memo modify body varchar(128)
+        createdIndices: []

@@ -7,7 +7,7 @@
 # outside the closed unilateral/coordinated choice. The same two endpoints named
 # here are the ones the provisioning case creates from absence, which is what
 # makes this the identity of that description rather than a separate shape.
-tags: [m-model-evolution, evolution, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -20,3 +20,12 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []

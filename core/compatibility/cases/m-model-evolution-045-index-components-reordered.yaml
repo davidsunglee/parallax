@@ -5,7 +5,7 @@
 # path. The uniqueness rule, by contrast, is an unordered Attribute set, so the
 # reordered Index enforces exactly what it enforced before and the evolution
 # carries no Behavioral Impact.
-tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -28,3 +28,24 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create unique index pxi_evolution_bale_parallax_co_d96760939d8bbbace573a4bce02d40e2 on evolution_bale (label, region)
+          - drop index pxi_evolution_bale_parallax_co_5f906729e5263c442b8da00f6a83daf4
+        createdIndices:
+          - physicalIndexName: pxi_evolution_bale_parallax_co_d96760939d8bbbace573a4bce02d40e2
+            physicalTable: evolution_bale
+            logicalIndexIdentity: parallax.compatibility.Bale.bale_lookup
+            unique: true
+    mariadb:
+      delta:
+        statements:
+          - create unique index pxi_evolution_bale_parallax_com_d96760939d8bbbace573a4bce02d40e2 on evolution_bale (label, region)
+          - drop index pxi_evolution_bale_parallax_com_5f906729e5263c442b8da00f6a83daf4 on evolution_bale
+        createdIndices:
+          - physicalIndexName: pxi_evolution_bale_parallax_com_d96760939d8bbbace573a4bce02d40e2
+            physicalTable: evolution_bale
+            logicalIndexIdentity: parallax.compatibility.Bale.bale_lookup
+            unique: true

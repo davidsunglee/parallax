@@ -19,18 +19,16 @@ output.
 
 from __future__ import annotations
 
-from parallax.core.dialect import Dialect, PhysicalIndexName, Unsupported
+from parallax.core.dialect import Dialect, Unsupported
 from parallax.evolution.model_evolution import UnilateralEvolution
 from parallax.evolution.schema_delta._naming import collision_groups
 from parallax.evolution.schema_delta._order import order
 from parallax.evolution.schema_delta._physical import (
     CreateIndex,
-    DropIndex,
-    IndexDefinition,
     PhysicalOperation,
     location_of,
 )
-from parallax.evolution.schema_delta._plan import plan
+from parallax.evolution.schema_delta._plan import Plan, plan
 from parallax.evolution.schema_delta._render import render
 from parallax.evolution.schema_delta._values import (
     CollidingIndex,
@@ -72,8 +70,9 @@ def schema_delta(evolution: UnilateralEvolution, dialect: Dialect) -> SchemaDelt
     idempotent; creating a unique Index is the authoritative validation of the
     data already stored.
     """
-    ordered = order(plan(evolution, dialect))
-    _reject_collisions(ordered, dialect)
+    built = plan(evolution, dialect)
+    _reject_collisions(built, dialect)
+    ordered = order(built.operations)
     rendered = tuple((operation, render(operation, dialect)) for operation in ordered)
     refusals = tuple(
         _refusal(operation, result)
@@ -106,20 +105,14 @@ def _refusal(operation: PhysicalOperation, result: Unsupported) -> UnsupportedSc
     )
 
 
-def _reject_collisions(ordered: tuple[PhysicalOperation, ...], dialect: Dialect) -> None:
-    """Refuse a name two distinct Index definitions in this plan both derived.
+def _reject_collisions(built: Plan, dialect: Dialect) -> None:
+    """Refuse a name two distinct Index definitions both derived.
 
-    The check spans the earlier definitions the plan drops as well as the later
-    ones it creates, because both exist at once during some prefix of the
-    statements.
+    The check spans every Index of both endpoints, not only the ones this delta
+    creates or drops: an Index it never mentions is still an object in the
+    database while a new one is created beside it, so the two coexist during some
+    prefix of the statements.
     """
-    earlier = [operation.definition for operation in ordered if isinstance(operation, DropIndex)]
-    later = [operation.definition for operation in ordered if isinstance(operation, CreateIndex)]
-    names: dict[IndexDefinition, PhysicalIndexName] = {
-        operation.definition: operation.name
-        for operation in ordered
-        if isinstance(operation, (CreateIndex, DropIndex))
-    }
-    groups = collision_groups(names, earlier, later)
+    groups = collision_groups(built.indices)
     if groups:
         raise PhysicalIndexNameCollisionError(dialect.name, groups)
