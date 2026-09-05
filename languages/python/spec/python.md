@@ -4485,6 +4485,17 @@ These feature tests do not claim the deferred `benchmark` command or general
   reaches the same order for free, because `edit()` rejects an illegal assignment
   before `tx.update()` receives a value.
 
+  **The Keyed Write Validation Order is one order.** Every keyed verb, Typed or
+  Wire, runs: reentry; representation-only shape; source resolution and
+  provenance; pin; window; member names, values, assignment legality, and
+  preparation; effective changes and restorations with the no-op return; the
+  buffered-insert exemption; evidence; claim and buffer. One private ingress owns
+  that order; each representation answers only source facts through a private
+  adapter, and a conformance call enters the same ingress once. Reentry is
+  refused once, as the ingress's first executable line. Typed prepares before it
+  resolves evidence, so `terminate` against a target with no as-of axis hears the
+  milestone-verb refusal even when its evidence is also unusable.
+
   **Which static refusal follows from whose rule was broken.**
   `WriteInstructionError` is the write verb's OWN verdict: input that states no
   well-formed write at all — a document position that is not a mapping of names
