@@ -483,7 +483,12 @@ class Transaction:
         all carry valid primary-key values, spec §5). A source view pinned at a
         finite Transaction-Time instant is read-only and raises
         :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
-        before any buffering, exactly as every other keyed verb does."""
+        before any buffering, exactly as every other keyed verb does.
+
+        ``delete`` physically removes the row and carries no temporal meaning, so
+        a target that milestones its rows refuses it at this call and names
+        :meth:`terminate`, which closes the row's history instead (`python.md`
+        §5 "Write verbs and temporal spellings")."""
         keyed_write(self._keyed, TypedKeyedWriteSource(node_or_instance, self._codec), "delete")
 
     # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
