@@ -245,12 +245,26 @@ declarations:
   because it invalidates a previously valid authored operation: an Entity, a
   concrete subtype, an Attribute, a Value Object occurrence or member, a
   Relationship direction, an As-Of Axis. Authored secondary Indices are the sole
-  exception, because model-authored operations never address them.
+  exception, because model-authored operations never address them. Whether the
+  removal *also* requires database migration follows what becomes of the stored
+  shape. One that takes its shape with it — an Entity, a concrete subtype, or a
+  Relationship direction, which stores no value of its own — needs the authoring
+  surface alone, because the objects the earlier edition addressed may be left in
+  place. A **required** member cut out of a shape that survives needs both,
+  because the surviving shape still demands a value the later model no longer
+  describes and the object enforcing it must be relaxed or removed before a later
+  write is accepted; a nullable one leaves a stored form the later edition simply
+  stops writing. The verdict reads accepted required-ness rather than the
+  physical object enforcing it, so it holds for a direct Column and an existing
+  Structured Column alike — the mirror of the addition boundary below.
 - **Addition.** Adding a nullable member is unilateral. Adding a **required**
   member to an existing stored shape requires coordination until a default and
   backfill contract makes existing data satisfy the later model — for scalar
   Attributes and Value Object members alike, whether they occupy a direct Column
-  or an existing Structured Column. A wholly new Entity may contain required
+  or an existing Structured Column. Where the caller authors the value it needs
+  the authoring surface too, because every previously valid insert omits an input
+  the later model demands; a framework-owned member needs the database alone,
+  since no caller ever supplied it. A wholly new Entity may contain required
   members, because its parent addition creates a complete empty Table.
 - **Value domain.** Within one unchanged Neutral Type, expanding the admitted
   domain is unilateral and contracting it requires coordination. Required to
@@ -287,11 +301,14 @@ declarations:
   Index is unilateral, including component and uniqueness changes: it affects
   only a rebuildable access path or enforcement rule, destroys no stored data,
   and invalidates no authored operation. It may change whether a write succeeds.
-- **As-Of Axes.** Adding or altering an axis on an existing Entity requires
-  coordination: it changes the temporal operation surface, framework ownership of
-  its endpoints, the derived physical primary key, or the bounds required of
-  existing rows. An axis on a wholly new Entity is part of the unilateral parent
-  addition.
+- **As-Of Axes.** Adding, altering, or removing an axis on an existing Entity
+  requires coordination for both reasons: it changes the temporal operation
+  surface, framework ownership of its endpoints, the derived physical primary
+  key, or the bounds required of existing rows. Removal is not the mirror of a
+  member removal that leaves a Column behind — the axis end Attributes leave the
+  derived physical key, so the later logical identity is narrower than the one
+  the surviving history was written under and that history collides beneath it.
+  An axis on a wholly new Entity is part of the unilateral parent addition.
 - **Inheritance.** An existing declaration is classified by its effective
   consequences, never automatically by a raw parent change. Interposing a new
   abstract subtype is unilateral when every earlier subtype-selection containment
@@ -317,7 +334,10 @@ a String maximum length, and adding a concrete subtype under **table-per-hierarc
 where a later writer can place a new discriminator value in the shared Table that
 an earlier reader cannot admit. Adding a concrete subtype under
 table-per-concrete-subtype is not overlap-visible: the later subtype occupies a
-separate Table the earlier edition never reads. A unique-constraint violation, a
+separate Table the earlier edition never reads. Neither is a concrete subtype
+whose family arrives whole with it, under either strategy: visibility is a claim
+about an earlier reader, and the earlier edition holds no position of that
+family, so neither its Table nor a selection through it. A unique-constraint violation, a
 DDL failure, and an ordinary behavior difference are not overlap visibility.
 
 ## Behavioral Impacts

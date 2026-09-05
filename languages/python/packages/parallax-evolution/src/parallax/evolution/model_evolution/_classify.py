@@ -74,9 +74,10 @@ _UNILATERAL: tuple[CoordinationReason, ...] = ()
 _BOTH: tuple[CoordinationReason, ...] = (_AUTHORING, _MIGRATION)
 
 # Removing a model-facing declaration invalidates a previously valid authored
-# operation, which is the whole of why it needs coordination: the physical
-# objects the earlier edition addressed may simply be left in place, so no
-# destructive transformation is required of the database.
+# operation, which is always one reason it needs coordination. It is the whole
+# of the reason only where the removal takes its stored shape with it: the
+# physical objects the earlier edition addressed are then addressed by nobody
+# and may simply be left in place.
 _REMOVAL: tuple[CoordinationReason, ...] = (_AUTHORING,)
 
 
@@ -107,16 +108,25 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
                 reasons=_UNILATERAL,
                 overlap_visible=_overlaps_an_earlier_reader(matching, operation.entity),
             )
-        case (
-            EntityRemoved()
-            | ConcreteSubtypeRemoved()
-            | AttributeRemoved()
-            | ValueObjectOccurrenceRemoved()
-            | ValueObjectAttributeRemoved()
-            | RelationshipRemoved()
-            | AsOfAxisRemoved()
-        ):
+        case EntityRemoved() | ConcreteSubtypeRemoved() | RelationshipRemoved():
+            # The stored shape goes with the declaration — a Relationship
+            # direction stores no value of its own — so nothing the later
+            # edition writes meets what the earlier one left behind.
             return Classification(reasons=_REMOVAL, overlap_visible=False)
+        case AttributeRemoved():
+            return _member_removal(
+                nullable=matching.attributes.removed[operation.attribute].nullable
+            )
+        case ValueObjectOccurrenceRemoved():
+            return _member_removal(
+                nullable=matching.value_objects.removed[operation.value_object].nullable
+            )
+        case ValueObjectAttributeRemoved():
+            return _member_removal(
+                nullable=matching.value_object_attributes.removed[
+                    operation.value_object_attribute
+                ].nullable
+            )
         case EntityAltered():
             return _entity_alteration(matching.entities.surviving[operation.entity], operation)
         case AttributeAdded():
@@ -143,11 +153,14 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
             return _relationship_alteration(
                 matching.relationships.surviving[operation.relationship]
             )
-        case AsOfAxisAdded() | AsOfAxisAltered():
+        case AsOfAxisAdded() | AsOfAxisAltered() | AsOfAxisRemoved():
             # An axis on an Entity that already stores rows changes the temporal
             # operation surface and the framework ownership of its endpoints, and
             # it moves the derived physical key and the bounds existing rows must
-            # carry. An axis on a wholly new Entity is suppressed by that
+            # carry. Removing one is not the mirror of removing a member: the
+            # key it leaves is NARROWER than the one the surviving rows were
+            # written under, so that history collides beneath the later logical
+            # identity. An axis on a wholly new Entity is suppressed by that
             # Entity's own unilateral addition and never reaches here.
             return Classification(reasons=_BOTH, overlap_visible=False)
         case _:
@@ -181,6 +194,24 @@ def _attribute_addition(added: AttributeMetadata) -> Classification:
         caller_authored=attribute_write_capability(added)
         is not AttributeWriteCapability.FRAMEWORK_OWNED,
     )
+
+
+def _member_removal(*, nullable: bool) -> Classification:
+    """A member cut out of an Entity or Value Object that survives it.
+
+    The removal invalidates a previously valid authored operation whatever the
+    member declared. A required one reaches the database too: the surviving
+    shape still demands a value the later model no longer describes, so the
+    object enforcing it must be relaxed or removed before a later write is
+    accepted. A nullable member leaves a stored form the later edition simply
+    stops writing. The verdict reads the accepted required-ness rather than the
+    physical object enforcing it, which is what keeps the rule the same for a
+    member holding a direct Column and one inside a Structured Column — the
+    mirror of the addition rule above.
+    """
+    if nullable:
+        return Classification(reasons=_REMOVAL, overlap_visible=False)
+    return Classification(reasons=_BOTH, overlap_visible=False)
 
 
 def _member_addition(*, nullable: bool, caller_authored: bool = True) -> Classification:

@@ -1,11 +1,14 @@
-# Removing every AS-OF AXIS from an Entity (m-model-evolution): coordinated by
-# the authoring surface alone.
+# Removing every AS-OF AXIS from an Entity (m-model-evolution): coordinated for
+# BOTH reasons, on every operation.
 #
-# Removal invalidates every previously valid temporal operation, while the
-# physical columns the earlier edition addressed may simply be left in place —
-# which is why removal carries one reason where the matching addition carries
-# two. A Temporal Dimension participates in axis identity, so the two axes are
-# removed independently rather than altered.
+# Removal invalidates every previously valid temporal operation, and unlike a
+# removal that takes its stored shape with it, this one leaves the shape behind:
+# the `Gauge` Table survives, its four endpoint Columns still demand values the
+# later model no longer describes, and the axis end Attributes leaving the
+# derived physical key make the later logical identity NARROWER than the one the
+# surviving history was written under, so that history collides beneath it. A
+# Temporal Dimension participates in axis identity, so the two axes are removed
+# independently rather than altered.
 tags: [m-model-evolution, evolution, temporal, slice-snapshot-1]
 shape: evolution
 when:
@@ -90,30 +93,36 @@ then:
           attribute: parallax.compatibility.Gauge.txEnd
         reasons:
           - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
       - operation:
           kind: AttributeRemoved
           attribute: parallax.compatibility.Gauge.txStart
         reasons:
           - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
       - operation:
           kind: AttributeRemoved
           attribute: parallax.compatibility.Gauge.validEnd
         reasons:
           - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
       - operation:
           kind: AttributeRemoved
           attribute: parallax.compatibility.Gauge.validStart
         reasons:
           - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
       - operation:
           kind: AsOfAxisRemoved
           entity: parallax.compatibility.Gauge
           dimension: valid-time
         reasons:
           - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
       - operation:
           kind: AsOfAxisRemoved
           entity: parallax.compatibility.Gauge
           dimension: transaction-time
         reasons:
           - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired

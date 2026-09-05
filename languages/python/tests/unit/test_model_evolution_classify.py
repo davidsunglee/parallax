@@ -133,10 +133,13 @@ def test_a_required_addition_the_framework_owns_asks_nothing_of_the_caller() -> 
     assert _verdict(_holding(), _holding(owned)) == _Verdict((_MIGRATION,), False)
 
 
-def test_a_member_removal_needs_the_authoring_surface_whatever_it_declared() -> None:
-    # The Column may simply be left in place, so removal never reaches the
-    # database — and a nullable member is no more removable than a required one.
+def test_a_member_removal_is_directional_in_what_the_shape_it_leaves_demands() -> None:
+    # The shape survives the member here, so what the database has to do about
+    # the removal is what that shape still demands: a nullable member leaves a
+    # Column the later edition simply stops writing, while a required one leaves
+    # one that rejects every write no longer supplying it.
     assert _verdict(_holding(_member(nullable=True)), _holding()) == _Verdict((_AUTHORING,), False)
+    assert _verdict(_holding(_member()), _holding()) == _Verdict(_BOTH, False)
 
 
 def test_a_neutral_type_change_needs_both_and_infers_no_safe_widening() -> None:
@@ -461,14 +464,16 @@ def _beside_widget(*declarations: Declaration) -> Metamodel:
 def test_an_axis_on_an_existing_entity_needs_the_surface_and_the_database() -> None:
     # The axis changes the temporal operation surface and the framework ownership
     # of its endpoints, and it moves the derived physical key and the bounds
-    # existing rows must carry. Removing one leaves those physical facts where
-    # they are, so it needs the authoring surface alone.
+    # existing rows must carry. Removal is not the mirror of a member removal
+    # that leaves a Column behind: the key the Entity keeps is NARROWER than the
+    # one its stored history was written under, so that history collides beneath
+    # the later identity and the direction is symmetric after all.
     without = _beside_widget(_reading(axis=None))
     with_axis = _beside_widget(_reading(axis=("openedAt", "closedAt")))
     added = evolve(without, with_axis)
     assert _verdict_on(added, _axis_operation(added)) == _Verdict(_BOTH, False)
     removed = evolve(with_axis, without)
-    assert _verdict_on(removed, _axis_operation(removed)) == _Verdict((_AUTHORING,), False)
+    assert _verdict_on(removed, _axis_operation(removed)) == _Verdict(_BOTH, False)
 
 
 def test_an_axis_alteration_needs_the_surface_and_the_database() -> None:
