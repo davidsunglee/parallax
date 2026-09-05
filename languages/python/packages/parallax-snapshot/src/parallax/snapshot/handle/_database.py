@@ -4,8 +4,9 @@ The composition root's own module: :meth:`Database.connect` wires a concrete
 ``m-db-port`` adapter to a metamodel, :meth:`Database.find`,
 :meth:`Database.stream`, and :meth:`Database.read_rows` delegate to the one
 :class:`~parallax.snapshot.handle._read_scope.ReadScope` this connection owns —
-the same scope the Wire reads it answers run, and the same scope every stream it
-opens is delivered through — and :meth:`Database.transact` is the
+the same scope its Wire view retains, and the same scope every stream it opens is
+delivered through, so no read composition is written here at all — and
+:meth:`Database.transact` is the
 callback demarcation — sentinel-backed options, join with the option-conflict
 check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
 into the unit of work.
@@ -405,26 +406,12 @@ class Database:
         not a second connection and not a format switch. It needs no Entity
         Class, which is why a descriptor-backed connection answers this and
         refuses :meth:`find`.
+
+        The view retains this connection's one Read Scope, so a Wire read enters
+        at that scope's own verb rather than at anything this property built:
+        re-entry is refused there, at the same first line ``db.find`` crosses.
         """
-        return WireDatabaseView(self._wire_find, self._wire_stream)
-
-    def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
-        """One Wire read: the Read Scope's own Wire verb.
-
-        The view ``db.wire`` answers holds this method rather than the handle,
-        so this — not the property that built the view — is where a Wire read
-        enters; re-entry is refused at the scope's first line.
-        """
-        return self._reads.wire_find(node)
-
-    def _wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
-        """One Wire stream: the Read Scope's own Wire stream verb.
-
-        The view ``db.wire`` answers holds this method rather than the handle,
-        so this — not the property that built the view — is where a Wire stream
-        enters; re-entry is refused at the scope's first line.
-        """
-        return self._reads.wire_stream(node, batch_size)
+        return WireDatabaseView(self._reads)
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Execute ``query`` exactly once outside any transaction and return its

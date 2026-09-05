@@ -38,6 +38,13 @@ live:
 - :mod:`~parallax.snapshot.handle._transaction` — :class:`Transaction`: the
   developer verbs a ``db.transact`` closure drives, and the participating
   :meth:`Transaction.find`.
+- :mod:`~parallax.snapshot.handle._read_scope` — :data:`WireQuery`, the three
+  spellings a Wire read accepts for one canonical Object Query, beside the read
+  composition that lowers them: the private Read Scope each ``Database`` and
+  each ``Transaction`` owns exactly one of, its Typed and Wire verbs, and the
+  standalone and participating execution policies below them. Nothing else here
+  crosses this package's boundary — the scope is an implementation seam rather
+  than an extension point.
 - :mod:`~parallax.snapshot.handle._errors` — :class:`QueryTargetError`, the
   refusal of a query whose target the connected model does not declare, raised
   by the shared read-preflight seam and by the write side's target resolution
@@ -52,11 +59,10 @@ live:
 - :mod:`~parallax.snapshot.handle._preflight` — :func:`preflight`, the one read
   gate every entry point crosses before any I/O.
 - :mod:`~parallax.snapshot.handle._wire` — :class:`WireDatabaseView` and
-  :class:`WireTransactionView`, the ``db.wire`` / ``tx.wire`` views,
-  :data:`WireQuery`, the three spellings a Wire read accepts for one canonical
-  Object Query, and the two documents its write verbs take:
-  :data:`WireChanges`, an authored assignment mapping, and
-  :data:`WirePredicateTarget`, the canonical ``{entity, predicate}`` selection.
+  :class:`WireTransactionView`, the ``db.wire`` / ``tx.wire`` views, and the two
+  documents its write verbs take: :data:`WireChanges`, an authored assignment
+  mapping, and :data:`WirePredicateTarget`, the canonical
+  ``{entity, predicate}`` selection.
 - :mod:`~parallax.snapshot.handle._wire_writes` — the Wire write ingress those
   verbs delegate to, which shares the evidence resolver, the claim algebra, the
   instruction IR, and the buffer with the Typed verbs.
@@ -146,6 +152,7 @@ from parallax.snapshot.handle._read import (
     find,
     find_history,
 )
+from parallax.snapshot.handle._read_scope import WireQuery
 from parallax.snapshot.handle._stream import (
     SnapshotStream,
     SnapshotStreamContinuationError,
@@ -156,7 +163,6 @@ from parallax.snapshot.handle._wire import (
     WireChanges,
     WireDatabaseView,
     WirePredicateTarget,
-    WireQuery,
     WireTransactionView,
 )
 from parallax.snapshot.handle._write_inputs import (

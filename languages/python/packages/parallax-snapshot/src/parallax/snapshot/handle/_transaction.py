@@ -18,14 +18,14 @@ does, and opens its own Read under this transaction's attempt exactly as every
 participating read here does.
 
 The read COMPOSITION is not owned here either. :meth:`Transaction.find`,
-:meth:`Transaction.stream`, :meth:`Transaction.read_rows`, and the Wire reads the
-``tx.wire`` view answers all delegate to the one participating
-:class:`~parallax.snapshot.handle._read_scope.ReadScope` this transaction
-constructs, which runs the same ladder a ``Database``'s standalone reads run,
-under a participating execution policy rather than a standalone one. A stream
-this transaction opens retains that scope too, so every page of it force-flushes
-and opens its Stream Batch through the same policy an eager read here runs
-under.
+:meth:`Transaction.stream`, and :meth:`Transaction.read_rows` delegate to the one
+participating :class:`~parallax.snapshot.handle._read_scope.ReadScope` this
+transaction constructs, which runs the same ladder a ``Database``'s standalone
+reads run, under a participating execution policy rather than a standalone one.
+The ``tx.wire`` view retains that same scope rather than anything cut from this
+class, and so does every stream this transaction opens — which is why each page
+force-flushes and opens its Stream Batch through the same policy an eager read
+here runs under.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn)`` into
@@ -588,10 +588,15 @@ class Transaction:
         claim algebra. The write lane reads the same buffered-insert ledger the
         Typed verbs record into, so read-your-own-writes spans both
         representations.
+
+        Its read half is this transaction's one Read Scope, retained rather than
+        wrapped, so a Wire read enters at that scope's own verb and refuses
+        re-entry at the same first line ``tx.find`` crosses. Its write half is a
+        lane of its own, because a write settles against evidence a read never
+        derives.
         """
         return WireTransactionView(
-            self._wire_find,
-            self._wire_stream,
+            self._reads,
             WireWriteLane(
                 self._model,
                 self._uow,
@@ -601,17 +606,6 @@ class Transaction:
                 self._lifecycle,
             ),
         )
-
-    def _wire_find(self, node: ObjectQueryNode) -> Snapshot[Any]:
-        """One participating Wire read, published as its Wire Snapshot.
-
-        What a caller may later write off it rides on the published values
-        themselves — each Entity node carries its own Source Hint — so the read
-        answers the result and nothing beside it. The view ``tx.wire`` answers
-        holds this method rather than the transaction, so this is where a Wire
-        read enters; re-entry is refused at the Read Scope's first line.
-        """
-        return self._reads.wire_find(node)
 
     def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
         """Deliver ``query``'s roots one at a time inside this transaction, as
@@ -629,15 +623,6 @@ class Transaction:
         callback opens a fresh stream and may observe them again.
         """
         return self._reads.stream(query, batch_size)
-
-    def _wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
-        """One participating Wire stream, published as Wire nodes one at a time.
-
-        The view ``tx.wire`` answers holds this method rather than the
-        transaction, so this is where a Wire stream enters; re-entry is refused
-        at the Read Scope's first line.
-        """
-        return self._reads.wire_stream(node, batch_size)
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Run a PARTICIPATING row-form read and return its published rows.

@@ -58,7 +58,8 @@ from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import All
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import InvalidData, WireEntity, connect, handle
-from parallax.snapshot.handle._wire import WireDatabaseView, wire_query_node
+from parallax.snapshot.handle._read_scope import wire_query_node
+from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.materialize import (
     merge_graph_input,
     source_hint_of,
