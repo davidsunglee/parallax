@@ -239,7 +239,12 @@ staged compatibility mechanism. One operation may require both, and appears once
 with both reasons in that order, so consumers never regroup duplicate entries.
 
 The boundaries, each compared against **effective** facts rather than raw
-declarations:
+declarations. A position whose **effective concrete set is empty** stores no
+rows, resolves no Subtype Selection, and is named by no write (`m-inheritance`),
+so every boundary phrased over an existing stored shape, a previously valid
+write, or a write the later edition must still accept is silent about it; what a
+read of such a position still addresses are the members its ancestry makes
+applicable.
 
 - **Removal.** Removing any model-facing declaration requires coordination,
   because it invalidates a previously valid authored operation: an Entity, a
@@ -351,8 +356,10 @@ whose family arrives whole with it, under either strategy: visibility is a claim
 about an earlier reader, and the earlier edition holds no position of that
 family, so neither its Table nor a selection through it. Neither is one added to
 a family whose later effective Persistence Mode is `ReadOnly`, which admits no
-writer to place the new discriminator value. A unique-constraint violation, a
-DDL failure, and an ordinary behavior difference are not overlap visibility.
+writer to place the new discriminator value. None of them is overlap-visible on
+a position whose effective concrete set is empty, which no later writer names. A
+unique-constraint violation, a DDL failure, and an ordinary behavior difference
+are not overlap visibility.
 
 ## Behavioral Impacts
 
