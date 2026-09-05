@@ -824,7 +824,7 @@ def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
     # milestone verb reaching the buffering seam instead resolves against a real
     # connection first, and settles as an ordinary versioned write that consumes
     # the row's version while dropping the bounds the caller wrote.
-    with pytest.raises(wi.WriteInstructionError, match="temporal milestone verb"):
+    with pytest.raises(wi.WriteInstructionError, match="Non-temporal objects like 'Account'"):
         wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
 
 

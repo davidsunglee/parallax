@@ -78,8 +78,10 @@ from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedWrite,
+    WriteSurface,
     derive_keyed_write,
     non_temporal_milestone_refusal,
+    temporal_delete_refusal,
 )
 from parallax.core.unit_work.materialized import (
     BufferItem,
@@ -548,7 +550,7 @@ class WritePlanner:
                 concurrency,
                 tx_instant,
             )
-        _reject_milestone_verb(entity, instruction.mutation)
+        _reject_milestone_verb(entity, instruction.mutation, "keyed")
         version_attr = self._concurrency.version_attribute(declaring_entity)
         members = resolved.applicable_members(entity)
         if instruction.mutation == "insert":
@@ -685,6 +687,7 @@ class WritePlanner:
                 "successors, and the set-based batch collapse never applies to a temporal "
                 "entity (m-batch-write)"
             )
+        _reject_temporal_delete(entity, instruction.mutation, "keyed")
         topology = self._temporal.topology(declaring_entity, instruction.mutation)
         observed = observation if isinstance(observation, TemporalObservation) else None
         if topology.closure is not None and observed is None:
@@ -884,7 +887,7 @@ class WritePlanner:
         silently discarded while its version is consumed.
         """
         assert isinstance(group.observations, VersionColumns)
-        _reject_milestone_verb(entity, group.mutation.mutation)
+        _reject_milestone_verb(entity, group.mutation.mutation, "predicate")
         declaring_entity = resolved.declaring(entity)
         version_attr = self._concurrency.version_attribute(declaring_entity)
         if version_attr is None:
@@ -940,6 +943,7 @@ class WritePlanner:
         :meth:`_MaterializedTemporalSegment.step` to bind.
         """
         assert isinstance(group.observations, TemporalColumns)
+        _reject_temporal_delete(entity, group.mutation.mutation, "predicate")
         topology = self._temporal.topology(declaring_entity, group.mutation.mutation)
         gated = self._concurrency.gates(concurrency, declaring_entity)
         steps_per_row = (1 if topology.closure is not None else 0) + len(topology.successors)
@@ -1743,7 +1747,24 @@ def _decomposed_updates(
     return decomposed
 
 
-def _reject_milestone_verb(entity: EntityMetadata, mutation: str) -> None:
+def _reject_temporal_delete(entity: EntityMetadata, mutation: str, surface: WriteSurface) -> None:
+    """Refuse ``mutation`` when ``entity``'s family milestones the rows it would
+    physically remove.
+
+    Reached only once the caller has established that the target DOES derive an
+    As-Of Axis — the converse of :func:`_reject_milestone_verb`'s quadrant, and
+    the last structural refusal before the temporal facet is asked for a
+    topology it owns none for. Refusing here rather than there is what lets the
+    caller hear which verb their target does take: a facet answers a mutation
+    token alone and carries neither the target's name nor the surface the call
+    arrived on.
+    """
+    refusal = temporal_delete_refusal(entity.identity.name, mutation, surface=surface)
+    if refusal is not None:
+        raise WritePlanningError(refusal)
+
+
+def _reject_milestone_verb(entity: EntityMetadata, mutation: str, surface: WriteSurface) -> None:
     """Refuse ``mutation`` when ``entity``'s family has no milestone for it to
     open, split, or close.
 
@@ -1761,7 +1782,7 @@ def _reject_milestone_verb(entity: EntityMetadata, mutation: str) -> None:
     from, so an instruction refused before SQL and one refused at flush describe
     the same mismatch.
     """
-    refusal = non_temporal_milestone_refusal(entity.identity.name, mutation)
+    refusal = non_temporal_milestone_refusal(entity.identity.name, mutation, surface=surface)
     if refusal is not None:
         raise WritePlanningError(refusal)
 

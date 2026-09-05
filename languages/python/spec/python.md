@@ -4495,7 +4495,13 @@ These feature tests do not claim the deferred `benchmark` command or general
   conformance call enters the same ingress once. Reentry is refused once, as the
   ingress's first executable line. Typed prepares before it resolves evidence, so
   `terminate` against a target with no as-of axis hears the milestone-verb
-  refusal even when its evidence is also unusable.
+  refusal even when its evidence is also unusable. Verb applicability belongs to
+  that same stage, so BOTH halves of it are refused at the verb, in either
+  representation and whatever the source: a target with no as-of axis refuses a
+  milestone verb, and a temporal target refuses `delete`, which physically
+  removes rows and so has no temporal meaning — a temporal target spells its
+  removal `terminate` ("Write verbs and temporal spellings"). Each refusal names
+  the method the caller's own surface offers instead, keyed or `_where`.
 
   **An insert enters that ingress by its own door, with no source.** `insert` and
   `insert_until` name a fresh value rather than one a read published, so there is

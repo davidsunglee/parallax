@@ -86,6 +86,7 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.write_planner import (
+    WritePlanningError,
     assigned_many_path,
 )
 from parallax.snapshot import QueryTargetError, SnapshotDecodingError
@@ -703,6 +704,26 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
         "infinity",
         dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     )
+
+
+def test_materializing_delete_where_over_a_temporal_target_is_refused() -> None:
+    # `delete_where` physically removes every row it resolved, and a target that
+    # milestones its rows spells that removal `terminate_where`. The resolve
+    # still runs — a predicate write reaches the database before it knows what
+    # it matched — so the refusal lands on the group it buffered, naming the
+    # verb the caller can reach rather than the topology the facet owns none of.
+    port = ScriptedPort(Transact(Read(rows=_two_terminate_rows())))
+
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(mm.Balance.where(mm.Balance.value < 200))
+
+    with pytest.raises(WritePlanningError) as refusal:
+        Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
+    assert str(refusal.value) == (
+        "Temporal objects like 'Balance' do not support 'delete_where', which physically "
+        "removes rows. Use 'terminate_where' instead."
+    )
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
@@ -1977,7 +1998,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
     ("mutation", "message"),
     [
         ("updateUntil", "takes no valid_from"),
-        ("terminate", "temporal milestone verb"),
+        ("terminate", "do not support 'terminate_where'"),
         ("terminateUntil", "takes no valid_from"),
     ],
 )
