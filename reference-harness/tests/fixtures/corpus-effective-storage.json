@@ -848,6 +848,50 @@
       "valueObject": {}
     }
   },
+  "models/evolution-departing-shape-v1.yaml": {
+    "parallax.compatibility.Holding": {
+      "attribute": {
+        "custodian": "custodian"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Lot": {
+      "attribute": {
+        "units": "units"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Portfolio": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-departing-shape-v2.yaml": {
+    "parallax.compatibility.Holding": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Lot": {
+      "attribute": {
+        "units": "units"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Portfolio": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-document-members-v1.yaml": {
     "parallax.compatibility.Container": {
       "attribute": {
@@ -1649,6 +1693,70 @@
         "id": "id",
         "queue": "queue",
         "subject": "subject"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-rowless-position-v1.yaml": {
+    "parallax.compatibility.Catalog": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Draft": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Listing": {
+      "attribute": {
+        "price": "price"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-rowless-position-v2.yaml": {
+    "parallax.compatibility.Catalog": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Draft": {
+      "attribute": {
+        "reviewer": "reviewer"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Listing": {
+      "attribute": {
+        "price": "price"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-sealed-domain-v1.yaml": {
+    "parallax.compatibility.Almanac": {
+      "attribute": {
+        "id": "id",
+        "note": "note"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-sealed-domain-v2.yaml": {
+    "parallax.compatibility.Almanac": {
+      "attribute": {
+        "id": "id",
+        "note": "note"
       },
       "documentPath": {},
       "valueObject": {}

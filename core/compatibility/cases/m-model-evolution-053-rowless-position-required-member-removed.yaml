@@ -1,0 +1,30 @@
+# Removing a required member from a position that denotes no stored shape
+# (m-model-evolution): coordinated for the AUTHORING SURFACE alone.
+#
+# This is m-model-evolution-052 read backwards. Removing a model-facing
+# declaration always invalidates a previously valid authored operation, because
+# a read may still target the rowless `Draft` and address the members its
+# ancestry makes applicable. What it does not reach is the database: no shape
+# stored under the position demands a value the later model stops describing, so
+# there is no enforcing object to relax before a later write is accepted. The
+# same removal from a position that keeps its stored shape carries both reasons,
+# which m-model-evolution-054 witnesses.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-rowless-position-v2.yaml
+    later: models/evolution-rowless-position-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeRemoved
+        attribute: parallax.compatibility.Draft.reviewer
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeRemoved
+          attribute: parallax.compatibility.Draft.reviewer
+        reasons: [AuthoringSurfaceChangeRequired]

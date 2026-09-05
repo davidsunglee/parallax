@@ -1,0 +1,18 @@
+# Almanac (v1): the REQUIRED end of the sealed value-domain scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# Entity is read-only in both endpoints, so no later writer exists to place a
+# value an earlier reader cannot admit, and the expansion v1 to v2 is
+# Overlap-Visible to nobody.
+entity:
+  name: Almanac
+  namespace: parallax.compatibility
+  table: evolution_almanac
+  persistence: read-only
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: note
+      type: string
+      maxLength: 64
