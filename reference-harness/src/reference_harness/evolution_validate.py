@@ -444,13 +444,34 @@ def _impact_findings(
     return findings
 
 
+_SCOPE_RANK: Mapping[str, int] = {
+    "entity": _ENTITY,
+    "attribute": _ATTRIBUTE,
+    "relationship": _RELATIONSHIP,
+    "valueObject": _VALUE_OBJECT,
+    "valueObjectAttribute": _VO_ATTRIBUTE,
+}
+
+
 def _scope_key(impact: Mapping[str, Any]) -> tuple[Any, ...]:
+    """One impact scope's canonical Model Location key.
+
+    The same law the operations follow: Entity Identity outside, then the member
+    rank, then the rank's own detail. A malformed scope sorts last rather than
+    colliding with a well-formed one.
+    """
     scope = impact.get("scope")
     if not isinstance(scope, Mapping) or len(scope) != 1:
-        return ((), "")
+        return ("", "", len(_SCOPE_RANK), (), "")
     member, spelling = next(iter(scope.items()))
     entity, path = split_reference(str(spelling))
-    return (entity or "", path, str(member))
+    namespace, _, name = (entity or "").rpartition(".")
+    rank = _SCOPE_RANK.get(str(member), len(_SCOPE_RANK))
+    if rank == _VALUE_OBJECT:
+        return (namespace, name, rank, path, "")
+    if rank == _VO_ATTRIBUTE:
+        return (namespace, name, rank, path[:-1], path[-1] if path else "")
+    return (namespace, name, rank, (), path[0] if path else "")
 
 
 def _caused_by_findings(

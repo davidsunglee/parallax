@@ -1,0 +1,14 @@
+# Gauge (v2): the BITEMPORAL end of the BITEMPORAL As-Of Axis scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-bitemporality-v1.yaml with the Bitemporal profile, which
+# derives two axes whose canonical order places Valid Time before Transaction
+# Time.
+entity:
+  name: Gauge
+  namespace: parallax.compatibility
+  table: evolution_gauge
+  temporality: bitemporal
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: reading, type: int64 }

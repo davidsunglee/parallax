@@ -1,0 +1,14 @@
+# Carton (v1): the earlier endpoint of the INDEX RENAME scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. An
+# authored name participates in Index identity, so v2's differently named Index
+# over the same components is a removal and an addition.
+entity:
+  name: Carton
+  namespace: parallax.compatibility
+  table: evolution_carton
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: serial, type: string, maxLength: 32 }
+  indices:
+    - { name: carton_lookup, attributes: [serial], unique: true }

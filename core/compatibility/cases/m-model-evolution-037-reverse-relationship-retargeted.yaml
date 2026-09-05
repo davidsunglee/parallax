@@ -1,0 +1,55 @@
+# Retargeting a REVERSE Relationship (m-model-evolution): classification reads
+# the direction, not the declaration.
+#
+# The reverse declaration names a different defining peer, so the direction it
+# navigates now reaches another Entity through another join — facts the
+# declaration itself never spells. That is what makes it coordinated, and it is
+# the same `ReverseOfChanged` operation that causes the membership impact.
+tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-relationship-reverse-v1.yaml
+    later: models/evolution-relationship-reverse-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Item.holder
+        deltas:
+          - kind: ReverseOfChanged
+            earlier: parallax.compatibility.Folder.items
+            later: parallax.compatibility.Bin.items
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope:
+          relationship: parallax.compatibility.Item.holder
+        earlier:
+          target: parallax.compatibility.Folder
+          join:
+            source: parallax.compatibility.Item.folderId
+            target: parallax.compatibility.Folder.id
+        later:
+          target: parallax.compatibility.Bin
+          join:
+            source: parallax.compatibility.Item.binId
+            target: parallax.compatibility.Bin.id
+        causedBy:
+          - kind: RelationshipAltered
+            relationship: parallax.compatibility.Item.holder
+            deltas:
+              - kind: ReverseOfChanged
+                earlier: parallax.compatibility.Folder.items
+                later: parallax.compatibility.Bin.items
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: RelationshipAltered
+          relationship: parallax.compatibility.Item.holder
+          deltas:
+            - kind: ReverseOfChanged
+              earlier: parallax.compatibility.Folder.items
+              later: parallax.compatibility.Bin.items
+        reasons:
+          - AuthoringSurfaceChangeRequired

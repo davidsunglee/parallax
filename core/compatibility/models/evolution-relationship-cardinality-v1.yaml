@@ -1,0 +1,35 @@
+# Folder / Item / Badge (v1): the earlier endpoint of the Relationship
+# CARDINALITY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Both
+# associations map primary key to primary key, so every cardinality this pair
+# declares identifies its One sides through the key. They sit at opposite ends
+# of the boundary: one moves between two shapes that answer with one object, and
+# one moves to a shape that answers with a collection.
+entities:
+  - name: Badge
+    namespace: parallax.compatibility
+    table: evolution_badge
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+  - name: Folder
+    namespace: parallax.compatibility
+    table: evolution_folder
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+    relationships:
+      - name: badge
+        cardinality: one-to-one
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Badge, attribute: id }
+      - name: items
+        cardinality: many-to-one
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Item, attribute: id }
+  - name: Item
+    namespace: parallax.compatibility
+    table: evolution_item
+    attributes:
+      - { name: id, type: int64, primaryKey: true }

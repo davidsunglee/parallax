@@ -1,0 +1,55 @@
+# Changing an authored INDEX's UNIQUENESS (m-model-evolution): unilateral in
+# either direction, and it may change whether a write succeeds.
+#
+# One access path becomes an enforcement rule the earlier edition did not have
+# and one stops being one. Both are Behavioral Impacts behind a preserved
+# surface rather than reasons to coordinate: they destroy no stored data and
+# invalidate no authored operation, and creating the unique Index is itself the
+# authoritative validation of the rows already there. The Entity reports one
+# `UniquenessEnforcementChanged` naming both causes, because a rule set is the
+# Entity's, not one Index's.
+tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-index-uniqueness-v1.yaml
+    later: models/evolution-index-uniqueness-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: IndexAltered
+        index: parallax.compatibility.Skid.skid_label
+        deltas:
+          - kind: UniquenessChanged
+            earlier: true
+            later: false
+      - kind: IndexAltered
+        index: parallax.compatibility.Skid.skid_serial
+        deltas:
+          - kind: UniquenessChanged
+            earlier: false
+            later: true
+    behavioralImpacts:
+      - kind: UniquenessEnforcementChanged
+        scope:
+          entity: parallax.compatibility.Skid
+        earlier:
+          - - parallax.compatibility.Skid.label
+        later:
+          - - parallax.compatibility.Skid.serial
+        causedBy:
+          - kind: IndexAltered
+            index: parallax.compatibility.Skid.skid_label
+            deltas:
+              - kind: UniquenessChanged
+                earlier: true
+                later: false
+          - kind: IndexAltered
+            index: parallax.compatibility.Skid.skid_serial
+            deltas:
+              - kind: UniquenessChanged
+                earlier: false
+                later: true
+    overlapVisibleOperations: []
+    coordinationRequirements: []

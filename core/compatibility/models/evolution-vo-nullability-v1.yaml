@@ -1,0 +1,20 @@
+# Parcel (v1): the earlier endpoint of the Value Object occurrence NULLABILITY
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Two
+# occurrences sit at opposite ends of the boundary so one evolution moves each
+# in the opposite direction.
+entity:
+  name: Parcel
+  namespace: parallax.compatibility
+  table: evolution_parcel
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: courier
+      nullable: true
+      attributes:
+        - { name: carrier, type: string }
+    - name: origin
+      attributes:
+        - { name: city, type: string }

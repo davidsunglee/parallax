@@ -1,0 +1,56 @@
+# Changing a Relationship's ORDERING (m-model-evolution): unilateral, and the
+# only result ordering the model itself defines.
+#
+# The navigation answers with the same Entities in a different order, which is
+# reported exclusively as `QueryResultOrderingChanged`. Declaration order, Index
+# component order, and unspecified physical row order are not model-defined
+# result ordering and never reach this impact.
+tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-relationship-ordering-v1.yaml
+    later: models/evolution-relationship-ordering-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Folder.items
+        deltas:
+          - kind: OrderingChanged
+            earlier:
+              - attribute: parallax.compatibility.Item.label
+                direction: asc
+                nulls: last
+            later:
+              - attribute: parallax.compatibility.Item.label
+                direction: desc
+                nulls: last
+    behavioralImpacts:
+      - kind: QueryResultOrderingChanged
+        scope:
+          relationship: parallax.compatibility.Folder.items
+        earlier:
+          - attribute: parallax.compatibility.Item.label
+            direction: asc
+            nulls: last
+        later:
+          - attribute: parallax.compatibility.Item.label
+            direction: desc
+            nulls: last
+        causedBy:
+          - kind: RelationshipAltered
+            relationship: parallax.compatibility.Folder.items
+            deltas:
+              - kind: OrderingChanged
+                earlier:
+                  - attribute: parallax.compatibility.Item.label
+                    direction: asc
+                    nulls: last
+                later:
+                  - attribute: parallax.compatibility.Item.label
+                    direction: desc
+                    nulls: last
+    overlapVisibleOperations: []
+    coordinationRequirements: []

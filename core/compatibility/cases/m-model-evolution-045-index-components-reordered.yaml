@@ -1,0 +1,30 @@
+# Reordering an INDEX's components (m-model-evolution): an alteration that
+# enforces the same rule.
+#
+# Component order is retained in the delta because it changes the physical access
+# path. The uniqueness rule, by contrast, is an unordered Attribute set, so the
+# reordered Index enforces exactly what it enforced before and the evolution
+# carries no Behavioral Impact.
+tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-index-components-v1.yaml
+    later: models/evolution-index-components-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: IndexAltered
+        index: parallax.compatibility.Bale.bale_lookup
+        deltas:
+          - kind: ComponentsChanged
+            earlier:
+              - parallax.compatibility.Bale.region
+              - parallax.compatibility.Bale.label
+            later:
+              - parallax.compatibility.Bale.label
+              - parallax.compatibility.Bale.region
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

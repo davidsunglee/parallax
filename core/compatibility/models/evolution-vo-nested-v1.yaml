@@ -1,0 +1,17 @@
+# Contact (v1): the earlier endpoint of the NESTED Value Object scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# top-level occurrence survives and one nested occurrence beneath it does not,
+# which is what makes the nested suppression rule observable at depth.
+entity:
+  name: Contact
+  namespace: parallax.compatibility
+  table: evolution_contact
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: profile
+      valueObjects:
+        - name: home
+          attributes:
+            - { name: city, type: string }

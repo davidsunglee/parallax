@@ -1,0 +1,77 @@
+# Reordering every local collection (m-model-evolution): one operation per
+# collection, all unilateral.
+#
+# Each operation names only the identities present in both endpoints, and the
+# later model is never normalized back into the earlier order. Every
+# declaration-order operation sorts after every declaration operation, and among
+# themselves by owner Model Location key and then by collection — which is why
+# the Entity's four collections precede the occurrence's two.
+tags: [m-model-evolution, evolution, declaration-order, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-declaration-order-v1.yaml
+    later: models/evolution-declaration-order-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: DeclarationOrderChanged
+        collection: entityAttributes
+        owner: parallax.compatibility.Batch
+        earlier:
+          - parallax.compatibility.Batch.id
+          - parallax.compatibility.Batch.alpha
+          - parallax.compatibility.Batch.beta
+        later:
+          - parallax.compatibility.Batch.id
+          - parallax.compatibility.Batch.beta
+          - parallax.compatibility.Batch.alpha
+      - kind: DeclarationOrderChanged
+        collection: entityRelationships
+        owner: parallax.compatibility.Batch
+        earlier:
+          - parallax.compatibility.Batch.slot
+          - parallax.compatibility.Batch.tray
+        later:
+          - parallax.compatibility.Batch.tray
+          - parallax.compatibility.Batch.slot
+      - kind: DeclarationOrderChanged
+        collection: entityValueObjects
+        owner: parallax.compatibility.Batch
+        earlier:
+          - parallax.compatibility.Batch.origin
+          - parallax.compatibility.Batch.route
+        later:
+          - parallax.compatibility.Batch.route
+          - parallax.compatibility.Batch.origin
+      - kind: DeclarationOrderChanged
+        collection: entityIndices
+        owner: parallax.compatibility.Batch
+        earlier:
+          - parallax.compatibility.Batch.batch_by_alpha
+          - parallax.compatibility.Batch.batch_by_beta
+        later:
+          - parallax.compatibility.Batch.batch_by_beta
+          - parallax.compatibility.Batch.batch_by_alpha
+      - kind: DeclarationOrderChanged
+        collection: valueObjectAttributes
+        owner: parallax.compatibility.Batch.origin
+        earlier:
+          - parallax.compatibility.Batch.origin.city
+          - parallax.compatibility.Batch.origin.zone
+        later:
+          - parallax.compatibility.Batch.origin.zone
+          - parallax.compatibility.Batch.origin.city
+      - kind: DeclarationOrderChanged
+        collection: nestedValueObjects
+        owner: parallax.compatibility.Batch.origin
+        earlier:
+          - parallax.compatibility.Batch.origin.far
+          - parallax.compatibility.Batch.origin.near
+        later:
+          - parallax.compatibility.Batch.origin.near
+          - parallax.compatibility.Batch.origin.far
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

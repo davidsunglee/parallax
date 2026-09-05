@@ -1,0 +1,35 @@
+# Moving a Value Object occurrence's STORAGE LOCATION (m-model-evolution):
+# coordinated.
+#
+# Only a top-level occurrence owns a Storage Location, and the two editions
+# cannot address both Structured Columns through one compiled operation surface.
+# The logical value domain is untouched, so the change causes no Behavioral
+# Impact at all.
+tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-vo-column-v1.yaml
+    later: models/evolution-vo-column-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: ValueObjectOccurrenceAltered
+        valueObject: parallax.compatibility.Crate.origin
+        deltas:
+          - kind: StorageChanged
+            earlier: origin_doc
+            later: origin_json
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: ValueObjectOccurrenceAltered
+          valueObject: parallax.compatibility.Crate.origin
+          deltas:
+            - kind: StorageChanged
+              earlier: origin_doc
+              later: origin_json
+        reasons:
+          - DatabaseMigrationRequired

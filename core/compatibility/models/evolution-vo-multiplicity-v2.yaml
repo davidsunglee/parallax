@@ -1,0 +1,19 @@
+# Ledger (v2): the later endpoint of the Value Object MULTIPLICITY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-vo-multiplicity-v1.yaml with `entry` declared as an ordered
+# collection and `line` declared as a single composite.
+entity:
+  name: Ledger
+  namespace: parallax.compatibility
+  table: evolution_ledger
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: entry
+      multiplicity: many
+      attributes:
+        - { name: memo, type: string }
+    - name: line
+      attributes:
+        - { name: amount, type: int64 }

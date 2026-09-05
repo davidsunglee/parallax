@@ -1,0 +1,21 @@
+# Container (v2): the later endpoint of the DOCUMENT-LAYOUT member scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-document-members-v1.yaml plus one nullable Attribute and one
+# nullable Value Object occurrence, the same two additions a Columns model would
+# describe identically.
+entity:
+  name: Container
+  namespace: parallax.compatibility
+  table: evolution_container
+  layout:
+    document:
+      column: payload
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: note, type: string, maxLength: 64, nullable: true }
+  valueObjects:
+    - name: origin
+      nullable: true
+      attributes:
+        - { name: city, type: string }

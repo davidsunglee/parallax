@@ -1,0 +1,67 @@
+# Changing a Relationship's effective TARGET ENTITY (m-model-evolution):
+# coordinated.
+#
+# The join moves to another Entity, so a previously valid navigation now answers
+# with a different type and every operation authored against the old one has to
+# change. The membership impact is reported beside it: the two are independent,
+# and a target change causes both.
+tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-relationship-target-v1.yaml
+    later: models/evolution-relationship-target-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Folder.holder
+        deltas:
+          - kind: JoinChanged
+            earlier:
+              source: parallax.compatibility.Folder.id
+              target: parallax.compatibility.Item.folderId
+            later:
+              source: parallax.compatibility.Folder.id
+              target: parallax.compatibility.Archive.folderId
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope:
+          relationship: parallax.compatibility.Folder.holder
+        earlier:
+          target: parallax.compatibility.Item
+          join:
+            source: parallax.compatibility.Folder.id
+            target: parallax.compatibility.Item.folderId
+        later:
+          target: parallax.compatibility.Archive
+          join:
+            source: parallax.compatibility.Folder.id
+            target: parallax.compatibility.Archive.folderId
+        causedBy:
+          - kind: RelationshipAltered
+            relationship: parallax.compatibility.Folder.holder
+            deltas:
+              - kind: JoinChanged
+                earlier:
+                  source: parallax.compatibility.Folder.id
+                  target: parallax.compatibility.Item.folderId
+                later:
+                  source: parallax.compatibility.Folder.id
+                  target: parallax.compatibility.Archive.folderId
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: RelationshipAltered
+          relationship: parallax.compatibility.Folder.holder
+          deltas:
+            - kind: JoinChanged
+              earlier:
+                source: parallax.compatibility.Folder.id
+                target: parallax.compatibility.Item.folderId
+              later:
+                source: parallax.compatibility.Folder.id
+                target: parallax.compatibility.Archive.folderId
+        reasons:
+          - AuthoringSurfaceChangeRequired

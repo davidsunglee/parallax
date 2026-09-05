@@ -1,0 +1,26 @@
+# Folder / Item (v1): the earlier endpoint of the DECLARATION FORM scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `Folder`
+# owns the mapping facts and `Item` names it; v2 exchanges the two roles without
+# moving either navigable direction.
+entities:
+  - name: Folder
+    namespace: parallax.compatibility
+    table: evolution_folder
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+    relationships:
+      - name: items
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Item, attribute: folderId }
+  - name: Item
+    namespace: parallax.compatibility
+    table: evolution_item
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: folderId, type: int64 }
+    relationships:
+      - name: folder
+        reverseOf: parallax.compatibility.Folder.items

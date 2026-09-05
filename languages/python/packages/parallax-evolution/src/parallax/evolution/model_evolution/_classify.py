@@ -16,13 +16,17 @@ from dataclasses import dataclass
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
     AttributePrimaryKey,
+    Cardinality,
     PersistenceMode,
     PrimaryKey,
     TablePerHierarchy,
 )
-from parallax.evolution.model_evolution._matching import EntityFacts, Matching
+from parallax.evolution.model_evolution._matching import EntityFacts, Matching, RelationshipFacts
 from parallax.evolution.model_evolution._values import (
     COORDINATION_REASON_ORDER,
+    AsOfAxisAdded,
+    AsOfAxisAltered,
+    AsOfAxisRemoved,
     AttributeAdded,
     AttributeAltered,
     AttributeRemoved,
@@ -34,15 +38,24 @@ from parallax.evolution.model_evolution._values import (
     EvolutionOperation,
     InheritanceChanged,
     MaximumLengthChanged,
+    MultiplicityChanged,
     NullabilityChanged,
     OptimisticLockingChanged,
     PersistenceChanged,
     PrimaryKeyChanged,
     ReadOnlyChanged,
+    RelationshipAltered,
+    RelationshipRemoved,
     StorageChanged,
     StorageContainerChanged,
     StorageLayoutChanged,
     TypeChanged,
+    ValueObjectAttributeAdded,
+    ValueObjectAttributeAltered,
+    ValueObjectAttributeRemoved,
+    ValueObjectOccurrenceAdded,
+    ValueObjectOccurrenceAltered,
+    ValueObjectOccurrenceRemoved,
 )
 
 __all__ = ["Classification", "classify"]
@@ -51,6 +64,7 @@ _AUTHORING = CoordinationReason.AUTHORING_SURFACE_CHANGE_REQUIRED
 _MIGRATION = CoordinationReason.DATABASE_MIGRATION_REQUIRED
 
 _UNILATERAL: tuple[CoordinationReason, ...] = ()
+_BOTH: tuple[CoordinationReason, ...] = (_AUTHORING, _MIGRATION)
 
 # Removing a model-facing declaration invalidates a previously valid authored
 # operation, which is the whole of why it needs coordination: the physical
@@ -86,14 +100,43 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
                 reasons=_UNILATERAL,
                 overlap_visible=_shares_a_table(matching.entities.added[operation.entity].family),
             )
-        case EntityRemoved() | ConcreteSubtypeRemoved() | AttributeRemoved():
+        case (
+            EntityRemoved()
+            | ConcreteSubtypeRemoved()
+            | AttributeRemoved()
+            | ValueObjectOccurrenceRemoved()
+            | ValueObjectAttributeRemoved()
+            | RelationshipRemoved()
+            | AsOfAxisRemoved()
+        ):
             return Classification(reasons=_REMOVAL, overlap_visible=False)
         case EntityAltered():
             return _entity_alteration(matching.entities.surviving[operation.entity], operation)
         case AttributeAdded():
-            return _attribute_addition(matching, operation)
+            return _member_addition(matching.attributes.added[operation.attribute].nullable)
         case AttributeAltered():
             return _attribute_alteration(operation)
+        case ValueObjectOccurrenceAdded():
+            return _member_addition(matching.value_objects.added[operation.value_object].nullable)
+        case ValueObjectOccurrenceAltered():
+            return _occurrence_alteration(operation)
+        case ValueObjectAttributeAdded():
+            return _member_addition(
+                matching.value_object_attributes.added[operation.value_object_attribute].nullable
+            )
+        case ValueObjectAttributeAltered():
+            return _value_object_attribute_alteration(operation)
+        case RelationshipAltered():
+            return _relationship_alteration(
+                matching.relationships.surviving[operation.relationship]
+            )
+        case AsOfAxisAdded() | AsOfAxisAltered():
+            # An axis on an Entity that already stores rows changes the temporal
+            # operation surface and the framework ownership of its endpoints, and
+            # it moves the derived physical key and the bounds existing rows must
+            # carry. An axis on a wholly new Entity is suppressed by that
+            # Entity's own unilateral addition and never reaches here.
+            return Classification(reasons=_BOTH, overlap_visible=False)
         case _:
             return Classification(reasons=_UNILATERAL, overlap_visible=False)
 
@@ -109,15 +152,17 @@ def _shares_a_table(family: InheritanceEntityView) -> bool:
     return isinstance(family.strategy, TablePerHierarchy)
 
 
-def _attribute_addition(matching: Matching, operation: AttributeAdded) -> Classification:
-    """A member added to an Entity that already stores rows.
+def _member_addition(nullable: bool) -> Classification:
+    """A member added to an Entity or Value Object that already stores rows.
 
     Adding a nullable member is unilateral. A required one needs coordination
     until a default and backfill contract makes existing rows satisfy the later
-    model; a wholly new Entity may carry required members, because its own
-    addition suppresses them and creates a complete empty Table.
+    model — for a scalar Attribute and a Value Object member alike, whether it
+    occupies a direct Column or an existing Structured Column. A wholly new
+    Entity may carry required members, because its own addition suppresses them
+    and creates a complete empty Table.
     """
-    if matching.attributes.added[operation.attribute].nullable:
+    if nullable:
         return Classification(reasons=_UNILATERAL, overlap_visible=False)
     return Classification(reasons=(_MIGRATION,), overlap_visible=False)
 
@@ -228,6 +273,73 @@ def _attribute_alteration(operation: AttributeAltered) -> Classification:
                     # previously valid write no longer supplies it.
                     reasons.add(_AUTHORING)
     return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
+
+
+def _occurrence_alteration(operation: ValueObjectOccurrenceAltered) -> Classification:
+    reasons: set[CoordinationReason] = set()
+    overlap_visible = False
+    for delta in operation.deltas:
+        match delta:
+            case StorageChanged():
+                reasons.add(_MIGRATION)
+            case MultiplicityChanged():
+                # An authored path changes between one object and a collection,
+                # and every stored document carries the shape it left behind.
+                reasons |= {_AUTHORING, _MIGRATION}
+            case NullabilityChanged(_, nullable):
+                if nullable:
+                    overlap_visible = True
+                else:
+                    reasons.add(_MIGRATION)
+    return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
+
+
+def _value_object_attribute_alteration(operation: ValueObjectAttributeAltered) -> Classification:
+    """A scalar leaf owns no Column, key, bound, or locking fact, so its two
+    deltas classify exactly as the same two do on a scalar Attribute."""
+    reasons: set[CoordinationReason] = set()
+    overlap_visible = False
+    for delta in operation.deltas:
+        match delta:
+            case TypeChanged():
+                reasons |= {_AUTHORING, _MIGRATION}
+            case NullabilityChanged(_, nullable):
+                if nullable:
+                    overlap_visible = True
+                else:
+                    reasons.add(_MIGRATION)
+    return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
+
+
+def _relationship_alteration(
+    surviving: tuple[RelationshipFacts, RelationshipFacts],
+) -> Classification:
+    """A surviving Relationship, judged on the direction it navigates.
+
+    Join, dependency, ordering, and source-side cardinality may all change behind
+    a preserved surface; what a previously valid authored navigation cannot
+    survive is reaching a different Entity or answering with a collection where
+    it answered with one object. The comparison reads the symmetric facet, so a
+    change a defining peer makes is seen from the reverse side too, and a
+    declaration that merely changes form while naming the same direction is no
+    change to the surface at all.
+    """
+    earlier, later = surviving
+    if _navigates_the_same_way(earlier, later):
+        return Classification(reasons=_UNILATERAL, overlap_visible=False)
+    return Classification(reasons=(_AUTHORING,), overlap_visible=False)
+
+
+def _navigates_the_same_way(earlier: RelationshipFacts, later: RelationshipFacts) -> bool:
+    return (
+        earlier.direction.join.target.entity == later.direction.join.target.entity
+        and _answers_many(earlier) == _answers_many(later)
+    )
+
+
+def _answers_many(facts: RelationshipFacts) -> bool:
+    """Whether navigating this direction answers with a collection."""
+    return facts.direction.cardinality is Cardinality.ONE_TO_MANY
 
 
 def _primary_key_reasons(

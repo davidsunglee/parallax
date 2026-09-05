@@ -1,0 +1,14 @@
+# Carton (v2): the later endpoint of the INDEX RENAME scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-index-name-v1.yaml with the Index renamed and its components
+# and uniqueness unchanged.
+entity:
+  name: Carton
+  namespace: parallax.compatibility
+  table: evolution_carton
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: serial, type: string, maxLength: 32 }
+  indices:
+    - { name: carton_serial_lookup, attributes: [serial], unique: true }

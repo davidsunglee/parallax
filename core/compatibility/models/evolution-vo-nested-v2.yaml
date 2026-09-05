@@ -1,0 +1,19 @@
+# Contact (v2): the later endpoint of the NESTED Value Object scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-vo-nested-v1.yaml with the nested `home` occurrence replaced
+# by a nullable `work`; each nested occurrence operation suppresses its own
+# leaves.
+entity:
+  name: Contact
+  namespace: parallax.compatibility
+  table: evolution_contact
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: profile
+      valueObjects:
+        - name: work
+          nullable: true
+          attributes:
+            - { name: city, type: string }
