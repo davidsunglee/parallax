@@ -61,6 +61,11 @@ from parallax.core.entity import (
     NodeHandle,
     graph_construction_of,
 )
+
+# The accepted Metamodel a `Database` builds for itself, and the ingress's own
+# seam records: both reached directly so what a record owns is proved at the seam
+# rather than inferred from what a verb emitted.
+from parallax.core.entity._model import cataloged_model
 from parallax.core.unit_work import (
     FixedClock,
     ObjectKey,
@@ -77,6 +82,10 @@ from parallax.snapshot.handle import (
     Transaction,
     TransactionTimePinReadOnlyError,
     WriteEvidenceError,
+)
+from parallax.snapshot.handle._keyed_writes import (
+    PreparedSourceWrite,
+    ResolvedKeyedWriteSource,
 )
 
 
@@ -1244,6 +1253,44 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
     assert refusal.value.code == "write-value-not-stored"
     assert refusal.value.identity == mm.Account.identity
     assert "tx.insert(...)" in refusal.value.message
+
+
+def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
+    # An adapter builds these mappings while reading its own value, and the
+    # ingress weighs them against the SEALED rows a prepared instruction carries,
+    # so neither may stay reachable through the caller that built it.
+    instruction = cast(
+        "instructions.PreparedKeyedWrite",
+        instructions.prepare_typed_write(
+            instructions.KeyedWrite(
+                "update", mm.Account.identity.canonical, ({"id": 1, "owner": "Ada"},), None, None
+            ),
+            cataloged_model(ACCOUNT).meta,
+        ),
+    )
+    identity_row: dict[str, object] = {"id": 1}
+    originals: dict[str, object] = {"owner": "Grace"}
+    resolved = ResolvedKeyedWriteSource(
+        entity=instruction.target,
+        pin=None,
+        hint=None,
+        identity_row=identity_row,
+        provenance="this",
+    )
+    prepared = PreparedSourceWrite(
+        instruction=instruction,
+        object_key=ObjectKey(mm.Account.identity, (("id", 1),)),
+        originals=originals,
+    )
+
+    identity_row["id"] = 2
+    originals["owner"] = "Newton"
+    assert resolved.identity_row == {"id": 1}
+    assert prepared.originals == {"owner": "Grace"}
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", resolved.identity_row)["id"] = 3
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", prepared.originals)["owner"] = "Newton"
 
 
 def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:

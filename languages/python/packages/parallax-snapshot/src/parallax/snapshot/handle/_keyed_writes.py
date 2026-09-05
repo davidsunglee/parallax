@@ -60,6 +60,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Protocol
 
 from parallax.core.entity._layout import CatalogedModel
@@ -163,6 +164,10 @@ class ResolvedKeyedWriteSource:
     identity_row: Mapping[str, object] | None
     provenance: Provenance
 
+    def __post_init__(self) -> None:
+        if self.identity_row is not None:
+            object.__setattr__(self, "identity_row", _sealed_row(self.identity_row))
+
 
 @dataclass(frozen=True, slots=True)
 class PreparedSourceWrite:
@@ -183,6 +188,9 @@ class PreparedSourceWrite:
     instruction: PreparedKeyedWrite
     object_key: ObjectKey
     originals: Mapping[str, object]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "originals", _sealed_row(self.originals))
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,6 +394,17 @@ def keyed_insert(
             observation=None,
         ),
     )
+
+
+def _sealed_row(row: Mapping[str, object]) -> Mapping[str, object]:
+    """``row`` owned by the record that answers it.
+
+    Copied and then sealed, both: an adapter builds these mappings as it reads a
+    value, and the ingress weighs them against the sealed rows a prepared
+    instruction carries, so a record crossing the seam has to be as unable to
+    change underneath its reader as those rows are.
+    """
+    return MappingProxyType(dict(row))
 
 
 def _effective_row(
