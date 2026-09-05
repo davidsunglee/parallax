@@ -8,7 +8,9 @@
 # there: the rows carrying `note` are addressed by nobody afterwards and may be
 # left in place, exactly as a concrete subtype's removal leaves them. Only a shape
 # the position keeps at BOTH endpoints has data to carry, and this position keeps
-# none. Two surviving positions change what they denote.
+# none. Two surviving positions change what they denote, and `Note` stops being a
+# write handle: a write names a concrete subtype, so the position admits no
+# persistence operation once it is abstract.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:
@@ -53,6 +55,22 @@ then:
         scope: { entity: parallax.compatibility.Note }
         earlier: { concreteEntities: [parallax.compatibility.Note], axes: [] }
         later: { concreteEntities: [], axes: [] }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Note
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Instrument
+                  tag: { value: note }
+                later:
+                  role: abstract-subtype
+                  parent: parallax.compatibility.Instrument
+      - kind: WriteCapabilityChanged
+        scope: { entity: parallax.compatibility.Note }
+        earlier: { writes: Enabled, shape: NonTemporal }
+        later: { writes: Disabled }
         causedBy:
           - kind: EntityAltered
             entity: parallax.compatibility.Note

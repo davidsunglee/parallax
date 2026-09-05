@@ -372,8 +372,10 @@ shape whose family arrives whole around it, under either strategy, because
 visibility is a claim about an earlier reader and the earlier edition holds no
 position of that family, so neither its Table nor a selection through it. A
 surviving position keeping the root it had stays in the family the earlier
-edition already held; one taking another root arrives in a family as an added
-subtype does.
+edition already held; one taking another root is judged in the family it joins
+on exactly the terms an added concrete subtype is, visible to whatever positions
+of that family the earlier edition already held and to nobody where the family
+arrives whole around it.
 
 None of them is overlap-visible where no later writer can place the value: a
 family whose later effective Persistence Mode is `ReadOnly` admits no writer at
@@ -421,7 +423,7 @@ claim to enumerate consequences outside this vocabulary.
 | `ConcurrencyControlChanged` | one surviving Entity | its model-derived behavior under the `optimistic` Concurrency Preference: `LockingFallback`, `VersionGated` naming the explicit version Attribute, or `TransactionTimeGated` naming the Transaction-Time start Attribute |
 | `QueryResultMembershipChanged` | one surviving Entity or Relationship position | for an Entity, the effective concrete Entity set and Temporal Shape including its axis Attributes; for a Relationship, the target Entity and effective join |
 | `QueryResultOrderingChanged` | one surviving Relationship | the normalized effective ordering terms, each with its target Attribute, Sort Direction, and Null Placement |
-| `WriteCapabilityChanged` | one surviving Entity or Attribute | for an Entity, `Disabled` or `Enabled` carrying the effective `NonTemporal`, `TransactionTimeOnly`, or `Bitemporal` write shape; for an Attribute, `FrameworkOwned`, `CallerInsertOnly`, or `CallerInsertAndUpdate` |
+| `WriteCapabilityChanged` | one surviving Entity or Attribute | for an Entity, `Disabled` or `Enabled` carrying the effective `NonTemporal`, `TransactionTimeOnly`, or `Bitemporal` write shape — `Enabled` only where the family admits writes and the Entity is itself a write handle, which an abstract root and an abstract subtype are not (`m-inheritance`); for an Attribute, `FrameworkOwned`, `CallerInsertOnly`, or `CallerInsertAndUpdate` |
 
 Impacts are ordered first by the closed variant order above, then by the
 structured identity of their scope. That order never implies severity or

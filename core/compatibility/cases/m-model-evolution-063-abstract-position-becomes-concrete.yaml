@@ -9,8 +9,10 @@
 # introduces a discriminator value the shared Table did not carry, and a reader
 # still on the earlier edition cannot admit `note`. The family the value lands in
 # is the one the earlier edition already held, which is what a position keeping its
-# root distinguishes from one arriving in a family whole. Two surviving positions
-# change what they denote.
+# root distinguishes from one arriving in a family the earlier edition holds no
+# position of. Two surviving positions change what they denote, and `Note` becomes
+# a write handle: a write names a concrete subtype, so the position admitted no
+# persistence operation at all while it was abstract.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:
@@ -55,6 +57,22 @@ then:
         scope: { entity: parallax.compatibility.Note }
         earlier: { concreteEntities: [], axes: [] }
         later: { concreteEntities: [parallax.compatibility.Note], axes: [] }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Note
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: abstract-subtype
+                  parent: parallax.compatibility.Instrument
+                later:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Instrument
+                  tag: { value: note }
+      - kind: WriteCapabilityChanged
+        scope: { entity: parallax.compatibility.Note }
+        earlier: { writes: Disabled }
+        later: { writes: Enabled, shape: NonTemporal }
         causedBy:
           - kind: EntityAltered
             entity: parallax.compatibility.Note

@@ -703,9 +703,21 @@ def _axis_endpoints(
 
 
 def _entity_writes(endpoint: _Endpoint, facts: EntityFacts) -> EntityWriteCapability:
+    """What persistence operations one Entity admits at one endpoint.
+
+    Two conditions must both hold. The family must admit writes at all, and the
+    Entity must be a write handle: every create, update, delete, and terminate
+    names a concrete subtype, so an abstract root and an abstract subtype are
+    polymorphic read positions admitting no persistence operation
+    (`m-inheritance`). A standalone Entity is its own concrete set and so passes
+    the second condition trivially.
+    """
+    entity = facts.declaration.identity
     if facts.family.persistence is PersistenceMode.READ_ONLY:
         return WRITES_DISABLED
-    return WritesEnabled(_write_shape(endpoint, facts.declaration.identity))
+    if entity not in set(facts.family.concrete_subtypes):
+        return WRITES_DISABLED
+    return WritesEnabled(_write_shape(endpoint, entity))
 
 
 def _write_shape(endpoint: _Endpoint, entity: EntityIdentity) -> EntityWriteShape:
@@ -758,10 +770,11 @@ def _shape_moved(analysis: _Analysis, entity: EntityIdentity) -> bool:
     """Whether the temporal write shape the two facts report differs.
 
     A surface that admits no write carries no shape, so an axis behind a later
-    disabled surface moved nothing the impact reports.
+    disabled surface moved nothing the impact reports — whether the family
+    withdrew its writes or the position stopped being a write handle.
     """
     _, later = analysis.matching.entities.surviving[entity]
-    if later.family.persistence is PersistenceMode.READ_ONLY:
+    if _entity_writes(analysis.later, later) == WRITES_DISABLED:
         return False
     return _write_shape(analysis.earlier, entity) != _write_shape(analysis.later, entity)
 
