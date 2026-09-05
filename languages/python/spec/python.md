@@ -4294,7 +4294,12 @@ These feature tests do not claim the deferred `benchmark` command or general
   carries no attribute for the member and is refused
   `entity-row-member-missing`, while a value whose class does carry the member
   and nothing ever populated it passes that check and fails on the attribute
-  read itself.
+  read itself. Totality is over the object the reading NAMES, not merely over
+  the row it builds: a value carrying something no object can be addressed by on
+  a key member — anything the exemption's own equality has no hash for — names no
+  object either, and reaches the same refusal rather than failing the ledger's
+  question. Which carriers those are is not enumerable, because a value
+  constructed without validation carries whatever its author put there.
 - **A keyed temporal close requires a value that names a milestone.** The
   observation a temporal `update`/`terminate`/`*_until` settles against is
   resolved at the verb from the **value being written** — its own `Edge` —
