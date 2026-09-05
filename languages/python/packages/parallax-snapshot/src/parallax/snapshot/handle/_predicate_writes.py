@@ -336,7 +336,7 @@ def buffer_predicate_instruction(
     temporal = is_temporal(declaring_entity)
     if not temporal:
         refusal = instructions.non_temporal_milestone_refusal(
-            entity.identity.name, instruction.mutation
+            entity.identity.name, instruction.mutation, surface="predicate"
         )
         if refusal is not None:
             raise instructions.WriteInstructionError(refusal)

@@ -1218,7 +1218,7 @@ def test_materialized_group_refuses_a_milestone_verb_on_a_non_temporal_target(
     assignments = (
         [WriteAssignment("Account.balance", Decimal("5.00"))] if mutation == "updateUntil" else []
     )
-    with pytest.raises(WriteInstructionError, match="temporal milestone verb"):
+    with pytest.raises(WriteInstructionError, match="Non-temporal objects like 'Account'"):
         _version_group("Account", mutation, "id", [(1, 1)], assignments)
 
 
