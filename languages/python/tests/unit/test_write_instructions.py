@@ -784,48 +784,91 @@ def test_a_canonical_spelling_resolves_where_the_bare_one_is_ambiguous() -> None
 # coordinates the target profile uses").                                        #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    "instruction",
+    ("instruction", "expected"),
     [
-        {
-            "mutation": "updateUntil",
-            "entity": "Account",
-            "rows": [{"id": 1, "balance": 5.00}],
-            "validFrom": _B1,
-            "until": _B2,
-        },
-        {"mutation": "terminate", "entity": "Account", "rows": [{"id": 1}]},
-        {
-            "mutation": "updateUntil",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
-            "assignments": [{"attr": "Account.balance", "value": 0}],
-            "validFrom": _B1,
-            "until": _B2,
-        },
-        {
-            "mutation": "terminateUntil",
-            "target": {"entity": "Account", "predicate": {"all": {}}},
-            "validFrom": _B1,
-            "until": _B2,
-        },
+        (
+            {
+                "mutation": "insertUntil",
+                "entity": "Account",
+                "rows": [{"id": 1, "balance": 5.00}],
+                "validFrom": _B1,
+                "until": _B2,
+            },
+            "Non-temporal objects like 'Account' do not support 'insert_until', which "
+            "records a row over a time range. Use 'insert' instead.",
+        ),
+        (
+            {
+                "mutation": "updateUntil",
+                "entity": "Account",
+                "rows": [{"id": 1, "balance": 5.00}],
+                "validFrom": _B1,
+                "until": _B2,
+            },
+            "Non-temporal objects like 'Account' do not support 'update_until', which "
+            "records a change over a time range. Use 'update' instead.",
+        ),
+        (
+            {"mutation": "terminate", "entity": "Account", "rows": [{"id": 1}]},
+            "Non-temporal objects like 'Account' do not support 'terminate', which closes "
+            "a row's history instead of removing it. Use 'delete' instead.",
+        ),
+        (
+            {
+                "mutation": "terminateUntil",
+                "entity": "Account",
+                "rows": [{"id": 1}],
+                "validFrom": _B1,
+                "until": _B2,
+            },
+            "Non-temporal objects like 'Account' do not support 'terminate_until', which "
+            "closes a row's history instead of removing it. Use 'delete' instead.",
+        ),
+        (
+            {
+                "mutation": "updateUntil",
+                "target": {"entity": "Account", "predicate": {"all": {}}},
+                "assignments": [{"attr": "Account.balance", "value": 0}],
+                "validFrom": _B1,
+                "until": _B2,
+            },
+            "Non-temporal objects like 'Account' do not support 'update_until_where', which "
+            "records a change over a time range. Use 'update_where' instead.",
+        ),
+        (
+            {
+                "mutation": "terminateUntil",
+                "target": {"entity": "Account", "predicate": {"all": {}}},
+                "validFrom": _B1,
+                "until": _B2,
+            },
+            "Non-temporal objects like 'Account' do not support 'terminate_until_where', which "
+            "closes a row's history instead of removing it. Use 'delete_where' instead.",
+        ),
     ],
     ids=[
+        "keyed-insertUntil",
         "keyed-updateUntil",
         "keyed-terminate",
+        "keyed-terminateUntil",
         "predicate-updateUntil",
         "predicate-terminateUntil",
     ],
 )
 def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
-    instruction: dict[str, Any],
+    instruction: dict[str, Any], expected: str
 ) -> None:
     # `Account` is versioned and non-temporal, so it has no milestone for a
     # bounded or closing verb to address. The validator owns this because it is
     # the one model-aware gate every ingress crosses: a predicate-selected
     # milestone verb reaching the buffering seam instead resolves against a real
     # connection first, and settles as an ordinary versioned write that consumes
-    # the row's version while dropping the bounds the caller wrote.
-    with pytest.raises(wi.WriteInstructionError, match="Non-temporal objects like 'Account'"):
+    # the row's version while dropping the bounds the caller wrote. Each verb
+    # names the alternative that keeps the caller's row effect, spelled for the
+    # surface the call arrived on, so the refusal is asserted in full.
+    with pytest.raises(wi.WriteInstructionError) as raised:
         wi.prepare_wire_write(wi.deserialize(instruction), _ACCOUNT)
+    assert str(raised.value) == expected
 
 
 @pytest.mark.parametrize(
