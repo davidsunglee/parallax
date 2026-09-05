@@ -12,13 +12,15 @@ A shape only one representation can express carries one assertion instead of a
 comparison, beside the row that proves the other representation cannot express
 it. A malformed change document, an undeclared member, and an illegal assignment
 are Wire-only because ``edit()`` judges a Typed assignment before ``tx.update()``
-receives a value, and the Typed rows here assert that pre-emption rather than
-leaving it unstated.
+receives a value, and the Typed rows here assert that pre-emption over each
+provenance rather than leaving it unstated.
 
-Two shapes assert the outcome the specification names and carry an expected
-failure until the ingress reaches it: `terminate` against a target with no as-of
-axis whose evidence is also unusable, which only the Typed lane answers wrongly,
-and `delete` against a temporal target, which neither lane refuses at the verb.
+Two shapes assert the outcome the specification names rather than the one the
+code produces, and carry an expected failure whose reason states that gap:
+`terminate` against a target with no as-of axis whose evidence is also unusable,
+which only the Typed lane answers wrongly, and `delete` against a temporal
+target, which neither lane refuses at the verb. Those marks are per
+representation, because the two lanes reach the specified answer separately.
 """
 
 from __future__ import annotations
@@ -55,12 +57,12 @@ from _keyed_write_drivers import (
     reachable,
 )
 
-from parallax.core.entity import EditError
+from _support.db_port import WriteCall
 
-# The Typed `delete` verb reaches no window gate and the Wire one does, so until
-# both refuse a temporal `delete` outright a Bitemporal one fails at different
-# stages by representation. `test_a_temporal_target_refuses_delete_at_the_verb`
-# states the outcome that retires this exemption.
+# The Typed `delete` verb reaches no window gate and the Wire one does, so a
+# Bitemporal `delete` fails at different stages by representation and has no
+# shared answer to compare. `test_a_temporal_target_refuses_delete_at_the_verb`
+# states the answer the specification names for both.
 _BITEMPORAL_DELETE: frozenset[tuple[str, str]] = frozenset({("position", "delete")})
 
 # `terminate` against a target with no as-of axis, when the source's evidence is
@@ -442,22 +444,45 @@ def test_malformed_wire_input_earns_a_static_refusal(scenario: Scenario, expecte
     assert expected in refused.message
 
 
+# --------------------------------------------------------------------------- #
+# The Typed half of those same three authorings, over the provenances the Wire #
+# rows above cross: a source a read published, and a source this unit of work  #
+# opened through either representation. `edit()` refuses each before           #
+# `tx.update()` receives a value, so the write reaches none of the stages the  #
+# Wire lane refuses at and the transaction leaves nothing to undo.             #
+# --------------------------------------------------------------------------- #
+_TYPED_AUTHORINGS: tuple[tuple[Mapping[str, object], str], ...] = (
+    ({"nope": 1}, "edit-unknown-member"),
+    ({"version": 9}, "edit-framework-owned"),
+    ({"id": 2}, "edit-primary-key"),
+)
+
+_TYPED_AUTHORING_SOURCES: tuple[Scenario, ...] = (
+    Scenario(target=ACCOUNT_TARGET, verb="update", label="over-a-read-source"),
+    Scenario(
+        target=ACCOUNT_TARGET, verb="update", opened_by="wire", label="over-a-wire-insert-source"
+    ),
+    Scenario(
+        target=ACCOUNT_TARGET, verb="update", opened_by="typed", label="over-a-typed-insert-source"
+    ),
+)
+
+
 @pytest.mark.parametrize(
     ("assignment", "expected"),
-    (
-        ({"nope": 1}, "edit-unknown-member"),
-        ({"version": 9}, "edit-framework-owned"),
-        ({"id": 2}, "edit-primary-key"),
-    ),
+    _TYPED_AUTHORINGS,
     ids=("undeclared-member", "framework-owned-member", "primary-key-member"),
 )
+@pytest.mark.parametrize("source", _TYPED_AUTHORING_SOURCES, ids=str)
 def test_the_typed_lane_refuses_that_authoring_before_a_verb_receives_it(
-    assignment: Mapping[str, object], expected: str
+    source: Scenario, assignment: Mapping[str, object], expected: str
 ) -> None:
-    source = ACCOUNT_TARGET.fresh()
-    with pytest.raises(EditError) as raised:
-        source.edit(**assignment)
-    assert expected in str(raised.value)
+    refused = outcome(replace(source, typed_changes=assignment), "typed")
+    assert isinstance(refused, Refused)
+    assert refused.error == "EditError"
+    assert refused.phase == "verb"
+    assert expected in refused.message
+    assert not any(isinstance(call, WriteCall) for call in refused.calls)
 
 
 # --------------------------------------------------------------------------- #
@@ -506,35 +531,64 @@ def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
 # carries no temporal meaning, so a target that milestones its rows spells its #
 # removal `terminate` and refuses `delete` at the verb, whichever              #
 # representation asked and whatever the source (`python.md` §5). Neither       #
-# representation refuses it there yet: the Typed verb reaches no window gate   #
-# at all, the Wire one reaches a window gate that answers about `valid_from`,  #
-# and a Bitemporal `delete` of a row this unit of work inserted is accepted    #
-# outright, its insert cancelled and no DML emitted.                           #
+# representation refuses it there: the Typed verb reaches no window gate at    #
+# all, the Wire one reaches a window gate that answers about `valid_from`, and #
+# a temporal `delete` of a row this unit of work inserted is accepted          #
+# outright, its insert cancelled and no DML emitted. Each lane carries its own #
+# expected failure, because each reaches the specified answer by its own       #
+# change and one mark over both would outlive the first of them.               #
 # --------------------------------------------------------------------------- #
 _TEMPORAL_DELETE_SOURCES: tuple[tuple[Source, Concurrency, Representation | None], ...] = (
     ("participating", "optimistic", None),
     ("standalone", "locking", None),
     ("participating", "optimistic", "wire"),
+    ("participating", "optimistic", "typed"),
 )
 
 _TEMPORAL_DELETE_ROWS: tuple[Scenario, ...] = tuple(
     Scenario(target=target, verb="delete", source=source, concurrency=concurrency, opened_by=opener)
     for target in (BALANCE_TARGET, POSITION_TARGET)
     for source, concurrency, opener in _TEMPORAL_DELETE_SOURCES
+) + tuple(
+    # Only a Bitemporal target admits a bounded opener, and the exemption the
+    # bounded insert records is the same one a plain insert records.
+    Scenario(target=POSITION_TARGET, verb="delete", opened_by=opener, opened_until=True)
+    for opener in REPRESENTATIONS
 )
 
-_DELETE_IS_NOT_A_TEMPORAL_VERB = pytest.mark.xfail(
+_TYPED_DELETE_IS_NOT_MEASURED = pytest.mark.xfail(
     reason=(
-        "no keyed verb measures `delete` against its target's temporality, so this "
-        "row hears the window gate, the evidence refusal, or nothing at all until "
-        "the shared keyed-write ingress lands"
+        "the Typed `delete` verb measures nothing about its target's temporality, "
+        "so this row hears the flush's refusal, the evidence refusal, or nothing at "
+        "all until the shared keyed-write ingress lands"
+    )
+)
+_WIRE_DELETE_IS_NOT_MEASURED = pytest.mark.xfail(
+    reason=(
+        "the Wire `delete` verb measures the window rather than the verb, so this "
+        "row hears the window gate, the flush's refusal, or nothing at all until "
+        "the Wire verbs enter the shared keyed-write ingress"
     )
 )
 
+_TEMPORAL_DELETE_CASES = tuple(
+    pytest.param(
+        scenario,
+        representation,
+        marks=(
+            _TYPED_DELETE_IS_NOT_MEASURED
+            if representation == "typed"
+            else _WIRE_DELETE_IS_NOT_MEASURED
+        ),
+        id=f"{scenario}-{representation}",
+    )
+    for scenario in _TEMPORAL_DELETE_ROWS
+    for representation in REPRESENTATIONS
+    if reachable(scenario, representation)
+)
 
-@_DELETE_IS_NOT_A_TEMPORAL_VERB
-@pytest.mark.parametrize("representation", REPRESENTATIONS)
-@pytest.mark.parametrize("scenario", _TEMPORAL_DELETE_ROWS, ids=str)
+
+@pytest.mark.parametrize(("scenario", "representation"), _TEMPORAL_DELETE_CASES)
 def test_a_temporal_target_refuses_delete_at_the_verb(
     scenario: Scenario, representation: Representation
 ) -> None:

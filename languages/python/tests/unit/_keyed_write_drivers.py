@@ -466,6 +466,9 @@ class Scenario:
     """Whether the same-transaction insert stated a bounded Valid-Time window."""
     wire_changes: Mapping[str, object] | None = None
     """A Wire-only authored document, for shapes no Typed caller can express."""
+    typed_changes: Mapping[str, object] | None = None
+    """The Typed spelling of the same authoring, for the rows that pin where a
+    Typed assignment the model does not admit is judged."""
     label: str = field(default="", compare=False)
 
     def __str__(self) -> str:
@@ -625,6 +628,8 @@ def _typed_source(tx: Transaction, scenario: Scenario, prior: object | None) -> 
 
 def _typed_authored(scenario: Scenario, source: EntityBase) -> EntityBase:
     target = scenario.target
+    if scenario.typed_changes is not None:
+        return source.edit(**scenario.typed_changes)
     if scenario.verb not in _UPDATE_VERBS or scenario.change == "untouched":
         return source
     edited = source.edit(**target.change_typed)
