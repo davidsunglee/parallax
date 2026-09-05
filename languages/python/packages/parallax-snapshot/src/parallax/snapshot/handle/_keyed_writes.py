@@ -13,10 +13,10 @@ reduces no change set, settles against no evidence, and takes no claim. What it
 keeps of the stages above is what a value alone can be wrong about — the pin its
 own view carries and the provenance it states, in that order.
 
-What differs between the Typed verbs and ``tx.wire``'s is not that order but
-where the facts it consumes come from — a Typed value carries its own Change
-Record and lifecycle, a Wire source carries a frozen published row and a Source
-Hint. A **Keyed Write Source** is that difference and nothing else: three phases,
+What differs between one representation's keyed verbs and another's is not that
+order but where the facts it consumes come from — a Typed value carries its own
+Change Record and lifecycle, a Wire source carries a frozen published row and a
+Source Hint. A **Keyed Write Source** is that difference and nothing else: three phases,
 run once each in the order above, answering the concrete Entity, the source Pin,
 the Source Hint, the canonical identity row, the value's provenance, and the
 canonical authored and original values of every named member. A source exposes
@@ -39,14 +39,19 @@ is what makes a Typed insert followed by a Wire update of one object one
 read-your-own-writes pair rather than two ingresses each with their own idea of
 what this transaction stores.
 
-Its ``spec/python.md`` §7 scope states what a keyed write reaches. Snapshot
-reads, deep fetch, navigation, the materializer, the Database Port, and the
-predicate-selected lane all fall outside its closure although the parent scope is
-granted every one: a keyed write addresses a row the caller already holds, so it
-resolves nothing from the store and needs no connection to refuse being given
-one.
+Its ``spec/python.md`` §7 scope states what a keyed write reaches. A keyed write
+addresses a row the caller already holds, so it resolves nothing from the store:
+row-to-graph materialization, the read result, and the read lock are forbidden
+here although the parent scope is granted all three, as are the write lowerings
+the sibling scopes own. The Database Port, deep fetch, and navigation are NOT
+among those exclusions and the row claims no such thing — a forbidden row is the
+complement of a closure, and each of the three rides in through a dependency the
+ingress does need: the port through the execution lifecycle the re-entry gate
+requires, the two traversals through the Entity values a Typed write is stated
+over.
 
-Every name here is spelled bare: privacy is carried by this MODULE's leading
+Names crossing a module boundary are spelled bare; a helper whose every caller
+lives here keeps its underscore. Privacy is carried by this MODULE's leading
 underscore and by the package's frozen ``__all__``, not by per-name underscores.
 """
 
@@ -167,8 +172,8 @@ class PreparedSourceWrite:
     original values. Both sides pass through the SAME producer inside the
     adapter, so the effective change set is a comparison of like with like
     whether the originals came from a Change Record or from a published row —
-    and the comparison itself belongs to the ingress, so one rule decides
-    effectiveness for both representations.
+    and the comparison itself belongs to the ingress rather than to any adapter,
+    so no source decides its own effectiveness.
 
     A destructive or close verb names no member, so ``originals`` is empty and
     the instruction is the identity row alone.
@@ -245,8 +250,8 @@ class KeyedInsertSource(Protocol):
     narrower peer, not a synthetic instance of it.
 
     The same three phases in the same order, over the facts an opening row has:
-    no pin, no hint, no identity row derived ahead of the instruction, and no
-    originals to compare against. :meth:`prepare` answers the prepared write
+    no hint, no identity row derived ahead of the instruction, and no originals
+    to compare against. :meth:`prepare` answers the prepared write
     itself rather than a record pairing it with originals, because an insert
     reduces no effective change set.
     """
@@ -272,7 +277,8 @@ def keyed_write(
     Order (`python.md` §5).
 
     The body IS the order, and the order is the contract: a caller learns it
-    once and every representation observes the same refusal precedence from it.
+    once, and every source entering here observes the same refusal precedence
+    from it.
     Re-entry is the first executable line, so a source's own capture can never
     run inside a lifecycle callback; the source answers, and every judgement
     between its answers belongs here.
