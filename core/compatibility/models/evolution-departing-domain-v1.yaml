@@ -1,0 +1,41 @@
+# Registry (v1): the endpoint of the DEPARTING DOMAIN scenario where the abstract
+# `Filed` denotes a stored shape and its member is nullable.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `Record`
+# is concrete beneath `Filed`, which declares the `clerk` those rows carry. The
+# pair is authored once and read in both directions: the shape leaves the
+# position in the same edition that contracts the member's domain, and arrives in
+# the same edition that expands it.
+entities:
+  - name: Registry
+    namespace: parallax.compatibility
+    table: evolution_registry
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Filed
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Registry
+    attributes:
+      - name: clerk
+        type: string
+        maxLength: 32
+        nullable: true
+  - name: Record
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Filed
+      tagValue: record
+    attributes:
+      - name: body
+        type: string
+        maxLength: 64

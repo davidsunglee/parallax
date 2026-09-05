@@ -1,0 +1,47 @@
+# Withdrawing a write and narrowing a domain on a position that denotes no stored
+# shape (m-model-evolution): both unilateral.
+#
+# `Provisional` is abstract and composes no concrete subtype, so it resolves to an
+# empty effective concrete set. `clerk` becoming read-only withdraws caller input
+# the same way m-model-evolution-014 does, and `memo` becoming required narrows an
+# admitted value domain the same way m-model-evolution-008 does — but both
+# boundaries are phrased over a stored value or an accepted write, and this
+# position has neither. No row holds a value against the narrowed domain, and no
+# insert names the position to lose the input. Both facts still moved, so each
+# operation causes its own Behavioral Impact: coordination is what falls silent
+# here, not behavior.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-rowless-member-v1.yaml
+    later: models/evolution-rowless-member-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Provisional.clerk
+        deltas: [{ kind: ReadOnlyChanged, earlier: false, later: true }]
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Provisional.memo
+        deltas: [{ kind: NullabilityChanged, earlier: true, later: false }]
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Provisional.memo }
+        earlier: { type: string, nullable: true, maxLength: 64 }
+        later: { type: string, nullable: false, maxLength: 64 }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Provisional.memo
+            deltas: [{ kind: NullabilityChanged, earlier: true, later: false }]
+      - kind: WriteCapabilityChanged
+        scope: { attribute: parallax.compatibility.Provisional.clerk }
+        earlier: CallerInsertAndUpdate
+        later: CallerInsertOnly
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Provisional.clerk
+            deltas: [{ kind: ReadOnlyChanged, earlier: false, later: true }]
+    overlapVisibleOperations: []
+    coordinationRequirements: []

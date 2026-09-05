@@ -1,0 +1,33 @@
+# Moving a position that denotes no stored shape out of its branch
+# (m-model-evolution): unilateral.
+#
+# `Sketch` leaves `Bound` for the root. Moving an existing subtype out of an
+# earlier branch is what m-model-evolution-023 reports as coordinated, because a
+# narrowing through that branch stops resolving — but a Subtype Selection resolves
+# to the position's effective concrete set and is rejected where that set is empty,
+# so no narrowing ever reached `Sketch` and the branch it hung from carried no
+# authored shape. `Bound` declares no member, so the move withdraws nothing a read
+# of the position could address, and no shape stored under `Sketch` changes Table.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-rowless-branch-v1.yaml
+    later: models/evolution-rowless-branch-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Sketch
+        deltas:
+          - kind: InheritanceChanged
+            earlier:
+              role: abstract-subtype
+              parent: parallax.compatibility.Bound
+            later:
+              role: abstract-subtype
+              parent: parallax.compatibility.Journal
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

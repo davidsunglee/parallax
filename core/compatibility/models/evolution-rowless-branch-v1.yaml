@@ -1,0 +1,39 @@
+# Journal (v1): the earlier endpoint of the ROWLESS BRANCH scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# abstract `Sketch` hangs off the abstract `Bound` and composes no concrete
+# subtype of its own, so no Subtype Selection ever resolved through that branch
+# to it. `Page` is what keeps the family legal, and it stays where it is in v2.
+entities:
+  - name: Journal
+    namespace: parallax.compatibility
+    table: evolution_journal
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Bound
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Journal
+  - name: Sketch
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Bound
+  - name: Page
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Bound
+      tagValue: page
+    attributes:
+      - name: body
+        type: string
+        maxLength: 64

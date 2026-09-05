@@ -1,0 +1,44 @@
+# Expanding a domain on a position that denotes no stored shape
+# (m-model-evolution): Overlap-Visible to nobody, and the mirror of
+# m-model-evolution-057.
+#
+# `Provisional.memo` becoming nullable is the unilateral expansion
+# m-model-evolution-007 reports, and `clerk` becoming editable only adds an input.
+# The narrower fact is the empty one: overlap visibility is a claim that a later
+# writer may place a value in a shape an earlier reader holds, and this position
+# denotes no shape either edition stores, so the expansion has nowhere to be seen.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-rowless-member-v2.yaml
+    later: models/evolution-rowless-member-v1.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Provisional.clerk
+        deltas: [{ kind: ReadOnlyChanged, earlier: true, later: false }]
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Provisional.memo
+        deltas: [{ kind: NullabilityChanged, earlier: false, later: true }]
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Provisional.memo }
+        earlier: { type: string, nullable: false, maxLength: 64 }
+        later: { type: string, nullable: true, maxLength: 64 }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Provisional.memo
+            deltas: [{ kind: NullabilityChanged, earlier: false, later: true }]
+      - kind: WriteCapabilityChanged
+        scope: { attribute: parallax.compatibility.Provisional.clerk }
+        earlier: CallerInsertOnly
+        later: CallerInsertAndUpdate
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Provisional.clerk
+            deltas: [{ kind: ReadOnlyChanged, earlier: true, later: false }]
+    overlapVisibleOperations: []
+    coordinationRequirements: []

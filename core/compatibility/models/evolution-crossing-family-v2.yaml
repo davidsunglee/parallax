@@ -1,0 +1,56 @@
+# Archive and Vault (v2): the later endpoint of the CROSSING FAMILY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-crossing-family-v1.yaml with `Folio` extending `Vault` and
+# `Sheet` extending `Archive` directly, so `Folio` denotes no stored shape at
+# either end of its move between Tables.
+entities:
+  - name: Archive
+    namespace: parallax.compatibility
+    table: evolution_archive
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Folio
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Vault
+  - name: Sheet
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Archive
+      tagValue: sheet
+    attributes:
+      - name: body
+        type: string
+        maxLength: 64
+  - name: Vault
+    namespace: parallax.compatibility
+    table: evolution_vault
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Coffer
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Vault
+      tagValue: coffer
+    attributes:
+      - name: seal
+        type: string
+        maxLength: 32

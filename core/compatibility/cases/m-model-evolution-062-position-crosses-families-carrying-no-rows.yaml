@@ -1,0 +1,100 @@
+# A position crossing to another family in the edition its shape leaves it
+# (m-model-evolution): the authoring surface alone, on both operations.
+#
+# `Folio` leaves `Archive` for `Vault` while `Sheet`, the only shape it denoted, is
+# reparented onto `Archive` directly. `Folio` therefore changes the Table its rows
+# would sit in, which is the physical transformation m-model-evolution-023 reports
+# as `DatabaseMigrationRequired` — but only a shape stored under the position at
+# BOTH endpoints has data to carry across, and `Folio` keeps none, so the move
+# transports nothing. `Sheet` keeps its Table, tag Column, and tag value and loses
+# no member, so its own alteration asks nothing of the database either. Both
+# invalidate a narrowing through the branch they left. One surviving position
+# changes what it denotes, and both alterations contribute to it.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-crossing-family-v1.yaml
+    later: models/evolution-crossing-family-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Folio
+        deltas:
+          - kind: InheritanceChanged
+            earlier:
+              role: abstract-subtype
+              parent: parallax.compatibility.Archive
+            later:
+              role: abstract-subtype
+              parent: parallax.compatibility.Vault
+      - kind: EntityAltered
+        entity: parallax.compatibility.Sheet
+        deltas:
+          - kind: InheritanceChanged
+            earlier:
+              role: concrete-subtype
+              parent: parallax.compatibility.Folio
+              tag: { value: sheet }
+            later:
+              role: concrete-subtype
+              parent: parallax.compatibility.Archive
+              tag: { value: sheet }
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Folio }
+        earlier: { concreteEntities: [parallax.compatibility.Sheet], axes: [] }
+        later: { concreteEntities: [], axes: [] }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Folio
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: abstract-subtype
+                  parent: parallax.compatibility.Archive
+                later:
+                  role: abstract-subtype
+                  parent: parallax.compatibility.Vault
+          - kind: EntityAltered
+            entity: parallax.compatibility.Sheet
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Folio
+                  tag: { value: sheet }
+                later:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Archive
+                  tag: { value: sheet }
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Folio
+          deltas:
+            - kind: InheritanceChanged
+              earlier:
+                role: abstract-subtype
+                parent: parallax.compatibility.Archive
+              later:
+                role: abstract-subtype
+                parent: parallax.compatibility.Vault
+        reasons: [AuthoringSurfaceChangeRequired]
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Sheet
+          deltas:
+            - kind: InheritanceChanged
+              earlier:
+                role: concrete-subtype
+                parent: parallax.compatibility.Folio
+                tag: { value: sheet }
+              later:
+                role: concrete-subtype
+                parent: parallax.compatibility.Archive
+                tag: { value: sheet }
+        reasons: [AuthoringSurfaceChangeRequired]

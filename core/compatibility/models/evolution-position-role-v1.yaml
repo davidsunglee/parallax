@@ -1,0 +1,35 @@
+# Instrument (v1): the endpoint of the POSITION ROLE scenario where `Note` is
+# abstract.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `Note`
+# composes no concrete subtype, so the shared Table carries no `note` tag value
+# and a read of the family admits only `bond`. The pair is authored once and read
+# in both directions: one direction gives the family a shape, and the other takes
+# it away.
+entities:
+  - name: Instrument
+    namespace: parallax.compatibility
+    table: evolution_instrument
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Note
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Instrument
+  - name: Bond
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Instrument
+      tagValue: bond
+    attributes:
+      - name: coupon
+        type: decimal(18,2)

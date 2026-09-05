@@ -87,10 +87,12 @@ class _Position:
 
     Only concrete subtypes own rows, so the stored shape a boundary speaks about
     at a position is the one BOTH editions denote there. A shape arriving under
-    the position is created complete by its own addition, and one leaving is
-    answered for at the alteration that moves it, so neither is this position's
-    to report. A boundary phrased instead over a previously valid authored
-    operation alone reads the earlier endpoint by itself.
+    the position is answered for where it arrives — a new one by its own
+    addition, which creates it complete, and a surviving one reparented in at its
+    own inheritance alteration — and one leaving is answered for at the
+    alteration that moves it, so neither is this position's to report. A boundary
+    phrased instead over a previously valid authored operation alone reads the
+    earlier endpoint by itself.
     """
 
     earlier: InheritanceEntityView
@@ -100,6 +102,16 @@ class _Position:
     def keeps_a_stored_shape(self) -> bool:
         """Whether a shape stored under this position is still stored under it."""
         return bool(set(self.earlier.concrete_subtypes) & set(self.later.concrete_subtypes))
+
+    @property
+    def becomes_a_stored_shape(self) -> bool:
+        """Whether the position starts owning rows of its own that it did not own.
+
+        An abstract position owns none, so a role change to a concrete subtype
+        adds the position itself to the shapes the family stores.
+        """
+        was_a_shape = self.earlier.entity in self.earlier.concrete_subtypes
+        return not was_a_shape and self.later.entity in self.later.concrete_subtypes
 
     @property
     def wrote_before(self) -> bool:
@@ -226,23 +238,51 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
             return Classification(reasons=_UNILATERAL, overlap_visible=False)
 
 
-def _overlaps_an_earlier_reader(matching: Matching, added: EntityIdentity) -> bool:
-    """Whether an earlier edition reads what the added concrete subtype writes.
+def _tags_a_shared_table(family: InheritanceEntityView) -> bool:
+    """Whether a later writer can place a new discriminator value an earlier
+    reader cannot admit.
 
-    A table-per-hierarchy addition is Overlap-Visible because a later writer can
-    place a new discriminator value in the shared Table that an earlier reader
-    cannot admit; a table-per-concrete-subtype addition occupies a separate
-    Table the earlier edition never reads. A family that arrives whole with the
-    subtype is visible to nobody: the earlier edition holds no position of it,
-    and so neither its Table nor a selection through it. Neither is a subtype of
-    a family the later edition holds read-only, which has no writer to place the
-    new discriminator value with.
+    Only table-per-hierarchy shares one Table across a family's shapes, so a
+    table-per-concrete-subtype shape occupies a Table the earlier edition never
+    reads; and a family the later edition holds read-only has no writer to place
+    the value with at all.
     """
-    family = matching.entities.added[added].family
     return (
         isinstance(family.strategy, TablePerHierarchy)
         and family.persistence is PersistenceMode.READ_WRITE
-        and any(position in matching.entities.surviving for position in family.ancestry)
+    )
+
+
+def _overlaps_an_earlier_reader(matching: Matching, added: EntityIdentity) -> bool:
+    """Whether an earlier edition reads what the added concrete subtype writes.
+
+    A family that arrives whole with the subtype is visible to nobody: the
+    earlier edition holds no position of it, and so neither its Table nor a
+    selection through it.
+    """
+    family = matching.entities.added[added].family
+    return _tags_a_shared_table(family) and any(
+        position in matching.entities.surviving for position in family.ancestry
+    )
+
+
+def _newly_stored_shape_overlaps(position: _Position) -> bool:
+    """Whether a position that starts storing rows of its own is Overlap-Visible.
+
+    A surviving position turning concrete hands a later writer the same new
+    discriminator value an added concrete subtype hands it, and the earlier
+    reader that cannot admit it is the family the earlier edition already held
+    here — the family whose root the position keeps. A position taking another
+    root arrives in that family as an added subtype does, with no earlier reader
+    of it; the root it leaves also takes back every member it gave the position,
+    so such a move always requires the authoring surface and its visibility is
+    never reported. The clause stands because the verdict is the rule, not what
+    the assembled evolution goes on to publish.
+    """
+    return (
+        position.becomes_a_stored_shape
+        and position.earlier.root == position.later.root
+        and _tags_a_shared_table(position.later)
     )
 
 
@@ -329,7 +369,9 @@ def _entity_alteration(
     surviving: tuple[EntityFacts, EntityFacts], operation: EntityAltered
 ) -> Classification:
     earlier, later = surviving
+    position = _Position(earlier.family, later.family)
     reasons: set[CoordinationReason] = set()
+    overlap_visible = False
     for delta in operation.deltas:
         match delta:
             case StorageContainerChanged() | StorageLayoutChanged():
@@ -339,8 +381,9 @@ def _entity_alteration(
             case PersistenceChanged():
                 reasons |= _persistence_reasons(earlier.family, later.family)
             case InheritanceChanged():
-                reasons |= _inheritance_reasons(_Position(earlier.family, later.family))
-    return Classification(reasons=_in_fixed_order(reasons), overlap_visible=False)
+                reasons |= _inheritance_reasons(position)
+                overlap_visible = _newly_stored_shape_overlaps(position)
+    return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
 
 
 def _persistence_reasons(
@@ -419,9 +462,11 @@ def _inherited_addition_reasons(position: _Position) -> set[CoordinationReason]:
     """The reasons the members an arriving ancestor hands this position carry.
 
     A position joining the ancestry brings every member it declares to whatever
-    shape is stored here, and its own addition suppresses operations for them, so
-    this alteration is where their consequence is reported. Each is classified
-    exactly as a member declared here would be.
+    shape is stored here. An ancestor arriving new suppresses its members' own
+    operations, and one that already existed declares them where this shape was
+    not stored, so either way this alteration is the only place their consequence
+    for these rows is reported. Each is classified exactly as a member declared
+    here would be.
     """
     arriving = set(position.later.ancestry) - set(position.earlier.ancestry)
     if not arriving:

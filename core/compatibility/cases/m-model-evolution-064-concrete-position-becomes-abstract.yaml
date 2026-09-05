@@ -1,0 +1,82 @@
+# A concrete position turning abstract under table-per-hierarchy
+# (m-model-evolution): the authoring surface alone, and the mirror of
+# m-model-evolution-063.
+#
+# `Note` gives up the concrete-subtype role and its `note` tag value. The family
+# loses a shape, so a narrowing that resolved to `Note` no longer denotes anything
+# and the previously valid authored operation it stood in must change. It stops
+# there: the rows carrying `note` are addressed by nobody afterwards and may be
+# left in place, exactly as a concrete subtype's removal leaves them. Only a shape
+# the position keeps at BOTH endpoints has data to carry, and this position keeps
+# none. Two surviving positions change what they denote.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-position-role-v2.yaml
+    later: models/evolution-position-role-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Note
+        deltas:
+          - kind: InheritanceChanged
+            earlier:
+              role: concrete-subtype
+              parent: parallax.compatibility.Instrument
+              tag: { value: note }
+            later:
+              role: abstract-subtype
+              parent: parallax.compatibility.Instrument
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Instrument }
+        earlier:
+          concreteEntities: [parallax.compatibility.Bond, parallax.compatibility.Note]
+          axes: []
+        later: { concreteEntities: [parallax.compatibility.Bond], axes: [] }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Note
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Instrument
+                  tag: { value: note }
+                later:
+                  role: abstract-subtype
+                  parent: parallax.compatibility.Instrument
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Note }
+        earlier: { concreteEntities: [parallax.compatibility.Note], axes: [] }
+        later: { concreteEntities: [], axes: [] }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Note
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Instrument
+                  tag: { value: note }
+                later:
+                  role: abstract-subtype
+                  parent: parallax.compatibility.Instrument
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Note
+          deltas:
+            - kind: InheritanceChanged
+              earlier:
+                role: concrete-subtype
+                parent: parallax.compatibility.Instrument
+                tag: { value: note }
+              later:
+                role: abstract-subtype
+                parent: parallax.compatibility.Instrument
+        reasons: [AuthoringSurfaceChangeRequired]
