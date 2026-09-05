@@ -1,0 +1,76 @@
+# A required member and the shape that carried it leaving one position together
+# (m-model-evolution): each reason reported where its subject is.
+#
+# `Lot` is reparented from the abstract `Holding` onto the root, and
+# `Holding.custodian` is removed in the same edition. The stored shape a boundary
+# speaks about at a position is the one BOTH editions denote there, and `Holding`
+# denotes none afterwards: `AttributeRemoved` therefore stops at the authoring
+# surface a read of the position still occupies. The rows themselves stay where
+# they are — an abstract position stores nothing of its own — so losing a
+# required member off them is reported at `Lot`'s own inheritance alteration,
+# which carries BOTH reasons: the narrowing through the departed branch stops
+# resolving, and the object enforcing `custodian` still rejects a later write
+# that omits it. One surviving position changes what it denotes, so the
+# alteration causes one `QueryResultMembershipChanged`.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-departing-shape-v1.yaml
+    later: models/evolution-departing-shape-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeRemoved
+        attribute: parallax.compatibility.Holding.custodian
+      - kind: EntityAltered
+        entity: parallax.compatibility.Lot
+        deltas:
+          - kind: InheritanceChanged
+            earlier:
+              role: concrete-subtype
+              parent: parallax.compatibility.Holding
+              tag: { value: lot }
+            later:
+              role: concrete-subtype
+              parent: parallax.compatibility.Portfolio
+              tag: { value: lot }
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Holding }
+        earlier: { concreteEntities: [parallax.compatibility.Lot], axes: [] }
+        later: { concreteEntities: [], axes: [] }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Lot
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Holding
+                  tag: { value: lot }
+                later:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Portfolio
+                  tag: { value: lot }
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeRemoved
+          attribute: parallax.compatibility.Holding.custodian
+        reasons: [AuthoringSurfaceChangeRequired]
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Lot
+          deltas:
+            - kind: InheritanceChanged
+              earlier:
+                role: concrete-subtype
+                parent: parallax.compatibility.Holding
+                tag: { value: lot }
+              later:
+                role: concrete-subtype
+                parent: parallax.compatibility.Portfolio
+                tag: { value: lot }
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

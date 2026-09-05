@@ -239,12 +239,19 @@ staged compatibility mechanism. One operation may require both, and appears once
 with both reasons in that order, so consumers never regroup duplicate entries.
 
 The boundaries, each compared against **effective** facts rather than raw
-declarations. A position whose **effective concrete set is empty** stores no
-rows, resolves no Subtype Selection, and is named by no write (`m-inheritance`),
-so every boundary phrased over an existing stored shape, a previously valid
-write, or a write the later edition must still accept is silent about it; what a
-read of such a position still addresses are the members its ancestry makes
-applicable.
+declarations. Only concrete subtypes own rows (`m-inheritance`), so the stored
+shape a boundary speaks about at a position is the one **both** editions denote
+there: the concrete subtypes in its effective concrete set at either endpoint.
+Every boundary phrased over an existing stored shape, over a write the later
+edition must still accept, or over a value a later writer may store is silent
+where that set is empty — whether the position composes no concrete subtype at
+all, or the shape it denoted leaves it in the same edition — because a shape
+arriving under the position is created complete by its own addition, and one
+departing is answered for at the alteration that moves it. A boundary phrased
+over a previously valid authored operation alone, such as a removed declaration
+or a narrowing that reached the position, reads the earlier endpoint by itself;
+what a read of a position denoting nothing still addresses are the members its
+ancestry makes applicable.
 
 - **Removal.** Removing any model-facing declaration requires coordination,
   because it invalidates a previously valid authored operation: an Entity, a
@@ -354,12 +361,12 @@ table-per-concrete-subtype is not overlap-visible: the later subtype occupies a
 separate Table the earlier edition never reads. Neither is a concrete subtype
 whose family arrives whole with it, under either strategy: visibility is a claim
 about an earlier reader, and the earlier edition holds no position of that
-family, so neither its Table nor a selection through it. Neither is one added to
-a family whose later effective Persistence Mode is `ReadOnly`, which admits no
-writer to place the new discriminator value. None of them is overlap-visible on
-a position whose effective concrete set is empty, which no later writer names. A
-unique-constraint violation, a DDL failure, and an ordinary behavior difference
-are not overlap visibility.
+family, so neither its Table nor a selection through it. None of them is
+overlap-visible where no later writer can place the value in a shape an earlier
+reader holds: a family whose later effective Persistence Mode is `ReadOnly`
+admits no writer at all, and a position denoting no shape both editions hold
+offers none to place it in. A unique-constraint violation, a DDL failure, and an
+ordinary behavior difference are not overlap visibility.
 
 ## Behavioral Impacts
 

@@ -2327,6 +2327,94 @@
       ]
     }
   },
+  "models/evolution-departing-shape-v1.yaml": {
+    "evolution_portfolio": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Lot"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Portfolio.id",
+          "declaringOwner": "parallax.compatibility.Portfolio",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Lot"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Portfolio",
+          "declaringOwner": "parallax.compatibility.Portfolio",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Lot"
+          ],
+          "column": "custodian",
+          "contributor": "attribute:parallax.compatibility.Holding.custodian",
+          "declaringOwner": "parallax.compatibility.Holding",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Lot"
+          ],
+          "column": "units",
+          "contributor": "attribute:parallax.compatibility.Lot.units",
+          "declaringOwner": "parallax.compatibility.Lot",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/evolution-departing-shape-v2.yaml": {
+    "evolution_portfolio": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Lot"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Portfolio.id",
+          "declaringOwner": "parallax.compatibility.Portfolio",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Lot"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Portfolio",
+          "declaringOwner": "parallax.compatibility.Portfolio",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Lot"
+          ],
+          "column": "units",
+          "contributor": "attribute:parallax.compatibility.Lot.units",
+          "declaringOwner": "parallax.compatibility.Lot",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/evolution-document-members-v1.yaml": {
     "evolution_container": {
       "columns": [
@@ -4713,6 +4801,150 @@
           "contributor": "attribute:parallax.compatibility.Ticket.queue",
           "declaringOwner": "parallax.compatibility.Ticket",
           "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/evolution-rowless-position-v1.yaml": {
+    "evolution_catalog": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Listing"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Catalog.id",
+          "declaringOwner": "parallax.compatibility.Catalog",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Listing"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Catalog",
+          "declaringOwner": "parallax.compatibility.Catalog",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Listing"
+          ],
+          "column": "price",
+          "contributor": "attribute:parallax.compatibility.Listing.price",
+          "declaringOwner": "parallax.compatibility.Listing",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/evolution-rowless-position-v2.yaml": {
+    "evolution_catalog": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Listing"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Catalog.id",
+          "declaringOwner": "parallax.compatibility.Catalog",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Listing"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Catalog",
+          "declaringOwner": "parallax.compatibility.Catalog",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Listing"
+          ],
+          "column": "price",
+          "contributor": "attribute:parallax.compatibility.Listing.price",
+          "declaringOwner": "parallax.compatibility.Listing",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [],
+          "column": "reviewer",
+          "contributor": "attribute:parallax.compatibility.Draft.reviewer",
+          "declaringOwner": "parallax.compatibility.Draft",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/evolution-sealed-domain-v1.yaml": {
+    "evolution_almanac": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Almanac"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Almanac.id",
+          "declaringOwner": "parallax.compatibility.Almanac",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Almanac"
+          ],
+          "column": "note",
+          "contributor": "attribute:parallax.compatibility.Almanac.note",
+          "declaringOwner": "parallax.compatibility.Almanac",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/evolution-sealed-domain-v2.yaml": {
+    "evolution_almanac": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Almanac"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Almanac.id",
+          "declaringOwner": "parallax.compatibility.Almanac",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Almanac"
+          ],
+          "column": "note",
+          "contributor": "attribute:parallax.compatibility.Almanac.note",
+          "declaringOwner": "parallax.compatibility.Almanac",
+          "effectiveNullable": true,
           "tier": "domain"
         }
       ],

@@ -1,0 +1,26 @@
+# Adding a required member to a position that denotes no stored shape
+# (m-model-evolution): unilateral.
+#
+# `Draft` is abstract and composes no concrete subtype, so it resolves to an
+# empty effective concrete set: only concrete subtypes own rows, and the family
+# stays legal on `Listing`. The Addition boundary is phrased over an existing
+# stored shape and over an insert the later model demands the value of, and this
+# position has neither — no row to backfill and no write naming it — so the
+# required `reviewer` asks for nothing. Member addition is its own operation
+# rather than an admissibility impact, and the root's concrete set is unchanged,
+# so the evolution holds no Behavioral Impact.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-rowless-position-v1.yaml
+    later: models/evolution-rowless-position-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAdded
+        attribute: parallax.compatibility.Draft.reviewer
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

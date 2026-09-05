@@ -1,0 +1,37 @@
+# Catalog (v2): the later endpoint of the ROWLESS POSITION scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-rowless-position-v1.yaml with the rowless `Draft` declaring a
+# required `reviewer`; nothing else differs. No concrete subtype composes that
+# position, so no stored shape carries the member and no insert names it.
+entities:
+  - name: Catalog
+    namespace: parallax.compatibility
+    table: evolution_catalog
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Draft
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Catalog
+    attributes:
+      - name: reviewer
+        type: string
+        maxLength: 64
+  - name: Listing
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Catalog
+      tagValue: listing
+    attributes:
+      - name: price
+        type: decimal(18,2)
