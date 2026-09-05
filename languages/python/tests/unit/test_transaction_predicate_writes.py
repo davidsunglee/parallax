@@ -85,10 +85,7 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
-from parallax.core.unit_work.write_planner import (
-    WritePlanningError,
-    assigned_many_path,
-)
+from parallax.core.unit_work.write_planner import assigned_many_path
 from parallax.snapshot import QueryTargetError, SnapshotDecodingError
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from parallax.snapshot.handle._predicate_writes import (
@@ -706,24 +703,27 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
     )
 
 
-def test_materializing_delete_where_over_a_temporal_target_is_refused() -> None:
+def test_delete_where_over_a_temporal_target_is_refused_at_the_verb() -> None:
     # `delete_where` physically removes every row it resolved, and a target that
-    # milestones its rows spells that removal `terminate_where`. The resolve
-    # still runs — a predicate write reaches the database before it knows what
-    # it matched — so the refusal lands on the group it buffered, naming the
-    # verb the caller can reach rather than the topology the facet owns none of.
-    port = ScriptedPort(Transact(Read(rows=_two_terminate_rows())))
+    # milestones its rows spells that removal `terminate_where`. Whether the
+    # target takes the verb needs the model and nothing else, so the call is
+    # refused before it resolves anything: the script holds no read at all, so a
+    # refusal deferred to the buffered group's flush would fail at the read it
+    # would first have to make.
+    port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
-        tx.delete_where(mm.Balance.where(mm.Balance.value < 200))
+        with pytest.raises(instructions.WriteInstructionError) as refusal:
+            tx.delete_where(mm.Balance.where(mm.Balance.value < 200))
+        assert str(refusal.value) == (
+            "Temporal objects like 'Balance' do not support 'delete_where', which physically "
+            "removes rows. Use 'terminate_where' instead."
+        )
+        assert port.calls == [BeginCall()]
+        raise _Abandon
 
-    with pytest.raises(WritePlanningError) as refusal:
+    with pytest.raises(_Abandon):
         Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
-    assert str(refusal.value) == (
-        "Temporal objects like 'Balance' do not support 'delete_where', which physically "
-        "removes rows. Use 'terminate_where' instead."
-    )
-    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
