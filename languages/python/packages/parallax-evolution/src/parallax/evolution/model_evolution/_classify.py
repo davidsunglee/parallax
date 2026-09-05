@@ -15,14 +15,19 @@ from dataclasses import dataclass
 
 from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeMetadata,
     AttributePrimaryKey,
     Cardinality,
+    EntityIdentity,
     PersistenceMode,
     PrimaryKey,
     TablePerHierarchy,
+    ValueObjectIdentity,
 )
 from parallax.evolution.model_evolution._matching import EntityFacts, Matching, RelationshipFacts
 from parallax.evolution.model_evolution._values import (
+    CALLER_INPUT_ORDER,
     COORDINATION_REASON_ORDER,
     AsOfAxisAdded,
     AsOfAxisAltered,
@@ -30,6 +35,7 @@ from parallax.evolution.model_evolution._values import (
     AttributeAdded,
     AttributeAltered,
     AttributeRemoved,
+    AttributeWriteCapability,
     ConcreteSubtypeAdded,
     ConcreteSubtypeRemoved,
     CoordinationReason,
@@ -56,6 +62,7 @@ from parallax.evolution.model_evolution._values import (
     ValueObjectOccurrenceAdded,
     ValueObjectOccurrenceAltered,
     ValueObjectOccurrenceRemoved,
+    attribute_write_capability,
 )
 
 __all__ = ["Classification", "classify"]
@@ -98,7 +105,7 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
         case ConcreteSubtypeAdded():
             return Classification(
                 reasons=_UNILATERAL,
-                overlap_visible=_shares_a_table(matching.entities.added[operation.entity].family),
+                overlap_visible=_overlaps_an_earlier_reader(matching, operation.entity),
             )
         case (
             EntityRemoved()
@@ -113,16 +120,22 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
         case EntityAltered():
             return _entity_alteration(matching.entities.surviving[operation.entity], operation)
         case AttributeAdded():
-            return _member_addition(matching.attributes.added[operation.attribute].nullable)
+            return _attribute_addition(matching.attributes.added[operation.attribute])
         case AttributeAltered():
-            return _attribute_alteration(operation)
+            return _attribute_alteration(
+                matching.attributes.surviving[operation.attribute], operation
+            )
         case ValueObjectOccurrenceAdded():
-            return _member_addition(matching.value_objects.added[operation.value_object].nullable)
+            return _member_addition(
+                nullable=matching.value_objects.added[operation.value_object].nullable
+            )
         case ValueObjectOccurrenceAltered():
             return _occurrence_alteration(operation)
         case ValueObjectAttributeAdded():
             return _member_addition(
-                matching.value_object_attributes.added[operation.value_object_attribute].nullable
+                nullable=matching.value_object_attributes.added[
+                    operation.value_object_attribute
+                ].nullable
             )
         case ValueObjectAttributeAltered():
             return _value_object_attribute_alteration(operation)
@@ -141,29 +154,51 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
             return Classification(reasons=_UNILATERAL, overlap_visible=False)
 
 
-def _shares_a_table(family: InheritanceEntityView) -> bool:
-    """Whether ``family`` stores every concrete position in one Table.
+def _overlaps_an_earlier_reader(matching: Matching, added: EntityIdentity) -> bool:
+    """Whether an earlier edition reads what the added concrete subtype writes.
 
     A table-per-hierarchy addition is Overlap-Visible because a later writer can
     place a new discriminator value in the shared Table that an earlier reader
     cannot admit; a table-per-concrete-subtype addition occupies a separate
-    Table the earlier edition never reads.
+    Table the earlier edition never reads. A family that arrives whole with the
+    subtype is visible to nobody: the earlier edition holds no position of it,
+    and so neither its Table nor a selection through it.
     """
-    return isinstance(family.strategy, TablePerHierarchy)
+    family = matching.entities.added[added].family
+    return isinstance(family.strategy, TablePerHierarchy) and any(
+        position in matching.entities.surviving for position in family.ancestry
+    )
 
 
-def _member_addition(nullable: bool) -> Classification:
+def _attribute_addition(added: AttributeMetadata) -> Classification:
+    """An Attribute added to an Entity that already stores rows.
+
+    A framework-owned Attribute is one no caller ever supplied, so its arrival
+    withdraws no previously valid write shape however it is declared.
+    """
+    return _member_addition(
+        nullable=added.nullable,
+        caller_authored=attribute_write_capability(added)
+        is not AttributeWriteCapability.FRAMEWORK_OWNED,
+    )
+
+
+def _member_addition(*, nullable: bool, caller_authored: bool = True) -> Classification:
     """A member added to an Entity or Value Object that already stores rows.
 
-    Adding a nullable member is unilateral. A required one needs coordination
-    until a default and backfill contract makes existing rows satisfy the later
-    model — for a scalar Attribute and a Value Object member alike, whether it
-    occupies a direct Column or an existing Structured Column. A wholly new
+    Adding a nullable member is unilateral. A required one needs the database:
+    existing rows have no value for it until a default and backfill contract
+    supplies one, for a scalar Attribute and a Value Object member alike,
+    whether it occupies a direct Column or an existing Structured Column. It
+    needs the authoring surface too where a caller authors the value, because
+    every previously valid insert now omits a required input. A wholly new
     Entity may carry required members, because its own addition suppresses them
     and creates a complete empty Table.
     """
     if nullable:
         return Classification(reasons=_UNILATERAL, overlap_visible=False)
+    if caller_authored:
+        return Classification(reasons=_BOTH, overlap_visible=False)
     return Classification(reasons=(_MIGRATION,), overlap_visible=False)
 
 
@@ -203,16 +238,18 @@ def _inheritance_reasons(
     """An inheritance change classified by its effective consequences.
 
     Interposing an abstract subtype keeps every earlier narrowing valid and every
-    earlier physical fact intact, so it is unilateral. Moving a position out of an
-    earlier branch invalidates a narrowing through that branch, and a strategy,
-    tag, or container change needs the rows themselves transformed.
+    earlier physical fact intact, so it is unilateral — but only while the
+    members the position newly inherits are additions this Entity's rows could
+    have taken on their own. Moving a position out of an earlier branch
+    invalidates a narrowing through that branch, and a strategy, tag, or
+    container change needs the rows themselves transformed.
     """
     reasons: set[CoordinationReason] = set()
     if not _selection_preserved(earlier, later):
         reasons.add(_AUTHORING)
     if not _physically_compatible(earlier, later):
         reasons.add(_MIGRATION)
-    return reasons
+    return reasons | _inherited_addition_reasons(earlier, later)
 
 
 def _selection_preserved(earlier: InheritanceEntityView, later: InheritanceEntityView) -> bool:
@@ -225,9 +262,45 @@ def _selection_preserved(earlier: InheritanceEntityView, later: InheritanceEntit
     return (
         set(earlier.ancestry) <= set(later.ancestry)
         and set(earlier.concrete_subtypes) <= set(later.concrete_subtypes)
-        and {member.identity for member in earlier.applicable_attributes}
-        <= {member.identity for member in later.applicable_attributes}
+        and _applicable_members(earlier) <= _applicable_members(later)
     )
+
+
+def _applicable_members(
+    view: InheritanceEntityView,
+) -> set[AttributeIdentity | ValueObjectIdentity]:
+    """Every member a narrowing to this position may address."""
+    return {member.identity for member in view.applicable_attributes} | {
+        occurrence.identity for occurrence in view.applicable_value_objects
+    }
+
+
+def _inherited_addition_reasons(
+    earlier: InheritanceEntityView, later: InheritanceEntityView
+) -> set[CoordinationReason]:
+    """The reasons the members an arriving ancestor hands this position carry.
+
+    A position joining the ancestry brings every member it declares to rows that
+    already exist here, and its own addition suppresses operations for them, so
+    this alteration is where their consequence is reported. Each is classified
+    exactly as a member declared here would be.
+    """
+    arriving = set(later.ancestry) - set(earlier.ancestry)
+    if not arriving:
+        return set()
+    inherited = (
+        *(
+            _attribute_addition(attribute)
+            for attribute in later.applicable_attributes
+            if attribute.identity.entity in arriving
+        ),
+        *(
+            _member_addition(nullable=occurrence.nullable)
+            for occurrence in later.applicable_value_objects
+            if occurrence.identity.entity in arriving
+        ),
+    )
+    return {reason for addition in inherited for reason in addition.reasons}
 
 
 def _physically_compatible(earlier: InheritanceEntityView, later: InheritanceEntityView) -> bool:
@@ -240,7 +313,9 @@ def _physically_compatible(earlier: InheritanceEntityView, later: InheritanceEnt
     )
 
 
-def _attribute_alteration(operation: AttributeAltered) -> Classification:
+def _attribute_alteration(
+    surviving: tuple[AttributeMetadata, AttributeMetadata], operation: AttributeAltered
+) -> Classification:
     reasons: set[CoordinationReason] = set()
     overlap_visible = False
     for delta in operation.deltas:
@@ -264,13 +339,12 @@ def _attribute_alteration(operation: AttributeAltered) -> Classification:
                     overlap_visible = True
                 else:
                     reasons.add(_MIGRATION)
-            case ReadOnlyChanged(_, read_only):
-                if read_only:
-                    reasons.add(_AUTHORING)
-            case OptimisticLockingChanged(_, optimistic_locking):
-                if optimistic_locking:
-                    # A caller-authored Attribute becomes framework-owned, so a
-                    # previously valid write no longer supplies it.
+            case ReadOnlyChanged() | OptimisticLockingChanged():
+                # Neither flag is the contract: what invalidates a previously
+                # valid write is caller input the later edition no longer
+                # accepts, which a flag moving over an Attribute the caller
+                # never supplied — a generated key, an axis endpoint — does not.
+                if _withdraws_caller_input(*surviving):
                     reasons.add(_AUTHORING)
     return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
 
@@ -350,6 +424,13 @@ def _primary_key_reasons(
     if isinstance(earlier, PrimaryKey) != isinstance(later, PrimaryKey):
         return {_AUTHORING, _MIGRATION}
     return {_AUTHORING}
+
+
+def _withdraws_caller_input(earlier: AttributeMetadata, later: AttributeMetadata) -> bool:
+    """Whether the later edition accepts less caller input than the earlier one."""
+    return CALLER_INPUT_ORDER.index(attribute_write_capability(later)) < CALLER_INPUT_ORDER.index(
+        attribute_write_capability(earlier)
+    )
 
 
 def _bound_relaxed(earlier: int | None, later: int | None) -> bool:
