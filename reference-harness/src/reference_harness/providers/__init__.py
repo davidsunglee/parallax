@@ -11,6 +11,9 @@ Each provider exposes:
   statement entry's ``sql`` dialect key and the sqlglot dialect.
 * ``reset()`` — return to a clean, empty state (drop everything).
 * ``apply_ddl(statements)`` — run derived ``CREATE TABLE`` DDL.
+* ``catalog(tables)`` — read back what the database itself holds for *tables*,
+  which is how an applied Schema Delta is compared against independently derived
+  provisioning DDL.
 * ``load(table, columns, rows)`` — bulk-insert fixture rows.
 * ``query(sql, binds)`` — execute a read and return rows as ordered dicts.
 * ``execute(sql, binds)`` — execute a write (DML) and return the affected count.

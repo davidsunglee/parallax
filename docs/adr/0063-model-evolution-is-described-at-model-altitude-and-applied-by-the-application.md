@@ -432,10 +432,16 @@ the physical Table, the structured declaring Entity Identity, authored Index
 name, ordered structured Attribute Identities, and uniqueness, rendered as 32
 lowercase hexadecimal characters. Only the readable prefix is truncated to
 satisfy the Dialect's byte limit; the fingerprint is never truncated. The
-generator rejects a collision between distinct physical definitions across all
-earlier and later Indices that can coexist during any statement prefix rather
-than silently renaming either definition. A definition's name is therefore
-stable independently of other Indices in the model.
+generator rejects a collision between distinct physical definitions across every
+Index either endpoint holds, rather than silently renaming either definition.
+The census is over the definitions and not over the emitted plan: a plan tells
+definitions apart by their derived names, so under a collision the create and the
+drop that would bound two definitions' lifetimes are exactly the statements it
+fails to emit, and a lifetime test read from it would rest on the assumption the
+check exists to falsify. Refusing a name shared by two definitions whose emitted
+lifetimes would not in fact have overlapped is the accepted cost on a path no
+sound fingerprint reaches. A definition's name is therefore stable independently
+of other Indices in the model.
 Name collision raises one aggregated `PhysicalIndexNameCollisionError` carrying
 the Dialect Identity and every collision group in Physical Index Name order.
 Each group retains the shared Physical Index Name and at least two colliding
@@ -559,12 +565,24 @@ coordinated expectation must omit `then.schema`. Splitting one transition across
 classification-only or operation-only case shapes is not conforming because the
 returned Evolution is one internally consistent value.
 For every unilateral case, the keys under `then.schema` must equal the complete
-supported Dialect catalog. The harness invokes `schema_delta` for every matrix
-cell and asserts either the complete successful delta or the complete
-unsupported-operation error; an omitted dialect is never an implicit skip.
-Adding a Dialect therefore makes every unilateral evolution case incomplete
-until its expected cell is authored. Coordinated cases remain dialect-independent
-because their value cannot be passed to `schema_delta`.
+supported Dialect catalog; an omitted dialect is never an implicit skip. Adding a
+Dialect therefore makes every unilateral evolution case incomplete until its
+expected cell is authored. Coordinated cases remain dialect-independent because
+their value cannot be passed to `schema_delta`.
+The two graders of a matrix cell are split, because the reference harness owns no
+generator. A language implementation invokes `schema_delta` for every cell
+through the conformance adapter and asserts the complete successful delta or the
+complete unsupported-operation error; a dialect that implementation ships no
+`Dialect` for is reported as an explicit `excluded` cell naming `no-dialect`,
+which is a declared absence rather than a silent pass. The harness grades the
+same cell as executable evidence instead: it applies an authored `delta` cell to
+a real database provisioned at the earlier endpoint and compares the catalog it
+leaves against the catalog the later model's own provisioning DDL leaves, so the
+cell is proved against a second implementation of the schema rather than against
+its own author. The consequence is deliberate and is the arrangement's one gap:
+an `unsupported` cell has no statements to execute, so it is asserted only by an
+implementation that ships that Dialect, and a refusal authored for a dialect no
+implementation ships is carried by the corpus without a generator behind it.
 
 The portable proof includes at least one witness for every Evolution Operation,
 field delta, Behavioral Impact, coordination reason, and private physical

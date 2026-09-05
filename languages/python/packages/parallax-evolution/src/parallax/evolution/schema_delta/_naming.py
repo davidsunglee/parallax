@@ -139,7 +139,7 @@ def census(
     later: Sequence[IndexDefinition],
     dialect: Dialect,
 ) -> tuple[NamedIndex, ...]:
-    """Every Index that exists during some prefix of the statements, named once.
+    """Every Index either endpoint defines, named once.
 
     An Index both endpoints define is ONE entry rather than two. The facts a name
     is derived over are exactly the facts that decide whether two definitions are

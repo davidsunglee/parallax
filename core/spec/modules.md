@@ -480,12 +480,14 @@ construction it may reference any behavioral module it harnesses.
   nowhere.
 - **`m-schema-delta --> m-model-evolution` / `m-metamodel` / `m-storage-layout` /
   `m-dialect`.** The generator consumes a Unilateral Evolution and lowers it: it
-  describes no difference of its own, so it never compares two models. Every
-  physical fact — the Tables, their canonical Column order, effective
-  nullability, and the physical primary key — is `m-storage-layout`'s, and every
-  spelling is `m-dialect`'s, so the generator composes over the layout and asks
-  the Dialect only for fragments. The edge runs one way: `m-model-evolution`
-  names no dialect and no statement.
+  re-derives no MODEL difference and re-classifies nothing, both being settled by
+  the value it is handed. The PHYSICAL difference is its own question, which it
+  answers by reading both retained endpoints' compiled layouts. Every physical
+  fact — the Tables, their canonical Column order, effective nullability, and the
+  physical primary key — is `m-storage-layout`'s, and every spelling is
+  `m-dialect`'s, so the generator composes over the layouts and asks the Dialect
+  only for fragments. The edge runs one way: `m-model-evolution` names no dialect
+  and no statement.
 - **Aggregation is deferred through two modules.** `m-agg` (algebra) and
   `m-sql-agg` (lowering) are both deferred; core SQL generation (`m-sql`) never
   references aggregation constructs.

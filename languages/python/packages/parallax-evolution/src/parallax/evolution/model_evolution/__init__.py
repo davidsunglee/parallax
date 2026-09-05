@@ -11,7 +11,8 @@ identity an operation names without holding a model of its own.
 The description is at model altitude and is pure: it makes no provider or
 database call, prescribes no migration procedure, severity, or retry, and names
 no dialect. Physical statements are ``m-schema-delta``'s, derived from a
-Unilateral Evolution and the later endpoint's Storage Layout.
+Unilateral Evolution and both retained endpoints' Storage Layouts; what those two
+differ by is that module's question and not one answered here.
 
 ``m-model-evolution`` depends on ``m-metamodel`` for the accepted declarations
 and identities, and on ``m-inheritance``, ``m-relationship``,

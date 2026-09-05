@@ -14,13 +14,15 @@ The adapter is also the `m-db-error` **port boundary**: every psycopg exception
 raised by work the port itself performs — a statement, or the transaction
 boundary's begin, commit, or rollback — becomes a neutral
 :class:`~parallax.core.db_error.DatabaseError` carrying the classified category,
-the preserved native SQLSTATE, and the driver message, so no driver exception
+the preserved native SQLSTATE, the driver message, and the violated Physical
+Index Name a unique violation reports, so no driver exception
 type produced by the PORT ever crosses above it (`m-db-port`
 normalize-at-boundary, `m-db-error`); a statement raises it and a transaction
 boundary carries it back in its outcome. An exception the caller's own
 ``transaction`` body raises is not the port's work and is not translated
 (`m-db-port`). Category interpretation is delegated to the pure dialect strategy;
-the adapter only extracts psycopg's driver-specific SQLSTATE and message.
+the adapter only extracts psycopg's driver-specific SQLSTATE, its message, and
+the structured ``diag.constraint_name`` beside them, and parses no message text.
 """
 
 from __future__ import annotations

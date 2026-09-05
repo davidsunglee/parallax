@@ -18,7 +18,11 @@ It performs m-case-format layer 1 statically (no database needed):
   case-authoring rules JSON Schema cannot express are asked here too, where the
   model is in hand and no executor has run yet: a buffered write's member honesty
   and a scenario `mutate`'s own assignments (:func:`_validate_scenario_edit`),
-  both model-aware; and the cross-references a scenario step makes — which find a
+  both model-aware; the Schema Delta matrix rule, which reaches across
+  ``then.evolution.kind`` into ``then.schema`` and so cannot be a schema
+  constraint — a unilateral Evolution MUST carry one cell per supported Dialect
+  and a coordinated one carries none (:func:`_schema_matrix_problems`); and the
+  cross-references a scenario step makes — which find a
   write settles against (:func:`_validate_settled_write`), which earlier step an
   identity observable is anchored to (:func:`_validate_identity_anchor`), and
   whether a step's dialect-keyed maps cover the dialects its own golden declares
