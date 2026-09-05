@@ -650,11 +650,13 @@ def test_a_rowless_position_moving_between_families_carries_no_data_across() -> 
 def test_a_position_arriving_in_a_family_as_a_shape_leaves_its_own_behind() -> None:
     # Turning `Note` concrete under the root it did not have places its
     # discriminator value in a Table this position never sat in, so the shape
-    # arrives in that family exactly as an added subtype does. The root it
-    # leaves takes back the family key a read of the position addressed, so the
-    # move requires the authoring surface whatever the new role is — which is
-    # why a position arriving in a family whole is never reported as
-    # Overlap-Visible however its own verdict reads.
+    # arrives in that family exactly as an added subtype does. Every root
+    # declares the one primary key of its family, so the root this position
+    # leaves always takes back a member a read of it addressed: a cross-family
+    # arrival requires the authoring surface whatever its new role is, which is
+    # why its overlap visibility is never published however its own verdict
+    # reads. This assertion is the guard on that — a unilateral verdict here
+    # would mean the rule had become publicly reachable and needs a case.
     joining = evolve(_across_roots(moved=False), _across_roots(moved=True, concrete=True))
     assert _verdict_on(joining, _altered(joining)) == _Verdict((_AUTHORING,), False)
 
