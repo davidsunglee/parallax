@@ -668,18 +668,22 @@ def _model_with_unique_index() -> Model:
     )
 
 
-def test_non_pk_unique_index_emits_unique_constraint() -> None:
-    (ddl,) = ddl_for(_model_with_unique_index(), "postgres")
-    # The derived primary-key Index becomes `primary key (...)`; the authored
-    # business-key unique Index becomes a `unique (...)` beside it.
-    assert "primary key (id)" in ddl
-    assert "unique (name)" in ddl
-    assert "unique (id)" not in ddl
+def test_non_pk_unique_index_emits_a_named_unique_index() -> None:
+    create, index = ddl_for(_model_with_unique_index(), "postgres")
+    # The derived primary-key Index becomes `primary key (...)` inline; the
+    # authored business-key unique Index becomes its own named statement, so a
+    # duplicate reports a name a rollout can correlate rather than an anonymous
+    # table constraint.
+    assert "primary key (id)" in create
+    assert "unique" not in create
+    assert index.startswith("create unique index pxi_tag_tag_tag_name_uq_unique_")
+    assert index.endswith(" on tag (name)")
 
 
 def test_unique_index_emitted_for_mariadb_too() -> None:
-    (ddl,) = ddl_for(_model_with_unique_index(), "mariadb")
-    assert "unique (name)" in ddl
+    _create, index = ddl_for(_model_with_unique_index(), "mariadb")
+    assert index.startswith("create unique index pxi_tag_tag_tag_name_uq_unique_")
+    assert index.endswith(" on tag (name)")
 
 
 def test_temporal_key_is_derived_and_emits_no_second_constraint() -> None:
@@ -703,4 +707,4 @@ def test_temporal_key_is_derived_and_emits_no_second_constraint() -> None:
     )
     (ddl,) = ddl_for(model, "postgres")
     assert "primary key (id, out_z)" in ddl
-    assert "unique (" not in ddl
+    assert "unique" not in ddl

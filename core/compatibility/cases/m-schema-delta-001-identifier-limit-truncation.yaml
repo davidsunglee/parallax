@@ -1,0 +1,53 @@
+# Identifier-limit truncation (m-schema-delta): a derived Physical Index Name that
+# does not fit is cut to exactly the dialect's limit, and the database keeps what
+# it was given byte for byte.
+#
+# The provisioning evolution is the same one operation `m-model-evolution-001`
+# describes; what this case is for is the name beneath it. The readable input —
+# physical table, declaring Entity Identity, authored Index name, and the
+# non-unique marker — runs far past the budget left once the `pxi` namespace, the
+# two joining underscores, and the 32-character fingerprint are spent, so only
+# the readable half is cut: 26 characters on Postgres and 27 on MariaDB, for
+# names of exactly 63 and 64 bytes. The fingerprint is IDENTICAL in the two
+# cells, which is the whole point of shortening only the prefix — the same
+# definition stays the same definition on either database.
+#
+# Both cells are executed against a real backend, and each `createdIndices` entry
+# is looked up in the database's own catalog under the name authored here: a
+# server that silently truncated a name it was handed would report a shorter one
+# and fail, which comparing the two catalogs alone could never detect.
+tags: [m-model-evolution, m-schema-delta, evolution, provisioning, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: null
+    later: models/evolution-long-names-v1.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: EntityAdded, entity: parallax.compatibility.LongIdentifierTruncationWitness }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create table evolution_identifier_truncation (id bigint not null, label varchar(64) not null, primary key (id))
+          - create index pxi_evolution_identifier_trunc_1a5a228fca735d19c5f2943d1f604b6f on evolution_identifier_truncation (label)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_identifier_trunc_1a5a228fca735d19c5f2943d1f604b6f
+            physicalTable: evolution_identifier_truncation
+            logicalIndexIdentity: parallax.compatibility.LongIdentifierTruncationWitness.evolution_identifier_truncation_label_lookup
+            unique: false
+    mariadb:
+      delta:
+        statements:
+          - create table evolution_identifier_truncation (id bigint not null, label varchar(64) not null, primary key (id))
+          - create index pxi_evolution_identifier_trunca_1a5a228fca735d19c5f2943d1f604b6f on evolution_identifier_truncation (label)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_identifier_trunca_1a5a228fca735d19c5f2943d1f604b6f
+            physicalTable: evolution_identifier_truncation
+            logicalIndexIdentity: parallax.compatibility.LongIdentifierTruncationWitness.evolution_identifier_truncation_label_lookup
+            unique: false

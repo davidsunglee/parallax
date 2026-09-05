@@ -627,7 +627,7 @@ def test_runner_fails_when_a_keyed_instruction_is_accepted() -> None:
         TEMPORAL_KEYED_WRITE_MULTI_ROW,
     )
     with pytest.raises(CaseFailure, match="did not match its pre-SQL refusal"):
-        run_case(case, None)  # type: ignore[arg-type]
+        run_case(case, None)
 
 
 def test_runner_fails_when_a_keyed_instruction_names_an_undeclared_entity() -> None:
@@ -639,7 +639,7 @@ def test_runner_fails_when_a_keyed_instruction_names_an_undeclared_entity() -> N
         TEMPORAL_KEYED_WRITE_MULTI_ROW,
     )
     with pytest.raises(CaseFailure, match="does not declare"):
-        run_case(case, None)  # type: ignore[arg-type]
+        run_case(case, None)
 
 
 def test_runner_fails_a_keyed_instruction_naming_an_undeclared_member() -> None:
@@ -658,14 +658,14 @@ def test_runner_fails_a_keyed_instruction_naming_an_undeclared_member() -> None:
         TEMPORAL_KEYED_WRITE_MULTI_ROW,
     )
     with pytest.raises(CaseFailure, match="are not attributes or value objects"):
-        run_case(case, None)  # type: ignore[arg-type]
+        run_case(case, None)
 
 
 @pytest.mark.parametrize("case", _rejected_cases(), ids=[c.path.stem for c in _rejected_cases()])
 def test_rejected_case_is_refused_pre_sql_db_free(case: Case) -> None:
     # `None` is a safe stand-in for the provider: a rejected case is refused with NO
     # database (no dialect / provisioning / execution is reached).
-    run_case(case, None)  # type: ignore[arg-type]
+    run_case(case, None)
 
 
 def test_the_dialect_free_and_dialect_executed_cases_partition_the_harness_lane() -> None:
@@ -1426,7 +1426,7 @@ def test_runner_fails_when_a_valid_query_is_authored_as_rejected() -> None:
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
     )
     with pytest.raises(CaseFailure, match="validation ACCEPTED the input"):
-        run_case(case, None)  # type: ignore[arg-type]
+        run_case(case, None)
 
 
 def test_runner_fails_when_the_named_rule_is_wrong() -> None:
@@ -1437,7 +1437,7 @@ def test_runner_fails_when_the_named_rule_is_wrong() -> None:
         NEUTRAL_LITERAL_TYPE_MISMATCH,  # actual rule: first-segment-not-value-object
     )
     with pytest.raises(CaseFailure, match="but the case expects then.rejectedRule") as exc:
-        run_case(case, None)  # type: ignore[arg-type]
+        run_case(case, None)
     assert NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT in str(exc.value)
 
 
@@ -1462,7 +1462,7 @@ def test_runner_fails_a_handleless_input_against_a_multi_family_model() -> None:
     }
     case = Case(path=Path("m-value-object-998-x.yaml"), raw=raw, model=model)
     with pytest.raises(CaseFailure, match="no default write root"):
-        run_case(case, None)  # type: ignore[arg-type]
+        run_case(case, None)
 
 
 def _bare_row_case(model_rel: str, row: dict[str, Any], rule: str) -> Case:
@@ -1492,7 +1492,7 @@ def test_runner_fails_a_bare_row_naming_an_undeclared_member() -> None:
         WRITE_REQUIRED_ATTRIBUTE_MISSING,
     )
     with pytest.raises(CaseFailure, match=r"names \['bogus'\]"):
-        run_case(case, None)  # type: ignore[arg-type]
+        run_case(case, None)
 
 
 def test_a_bare_row_carries_the_shared_observation_control_key() -> None:
@@ -1505,7 +1505,7 @@ def test_a_bare_row_carries_the_shared_observation_control_key() -> None:
         {"id": 1, "balance": "10.00", "observedVersion": 3},
         WRITE_REQUIRED_ATTRIBUTE_MISSING,
     )
-    run_case(case, None)  # type: ignore[arg-type]
+    run_case(case, None)
 
 
 def test_the_subtype_protocol_classifies_the_family_names_member_honesty_would_claim() -> None:
@@ -1520,7 +1520,7 @@ def test_the_subtype_protocol_classifies_the_family_names_member_honesty_would_c
         {"id": 1, "amount": "10.00", "tagValue": "card"},
         SUBTYPE_WRITE_METADATA_FIELD,
     )
-    run_case(case, None)  # type: ignore[arg-type]
+    run_case(case, None)
 
 
 # --- the _assert_schema XOR guard: EXACTLY ONE of objectQuery/write ----------

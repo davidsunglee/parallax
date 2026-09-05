@@ -25,7 +25,7 @@ from .._declared_contributor import TEMPORAL_INFINITY
 from ..ddl_builder import quote_identifier
 from ..document_codec import is_document
 from ..portable_literal import AuthoredNumber
-from . import register
+from . import Catalog, build_catalog, register
 from ._binds import adapt_document_scalar_binds
 
 if TYPE_CHECKING:
@@ -42,6 +42,39 @@ _CODES: dict[str, str] = {
     "40001": errors.DEADLOCK,  # serialization_failure -- retriable, folded into deadlock
     "55P03": errors.LOCK_WAIT_TIMEOUT,  # lock_not_available (SET lock_timeout exceeded)
 }
+
+# `pg_catalog` rather than `information_schema`: the standard views report an
+# index only through the constraint that owns one, and a bare `create index` owns
+# no constraint, so a named non-unique index would be invisible there.
+_CATALOG_COLUMNS = """
+select c.relname as table_name,
+       a.attname as column_name,
+       format_type(a.atttypid, a.atttypmod) as column_type,
+       not a.attnotnull as is_nullable
+from pg_catalog.pg_class c
+join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+join pg_catalog.pg_attribute a on a.attrelid = c.oid
+where n.nspname = current_schema() and a.attnum > 0 and not a.attisdropped
+  and c.relname in ({placeholders})
+"""
+
+# `indkey` is the ordered component vector, so `with ordinality` recovers the
+# component ORDER a physical access path depends on.
+_CATALOG_INDICES = """
+select c.relname as table_name,
+       i.relname as index_name,
+       x.indisunique as is_unique,
+       a.attname as column_name,
+       k.ordinality as position
+from pg_catalog.pg_index x
+join pg_catalog.pg_class c on c.oid = x.indrelid
+join pg_catalog.pg_class i on i.oid = x.indexrelid
+join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+join unnest(x.indkey) with ordinality as k(attnum, ordinality) on true
+join pg_catalog.pg_attribute a on a.attrelid = c.oid and a.attnum = k.attnum
+where n.nspname = current_schema() and c.relname in ({placeholders})
+order by i.relname, k.ordinality
+"""
 
 # Each portable Isolation Level (m-db-port), keyed by the core serialized value a
 # case declares, as the statements that open a session at it. Postgres reaches all
@@ -199,6 +232,23 @@ class PostgresProvider:
         with self._conn.cursor() as cur:
             for statement in statements:
                 cur.execute(_trusted_query(statement))
+
+    def catalog(self, tables: Sequence[str]) -> Catalog:
+        """The physical shape Postgres itself reports for *tables*."""
+        names = tuple(tables)
+        if not names:
+            return Catalog(tables=())
+        placeholders = ", ".join(["%s"] * len(names))
+        with self._conn.cursor() as cur:
+            cur.execute(_trusted_query(_CATALOG_COLUMNS.format(placeholders=placeholders)), names)
+            columns = [
+                (str(row[0]), str(row[1]), str(row[2]), bool(row[3])) for row in cur.fetchall()
+            ]
+            cur.execute(_trusted_query(_CATALOG_INDICES.format(placeholders=placeholders)), names)
+            components = [
+                (str(row[0]), str(row[1]), bool(row[2]), str(row[3])) for row in cur.fetchall()
+            ]
+        return build_catalog(names, columns, components)
 
     def load(
         self,

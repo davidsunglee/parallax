@@ -37,7 +37,93 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
+
+
+@dataclass(frozen=True)
+class CatalogColumn:
+    """One column as the database's own catalog holds it."""
+
+    name: str
+    type_sql: str
+    nullable: bool
+
+
+@dataclass(frozen=True)
+class CatalogIndex:
+    """One index as the database's own catalog holds it.
+
+    ``columns`` stays ordered: component order is the physical access path, so
+    two indices over the same columns in different orders are different objects.
+    """
+
+    name: str
+    columns: tuple[str, ...]
+    unique: bool
+
+
+@dataclass(frozen=True)
+class CatalogTable:
+    """One table's physical shape, read back from the database that holds it.
+
+    Columns are a SET: ordinal position is a consequence of the order statements
+    happened to run in, and two schemas that differ only in it hold the same
+    data under the same names, types, and nullability.
+    """
+
+    name: str
+    columns: frozenset[CatalogColumn]
+    indices: frozenset[CatalogIndex]
+
+
+@dataclass(frozen=True)
+class Catalog:
+    """What a database really holds for a named set of tables.
+
+    A plain value compared with ``==``. Both sides of any comparison are read
+    from the same backend through the same reader, so no cross-dialect type
+    normalization is needed and the derived primary key — which each engine names
+    in its own way — cancels out.
+    """
+
+    tables: tuple[CatalogTable, ...]
+
+
+def build_catalog(
+    tables: Sequence[str],
+    columns: Sequence[tuple[str, str, str, bool]],
+    components: Sequence[tuple[str, str, bool, str]],
+) -> Catalog:
+    """Assemble one :class:`Catalog` from a provider's two catalog reads.
+
+    ``columns`` are ``(table, column, type, nullable)`` rows in any order and
+    ``components`` are ``(table, index, unique, column)`` rows in COMPONENT
+    order. Each requested table gets an entry whether or not the database holds
+    it, so a table one side of a comparison never created is a difference rather
+    than a silently absent key.
+    """
+    index_columns: dict[tuple[str, str, bool], list[str]] = {}
+    for table, index, unique, column in components:
+        index_columns.setdefault((table, index, unique), []).append(column)
+    return Catalog(
+        tables=tuple(
+            CatalogTable(
+                name=table,
+                columns=frozenset(
+                    CatalogColumn(name=name, type_sql=type_sql, nullable=nullable)
+                    for owner, name, type_sql, nullable in columns
+                    if owner == table
+                ),
+                indices=frozenset(
+                    CatalogIndex(name=index, columns=tuple(members), unique=unique)
+                    for (owner, index, unique), members in index_columns.items()
+                    if owner == table
+                ),
+            )
+            for table in sorted(set(tables))
+        )
+    )
 
 
 @runtime_checkable
@@ -73,6 +159,17 @@ class DatabaseProvider(Protocol):
 
     def apply_ddl(self, statements: Sequence[str]) -> None:
         """Execute derived DDL (``CREATE TABLE`` …)."""
+        ...
+
+    def catalog(self, tables: Sequence[str]) -> Catalog:
+        """What the database itself holds for *tables*, read from its own catalog.
+
+        The one observation of physical schema the seam offers, and the only way
+        an applied Schema Delta can be compared against independently derived
+        provisioning DDL: both are read back through this, so what is compared is
+        the schema each really produced rather than the statements either
+        authored.
+        """
         ...
 
     def load(self, table: str, columns: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:

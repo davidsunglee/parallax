@@ -70,7 +70,7 @@ def test_position_is_bitemporal_with_both_axes() -> None:
 
 
 def test_bitemporal_ddl_primary_key_spans_both_as_of_to_columns() -> None:
-    (create,) = ddl_for(_position_model(), "postgres")
+    create, _index = ddl_for(_position_model(), "postgres")
     # The business key alone (pos_id) is not unique across rectangles; the
     # physical primary key MUST include BOTH axes' end columns (thru_z, out_z) so a
     # valid-time-bounded rectangle and its inactivated original coexist. The ends
@@ -94,7 +94,7 @@ def test_bitemporal_ddl_key_is_the_layout_selection_in_dimension_order() -> None
         "temporal",
     ]
     assert [layout.columns.index(slot) for slot in layout.physical_primary_key] == [0, 4, 6]
-    (create,) = ddl_for(_position_model(), "postgres")
+    create, _index = ddl_for(_position_model(), "postgres")
     assert (
         f"primary key ({', '.join(slot.column for slot in layout.physical_primary_key)})" in create
     )

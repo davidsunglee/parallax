@@ -77,6 +77,20 @@ For every supported adapter, the smoke suite covers:
 - a bytes write round trip through the dialect bind seam
 - affected-row semantics for matched and unmatched DML
 - feasible transient classification through the portable database error surface
+- a **derived Physical Index Name at exactly this engine's identifier limit**,
+  applied and then read back from the engine's own catalog and found unchanged.
+  The generating input must be long enough that the readable half was really
+  shortened, so what the proof establishes is that shortening produced a name the
+  engine stores whole — a limit stated one byte too high fails here and nowhere
+  else, because every shorter name a corpus happens to hold would survive. The
+  fingerprint must be intact in what the catalog reports, since it is the half
+  truncation never touches and the half the name is unique by
+- a **duplicate whose neutral error names the index it violated**, read from the
+  driver's structured diagnostics rather than from its message, and equal to the
+  name the Schema Delta that created that index recorded. Both halves are the
+  obligation: an error carrying some name proves only that a field was read,
+  while one carrying the name the generator derived proves the correlation a host
+  performs after a rollout
 
 When a transient proof would be impractical for a specific database in local
 tooling, the language spec must record the gap and name the deeper suite that
@@ -169,6 +183,15 @@ A provider contract suite must exercise these operations:
 - `execRolledBack`: execute DML in a transaction that is rolled back
 - `peer`: expose an independent connection for concurrent-writer and coherence
   style checks when the language's composition root needs one
+- `catalog`: report what the database itself holds for a named set of tables —
+  each table's columns with their types and nullability, and each index with its
+  ordered columns and its uniqueness. Column ordinal position is deliberately
+  excluded: it records the order statements happened to run in, and two schemas
+  differing only in it hold the same data under the same names. This is the one
+  observation of physical schema the seam offers, and the only way an applied
+  Schema Delta can be compared against independently derived provisioning DDL:
+  what is compared is the schema each really produced, never the statements
+  either authored
 
 The provider matrix must be declared with named profiles. A profile records:
 
