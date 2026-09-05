@@ -9,7 +9,11 @@ with both directions of the boundaries the specification calls directional.
 Three names are exempt, and ADR 0063's portable-proof obligation is written to
 admit exactly them: it covers every name a pair of model descriptors can
 express, while a name only an accepted Metamodel can produce is witnessed by the
-implementation's own suite and proved unreachable here rather than asserted.
+implementation's own suite and proved unreachable here rather than asserted. The
+proof reads the descriptor language itself — the closed temporal vocabulary
+`m-descriptor.md` fixes and the corpus's own rejection fixtures — rather than
+the models the evolution cases happen to name, so a language that grew a way to
+spell a disagreeing endpoint would fail it.
 
 The property is the CORPUS's, not one implementation's, which is why it lives in
 the harness: it fails when a name is added to the vocabulary and no case is
@@ -19,28 +23,44 @@ authored for it, whoever wrote the implementation.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping, Sequence
+import re
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, Final
 
 import pytest
 
-from reference_harness.case import Case, discover_cases, load_model
-from reference_harness.temporality import TEMPORAL_MEMBERS, temporal_axes
+from reference_harness.case import Case, discover_cases
+from reference_harness.corpus_yaml import read_corpus_yaml
+from reference_harness.temporality import (
+    TEMPORAL_MEMBERS,
+    TEMPORALITY_PROFILES,
+    Endpoint,
+    temporal_axes,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _CASE_SCHEMA = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json"
+_DESCRIPTOR_SPEC = _REPO_ROOT / "core" / "spec" / "m-descriptor.md"
 
-# A surviving As-Of Axis cannot report changed endpoints in a corpus case: a
-# descriptor spells one Temporality Profile and the profile derives each axis's
-# endpoint Attributes from its dimension alone, so two endpoints agreeing on
-# (Entity, Temporal Dimension) agree on the endpoints too. The vocabulary keeps
-# the names because an accepted Metamodel reaching `m-metamodel` directly may
-# carry other endpoints, and ADR 0063 names this exemption where it states the
-# portable-proof obligation: such a name is witnessed by the implementation's
-# own suite, and the corpus proves it unreachable.
-# `test_a_surviving_axis_cannot_change_its_endpoints` is that proof.
+# The two normative tables `m-descriptor.md` fixes the temporal language with:
+# the closed profile vocabulary, and the endpoint Attribute and column each
+# Temporal Dimension derives.
+_PROFILE_TABLE_HEADER = "| Profile | Derived As-Of Axes |"
+_ENDPOINT_TABLE_HEADER = "| Dimension | Start Attribute / column | End Attribute / column |"
+
+# A surviving As-Of Axis cannot report changed endpoints from any descriptor
+# pair: a descriptor spells one Temporality Profile out of a closed vocabulary
+# and the profile derives each axis's endpoint Attributes from its dimension
+# alone, so two descriptors agreeing on (Entity, Temporal Dimension) agree on
+# the endpoints too. The vocabulary keeps the names because an accepted
+# Metamodel reaching `m-metamodel` directly may carry other endpoints, and ADR
+# 0063 names this exemption where it states the portable-proof obligation: such
+# a name is witnessed by the implementation's own suite, and the corpus proves
+# it unreachable. The three tests below are that proof — the temporal alphabet
+# is the language's own, one endpoint pair is derived per dimension across every
+# descriptor the language spells, and an authored endpoint is rejected.
 _UNREACHABLE_FROM_A_DESCRIPTOR: Final[frozenset[str]] = frozenset(
     {"AsOfAxisAltered", "StartAttributeChanged", "EndAttributeChanged"}
 )
@@ -214,20 +234,97 @@ def test_a_member_addition_is_witnessed_unilateral_and_coordinated(kind: str) ->
     assert described - coordinated, f"no unilateral {kind} witness"
 
 
-def test_a_surviving_axis_cannot_change_its_endpoints() -> None:
-    # The exemption above, proven rather than asserted: every corpus model's
-    # As-Of Axis endpoints are the framework-fixed ones its Temporal Dimension
-    # derives, so no two endpoints can agree on an axis position and disagree on
-    # its endpoint Attributes.
-    named = {*_earlier_models(), *(case.evolve_later for case in _CASES)}
-    assert named
-    for relative in sorted(path for path in named if path is not None):
-        model = load_model(_COMPATIBILITY_ROOT, relative)
-        for definition in model.entity_defs:
-            for axis in temporal_axes(definition):
-                start, end = TEMPORAL_MEMBERS[axis.dimension]
-                assert (axis.start.name, axis.end.name) == (start.name, end.name), relative
+def test_the_temporal_alphabet_is_the_one_the_descriptor_language_spells() -> None:
+    # First half of the exemption's proof, and what makes the second half
+    # exhaustive rather than a sample: `m-descriptor.md` fixes the closed
+    # profile vocabulary and the normative dimension-to-endpoint table, so both
+    # are read back out of the specification. A profile or endpoint the language
+    # gains without the derivation following fails here.
+    assert _spelled_profiles() == dict(TEMPORALITY_PROFILES)
+    assert _spelled_endpoints() == dict(TEMPORAL_MEMBERS)
 
 
-def _earlier_models() -> Sequence[str]:
-    return [case.evolve_earlier for case in _CASES if case.evolve_earlier is not None]
+def test_no_two_descriptors_can_disagree_on_a_surviving_axis_endpoint() -> None:
+    # Second half: every axis any pair of descriptors can put at one position,
+    # derived from every profile the language spells and from definitions
+    # differing in everything else a descriptor may carry. One endpoint pair per
+    # Temporal Dimension means two descriptors agreeing on (Entity, Temporal
+    # Dimension) agree on the endpoints too, so `AsOfAxisAltered` and its two
+    # deltas have no descriptor pair that can emit them.
+    spelled = _spelled_endpoints()
+    derived: dict[str, set[tuple[Endpoint, Endpoint]]] = {}
+    for definition in _every_definition_the_language_spells():
+        for axis in temporal_axes(definition):
+            derived.setdefault(axis.dimension, set()).add((axis.start, axis.end))
+    assert set(derived) == set(spelled)
+    assert all(pairs == {spelled[dimension]} for dimension, pairs in derived.items())
+
+
+def test_no_descriptor_can_author_an_axis_endpoint() -> None:
+    # The remaining route to a disagreeing endpoint is an authored one, and the
+    # corpus's own rejection fixtures close it: an Attribute bearing a derived
+    # endpoint's canonical name is a phase-3 value violation, and the retired
+    # container that once spelled axes and endpoint references is rejected at
+    # the entity's closed key set.
+    authored = _rejection("value-temporal-attribute-declared")
+    assert {violation["rule"] for violation in authored["violations"]} == {
+        "temporal-attribute-declared"
+    }
+    container = _rejection("schema-retired-as-of-axes")
+    assert container["code"] == "descriptor-schema-invalid"
+
+
+def _every_definition_the_language_spells() -> Iterator[Mapping[str, Any]]:
+    """Every temporal shape a descriptor entity can present to the derivation.
+
+    One definition per profile the language spells plus the omitted profile,
+    each also carried by a definition spelling everything else that could name
+    an endpoint — an Attribute bearing an endpoint's canonical name over a
+    different column, an inheritance parent, a layout, a Persistence Mode — so
+    the derivation is shown to read the profile and nothing else.
+    """
+    yield {}
+    for profile in _spelled_profiles():
+        yield {"temporality": profile}
+        yield {
+            "name": "Anything",
+            "temporality": profile,
+            "attributes": [
+                {"name": "validStart", "type": "timestamp", "column": "authored_from"},
+                {"name": "txEnd", "type": "timestamp", "column": "authored_out"},
+            ],
+            "extends": "Root",
+            "layout": "relational-document",
+            "persistence": "read-only",
+        }
+
+
+def _spelled_profiles() -> dict[str, tuple[str, ...]]:
+    return {row[0][0]: tuple(row[1]) for row in _spec_table(_PROFILE_TABLE_HEADER)}
+
+
+def _spelled_endpoints() -> dict[str, tuple[Endpoint, Endpoint]]:
+    return {
+        row[0][0]: (Endpoint(*row[1]), Endpoint(*row[2]))
+        for row in _spec_table(_ENDPOINT_TABLE_HEADER)
+    }
+
+
+def _spec_table(header: str) -> list[list[list[str]]]:
+    """Each row under *header* in ``m-descriptor.md``, cell by cell.
+
+    A cell answers with the backticked tokens it spells in order, which is how
+    the normative tables mark the vocabulary they fix: prose around a token
+    ("(default)", "none", "then") carries no name.
+    """
+    lines = _DESCRIPTOR_SPEC.read_text(encoding="utf-8").splitlines()
+    rows: list[list[list[str]]] = []
+    for line in lines[lines.index(header) + 2 :]:
+        if not line.startswith("|"):
+            break
+        rows.append([re.findall(r"`([^`]+)`", cell) for cell in line.strip("|").split("|")])
+    return rows
+
+
+def _rejection(name: str) -> Mapping[str, Any]:
+    return read_corpus_yaml(_COMPATIBILITY_ROOT / "descriptor-errors" / f"{name}.expected.yaml")
