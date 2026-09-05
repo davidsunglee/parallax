@@ -133,6 +133,43 @@ def test_a_required_addition_the_framework_owns_asks_nothing_of_the_caller() -> 
     assert _verdict(_holding(), _holding(owned)) == _Verdict((_MIGRATION,), False)
 
 
+def test_a_flag_moving_on_a_read_only_entity_withdraws_no_input_either() -> None:
+    # The same rule from the other side: an Entity that accepted no caller write
+    # holds no input for a read-only or optimistic-locking flag to withdraw,
+    # however the Attribute's own capability moves.
+    assert _verdict(_sealed(_member()), _sealed(_member(read_only=True))) == _Verdict(
+        _UNILATERAL, False
+    )
+
+
+def test_a_required_addition_reaches_the_caller_only_where_an_insert_did() -> None:
+    # `AuthoringSurfaceChangeRequired` names a PREVIOUSLY valid shape that must
+    # change, so an Entity already effectively `ReadOnly` has no insert for the
+    # member to invalidate; the rows it holds still have no value for it, so the
+    # database is the whole of the reason. An Entity that BECOMES read-only had
+    # one, and the addition is classified on its own terms.
+    assert _verdict(_sealed(), _sealed(_member())) == _Verdict((_MIGRATION,), False)
+    becoming = evolve(_holding(), _sealed(_member()))
+    (added,) = [
+        operation for operation in becoming.operations if not isinstance(operation, EntityAltered)
+    ]
+    assert _verdict_on(becoming, added) == _Verdict(_BOTH, False)
+
+
+def _sealed(*members: AttributeMetadata) -> Metamodel:
+    """``_holding``'s model with the Entity effectively ``ReadOnly``."""
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_WIDGET,
+                container=Table("widget"),
+                persistence=PersistenceMode.READ_ONLY,
+                attributes=(key(_WIDGET), *members),
+            )
+        )
+    )
+
+
 def test_a_member_removal_is_directional_in_what_the_shape_it_leaves_demands() -> None:
     # The shape survives the member here, so what the database has to do about
     # the removal is what that shape still demands: a nullable member leaves a
@@ -316,18 +353,23 @@ def test_persistence_is_directional_in_its_effective_mode_not_its_declaration() 
     assert _verdict(read_only, declared) == _Verdict(_UNILATERAL, False)
 
 
-def _hierarchy(*, interposed: bool) -> Metamodel:
+def _hierarchy(*, interposed: bool, declares: AttributeMetadata | None = None) -> Metamodel:
     """A table-per-hierarchy family whose concrete leaf extends the root
-    directly, or extends an abstract position interposed under it."""
+    directly, or extends an abstract position interposed under it.
+
+    The interposed position declares ``declares``, defaulting to a nullable
+    member.
+    """
     root = Declaration(
         identity=_ROOT,
         container=Table("instrument"),
         attributes=(key(_ROOT),),
         inheritance=AbstractRoot(TablePerHierarchy("kind")),
     )
+    memo = dataclasses.replace(attribute(_BRANCH, "memo", type=STRING), nullable=True)
     branch = Declaration(
         identity=_BRANCH,
-        attributes=(dataclasses.replace(attribute(_BRANCH, "memo", type=STRING), nullable=True),),
+        attributes=(declares or memo,),
         inheritance=AbstractSubtype(ExactEntityReference(_ROOT)),
     )
     leaf = Declaration(
@@ -416,6 +458,16 @@ def test_an_inheritance_change_is_classified_by_its_effective_consequences() -> 
     assert _verdict_on(interposing, _altered(interposing)) == _Verdict(_UNILATERAL, False)
     flattening = evolve(interposed, direct)
     assert _verdict_on(flattening, _altered(flattening)) == _Verdict((_AUTHORING,), False)
+
+
+def test_a_departing_position_takes_its_required_members_off_rows_that_stay() -> None:
+    # An abstract position stores nothing of its own, so its removal leaves the
+    # members it handed down in the descendant's Table: a required one still
+    # rejects every later write that omits the value nothing now describes. The
+    # nullable case above stops at the authoring surface.
+    interposed = _hierarchy(interposed=True, declares=attribute(_BRANCH, "issuer", type=STRING))
+    flattening = evolve(interposed, _hierarchy(interposed=False))
+    assert _verdict_on(flattening, _altered(flattening)) == _Verdict(_BOTH, False)
 
 
 _READING = identity("Reading")
@@ -525,6 +577,50 @@ def test_a_family_arriving_whole_is_visible_to_no_earlier_reader() -> None:
         if isinstance(operation, ConcreteSubtypeAdded)
     ]
     assert _verdict_on(evolution, added) == _Verdict(_UNILATERAL, False)
+
+
+def _tagged_family(*, persistence: PersistenceMode, leaves: tuple[str, ...]) -> Metamodel:
+    """A table-per-hierarchy family under *persistence*, holding one concrete
+    subtype per name in *leaves*."""
+    return _beside_widget(
+        Declaration(
+            identity=_ROOT,
+            container=Table("instrument"),
+            attributes=(key(_ROOT),),
+            persistence=persistence,
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        *(
+            Declaration(
+                identity=identity(leaf),
+                inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), leaf.upper()),
+            )
+            for leaf in leaves
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("persistence", "overlap_visible"),
+    ((PersistenceMode.READ_WRITE, True), (PersistenceMode.READ_ONLY, False)),
+)
+def test_a_subtype_joining_a_read_only_family_has_no_writer_to_be_seen_by(
+    persistence: PersistenceMode, overlap_visible: bool
+) -> None:
+    # The risk is a LATER WRITER placing a discriminator value in the shared
+    # Table that an earlier reader cannot admit. A family the later edition holds
+    # read-only admits no such writer, so the same addition under the same
+    # strategy is visible only where writes are.
+    evolution = evolve(
+        _tagged_family(persistence=persistence, leaves=("Bond",)),
+        _tagged_family(persistence=persistence, leaves=("Bond", "Swap")),
+    )
+    (added,) = [
+        operation
+        for operation in evolution.operations
+        if isinstance(operation, ConcreteSubtypeAdded)
+    ]
+    assert _verdict_on(evolution, added) == _Verdict(_UNILATERAL, overlap_visible)
 
 
 def _axis_operation(evolution: Evolution) -> EvolutionOperation:

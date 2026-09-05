@@ -334,7 +334,8 @@ def test_a_live_qualified_stem_names_something_that_is_not_a_query() -> None:
         assert check_text("f.md", line) == [], line
     # The qualifier has to be the word immediately before the stem; anything else
     # is the unqualified compound the family retires. A query subject in front of
-    # the qualifier is retired too: the thing being named is still a read.
+    # the qualifier is retired too: the thing being named is still a read, so the
+    # subject closes the compound on its own and no surface noun need follow.
     flagged = [
         "the read's own operation tree",
         "def operation_algebra() -> None:",
@@ -344,6 +345,14 @@ def test_a_live_qualified_stem_names_something_that_is_not_a_query() -> None:
         "the query physical operation tree",
         "the query-evolution-operation tree",
         "validate_physical_operation_schema",
+        "queryPhysicalOperation",
+        "query_physical_operation",
+        "the query physical operation",
+        "the query-evolution-operation",
+        "findUnsupportedOperation",
+        "validateEvolutionOperation",
+        "equalUnsupportedOperations",
+        "malformed_evolution_operation",
     ]
     for line in flagged:
         assert check_text("f.py", line), line

@@ -250,7 +250,10 @@ declarations:
   shape. One that takes its shape with it — an Entity, a concrete subtype, or a
   Relationship direction, which stores no value of its own — needs the authoring
   surface alone, because the objects the earlier edition addressed may be left in
-  place. A **required** member cut out of a shape that survives needs both,
+  place. An abstract inheritance position stores nothing of its own and its
+  members are stored by each descendant, so its removal leaves them behind and
+  every surviving descendant reports what it loses on its own inheritance
+  alteration. A **required** member cut out of a shape that survives needs both,
   because the surviving shape still demands a value the later model no longer
   describes and the object enforcing it must be relaxed or removed before a later
   write is accepted; a nullable one leaves a stored form the later edition simply
@@ -261,11 +264,14 @@ declarations:
   member to an existing stored shape requires coordination until a default and
   backfill contract makes existing data satisfy the later model — for scalar
   Attributes and Value Object members alike, whether they occupy a direct Column
-  or an existing Structured Column. Where the caller authors the value it needs
-  the authoring surface too, because every previously valid insert omits an input
-  the later model demands; a framework-owned member needs the database alone,
-  since no caller ever supplied it. A wholly new Entity may contain required
-  members, because its parent addition creates a complete empty Table.
+  or an existing Structured Column. Where an insert the caller could author
+  carries the value it needs the authoring surface too, because every previously
+  valid insert omits an input the later model demands. A framework-owned member
+  needs the database alone, since no caller ever supplied it, and so does any
+  member arriving on an Entity whose family was already effectively `ReadOnly`,
+  which has no previously valid insert to invalidate. A wholly new Entity may
+  contain required members, because its parent addition creates a complete empty
+  Table.
 - **Value domain.** Within one unchanged Neutral Type, expanding the admitted
   domain is unilateral and contracting it requires coordination. Required to
   nullable, a widened String maximum length, and a removed length bound are
@@ -284,7 +290,10 @@ declarations:
   optimistic version brings with it is not a second reason of its own: an
   Entity's concurrency control changing is a Behavioral Impact behind the
   preserved surface, and it is the member's own move between caller-authored and
-  framework-owned that decides coordination. Persistence Mode follows the same
+  framework-owned that decides coordination, on an Entity whose family accepted
+  caller writes in the earlier edition: one already effectively `ReadOnly`
+  carried no input for the move to withdraw, while one that becomes read-only
+  did. Persistence Mode follows the same
   directional rule over the whole family — `ReadWrite` to `ReadOnly` requires
   coordination, `ReadOnly` to `ReadWrite` is unilateral — and the root-owned
   change is reported once rather than repeated per descendant.
@@ -313,7 +322,10 @@ declarations:
   consequences, never automatically by a raw parent change. Interposing a new
   abstract subtype is unilateral when every earlier subtype-selection containment
   remains valid, each earlier position keeps compatible physical facts, and any
-  inherited member additions are independently unilateral. Moving an existing
+  inherited member additions are independently unilateral. A position leaving the
+  ancestry withdraws the members that position declared from rows that stay where
+  they are; each is classified at the descendant exactly as a member cut out of it
+  would be, so a required one also requires database migration. Moving an existing
   subtype out of an earlier branch requires coordination, as do strategy, tag, or
   storage changes needing physical transformation.
 - **Concrete subtypes.** Adding one is unilateral under either supported
@@ -337,7 +349,9 @@ table-per-concrete-subtype is not overlap-visible: the later subtype occupies a
 separate Table the earlier edition never reads. Neither is a concrete subtype
 whose family arrives whole with it, under either strategy: visibility is a claim
 about an earlier reader, and the earlier edition holds no position of that
-family, so neither its Table nor a selection through it. A unique-constraint violation, a
+family, so neither its Table nor a selection through it. Neither is one added to
+a family whose later effective Persistence Mode is `ReadOnly`, which admits no
+writer to place the new discriminator value. A unique-constraint violation, a
 DDL failure, and an ordinary behavior difference are not overlap visibility.
 
 ## Behavioral Impacts

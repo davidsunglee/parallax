@@ -193,16 +193,22 @@ An existing inheritance declaration is classified by its effective consequences,
 not automatically by a raw parent change. Interposing a new abstract subtype is
 unilateral when every earlier subtype-selection containment remains valid, each
 earlier position keeps compatible physical facts, and any inherited member
-additions are independently unilateral. Queries narrow to named Entity positions
-whose effective concrete sets are compared; they do not encode direct hierarchy
-edges. Moving an existing subtype out of an earlier branch requires coordination
-because a narrowing through that branch becomes invalid, as do strategy, tag, or
-storage changes that require physical transformation.
+additions are independently unilateral. A position leaving the ancestry
+withdraws the members that position declared from rows that stay where they
+are, and each is classified at the descendant exactly as a member cut out of it
+would be, so a required one also requires database migration. Queries narrow to
+named Entity positions whose effective concrete sets are compared; they do not
+encode direct hierarchy edges. Moving an existing subtype out of an earlier
+branch requires coordination because a narrowing through that branch becomes
+invalid, as do strategy, tag, or storage changes that require physical
+transformation.
 Adding a concrete subtype is unilateral under either supported inheritance
 strategy. It is Overlap-Visible under table-per-hierarchy because a later writer
 can place a new discriminator value in the shared Table that an earlier reader
 cannot admit. It is not Overlap-Visible under table-per-concrete-subtype because
-the later subtype occupies a separate Table the earlier edition never reads.
+the later subtype occupies a separate Table the earlier edition never reads, and
+not where the later family's effective Persistence Mode is `ReadOnly`, because
+then no writer exists to place that value.
 
 Attribute classification likewise compares the effective caller contract rather
 than treating a raw flag change as decisive. Making an editable Attribute
@@ -353,7 +359,11 @@ Whether a removal ALSO requires database migration follows what becomes of the
 stored shape. A removal that takes its whole stored shape with it — an Entity, a
 Concrete Subtype, or a Relationship direction, which stores no value of its own
 — requires the authoring surface alone, because the objects the earlier edition
-addressed may simply be left in place. A member cut out of a stored shape that
+addressed may simply be left in place. An abstract inheritance position stores
+nothing of its own either, and the members it handed down are stored by each
+descendant, so its removal leaves them behind: every surviving descendant
+reports what it loses on its own inheritance alteration, by the member rule
+below. A member cut out of a stored shape that
 SURVIVES is directional in the same fact its addition is: removing a required
 Attribute, Value Object occurrence, or Value Object member also requires
 database migration, because the surviving shape still demands a value the later

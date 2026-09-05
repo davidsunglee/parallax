@@ -30,7 +30,8 @@ live subject QUALIFIES is not in it: an Evolution Operation (`m-model-evolution`
 the private physical operation a Schema Delta lowers to, and the unsupported one a
 dialect cannot render (`m-schema-delta`) are each a named thing of their own, and
 none of them is a query. A query subject standing in front of the qualifier still
-names a query, whatever qualifies the stem in between. Every other
+names a query, whatever qualifies the stem in between, so the subject rule reads
+across one qualifier and needs no surface noun to close the compound. Every other
 spelling that names a query, its grammar, its wire form, or the machinery that
 reads one an *operation* is retired: the module
 `m-op-algebra`, the package `op_algebra`, the schema `operation.schema.json`,
@@ -340,6 +341,20 @@ _QUERY_SUBJECT_WORDS = (
 )
 _QUERY_SUBJECTS = "|".join(_QUERY_SUBJECT_WORDS)
 
+# Qualifiers that make the stem after them a live subject of its own: an
+# Evolution Operation (`m-model-evolution`), the private physical operation a
+# Schema Delta lowers to, and the unsupported one a dialect cannot render
+# (`m-schema-delta`). The exemption below masks the compound each of them
+# spells, so the subject rules must read ACROSS one: a query standing in front
+# of a qualifier still names a query an operation, and `queryPhysicalOperation`
+# would otherwise reach no pattern at all, since the exemption leaves it
+# unmasked and no other rule spans the qualifier.
+_LIVE_QUALIFIED_WORDS = ("evolution", "physical", "unsupported")
+_INTERPOSED_QUALIFIER = rf"(?:(?:{'|'.join(_LIVE_QUALIFIED_WORDS)}){_JOIN})?"
+_CAMEL_INTERPOSED_QUALIFIER = (
+    rf"(?:{'|'.join(word.capitalize() for word in _LIVE_QUALIFIED_WORDS)})?"
+)
+
 
 # camelCase compounds, derived from the SAME word lists as the spaced and joined
 # patterns so the camel coverage can never drift from them. The stems keep their
@@ -371,7 +386,10 @@ _RETIRED_QUERY_PATTERNS = (
         rf"{_LEFT}(?:{_QUERY_STEMS}){_JOIN}{_QUERY_CONNECTIVE}(?:{_QUERY_SURFACE}){_RIGHT}",
         re.IGNORECASE,
     ),
-    re.compile(rf"{_LEFT}(?:{_QUERY_SUBJECTS}){_JOIN}(?:{_QUERY_STEMS}){_RIGHT}", re.IGNORECASE),
+    re.compile(
+        rf"{_LEFT}(?:{_QUERY_SUBJECTS}){_JOIN}{_INTERPOSED_QUALIFIER}(?:{_QUERY_STEMS}){_RIGHT}",
+        re.IGNORECASE,
+    ),
     re.compile(
         rf"{_LEFT}(?:{_QUERY_FULL_STEMS})[_-](?:(?:{'|'.join(_QUERY_CONNECTIVE_WORDS)})[_-])?"
         rf"(?:{_QUERY_JOINED_WORDS}){_RIGHT}",
@@ -393,7 +411,10 @@ _RETIRED_QUERY_PATTERNS = (
         rf"(?:{_QUERY_CAMEL_ABBREVIATED_STEM}){_QUERY_CAMEL_CONNECTIVE}"
         rf"(?:{_QUERY_CAMEL_SURFACE}){_CAMEL_RIGHT}"
     ),
-    re.compile(rf"(?:{_QUERY_CAMEL_SUBJECTS})(?:Op|Operations?){_CAMEL_RIGHT}"),
+    re.compile(
+        rf"(?:{_QUERY_CAMEL_SUBJECTS}){_CAMEL_INTERPOSED_QUALIFIER}"
+        rf"(?:Op|Operations?){_CAMEL_RIGHT}"
+    ),
     re.compile(rf"(?:{_QUERY_CAMEL_JOINED})(?:Operations?){_CAMEL_RIGHT}"),
     # The retired schema filename, whose `.` joiner is deliberately not in the
     # general compound pattern: an ordinary sentence break before a capitalized
@@ -462,12 +483,10 @@ _LIVE_SPELLINGS = re.compile(
     rf"(?<!{_LIVE_SPELLING_EDGE})(?:{'|'.join(_LIVE_SPELLING_WORDS)})(?!{_LIVE_SPELLING_EDGE})"
 )
 
-# Qualifiers that make the stem after them a LIVE subject rather than a query
-# named as an operation: an Evolution Operation (`m-model-evolution`), the
-# private physical operation a Schema Delta lowers to, and the unsupported one a
-# dialect cannot render (`m-schema-delta`). Each is a named thing of its own and
-# none of them is a query, so the whole qualified compound is masked wherever it
-# is written.
+# The compound each `_LIVE_QUALIFIED_WORDS` qualifier spells, masked wherever it
+# is written: an Evolution Operation, the private physical operation, and the
+# unsupported one are each a named thing of their own and none of them is a
+# query.
 #
 # Unlike the exact identifiers above, the qualifier joins its stem the way every
 # compound in this module does: a space, a `/`, a `_`, a `-`, or a camel hump —
@@ -476,10 +495,9 @@ _LIVE_SPELLINGS = re.compile(
 #
 # The exemption qualifies the stem; it never masks the word in front of it. A
 # query subject there names a read an operation whatever qualifier sits between
-# them — `queryPhysicalOperationTree` and `query_evolution_operation_tree` are
-# the retired compound, not an exempt one — so a match carrying that subject is
-# returned unmasked for the retired patterns to read.
-_LIVE_QUALIFIED_WORDS = ("evolution", "physical", "unsupported")
+# them, so a match carrying that subject is returned unmasked — and the subject
+# patterns above read across the qualifier, which is what makes
+# `queryPhysicalOperation` a violation with no surface noun to close it.
 _LIVE_QUALIFIED_SUBJECT = "subject"
 _LIVE_QUALIFIED = re.compile(
     rf"(?P<{_LIVE_QUALIFIED_SUBJECT}>(?:{_QUERY_CAMEL_SUBJECTS})(?:{_JOIN}|))?"
