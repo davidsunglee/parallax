@@ -35,7 +35,10 @@ verbs are thin delegates that thread ``(uow, meta, conn)`` into
 Depends on :mod:`parallax.snapshot.handle._read_scope` (the read composition the
 eager read verbs here delegate to),
 :mod:`parallax.snapshot.handle._read` (the publication factories and the result
-surface), :mod:`parallax.snapshot.handle._write_inputs` (verb-input validation
+surface), :mod:`parallax.snapshot.handle._keyed_writes` (the keyed write ingress,
+whose per-call context this transaction builds once and hands to its own keyed
+verbs, to ``tx.wire``'s, and to the conformance bridge alike),
+:mod:`parallax.snapshot.handle._write_inputs` (verb-input validation
 and the evidence machinery), and
 :mod:`parallax.snapshot.handle._predicate_writes`. Demarcation — ``Database``,
 ``_Demarcation``, and ``TransactionOptionConflictError`` — lives in
@@ -53,6 +56,7 @@ from parallax.core.db_port import DbPort
 from parallax.core.entity import (
     AttributeAssignment,
     EntityRowCodec,
+    lifecycle_state_of,
 )
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution_lifecycle._activity import (
@@ -75,7 +79,9 @@ from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPre
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
+from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._family import declaring as declaring_of
+from parallax.snapshot.handle._keyed_writes import KeyedWriteContext, Provenance
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
@@ -95,12 +101,33 @@ from parallax.snapshot.handle._write_inputs import (
     source_hint_of,
     source_pin,
     validate_keyed_instruction,
+    validate_provenance,
     validate_source_pin,
     validate_window,
-    validate_write_value,
     written_object,
     written_object_key,
 )
+
+
+def provenance_of(value: EntityBase) -> Provenance:
+    """Which framework-managed source produced ``value``.
+
+    Read through :func:`~parallax.snapshot._inspection.snapshot_state_of` and the
+    un-narrowed :func:`~parallax.core.entity.lifecycle_state_of`, never through a
+    value's private state: the narrowed answer says THIS Snapshot lifecycle
+    produced the value, and the un-narrowed one is what distinguishes another
+    framework-managed source's value from one no managed read produced at all.
+
+    It lives beside the Typed verbs because only a Typed value carries a
+    lifecycle to read: a Wire source answers the same fact from the Source Hint
+    its read filed, and what the keyed write judges is the answer rather than
+    either carrier.
+    """
+    if lifecycle_state_of(value) is None:
+        return "none"
+    if snapshot_state_of(value) is None:
+        return "foreign"
+    return "this"
 
 
 class Transaction:
@@ -143,7 +170,7 @@ class Transaction:
         "_attempt",
         "_codec",
         "_conn",
-        "_inserted_objects",
+        "_keyed",
         "_lifecycle",
         "_model",
         "_reads",
@@ -183,12 +210,20 @@ class Transaction:
         self._reads = participating_read_scope(
             lifecycle=lifecycle, selected=selected, uow=uow, conn=conn, attempt=attempt
         )
-        # What THIS transaction buffered an insert of — a same-transaction insert
-        # IS the provenance a subsequent keyed write builds on, so both
-        # read-your-own-writes exemptions (the value-provenance refusal and the
-        # write-evidence resolution) read this one ledger, and so does the Wire
-        # ingress, whose inserts and updates pair with the Typed ones.
-        self._inserted_objects = BufferedInserts()
+        # The transaction state every keyed write of this transaction reads,
+        # built once because all four facts are fixed for its life and handed to
+        # each keyed verb by value. Its ledger of what THIS transaction buffered
+        # an insert of is what a same-transaction insert leaves for a subsequent
+        # keyed write to build on, so both read-your-own-writes exemptions — the
+        # value-provenance refusal and the write-evidence resolution — read one
+        # ledger, and so does the Wire ingress, whose inserts and updates pair
+        # with the Typed ones.
+        self._keyed = KeyedWriteContext(
+            model=self._model,
+            uow=uow,
+            inserts=BufferedInserts(),
+            lifecycle=lifecycle,
+        )
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
@@ -409,9 +444,10 @@ class Transaction:
         and an edited copy of such a view carries that view's own pin, so
         deriving one is no route past this refusal), refuse a value whose
         provenance this mutation's verb does not accept
-        (:func:`validate_write_value`, before any row is derived — with the
-        object this transaction already buffered an insert for exempted, so an
-        insert-then-update pair coalesces rather than being refused), then
+        (:func:`validate_provenance` over :func:`provenance_of`'s answer, before
+        any row is derived — with the object this transaction already buffered an
+        insert for exempted, so an insert-then-update pair coalesces rather than
+        being refused), then
         validate + render the whole Valid-Time window against that declaring
         entity's own temporality (:func:`validate_window`, spec §5).
 
@@ -427,11 +463,11 @@ class Transaction:
         record = metadata_of_instance(self._model.meta, node_or_instance)
         declaring = declaring_of(self._model.meta, record)
         validate_source_pin(record.identity, source_pin(node_or_instance))
-        validate_write_value(
+        validate_provenance(
             record.identity,
-            node_or_instance,
+            provenance_of(node_or_instance),
             mutation,
-            inserted_here=lambda: self._has_buffered_insert(record, node_or_instance),
+            inserted=self._has_buffered_insert(record, node_or_instance),
         )
         valid_from_literal, until_literal = validate_window(declaring, mutation, valid_from, until)
         return record, valid_from_literal, until_literal
@@ -471,7 +507,7 @@ class Transaction:
         through a derived row, because the exemption is asked on a branch that
         must not derive one.
         """
-        self._inserted_objects.record(written_object(record, self._model.meta, instance))
+        self._keyed.inserts.record(written_object(record, self._model.meta, instance))
 
     def _has_buffered_insert(self, record: EntityMetadata, instance: EntityBase) -> bool:
         """Whether THIS transaction already buffered an insert of the object
@@ -486,9 +522,9 @@ class Transaction:
         — as what the developer sees. A transaction that buffered no insert
         answers without reading ``instance`` at all.
         """
-        if not self._inserted_objects:
+        if not self._keyed.inserts:
             return False
-        return self._inserted_objects.holds(written_object(record, self._model.meta, instance))
+        return self._keyed.inserts.holds(written_object(record, self._model.meta, instance))
 
     def _resolve_evidence(
         self,
@@ -597,14 +633,7 @@ class Transaction:
         """
         return WireTransactionView(
             self._reads,
-            WireWriteLane(
-                self._model,
-                self._uow,
-                self._conn,
-                self._attempt,
-                self._inserted_objects,
-                self._lifecycle,
-            ),
+            WireWriteLane(self._keyed, self._conn, self._attempt),
         )
 
     def stream[S](self, query: ObjectQuery[Any, S], *, batch_size: int = 1000) -> SnapshotStream[S]:
@@ -810,14 +839,7 @@ class Transaction:
         assigned_members: frozenset[str],
     ) -> None:
         buffer_prepared_keyed_write(
-            WireWriteLane(
-                self._model,
-                self._uow,
-                self._conn,
-                self._attempt,
-                self._inserted_objects,
-                self._lifecycle,
-            ),
+            WireWriteLane(self._keyed, self._conn, self._attempt),
             observed,
             instruction,
             assigned_members,

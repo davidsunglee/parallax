@@ -528,6 +528,37 @@ def test_the_read_composition_row_forbids_every_write_policy_the_parent_grants()
         assert policy in forbidden[scope], policy
 
 
+def test_the_keyed_write_ingress_row_forbids_the_read_half_the_parent_grants() -> None:
+    # The exclusion the ingress row exists for: a keyed write addresses a row its
+    # caller already holds, so it materializes no graph, publishes no read
+    # result, and takes no read lock — which only a row narrower than the
+    # parent's can state, since the parent is granted all three outright.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    forbidden = dag.compute_forbidden(adjacency)
+    scope = "parallax.snapshot.handle._keyed_writes"
+    for reach in (
+        "parallax.snapshot.materialize",
+        "parallax.snapshot._read_result",
+        "parallax.core.read_lock",
+    ):
+        assert reach in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"], reach
+        assert reach not in forbidden["parallax.snapshot.handle"], reach
+        assert reach in forbidden[scope], reach
+
+
+def test_the_keyed_write_ingress_row_inherits_the_port_rather_than_forbidding_it() -> None:
+    # `modules.md` routes `m-db-port` through `m-execution-lifecycle`, which the
+    # re-entry gate requires, and a forbidden row is the complement of a closure
+    # — so the port rides in although a keyed write never reads or writes over
+    # one, and §7's prose records the closure fact instead of claiming an
+    # exclusion no row could carry.
+    adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
+    scope = "parallax.snapshot.handle._keyed_writes"
+    assert "parallax.core.execution_lifecycle" in adjacency[scope]
+    assert "parallax.core.db_port" in dag.transitive_closure(adjacency, scope)
+    assert "parallax.core.db_port" not in dag.compute_forbidden(adjacency)[scope]
+
+
 def test_the_read_composition_row_inherits_retry_rather_than_forbidding_it() -> None:
     # `modules.md` routes `m-auto-retry` through `m-execution-lifecycle`, which
     # the re-entry gate and the read roots both require, and a forbidden row is
@@ -626,6 +657,7 @@ def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
             "parallax.snapshot.handle._materializer",
             "parallax.snapshot.handle._preflight",
             "parallax.snapshot.handle._read_scope",
+            "parallax.snapshot.handle._keyed_writes",
             "parallax.snapshot.handle._family",
             "parallax.snapshot.handle._keyed_sql",
             "parallax.snapshot.handle._write_lowering",
@@ -691,6 +723,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
             "parallax.snapshot.handle._materializer",
             "parallax.snapshot.handle._preflight",
             "parallax.snapshot.handle._read_scope",
+            "parallax.snapshot.handle._keyed_writes",
             "parallax.snapshot.handle._errors",
             "parallax.snapshot.handle._family",
             "parallax.snapshot.handle._keyed_sql",
@@ -1120,6 +1153,37 @@ def test_a_write_policy_import_in_the_read_composition_fails_lint_imports() -> N
         in reported
     )
     assert "parallax.snapshot.handle._read_scope -> parallax.core.batch_write" in reported
+
+
+# --------------------------------------------------------------------------
+# Canary 5c: the keyed write ingress materializes nothing, which the parent
+# scope's own row permits.
+# --------------------------------------------------------------------------
+def test_a_materialization_import_in_the_keyed_write_ingress_fails_lint_imports() -> None:
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    # Row-to-graph conversion IS in the parent handle grant row — every read the
+    # package publishes goes through it — so the broad contract permits this
+    # import and only the child row can reject it.
+    assert "parallax.snapshot.materialize" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_keyed_writes.py"
+    original = target.read_text()
+    target.write_text(
+        f"{original}import parallax.snapshot.materialize  # deliberate read-half violation\n"
+    )
+    try:
+        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
+    finally:
+        target.write_text(original)
+
+    assert result.returncode != 0, result.stdout
+    reported = " ".join(result.stdout.split())
+    assert (
+        "parallax.snapshot.handle._keyed_writes may import only its permitted dependencies BROKEN"
+        in reported
+    )
+    assert "parallax.snapshot.handle._keyed_writes -> parallax.snapshot.materialize" in reported
 
 
 # --------------------------------------------------------------------------
