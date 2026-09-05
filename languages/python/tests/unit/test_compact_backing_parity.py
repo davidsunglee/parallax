@@ -4,8 +4,8 @@ Every reader of a value's physical state asks the instance-state Module rather
 than Pydantic's instance dictionary, and the point of asking there is that the
 answers do not depend on which backing the value carries. So each case here
 builds the SAME value both ways and asserts one outcome: an edit, the Change
-Record an edit chain composes, the three Row Codec operations, and a Value
-Object's canonical document.
+Record an edit chain composes, the Row Codec operations, and a Value Object's
+canonical document.
 
 The two arms are twins by construction. ``model_construct(**members)`` populates
 exactly the named members and fills every other declared field with its declared
@@ -368,6 +368,28 @@ def test_an_edited_row_answers_none_for_a_chain_that_nets_to_zero(build: Builder
     assert _codec().restored_members(value.edit(label="south").edit(label="north")) == {"label"}
 
 
+def test_an_authored_row_carries_both_sides_of_the_change_off_either_backing(
+    build: Builder,
+) -> None:
+    edited = build(Depot, id=1, label="north", capacity=12).edit(label="south")
+    authored = _codec().authored_row(edited)
+    assert authored is not None
+    assert authored.row == {"id": 1, "label": "south"}
+    assert authored.originals == {"label": "north"}
+
+
+def test_an_authored_row_answers_none_only_for_a_value_no_edit_touched(
+    build: Builder,
+) -> None:
+    value = build(Depot, id=1, label="north")
+    assert _codec().authored_row(value) is None
+    restored = value.edit(label="south").edit(label="north")
+    authored = _codec().authored_row(restored)
+    assert authored is not None
+    assert authored.row == {"id": 1, "label": "north"}
+    assert authored.originals == {"label": "north"}
+
+
 def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> None:
     # The published arm's own obligation, which the ordinary arm cannot have:
     # every operation above reaches for what the value holds by name, and asking
@@ -380,6 +402,7 @@ def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> Non
     codec.identity_row(value)
     codec.edited_row(value)
     codec.restored_members(value)
+    codec.authored_row(value)
     assert not carries_instance_storage(value)
     # Read last, because reading it is what creates it.
     assert real_storage(value) == {}
