@@ -86,12 +86,26 @@ narrows a stored domain is unilateral.
 
 Each physical operation carries its **causal Evolution Operations** — all and
 only the operations whose changed facts asked for it, in canonical operation
-order. An entity-level addition brings a whole Table with it and suppresses
-operations for the members it contains, so the Columns and authored Indices of an
-added Entity are read off the later model rather than arriving as operations of
-their own; every addition that contributes a Column to a Table, or owns rows in
-it, is a cause of that Table's creation, and an Index created as part of creating
-its Table carries the same causes as the Table.
+order. One rule decides that, and it is asked of each operation separately rather
+than of a category: an Evolution Operation is causal exactly when a fact **it**
+moved is one of the facts the physical difference is made of. Both edges follow
+from that single test. A difference several operations were each needed for names
+every one of them — a Column is in a Table because its declaration exists **and**
+because that declaration reaches the rows the Table holds, so a member added on an
+ancestor and the inheritance alteration that carried the ancestor's members to a
+descendant's rows are named together, while a Table already holding that ancestry
+names the addition alone. And an operation that moved only facts the database does
+not hold — a write flag, a declaration order, an optimistic-locking marker — is a
+cause of nothing, even where it alters the very declaration a widened Column
+materializes: a stored domain is a Neutral Type, a String bound, and a
+nullability, so those are the only facts a widening can answer to.
+
+An entity-level addition brings a whole Table with it and suppresses operations
+for the members it contains, so the Columns and authored Indices of an added
+Entity are read off the later model rather than arriving as operations of their
+own; every addition that contributes a Column to a Table, or owns rows in it, is a
+cause of that Table's creation, and an Index created as part of creating its Table
+carries the same causes as the Table.
 
 A schema-neutral unilateral operation lowers to no physical operation at all.
 
@@ -187,15 +201,26 @@ Evolution Operations in canonical operation order. This does **not** reclassify
 the dialect-independent Unilateral Evolution as coordinated: renderer support is a
 deployment capability, not a model-semantic fact.
 
-**Physical Index Name collision.** If two distinct physical Index definitions that
-can coexist during any statement prefix derive one name, generation refuses
-rather than silently renaming either. The error carries the Dialect Identity and
-every collision group in Physical Index Name order; each group carries the shared
-name and at least two colliding definitions in canonical logical-identity order,
-each naming its physical Table, logical Index Identity, ordered components,
-uniqueness, and whether it occurs in the earlier endpoint, the later endpoint, or
-both. This is a defensive backstop for an unexpected 128-bit fingerprint
-collision, not an ordinary control path and not a dialect-capability error.
+**Physical Index Name collision.** If two distinct physical Index definitions
+either endpoint holds derive one name, generation refuses rather than silently
+renaming either. The census spans **every** Index of both endpoints — not only the
+ones this delta creates or drops, and deliberately not only the ones whose
+lifetimes overlap in the emitted order. An Index the delta never mentions is still
+an object in the database while a new one is created beside it, and the emitted
+order cannot be the test: a plan is built by telling definitions apart **by their
+derived names**, so under a collision the two are already indistinguishable and
+the create and the drop that would have bounded their lifetimes are exactly the
+statements the plan fails to emit. Asking of the definitions rather than of the
+plan is what keeps the check off the assumption it exists to falsify; the price is
+that a name shared by two definitions that would never in fact have overlapped is
+refused too, which errs toward refusal on a path no sound fingerprint reaches. The
+error carries the Dialect Identity and every collision group in Physical Index
+Name order; each group carries the shared name and at least two colliding
+definitions in canonical logical-identity order, each naming its physical Table,
+logical Index Identity, ordered components, uniqueness, and whether it occurs in
+the earlier endpoint, the later endpoint, or both. This is a defensive backstop
+for an unexpected 128-bit fingerprint collision, not an ordinary control path and
+not a dialect-capability error.
 
 ## Rule Set boundary
 

@@ -48,6 +48,7 @@ from parallax.core.storage_layout import (
 from parallax.evolution.model_evolution import (
     AttributeAdded,
     AttributeAltered,
+    AttributeDelta,
     ConcreteSubtypeAdded,
     EntityAdded,
     EntityAltered,
@@ -56,8 +57,12 @@ from parallax.evolution.model_evolution import (
     IndexAltered,
     IndexRemoved,
     InheritanceChanged,
+    MaximumLengthChanged,
+    NullabilityChanged,
     UnilateralEvolution,
     ValueObjectOccurrenceAdded,
+    ValueObjectOccurrenceAltered,
+    ValueObjectOccurrenceDelta,
 )
 from parallax.evolution.schema_delta._naming import NamedIndex, census, physical_index_name
 from parallax.evolution.schema_delta._physical import (
@@ -82,12 +87,14 @@ _TAG_MAX_LENGTH = 32
 
 @dataclass(frozen=True, slots=True)
 class Plan:
-    """What the database is asked to do, and every Index that exists while it does.
+    """What the database is asked to do, and every Index either endpoint defines.
 
-    The Index census spans both endpoints because a name has to be unique among
-    the Indices that COEXIST, not merely among the ones a statement touches: an
-    Index the delta never mentions is still an object in the database while a new
-    one is created beside it.
+    The census spans both endpoints' complete Index sets rather than the
+    operations below it. An Index the delta never mentions is still an object in
+    the database while a new one is created beside it — and the operations could
+    not answer the question anyway, because they are built by telling definitions
+    apart BY their derived names, so under a collision the two are already one and
+    the statements bounding their lifetimes are the ones never emitted.
     """
 
     operations: tuple[PhysicalOperation, ...]
@@ -170,6 +177,19 @@ class _Endpoint:
         """
         return {
             entity.identity: view.layout.table
+            for entity in self.model.entities
+            if (view := self.facet.entity(entity.identity)) is not None
+        }
+
+    def owners(self) -> Mapping[EntityIdentity, frozenset[EntityIdentity]]:
+        """The Entities whose declarations already reach each row-owning Entity.
+
+        This is what an inheritance alteration changes, read off the layout rather
+        than walked: a declaration reaches an Entity's rows exactly while one of
+        its ancestors-or-self contributes a Column the Entity's own view selects.
+        """
+        return {
+            entity.identity: frozenset(slot.declaring_owner for slot in view.columns)
             for entity in self.model.entities
             if (view := self.facet.entity(entity.identity)) is not None
         }
@@ -293,17 +313,22 @@ def _named(
 class _Causes:
     """Which Evolution Operations asked for a physical change.
 
-    A Column arrives because the declaration it materializes arrived, or —
-    when both editions declare it — because this Table started materializing
-    that declaration. A stored domain widens because the member's own
-    declaration widened, or because the rows the Table holds changed: a
-    Column required of every shape a Table stored is nullable once it stores one
-    more.
+    One operation is a cause exactly when a fact IT moved is one of the facts the
+    physical difference is made of, so every question below is a filter over the
+    whole operation sequence rather than a choice between categories: a
+    difference several operations were each needed for names all of them.
+
+    A Column is in a Table because its declaration exists AND because that
+    declaration reaches the rows the Table holds. A stored domain is wider
+    because the declared domain widened, or because the set of shapes the Table
+    stores changed — a Column required of every shape a Table stored is nullable
+    once it stores one more.
     """
 
     operations: tuple[EvolutionOperation, ...]
     later_rows: Mapping[EntityIdentity, Table]
     earlier_rows: Mapping[EntityIdentity, Table]
+    earlier_owners: Mapping[EntityIdentity, frozenset[EntityIdentity]]
     declared_in: Mapping[Table, frozenset[EntityIdentity]]
 
     @staticmethod
@@ -314,6 +339,7 @@ class _Causes:
             operations=tuple(operations),
             later_rows=later.rows(),
             earlier_rows={} if earlier is None else earlier.rows(),
+            earlier_owners={} if earlier is None else earlier.owners(),
             declared_in={
                 layout.table: frozenset(slot.declaring_owner for slot in layout.columns)
                 for layout in later.facet.tables
@@ -339,16 +365,18 @@ class _Causes:
         )
 
     def column(self, table: Table, slot: ColumnSlot) -> tuple[EvolutionOperation, ...]:
-        """Why ``slot``'s Column is in ``table`` now and was not before."""
-        brought = tuple(
-            operation for operation in self.operations if _brings_declaration(operation, slot)
-        )
-        return brought or tuple(
+        """Why ``slot``'s Column is in ``table`` now and was not before.
+
+        Both halves are named together when both were needed: a member added on
+        an ancestor lands in a descendant's Table only because the descendant was
+        also reparented under that ancestor, and neither operation alone put the
+        Column there.
+        """
+        return tuple(
             operation
             for operation in self.operations
-            if isinstance(operation, EntityAltered)
-            and _reparents(operation)
-            and self.later_rows.get(operation.entity) == table
+            if _brings_declaration(operation, slot)
+            or self._carries_declarations(operation, table, slot.declaring_owner)
         )
 
     def expansion(
@@ -358,7 +386,8 @@ class _Causes:
 
         A relaxed nullability additionally answers to whatever changed the shapes
         ``table`` stores, because a Column is required exactly while every one of
-        them declares it.
+        them declares it. Nothing a row-set change does can lengthen a String
+        bound, so a widening that only moved the bound never names one.
         """
         return tuple(
             operation
@@ -372,18 +401,36 @@ class _Causes:
 
         An Index whose own operation describes it names it; one an entity-level
         addition brought silently is caused by that addition, exactly as the
-        Columns beside it are.
+        Columns beside it are; and one that reaches this Table only because a
+        reparent carried its declaring Entity's members here names that too.
         """
-        named = tuple(
-            operation for operation in self.operations if _names_index(operation, definition.index)
-        )
-        brought = tuple(
+        return tuple(
             operation
             for operation in self.operations
-            if isinstance(operation, (EntityAdded, ConcreteSubtypeAdded))
-            and operation.entity == definition.index.entity
+            if _names_index(operation, definition.index)
+            or (
+                isinstance(operation, (EntityAdded, ConcreteSubtypeAdded))
+                and operation.entity == definition.index.entity
+            )
+            or self._carries_declarations(operation, definition.table, definition.index.entity)
         )
-        return named or brought or self.table(definition.table)
+
+    def _carries_declarations(
+        self, operation: EvolutionOperation, table: Table, owner: EntityIdentity
+    ) -> bool:
+        """Whether ``operation`` is why ``owner``'s declarations reach ``table``'s rows.
+
+        An Entity always held its own declarations, and one whose earlier
+        ancestry already reached ``owner`` held that ancestor's too, so in
+        neither case did this alteration bring anything to these rows.
+        """
+        return (
+            isinstance(operation, EntityAltered)
+            and _reparents(operation)
+            and self.later_rows.get(operation.entity) == table
+            and owner != operation.entity
+            and owner not in self.earlier_owners.get(operation.entity, frozenset())
+        )
 
     def _changes_stored_shapes(self, operation: EvolutionOperation, table: Table) -> bool:
         """Whether ``operation`` moves a row-owning shape into or out of ``table``."""
@@ -407,8 +454,30 @@ def _brings_declaration(operation: EvolutionOperation, slot: ColumnSlot) -> bool
 
 
 def _widens_declaration(operation: EvolutionOperation, slot: ColumnSlot) -> bool:
-    """Whether ``operation`` is the member alteration that widened ``slot``'s domain."""
-    return isinstance(operation, AttributeAltered) and operation.attribute == slot.contributor
+    """Whether ``operation`` is the member alteration that widened ``slot``'s domain.
+
+    A physical Column holds a Neutral Type, a String bound, and a nullability and
+    nothing else, so altering the same declaration's write flag, key membership,
+    storage location, or occurrence multiplicity widened no stored domain. The
+    question is which FACT moved, never which declaration the operation names.
+    """
+    match operation:
+        case AttributeAltered():
+            return operation.attribute == slot.contributor and _widens_domain(operation.deltas)
+        case ValueObjectOccurrenceAltered():
+            return operation.value_object == slot.contributor and _widens_domain(operation.deltas)
+        case _:
+            return False
+
+
+def _widens_domain(deltas: Sequence[AttributeDelta | ValueObjectOccurrenceDelta]) -> bool:
+    """Whether any delta moved a fact a stored domain can be widened along.
+
+    A Neutral Type change is never unilateral, so the two facts left are the
+    String bound and nullability — the same pair `m-model-evolution`'s value-domain
+    boundary is phrased over.
+    """
+    return any(isinstance(delta, (NullabilityChanged, MaximumLengthChanged)) for delta in deltas)
 
 
 def _reparents(operation: EntityAltered) -> bool:
