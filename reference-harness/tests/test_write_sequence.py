@@ -799,7 +799,7 @@ def test_increment_marker_matches_exact_schema_shape() -> None:
 
 def test_temporal_ddl_primary_key_spans_the_as_of_to_column() -> None:
     model = _balance_model()
-    (create,) = ddl_for(model, "postgres")
+    create, _index = ddl_for(model, "postgres")
     # The business key alone (bal_id) is not unique across milestones; the
     # physical primary key MUST include the as-of end_column (out_z), which is
     # also the column every close-update and Latest predicate pins.

@@ -39,7 +39,7 @@ from .. import errors
 from .._declared_contributor import TEMPORAL_INFINITY
 from ..ddl_builder import quote_identifier
 from ..document_codec import is_document
-from . import register
+from . import Catalog, build_catalog, register
 from ._binds import adapt_document_scalar_binds
 
 if TYPE_CHECKING:
@@ -92,6 +92,23 @@ _ISOLATION: dict[str, tuple[str, ...]] = {
     ),
     "serializable": ("set session transaction isolation level serializable",),
 }
+
+# `COLUMN_TYPE` rather than `DATA_TYPE`: only the former carries the declared
+# length and precision a comparison of two schemas turns on.
+_CATALOG_COLUMNS = """
+select table_name, column_name, column_type, is_nullable
+from information_schema.columns
+where table_schema = %s and table_name in ({placeholders})
+"""
+
+# `NON_UNIQUE` is inverted uniqueness and `SEQ_IN_INDEX` is the component order a
+# physical access path depends on.
+_CATALOG_INDICES = """
+select table_name, index_name, non_unique, column_name
+from information_schema.statistics
+where table_schema = %s and table_name in ({placeholders})
+order by index_name, seq_in_index
+"""
 
 # MariaDB has no native timestamp infinity; the open upper bound (m-core/m-dialect) is the
 # largest representable DATETIME(6). This is the documented max-sentinel the seam
@@ -230,6 +247,29 @@ class MariaDbProvider:
             for statement in statements:
                 cur.execute(statement)
         self._conn.commit()
+
+    def catalog(self, tables: Sequence[str]) -> Catalog:
+        """The physical shape MariaDB itself reports for *tables*.
+
+        ``information_schema.STATISTICS`` is the whole index catalog here — it
+        reports every key including the `PRIMARY` one, non-unique keys included —
+        so no second source is needed for a bare ``create index``.
+        """
+        names = tuple(tables)
+        if not names:
+            return Catalog(tables=())
+        placeholders = ", ".join(["%s"] * len(names))
+        binds = (self._dbname, *names)
+        with self._conn.cursor() as cur:
+            cur.execute(_CATALOG_COLUMNS.format(placeholders=placeholders), binds)
+            columns = [
+                (str(row[0]), str(row[1]), str(row[2]), row[3] == "YES") for row in cur.fetchall()
+            ]
+            cur.execute(_CATALOG_INDICES.format(placeholders=placeholders), binds)
+            components = [
+                (str(row[0]), str(row[1]), int(row[2]) == 0, str(row[3])) for row in cur.fetchall()
+            ]
+        return build_catalog(names, columns, components)
 
     def load(
         self,

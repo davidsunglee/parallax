@@ -54,7 +54,7 @@ def test_a_scenario_provisions_before_its_first_step(corpus_case) -> None:
 
     # Schema and fixtures first, then the group's session — a step never runs
     # against a database the case's own `given` has not finished describing.
-    assert db.chronology[:4] == [Reset(), Ddl(1), Fixtures("account"), Opened(0)]
+    assert db.chronology[:4] == [Reset(), Ddl(2), Fixtures("account"), Opened(0)]
 
 
 # --- grouped execution ------------------------------------------------------

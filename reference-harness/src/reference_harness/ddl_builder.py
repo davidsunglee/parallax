@@ -1,16 +1,24 @@
-"""Derive ``CREATE TABLE`` DDL from a model descriptor (dialect-aware).
+"""Derive schema DDL from a model descriptor (dialect-aware).
 
 The neutral-type -> column-type mapping is the m-core table; it lives behind the
 dialect (m-dialect). Postgres and MariaDB are the supported dialects
 behind the same seam. The harness derives DDL from the descriptor so the database
 schema is never authored by hand — it is a function of the metamodel, exactly as
 an implementation's would be.
+
+Every authored Index becomes a separately named ``create index`` statement under
+its derived Physical Index Name (m-schema-delta), which is what lets a catalog
+read after an authored Schema Delta be compared against a catalog read after this
+builder ran. The naming rule is re-derived here from the normative statement
+rather than shared with any implementation: it is the second oracle a delta cell
+is graded against, so a shared derivation would grade the implementation twice.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -256,23 +264,121 @@ _TAG_COLUMN_MAX_LENGTH = 32
 _DOCUMENT_TYPE = "json"
 
 
+# The longest identifier each database stores without truncating it (m-dialect).
+# Only a DERIVED name has to fit; an authored table or column name is spelled as
+# the model declares it.
+_MAX_IDENTIFIER_BYTES = {"postgres": 63, "mariadb": 64}
+
+# The Physical Index Name grammar (m-schema-delta): `pxi_<readable>_<fingerprint>`.
+_NAME_NAMESPACE = "pxi"
+_FINGERPRINT_VERSION = "pxi-1"
+_FINGERPRINT_HEX = 32
+_EMPTY_PREFIX = "index"
+_UNIQUE_MARKER = {True: "unique", False: "non-unique"}
+
+
+def _readable_prefix(fields: Sequence[str]) -> str:
+    """The readable half of a Physical Index Name, from the facts it is derived over.
+
+    ASCII letters lowercase, digits stay, every maximal run of anything else —
+    including the boundary between two fields — becomes one underscore, and the
+    result is trimmed. An input keeping nothing at all becomes ``index``.
+    """
+    kept: list[str] = []
+    separated = False
+    for character in " ".join(fields):
+        if character.isascii() and character.isalnum():
+            if separated and kept:
+                kept.append("_")
+            separated = False
+            kept.append(character.lower())
+        else:
+            separated = True
+    return "".join(kept) or _EMPTY_PREFIX
+
+
+def _fingerprint(fields: Sequence[str]) -> str:
+    """The first 128 bits of SHA-256 over a versioned, length-prefixed field
+    sequence, as lowercase hexadecimal.
+
+    Length-prefixing is what makes the digest a function of the field STRUCTURE:
+    no two distinct sequences concatenate to the same bytes.
+    """
+    digest = hashlib.sha256()
+    for field_value in fields:
+        encoded = field_value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()[:_FINGERPRINT_HEX]
+
+
+@dataclass(frozen=True)
+class _AuthoredIndex:
+    """One authored Index beside the declaring Entity Identity its name is derived
+    from.
+
+    The namespace and the local name are kept apart from the canonical spelling
+    because the fingerprint hashes the structured identity while the readable
+    prefix reads the canonical one.
+    """
+
+    namespace: str
+    entity: str
+    definition: dict[str, Any]
+
+    @property
+    def owner(self) -> str:
+        """The declaring Entity's canonical name."""
+        return self.entity if not self.namespace else f"{self.namespace}.{self.entity}"
+
+
+def physical_index_name(index: _AuthoredIndex, table: str, dialect: str) -> str:
+    """``index``'s derived Physical Index Name on ``table`` for ``dialect``.
+
+    Only the readable prefix is shortened, to whatever the dialect's identifier
+    budget leaves once the namespace, the two joining underscores, and the
+    never-truncated fingerprint are spent; the trim and the empty-input fallback
+    are re-applied afterwards, so a cut landing inside a separator run cannot
+    leave a doubled underscore behind. Generated names are ASCII, so a character
+    budget and a byte budget are one budget.
+    """
+    components = [f"{index.owner}.{name}" for name in index.definition["attributes"]]
+    marker = _UNIQUE_MARKER[bool(index.definition.get("unique", False))]
+    fingerprint = _fingerprint(
+        [
+            _FINGERPRINT_VERSION,
+            table,
+            index.namespace,
+            index.entity,
+            index.definition["name"],
+            str(len(components)),
+            *components,
+            marker,
+        ]
+    )
+    prefix = _readable_prefix([table, index.owner, index.definition["name"], marker])
+    budget = max(_MAX_IDENTIFIER_BYTES[dialect] - len(_NAME_NAMESPACE) - len(fingerprint) - 2, 0)
+    kept = prefix[:budget].strip("_") or _EMPTY_PREFIX
+    return f"{_NAME_NAMESPACE}_{kept}_{fingerprint}"
+
+
 @dataclass(frozen=True)
 class _Declarations:
     """The authored facts DDL still resolves outside the physical layout.
 
     A layout slot names its contributor and physical answer; the neutral type and
-    the ordered logical components of a unique Index remain declaration facts.
+    the ordered logical components of an Index remain declaration facts.
     """
 
     contributors: Mapping[ColumnContributor, DeclaredContributor]
     primary_key_indices: tuple[tuple[str, dict[str, Any]], ...]
-    unique_indices: tuple[tuple[str, dict[str, Any]], ...]
+    authored_indices: tuple[_AuthoredIndex, ...]
 
 
 def _declarations(model: Model) -> _Declarations:
     contributors: dict[ColumnContributor, DeclaredContributor] = {}
     primary_key_indices: list[tuple[str, dict[str, Any]]] = []
-    unique_indices: list[tuple[str, dict[str, Any]]] = []
+    authored_indices: list[_AuthoredIndex] = []
     for entity in model.entities:
         owner = entity.canonical_name
         definition = entity.definition
@@ -288,15 +394,18 @@ def _declarations(model: Model) -> _Declarations:
         derived = derived_primary_key_index(definition)
         if derived is not None:
             primary_key_indices.append((owner, derived))
-        unique_indices.extend(
-            (owner, index)
+        authored_indices.extend(
+            _AuthoredIndex(
+                namespace=definition.get("namespace") or "",
+                entity=definition["name"],
+                definition=index,
+            )
             for index in definition.get("indices", []) or []
-            if index.get("unique", False)
         )
     return _Declarations(
         contributors=contributors,
         primary_key_indices=tuple(primary_key_indices),
-        unique_indices=tuple(unique_indices),
+        authored_indices=tuple(authored_indices),
     )
 
 
@@ -348,23 +457,15 @@ def _index_columns(layout: TableLayout, owner: str, index: Mapping[str, Any]) ->
 
 
 def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str) -> str:
-    """One physical table's ``create table``, rendered from index metadata.
+    """One physical table's ``create table``, keyed inline.
 
-    Every constraint comes from an Index: the derived primary-key Index becomes
-    `primary key (...)` and each authored unique Index becomes `unique (...)`.
-    The two sets are disjoint — the primary-key Index is never authored — so
-    nothing is redundant and no constraint is suppressed. The layout owns the
-    complete slot sequence and effective physical nullability (m-storage-layout);
-    this only renders selected values per dialect.
+    The derived primary-key Index becomes `primary key (...)` here; every
+    authored Index is a separate statement instead, so a unique one is a named
+    object a violation can report rather than an anonymous table constraint. The
+    layout owns the complete slot sequence and effective physical nullability
+    (m-storage-layout); this only renders selected values per dialect.
     """
     columns = [_slot_ddl(slot, declarations, dialect) for slot in layout.columns]
-
-    for owner, index in declarations.unique_indices:
-        index_columns = _index_columns(layout, owner, index)
-        if index_columns is None:
-            continue
-        quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
-        columns.append(f"unique ({quoted})")
 
     for owner, index in declarations.primary_key_indices:
         index_columns = _index_columns(layout, owner, index)
@@ -377,15 +478,44 @@ def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str
     return f"create table {quote_identifier(layout.table, dialect)} (\n  {column_clause}\n)"
 
 
+def _create_indices(layout: TableLayout, declarations: _Declarations, dialect: str) -> list[str]:
+    """Every authored Index this table holds, each under its derived name.
+
+    An Index declared on an ancestor of several table-per-concrete-subtype
+    concretes resolves into each of their tables, and the physical table is one
+    of the facts the name is derived over, so the repetitions are distinct
+    objects rather than a clash.
+    """
+    statements = []
+    for index in declarations.authored_indices:
+        index_columns = _index_columns(layout, index.owner, index.definition)
+        if index_columns is None:
+            continue
+        keyword = "create unique index" if index.definition.get("unique", False) else "create index"
+        name = quote_identifier(physical_index_name(index, layout.table, dialect), dialect)
+        quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
+        table = quote_identifier(layout.table, dialect)
+        statements.append(f"{keyword} {name} on {table} ({quoted})")
+    return statements
+
+
 def ddl_for(model: Model, dialect: str) -> list[str]:
     """Return the ordered DDL statements that create every physical table.
 
     One ``CREATE TABLE`` per compiled Table Layout, so a `table-per-hierarchy`
     family's shared table is created once with the whole family's slots and each
     `table-per-concrete-subtype` concrete gets its own ancestry-derived table.
-    Foreign keys are intentionally omitted: relationships are a query concern
-    (navigation/join derivation), and leaving FK constraints out keeps
-    fixture-load order unconstrained.
+    Every authored Index follows as its own named statement, after every table,
+    which is the form a generated Schema Delta uses too — the catalogs the two
+    leave behind are what a delta cell is graded by. Foreign keys are
+    intentionally omitted: relationships are a query concern (navigation/join
+    derivation), and leaving FK constraints out keeps fixture-load order
+    unconstrained.
     """
     declarations = _declarations(model)
-    return [_create_table(layout, declarations, dialect) for layout in model.storage_layout.tables]
+    tables = model.storage_layout.tables
+    return [_create_table(layout, declarations, dialect) for layout in tables] + [
+        statement
+        for layout in tables
+        for statement in _create_indices(layout, declarations, dialect)
+    ]

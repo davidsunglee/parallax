@@ -20,17 +20,16 @@ def _seams(source: str) -> list[str]:
     return [target for _line, target in access.seam_calls(ast.parse(source))]
 
 
+_CLASSIFIER = '_DATABASE_FIXTURES = frozenset({"provider"})\n'
+_FIXTURE = "def provider(request):\n    with provider_for(request.param) as db:\n        yield db\n"
+
+
 def _minimal_tree(root: Path) -> None:
     """A tests root the guard finds clean: the designated fixture, acquiring the
-    database, and a classifier designating exactly it."""
-    (root / "conftest.py").write_text('_DATABASE_FIXTURES = frozenset({"provider"})\n')
-    (root / "test_compatibility.py").write_text(
-        "from reference_harness.providers import provider_for\n"
-        "\n"
-        "\n"
-        "def provider(request):\n"
-        "    with provider_for(request.param) as db:\n"
-        "        yield db\n"
+    database, and a classifier designating exactly it. Both live in the one file
+    the guard designates."""
+    (root / "conftest.py").write_text(
+        f"from reference_harness.providers import provider_for\n\n{_CLASSIFIER}\n\n{_FIXTURE}"
     )
 
 
@@ -236,7 +235,9 @@ def test_a_seam_call_elsewhere_in_the_designated_module_is_a_violation(tmp_path:
 
 def test_a_missing_designated_fixture_is_a_violation(tmp_path: Path) -> None:
     _minimal_tree(tmp_path)
-    (tmp_path / access.ENTRY_POINT_MODULE).write_text("def other():\n    ...\n")
+    # The classifier survives the rewrite, so the ONE thing missing is the
+    # fixture and the one finding names it.
+    (tmp_path / access.ENTRY_POINT_MODULE).write_text(f"{_CLASSIFIER}\n\ndef other():\n    ...\n")
     (finding,) = access.audit(tmp_path)
     assert "is not defined here" in finding.message
 

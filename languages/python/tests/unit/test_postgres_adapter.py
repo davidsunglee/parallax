@@ -11,7 +11,8 @@ a container; the end-to-end deadlock witness lives in the provider lane.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 
 import psycopg
 import pytest
@@ -35,6 +36,7 @@ from parallax.core.db_port import (
     RolledBack,
     isolation_level,
 )
+from parallax.core.dialect import PhysicalIndexName
 from parallax.postgres import PostgresAdapter, isolation_spelling
 from parallax.postgres.adapter import (
     adapt_binds,
@@ -91,6 +93,32 @@ def test_translate_driver_error_maps_a_unique_violation() -> None:
     assert error.native_code == "23505"
     assert error.violates_unique_index
     assert error.message == "dup key"
+
+
+class _NamedUniqueViolation(errors.UniqueViolation):
+    """A `23505` whose libpq diagnostics name the index it violated.
+
+    libpq treats an index as a constraint even when no constraint syntax created
+    it, so a bare `create unique index` reports its own name in this field —
+    which is what makes the name correlate with a rollout's own provenance.
+    """
+
+    @property
+    def diag(self) -> Any:
+        return SimpleNamespace(constraint_name="pxi_widget_label_0f1e2d3c")
+
+
+def test_translate_driver_error_forwards_the_violated_index_name() -> None:
+    error = translate_driver_error(_DIALECT, _NamedUniqueViolation("dup key"))
+    assert error.violated_index == PhysicalIndexName("pxi_widget_label_0f1e2d3c")
+
+
+def test_translate_driver_error_reports_no_index_when_the_diagnostics_name_none() -> None:
+    # A duplicate whose detecting path named no constraint is an ordinary
+    # negative correlation, not a defect: the adapter interprets nothing.
+    error = translate_driver_error(_DIALECT, errors.UniqueViolation("dup key"))
+    assert error.violates_unique_index
+    assert error.violated_index is None
 
 
 def test_translate_driver_error_is_uncategorized_without_sqlstate() -> None:

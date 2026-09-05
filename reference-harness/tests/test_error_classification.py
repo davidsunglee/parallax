@@ -322,7 +322,8 @@ def test_error_model_builds_ddl_on_both_dialects() -> None:
         ddl = "\n".join(ddl_for(model, dialect))
         assert "create table widget" in ddl
         assert "create table tag" in ddl
-        assert "unique (name)" in ddl  # Tag.name unique index (Task 5)
+        # Tag.name's authored unique Index, as its own named statement.
+        assert " on tag (name)" in ddl
 
 
 def test_gauge_seeded_with_two_lockable_rows() -> None:

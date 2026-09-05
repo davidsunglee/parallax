@@ -22,6 +22,28 @@ as predicates defined as category membership — not one stringly-typed method:
   (`category = uniqueViolation`);
 - the lock path asks `isTimedOut` (`category = lockWaitTimeout`).
 
+## The violated Physical Index Name
+
+A classified error additionally carries the Physical Index Name the violation
+named, or nothing. It is present only when the category is `uniqueViolation`: a
+check or foreign-key constraint reports its own name through the same driver
+field and is not an Index, so nothing else may carry one.
+
+The name is read from the driver's own **structured diagnostics**. No
+implementation parses the error message. A concrete adapter forwards whatever
+name those diagnostics hold and interprets nothing; this module owns the single
+rule above. A driver whose diagnostics carry no name, or whose detecting path
+named none, yields no violated name at all — which is an ordinary outcome, not a
+defect.
+
+The value is a Physical Index Name as `m-dialect` defines it: any nonempty
+physical identifier. A name the database itself derived for a primary key's
+backing index is as legitimate as one `m-schema-delta` generated, and matching
+nothing a rollout created is an ordinary negative correlation. Deciding whether a
+name corresponds to an index a rollout created, and what to do about it, is the
+host's question: it holds its own Schema Delta's created-index provenance and
+compares the two. Nothing in this module or below it consults a rollout.
+
 ## Per-dialect native codes
 
 The native code source **diverges**: Postgres keys on the **`SQLSTATE` string**,

@@ -637,6 +637,12 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "evolution-rowless-branch-v2": _EVOLUTION_ENDPOINT,
         "evolution-rowless-member-v1": _EVOLUTION_ENDPOINT,
         "evolution-rowless-member-v2": _EVOLUTION_ENDPOINT,
+        "evolution-long-names-v1": (
+            "endpoint-only model: it exists as one end of a described evolution, which is a "
+            "pure comparison of two accepted models that no developer surface builds or "
+            "executes, and its subject is the LENGTH of the names a generator derives rather "
+            "than any declaration the mirrored families do not already carry"
+        ),
         "evolution-rowless-position-v1": _EVOLUTION_ENDPOINT,
         "evolution-rowless-position-v2": _EVOLUTION_ENDPOINT,
         "evolution-sealed-domain-v1": _EVOLUTION_ENDPOINT,

@@ -3385,6 +3385,35 @@
       ]
     }
   },
+  "models/evolution-long-names-v1.yaml": {
+    "evolution_identifier_truncation": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LongIdentifierTruncationWitness"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.LongIdentifierTruncationWitness.id",
+          "declaringOwner": "parallax.compatibility.LongIdentifierTruncationWitness",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LongIdentifierTruncationWitness"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.LongIdentifierTruncationWitness.label",
+          "declaringOwner": "parallax.compatibility.LongIdentifierTruncationWitness",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/evolution-nullability-v1.yaml": {
     "evolution_reading": {
       "columns": [

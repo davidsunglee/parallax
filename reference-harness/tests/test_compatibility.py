@@ -1,8 +1,8 @@
 """Discover every compatibility case and run it through the layered assertions.
 
 For each available database provider (selected by ``PARALLAX_DATABASES``,
-default: all registered), one container is booted for the whole module and every
-case whose outcome depends on the dialect is run against it. This is the
+default: all registered), one container is booted for the whole session and
+every case whose outcome depends on the dialect is run against it. This is the
 m-case-format runner exercising the suite end-to-end: schema conformance, triple
 equivalence, normalization determinism, and serde round-trip — against real
 Postgres.
@@ -13,9 +13,9 @@ real-database run.
 
 The module's second half is the same runner exercised from the other side: a
 shipped case damaged in one specific way, asserted to be REFUSED. It lives here
-because the harness designates exactly one entry point to a live database — the
-``provider`` fixture below — and both directions of the runner need one. What
-belongs here is what THIS module still owns; every accepted-read refusal is
+because both directions of the runner need a live database, and the harness
+designates exactly one way to one — the ``provider`` fixture in ``conftest.py``.
+What belongs here is what THIS module still owns; every accepted-read refusal is
 exercised against the read oracle's own seam under ``tests/oracle/``.
 
 The graded MariaDB release floor is asserted here for the same reason: only a
@@ -35,7 +35,7 @@ import pytest
 from reference_harness.case import Case, dialect_executed_cases, discover_cases
 from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_runner import run_case
-from reference_harness.providers import available_dialects, provider_for
+from reference_harness.providers import available_dialects
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -45,7 +45,6 @@ COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 # is the sole runner for the `rejected` shape and pins the partition.
 ALL_CASES = discover_cases(COMPATIBILITY_ROOT)
 CASES = dialect_executed_cases(COMPATIBILITY_ROOT)
-DIALECTS = available_dialects()
 
 # The graded MariaDB floor: 11.4.2, the first release of the 11.4 series carrying
 # `innodb_snapshot_isolation`, without which the server has no setting under which
@@ -83,13 +82,6 @@ def _case_id(case) -> str:
     return f"{case.path.stem}-{tags}" if tags else case.path.stem
 
 
-@pytest.fixture(scope="session", params=DIALECTS)
-def provider(request):
-    dialect = request.param
-    with provider_for(dialect) as db:
-        yield db
-
-
 def test_cases_discovered() -> None:
     assert CASES, "no compatibility cases discovered under core/compatibility/cases"
 
@@ -106,11 +98,11 @@ def test_api_conformance_lane_cases_are_not_executed() -> None:
         if case.lane == "api-conformance":
             # run_case must early-return (schema-validate only) without a database —
             # None is a safe stand-in because no provisioning/execution is reached.
-            run_case(case, None)  # type: ignore[arg-type]
+            run_case(case, None)
 
 
 def test_a_dialect_is_available() -> None:
-    assert DIALECTS, (
+    assert available_dialects(), (
         "no database providers available; set PARALLAX_DATABASES or ensure a provider is registered"
     )
 

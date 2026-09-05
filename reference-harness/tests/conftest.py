@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from reference_harness.gate_graph import GateGraph, load_graph
+from reference_harness.providers import available_dialects, provider_for
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GATE_GRAPH_FIXTURES = Path(__file__).parent / "fixtures" / "gate-graphs"
@@ -16,6 +17,25 @@ _GATE_GRAPH_FIXTURES = Path(__file__).parent / "fixtures" / "gate-graphs"
 # The designated entry points to a live database. A test reaching one by any other
 # route would be classified `dbfree` while needing a container.
 _DATABASE_FIXTURES = frozenset({"provider"})
+
+# The dialects this run selects (`PARALLAX_DATABASES`, else every registered
+# provider). Read once, because it parametrizes the session-scoped fixture below
+# and so decides how many containers the whole run boots.
+DIALECTS = available_dialects()
+
+
+@pytest.fixture(scope="session", params=DIALECTS)
+def provider(request: pytest.FixtureRequest):
+    """The one live database every case-executing test runs against.
+
+    Session-scoped and parametrized by dialect, so each selected backend boots
+    exactly one container for the whole run. It lives here rather than beside any
+    one runner because more than one module executes against a database — the
+    dialect-parametrized corpus run and the evolution runner's delta cells — and
+    a second definition would be a second way into a container.
+    """
+    with provider_for(request.param) as db:
+        yield db
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

@@ -61,7 +61,10 @@ __all__ = [
 
 TESTS_ROOT = Path(__file__).resolve().parents[2] / "tests"
 
-ENTRY_POINT_MODULE = "test_compatibility.py"
+# The fixture and the classifier that designates it live in the same file: more
+# than one test module executes against a database, so the fixture belongs where
+# every module can reach the one definition of it.
+ENTRY_POINT_MODULE = "conftest.py"
 ENTRY_POINT_FIXTURE = "provider"
 CLASSIFIER_MODULE = "conftest.py"
 CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"

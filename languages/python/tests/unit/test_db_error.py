@@ -4,7 +4,9 @@ Covers the closed neutral category set, the classification seam over the pure
 Postgres dialect code table, and the call-site **predicate partition** (each
 category fires exactly one of ``is_retriable`` / ``violates_unique_index`` /
 ``is_timed_out``, and the reserved ``connectionDead`` and the uncategorized
-``None`` fire none). The port-boundary re-raise is proven separately in
+``None`` fire none). It also covers the one rule the violated Physical Index
+Name obeys: a constraint name the adapter read off the driver is kept only for a
+unique violation. The port-boundary re-raise is proven separately in
 ``test_postgres_adapter`` (Docker-free) and end-to-end by the provider deadlock
 proof.
 """
@@ -29,7 +31,7 @@ from parallax.core.db_error import (
     is_timed_out,
     violates_unique_index,
 )
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, PhysicalIndexName
 
 _PREDICATES: dict[str, Callable[[Category | None], bool]] = {
     "is_retriable": is_retriable,
@@ -117,6 +119,42 @@ def test_database_error_str_carries_category_code_and_message() -> None:
     assert str(error) == "deadlock [40P01]: deadlock detected"
     uncategorized = DatabaseError(category=None, native_code=None, message="down")
     assert str(uncategorized) == "uncategorized [no-sqlstate]: down"
+
+
+def test_a_unique_violation_keeps_the_constraint_name_as_the_violated_index() -> None:
+    error = classify_error(
+        POSTGRES, "23505", "duplicate key", constraint_name="pxi_widget_label_1234"
+    )
+    assert error.violated_index == PhysicalIndexName("pxi_widget_label_1234")
+
+
+def test_a_name_read_off_the_database_is_as_legitimate_as_a_generated_one() -> None:
+    # A primary-key violation reports the key's backing index, which no rollout
+    # ever created under a derived name. The seam keeps it: whether it correlates
+    # with anything the host generated is the host's question, not this module's.
+    error = classify_error(POSTGRES, "23505", "duplicate key", constraint_name="widget_pkey")
+    assert error.violated_index == PhysicalIndexName("widget_pkey")
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [
+        ("23514", "widget_label_check"),
+        ("23503", "widget_owner_fkey"),
+        ("40P01", None),
+    ],
+)
+def test_only_a_unique_violation_carries_a_violated_index(code: str, name: str | None) -> None:
+    # A check and a foreign-key constraint report their names through the same
+    # driver field; neither is an Index, so neither may masquerade as one.
+    error = classify_error(POSTGRES, code, "boom", constraint_name=name)
+    assert error.violated_index is None
+
+
+def test_an_absent_constraint_name_leaves_the_violated_index_absent() -> None:
+    error = classify_error(POSTGRES, "23505", "duplicate key")
+    assert error.violates_unique_index
+    assert error.violated_index is None
 
 
 def test_as_category_narrows_only_known_members() -> None:

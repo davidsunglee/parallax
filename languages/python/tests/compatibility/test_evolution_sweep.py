@@ -109,14 +109,16 @@ def test_the_matrix_reports_every_catalog_dialect_and_excludes_the_missing_one()
     # The supported Dialect catalog is the SPEC's, so the envelope answers for
     # `mariadb` even though this implementation ships no strategy for it: the
     # gap is named with its reason rather than left out of the matrix.
-    (provisioning,) = [
+    provisioning = [
         case for case in _REACHABLE_EVOLUTION if "provisioning" in case_document(case)["tags"]
     ]
-    envelope = adapter.run_case(provisioning.path, _PROFILE.on_stand_in(_RefusingPort()))
-    matrix = envelope["observations"]["schema"]
-    assert sorted(matrix) == ["mariadb", "postgres"]
-    assert matrix["mariadb"] == {"excluded": {"reason": "no-dialect"}}
-    assert "delta" in matrix["postgres"]
+    assert provisioning, "the reachable population lost its provisioning cases"
+    for case in provisioning:
+        envelope = adapter.run_case(case.path, _PROFILE.on_stand_in(_RefusingPort()))
+        matrix = envelope["observations"]["schema"]
+        assert sorted(matrix) == ["mariadb", "postgres"], case.path.name
+        assert matrix["mariadb"] == {"excluded": {"reason": "no-dialect"}}, case.path.name
+        assert "delta" in matrix["postgres"], case.path.name
 
 
 def test_a_coordinated_description_reports_no_schema_matrix() -> None:

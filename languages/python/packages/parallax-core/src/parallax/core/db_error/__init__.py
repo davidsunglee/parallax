@@ -20,7 +20,8 @@ membership** — not one stringly-typed method:
 
 :class:`DatabaseError` is the Parallax error a driver exception is re-raised as at
 the `m-db-port` boundary — it carries the neutral category, the preserved native
-code (SQLSTATE), and the driver message, so no driver exception type crosses above
+code (SQLSTATE), the driver message, and, for a unique violation, the Physical
+Index Name the database itself named — so no driver exception type crosses above
 the port. ``m-db-error`` depends on ``m-db-port`` and ``m-dialect`` only.
 """
 
@@ -28,7 +29,7 @@ from __future__ import annotations
 
 from typing import Final, Literal
 
-from parallax.core.dialect import Dialect
+from parallax.core.dialect import Dialect, PhysicalIndexName
 
 __all__ = [
     "CATEGORIES",
@@ -96,19 +97,29 @@ class DatabaseError(Exception):
     """A neutral Parallax database error raised at the `m-db-port` boundary.
 
     Carries the neutral :data:`Category` (``None`` when the native code did not
-    classify), the preserved native code (Postgres SQLSTATE), and the driver
-    message. Above-seam code reasons over :attr:`category` (or the call-site
-    predicate properties) and never sees a driver exception type.
+    classify), the preserved native code (Postgres SQLSTATE), the driver
+    message, and the Physical Index Name the violation names when there is one.
+    Above-seam code reasons over :attr:`category` (or the call-site predicate
+    properties) and never sees a driver exception type.
     """
 
     category: Category | None
     native_code: str | None
     message: str
+    violated_index: PhysicalIndexName | None
 
-    def __init__(self, *, category: Category | None, native_code: str | None, message: str) -> None:
+    def __init__(
+        self,
+        *,
+        category: Category | None,
+        native_code: str | None,
+        message: str,
+        violated_index: PhysicalIndexName | None = None,
+    ) -> None:
         self.category = category
         self.native_code = native_code
         self.message = message
+        self.violated_index = violated_index
         code = native_code if native_code is not None else "no-sqlstate"
         label = category if category is not None else "uncategorized"
         super().__init__(f"{label} [{code}]: {message}")
@@ -129,13 +140,35 @@ class DatabaseError(Exception):
         return is_timed_out(self.category)
 
 
-def classify_error(dialect: Dialect, native_code: str | None, message: str) -> DatabaseError:
+def classify_error(
+    dialect: Dialect,
+    native_code: str | None,
+    message: str,
+    *,
+    constraint_name: str | None = None,
+) -> DatabaseError:
     """Build the neutral :class:`DatabaseError` for a raised driver exception.
 
     Category interpretation is delegated to ``dialect.classify`` (the single home
     of the per-dialect ``native code -> category`` table, `m-dialect`); this module
     only assembles the neutral error. A driver exception with no native code (a
     connection failure with no SQLSTATE) yields an uncategorized error.
+
+    ``constraint_name`` is whatever structured name the adapter read off the
+    driver's own diagnostics, uninterpreted. It becomes the violated Physical
+    Index Name only for a unique violation, which is the one category the name
+    can be an index's: a check or foreign-key constraint reports its name the
+    same way and is not an Index, so nothing else may carry it.
     """
     category = as_category(dialect.classify(native_code)) if native_code is not None else None
-    return DatabaseError(category=category, native_code=native_code, message=message)
+    violated = (
+        PhysicalIndexName(constraint_name)
+        if constraint_name and violates_unique_index(category)
+        else None
+    )
+    return DatabaseError(
+        category=category,
+        native_code=native_code,
+        message=message,
+        violated_index=violated,
+    )
