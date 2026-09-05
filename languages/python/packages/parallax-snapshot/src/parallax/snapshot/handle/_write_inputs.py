@@ -246,8 +246,10 @@ def source_identity_row(
     the ledger is consulted before the provenance refusal that a value naming no
     object of this store has coming, so a value this reading could refuse would
     be answered ahead of the honest complaint about it. The Entity Row Codec's
-    :meth:`~parallax.core.entity.EntityRowCodec.identity_row` answers the same
-    members and refuses instead; its refusal follows later, when the write goes
+    :meth:`~parallax.core.entity.EntityRowCodec.identity_row` selects the same
+    members and is total over neither case: it refuses the class that carries no
+    attribute for the member and fails on the attribute read for the one that
+    carries it unpopulated. Whichever it does follows later, when the write goes
     to derive the row it would actually buffer.
 
     ``None`` means no object, so no insert of it was buffered, which is what
