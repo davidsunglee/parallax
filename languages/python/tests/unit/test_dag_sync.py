@@ -37,6 +37,7 @@ importer exemption), and the support-scope additions:
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -51,6 +52,54 @@ PY_ROOT = Path(__file__).resolve().parents[2]
 
 # The §7 table header the prose parser keys on, for synthetic one-row fixtures.
 _HEADER = "| Behavioral/support module | a | b | c | d |"
+
+
+@pytest.fixture(scope="module")
+def linted_copy(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A throwaway copy of the graded packages beside the contracts grading them.
+
+    A contract canary proves a row by breaking it, and the deliberate violation
+    goes here rather than into the tracked module it names: running the tests
+    rewrites no tracked source, so an interrupted run leaves nothing behind to
+    restore. `lint-imports` resolves the packages it grades off ``PYTHONPATH``,
+    which is what makes this copy the tree it reads.
+    """
+    tree = tmp_path_factory.mktemp("linted-copy")
+    shutil.copy(dag.PYPROJECT, tree / dag.PYPROJECT.name)
+    ignore_bytecode = shutil.ignore_patterns("__pycache__")
+    for src in sorted(PY_ROOT.glob("packages/*/src")):
+        shutil.copytree(src, tree / "packages" / src.parent.name / "src", ignore=ignore_bytecode)
+    return tree
+
+
+def broken_by(tree: Path, module: str, statement: str) -> str:
+    """`lint-imports`' report over ``tree``, unwrapped, with ``statement``
+    appended to ``module`` — the copied module named by its dotted import path.
+
+    Asserts a contract broke, because every caller is a canary whose subject is
+    which contract the tool then names and along which edge. The report wraps
+    long edges across lines, so it is answered unwrapped.
+    """
+    lint_imports = shutil.which("lint-imports")
+    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+
+    (target,) = tree.glob(f"packages/*/src/{module.replace('.', '/')}.py")
+    original = target.read_text()
+    target.write_text(f"{original}{statement}\n")
+    try:
+        result = subprocess.run(
+            [lint_imports],
+            cwd=tree,
+            capture_output=True,
+            text=True,
+            env=os.environ
+            | {"PYTHONPATH": os.pathsep.join(str(src) for src in tree.glob("packages/*/src"))},
+        )
+    finally:
+        target.write_text(original)
+
+    assert result.returncode != 0, result.stdout
+    return " ".join(result.stdout.split())
 
 
 # --------------------------------------------------------------------------
@@ -1023,30 +1072,17 @@ def test_the_expression_scope_is_narrower_than_the_frontend_it_sits_in() -> None
 # --------------------------------------------------------------------------
 # Canary 3: a child contract blocks what the parent contract permits.
 # --------------------------------------------------------------------------
-def test_child_scope_contract_blocks_an_import_the_parent_permits() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
-
+def test_child_scope_contract_blocks_an_import_the_parent_permits(linted_copy: Path) -> None:
     # `m-sql` IS in the parent handle grant row, so the broad contract permits
     # this import; only the `_materializer` child contract can reject it.
     assert "parallax.core.sql_gen" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
-    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_materializer.py"
-    original = target.read_text()
-    target.write_text(
-        f"{original}import parallax.core.sql_gen  # deliberate child-scope violation\n"
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot.handle._materializer",
+        "import parallax.core.sql_gen  # deliberate child-scope violation",
     )
-    try:
-        result = subprocess.run(
-            [lint_imports],
-            cwd=PY_ROOT,
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        target.write_text(original)
 
-    assert result.returncode != 0, result.stdout
-    assert "parallax.snapshot.handle._materializer -> parallax.core.sql_gen" in result.stdout
+    assert "parallax.snapshot.handle._materializer -> parallax.core.sql_gen" in reported
 
 
 # --------------------------------------------------------------------------
@@ -1071,83 +1107,62 @@ def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope() -> None:
 # --------------------------------------------------------------------------
 # Canary 5: the read-preflight seam may not reach a Database Port — by name...
 # --------------------------------------------------------------------------
-def test_a_direct_port_import_in_the_preflight_seam_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+def test_a_direct_port_import_in_the_preflight_seam_fails_lint_imports(linted_copy: Path) -> None:
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot.handle._preflight",
+        "import parallax.core.db_port  # deliberate port violation",
+    )
 
-    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_preflight.py"
-    original = target.read_text()
-    target.write_text(f"{original}import parallax.core.db_port  # deliberate port violation\n")
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        target.write_text(original)
-
-    assert result.returncode != 0, result.stdout
     assert (
         "parallax.snapshot.handle._preflight may import only its permitted dependencies BROKEN"
-        in result.stdout
+        in reported
     )
-    assert "parallax.snapshot.handle._preflight -> parallax.core.db_port" in result.stdout
+    assert "parallax.snapshot.handle._preflight -> parallax.core.db_port" in reported
 
 
 # --------------------------------------------------------------------------
 # ...and Canary 6: nor through a chain. This is the half a row carrying
 # `allow_indirect_imports` cannot prove.
 # --------------------------------------------------------------------------
-def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
-
+def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports(linted_copy: Path) -> None:
     # The seam's row forbids `parallax.core.entity` outright, so naming
     # `parallax.core.entity._model` breaks it on that edge alone. What this canary
     # adds is the half a row carrying `allow_indirect_imports` cannot prove: where
     # that name LEADS — the Domain Model's model-formation edge, and through it the
     # chain toward the port that made the whole frontend too wide a grant.
-    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_preflight.py"
-    original = target.read_text()
-    target.write_text(
-        f"{original}import parallax.core.entity._model  # deliberate reach violation\n"
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot.handle._preflight",
+        "import parallax.core.entity._model  # deliberate reach violation",
     )
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        target.write_text(original)
 
-    assert result.returncode != 0, result.stdout
     assert (
         "parallax.snapshot.handle._preflight may import only its permitted dependencies BROKEN"
-        in result.stdout
+        in reported
     )
     # Two hops: the seam names the Domain Model, which names model formation.
-    assert "parallax.snapshot.handle._preflight -> parallax.core.entity._model" in result.stdout
-    assert "parallax.core.entity._model -> parallax.core._formation_profile" in result.stdout
+    assert "parallax.snapshot.handle._preflight -> parallax.core.entity._model" in reported
+    assert "parallax.core.entity._model -> parallax.core._formation_profile" in reported
 
 
 # --------------------------------------------------------------------------
 # Canary 5b: the read composition reaches no write policy, which the parent
 # scope's own row permits.
 # --------------------------------------------------------------------------
-def test_a_write_policy_import_in_the_read_composition_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
-
+def test_a_write_policy_import_in_the_read_composition_fails_lint_imports(
+    linted_copy: Path,
+) -> None:
     # `m-batch-write` IS in the parent handle grant row — the Write Planner's
     # strategy adapters are wired there — so the broad contract permits this
     # import and only the child row can reject it.
     assert "parallax.core.batch_write" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
-    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_read_scope.py"
-    original = target.read_text()
-    target.write_text(
-        f"{original}import parallax.core.batch_write  # deliberate write-policy violation\n"
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot.handle._read_scope",
+        "import parallax.core.batch_write  # deliberate write-policy violation",
     )
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        target.write_text(original)
 
-    assert result.returncode != 0, result.stdout
-    reported = " ".join(result.stdout.split())
     assert (
         "parallax.snapshot.handle._read_scope may import only its permitted dependencies BROKEN"
         in reported
@@ -1159,26 +1174,19 @@ def test_a_write_policy_import_in_the_read_composition_fails_lint_imports() -> N
 # Canary 5c: the keyed write ingress materializes nothing, which the parent
 # scope's own row permits.
 # --------------------------------------------------------------------------
-def test_a_materialization_import_in_the_keyed_write_ingress_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
-
+def test_a_materialization_import_in_the_keyed_write_ingress_fails_lint_imports(
+    linted_copy: Path,
+) -> None:
     # Row-to-graph conversion IS in the parent handle grant row — every read the
     # package publishes goes through it — so the broad contract permits this
     # import and only the child row can reject it.
     assert "parallax.snapshot.materialize" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
-    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_keyed_writes.py"
-    original = target.read_text()
-    target.write_text(
-        f"{original}import parallax.snapshot.materialize  # deliberate read-half violation\n"
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot.handle._keyed_writes",
+        "import parallax.snapshot.materialize  # deliberate read-half violation",
     )
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        target.write_text(original)
 
-    assert result.returncode != 0, result.stdout
-    reported = " ".join(result.stdout.split())
     assert (
         "parallax.snapshot.handle._keyed_writes may import only its permitted dependencies BROKEN"
         in reported
@@ -1190,48 +1198,38 @@ def test_a_materialization_import_in_the_keyed_write_ingress_fails_lint_imports(
 # Canary 6b: query authoring reaches no model. The expression scope's row is
 # what proves it — the module docstring's claim is otherwise unenforced.
 # --------------------------------------------------------------------------
-def test_reaching_model_formation_from_the_expression_scope_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+def test_reaching_model_formation_from_the_expression_scope_fails_lint_imports(
+    linted_copy: Path,
+) -> None:
+    reported = broken_by(
+        linted_copy,
+        "parallax.core.entity._expressions",
+        "import parallax.core._formation_profile  # deliberate reach",
+    )
 
-    target = PY_ROOT / "packages/parallax-core/src/parallax/core/entity/_expressions.py"
-    original = target.read_text()
-    target.write_text(f"{original}import parallax.core._formation_profile  # deliberate reach\n")
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        target.write_text(original)
-
-    assert result.returncode != 0, result.stdout
     assert (
         "parallax.core.entity._expressions may import only its permitted dependencies BROKEN"
-        in result.stdout
+        in reported
     )
-    assert "parallax.core.entity._expressions -> parallax.core._formation_profile" in result.stdout
+    assert "parallax.core.entity._expressions -> parallax.core._formation_profile" in reported
 
 
 # --------------------------------------------------------------------------
 # Canary 7: the refusal leaf may name no first-party scope outside its package.
 # --------------------------------------------------------------------------
-def test_a_first_party_import_in_the_refusal_leaf_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
-
+def test_a_first_party_import_in_the_refusal_leaf_fails_lint_imports(linted_copy: Path) -> None:
     # `m-metamodel` sits in the closure of BOTH consumer scopes, so neither
     # consumer's row would report it; the zero-grant row is what turns the
     # module's dependency-free claim into a gate.
-    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_errors.py"
-    original = target.read_text()
-    target.write_text(f"{original}import parallax.core.metamodel  # deliberate leaf violation\n")
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        target.write_text(original)
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot.handle._errors",
+        "import parallax.core.metamodel  # deliberate leaf violation",
+    )
 
-    assert result.returncode != 0, result.stdout
     assert (
         "parallax.snapshot.handle._errors may import only its permitted dependencies BROKEN"
-        in result.stdout
+        in reported
     )
 
 
@@ -1239,56 +1237,38 @@ def test_a_first_party_import_in_the_refusal_leaf_fails_lint_imports() -> None:
 # ...and Canary 8: nor a sibling INSIDE its package. This is the half the
 # outside-the-package row cannot state, and the reason the row names siblings.
 # --------------------------------------------------------------------------
-def test_a_sibling_import_in_the_refusal_leaf_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
-
+def test_a_sibling_import_in_the_refusal_leaf_fails_lint_imports(linted_copy: Path) -> None:
     # The zero-grant row names the preflight child directly, so an import inside
     # the shared parent package is rejected rather than escaping package-scoped
     # enforcement.
-    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_errors.py"
-    original = target.read_text()
-    target.write_text(
-        f"{original}import parallax.snapshot.handle._preflight  # deliberate sibling violation\n"
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot.handle._errors",
+        "import parallax.snapshot.handle._preflight  # deliberate sibling violation",
     )
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        target.write_text(original)
 
-    assert result.returncode != 0, result.stdout
     assert (
         "parallax.snapshot.handle._errors may import only its permitted dependencies BROKEN"
-        in result.stdout
+        in reported
     )
-    assert (
-        "parallax.snapshot.handle._errors -> parallax.snapshot.handle._preflight" in result.stdout
-    )
+    assert "parallax.snapshot.handle._errors -> parallax.snapshot.handle._preflight" in reported
 
 
 # --------------------------------------------------------------------------
 # Canary 9: an isolated child is not carried by a grant on its parent package.
 # --------------------------------------------------------------------------
-def test_importing_the_lifecycle_recorder_from_production_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
-
+def test_importing_the_lifecycle_recorder_from_production_fails_lint_imports(
+    linted_copy: Path,
+) -> None:
     # The Snapshot handle is granted `parallax.core.execution_lifecycle` and
     # imports its private activity seam legally, so nothing about the package
     # grant stops the recorder inside it — only the isolated-child entry does.
-    target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_database.py"
-    original = target.read_text()
-    target.write_text(
-        f"{original}import parallax.core.execution_lifecycle.testing  # deliberate violation\n"
+    reported = broken_by(
+        linted_copy,
+        "parallax.snapshot.handle._database",
+        "import parallax.core.execution_lifecycle.testing  # deliberate violation",
     )
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        target.write_text(original)
 
-    assert result.returncode != 0, result.stdout
-    # The report wraps a long edge across lines, so it is read unwrapped.
-    reported = " ".join(result.stdout.split())
     assert "parallax.snapshot.handle may import only its permitted dependencies BROKEN" in reported
     assert (
         "parallax.snapshot.handle._database -> parallax.core.execution_lifecycle.testing"
