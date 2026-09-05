@@ -1307,6 +1307,24 @@ def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
 
+def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> None:
+    # The same totality over the other way a value can name no object: its class
+    # declares the key member and nothing ever populated it, so reading that
+    # member raises. The provenance refusal is decided BEFORE any row is derived
+    # and therefore before the codec would refuse, so the reading it is decided
+    # from has to answer for such a value rather than raise on its behalf —
+    # otherwise a value with an ordinary mistake earns an `AttributeError`
+    # naming a framework attribute instead of the verb's own complaint.
+    unkeyed = mm.Account.model_construct(owner="Ada", balance=Decimal("100.00"), version=1)
+
+    def fn(tx: Transaction) -> None:
+        tx.update(unkeyed)
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+    assert refusal.value.code == "write-value-not-stored"
+
+
 # --------------------------------------------------------------------------- #
 # What a framework-managed SOURCE is (ADR 0010): the managed lifecycle, so     #
 # every `Database` over one store is one source. The two arrangements below    #

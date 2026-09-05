@@ -4285,10 +4285,12 @@ These feature tests do not claim the deferred `benchmark` command or general
   exactly as any other value no read produced is. Which object a value names is
   read off its own primary-key members rather than derived through the Entity Row
   Codec, because the refusal this exemption lifts is decided before any row
-  exists: a cross-model value whose class keys the same Entity by other members
-  names no object at all, and it therefore reaches `write-value-not-stored`
-  rather than the `entity-row-member-missing` an identity row would have raised
-  on its behalf.
+  exists. That reading is therefore TOTAL over every value of the Entity: a value
+  stating no value for a declared key member — one whose class keys the same
+  Entity by other members, or one whose class carries the member and nothing ever
+  populated it — names no object at all, and it therefore reaches
+  `write-value-not-stored` rather than the `entity-row-member-missing` an
+  identity row would have raised on its behalf.
 - **A keyed temporal close requires a value that names a milestone.** The
   observation a temporal `update`/`terminate`/`*_until` settles against is
   resolved at the verb from the **value being written** — its own `Edge` —

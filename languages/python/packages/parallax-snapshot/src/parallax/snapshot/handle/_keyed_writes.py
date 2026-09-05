@@ -150,10 +150,11 @@ class ResolvedKeyedWriteSource:
     Transaction-Time instant is read-only whatever else is true of it.
 
     ``identity_row`` is ``None`` for a source that names no object of this store
-    at all — a value whose own class keys this Entity by other members. The
-    ledger holds no insert of an object nothing named, so such a source reaches
-    the provenance refusal that is the honest complaint about it; deriving a row
-    to ask the question with would answer that mistake with a row error instead.
+    at all — a value whose own class keys this Entity by other members, or one
+    that carries no value for a member it does key by. The ledger holds no insert
+    of an object nothing named, so such a source reaches the provenance refusal
+    that is the honest complaint about it; deriving a row to ask the question
+    with would answer that mistake with a row error instead.
     """
 
     entity: EntityMetadata
