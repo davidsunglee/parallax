@@ -13,7 +13,8 @@ identities, and canonical Model Location order it reuses, and on
 **effective** facts classification and Behavioral Impacts compare. Each of those
 is read through its owner's compiled facet and re-derived nowhere. Physical
 statements are not this module's: a relational consumer lowers a Unilateral
-Evolution against the later endpoint's Storage Layout.
+Evolution against both retained endpoints' Storage Layouts, and what those two
+differ by is that consumer's question rather than one answered here.
 
 The decision record is
 [ADR 0063](../../docs/adr/0063-model-evolution-is-described-at-model-altitude-and-applied-by-the-application.md).

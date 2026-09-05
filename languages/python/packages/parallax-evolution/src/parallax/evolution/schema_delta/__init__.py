@@ -110,8 +110,9 @@ def _reject_collisions(built: Plan, dialect: Dialect) -> None:
 
     The check spans every Index of both endpoints, not only the ones this delta
     creates or drops: an Index it never mentions is still an object in the
-    database while a new one is created beside it, so the two coexist during some
-    prefix of the statements.
+    database while a new one is created beside it. It is asked of the definitions
+    and never of the plan, because the plan already told two colliding definitions
+    apart by the name they share.
     """
     groups = collision_groups(built.indices)
     if groups:

@@ -4610,7 +4610,11 @@ remains observable rather than making Python its own oracle.
   neutral-scalar column-type mapping (parametric decimals, bounded strings),
   bytes projection shape and projection-introduced binds, temporal-infinity
   bind representation, placeholder translation (canonical `?` → psycopg `%s`),
-  typed bind normalization, precision-sensitive value parsing, and native
+  typed bind normalization, precision-sensitive value parsing, the declared
+  identifier byte limit, the five schema DDL primitives (`create_table`'s inline
+  key, `add_column`, each widening `expand_column` spells, `create_index`'s
+  uniqueness and component order, `drop_index`) with their identifiers quoted by
+  the same rule as every other, and native
   error-code classification predicates. Runs in `uv run pytest tests/dialect`
   with no Docker and no driver I/O.
 - **Adapter smoke and provider contract suites.** The psycopg adapter — the
@@ -4703,7 +4707,10 @@ remains observable rather than making Python its own oracle.
   by work the port itself performs — a statement, or the `transaction`
   boundary's begin, commit, or rollback — is
   re-raised as a Parallax Error carrying the neutral `m-db-error` category,
-  the preserved native SQLSTATE, and the driver message; no driver exception
+  the preserved native SQLSTATE, the driver message, and — on a unique violation
+  alone — the violated Physical Index Name, which the adapter reads off psycopg's
+  structured `diag.constraint_name` and hands over uninterpreted, never parsing a
+  message; no driver exception
   type the port raises ever crosses above it. The one exclusion is the caller's
   own `transaction` body: an exception it raises is not the port's, so it
   crosses unchanged even when it is a driver exception, which is what keeps a

@@ -17,7 +17,14 @@ provisioned database selected via the provider seam:
 
 What this module owns beyond those shared layers is case-shape routing plus the
 lanes whose ordered steps have no owner of their own: rejected-case adjudication,
-write sequences, conflicts, error classification, concurrency, and coherence.
+write sequences, conflicts, error classification, concurrency, coherence, and an
+evolution case's Schema Delta. That last one is the one lane that reaches a
+database for a shape whose own observable is pure: an authored ``delta`` cell is
+APPLIED to a database provisioned at the earlier endpoint and the catalog it
+leaves is compared against the catalog the later model's own provisioning DDL
+leaves, so the cell is graded against a second implementation of the schema
+rather than against its author. An ``unsupported`` cell has nothing to execute
+and is left to the language implementations.
 
 Two whole lanes are somebody else's. Every accepted read is
 :mod:`object_query_oracle`'s ``assert_case_read``: this module states a case and

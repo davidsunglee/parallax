@@ -1,11 +1,14 @@
 """``parallax.core.dialect`` enforcement scope (m-dialect).
 
 The pure, driver-free dialect strategy — the single home of every
-dialect-specific decision (`m-dialect`): identifier quoting, NULL ordering,
+dialect-specific decision (`m-dialect`): identifier quoting, the identifier byte
+limit, NULL ordering,
 row-limit rendering, optimizer fences, shared-read-lock application, the neutral-type → column-type
 mapping, the structured-document extraction / typed-cast forms, the bytes
 projection shape, the canonical `?` → driver placeholder translation, the
-infinity representation, and the SQLSTATE → neutral-category table (`m-db-error`).
+infinity representation, the five schema DDL primitives ``create_table`` /
+``add_column`` / ``expand_column`` / ``create_index`` / ``drop_index``
+(`m-schema-delta`), and the SQLSTATE → neutral-category table (`m-db-error`).
 It performs no I/O and imports no driver. ``m-dialect`` depends only on ``m-core``.
 """
 
