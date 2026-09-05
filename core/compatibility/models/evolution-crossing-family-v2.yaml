@@ -2,8 +2,9 @@
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. It is
 # models/evolution-crossing-family-v1.yaml with `Folio` extending `Vault` and
-# `Sheet` extending `Archive` directly, so `Folio` denotes no stored shape at
-# either end of its move between Tables.
+# `Sheet` extending `Archive` directly, so no stored shape survives under `Folio`
+# across the pair: `Sheet` is the shape it denotes in v1, and it denotes none
+# here, which is what leaves its move between Tables with no row to carry.
 entities:
   - name: Archive
     namespace: parallax.compatibility

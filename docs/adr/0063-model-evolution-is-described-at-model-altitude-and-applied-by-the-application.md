@@ -124,7 +124,10 @@ unchanged.
 `WriteCapabilityChanged` has the closed scope of Entity Writes, identified by
 Entity Identity, and Attribute Writes, identified by Attribute Identity. Entity
 endpoint facts are `Disabled` or `Enabled` carrying the effective
-`NonTemporal`, `TransactionTimeOnly`, or `Bitemporal` write shape. Attribute
+`NonTemporal`, `TransactionTimeOnly`, or `Bitemporal` write shape; a write names
+a concrete subtype, so an abstract root and an abstract subtype are `Disabled`
+however their family stands, and a position changing role between abstract and
+concrete changes its Entity write capability. Attribute
 endpoint facts are `FrameworkOwned`, `CallerInsertOnly`, or
 `CallerInsertAndUpdate`: generated primary keys, optimistic versions, Audit
 Attributes, and As-Of Axis endpoints are framework-owned; application-assigned
@@ -232,8 +235,10 @@ table-per-concrete-subtype because the new shape occupies a separate Table the
 earlier edition never reads, nor where the later family's effective Persistence
 Mode is `ReadOnly`, because then no writer exists to place that value, nor where
 the family arrives whole around the shape, because then no earlier reader holds a
-position of it — which is what a surviving position keeping the root it had
-distinguishes from one taking another.
+position of it. A surviving position keeping the root it had stays in the family
+the earlier edition already held; one taking another root is judged in the family
+it joins on the same terms an added subtype is, rather than being treated as
+though that family had arrived with it.
 
 Attribute classification likewise compares the effective caller contract rather
 than treating a raw flag change as decisive. Making an editable Attribute

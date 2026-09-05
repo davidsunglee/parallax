@@ -5,10 +5,12 @@
 # `Record` is reparented onto the abstract `Filed`, whose `clerk` becomes nullable
 # in the same edition. Every earlier narrowing still resolves and the rows keep
 # their Table and tag, and the member the arriving ancestor hands them is nullable,
-# so `Record`'s inheritance alteration is unilateral. So is the expansion: a later
-# writer places the widened value in a shape the earlier edition denoted at this
-# position, and the earlier edition denoted none there, so no reader of it can
-# meet a value it cannot admit.
+# so `Record`'s inheritance alteration is unilateral. So is the expansion, and it
+# is visible to no earlier reader: an expansion widens what an ALREADY STORED
+# shape admits, so it needs a shape both editions denote under the position, and
+# no shape is denoted under `Filed` at both endpoints — the earlier edition
+# denotes none there at all, because the rows arrive in the same edition that
+# widens the member.
 tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:

@@ -159,7 +159,9 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
         case ConcreteSubtypeAdded():
             return Classification(
                 reasons=_UNILATERAL,
-                overlap_visible=_overlaps_an_earlier_reader(matching, operation.entity),
+                overlap_visible=_overlaps_an_earlier_reader(
+                    matching, matching.entities.added[operation.entity].family
+                ),
             )
         case EntityRemoved() | ConcreteSubtypeRemoved() | RelationshipRemoved():
             # The stored shape goes with the declaration — a Relationship
@@ -187,7 +189,9 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
                 position=_position(matching, operation.value_object_attribute.value_object.entity),
             )
         case EntityAltered():
-            return _entity_alteration(matching.entities.surviving[operation.entity], operation)
+            return _entity_alteration(
+                matching, matching.entities.surviving[operation.entity], operation
+            )
         case AttributeAdded():
             return _attribute_addition(
                 matching.attributes.added[operation.attribute],
@@ -253,37 +257,37 @@ def _tags_a_shared_table(family: InheritanceEntityView) -> bool:
     )
 
 
-def _overlaps_an_earlier_reader(matching: Matching, added: EntityIdentity) -> bool:
-    """Whether an earlier edition reads what the added concrete subtype writes.
+def _overlaps_an_earlier_reader(matching: Matching, family: InheritanceEntityView) -> bool:
+    """Whether a shape arriving in ``family`` is Overlap-Visible.
 
-    A family that arrives whole with the subtype is visible to nobody: the
-    earlier edition holds no position of it, and so neither its Table nor a
-    selection through it.
+    Visibility is a claim about an EARLIER READER, so it asks whether the earlier
+    edition already held a position of the family the shape lands in — every such
+    position carries the shared Table and a selection through it. A family that
+    arrives whole is visible to nobody, and the arriving shape is not that reader
+    itself: a surviving position moving here addressed another family's Table
+    before it moved.
     """
-    family = matching.entities.added[added].family
     return _tags_a_shared_table(family) and any(
-        position in matching.entities.surviving for position in family.ancestry
+        position in matching.entities.surviving
+        for position in family.ancestry
+        if position != family.entity
     )
 
 
-def _newly_stored_shape_overlaps(position: _Position) -> bool:
+def _newly_stored_shape_overlaps(matching: Matching, position: _Position) -> bool:
     """Whether a position that starts storing rows of its own is Overlap-Visible.
 
     A surviving position turning concrete hands a later writer the same new
-    discriminator value an added concrete subtype hands it, and the earlier
-    reader that cannot admit it is the family the earlier edition already held
-    here — the family whose root the position keeps. A position taking another
-    root arrives in that family as an added subtype does, with no earlier reader
-    of it; the root it leaves also takes back every member it gave the position,
-    so such a move always requires the authoring surface and its visibility is
-    never reported. The clause stands because the verdict is the rule, not what
-    the assembled evolution goes on to publish.
+    discriminator value an added concrete subtype hands it, so it is judged in
+    the family it lands in on exactly those terms — the family whose root it
+    keeps, which the earlier edition already held, or another family, which is
+    visible to whichever earlier readers it already had. The root a moving
+    position leaves takes back every member it gave it, so such a move always
+    requires the authoring surface and its visibility is never published; the
+    clause is stated on the general terms anyway, because the verdict is the
+    rule, not what the assembled evolution goes on to report.
     """
-    return (
-        position.becomes_a_stored_shape
-        and position.earlier.root == position.later.root
-        and _tags_a_shared_table(position.later)
-    )
+    return position.becomes_a_stored_shape and _overlaps_an_earlier_reader(matching, position.later)
 
 
 def _attribute_addition(added: AttributeMetadata, position: _Position) -> Classification:
@@ -366,7 +370,7 @@ def _domain_contraction(position: _Position) -> set[CoordinationReason]:
 
 
 def _entity_alteration(
-    surviving: tuple[EntityFacts, EntityFacts], operation: EntityAltered
+    matching: Matching, surviving: tuple[EntityFacts, EntityFacts], operation: EntityAltered
 ) -> Classification:
     earlier, later = surviving
     position = _Position(earlier.family, later.family)
@@ -382,7 +386,7 @@ def _entity_alteration(
                 reasons |= _persistence_reasons(earlier.family, later.family)
             case InheritanceChanged():
                 reasons |= _inheritance_reasons(position)
-                overlap_visible = _newly_stored_shape_overlaps(position)
+                overlap_visible = _newly_stored_shape_overlaps(matching, position)
     return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
 
 

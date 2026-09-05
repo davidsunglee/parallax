@@ -169,19 +169,20 @@ def test_one_impact_names_every_operation_that_contributed_to_it_once() -> None:
 
 
 def test_a_temporal_write_surface_states_the_shape_its_axes_fix() -> None:
-    # Persistence is family-wide, so withdrawing it reports every surviving
-    # position of the family rather than the root that declared it — each with
-    # the write shape its own axes fix, bitemporal for the family and
-    # Transaction-Time-only for the standalone Entity beside it.
+    # Persistence is family-wide, so withdrawing it reports every surviving WRITE
+    # HANDLE of the family rather than the root that declared it — each with the
+    # write shape its own axes fix, bitemporal for the family's concrete subtype
+    # and Transaction-Time-only for the standalone Entity beside it. The abstract
+    # root is a polymorphic read position that admitted no write to withdraw, so
+    # its capability is Disabled at both endpoints and reports nothing.
     evolution = evolve(_temporal(), _temporal(writable=False))
     writes = _of(evolution, WriteCapabilityChanged)
-    assert [impact.scope for impact in writes] == [_ARRIVAL, _BOND, _ROOT]
+    assert [impact.scope for impact in writes] == [_ARRIVAL, _BOND]
     assert [impact.earlier for impact in writes] == [
         WritesEnabled(EntityWriteShape.TRANSACTION_TIME_ONLY),
         WritesEnabled(EntityWriteShape.BITEMPORAL),
-        WritesEnabled(EntityWriteShape.BITEMPORAL),
     ]
-    assert [impact.later for impact in writes] == [WRITES_DISABLED] * 3
+    assert [impact.later for impact in writes] == [WRITES_DISABLED] * 2
 
 
 def _holding(*members: AttributeMetadata) -> Metamodel:
@@ -607,7 +608,10 @@ def test_an_abstract_position_moving_is_the_cause_above_and_below_it() -> None:
     # own: nothing names the two positions the move actually carried. Every
     # impact the one alteration causes — the roots it left and joined, the
     # position itself, and the concrete Entity beneath it — names that operation,
-    # and none of them is left without a cause.
+    # and none of them is left without a cause. The moved position takes the
+    # Transaction-Time shape of the family it joins, but only the concrete Entity
+    # beneath it reports a write capability: an abstract subtype is a read
+    # position under either root.
     evolution = evolve(_subtree(under=_ROOT), _subtree(under=_LEDGER))
     (moved,) = [
         operation for operation in evolution.operations if isinstance(operation, EntityAltered)
@@ -620,7 +624,6 @@ def test_an_abstract_position_moving_is_the_cause_above_and_below_it() -> None:
         ("QueryResultMembershipChanged", _NOTE),
         ("QueryResultMembershipChanged", _ROOT),
         ("WriteCapabilityChanged", _BOND),
-        ("WriteCapabilityChanged", _NOTE),
     }
     assert {impact.caused_by for impact in evolution.behavioral_impacts} == {(moved,)}
 
@@ -700,6 +703,60 @@ def test_an_axis_behind_a_withdrawn_write_surface_is_no_cause_of_it() -> None:
     assert (write.scope, write.later) == (_ARCHIVE, WRITES_DISABLED)
     assert added not in write.caused_by
     assert [type(operation) for operation in write.caused_by] == [EntityAltered]
+
+
+def _rolled(*, concrete: bool, dated: bool) -> Metamodel:
+    """An `Instrument` family whose `Note` holds the concrete-subtype role or the
+    abstract one, gaining a Transaction-Time axis over Instants it already
+    declared in the same evolution."""
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_ROOT,
+                container=Table("instrument"),
+                attributes=(key(_ROOT), instant(_ROOT, "txStart"), instant(_ROOT, "txEnd")),
+                as_of_axes=(_TRANSACTION_TIME,) if dated else (),
+                inheritance=AbstractRoot(TablePerHierarchy("kind")),
+            ),
+            Declaration(
+                identity=_BOND,
+                attributes=(attribute(_BOND, "coupon"),),
+                inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "BOND"),
+            ),
+            Declaration(
+                identity=_NOTE,
+                inheritance=(
+                    ConcreteSubtype(ExactEntityReference(_ROOT), "NOTE")
+                    if concrete
+                    else AbstractSubtype(ExactEntityReference(_ROOT))
+                ),
+            ),
+        )
+    )
+
+
+def test_an_axis_behind_a_surrendered_write_handle_is_no_cause_of_it() -> None:
+    # A position that gives up the concrete-subtype role stops being a write
+    # handle, so its later surface admits no write and carries no temporal shape:
+    # the role change is the whole cause, and the axis arriving beside it moved
+    # nothing this impact reports. The concrete sibling, whose handle survives,
+    # names that same axis as the whole cause of its own shape moving.
+    evolution = evolve(_rolled(concrete=True, dated=False), _rolled(concrete=False, dated=True))
+    (added,) = [
+        operation for operation in evolution.operations if isinstance(operation, AsOfAxisAdded)
+    ]
+    (altered,) = [
+        operation for operation in evolution.operations if isinstance(operation, EntityAltered)
+    ]
+    (note,) = [impact for impact in _of(evolution, WriteCapabilityChanged) if impact.scope == _NOTE]
+    assert (note.earlier, note.later) == (
+        WritesEnabled(EntityWriteShape.NON_TEMPORAL),
+        WRITES_DISABLED,
+    )
+    assert note.caused_by == (altered,)
+    (bond,) = [impact for impact in _of(evolution, WriteCapabilityChanged) if impact.scope == _BOND]
+    assert bond.later == WritesEnabled(EntityWriteShape.TRANSACTION_TIME_ONLY)
+    assert bond.caused_by == (added,)
 
 
 def _admitted(*, temporal: bool) -> Metamodel:
