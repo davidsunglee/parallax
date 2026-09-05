@@ -159,6 +159,7 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"declaration_of", "is_entity_class", "members_of"}
     ),
     ("parallax.snapshot.handle._database", "_model"): frozenset({"cataloged_model", "class_index"}),
+    ("parallax.snapshot.handle._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._page", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),
@@ -166,7 +167,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.handle._stream", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._write_inputs", "_declaration"): frozenset({"declaration_of"}),
     ("parallax.snapshot.handle._write_inputs", "_entity"): frozenset({"wire_names_of"}),
-    ("parallax.snapshot.handle._wire_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.materialize._classify", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._convert", "_layout"): frozenset({"EntityLayout"}),
     ("parallax.snapshot.materialize._graph", "_construction_input"): frozenset({"ABSENT"}),

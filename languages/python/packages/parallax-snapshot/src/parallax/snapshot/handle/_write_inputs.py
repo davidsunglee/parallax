@@ -13,7 +13,7 @@ judgement and one buffer behind two representations:
   :func:`validate_source_pin`, :func:`source_pin`), and the provenance refusal
   the value-taking keyed verbs run before any row is derived
   (:class:`KeyedWriteValueError`, :data:`KEYED_WRITE_VALUE_CODES`,
-  :func:`validate_write_value`);
+  :data:`Provenance`, :func:`validate_provenance`);
 * instance -> accepted-Metadata resolution (:func:`metadata_of_instance`), the
   object a written value addresses (:func:`written_object_key`), and the
   codec-free reading of which object a value names (:func:`written_object`) that
@@ -58,13 +58,12 @@ run. The package's re-export list is which names those are.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Final, Literal, Protocol
 
 from parallax.core import opt_lock
 from parallax.core.base import InstantError, normalize_instant
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.metamodel import (
@@ -109,6 +108,7 @@ __all__ = [
     "BufferedInserts",
     "ClaimLedger",
     "KeyedWriteValueError",
+    "Provenance",
     "TransactionTimePinReadOnlyError",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
@@ -123,9 +123,9 @@ __all__ = [
     "source_hint_of",
     "source_pin",
     "validate_keyed_instruction",
+    "validate_provenance",
     "validate_source_pin",
     "validate_window",
-    "validate_write_value",
     "written_object",
     "written_object_key",
     "written_object_of_row",
@@ -735,12 +735,25 @@ def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
     )
 
 
-def validate_write_value(
+type Provenance = Literal["none", "foreign", "this"]
+"""Which framework-managed source produced a written value: no managed read
+produced it at all, another managed source did, or the writing Snapshot
+lifecycle's own read did.
+
+The three partition the values a keyed verb can be handed, which is what makes
+:func:`validate_provenance` total over them and lets each refusal name the verb
+that does accept the value. Deriving the answer is the REPRESENTATION's job — a
+Typed value carries a lifecycle to read it from and a Wire source carries a
+Source Hint — so this is a fact a caller states rather than a value this module
+inspects."""
+
+
+def validate_provenance(
     identity: EntityIdentity,
-    value: EntityBase,
+    provenance: Provenance,
     mutation: KeyedMutation,
     *,
-    inserted_here: Callable[[], bool],
+    inserted: bool,
 ) -> None:
     """Refuse a value whose PROVENANCE ``mutation``'s verb does not accept
     (`m-unit-work` "Write value provenance"), before any row is derived from it.
@@ -763,29 +776,21 @@ def validate_write_value(
     ``delete`` / ``terminate`` / ``terminateUntil`` derive an identity row alone
     and fall through, exactly as they already do for ``valid_from``.
 
-    ``inserted_here`` answers whether the writing unit of work has ALREADY
-    buffered an insert of this object, and its ``True`` exempts a value from the
-    NotStored refusal: a row this transaction inserted is a row it stores, so the
-    update that follows carries the final value the flush writes rather than
-    addressing nothing (`m-unit-work` "Insert-then-update coalesces in place").
-    It is consulted only on the branch that would otherwise refuse, so an
-    accepted value never pays for it, and it answers from what the value itself
-    names (:func:`written_object`) rather than from a row, so a value whose class
-    can key no row still reaches THIS refusal rather than an
+    ``inserted`` answers whether the writing unit of work has ALREADY buffered an
+    insert of this object, and its ``True`` exempts a value from the NotStored
+    refusal: a row this transaction inserted is a row it stores, so the update
+    that follows carries the final value the flush writes rather than addressing
+    nothing (`m-unit-work` "Insert-then-update coalesces in place"). It is
+    answered from what a value or a resolved identity row itself names
+    (:func:`written_object`, :func:`written_object_of_row`), never through a row
+    derived for the purpose, so a value whose class can key no row still reaches
+    THIS refusal rather than an
     :class:`~parallax.core.entity.EntityRowError` raised on its behalf.
-
-    Provenance is read through :func:`~parallax.snapshot._inspection.
-    snapshot_state_of` and the un-narrowed
-    :func:`~parallax.core.entity.lifecycle_state_of`, never through a value's
-    private state: the narrowed answer says this Snapshot lifecycle produced the
-    value, and the un-narrowed one is what distinguishes ANOTHER framework-managed
-    source's value from one no managed read produced at all.
     """
     if mutation not in _UPDATE_MUTATIONS and mutation not in INSERT_MUTATIONS:
         return
-    state = lifecycle_state_of(value)
-    if state is None:
-        if mutation in INSERT_MUTATIONS or inserted_here():
+    if provenance == "none":
+        if mutation in INSERT_MUTATIONS or inserted:
             return
         raise KeyedWriteValueError(
             code="write-value-not-stored",
@@ -796,7 +801,7 @@ def validate_write_value(
             ),
             identity=identity,
         )
-    if snapshot_state_of(value) is None:
+    if provenance == "foreign":
         raise KeyedWriteValueError(
             code="write-value-foreign-lifecycle",
             message=(

@@ -68,9 +68,7 @@ from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import TIMESTAMP, NeutralType
 from parallax.core.db_port import DbPort
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import (
-    InstalledLifecycle,
     TransactionAttemptActivity,
     refuse_reentry,
 )
@@ -88,7 +86,6 @@ from parallax.core.unit_work import (
     PredicateWrite,
     SettledEvidence,
     SourceHint,
-    UnitOfWork,
     instructions,
     object_key,
 )
@@ -99,12 +96,12 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.snapshot.handle._family import declaring as declaring_of
+from parallax.snapshot.handle._keyed_writes import KeyedWriteContext
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate_instruction,
     reject_temporal_delete,
 )
 from parallax.snapshot.handle._write_inputs import (
-    BufferedInserts,
     KeyedWriteValueError,
     admit_and_buffer,
     cancels_a_pending_assignment,
@@ -157,23 +154,25 @@ _DeclaredMember = AttributeMetadata | ValueObjectMetadata
 class WireWriteLane:
     """The transaction state a Wire write verb reads, and nothing wider.
 
-    ``inserts`` is the SAME ledger the Typed verbs record into, which is what
-    makes a Typed insert followed by a Wire update of one object — and the
-    reverse — one read-your-own-writes pair rather than two ingresses each with
-    their own idea of what this transaction stores.
+    ``keyed`` is the SAME ``KeyedWriteContext`` this transaction's Typed verbs
+    read — one accepted model, one unit of work, one buffered-insert ledger, one
+    installed lifecycle. That the ledger is one is what makes a Typed insert
+    followed by a Wire update of one object, and the reverse, one
+    read-your-own-writes pair rather than two ingresses each with their own idea
+    of what this transaction stores; that the model is one is what stops a lane
+    resolving metadata against a model its Typed peer does not use. The
+    predicate verb here reads three of the four for the same reason, so the four
+    are stated once rather than restated per lane.
 
-    ``model`` carries the accepted metadata every verb here resolves against and
-    the layouts a materializing predicate write converts its resolved rows
-    through as one value, so this lane names one model rather than two halves
-    that could disagree.
+    The connection and the attempt sit beside that record rather than inside it
+    because only the predicate-selected lane reads either: a materializing
+    set-based write runs a resolving read of its own, and no keyed write reads at
+    all.
     """
 
-    model: CatalogedModel
-    uow: UnitOfWork
+    keyed: KeyedWriteContext
     conn: DbPort
     attempt: TransactionAttemptActivity
-    inserts: BufferedInserts
-    lifecycle: InstalledLifecycle | None
 
 
 def _wire_bound(value: dt.datetime | None) -> str | None:
@@ -219,13 +218,13 @@ def wire_insert(
     insert instead, through the ledger this call records into, and the two
     coalesce.
     """
-    refuse_reentry(lane.lifecycle)
+    refuse_reentry(lane.keyed.lifecycle)
     payload = _authored_document(data, f"a Wire `{mutation}` payload")
-    entity = instructions.resolve_target(lane.model.meta, entity_name)
+    entity = instructions.resolve_target(lane.keyed.model.meta, entity_name)
     _refuse_published_source(entity, data, mutation)
-    declaring = declaring_of(lane.model.meta, entity)
+    declaring = declaring_of(lane.keyed.model.meta, entity)
     valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
-    _refuse_framework_owned(lane.model.meta, entity, payload)
+    _refuse_framework_owned(lane.keyed.model.meta, entity, payload)
     authored = keyed_instruction(
         mutation,
         entity.identity,
@@ -233,23 +232,23 @@ def wire_insert(
         valid_from=_wire_bound(valid_from_managed),
         until=_wire_bound(until_managed),
     )
-    prepared = instructions.prepare_wire_write(authored, lane.model.meta)
+    prepared = instructions.prepare_wire_write(authored, lane.keyed.model.meta)
     assert isinstance(prepared, PreparedKeyedWrite)
     row = prepared.rows[0]
-    admit_and_buffer(lane.uow, lane.model.meta, prepared, None)
-    lane.inserts.record(written_object_of_row(entity, lane.model.meta, row))
-    opened = object_key(prepared, lane.model.meta)
+    admit_and_buffer(lane.keyed.uow, lane.keyed.model.meta, prepared, None)
+    lane.keyed.inserts.record(written_object_of_row(entity, lane.keyed.model.meta, row))
+    opened = object_key(prepared, lane.keyed.model.meta)
     # A Create Payload is a complete document, so the row it buffers always
     # names its own object by the time validation has admitted it.
     assert opened is not None
     return opened_wire_entity(
-        lane.model.meta,
+        lane.keyed.model.meta,
         entity.identity,
         row,
         SourceHint(
             entity=entity.identity,
             object_key=opened,
-            participation=lane.uow.participation,
+            participation=lane.keyed.uow.participation,
             observation=None,
         ),
     )
@@ -283,11 +282,11 @@ def wire_keyed_write(
     is the ordinary no-op, dropped before the evidence question is asked at all,
     exactly as an empty Typed effective change set is.
     """
-    refuse_reentry(lane.lifecycle)
+    refuse_reentry(lane.keyed.lifecycle)
     authored = _authored_changes(mutation, changes)
     source, hint = _keyed_source(mutation, observed)
-    record = _concrete_entity(lane.model.meta, hint)
-    declaring = declaring_of(lane.model.meta, record)
+    record = _concrete_entity(lane.keyed.model.meta, hint)
+    declaring = declaring_of(lane.keyed.model.meta, record)
     validate_source_pin(record.identity, hint.pin)
     valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
     identity_row = dict(hint.object_key.primary_key)
@@ -301,7 +300,7 @@ def wire_keyed_write(
     )
     prepared = instructions.prepare_wire_write(
         raw_instruction,
-        lane.model.meta,
+        lane.keyed.model.meta,
         assigned_members=frozenset(authored),
     )
     assert isinstance(prepared, PreparedKeyedWrite)
@@ -321,13 +320,13 @@ def buffer_prepared_keyed_write(
     this seam retains production ownership of source validation, effective
     changes, evidence, claims, and buffering.
     """
-    refuse_reentry(lane.lifecycle)
+    refuse_reentry(lane.keyed.lifecycle)
     mutation = prepared.mutation
     source, hint = _keyed_source(mutation, observed)
-    record = _concrete_entity(lane.model.meta, hint)
+    record = _concrete_entity(lane.keyed.model.meta, hint)
     validate_source_pin(record.identity, hint.pin)
     identity_row = dict(hint.object_key.primary_key)
-    members = _row_members(lane.model.meta, record)
+    members = _row_members(lane.keyed.model.meta, record)
     managed_assignments = {name: prepared.rows[0][name] for name in assigned_members}
     row, restorations = _authored_row(
         lane, record, hint, mutation, identity_row, members, managed_assignments, source
@@ -335,21 +334,23 @@ def buffer_prepared_keyed_write(
     if row is None:
         return
     prepared = instructions.derive_keyed_write(prepared, (row,))
-    written = written_object_of_row(record, lane.model.meta, identity_row)
+    written = written_object_of_row(record, lane.keyed.model.meta, identity_row)
     evidence: SettledEvidence | None = (
         None
-        if lane.inserts.holds(written)
+        if lane.keyed.inserts.holds(written)
         else resolve_write_evidence(
-            lane.model.meta,
+            lane.keyed.model.meta,
             record,
             hint,
             mutation=mutation,
             object_key=hint.object_key,
-            preference=lane.uow.settings.concurrency,
-            participation=lane.uow.participation,
+            preference=lane.keyed.uow.settings.concurrency,
+            participation=lane.keyed.uow.participation,
         )
     )
-    admit_and_buffer(lane.uow, lane.model.meta, prepared, evidence, restorations=restorations)
+    admit_and_buffer(
+        lane.keyed.uow, lane.keyed.model.meta, prepared, evidence, restorations=restorations
+    )
 
 
 def wire_predicate_write(
@@ -382,15 +383,15 @@ def wire_predicate_write(
     verdict on the VERB before the window gate is reached at all, exactly as the
     Typed ``_where`` lane does.
     """
-    refuse_reentry(lane.lifecycle)
+    refuse_reentry(lane.keyed.lifecycle)
     selection = _authored_document(target, "a predicate-selected write's canonical target")
     entity_name = _selection_shape(selection)
     authored = _authored_changes(mutation, changes)
-    entity = instructions.resolve_target(lane.model.meta, entity_name)
-    declaring = declaring_of(lane.model.meta, entity)
+    entity = instructions.resolve_target(lane.keyed.model.meta, entity_name)
+    declaring = declaring_of(lane.keyed.model.meta, entity)
     reject_temporal_delete(entity, declaring, mutation)
     valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
-    members = _row_members(lane.model.meta, entity)
+    members = _row_members(lane.keyed.model.meta, entity)
     unknown = sorted(set(authored) - set(members))
     if unknown:
         raise instructions.WriteInstructionError(
@@ -411,9 +412,11 @@ def wire_predicate_write(
         doc["until"] = _wire_bound(until_managed)
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # a `target` document always builds this shape
-    prepared = instructions.prepare_wire_write(instruction, lane.model.meta)
+    prepared = instructions.prepare_wire_write(instruction, lane.keyed.model.meta)
     assert isinstance(prepared, PreparedPredicateWrite)
-    buffer_predicate_instruction(lane.uow, lane.model, lane.conn, prepared, lane.attempt)
+    buffer_predicate_instruction(
+        lane.keyed.uow, lane.keyed.model, lane.conn, prepared, lane.attempt
+    )
 
 
 def _authored_row(
@@ -462,7 +465,7 @@ def _authored_row(
     if effective:
         return {**identity_row, **effective}, restorations
     if not restorations or not cancels_a_pending_assignment(
-        lane.uow, lane.model.meta, record, hint, mutation
+        lane.keyed.uow, lane.keyed.model.meta, record, hint, mutation
     ):
         return None, restorations
     return dict(identity_row), restorations

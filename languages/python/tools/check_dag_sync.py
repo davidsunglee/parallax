@@ -395,6 +395,35 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.execution_lifecycle",
         }
     ),
+    # The keyed write ingress, scoped apart from its package so the generated
+    # contract carries what a keyed write reaches: the value and the metadata it
+    # resolves an Entity from, the temporal vocabulary its pin and window are
+    # stated in, the unit of work it claims and buffers into, and the lifecycle
+    # whose re-entry it refuses first. A keyed write addresses a row its caller
+    # already holds, so the read half of the parent scope falls outside this
+    # closure — row-to-graph materialization, the read result, and the read lock
+    # are each forbidden here and each granted to the parent — and so do the
+    # three write policies, which lowering owns in its own sibling child scopes.
+    #
+    # `m-db-port`, `m-deep-fetch` and `m-navigate` are deliberately NOT among
+    # those exclusions, and the row does not claim them: `modules.md` routes the
+    # port through `m-execution-lifecycle` and the two traversal modules through
+    # `parallax.core.entity`, and a forbidden row is the complement of a
+    # closure, so each rides in whatever this composition itself imports. What
+    # the row says about them is that this scope inherits them, not that they are
+    # forbidden. `_write_inputs`, `_family` and `_predicate_writes` are modules
+    # of the parent package rather than declared scopes, so no row can name any
+    # of the three either way.
+    "parallax.snapshot.handle._keyed_writes": frozenset(
+        {
+            "parallax.core.entity",
+            "parallax.snapshot._inspection",
+            "parallax.core.metamodel",
+            "parallax.core.temporal_read",
+            "parallax.core.unit_work",
+            "parallax.core.execution_lifecycle",
+        }
+    ),
     # The refusal leaf's emptiness IS its contract: `_preflight` and `_family`
     # raise one error class while their scopes grant disjoint dependencies, so
     # either naming the other would drag in a scope the importer may not reach.
@@ -507,6 +536,7 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
     "parallax.snapshot.handle._read_scope": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._keyed_writes": "parallax.snapshot.handle",
     "parallax.snapshot.handle._errors": "parallax.snapshot.handle",
     "parallax.snapshot.handle._family": "parallax.snapshot.handle",
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",

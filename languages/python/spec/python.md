@@ -4949,6 +4949,25 @@ it is forbidden. Write lowering is a child scope of the same parent, which the
 general target set excludes, so not importing it is the only exclusion available
 there.
 
+`parallax.snapshot.handle._keyed_writes` is the keyed write ingress both
+representations enter, scoped apart from its package for the converse reason:
+its row states what a keyed write reaches and what it does not. A keyed write
+addresses a row its caller already holds, so it resolves nothing from the store,
+and the read half of the parent's grant falls outside this closure — row-to-graph
+materialization, the read result, and the read lock are each forbidden here and
+each granted to the parent. So are batch writes, Transaction-Time writes, and
+Bitemporal writes, which the sibling lowering scopes own. `m-db-port`,
+`m-deep-fetch`, and `m-navigate` are deliberately NOT among those exclusions,
+and the row does not claim them: `modules.md` routes the port through
+`m-execution-lifecycle`, which the re-entry gate requires, and the two traversal
+modules through `parallax.core.entity`, whose values every Typed write is stated
+over. A forbidden row is the complement of a closure, so each rides in whatever
+the ingress itself imports, and what the row says about them is that this scope
+inherits them rather than that they are forbidden. The verb-input step library
+this ingress composes, the family answers it resolves through, and the
+predicate-selected lane beside it are all modules of the parent package rather
+than declared scopes, so no contract can name any of them either way.
+
 A behavioral module maps to the scope that needs its whole edge set.
 `m-execution-lifecycle` is owned by `parallax.core.execution_lifecycle`, while
 the Snapshot handle is the composition scope that publishes snapshot reads and
@@ -5052,6 +5071,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot read composition (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._read_scope` | `parallax.snapshot.handle._read_scope` | `parallax.core.entity`, `parallax.core.continuation`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-read-lock`, `m-opt-lock`, `m-execution-lifecycle` | generated forbidden contracts |
+| Snapshot keyed write ingress (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._keyed_writes` | `parallax.snapshot.handle._keyed_writes` | `parallax.core.entity`, `parallax.snapshot._inspection`, `m-metamodel`, `m-temporal-read`, `m-unit-work`, `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Snapshot handle write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | Snapshot write-observation retention (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts + `tools/check_scope_ownership.py` |
@@ -5196,6 +5216,12 @@ parallax.snapshot.handle._read_scope --> parallax.core.unit_work
 parallax.snapshot.handle._read_scope --> parallax.core.read_lock
 parallax.snapshot.handle._read_scope --> parallax.core.opt_lock
 parallax.snapshot.handle._read_scope --> parallax.core.execution_lifecycle
+parallax.snapshot.handle._keyed_writes --> parallax.core.entity
+parallax.snapshot.handle._keyed_writes --> parallax.snapshot._inspection
+parallax.snapshot.handle._keyed_writes --> parallax.core.metamodel
+parallax.snapshot.handle._keyed_writes --> parallax.core.temporal_read
+parallax.snapshot.handle._keyed_writes --> parallax.core.unit_work
+parallax.snapshot.handle._keyed_writes --> parallax.core.execution_lifecycle
 parallax.snapshot.handle._errors --> (none)
 parallax.snapshot.handle._family --> parallax.core.base
 parallax.snapshot.handle._family --> parallax.core.wire
