@@ -4485,16 +4485,26 @@ These feature tests do not claim the deferred `benchmark` command or general
   reaches the same order for free, because `edit()` rejects an illegal assignment
   before `tx.update()` receives a value.
 
-  **The Keyed Write Validation Order is one order.** Every keyed verb, Typed or
-  Wire, runs: reentry; representation-only shape; source resolution and
-  provenance; pin; window; member names, values, assignment legality, and
-  preparation; effective changes and restorations with the no-op return; the
-  buffered-insert exemption; evidence; claim and buffer. One private ingress owns
-  that order; each representation answers only source facts through a private
-  adapter, and a conformance call enters the same ingress once. Reentry is
-  refused once, as the ingress's first executable line. Typed prepares before it
-  resolves evidence, so `terminate` against a target with no as-of axis hears the
-  milestone-verb refusal even when its evidence is also unusable.
+  **The Keyed Write Validation Order is one order.** Every keyed write over a
+  source — every keyed verb but the two inserts — runs, Typed or Wire: reentry;
+  representation-only shape; source resolution and provenance; pin; window;
+  member names, values, assignment legality, and preparation; effective changes
+  and restorations with the no-op return; the buffered-insert exemption;
+  evidence; claim and buffer. One private ingress owns that order; each
+  representation answers only source facts through a private adapter, and a
+  conformance call enters the same ingress once. Reentry is refused once, as the
+  ingress's first executable line. Typed prepares before it resolves evidence, so
+  `terminate` against a target with no as-of axis hears the milestone-verb
+  refusal even when its evidence is also unusable.
+
+  **An insert enters that ingress by its own door, with no source.** `insert` and
+  `insert_until` name a fresh value rather than one a read published, so there is
+  no source to resolve and none is invented: the door they enter runs reentry;
+  representation-only shape; the provenance the value itself states; window;
+  member names, values, and preparation; then buffer, recording the row it opened
+  in the one ledger the exemption above reads. An opening row observed nothing,
+  so it reduces no effective change set, resolves no evidence, and takes no
+  claim.
 
   **Which static refusal follows from whose rule was broken.**
   `WriteInstructionError` is the write verb's OWN verdict: input that states no
