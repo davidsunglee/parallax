@@ -1,0 +1,18 @@
+# Almanac (v2): the NULLABLE end of the sealed value-domain scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-sealed-domain-v1.yaml with `note` nullable; the Entity stays
+# read-only.
+entity:
+  name: Almanac
+  namespace: parallax.compatibility
+  table: evolution_almanac
+  persistence: read-only
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: note
+      type: string
+      maxLength: 64
+      nullable: true

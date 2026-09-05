@@ -1,0 +1,33 @@
+# Expanding a value domain where no later writer exists (m-model-evolution):
+# unilateral, and Overlap-Visible to nobody.
+#
+# `Almanac` is read-only in both endpoints, so making `note` nullable is the same
+# unilateral expansion m-model-evolution-007 reports. What differs is the
+# narrower fact: overlap visibility is a claim that a LATER writer may store a
+# value an earlier reader cannot admit, and a family the later edition holds
+# read-only admits no writer at all. The admissibility of the surviving path
+# changed, so the same operation still causes one `ValueAdmissibilityChanged`.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-sealed-domain-v1.yaml
+    later: models/evolution-sealed-domain-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Almanac.note
+        deltas: [{ kind: NullabilityChanged, earlier: false, later: true }]
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Almanac.note }
+        earlier: { type: string, nullable: false, maxLength: 64 }
+        later: { type: string, nullable: true, maxLength: 64 }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Almanac.note
+            deltas: [{ kind: NullabilityChanged, earlier: false, later: true }]
+    overlapVisibleOperations: []
+    coordinationRequirements: []

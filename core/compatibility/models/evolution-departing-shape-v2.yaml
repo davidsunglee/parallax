@@ -1,0 +1,34 @@
+# Portfolio (v2): the endpoint of the DEPARTING SHAPE scenario where the
+# abstract `Holding` denotes nothing.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-departing-shape-v1.yaml with `Lot` extending the root
+# directly and `Holding.custodian` gone, so the position keeps no stored shape
+# for the member to be demanded of.
+entities:
+  - name: Portfolio
+    namespace: parallax.compatibility
+    table: evolution_portfolio
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Holding
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Portfolio
+  - name: Lot
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Portfolio
+      tagValue: lot
+    attributes:
+      - name: units
+        type: int64

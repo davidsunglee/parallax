@@ -202,18 +202,23 @@ encode direct hierarchy edges. Moving an existing subtype out of an earlier
 branch requires coordination because a narrowing through that branch becomes
 invalid, as do strategy, tag, or storage changes that require physical
 transformation.
-A position whose effective concrete set is empty is where that comparison bites
-hardest: only concrete subtypes own rows, so such a position stores none, no
-Subtype Selection resolves to it, and no write names it. Every classification
-phrased over stored rows or a previously valid write is therefore silent about
-it — a required member arriving on it or cut out of it has no row to backfill
-and no insert to invalidate, a write flag moving over it withdraws no caller
-input, contracting a member's admitted value domain reaches no stored value and
-no write that must still be accepted, and moving it between branches or Tables
-carries no data across. Nothing on it is Overlap-Visible either, since that is a
-claim about a later writer. What a read of it still addresses are the members
-its ancestry makes applicable, so losing one of those remains an authoring
-surface change.
+Only concrete subtypes own rows, so the stored shape a classification speaks
+about at a position is the one both editions denote there. That set is empty
+where the position composes no concrete subtype, and equally where the shape it
+denoted leaves it in the same edition, reparented out from under it or removed
+outright. Every classification phrased over stored rows, over a write the later
+edition must still accept, or over a value a later writer may store is therefore
+silent about such a position — a required member arriving on it or cut out of it
+has no row to backfill and no insert the later model still demands the value of,
+a write flag moving over it withdraws no caller input, contracting a member's
+admitted value domain reaches no stored value, and moving it between branches or
+Tables carries no data across. Nothing on it is Overlap-Visible either, which is
+a claim about a later writer and so is equally silent on a family the later
+edition holds read-only. A shape arriving under the position is created complete
+by its own addition and one departing is answered for at the alteration that
+moves it, so neither is this position's to report. What a read of it still
+addresses are the members its ancestry makes applicable, so losing one of those
+remains an authoring surface change.
 Adding a concrete subtype is unilateral under either supported inheritance
 strategy. It is Overlap-Visible under table-per-hierarchy because a later writer
 can place a new discriminator value in the shared Table that an earlier reader

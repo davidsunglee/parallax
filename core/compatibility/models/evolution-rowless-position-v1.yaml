@@ -1,0 +1,34 @@
+# Catalog (v1): the earlier endpoint of the ROWLESS POSITION scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# abstract `Draft` composes no concrete subtype of its own, so it resolves to an
+# empty effective concrete set while the family stays legal on `Listing`. The
+# pair is authored once and read in both directions: v1 to v2 adds a required
+# member to that position, and v2 to v1 cuts it back out.
+entities:
+  - name: Catalog
+    namespace: parallax.compatibility
+    table: evolution_catalog
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Draft
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Catalog
+  - name: Listing
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Catalog
+      tagValue: listing
+    attributes:
+      - name: price
+        type: decimal(18,2)

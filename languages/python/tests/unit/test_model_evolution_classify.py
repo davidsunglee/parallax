@@ -476,18 +476,16 @@ _OTHER_ROOT = identity("Security")
 _OTHER_LEAF = identity("Share")
 
 
-def _rowless_branch(
+def _branch_family(
     *declares: AttributeMetadata,
-    under: EntityIdentity | None = None,
-    holds: tuple[ValueObjectOccurrenceDeclaration, ...] = (),
+    under: EntityIdentity | None,
+    holds: tuple[ValueObjectOccurrenceDeclaration, ...],
+    leaf_under: EntityIdentity,
 ) -> Metamodel:
-    """A table-per-hierarchy family whose abstract ``Note`` composes no concrete
-    subtype of its own and declares ``declares``.
-
-    ``Bond`` is the family's one concrete subtype, so the family is legal while
-    ``Note`` resolves to an EMPTY effective concrete set. ``under`` places
-    ``Note`` beneath a member-less abstract ``Bill`` instead of beneath the root.
-    """
+    """A legal table-per-hierarchy family: root ``Instrument``, a member-less
+    abstract ``Bill``, an abstract ``Note`` declaring ``declares`` and ``holds``
+    beneath ``under``, and the family's one concrete subtype ``Bond`` beneath
+    ``leaf_under``."""
     root = Declaration(
         identity=_ROOT,
         container=Table("instrument"),
@@ -506,9 +504,28 @@ def _rowless_branch(
     leaf = Declaration(
         identity=_LEAF,
         attributes=(attribute(_LEAF, "coupon"),),
-        inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "BOND"),
+        inheritance=ConcreteSubtype(ExactEntityReference(leaf_under), "BOND"),
     )
     return form_metamodel(source(root, sibling, branch, leaf))
+
+
+def _rowless_branch(
+    *declares: AttributeMetadata,
+    under: EntityIdentity | None = None,
+    holds: tuple[ValueObjectOccurrenceDeclaration, ...] = (),
+) -> Metamodel:
+    """The family with ``Bond`` hanging off the root, so ``Note`` resolves to an
+    EMPTY effective concrete set while the family stays legal. ``under`` places
+    ``Note`` beneath the member-less abstract ``Bill`` instead of the root."""
+    return _branch_family(*declares, under=under, holds=holds, leaf_under=_ROOT)
+
+
+def _rowful_branch(
+    *declares: AttributeMetadata, holds: tuple[ValueObjectOccurrenceDeclaration, ...] = ()
+) -> Metamodel:
+    """The same family with ``Bond`` hanging off ``Note``, which therefore
+    denotes ``Bond``'s stored shape."""
+    return _branch_family(*declares, under=None, holds=holds, leaf_under=_BRANCH)
 
 
 def test_a_position_composing_no_concrete_subtype_has_no_row_to_answer_for() -> None:
@@ -569,9 +586,10 @@ def test_a_rowless_position_leaves_a_branch_no_narrowing_ever_came_through() -> 
     assert _verdict_on(flattening, _altered(flattening)) == _Verdict(_UNILATERAL, False)
 
 
-def _across_roots(*, moved: bool) -> Metamodel:
+def _across_roots(*, moved: bool, leaf_under: EntityIdentity | None = None) -> Metamodel:
     """Two live table-per-hierarchy families with distinct Tables and tag
-    Columns, with the rowless abstract ``Note`` under one root or the other."""
+    Columns, with the abstract ``Note`` under one root or the other and the
+    concrete ``Bond`` beneath ``leaf_under``, defaulting to the first root."""
     return form_metamodel(
         source(
             Declaration(
@@ -583,7 +601,7 @@ def _across_roots(*, moved: bool) -> Metamodel:
             Declaration(
                 identity=_LEAF,
                 attributes=(attribute(_LEAF, "coupon"),),
-                inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "BOND"),
+                inheritance=ConcreteSubtype(ExactEntityReference(leaf_under or _ROOT), "BOND"),
             ),
             Declaration(
                 identity=_OTHER_ROOT,
@@ -611,6 +629,77 @@ def test_a_rowless_position_moving_between_families_carries_no_data_across() -> 
     # the family key it leaves behind, which is an authoring surface change.
     moving = evolve(_across_roots(moved=False), _across_roots(moved=True))
     assert _verdict_on(moving, _altered(moving)) == _Verdict((_AUTHORING,), False)
+
+
+def _altered_on(evolution: Evolution, entity: EntityIdentity) -> EvolutionOperation:
+    (operation,) = [
+        candidate
+        for candidate in evolution.operations
+        if isinstance(candidate, EntityAltered) and candidate.entity == entity
+    ]
+    return operation
+
+
+def test_a_member_leaving_a_position_its_shape_also_leaves_demands_no_backfill() -> None:
+    # The stored shape a removal speaks about is the one the position keeps: with
+    # `Bond` reparented out from under `Note` in the same edition, no `Note`
+    # denotes a row that still demands `issuer`, so the removal stops at the
+    # authoring surface a read of the position occupies. `Bond` is where the loss
+    # of a required member off rows that stay IS reported, and it carries both.
+    issuer = attribute(_BRANCH, "issuer", type=STRING)
+    departing = evolve(_rowful_branch(issuer), _rowless_branch())
+    (removed,) = [
+        operation for operation in departing.operations if not isinstance(operation, EntityAltered)
+    ]
+    assert _verdict_on(departing, removed) == _Verdict((_AUTHORING,), False)
+    assert _verdict_on(departing, _altered_on(departing, _LEAF)) == _Verdict(_BOTH, False)
+
+
+def test_a_member_arriving_where_the_shape_departs_has_no_row_to_backfill() -> None:
+    # The addition's mirror: the rows `Note` denoted leave it in the same edition
+    # the required `issuer` arrives, so there is neither a row to backfill nor an
+    # insert the later model still demands the value of.
+    issuer = attribute(_BRANCH, "issuer", type=STRING)
+    arriving = evolve(_rowful_branch(), _rowless_branch(issuer))
+    (added,) = [
+        operation for operation in arriving.operations if not isinstance(operation, EntityAltered)
+    ]
+    assert _verdict_on(arriving, added) == _Verdict(_UNILATERAL, False)
+
+
+def test_a_domain_change_reaches_only_the_shape_the_position_keeps() -> None:
+    # Contracting the domain claims something about values already stored under
+    # the position and about a write the later edition must still accept;
+    # expanding it claims something about a value a later writer may store where
+    # an earlier reader reads. Neither claim survives the shape leaving.
+    optional = dataclasses.replace(attribute(_BRANCH, "issuer", type=STRING), nullable=True)
+    required = dataclasses.replace(optional, nullable=False)
+    for earlier, later in ((optional, required), (required, optional)):
+        changing = evolve(_rowful_branch(earlier), _rowless_branch(later))
+        (altered,) = [
+            operation
+            for operation in changing.operations
+            if not isinstance(operation, EntityAltered)
+        ]
+        assert _verdict_on(changing, altered) == _Verdict(_UNILATERAL, False)
+
+
+def test_an_expansion_with_no_later_writer_is_visible_to_nobody() -> None:
+    # Overlap visibility is a claim about a LATER writer placing a value an
+    # earlier reader cannot admit, so a family the later edition holds read-only
+    # names none, however many rows it denotes.
+    assert _verdict(_sealed(_member()), _sealed(_member(nullable=True))) == _Verdict(
+        _UNILATERAL, False
+    )
+
+
+def test_a_position_the_rows_leave_carries_no_data_to_the_family_it_joins() -> None:
+    # The rowful case of the move above: `Note` denotes `Bond` before the move
+    # and nothing after it, because `Bond` stays behind under the old root. No
+    # `Note`-denoted row crosses to the other Table, so the changed Table,
+    # strategy tag Column, and family key are an authoring surface change alone.
+    moving = evolve(_across_roots(moved=False, leaf_under=_BRANCH), _across_roots(moved=True))
+    assert _verdict_on(moving, _altered_on(moving, _BRANCH)) == _Verdict((_AUTHORING,), False)
 
 
 _READING = identity("Reading")

@@ -1,0 +1,69 @@
+# A required member and the shape that will carry it arriving at one position
+# together (m-model-evolution): the mirror of m-model-evolution-054.
+#
+# `Lot` is reparented onto the abstract `Holding`, which declares the required
+# `custodian` in the same edition. `Holding` denoted no stored shape in the
+# earlier edition, so `AttributeAdded` has no row there to backfill and no
+# previously valid insert naming that position to invalidate: it is unilateral.
+# The rows that will carry the member are `Lot`'s own, which stay where they are,
+# so the backfill and the reshaped insert are reported at `Lot`'s inheritance
+# alteration — a member an arriving ancestor hands a position is classified
+# exactly as one declared there would be.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-departing-shape-v2.yaml
+    later: models/evolution-departing-shape-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAdded
+        attribute: parallax.compatibility.Holding.custodian
+      - kind: EntityAltered
+        entity: parallax.compatibility.Lot
+        deltas:
+          - kind: InheritanceChanged
+            earlier:
+              role: concrete-subtype
+              parent: parallax.compatibility.Portfolio
+              tag: { value: lot }
+            later:
+              role: concrete-subtype
+              parent: parallax.compatibility.Holding
+              tag: { value: lot }
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Holding }
+        earlier: { concreteEntities: [], axes: [] }
+        later: { concreteEntities: [parallax.compatibility.Lot], axes: [] }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Lot
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Portfolio
+                  tag: { value: lot }
+                later:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Holding
+                  tag: { value: lot }
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Lot
+          deltas:
+            - kind: InheritanceChanged
+              earlier:
+                role: concrete-subtype
+                parent: parallax.compatibility.Portfolio
+                tag: { value: lot }
+              later:
+                role: concrete-subtype
+                parent: parallax.compatibility.Holding
+                tag: { value: lot }
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

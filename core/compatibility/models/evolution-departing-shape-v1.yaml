@@ -1,0 +1,39 @@
+# Portfolio (v1): the endpoint of the DEPARTING SHAPE scenario where the
+# abstract `Holding` denotes a stored shape.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `Lot` is
+# concrete beneath `Holding`, which declares the required `custodian` those rows
+# carry. The pair is authored once and read in both directions: the required
+# member and the shape that carries it leave the position together in one, and
+# arrive together in the other.
+entities:
+  - name: Portfolio
+    namespace: parallax.compatibility
+    table: evolution_portfolio
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Holding
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Portfolio
+    attributes:
+      - name: custodian
+        type: string
+        maxLength: 64
+  - name: Lot
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Holding
+      tagValue: lot
+    attributes:
+      - name: units
+        type: int64
