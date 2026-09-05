@@ -98,7 +98,7 @@ def _balance_node(temporal: dict[str, object]) -> ObjectQueryNode:
 
 
 class _LoweringReached(Exception):
-    """The marker a hostile query lowering raises, so a case can prove it ran."""
+    pass
 
 
 class _Ledger:
