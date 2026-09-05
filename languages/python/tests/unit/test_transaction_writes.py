@@ -11,7 +11,7 @@ validation, and the §5 prior-observation license enforced at the developer verb
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Any, cast
 
@@ -1258,7 +1258,9 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
 def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
     # An adapter builds these mappings while reading its own value, and the
     # ingress weighs them against the SEALED rows a prepared instruction carries,
-    # so neither may stay reachable through the caller that built it.
+    # so neither may stay reachable through the caller that built it — to the
+    # leaves, because a structured member's own container is as reachable as the
+    # mapping holding it, and a prepared row's leaves are frozen the same way.
     instruction = cast(
         "instructions.PreparedKeyedWrite",
         instructions.prepare_typed_write(
@@ -1268,8 +1270,13 @@ def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
             cataloged_model(ACCOUNT).meta,
         ),
     )
+    nested: dict[str, object] = {"city": "Berlin"}
+    phones: list[object] = ["home"]
     identity_row: dict[str, object] = {"id": 1}
-    originals: dict[str, object] = {"owner": "Grace"}
+    originals: dict[str, object] = {
+        "owner": "Grace",
+        "address": {"geo": nested, "phones": phones},
+    }
     resolved = ResolvedKeyedWriteSource(
         entity=instruction.target,
         pin=None,
@@ -1285,12 +1292,22 @@ def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
 
     identity_row["id"] = 2
     originals["owner"] = "Newton"
+    nested["city"] = "Bonn"
+    phones.append("work")
     assert resolved.identity_row == {"id": 1}
-    assert prepared.originals == {"owner": "Grace"}
+    assert prepared.originals == {
+        "owner": "Grace",
+        "address": {"geo": {"city": "Berlin"}, "phones": ("home",)},
+    }
     with pytest.raises(TypeError):
         cast("dict[str, object]", resolved.identity_row)["id"] = 3
     with pytest.raises(TypeError):
         cast("dict[str, object]", prepared.originals)["owner"] = "Newton"
+    address = cast("Mapping[str, object]", prepared.originals["address"])
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", address)["geo"] = None
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", address["geo"])["city"] = "Bonn"
 
 
 def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:

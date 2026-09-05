@@ -4286,11 +4286,15 @@ These feature tests do not claim the deferred `benchmark` command or general
   read off its own primary-key members rather than derived through the Entity Row
   Codec, because the refusal this exemption lifts is decided before any row
   exists. That reading is therefore TOTAL over every value of the Entity: a value
-  stating no value for a declared key member — one whose class keys the same
-  Entity by other members, or one whose class carries the member and nothing ever
-  populated it — names no object at all, and it therefore reaches
-  `write-value-not-stored` rather than the `entity-row-member-missing` an
-  identity row would have raised on its behalf.
+  stating no value for a declared key member names no object at all, so it
+  reaches `write-value-not-stored`, the honest complaint about it. Deriving an
+  identity row to ask the question with would answer that mistake with a row
+  defect instead, and the two ways a value can state no key member do not even
+  answer it alike: a value whose class keys the same Entity by other members
+  carries no attribute for the member and is refused
+  `entity-row-member-missing`, while a value whose class does carry the member
+  and nothing ever populated it passes that check and fails on the attribute
+  read itself.
 - **A keyed temporal close requires a value that names a milestone.** The
   observation a temporal `update`/`terminate`/`*_until` settles against is
   resolved at the verb from the **value being written** — its own `Edge` —

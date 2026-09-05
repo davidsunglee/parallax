@@ -75,6 +75,7 @@ from parallax.core.unit_work import (
     UnitOfWork,
     object_key,
 )
+from parallax.core.unit_work.columns import freeze_retained_value
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedTemporalBounds,
@@ -155,7 +156,7 @@ class ResolvedKeyedWriteSource:
     that carries no value for a member it does key by. The ledger holds no insert
     of an object nothing named, so such a source reaches the provenance refusal
     that is the honest complaint about it; deriving a row to ask the question
-    with would answer that mistake with a row error instead.
+    with would answer that mistake with a codec failure instead.
     """
 
     entity: EntityMetadata
@@ -397,14 +398,17 @@ def keyed_insert(
 
 
 def _sealed_row(row: Mapping[str, object]) -> Mapping[str, object]:
-    """``row`` owned by the record that answers it.
+    """``row`` owned by the record that answers it, to the leaves.
 
     Copied and then sealed, both: an adapter builds these mappings as it reads a
     value, and the ingress weighs them against the sealed rows a prepared
     instruction carries, so a record crossing the seam has to be as unable to
-    change underneath its reader as those rows are.
+    change underneath its reader as those rows are. Sealing the mapping alone
+    would leave a structured member's own container reachable, so the values go
+    through the SAME freeze a prepared row's leaves do — which is also what makes
+    the two comparable: one carrier per value, whichever side produced it.
     """
-    return MappingProxyType(dict(row))
+    return MappingProxyType({name: freeze_retained_value(value) for name, value in row.items()})
 
 
 def _effective_row(
