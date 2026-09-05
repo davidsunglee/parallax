@@ -99,7 +99,10 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.snapshot.handle._family import declaring as declaring_of
-from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
+from parallax.snapshot.handle._predicate_writes import (
+    buffer_predicate_instruction,
+    reject_temporal_delete,
+)
 from parallax.snapshot.handle._write_inputs import (
     BufferedInserts,
     KeyedWriteValueError,
@@ -374,7 +377,10 @@ def wire_predicate_write(
     about the Entity, the window, or the assignments beside it. The Entity is
     then resolved HERE rather than left to the instruction build, because the
     temporal bounds are rendered against the target's own declaring Entity and a
-    bound has to be canonical from the moment the instruction exists.
+    bound has to be canonical from the moment the instruction exists — and
+    ``delete_where``, which offers no bound to render, hears the target's
+    verdict on the VERB before the window gate is reached at all, exactly as the
+    Typed ``_where`` lane does.
     """
     refuse_reentry(lane.lifecycle)
     selection = _authored_document(target, "a predicate-selected write's canonical target")
@@ -382,6 +388,7 @@ def wire_predicate_write(
     authored = _authored_changes(mutation, changes)
     entity = instructions.resolve_target(lane.model.meta, entity_name)
     declaring = declaring_of(lane.model.meta, entity)
+    reject_temporal_delete(entity, declaring, mutation)
     valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
     members = _row_members(lane.model.meta, entity)
     unknown = sorted(set(authored) - set(members))
