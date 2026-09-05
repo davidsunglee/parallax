@@ -705,7 +705,7 @@ def test_an_axis_behind_a_withdrawn_write_surface_is_no_cause_of_it() -> None:
     assert [type(operation) for operation in write.caused_by] == [EntityAltered]
 
 
-def _rolled(*, concrete: bool, dated: bool) -> Metamodel:
+def _write_handle_and_axis(*, concrete: bool, dated: bool) -> Metamodel:
     """An `Instrument` family whose `Note` holds the concrete-subtype role or the
     abstract one, gaining a Transaction-Time axis over Instants it already
     declared in the same evolution."""
@@ -741,7 +741,10 @@ def test_an_axis_behind_a_surrendered_write_handle_is_no_cause_of_it() -> None:
     # the role change is the whole cause, and the axis arriving beside it moved
     # nothing this impact reports. The concrete sibling, whose handle survives,
     # names that same axis as the whole cause of its own shape moving.
-    evolution = evolve(_rolled(concrete=True, dated=False), _rolled(concrete=False, dated=True))
+    evolution = evolve(
+        _write_handle_and_axis(concrete=True, dated=False),
+        _write_handle_and_axis(concrete=False, dated=True),
+    )
     (added,) = [
         operation for operation in evolution.operations if isinstance(operation, AsOfAxisAdded)
     ]
