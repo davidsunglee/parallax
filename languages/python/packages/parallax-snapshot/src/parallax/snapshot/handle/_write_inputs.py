@@ -194,6 +194,12 @@ class TransactionTimePinReadOnlyError(ValueError):
     code: Final[str] = "transaction-time-pin-read-only"
 
 
+_UNPOPULATED: Final = object()
+"""What :func:`source_identity_row` reads for a member the value states no value
+for — the one reading that must answer rather than raise, since it runs before
+the refusal such a value has coming."""
+
+
 def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
     return declaring_entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
 
@@ -231,20 +237,21 @@ an :class:`~parallax.core.unit_work.ObjectKey`."""
 def source_identity_row(
     record: EntityMetadata, meta: Metamodel, value: EntityBase
 ) -> Mapping[str, object] | None:
-    """``value``'s primary-key members read straight off it — or ``None`` when
-    its own class carries no attribute for one of them.
+    """``value``'s primary-key members read straight off it — or ``None`` when it
+    states no value for one of them, because its own class carries no attribute
+    for that member or because nothing ever populated the one it carries.
 
-    The Entity Row Codec's :meth:`~parallax.core.entity.EntityRowCodec.identity_row`
-    answers the same members and REFUSES that value instead, which is the
-    difference this reading exists for: the identity row is what names the object
-    to the buffered-insert ledger, and the ledger is consulted before the
-    provenance refusal that a value naming no object of this store has coming. A
-    cross-model value whose class keys the same Entity by other members must
-    therefore reach that refusal rather than an
-    :class:`~parallax.core.entity.EntityRowError` raised on its behalf, and
-    ``None`` — no object, so no insert of it was buffered — is what leaves it
-    standing. The codec's own refusal follows later, when the write goes to
-    derive the row it would actually buffer.
+    Total for every value of the Entity, which is what this reading exists for:
+    the identity row is what names the object to the buffered-insert ledger, and
+    the ledger is consulted before the provenance refusal that a value naming no
+    object of this store has coming, so a value this reading could refuse would
+    be answered ahead of the honest complaint about it. The Entity Row Codec's
+    :meth:`~parallax.core.entity.EntityRowCodec.identity_row` answers the same
+    members and refuses instead; its refusal follows later, when the write goes
+    to derive the row it would actually buffer.
+
+    ``None`` means no object, so no insert of it was buffered, which is what
+    leaves such a value's provenance refusal standing.
 
     A primary key is Attributes alone, whose canonical form is the value itself,
     so members are carried here exactly as a row would serialize them and a
@@ -256,7 +263,10 @@ def source_identity_row(
         py_name = names.name_to_py.get(attribute.identity.name)
         if py_name is None:
             return None
-        row[attribute.identity.name] = getattr(value, py_name)
+        member = getattr(value, py_name, _UNPOPULATED)
+        if member is _UNPOPULATED:
+            return None
+        row[attribute.identity.name] = member
     return row
 
 
