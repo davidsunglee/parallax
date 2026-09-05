@@ -4,16 +4,16 @@ What the public read verbs cannot state is what this suite is for: that the
 scope refuses re-entry before it asks its policy for anything — a Wire spelling
 it cannot even lower included, since lowering is the call's own argument — that
 it selects the model before it refuses a classless one, that a refused query
-reaches no capability at all, that one scope chooses its publication per call
-rather than holding one, and that the body it hands the policy takes its port,
+reaches no capability that executes, that one scope chooses its publication per
+call rather than holding one, and that the body it hands the policy takes its port,
 its Concurrency Preference, and its observation ledger from the inputs it was
 handed rather than from anything it closed over.
 
 A delivery is the same ladder read from the other side, and gets the same
 treatment: that a stream verb refuses everything it can before it judges the page
-size it was named with, that constructing one reaches no capability and entering
-one opens exactly the activity the policy answers, and that every page of a
-delivery comes back to the ONE scope and the ONE selection it was opened with.
+size it was named with, that constructing one opens no activity and entering one
+opens exactly the activity the policy answers, and that every page of a delivery
+comes back to the ONE scope and the ONE selection it was opened with.
 
 The recording policy here is the third adapter beside the two production ones:
 it answers a fixed selection, records every capability call, and runs each body
@@ -73,8 +73,7 @@ from parallax.snapshot.handle._retention import ObservationLedger
 
 _ACCOUNT_ROWS: Final = (NEW_ROW,)
 
-_PAGE: Final = 2
-"""A page size that is valid, so a refusal ahead of it is the case's own subject."""
+_VALID_BATCH_SIZE: Final = 2
 
 
 def _account_row(account_id: int) -> dict[str, object]:
@@ -247,7 +246,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
 
 
 @dataclass(frozen=True, slots=True)
-class _Paged:
+class _PageRead:
     """One page the scope's own body read, and what it read it under."""
 
     model: CatalogedModel
@@ -256,11 +255,11 @@ class _Paged:
     ledger: ObservationLedger | None
 
 
-def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_Paged]:
+def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_PageRead]:
     """The model, port, preference, and ledger every page of a delivery was read
     under, spelled with the page reader's full signature for `_recorded`'s
     reason."""
-    paged: list[_Paged] = []
+    page_reads: list[_PageRead] = []
 
     def recording_read_stream_page(
         page_plan: PagePlan,
@@ -272,13 +271,13 @@ def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_Paged]:
         ledger: ObservationLedger | None = None,
         calls: DatabaseCallScope = INERT,
     ) -> StreamPage:
-        paged.append(_Paged(model, port, preference, ledger))
+        page_reads.append(_PageRead(model, port, preference, ledger))
         return handle_page.read_stream_page(
             page_plan, at, model, port, preference=preference, ledger=ledger, calls=calls
         )
 
     patch.setattr(read_scope_module, "read_stream_page", recording_read_stream_page)
-    return paged
+    return page_reads
 
 
 def _delivering() -> InstalledLifecycle:
@@ -314,10 +313,10 @@ def test_every_verb_refuses_re_entry_before_it_asks_its_policy_for_anything() ->
 
     for verb in (
         lambda: scope.find(_typed_query()),
-        lambda: scope.stream(_typed_query(), _PAGE),
+        lambda: scope.stream(_typed_query(), _VALID_BATCH_SIZE),
         lambda: scope.read_rows(_rows_node()),
         lambda: scope.wire_find(_wire_node()),
-        lambda: scope.wire_stream(_wire_node(), _PAGE),
+        lambda: scope.wire_stream(_wire_node(), _VALID_BATCH_SIZE),
     ):
         with pytest.raises(ExecutionLifecycleReentryError):
             verb()
@@ -338,13 +337,13 @@ def test_a_wire_verb_refuses_re_entry_before_it_lowers_what_it_was_handed() -> N
 
     for refused in (
         lambda: delivering.wire_find(malformed),
-        lambda: delivering.wire_stream(malformed, _PAGE),
+        lambda: delivering.wire_stream(malformed, _VALID_BATCH_SIZE),
     ):
         with pytest.raises(ExecutionLifecycleReentryError):
             refused()
     for complaining in (
         lambda: quiet.wire_find(malformed),
-        lambda: quiet.wire_stream(malformed, _PAGE),
+        lambda: quiet.wire_stream(malformed, _VALID_BATCH_SIZE),
     ):
         with pytest.raises(ObjectQueryError, match="missing required clause"):
             complaining()
@@ -573,7 +572,7 @@ def test_the_wire_stream_verb_crosses_no_classless_refusal_and_still_judges_its_
         ("wire_stream", "WIRE", "Account"),
     ],
 )
-def test_constructing_a_stream_reaches_no_capability_and_entering_it_opens_one(
+def test_constructing_a_stream_opens_no_activity_and_entering_it_opens_one(
     verb_name: str, interface: ReadInterface, target: str
 ) -> None:
     # The stream's side-effect boundary is its scope rather than its
@@ -585,8 +584,8 @@ def test_constructing_a_stream_reaches_no_capability_and_entering_it_opens_one(
     port = ScriptedPort(Read(rows=[_account_row(1)]))
     scope, execution = _scope(port)
     verbs: dict[str, Callable[[], Any]] = {
-        "stream": lambda: scope.stream(_typed_query(), _PAGE),
-        "wire_stream": lambda: scope.wire_stream(_wire_node(), _PAGE),
+        "stream": lambda: scope.stream(_typed_query(), _VALID_BATCH_SIZE),
+        "wire_stream": lambda: scope.wire_stream(_wire_node(), _VALID_BATCH_SIZE),
     }
 
     stream = verbs[verb_name]()
@@ -596,7 +595,11 @@ def test_constructing_a_stream_reaches_no_capability_and_entering_it_opens_one(
     with stream:
         assert execution.calls == ["begin", "open_stream"]
         opened_on, opened_as, batch_size = execution.stream_calls[0]
-        assert (opened_on.canonical, opened_as, batch_size) == (target, interface, _PAGE)
+        assert (opened_on.canonical, opened_as, batch_size) == (
+            target,
+            interface,
+            _VALID_BATCH_SIZE,
+        )
         assert list(stream) != []
     assert execution.calls == ["begin", "open_stream", "page"]
 
@@ -617,15 +620,15 @@ def test_every_page_of_a_delivery_is_read_under_the_one_selection_it_opened_with
         Read(rows=[_account_row(3)]),
     )
     scope, execution = _scope(port, selected=selected)
-    paged = _recorded_pages(monkeypatch)
+    page_reads = _recorded_pages(monkeypatch)
 
     with scope.stream(_typed_query(), 1) as stream:
         delivered = [root.id for root in stream]
 
     assert delivered == [1, 2, 3]
     assert execution.calls == ["begin", "open_stream", "page", "page", "page"]
-    assert [page.model for page in paged] == [selected.model] * 3
-    assert all(page.model is selected.model for page in paged)
+    assert [read.model for read in page_reads] == [selected.model] * 3
+    assert all(read.model is selected.model for read in page_reads)
 
 
 def test_every_page_threads_the_port_preference_and_ledger_it_was_handed(
@@ -640,17 +643,17 @@ def test_every_page_threads_the_port_preference_and_ledger_it_was_handed(
     participating_port = ScriptedPort(Read(rows=[_account_row(1)]))
     standalone, _ = _scope(standalone_port)
     participating, _ = _scope(participating_port, preference="locking", ledger=ledger)
-    paged = _recorded_pages(monkeypatch)
+    page_reads = _recorded_pages(monkeypatch)
 
     for scope, expected_port in (
         (standalone, standalone_port),
         (participating, participating_port),
     ):
-        with scope.stream(_typed_query(), _PAGE) as stream:
+        with scope.stream(_typed_query(), _VALID_BATCH_SIZE) as stream:
             assert list(stream) != []
-        assert paged[-1].port is expected_port
+        assert page_reads[-1].port is expected_port
 
-    first, second = paged
+    first, second = page_reads
     assert (first.preference, first.ledger) == (None, None)
     assert second.preference == "locking"
     assert second.ledger is ledger

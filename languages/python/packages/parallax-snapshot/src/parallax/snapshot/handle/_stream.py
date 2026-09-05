@@ -69,7 +69,7 @@ __all__ = [
 
 
 class StreamExecution(Protocol):
-    """The two things a delivery reaches outside itself, as one retained object.
+    """The two things a delivery asks its read composition for, as one object.
 
     A stream retains the ONE read composition that opened it, so what a page runs
     inside and whose activity the stream is are one answer given once, by the

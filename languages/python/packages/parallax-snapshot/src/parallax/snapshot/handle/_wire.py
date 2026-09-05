@@ -6,8 +6,8 @@ modes. A view retains the one
 :class:`~parallax.snapshot.handle._read_scope.ReadScope` its owner already
 composed — read gate, force-flush, locking, evidence retention, activity
 bracket, unit of work, coalescing — so a Wire call and a Typed call differ in
-nothing but the representation their values are stated in, and the view itself
-decides nothing and holds nothing else. That is why the interfaces are two
+nothing but the representation their values are stated in, and a view's read half
+decides nothing and holds nothing besides that scope. That is why the interfaces are two
 objects rather than one ``format=`` argument: capability is what a caller holds,
 not a value it passes.
 
