@@ -78,10 +78,12 @@ __all__ = [
     "WriteAssignment",
     "WriteInstruction",
     "WriteInstructionError",
+    "WriteSurface",
     "deserialize",
     "non_temporal_milestone_refusal",
     "resolve_target",
     "serialize",
+    "temporal_delete_refusal",
 ]
 
 # The keyed write mutation surface: the MVP non-temporal / audit-only verbs plus
@@ -92,6 +94,12 @@ KeyedMutation = Literal[
 # The predicate-selected (set-based) mutation surface: there is no `insert` — a
 # predicate cannot select rows that do not yet exist.
 PredicateMutation = Literal["update", "delete", "terminate", "updateUntil", "terminateUntil"]
+
+# Which of the two verb surfaces above a mutation arrived through. Carried only
+# so a refusal can name methods the caller can act on: one mutation token is
+# spelled by two methods, and answering a `terminate_where` call with "use
+# `delete`" names the addressed verb, which selects nothing.
+WriteSurface = Literal["keyed", "predicate"]
 
 INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 """The keyed mutations that OPEN a row rather than write against an existing
@@ -594,7 +602,70 @@ def _wire_bound(value: str | dt.datetime) -> object:
 # --------------------------------------------------------------------------- #
 # Target/mutation applicability (metamodel-aware, shared across the layers).   #
 # --------------------------------------------------------------------------- #
-def non_temporal_milestone_refusal(entity_name: str, mutation: str) -> str | None:
+_KEYED_SPELLING: Final[dict[str, str]] = {
+    "insert": "insert",
+    "insertUntil": "insert_until",
+    "update": "update",
+    "updateUntil": "update_until",
+    "delete": "delete",
+    "terminate": "terminate",
+    "terminateUntil": "terminate_until",
+}
+
+_MILESTONE_MEANING: Final[dict[str, tuple[str, str]]] = {
+    "insertUntil": ("records a row over a time range", "insert"),
+    "updateUntil": ("records a change over a time range", "update"),
+    "terminate": ("closes a row's history instead of removing it", "delete"),
+    "terminateUntil": ("closes a row's history instead of removing it", "delete"),
+}
+
+
+def _spelled(mutation: str, surface: WriteSurface) -> str:
+    """``mutation``'s METHOD name on ``surface``, which is the only spelling a
+    caller can act on.
+
+    Deliberately not the wire mutation token these refusals otherwise render:
+    a caller who wrote ``terminate_until`` never typed ``terminateUntil``, and a
+    message that renames their call to a token no method carries costs them the
+    step of translating it back. Scoped to the two applicability refusals below;
+    every other message in this module still names the token it was given.
+    """
+    keyed = _KEYED_SPELLING[mutation]
+    return keyed if surface == "keyed" else f"{keyed}_where"
+
+
+def temporal_delete_refusal(
+    entity_name: str, mutation: str, *, surface: WriteSurface
+) -> str | None:
+    """Why a TEMPORAL target refuses ``mutation``'s VERB, or ``None`` when this
+    rule has nothing to say about it.
+
+    Reached only once the caller has established that ``entity_name``'s
+    inheritance family DOES derive an As-Of Axis. ``delete`` is physical row
+    removal and carries no temporal meaning at all, so a target that milestones
+    its rows spells its removal ``terminate`` and rejects ``delete`` outright
+    (`python.md` §5 "Write verbs and temporal spellings"; `m-txtime-write` /
+    `m-bitemp-write`). Settling one anyway would erase the history the target
+    exists to keep, leaving no milestone recording that the value ever held.
+
+    A MESSAGE rather than a refusal, for the same reason
+    :func:`non_temporal_milestone_refusal` is one: the two layers that can reach
+    this quadrant classify differently, and one wording keeps the verb's refusal
+    and the flush's from describing the mismatch differently. The two are
+    converse halves of one applicability rule and are never both consulted.
+    """
+    if mutation != "delete":
+        return None
+    return (
+        f"Temporal objects like {entity_name!r} do not support "
+        f"{_spelled(mutation, surface)!r}, which physically removes rows. "
+        f"Use {_spelled('terminate', surface)!r} instead."
+    )
+
+
+def non_temporal_milestone_refusal(
+    entity_name: str, mutation: str, *, surface: WriteSurface
+) -> str | None:
     """Why a NON-TEMPORAL target refuses ``mutation``'s VERB, or ``None`` when
     this rule has nothing to say about it.
 
@@ -617,13 +688,19 @@ def non_temporal_milestone_refusal(entity_name: str, mutation: str) -> str | Non
     the last structural refusal before SQL. One wording, so an ingress cannot
     describe the mismatch differently from the flush that would otherwise settle
     it.
+
+    The alternative each milestone verb names is the one that keeps the caller's
+    row effect on a target with no axis, which is why it is per-verb: a bounded
+    ``insert_until`` wanted an ``insert``, not the ``delete`` a ``terminate``
+    wanted (`m-txtime-write` / `m-bitemp-write`).
     """
     if mutation not in MILESTONE_MUTATIONS:
         return None
+    meaning, alternative = _MILESTONE_MEANING[mutation]
     return (
-        f"{mutation!r} is a temporal milestone verb, and {entity_name!r} declares no "
-        "temporal dimension — a milestone verb never applies to a non-temporal entity "
-        "(m-txtime-write / m-bitemp-write)"
+        f"Non-temporal objects like {entity_name!r} do not support "
+        f"{_spelled(mutation, surface)!r}, which {meaning}. "
+        f"Use {_spelled(alternative, surface)!r} instead."
     )
 
 
@@ -695,7 +772,11 @@ def _preflight_write_shape(
         if plural is not None:
             raise InstructionRejectedError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
     else:
-        refusal = non_temporal_milestone_refusal(entity.identity.name, instruction.mutation)
+        refusal = non_temporal_milestone_refusal(
+            entity.identity.name,
+            instruction.mutation,
+            surface="keyed" if isinstance(instruction, KeyedWrite) else "predicate",
+        )
         if refusal is not None:
             raise WriteInstructionError(refusal)
     return entity

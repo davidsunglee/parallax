@@ -15,10 +15,10 @@ are Wire-only because ``edit()`` judges a Typed assignment before ``tx.update()`
 receives a value, and the Typed rows here assert that pre-emption rather than
 leaving it unstated.
 
-Two shapes are pinned per representation instead of compared, because the two
-representations answer them differently: `terminate` against a target with no
-as-of axis whose evidence is also unusable, and `delete` against a Bitemporal
-target.
+Two shapes assert the outcome the specification names and carry an expected
+failure until the ingress reaches it: `terminate` against a target with no as-of
+axis whose evidence is also unusable, which only the Typed lane answers wrongly,
+and `delete` against a temporal target, which neither lane refuses at the verb.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from typing import cast
 import pytest
 from _keyed_write_drivers import (
     ACCOUNT_TARGET,
+    BALANCE_TARGET,
     BLANK_CONTACT_TARGET,
     CONCURRENCIES,
     CONTACT_TARGET,
@@ -41,6 +42,7 @@ from _keyed_write_drivers import (
     VERBS,
     Change,
     Completed,
+    Concurrency,
     Outcome,
     Refused,
     Representation,
@@ -53,12 +55,12 @@ from _keyed_write_drivers import (
     reachable,
 )
 
-from _support.db_port import BeginCall, CommitCall
 from parallax.core.entity import EditError
 
-# The Typed `delete` verb reaches no window gate and the Wire one does, so a
-# Bitemporal `delete` refuses differently by representation. The
-# `test_a_bitemporal_delete_...` rows state each answer directly.
+# The Typed `delete` verb reaches no window gate and the Wire one does, so until
+# both refuse a temporal `delete` outright a Bitemporal one fails at different
+# stages by representation. `test_a_temporal_target_refuses_delete_at_the_verb`
+# states the outcome that retires this exemption.
 _BITEMPORAL_DELETE: frozenset[tuple[str, str]] = frozenset({("position", "delete")})
 
 # `terminate` against a target with no as-of axis, when the source's evidence is
@@ -78,6 +80,11 @@ _SOURCE_VERBS: tuple[Verb, ...] = (
 )
 _BOUNDED_VERBS: tuple[Verb, ...] = ("insert_until", "update_until", "terminate_until")
 _ALL_TARGETS: tuple[Target, ...] = TARGETS + DOCUMENT_TARGETS
+
+
+def _short(target: Target) -> str:
+    """``target``'s Entity name as a refusal spells it, without its namespace."""
+    return target.entity.rsplit(".", 1)[-1]
 
 
 def _agrees(scenario: Scenario) -> None:
@@ -488,53 +495,57 @@ def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
     assert isinstance(refused, Refused)
     assert refused.error == "WriteInstructionError"
     assert refused.phase == "verb"
-    assert "milestone verb never applies to a non-temporal entity" in refused.message
-
-
-# --------------------------------------------------------------------------- #
-# `delete` against a Bitemporal target. The Typed verb reaches neither         #
-# `declaring_of` nor the window gate, so it buffers an instruction the flush   #
-# then refuses, resolves unusable evidence first where there is any, or — over #
-# a row this unit of work inserted — cancels that insert and emits nothing;    #
-# the Wire verb runs the window gate and refuses at the call. Each answer is   #
-# stated on its own, because the specification names neither of the two as the #
-# correct one.                                                                 #
-# --------------------------------------------------------------------------- #
-def test_a_bitemporal_delete_is_refused_at_the_flush_on_the_typed_lane() -> None:
-    refused = outcome(Scenario(target=POSITION_TARGET, verb="delete"), "typed")
-    assert isinstance(refused, Refused)
-    assert refused.error == "TemporalPlanningError"
-    assert refused.phase == "flush"
-    assert refused.message == "'delete' is not a Bitemporal milestone mutation"
-
-
-def test_a_bitemporal_delete_of_a_standalone_source_hears_the_evidence_refusal_typed() -> None:
-    scenario = Scenario(
-        target=POSITION_TARGET, verb="delete", source="standalone", concurrency="locking"
+    assert refused.message == (
+        f"Non-temporal objects like {_short(scenario.target)!r} do not support 'terminate', "
+        "which closes a row's history instead of removing it. Use 'delete' instead."
     )
-    refused = outcome(scenario, "typed")
+
+
+# --------------------------------------------------------------------------- #
+# `delete` against a temporal target. `delete` physically removes rows and     #
+# carries no temporal meaning, so a target that milestones its rows spells its #
+# removal `terminate` and refuses `delete` at the verb, whichever              #
+# representation asked and whatever the source (`python.md` §5). Neither       #
+# representation refuses it there yet: the Typed verb reaches no window gate   #
+# at all, the Wire one reaches a window gate that answers about `valid_from`,  #
+# and a Bitemporal `delete` of a row this unit of work inserted is accepted    #
+# outright, its insert cancelled and no DML emitted.                           #
+# --------------------------------------------------------------------------- #
+_TEMPORAL_DELETE_SOURCES: tuple[tuple[Source, Concurrency, Representation | None], ...] = (
+    ("participating", "optimistic", None),
+    ("standalone", "locking", None),
+    ("participating", "optimistic", "wire"),
+)
+
+_TEMPORAL_DELETE_ROWS: tuple[Scenario, ...] = tuple(
+    Scenario(target=target, verb="delete", source=source, concurrency=concurrency, opened_by=opener)
+    for target in (BALANCE_TARGET, POSITION_TARGET)
+    for source, concurrency, opener in _TEMPORAL_DELETE_SOURCES
+)
+
+_DELETE_IS_NOT_A_TEMPORAL_VERB = pytest.mark.xfail(
+    reason=(
+        "no keyed verb measures `delete` against its target's temporality, so this "
+        "row hears the window gate, the evidence refusal, or nothing at all until "
+        "the shared keyed-write ingress lands"
+    )
+)
+
+
+@_DELETE_IS_NOT_A_TEMPORAL_VERB
+@pytest.mark.parametrize("representation", REPRESENTATIONS)
+@pytest.mark.parametrize("scenario", _TEMPORAL_DELETE_ROWS, ids=str)
+def test_a_temporal_target_refuses_delete_at_the_verb(
+    scenario: Scenario, representation: Representation
+) -> None:
+    refused = outcome(scenario, representation)
     assert isinstance(refused, Refused)
-    assert refused.error == "WriteEvidenceError"
-    assert refused.code == "write-evidence-unavailable"
+    assert refused.error == "WriteInstructionError"
     assert refused.phase == "verb"
-
-
-def test_a_bitemporal_delete_of_an_inserted_row_cancels_it_on_the_typed_lane() -> None:
-    emitted = outcome(Scenario(target=POSITION_TARGET, verb="delete", opened_by="wire"), "typed")
-    assert emitted == Completed((BeginCall(), CommitCall()))
-
-
-def test_a_bitemporal_delete_is_refused_at_the_verb_on_the_wire_lane() -> None:
-    for scenario in (
-        Scenario(target=POSITION_TARGET, verb="delete"),
-        Scenario(target=POSITION_TARGET, verb="delete", source="standalone", concurrency="locking"),
-        Scenario(target=POSITION_TARGET, verb="delete", opened_by="wire"),
-    ):
-        refused = outcome(scenario, "wire")
-        assert isinstance(refused, Refused)
-        assert refused.error == "WriteInstructionError"
-        assert refused.phase == "verb"
-        assert "a bitemporal 'delete' requires valid_from" in refused.message
+    assert refused.message == (
+        f"Temporal objects like {_short(scenario.target)!r} do not support 'delete', "
+        "which physically removes rows. Use 'terminate' instead."
+    )
 
 
 # --------------------------------------------------------------------------- #
