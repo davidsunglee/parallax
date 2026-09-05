@@ -505,7 +505,7 @@ def test_a_fact_outside_the_spelled_shapes_is_refused_rather_than_guessed() -> N
     refused = UnilateralEvolution(
         earlier=None,
         later=_MODEL,
-        operations=(AttributeAltered(_ID, (NullabilityChanged(object(), False),)),),  # pyright: ignore[reportArgumentType]
+        operations=(AttributeAltered(_ID, (NullabilityChanged(object(), False),)),),  # pyright: ignore[reportArgumentType] - the probe carries a value outside the delta's declared domain
         behavioral_impacts=(),
         overlap_visible_operations=(),
     )
@@ -517,13 +517,13 @@ def test_an_unspellable_declaration_or_scope_is_refused_the_same_way() -> None:
     reorder = DeclarationOrderChanged(
         DeclarationCollection.ENTITY_ATTRIBUTES,
         _ORDER,
-        (object(),),  # pyright: ignore[reportArgumentType]
+        (object(),),  # pyright: ignore[reportArgumentType] - the probe carries a declaration identity outside the declared domain
         (),
     )
     with pytest.raises(EvolutionSpellingError, match="no declaration spelling"):
         _spelled(reorder)
     impact = ConcurrencyControlChanged(
-        scope=object(),  # pyright: ignore[reportArgumentType]
+        scope=object(),  # pyright: ignore[reportArgumentType] - the probe carries a scope outside the declared domain
         earlier=_MODEL,
         later=_MODEL,
         caused_by=(),

@@ -26,9 +26,11 @@ values `valid-time` / `transaction-time`.
 
 **Query.** A read is an Object Query carrying a Predicate; neither is an
 *operation*. What the family retires is naming a QUERY an operation, so a stem a
-live subject QUALIFIES is not in it: an Evolution Operation, a physical
-operation, and the unsupported one a dialect cannot render are each a named thing
-of their own (`m-model-evolution`), and none of them is a query. Every other
+live subject QUALIFIES is not in it: an Evolution Operation (`m-model-evolution`),
+the private physical operation a Schema Delta lowers to, and the unsupported one a
+dialect cannot render (`m-schema-delta`) are each a named thing of their own, and
+none of them is a query. A query subject standing in front of the qualifier still
+names a query, whatever qualifies the stem in between. Every other
 spelling that names a query, its grammar, its wire form, or the machinery that
 reads one an *operation* is retired: the module
 `m-op-algebra`, the package `op_algebra`, the schema `operation.schema.json`,
@@ -90,7 +92,8 @@ Allow-list (explicitly labeled historical / prior-art / rejection text):
   change; a URL under the repository's own host is scanned, because a canonical
   schema ``$id`` is a name this repository chooses;
 - the handful of LIVE spellings a compound rule reads as retired ones, listed in
-  ``_LIVE_SPELLING_WORDS``, and the qualified stems of ``_LIVE_QUALIFIED_WORDS``;
+  ``_LIVE_SPELLING_WORDS``, and the stems ``_LIVE_QUALIFIED_WORDS`` qualifies
+  where no query subject stands in front of the qualifier;
 - this module's own test file, whose fixtures spell the retired phrases.
 """
 
@@ -460,17 +463,26 @@ _LIVE_SPELLINGS = re.compile(
 )
 
 # Qualifiers that make the stem after them a LIVE subject rather than a query
-# named as an operation: an Evolution Operation, the private physical operation a
-# Schema Delta lowers to, and the unsupported one a dialect cannot render. Each
-# is a named thing `m-model-evolution` owns, and none of them is a query, so the
-# whole qualified compound is masked wherever it is written.
+# named as an operation: an Evolution Operation (`m-model-evolution`), the
+# private physical operation a Schema Delta lowers to, and the unsupported one a
+# dialect cannot render (`m-schema-delta`). Each is a named thing of its own and
+# none of them is a query, so the whole qualified compound is masked wherever it
+# is written.
 #
 # Unlike the exact identifiers above, the qualifier joins its stem the way every
 # compound in this module does: a space, a `/`, a `_`, a `-`, or a camel hump —
 # and the stem closes at the same camel boundary, so `evolutionOperationKind` is
 # the one compound it spells rather than a qualifier beside a retired one.
+#
+# The exemption qualifies the stem; it never masks the word in front of it. A
+# query subject there names a read an operation whatever qualifier sits between
+# them — `queryPhysicalOperationTree` and `query_evolution_operation_tree` are
+# the retired compound, not an exempt one — so a match carrying that subject is
+# returned unmasked for the retired patterns to read.
 _LIVE_QUALIFIED_WORDS = ("evolution", "physical", "unsupported")
+_LIVE_QUALIFIED_SUBJECT = "subject"
 _LIVE_QUALIFIED = re.compile(
+    rf"(?P<{_LIVE_QUALIFIED_SUBJECT}>(?:{_QUERY_CAMEL_SUBJECTS})(?:{_JOIN}|))?"
     rf"(?:{'|'.join(_camel_first_word(word) for word in _LIVE_QUALIFIED_WORDS)})"
     rf"(?:{_JOIN}|)(?:[Oo]perations?){_CAMEL_RIGHT}"
 )
@@ -560,6 +572,13 @@ def _blanked(match: re.Match[str]) -> str:
     return _MASK * len(match.group(0))
 
 
+def _blanked_unless_a_query_asks(match: re.Match[str]) -> str:
+    """*match* blanked, unless a query subject qualifies the qualifier in turn."""
+    if match.group(_LIVE_QUALIFIED_SUBJECT):
+        return match.group(0)
+    return _blanked(match)
+
+
 def _masked(text: str) -> str:
     """*text* with every exempt line, foreign URL, and live spelling ``_MASK``ed.
 
@@ -582,7 +601,11 @@ def _masked(text: str) -> str:
             masked.append(_MASK * len(line))
         else:
             unmasked = _URL.sub(_blanked, line)
-            masked.append(_LIVE_QUALIFIED.sub(_blanked, _LIVE_SPELLINGS.sub(_blanked, unmasked)))
+            masked.append(
+                _LIVE_QUALIFIED.sub(
+                    _blanked_unless_a_query_asks, _LIVE_SPELLINGS.sub(_blanked, unmasked)
+                )
+            )
     return "\n".join(masked)
 
 

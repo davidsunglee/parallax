@@ -1,10 +1,15 @@
-"""The corpus witnesses every name the evolution vocabulary closes — DB-free.
+"""The corpus witnesses every name a descriptor pair can reach — DB-free.
 
 ADR 0063 fixes closed algebras, and `compatibility-case.schema.json` spells them
 as enums. A closed vocabulary with an unwitnessed name is a portability claim no
 implementation is measured against, so these tests read the enums back out of the
 schema and require each name to appear in some case's `then.evolution`, together
 with both directions of the boundaries the specification calls directional.
+
+Three names are exempt, and the exemption is the one place this falls short of
+the portable proof ADR 0063 asks for: no pair of model descriptors can reach
+them, for the structural reason `_UNREACHABLE_FROM_A_DESCRIPTOR` states and
+`test_a_surviving_axis_cannot_change_its_endpoints` proves.
 
 The property is the CORPUS's, not one implementation's, which is why it lives in
 the harness: it fails when a name is added to the vocabulary and no case is
@@ -92,9 +97,9 @@ def _directions(kind: str) -> set[tuple[Any, Any]]:
 
 def _hashable(value: Any) -> Any:
     if isinstance(value, list):
-        return tuple(_hashable(item) for item in value)  # pyright: ignore[reportUnknownVariableType]
+        return tuple(_hashable(item) for item in value)  # pyright: ignore[reportUnknownVariableType] - parsed YAML hands its items over as unknowns
     if isinstance(value, dict):
-        return tuple(sorted((key, _hashable(item)) for key, item in value.items()))  # pyright: ignore[reportUnknownVariableType]
+        return tuple(sorted((key, _hashable(item)) for key, item in value.items()))  # pyright: ignore[reportUnknownVariableType] - parsed YAML hands its items over as unknowns
     return value
 
 

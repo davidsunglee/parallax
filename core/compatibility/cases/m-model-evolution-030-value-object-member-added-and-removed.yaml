@@ -3,8 +3,8 @@
 #
 # The occurrence survives, so its leaves are compared one by one. A nullable
 # `postcode` is unilateral; a required `tier` needs the documents already stored
-# to carry a value they do not have; removing `region` invalidates a previously
-# valid authored path. The three operations stay in identity order rather than
+# to carry a value they do not have and every previously valid insert to supply
+# it; removing `region` invalidates a previously valid authored path. The three operations stay in identity order rather than
 # being grouped by kind, because an addition and a removal cannot tie at one
 # identity.
 tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
@@ -35,4 +35,5 @@ then:
           kind: ValueObjectAttributeAdded
           valueObjectAttribute: parallax.compatibility.Consignment.origin.tier
         reasons:
+          - AuthoringSurfaceChangeRequired
           - DatabaseMigrationRequired

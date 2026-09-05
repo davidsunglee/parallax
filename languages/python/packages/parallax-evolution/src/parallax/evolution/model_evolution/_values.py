@@ -15,9 +15,11 @@ from typing import Final
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel import (
+    ApplicationAssigned,
     AsOfAxisLocation,
     AttributeIdentity,
     AttributeLocation,
+    AttributeMetadata,
     AttributePrimaryKey,
     Cardinality,
     EntityIdentity,
@@ -29,6 +31,7 @@ from parallax.core.metamodel import (
     ModelLocationKey,
     Multiplicity,
     PersistenceMode,
+    PrimaryKey,
     RelationshipIdentity,
     RelationshipJoin,
     RelationshipLocation,
@@ -55,6 +58,7 @@ __all__ = [
     "AS_OF_AXIS_DELTA_ORDER",
     "ATTRIBUTE_DELTA_ORDER",
     "BEHAVIORAL_IMPACT_ORDER",
+    "CALLER_INPUT_ORDER",
     "COORDINATION_REASON_ORDER",
     "ENTITY_DELTA_ORDER",
     "INDEX_DELTA_ORDER",
@@ -155,6 +159,7 @@ __all__ = [
     "WriteScope",
     "WritesDisabled",
     "WritesEnabled",
+    "attribute_write_capability",
     "canonical_operation_key",
 ]
 
@@ -850,11 +855,45 @@ type EntityWriteCapability = WritesDisabled | WritesEnabled
 
 
 class AttributeWriteCapability(enum.Enum):
-    """What caller input one Attribute admits."""
+    """What caller input one Attribute admits, widest input last.
+
+    The order is the admission order: each member accepts everything the one
+    before it accepts and more, so comparing two members says whether the caller
+    contract widened or narrowed.
+    """
 
     FRAMEWORK_OWNED = "FrameworkOwned"
     CALLER_INSERT_ONLY = "CallerInsertOnly"
     CALLER_INSERT_AND_UPDATE = "CallerInsertAndUpdate"
+
+
+CALLER_INPUT_ORDER: Final[tuple[AttributeWriteCapability, ...]] = (
+    AttributeWriteCapability.FRAMEWORK_OWNED,
+    AttributeWriteCapability.CALLER_INSERT_ONLY,
+    AttributeWriteCapability.CALLER_INSERT_AND_UPDATE,
+)
+
+
+def attribute_write_capability(attribute: AttributeMetadata) -> AttributeWriteCapability:
+    """What caller input one accepted Attribute admits.
+
+    Ownership is derived, not declared: a generated primary key joins the
+    framework-owned designations because the framework rather than the caller
+    supplies its value, while an application-assigned key and a read-only
+    Attribute admit insert input alone. Classification and the write-capability
+    impact read the contract here so a raw flag is never mistaken for it.
+    """
+    if attribute.framework_owned or _generated(attribute):
+        return AttributeWriteCapability.FRAMEWORK_OWNED
+    if attribute.read_only or isinstance(attribute.primary_key, PrimaryKey):
+        return AttributeWriteCapability.CALLER_INSERT_ONLY
+    return AttributeWriteCapability.CALLER_INSERT_AND_UPDATE
+
+
+def _generated(attribute: AttributeMetadata) -> bool:
+    return isinstance(attribute.primary_key, PrimaryKey) and not isinstance(
+        attribute.primary_key.generation, ApplicationAssigned
+    )
 
 
 type WriteScope = EntityIdentity | AttributeIdentity

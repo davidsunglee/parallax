@@ -1,12 +1,13 @@
 # Adding a REQUIRED member to an existing stored shape (m-model-evolution):
-# coordinated, for the database alone.
+# coordinated, for both reasons.
 #
 # `Ticket.queue` is the same AttributeAdded operation as the nullable addition in
 # m-model-evolution-003, classified the other way: rows the earlier edition
 # already stored carry no value the later model requires, and no default and
-# backfill contract exists yet to supply one. The reason set is
-# `DatabaseMigrationRequired` alone — every previously valid query and write still
-# addresses the same identities with the same shapes.
+# backfill contract exists yet to supply one, which is
+# `DatabaseMigrationRequired`. The caller authors the value, so every previously
+# valid insert now omits an input the later model demands, which is
+# `AuthoringSurfaceChangeRequired`.
 tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:
@@ -22,4 +23,4 @@ then:
     overlapVisibleOperations: []
     coordinationRequirements:
       - operation: { kind: AttributeAdded, attribute: parallax.compatibility.Ticket.queue }
-        reasons: [DatabaseMigrationRequired]
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

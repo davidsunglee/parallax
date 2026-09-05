@@ -42,11 +42,16 @@ from parallax.core.metamodel import (
     Table,
     TablePerHierarchy,
     TemporalDimension,
+    ValueObjectAttributeDeclaration,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
 )
 from parallax.evolution.model_evolution import (
     AsOfAxisAdded,
     AsOfAxisAltered,
     AsOfAxisRemoved,
+    ConcreteSubtypeAdded,
     CoordinationReason,
     EntityAdded,
     EntityAltered,
@@ -113,9 +118,19 @@ def _verdict_on(evolution: Evolution, operation: EvolutionOperation) -> _Verdict
 
 def test_a_member_addition_is_directional_in_what_existing_rows_already_hold() -> None:
     # Nothing has to be migrated for a member existing rows need no value for; a
-    # required one has no default and backfill contract to satisfy them with.
+    # required one has no default and backfill contract to satisfy them with, and
+    # every previously valid insert omits the input it now demands.
     assert _verdict(_holding(), _holding(_member(nullable=True))) == _Verdict(_UNILATERAL, False)
-    assert _verdict(_holding(), _holding(_member())) == _Verdict((_MIGRATION,), False)
+    assert _verdict(_holding(), _holding(_member())) == _Verdict(_BOTH, False)
+
+
+def test_a_required_addition_the_framework_owns_asks_nothing_of_the_caller() -> None:
+    # The caller never supplied this value, so no earlier write shape changes;
+    # the rows that already exist still have none, so the database does.
+    owned = dataclasses.replace(
+        attribute(_WIDGET, "version"), optimistic_locking=True, framework_owned=True
+    )
+    assert _verdict(_holding(), _holding(owned)) == _Verdict((_MIGRATION,), False)
 
 
 def test_a_member_removal_needs_the_authoring_surface_whatever_it_declared() -> None:
@@ -211,6 +226,31 @@ def test_the_write_surface_is_directional_in_what_the_caller_may_still_supply() 
     assert _verdict(_holding(read_only), _holding(editable)) == _Verdict(_UNILATERAL, False)
 
 
+def _identified(*, read_only: bool) -> Metamodel:
+    """A `Widget` whose application-assigned key carries the read-only flag."""
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_WIDGET,
+                container=Table("widget"),
+                attributes=(
+                    dataclasses.replace(key(_WIDGET), read_only=read_only),
+                    _LABEL,
+                ),
+            )
+        )
+    )
+
+
+def test_a_flag_moving_over_input_the_caller_never_had_withdraws_nothing() -> None:
+    # An application-assigned key admits insert input and no update whatever its
+    # read-only flag says, so declaring the flag changes the declaration without
+    # touching the contract — and the raw delta is no verdict on its own.
+    assert _verdict(_identified(read_only=False), _identified(read_only=True)) == _Verdict(
+        _UNILATERAL, False
+    )
+
+
 def test_member_ownership_is_directional_in_who_supplies_the_value() -> None:
     version = attribute(_WIDGET, "version")
     owned = dataclasses.replace(version, optimistic_locking=True, framework_owned=True)
@@ -302,6 +342,65 @@ def _altered(evolution: Evolution) -> EvolutionOperation:
     return operation
 
 
+_TERMS = ValueObjectOccurrenceDeclaration(
+    name="terms",
+    storage=Column("terms"),
+    shape=ValueObjectShapeDeclaration(
+        key=ValueObjectShapeKey(),
+        attributes=(ValueObjectAttributeDeclaration("tenor", type=STRING, nullable=True),),
+    ),
+)
+
+
+def _interposing(
+    *,
+    attributes: tuple[AttributeMetadata, ...] = (),
+    value_objects: tuple[ValueObjectOccurrenceDeclaration, ...] = (),
+) -> Evolution:
+    """Interposing an abstract position that declares the given members."""
+    root = Declaration(
+        identity=_ROOT,
+        container=Table("instrument"),
+        attributes=(key(_ROOT),),
+        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+    )
+    branch = Declaration(
+        identity=_BRANCH,
+        attributes=attributes,
+        value_objects=value_objects,
+        inheritance=AbstractSubtype(ExactEntityReference(_ROOT)),
+    )
+    leaf = Declaration(
+        identity=_LEAF,
+        attributes=(attribute(_LEAF, "coupon"),),
+        inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "BOND"),
+    )
+    return evolve(
+        form_metamodel(source(root, leaf)),
+        form_metamodel(
+            source(
+                root,
+                branch,
+                dataclasses.replace(
+                    leaf, inheritance=ConcreteSubtype(ExactEntityReference(_BRANCH), "BOND")
+                ),
+            )
+        ),
+    )
+
+
+def test_an_interposed_position_hands_its_required_members_down() -> None:
+    # The arriving parent's own addition suppresses operations for its members,
+    # so the descendant's inheritance alteration is where they are answered for:
+    # rows already stored carry no value for a required inherited member, and no
+    # previously valid insert supplies one — for an Attribute and a Value Object
+    # occurrence alike.
+    attributes = _interposing(attributes=(attribute(_BRANCH, "issuer", type=STRING),))
+    assert _verdict_on(attributes, _altered(attributes)) == _Verdict(_BOTH, False)
+    occurrences = _interposing(value_objects=(_TERMS,))
+    assert _verdict_on(occurrences, _altered(occurrences)) == _Verdict(_BOTH, False)
+
+
 def test_an_inheritance_change_is_classified_by_its_effective_consequences() -> None:
     # Interposing an abstract position keeps every earlier narrowing resolvable
     # and every physical fact intact. Flattening one back out is the same raw
@@ -389,6 +488,38 @@ def test_an_axis_on_a_wholly_new_entity_is_carried_by_its_parent_addition() -> N
     arriving = evolve(_beside_widget(), _beside_widget(_reading(axis=("openedAt", "closedAt"))))
     assert [type(operation) for operation in arriving.operations] == [EntityAdded]
     assert isinstance(arriving, UnilateralEvolution)
+
+
+def _arriving_family() -> Metamodel:
+    """A table-per-hierarchy family beside the standalone `Widget`."""
+    return _beside_widget(
+        Declaration(
+            identity=_ROOT,
+            container=Table("instrument"),
+            attributes=(key(_ROOT),),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=_LEAF,
+            attributes=(attribute(_LEAF, "coupon"),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "BOND"),
+        ),
+    )
+
+
+def test_a_family_arriving_whole_is_visible_to_no_earlier_reader() -> None:
+    # Overlap visibility is a claim about an EARLIER edition: a later writer
+    # placing a discriminator value in a shared Table an earlier reader cannot
+    # admit. A family the earlier model holds no position of has neither that
+    # Table nor a selection through it, so its concrete subtype's addition is
+    # visible to nobody however the family stores its positions.
+    evolution = evolve(_beside_widget(), _arriving_family())
+    (added,) = [
+        operation
+        for operation in evolution.operations
+        if isinstance(operation, ConcreteSubtypeAdded)
+    ]
+    assert _verdict_on(evolution, added) == _Verdict(_UNILATERAL, False)
 
 
 def _axis_operation(evolution: Evolution) -> EvolutionOperation:

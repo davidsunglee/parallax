@@ -23,6 +23,7 @@ from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.metamodel import (
     AbstractRoot,
+    AbstractSubtype,
     AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
@@ -44,6 +45,7 @@ from parallax.evolution.model_evolution import (
     AsOfAxisAdded,
     AsOfAxisAltered,
     AttributeAdded,
+    AttributeAltered,
     AttributeRemoved,
     AttributeWriteCapability,
     BehavioralImpact,
@@ -513,3 +515,236 @@ def test_an_arriving_axis_claims_the_members_it_makes_its_endpoints() -> None:
     ]
     assert {impact.later for impact in writes} == {AttributeWriteCapability.FRAMEWORK_OWNED}
     assert {impact.caused_by for impact in writes} == {(added,)}
+
+
+_PAIRED = identity("Reconciliation")
+
+
+def _paired_indices(*names: tuple[str, tuple[str, ...]]) -> Metamodel:
+    """A `Reconciliation` carrying one unique Index per named component tuple."""
+    members = tuple(attribute(_PAIRED, name, type=STRING) for name in ("left", "right", "note"))
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_PAIRED,
+                container=Table("reconciliation"),
+                attributes=(key(_PAIRED), *members),
+                indices=tuple(
+                    IndexMetadata(
+                        IndexIdentity(_PAIRED, name),
+                        tuple(AttributeIdentity(_PAIRED, component) for component in components),
+                        unique=True,
+                    )
+                    for name, components in names
+                ),
+            )
+        )
+    )
+
+
+def test_two_equivalent_indices_trading_places_cause_nothing_they_did_not_move() -> None:
+    # A uniqueness rule is an unordered Attribute set, so an Index removed and an
+    # equivalent one added enforce the same rule throughout: the impact beside
+    # them is caused by the Index that carries the rule the two sets differ by,
+    # and by that one alone.
+    evolution = evolve(
+        _paired_indices(("by_pair", ("left", "right"))),
+        _paired_indices(("by_swap", ("right", "left")), ("by_note", ("note",))),
+    )
+    (enforcement,) = _of(evolution, UniquenessEnforcementChanged)
+    assert enforcement.caused_by == (IndexAdded(IndexIdentity(_PAIRED, "by_note")),)
+
+
+def _subtree(*, under: EntityIdentity) -> Metamodel:
+    """Two roots, one of them Transaction-Time, with an ABSTRACT position — and
+    the concrete Entity below it — hanging from ``under``."""
+    declarations = (
+        Declaration(
+            identity=_ROOT,
+            container=Table("instrument"),
+            attributes=(key(_ROOT),),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=_LEDGER,
+            container=Table("ledger"),
+            attributes=(key(_LEDGER), instant(_LEDGER, "txStart"), instant(_LEDGER, "txEnd")),
+            as_of_axes=(
+                AsOfAxisMetadata(
+                    TemporalDimension.TRANSACTION_TIME,
+                    AttributeIdentity(_LEDGER, "txStart"),
+                    AttributeIdentity(_LEDGER, "txEnd"),
+                ),
+            ),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=_STOCK,
+            attributes=(attribute(_STOCK, "ticker", type=STRING),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "STOCK"),
+        ),
+        Declaration(
+            identity=_ENTRY,
+            attributes=(attribute(_ENTRY, "amount"),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_LEDGER), "ENTRY"),
+        ),
+        Declaration(
+            identity=_NOTE,
+            inheritance=AbstractSubtype(ExactEntityReference(under)),
+        ),
+        Declaration(
+            identity=_BOND,
+            attributes=(attribute(_BOND, "coupon"),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_NOTE), "BOND"),
+        ),
+    )
+    return form_metamodel(source(*declarations))
+
+
+def test_an_abstract_position_moving_is_the_cause_above_and_below_it() -> None:
+    # The moved position is abstract, so it denotes no rows and appears in no
+    # concrete set, and the Entity below it declares no inheritance change of its
+    # own: nothing names the two positions the move actually carried. Every
+    # impact the one alteration causes — the roots it left and joined, the
+    # position itself, and the concrete Entity beneath it — names that operation,
+    # and none of them is left without a cause.
+    evolution = evolve(_subtree(under=_ROOT), _subtree(under=_LEDGER))
+    (moved,) = [
+        operation for operation in evolution.operations if isinstance(operation, EntityAltered)
+    ]
+    assert {(type(impact).__name__, impact.scope) for impact in evolution.behavioral_impacts} == {
+        ("ConcurrencyControlChanged", _BOND),
+        ("ConcurrencyControlChanged", _NOTE),
+        ("QueryResultMembershipChanged", _BOND),
+        ("QueryResultMembershipChanged", _LEDGER),
+        ("QueryResultMembershipChanged", _NOTE),
+        ("QueryResultMembershipChanged", _ROOT),
+        ("WriteCapabilityChanged", _BOND),
+        ("WriteCapabilityChanged", _NOTE),
+    }
+    assert {impact.caused_by for impact in evolution.behavioral_impacts} == {(moved,)}
+
+
+def _tagged(tag: str, *, extended: bool) -> Metamodel:
+    """A table-per-hierarchy family whose concrete `Bond` carries ``tag``,
+    optionally extended by a second concrete position."""
+    declarations = [
+        Declaration(
+            identity=_ROOT,
+            container=Table("instrument"),
+            attributes=(key(_ROOT),),
+            inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        ),
+        Declaration(
+            identity=_BOND,
+            attributes=(attribute(_BOND, "coupon"),),
+            inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), tag),
+        ),
+    ]
+    if extended:
+        declarations.append(
+            Declaration(
+                identity=_STOCK,
+                attributes=(attribute(_STOCK, "ticker", type=STRING),),
+                inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "STOCK"),
+            )
+        )
+    return form_metamodel(source(*declarations))
+
+
+def test_a_re_tagged_position_moves_nothing_the_family_denotes() -> None:
+    # A tag value is an inheritance change that leaves every position exactly
+    # where it was: the root denotes a different concrete set here, but the
+    # arriving subtype is the whole of why, and the re-tagged one is named by
+    # nothing.
+    evolution = evolve(_tagged("BOND", extended=False), _tagged("SENIOR", extended=True))
+    (membership,) = _of(evolution, QueryResultMembershipChanged)
+    assert membership.scope == _ROOT
+    assert membership.caused_by == (ConcreteSubtypeAdded(_STOCK),)
+
+
+def _closing(*, sealed: bool) -> Metamodel:
+    """An `Archive` that withdraws its writes and gains a Transaction-Time axis
+    over two Timestamps it already declared, in one evolution."""
+    axis = AsOfAxisMetadata(
+        TemporalDimension.TRANSACTION_TIME,
+        AttributeIdentity(_ARCHIVE, "openedAt"),
+        AttributeIdentity(_ARCHIVE, "closedAt"),
+    )
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_ARCHIVE,
+                container=Table("archive"),
+                persistence=(PersistenceMode.READ_ONLY if sealed else PersistenceMode.READ_WRITE),
+                attributes=(
+                    key(_ARCHIVE),
+                    instant(_ARCHIVE, "openedAt"),
+                    instant(_ARCHIVE, "closedAt"),
+                ),
+                as_of_axes=(axis,) if sealed else (),
+            )
+        )
+    )
+
+
+def test_an_axis_behind_a_withdrawn_write_surface_is_no_cause_of_it() -> None:
+    # A surface admitting no write carries no temporal shape, so the axis
+    # arriving beside the withdrawal moved nothing the impact reports: the
+    # Persistence Mode is its whole cause.
+    evolution = evolve(_closing(sealed=False), _closing(sealed=True))
+    (added,) = [
+        operation for operation in evolution.operations if isinstance(operation, AsOfAxisAdded)
+    ]
+    (write,) = _of(evolution, WriteCapabilityChanged)
+    assert (write.scope, write.later) == (_ARCHIVE, WRITES_DISABLED)
+    assert added not in write.caused_by
+    assert [type(operation) for operation in write.caused_by] == [EntityAltered]
+
+
+def _admitted(*, temporal: bool) -> Metamodel:
+    """A read-only `Archive` whose `openedAt` stops admitting absence exactly
+    when the axis that claims it arrives."""
+    axis = AsOfAxisMetadata(
+        TemporalDimension.TRANSACTION_TIME,
+        AttributeIdentity(_ARCHIVE, "openedAt"),
+        AttributeIdentity(_ARCHIVE, "closedAt"),
+    )
+    opened = instant(_ARCHIVE, "openedAt")
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_ARCHIVE,
+                container=Table("archive"),
+                persistence=PersistenceMode.READ_ONLY,
+                attributes=(
+                    key(_ARCHIVE),
+                    opened if temporal else dataclasses.replace(opened, nullable=True),
+                    instant(_ARCHIVE, "closedAt"),
+                ),
+                as_of_axes=(axis,) if temporal else (),
+            )
+        )
+    )
+
+
+def test_an_alteration_that_moves_no_ownership_is_no_cause_of_a_write_impact() -> None:
+    # Caller ownership follows key membership, the read-only fact, and optimistic
+    # locking; this Attribute's own alteration moves none of them. The axis
+    # claiming it as an endpoint is what withdrew the caller's input, and the
+    # nullability delta stays where it belongs — on the value domain.
+    evolution = evolve(_admitted(temporal=False), _admitted(temporal=True))
+    (added,) = [
+        operation for operation in evolution.operations if isinstance(operation, AsOfAxisAdded)
+    ]
+    (altered,) = [
+        operation for operation in evolution.operations if isinstance(operation, AttributeAltered)
+    ]
+    opened = AttributeIdentity(_ARCHIVE, "openedAt")
+    (write,) = [
+        impact for impact in _of(evolution, WriteCapabilityChanged) if impact.scope == opened
+    ]
+    assert write.later == AttributeWriteCapability.FRAMEWORK_OWNED
+    assert write.caused_by == (added,)
+    (admissibility,) = _of(evolution, ValueAdmissibilityChanged)
+    assert (admissibility.scope, admissibility.caused_by) == (opened, (altered,))
