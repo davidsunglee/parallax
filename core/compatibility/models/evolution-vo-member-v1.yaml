@@ -1,0 +1,16 @@
+# Consignment (v1): the earlier endpoint of the Value Object MEMBER scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# occurrence survives, so its leaves are compared one by one rather than being
+# suppressed by an occurrence-level operation.
+entity:
+  name: Consignment
+  namespace: parallax.compatibility
+  table: evolution_consignment
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: origin
+      attributes:
+        - { name: city, type: string }
+        - { name: region, type: string }

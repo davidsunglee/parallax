@@ -1,0 +1,30 @@
+# Adding a Value Object OCCURRENCE (m-model-evolution): the addition boundary is
+# the member's own nullability, not the kind of member it is.
+#
+# Both occurrences land on an Entity that already stores rows, and each addition
+# suppresses its own leaves. The nullable one is unilateral because every stored
+# row already satisfies it; the required one needs the existing documents to
+# carry a value they do not have, which is a database migration. Coordination is
+# per operation, so the unilateral addition beside it carries no requirement.
+tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-value-object-v1.yaml
+    later: models/evolution-value-object-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: ValueObjectOccurrenceAdded
+        valueObject: parallax.compatibility.Shipment.audit
+      - kind: ValueObjectOccurrenceAdded
+        valueObject: parallax.compatibility.Shipment.warranty
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: ValueObjectOccurrenceAdded
+          valueObject: parallax.compatibility.Shipment.warranty
+        reasons:
+          - DatabaseMigrationRequired

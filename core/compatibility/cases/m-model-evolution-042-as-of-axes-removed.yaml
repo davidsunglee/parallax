@@ -1,0 +1,119 @@
+# Removing every AS-OF AXIS from an Entity (m-model-evolution): coordinated by
+# the authoring surface alone.
+#
+# Removal invalidates every previously valid temporal operation, while the
+# physical columns the earlier edition addressed may simply be left in place —
+# which is why removal carries one reason where the matching addition carries
+# two. A Temporal Dimension participates in axis identity, so the two axes are
+# removed independently rather than altered.
+tags: [m-model-evolution, evolution, temporal, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-bitemporality-v2.yaml
+    later: models/evolution-bitemporality-v1.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeRemoved
+        attribute: parallax.compatibility.Gauge.txEnd
+      - kind: AttributeRemoved
+        attribute: parallax.compatibility.Gauge.txStart
+      - kind: AttributeRemoved
+        attribute: parallax.compatibility.Gauge.validEnd
+      - kind: AttributeRemoved
+        attribute: parallax.compatibility.Gauge.validStart
+      - kind: AsOfAxisRemoved
+        entity: parallax.compatibility.Gauge
+        dimension: valid-time
+      - kind: AsOfAxisRemoved
+        entity: parallax.compatibility.Gauge
+        dimension: transaction-time
+    behavioralImpacts:
+      - kind: ConcurrencyControlChanged
+        scope:
+          entity: parallax.compatibility.Gauge
+        earlier:
+          gate: TransactionTimeGated
+          startAttribute: parallax.compatibility.Gauge.txStart
+        later:
+          gate: LockingFallback
+        causedBy:
+          - kind: AsOfAxisRemoved
+            entity: parallax.compatibility.Gauge
+            dimension: transaction-time
+      - kind: QueryResultMembershipChanged
+        scope:
+          entity: parallax.compatibility.Gauge
+        earlier:
+          concreteEntities:
+            - parallax.compatibility.Gauge
+          axes:
+            - dimension: valid-time
+              startAttribute: parallax.compatibility.Gauge.validStart
+              endAttribute: parallax.compatibility.Gauge.validEnd
+            - dimension: transaction-time
+              startAttribute: parallax.compatibility.Gauge.txStart
+              endAttribute: parallax.compatibility.Gauge.txEnd
+        later:
+          concreteEntities:
+            - parallax.compatibility.Gauge
+          axes: []
+        causedBy:
+          - kind: AsOfAxisRemoved
+            entity: parallax.compatibility.Gauge
+            dimension: valid-time
+          - kind: AsOfAxisRemoved
+            entity: parallax.compatibility.Gauge
+            dimension: transaction-time
+      - kind: WriteCapabilityChanged
+        scope:
+          entity: parallax.compatibility.Gauge
+        earlier:
+          writes: Enabled
+          shape: Bitemporal
+        later:
+          writes: Enabled
+          shape: NonTemporal
+        causedBy:
+          - kind: AsOfAxisRemoved
+            entity: parallax.compatibility.Gauge
+            dimension: valid-time
+          - kind: AsOfAxisRemoved
+            entity: parallax.compatibility.Gauge
+            dimension: transaction-time
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeRemoved
+          attribute: parallax.compatibility.Gauge.txEnd
+        reasons:
+          - AuthoringSurfaceChangeRequired
+      - operation:
+          kind: AttributeRemoved
+          attribute: parallax.compatibility.Gauge.txStart
+        reasons:
+          - AuthoringSurfaceChangeRequired
+      - operation:
+          kind: AttributeRemoved
+          attribute: parallax.compatibility.Gauge.validEnd
+        reasons:
+          - AuthoringSurfaceChangeRequired
+      - operation:
+          kind: AttributeRemoved
+          attribute: parallax.compatibility.Gauge.validStart
+        reasons:
+          - AuthoringSurfaceChangeRequired
+      - operation:
+          kind: AsOfAxisRemoved
+          entity: parallax.compatibility.Gauge
+          dimension: valid-time
+        reasons:
+          - AuthoringSurfaceChangeRequired
+      - operation:
+          kind: AsOfAxisRemoved
+          entity: parallax.compatibility.Gauge
+          dimension: transaction-time
+        reasons:
+          - AuthoringSurfaceChangeRequired

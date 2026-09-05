@@ -1,0 +1,21 @@
+# Inserting a declaration between two existing ones (m-model-evolution): an
+# addition, and no reordering.
+#
+# Reordering compares only the identities both endpoints hold, and those keep the
+# relative order they had, so the insertion is described once as the addition it
+# is rather than twice.
+tags: [m-model-evolution, evolution, declaration-order, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-declaration-insertion-v1.yaml
+    later: models/evolution-declaration-insertion-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAdded
+        attribute: parallax.compatibility.Lot.beta
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

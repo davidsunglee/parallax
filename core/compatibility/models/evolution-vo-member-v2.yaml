@@ -1,0 +1,18 @@
+# Consignment (v2): the later endpoint of the Value Object MEMBER scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-vo-member-v1.yaml with `region` gone, a nullable `postcode`
+# added, and a required `tier` added, so one evolution carries a removal and
+# both directions of the addition boundary.
+entity:
+  name: Consignment
+  namespace: parallax.compatibility
+  table: evolution_consignment
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: origin
+      attributes:
+        - { name: city, type: string }
+        - { name: postcode, type: string, nullable: true }
+        - { name: tier, type: string }

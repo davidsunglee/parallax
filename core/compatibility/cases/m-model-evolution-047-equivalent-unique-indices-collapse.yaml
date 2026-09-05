@@ -1,0 +1,35 @@
+# Two equivalent unique INDICES are ONE enforcement rule (m-model-evolution).
+#
+# The two additions differ in name and component order and in nothing else that
+# uniqueness depends on, so the Entity gains one rule rather than two. Both
+# operations caused it, and both are named — `causedBy` carries all and only the
+# operations whose changed facts contribute.
+tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-index-collapse-v1.yaml
+    later: models/evolution-index-collapse-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: IndexAdded
+        index: parallax.compatibility.Tote.tote_by_label
+      - kind: IndexAdded
+        index: parallax.compatibility.Tote.tote_by_region
+    behavioralImpacts:
+      - kind: UniquenessEnforcementChanged
+        scope:
+          entity: parallax.compatibility.Tote
+        earlier: []
+        later:
+          - - parallax.compatibility.Tote.label
+            - parallax.compatibility.Tote.region
+        causedBy:
+          - kind: IndexAdded
+            index: parallax.compatibility.Tote.tote_by_label
+          - kind: IndexAdded
+            index: parallax.compatibility.Tote.tote_by_region
+    overlapVisibleOperations: []
+    coordinationRequirements: []

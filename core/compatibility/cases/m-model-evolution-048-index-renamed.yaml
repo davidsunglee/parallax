@@ -1,0 +1,24 @@
+# Renaming an authored INDEX (m-model-evolution): a removal and an addition that
+# together enforce what was already enforced.
+#
+# An authored name participates in Index identity and no rename is inferred, so
+# the pair is two operations in identity order. The rule they enforce is the same
+# unordered Attribute set at both endpoints, so nothing changed behind the
+# surface either.
+tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-index-name-v1.yaml
+    later: models/evolution-index-name-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: IndexRemoved
+        index: parallax.compatibility.Carton.carton_lookup
+      - kind: IndexAdded
+        index: parallax.compatibility.Carton.carton_serial_lookup
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

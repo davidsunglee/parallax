@@ -1,0 +1,30 @@
+# Folder / Item / Archive (v2): the later endpoint of the Relationship TARGET
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-relationship-target-v1.yaml with `holder` reaching `Archive`
+# instead of `Item`.
+entities:
+  - name: Archive
+    namespace: parallax.compatibility
+    table: evolution_archive
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: folderId, type: int64 }
+  - name: Folder
+    namespace: parallax.compatibility
+    table: evolution_folder
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+    relationships:
+      - name: holder
+        cardinality: one-to-one
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Archive, attribute: folderId }
+  - name: Item
+    namespace: parallax.compatibility
+    table: evolution_item
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: folderId, type: int64 }

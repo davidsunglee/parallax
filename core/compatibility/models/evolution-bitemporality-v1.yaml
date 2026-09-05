@@ -1,0 +1,12 @@
+# Gauge (v1): the NON-TEMPORAL end of the BITEMPORAL As-Of Axis scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The pair
+# reads in both directions: v1 to v2 adds both axes at once, and v2 to v1
+# removes both.
+entity:
+  name: Gauge
+  namespace: parallax.compatibility
+  table: evolution_gauge
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: reading, type: int64 }

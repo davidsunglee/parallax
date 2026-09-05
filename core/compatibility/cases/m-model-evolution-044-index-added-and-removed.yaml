@@ -1,0 +1,34 @@
+# Adding and removing an authored secondary INDEX (m-model-evolution): both are
+# unilateral, removal included.
+#
+# An authored Index is the one model-facing declaration a query or write never
+# addresses, so removing one invalidates nothing and is the sole exception to the
+# removal rule. Adding a UNIQUE one changes what the database admits, which is
+# reported as `UniquenessEnforcementChanged` and caused by that addition alone —
+# the non-unique Index leaving enforces nothing and causes nothing.
+tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-index-v1.yaml
+    later: models/evolution-index-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: IndexRemoved
+        index: parallax.compatibility.Pallet.pallet_label
+      - kind: IndexAdded
+        index: parallax.compatibility.Pallet.pallet_serial
+    behavioralImpacts:
+      - kind: UniquenessEnforcementChanged
+        scope:
+          entity: parallax.compatibility.Pallet
+        earlier: []
+        later:
+          - - parallax.compatibility.Pallet.serial
+        causedBy:
+          - kind: IndexAdded
+            index: parallax.compatibility.Pallet.pallet_serial
+    overlapVisibleOperations: []
+    coordinationRequirements: []
