@@ -1,0 +1,16 @@
+# Tote (v2): the later endpoint of the EQUIVALENT UNIQUENESS RULE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-index-collapse-v1.yaml plus two unique Indices over the same
+# Attribute set in different component orders, which are one enforcement rule.
+entity:
+  name: Tote
+  namespace: parallax.compatibility
+  table: evolution_tote
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: label, type: string, maxLength: 32 }
+    - { name: region, type: string, maxLength: 32 }
+  indices:
+    - { name: tote_by_label, attributes: [label, region], unique: true }
+    - { name: tote_by_region, attributes: [region, label], unique: true }

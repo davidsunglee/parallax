@@ -1,0 +1,15 @@
+# Pallet (v1): the earlier endpoint of the authored INDEX scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Every
+# component Attribute exists at both endpoints, so the pair varies the authored
+# Indices alone.
+entity:
+  name: Pallet
+  namespace: parallax.compatibility
+  table: evolution_pallet
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: label, type: string, maxLength: 32 }
+    - { name: serial, type: string, maxLength: 32 }
+  indices:
+    - { name: pallet_label, attributes: [label] }

@@ -1,0 +1,18 @@
+# Manifest (v2): the later endpoint of the Value Object LEAF VALUE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-vo-value-v1.yaml with `city` nullable, `note` required, and
+# `zone` carrying a different Neutral Type, so one evolution holds both leaf
+# deltas and both directions of the nullability one.
+entity:
+  name: Manifest
+  namespace: parallax.compatibility
+  table: evolution_manifest
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: origin
+      attributes:
+        - { name: city, type: string, nullable: true }
+        - { name: note, type: string }
+        - { name: zone, type: int64 }

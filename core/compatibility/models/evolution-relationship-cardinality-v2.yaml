@@ -1,0 +1,34 @@
+# Folder / Item / Badge (v2): the later endpoint of the Relationship
+# CARDINALITY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-relationship-cardinality-v1.yaml with `badge` moved between
+# two shapes that both answer with one object, and `items` moved to one that
+# answers with a collection.
+entities:
+  - name: Badge
+    namespace: parallax.compatibility
+    table: evolution_badge
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+  - name: Folder
+    namespace: parallax.compatibility
+    table: evolution_folder
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+    relationships:
+      - name: badge
+        cardinality: many-to-one
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Badge, attribute: id }
+      - name: items
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Item, attribute: id }
+  - name: Item
+    namespace: parallax.compatibility
+    table: evolution_item
+    attributes:
+      - { name: id, type: int64, primaryKey: true }

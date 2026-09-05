@@ -1,0 +1,29 @@
+# NESTED Value Object occurrences (m-model-evolution): a nested add or remove
+# suppresses its own members.
+#
+# The top-level `profile` occurrence survives, so the two operations are its
+# nested occurrences alone and neither reports the leaf beneath it. Removing
+# `home` invalidates a previously valid authored path; adding a nullable `work`
+# is unilateral.
+tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-vo-nested-v1.yaml
+    later: models/evolution-vo-nested-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: ValueObjectOccurrenceRemoved
+        valueObject: parallax.compatibility.Contact.profile.home
+      - kind: ValueObjectOccurrenceAdded
+        valueObject: parallax.compatibility.Contact.profile.work
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: ValueObjectOccurrenceRemoved
+          valueObject: parallax.compatibility.Contact.profile.home
+        reasons:
+          - AuthoringSurfaceChangeRequired

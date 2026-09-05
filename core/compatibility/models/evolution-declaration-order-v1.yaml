@@ -1,0 +1,53 @@
+# Batch / Slot / Tray (v1): the earlier endpoint of the DECLARATION ORDER
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. v2
+# declares exactly these members in a different order in every one of the six
+# local collections, so nothing is added, removed, or altered anywhere.
+entities:
+  - name: Batch
+    namespace: parallax.compatibility
+    table: evolution_batch
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: alpha, type: int64 }
+      - { name: beta, type: int64 }
+    relationships:
+      - name: slot
+        cardinality: one-to-one
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Slot, attribute: id }
+      - name: tray
+        cardinality: one-to-one
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Tray, attribute: id }
+    valueObjects:
+      - name: origin
+        attributes:
+          - { name: city, type: string }
+          - { name: zone, type: string }
+        valueObjects:
+          - name: far
+            attributes:
+              - { name: label, type: string }
+          - name: near
+            attributes:
+              - { name: label, type: string }
+      - name: route
+        attributes:
+          - { name: leg, type: string }
+    indices:
+      - { name: batch_by_alpha, attributes: [alpha] }
+      - { name: batch_by_beta, attributes: [beta] }
+  - name: Slot
+    namespace: parallax.compatibility
+    table: evolution_slot
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+  - name: Tray
+    namespace: parallax.compatibility
+    table: evolution_tray
+    attributes:
+      - { name: id, type: int64, primaryKey: true }

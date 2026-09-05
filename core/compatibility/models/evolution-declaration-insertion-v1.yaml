@@ -1,0 +1,13 @@
+# Lot (v1): the earlier endpoint of the DECLARATION INSERTION scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. v2
+# inserts a member between two of these, which leaves the surviving members in
+# the order they already had.
+entity:
+  name: Lot
+  namespace: parallax.compatibility
+  table: evolution_lot
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: alpha, type: int64 }
+    - { name: gamma, type: int64 }

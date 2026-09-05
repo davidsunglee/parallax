@@ -1,0 +1,38 @@
+# Value Object LEAF addition and removal (m-model-evolution): no rename is
+# inferred, and the addition boundary is the leaf's own nullability.
+#
+# The occurrence survives, so its leaves are compared one by one. A nullable
+# `postcode` is unilateral; a required `tier` needs the documents already stored
+# to carry a value they do not have; removing `region` invalidates a previously
+# valid authored path. The three operations stay in identity order rather than
+# being grouped by kind, because an addition and a removal cannot tie at one
+# identity.
+tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-vo-member-v1.yaml
+    later: models/evolution-vo-member-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: ValueObjectAttributeAdded
+        valueObjectAttribute: parallax.compatibility.Consignment.origin.postcode
+      - kind: ValueObjectAttributeRemoved
+        valueObjectAttribute: parallax.compatibility.Consignment.origin.region
+      - kind: ValueObjectAttributeAdded
+        valueObjectAttribute: parallax.compatibility.Consignment.origin.tier
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: ValueObjectAttributeRemoved
+          valueObjectAttribute: parallax.compatibility.Consignment.origin.region
+        reasons:
+          - AuthoringSurfaceChangeRequired
+      - operation:
+          kind: ValueObjectAttributeAdded
+          valueObjectAttribute: parallax.compatibility.Consignment.origin.tier
+        reasons:
+          - DatabaseMigrationRequired

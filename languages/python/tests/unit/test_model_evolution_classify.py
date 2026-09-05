@@ -21,13 +21,15 @@ import pytest
 from _metamodel_support import Declaration, attribute, identity, key, source
 
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import INT32, STRING
+from parallax.core.base import INT32, STRING, TIMESTAMP
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
     NOT_PRIMARY_KEY,
     AbstractRoot,
     AbstractSubtype,
+    AsOfAxisMetadata,
+    AttributeIdentity,
     AttributeMetadata,
     Column,
     ConcreteSubtype,
@@ -39,9 +41,14 @@ from parallax.core.metamodel import (
     PrimaryKey,
     Table,
     TablePerHierarchy,
+    TemporalDimension,
 )
 from parallax.evolution.model_evolution import (
+    AsOfAxisAdded,
+    AsOfAxisAltered,
+    AsOfAxisRemoved,
     CoordinationReason,
+    EntityAdded,
     EntityAltered,
     Evolution,
     EvolutionOperation,
@@ -307,3 +314,87 @@ def test_an_inheritance_change_is_classified_by_its_effective_consequences() -> 
     assert _verdict_on(interposing, _altered(interposing)) == _Verdict(_UNILATERAL, False)
     flattening = evolve(interposed, direct)
     assert _verdict_on(flattening, _altered(flattening)) == _Verdict((_AUTHORING,), False)
+
+
+_READING = identity("Reading")
+
+_WIDGET_ONLY = Declaration(
+    identity=_WIDGET, container=Table("widget"), attributes=(key(_WIDGET), _LABEL)
+)
+
+
+def _timestamped(name: str) -> AttributeMetadata:
+    return attribute(_READING, name, type=TIMESTAMP)
+
+
+def _reading(
+    *, axis: tuple[str, str] | None, endpoints: tuple[str, ...] = ("openedAt", "closedAt")
+) -> Declaration:
+    """A `Reading` Entity declaring ``endpoints`` as Timestamps, carrying a
+    Transaction-Time axis over ``axis`` when one is named.
+
+    None of the candidate endpoint names is a conventional temporal one: a
+    declared axis reserves those for its own endpoints, so an Entity that could
+    move its axis between two pairs may bear neither.
+    """
+    return Declaration(
+        identity=_READING,
+        container=Table("reading"),
+        attributes=(key(_READING), *(_timestamped(name) for name in endpoints)),
+        as_of_axes=(
+            ()
+            if axis is None
+            else (
+                AsOfAxisMetadata(
+                    TemporalDimension.TRANSACTION_TIME,
+                    AttributeIdentity(_READING, axis[0]),
+                    AttributeIdentity(_READING, axis[1]),
+                ),
+            )
+        ),
+    )
+
+
+def _beside_widget(*declarations: Declaration) -> Metamodel:
+    return form_metamodel(source(_WIDGET_ONLY, *declarations))
+
+
+def test_an_axis_on_an_existing_entity_needs_the_surface_and_the_database() -> None:
+    # The axis changes the temporal operation surface and the framework ownership
+    # of its endpoints, and it moves the derived physical key and the bounds
+    # existing rows must carry. Removing one leaves those physical facts where
+    # they are, so it needs the authoring surface alone.
+    without = _beside_widget(_reading(axis=None))
+    with_axis = _beside_widget(_reading(axis=("openedAt", "closedAt")))
+    added = evolve(without, with_axis)
+    assert _verdict_on(added, _axis_operation(added)) == _Verdict(_BOTH, False)
+    removed = evolve(with_axis, without)
+    assert _verdict_on(removed, _axis_operation(removed)) == _Verdict((_AUTHORING,), False)
+
+
+def test_an_axis_alteration_needs_the_surface_and_the_database() -> None:
+    # Endpoint Attributes reach a descriptor framework-fixed, so a surviving axis
+    # naming different ones is reachable only through the `m-metamodel` seam.
+    pair = ("openedAt", "closedAt", "seenAt", "goneAt")
+    moved = evolve(
+        _beside_widget(_reading(axis=("openedAt", "closedAt"), endpoints=pair)),
+        _beside_widget(_reading(axis=("seenAt", "goneAt"), endpoints=pair)),
+    )
+    assert _verdict_on(moved, _axis_operation(moved)) == _Verdict(_BOTH, False)
+
+
+def test_an_axis_on_a_wholly_new_entity_is_carried_by_its_parent_addition() -> None:
+    # A new Entity creates a complete empty Table, so its axis needs neither a
+    # surface change nor a migration and is not described on its own at all.
+    arriving = evolve(_beside_widget(), _beside_widget(_reading(axis=("openedAt", "closedAt"))))
+    assert [type(operation) for operation in arriving.operations] == [EntityAdded]
+    assert isinstance(arriving, UnilateralEvolution)
+
+
+def _axis_operation(evolution: Evolution) -> EvolutionOperation:
+    (operation,) = [
+        candidate
+        for candidate in evolution.operations
+        if isinstance(candidate, AsOfAxisAdded | AsOfAxisAltered | AsOfAxisRemoved)
+    ]
+    return operation

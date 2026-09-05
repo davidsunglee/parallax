@@ -1,0 +1,25 @@
+# Adding members under a RELATIONAL DOCUMENT LAYOUT (m-model-evolution): the
+# described evolution is the layout's twin.
+#
+# The Entity's governed members live in one Structured Column rather than in
+# Columns of their own, and the description is unchanged by that: one nullable
+# Attribute addition and one nullable occurrence addition, both unilateral,
+# exactly as the same two additions read against a Columns model. A Storage
+# Layout is a physical fact, and this module describes the model.
+tags: [m-model-evolution, evolution, storage-layout, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-document-members-v1.yaml
+    later: models/evolution-document-members-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: AttributeAdded
+        attribute: parallax.compatibility.Container.note
+      - kind: ValueObjectOccurrenceAdded
+        valueObject: parallax.compatibility.Container.origin
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

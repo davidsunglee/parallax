@@ -1,0 +1,27 @@
+# Folder / Item (v2): the later endpoint of the DECLARATION FORM scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-relationship-form-v1.yaml with the mapping facts declared
+# from `Item` instead, which leaves both directions' target, cardinality, join,
+# and dependency exactly as they were.
+entities:
+  - name: Folder
+    namespace: parallax.compatibility
+    table: evolution_folder
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+    relationships:
+      - name: items
+        reverseOf: parallax.compatibility.Item.folder
+  - name: Item
+    namespace: parallax.compatibility
+    table: evolution_item
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: folderId, type: int64 }
+    relationships:
+      - name: folder
+        cardinality: many-to-one
+        join:
+          source: folderId
+          target: { entity: parallax.compatibility.Folder, attribute: id }

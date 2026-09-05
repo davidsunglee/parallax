@@ -1,0 +1,53 @@
+# Changing a Value Object occurrence between ONE and MANY (m-model-evolution):
+# coordinated for both reasons, in either direction.
+#
+# An authored path that reached one object now reaches a collection, or the
+# reverse, so the previously valid query and write shape changes; and every
+# stored document carries the shape it was written with, so existing rows have to
+# be transformed. Multiplicity is structural rather than a value domain, so it
+# causes no `ValueAdmissibilityChanged`.
+tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-vo-multiplicity-v1.yaml
+    later: models/evolution-vo-multiplicity-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: ValueObjectOccurrenceAltered
+        valueObject: parallax.compatibility.Ledger.entry
+        deltas:
+          - kind: MultiplicityChanged
+            earlier: one
+            later: many
+      - kind: ValueObjectOccurrenceAltered
+        valueObject: parallax.compatibility.Ledger.line
+        deltas:
+          - kind: MultiplicityChanged
+            earlier: many
+            later: one
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: ValueObjectOccurrenceAltered
+          valueObject: parallax.compatibility.Ledger.entry
+          deltas:
+            - kind: MultiplicityChanged
+              earlier: one
+              later: many
+        reasons:
+          - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
+      - operation:
+          kind: ValueObjectOccurrenceAltered
+          valueObject: parallax.compatibility.Ledger.line
+          deltas:
+            - kind: MultiplicityChanged
+              earlier: many
+              later: one
+        reasons:
+          - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired

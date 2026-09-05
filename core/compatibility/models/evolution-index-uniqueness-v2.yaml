@@ -1,0 +1,16 @@
+# Skid (v2): the later endpoint of the INDEX UNIQUENESS scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-index-uniqueness-v1.yaml with `skid_serial` enforcing
+# uniqueness and `skid_label` becoming an access path alone.
+entity:
+  name: Skid
+  namespace: parallax.compatibility
+  table: evolution_skid
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: label, type: string, maxLength: 32 }
+    - { name: serial, type: string, maxLength: 32 }
+  indices:
+    - { name: skid_label, attributes: [label] }
+    - { name: skid_serial, attributes: [serial], unique: true }

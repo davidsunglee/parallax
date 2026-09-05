@@ -1,0 +1,55 @@
+# Changing a Relationship's JOIN while its target survives (m-model-evolution):
+# unilateral, with the rows it reaches changing behind the preserved surface.
+#
+# The navigation keeps its identity, its target Entity, and its One-versus-Many
+# result shape, so every previously valid authored navigation still compiles and
+# still answers with the same kind of value. WHICH rows it answers with is a
+# `QueryResultMembershipChanged` on the Relationship position rather than a
+# reason to coordinate.
+tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-relationship-join-v1.yaml
+    later: models/evolution-relationship-join-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Folder.items
+        deltas:
+          - kind: JoinChanged
+            earlier:
+              source: parallax.compatibility.Folder.id
+              target: parallax.compatibility.Item.folderId
+            later:
+              source: parallax.compatibility.Folder.id
+              target: parallax.compatibility.Item.ownerId
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope:
+          relationship: parallax.compatibility.Folder.items
+        earlier:
+          target: parallax.compatibility.Item
+          join:
+            source: parallax.compatibility.Folder.id
+            target: parallax.compatibility.Item.folderId
+        later:
+          target: parallax.compatibility.Item
+          join:
+            source: parallax.compatibility.Folder.id
+            target: parallax.compatibility.Item.ownerId
+        causedBy:
+          - kind: RelationshipAltered
+            relationship: parallax.compatibility.Folder.items
+            deltas:
+              - kind: JoinChanged
+                earlier:
+                  source: parallax.compatibility.Folder.id
+                  target: parallax.compatibility.Item.folderId
+                later:
+                  source: parallax.compatibility.Folder.id
+                  target: parallax.compatibility.Item.ownerId
+    overlapVisibleOperations: []
+    coordinationRequirements: []

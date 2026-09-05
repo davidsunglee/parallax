@@ -1,11 +1,13 @@
-"""The Behavioral Impacts an Entity and Attribute evolution derives.
+"""The Behavioral Impacts a model evolution derives.
 
 The compatibility corpus witnesses each impact once, over non-temporal
 standalone Entities and single-family hierarchies. What it does not reach
 cheaply is what this covers: the facts a TEMPORAL family answers with, an impact
 several operations contribute to, one operation moving a surviving Entity
-between two families at once, and the member impact an Entity-level change
-deliberately dominates.
+between two families at once, the member impact an Entity-level change
+deliberately dominates, and the two scenarios an authored descriptor cannot
+spell at all — an As-Of Axis moving its endpoint Attributes, and the derived
+primary-key Index changing underneath an unchanged authored one.
 
 Every impact is read off the public result, and endpoint facts are compared as
 whole values, because an impact reports a scope's facts rather than one field.
@@ -28,6 +30,8 @@ from parallax.core.metamodel import (
     ConcreteSubtype,
     EntityIdentity,
     ExactEntityReference,
+    IndexIdentity,
+    IndexMetadata,
     Metamodel,
     PersistenceMode,
     Table,
@@ -37,18 +41,27 @@ from parallax.core.metamodel import (
 from parallax.evolution.model_evolution import (
     LOCKING_FALLBACK,
     WRITES_DISABLED,
+    AsOfAxisAdded,
+    AsOfAxisAltered,
     AttributeAdded,
     AttributeRemoved,
+    AttributeWriteCapability,
     BehavioralImpact,
     ConcreteSubtypeAdded,
     ConcurrencyControlChanged,
+    EndAttributeChanged,
     EntityAltered,
     EntitySelectionFacts,
     EntityWriteShape,
     Evolution,
+    IndexAdded,
+    IndexAltered,
+    IndexRemoved,
     QueryResultMembershipChanged,
     ScalarAdmissibility,
+    StartAttributeChanged,
     TemporalAxisFacts,
+    UniquenessEnforcementChanged,
     ValueAdmissibilityChanged,
     VersionGated,
     WriteCapabilityChanged,
@@ -320,3 +333,183 @@ def test_an_entity_write_change_dominates_the_member_impacts_it_implies() -> Non
     assert write.scope == _ARCHIVE
     assert write.earlier == WritesEnabled(EntityWriteShape.NON_TEMPORAL)
     assert write.later == WRITES_DISABLED
+
+
+_MOVED_AXIS = identity("Reading")
+
+
+def _moved_axis(start: str, end: str) -> Metamodel:
+    """A Transaction-Time Entity whose axis names one of two candidate endpoint
+    pairs, all four of which it declares.
+
+    Axis endpoints reach a descriptor's Temporality Profile framework-fixed, so
+    a moved endpoint is reachable only through the `m-metamodel` seam — which is
+    the whole reason this scenario is stated here rather than in the corpus.
+    """
+    axis = AsOfAxisMetadata(
+        TemporalDimension.TRANSACTION_TIME,
+        AttributeIdentity(_MOVED_AXIS, start),
+        AttributeIdentity(_MOVED_AXIS, end),
+    )
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_MOVED_AXIS,
+                container=Table("reading"),
+                attributes=(
+                    key(_MOVED_AXIS),
+                    instant(_MOVED_AXIS, "openedAt"),
+                    instant(_MOVED_AXIS, "closedAt"),
+                    instant(_MOVED_AXIS, "seenAt"),
+                    instant(_MOVED_AXIS, "goneAt"),
+                ),
+                as_of_axes=(axis,),
+            )
+        )
+    )
+
+
+def test_an_axis_moving_its_endpoints_moves_what_a_caller_may_supply() -> None:
+    # Framework ownership is derived from axis membership rather than declared,
+    # so four Attributes exchange input capability while not one of their own
+    # declarations changes. The axis alteration is the only operation that could
+    # have caused it, and it is what `causedBy` names.
+    evolution = evolve(_moved_axis("openedAt", "closedAt"), _moved_axis("seenAt", "goneAt"))
+    (altered,) = evolution.operations
+    assert altered == AsOfAxisAltered(
+        _MOVED_AXIS,
+        TemporalDimension.TRANSACTION_TIME,
+        (
+            StartAttributeChanged(
+                AttributeIdentity(_MOVED_AXIS, "openedAt"),
+                AttributeIdentity(_MOVED_AXIS, "seenAt"),
+            ),
+            EndAttributeChanged(
+                AttributeIdentity(_MOVED_AXIS, "closedAt"),
+                AttributeIdentity(_MOVED_AXIS, "goneAt"),
+            ),
+        ),
+    )
+    writes = _of(evolution, WriteCapabilityChanged)
+    assert [impact.scope for impact in writes] == [
+        AttributeIdentity(_MOVED_AXIS, "closedAt"),
+        AttributeIdentity(_MOVED_AXIS, "goneAt"),
+        AttributeIdentity(_MOVED_AXIS, "openedAt"),
+        AttributeIdentity(_MOVED_AXIS, "seenAt"),
+    ]
+    assert {impact.caused_by for impact in writes} == {(altered,)}
+    assert [impact.earlier for impact in writes] == [
+        AttributeWriteCapability.FRAMEWORK_OWNED,
+        AttributeWriteCapability.CALLER_INSERT_AND_UPDATE,
+        AttributeWriteCapability.FRAMEWORK_OWNED,
+        AttributeWriteCapability.CALLER_INSERT_AND_UPDATE,
+    ]
+
+
+def _keyed_index(*, temporal: bool) -> Metamodel:
+    """One Entity carrying an authored unique Index, temporal or not.
+
+    Its derived primary-key Index gains the axis end Attribute when the profile
+    does, which is the change this scenario is here to prove is NOT described.
+    """
+    axis = AsOfAxisMetadata(
+        TemporalDimension.TRANSACTION_TIME,
+        AttributeIdentity(_ARRIVAL, "txStart"),
+        AttributeIdentity(_ARRIVAL, "txEnd"),
+    )
+    serial = attribute(_ARRIVAL, "serial", type=STRING)
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_ARRIVAL,
+                container=Table("arrival"),
+                attributes=(
+                    key(_ARRIVAL),
+                    serial,
+                    *(
+                        (instant(_ARRIVAL, "txStart"), instant(_ARRIVAL, "txEnd"))
+                        if temporal
+                        else ()
+                    ),
+                ),
+                as_of_axes=(axis,) if temporal else (),
+                indices=(
+                    IndexMetadata(
+                        IndexIdentity(_ARRIVAL, "arrival_serial"), (serial.identity,), unique=True
+                    ),
+                ),
+            )
+        )
+    )
+
+
+def test_the_derived_primary_key_index_is_neither_an_operation_nor_a_uniqueness_rule() -> None:
+    # The derived Index is not independently authored: its components change with
+    # the temporal profile, and that change is described by the causal As-Of Axis
+    # operation rather than by an Index operation or a uniqueness impact. The
+    # authored unique Index beside it is unchanged, so no rule moved either.
+    evolution = evolve(_keyed_index(temporal=False), _keyed_index(temporal=True))
+    assert not [
+        operation
+        for operation in evolution.operations
+        if isinstance(operation, IndexAdded | IndexRemoved | IndexAltered)
+    ]
+    assert _of(evolution, UniquenessEnforcementChanged) == []
+
+
+def _sealed(*, temporal: bool) -> Metamodel:
+    """A READ-ONLY Entity whose two Timestamps are an axis's endpoints or are
+    ordinary members, gaining an unrelated nullable member at the same time.
+
+    Read-only is what makes the scenario reachable: the Entity write surface is
+    `Disabled` at both endpoints, so the axis does not dominate its members and
+    each endpoint Attribute reports the input capability it moved between. The
+    unrelated addition is there to be excluded from their causes.
+    """
+    axis = AsOfAxisMetadata(
+        TemporalDimension.TRANSACTION_TIME,
+        AttributeIdentity(_ARCHIVE, "openedAt"),
+        AttributeIdentity(_ARCHIVE, "closedAt"),
+    )
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_ARCHIVE,
+                container=Table("archive"),
+                persistence=PersistenceMode.READ_ONLY,
+                attributes=(
+                    key(_ARCHIVE),
+                    instant(_ARCHIVE, "openedAt"),
+                    instant(_ARCHIVE, "closedAt"),
+                    *(
+                        (
+                            dataclasses.replace(
+                                attribute(_ARCHIVE, "memo", type=STRING), nullable=True
+                            ),
+                        )
+                        if temporal
+                        else ()
+                    ),
+                ),
+                as_of_axes=(axis,) if temporal else (),
+            )
+        )
+    )
+
+
+def test_an_arriving_axis_claims_the_members_it_makes_its_endpoints() -> None:
+    # Adding the axis leaves the Entity write surface exactly where it was, so
+    # nothing dominates its members, and the two Attributes it claims move from
+    # caller-supplied to framework-owned with the addition as their only cause —
+    # the unrelated member arriving beside it moves nothing they report.
+    evolution = evolve(_sealed(temporal=False), _sealed(temporal=True))
+    (added,) = [
+        operation for operation in evolution.operations if isinstance(operation, AsOfAxisAdded)
+    ]
+    writes = _of(evolution, WriteCapabilityChanged)
+    assert [impact.scope for impact in writes] == [
+        AttributeIdentity(_ARCHIVE, "closedAt"),
+        AttributeIdentity(_ARCHIVE, "openedAt"),
+    ]
+    assert {impact.later for impact in writes} == {AttributeWriteCapability.FRAMEWORK_OWNED}
+    assert {impact.caused_by for impact in writes} == {(added,)}

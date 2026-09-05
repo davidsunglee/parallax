@@ -1,0 +1,17 @@
+# Shipment (v1): the earlier endpoint of the Value Object OCCURRENCE ADDITION
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# Entity already stores rows carrying one occurrence, which is what makes the
+# two occurrences v2 adds land on an existing stored shape rather than on a new
+# Table.
+entity:
+  name: Shipment
+  namespace: parallax.compatibility
+  table: evolution_shipment
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: origin
+      attributes:
+        - { name: city, type: string }

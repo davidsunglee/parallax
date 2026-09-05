@@ -1,0 +1,20 @@
+# Parcel (v2): the later endpoint of the Value Object occurrence NULLABILITY
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-vo-nullability-v1.yaml with `courier` required and `origin`
+# nullable, so the pair exercises both directions at once.
+entity:
+  name: Parcel
+  namespace: parallax.compatibility
+  table: evolution_parcel
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: courier
+      attributes:
+        - { name: carrier, type: string }
+    - name: origin
+      nullable: true
+      attributes:
+        - { name: city, type: string }

@@ -1,0 +1,42 @@
+# Relationship CARDINALITY (m-model-evolution): the boundary is the result shape,
+# not the cardinality name.
+#
+# `badge` moves between two cardinalities that both answer with one object, so
+# the authored surface survives it. `items` moves to one that answers with a
+# collection, so a previously valid navigation changes its result shape. Both
+# associations map primary key to primary key, which is what lets one pair
+# declare all four cardinalities.
+tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-relationship-cardinality-v1.yaml
+    later: models/evolution-relationship-cardinality-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Folder.badge
+        deltas:
+          - kind: CardinalityChanged
+            earlier: one-to-one
+            later: many-to-one
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Folder.items
+        deltas:
+          - kind: CardinalityChanged
+            earlier: many-to-one
+            later: one-to-many
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: RelationshipAltered
+          relationship: parallax.compatibility.Folder.items
+          deltas:
+            - kind: CardinalityChanged
+              earlier: many-to-one
+              later: one-to-many
+        reasons:
+          - AuthoringSurfaceChangeRequired
