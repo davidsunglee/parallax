@@ -349,6 +349,26 @@ invalidates a previously valid authored operation. This includes an Entity,
 Concrete Subtype, Attribute, Value Object occurrence or member, Relationship
 direction, and As-Of Axis. Authored secondary Indices are the sole exception
 because model-authored operations never address them.
+Whether a removal ALSO requires database migration follows what becomes of the
+stored shape. A removal that takes its whole stored shape with it — an Entity, a
+Concrete Subtype, or a Relationship direction, which stores no value of its own
+— requires the authoring surface alone, because the objects the earlier edition
+addressed may simply be left in place. A member cut out of a stored shape that
+SURVIVES is directional in the same fact its addition is: removing a required
+Attribute, Value Object occurrence, or Value Object member also requires
+database migration, because the surviving shape still demands a value the later
+model no longer describes and the object enforcing it must be relaxed or removed
+before a later write is accepted, while removing a nullable one leaves a stored
+form the later edition simply stops writing. The rule reads the accepted
+required-ness rather than the physical object that happens to enforce it, so it
+holds whether the member occupied a direct Column or an existing Structured
+Column — exactly as the addition rule does, and for the same reason: this is a
+model-altitude classification that consults no Storage Layout.
+Removing an As-Of Axis always requires both, and the sharper consequence is not
+a Column. Its end Attributes contribute to the derived physical primary key, so
+the later logical identity is narrower than the one the surviving rows were
+written under and that history collides beneath it; no prefix of a Schema Delta
+reconciles that without transforming the rows themselves.
 
 The Schema Delta is an immutable value containing its ordered dialect statements
 as plain strings and an ordered `createdIndices` provenance sequence. Statements
@@ -508,9 +528,19 @@ because their value cannot be passed to `schema_delta`.
 
 The portable proof includes at least one witness for every Evolution Operation,
 field delta, Behavioral Impact, coordination reason, and private physical
-operation. Directional boundaries exercise both directions where classification
-differs, including nullability, maximum length, persistence, effective caller
-write ownership, and Value Object occurrence nullability. Structural witnesses
+operation a pair of model descriptors can express. A name only an accepted
+Metamodel reaching `m-metamodel` directly can produce is witnessed by the
+implementation's own suite instead, and the corpus proves it unreachable rather
+than asserting the exemption. `AsOfAxisAltered` and its two deltas are that
+case: a descriptor derives every As-Of Axis from its Temporality Profile with
+framework-fixed endpoint Attributes, so two descriptors agreeing on an axis
+position agree on its endpoints too. They stay in the closed vocabulary because
+the accepted Metamodel admits endpoints no descriptor can spell, and a total
+description of two such models needs the name.
+Directional boundaries exercise both directions where classification differs,
+including nullability, maximum length, persistence, effective caller write
+ownership, Value Object occurrence nullability, and member removal from a
+surviving stored shape. Structural witnesses
 cover rename as removal plus addition, parent suppression, equal-model
 evolution, provisioning, genuine declaration reorder, and insertion without
 reorder. Inheritance and layout witnesses distinguish table-per-hierarchy from

@@ -2,9 +2,10 @@
 # suppresses its own members.
 #
 # The top-level `profile` occurrence survives, so the two operations are its
-# nested occurrences alone and neither reports the leaf beneath it. Removing
-# `home` invalidates a previously valid authored path; adding a nullable `work`
-# is unilateral.
+# nested occurrences alone and neither reports the leaf beneath it. Removing the
+# required `home` invalidates a previously valid authored path and leaves the
+# surviving occurrence demanding an object the later model no longer describes;
+# adding a nullable `work` is unilateral.
 tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
 shape: evolution
 when:
@@ -27,3 +28,4 @@ then:
           valueObject: parallax.compatibility.Contact.profile.home
         reasons:
           - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired

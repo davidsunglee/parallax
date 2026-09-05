@@ -2,10 +2,14 @@
 #
 # Declarations are matched by structured identity and a rename is never inferred,
 # so spelling `Label.label` as `Label.caption` produces two independent operations
-# with two independent classifications. Canonical order carries no operation-kind
-# rank — add, remove, and alter cannot tie at one identity — so the addition sorts
-# FIRST here, by `caption` preceding `label`, rather than being forced
-# removal-first.
+# with two independent classifications. Both members are required and the `Label`
+# Table survives both endpoints, so each needs both reasons for its own half of
+# the exchange: the arriving one has no value in the rows already stored and is
+# missing from every earlier insert, and the departing one leaves a Column still
+# demanding a value the later model no longer describes. Canonical order carries
+# no operation-kind rank — add, remove, and alter cannot tie at one identity — so
+# the addition sorts FIRST here, by `caption` preceding `label`, rather than
+# being forced removal-first.
 tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:
@@ -24,4 +28,4 @@ then:
       - operation: { kind: AttributeAdded, attribute: parallax.compatibility.Label.caption }
         reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
       - operation: { kind: AttributeRemoved, attribute: parallax.compatibility.Label.label }
-        reasons: [AuthoringSurfaceChangeRequired]
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

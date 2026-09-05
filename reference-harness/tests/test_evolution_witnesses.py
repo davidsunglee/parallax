@@ -6,10 +6,10 @@ implementation is measured against, so these tests read the enums back out of th
 schema and require each name to appear in some case's `then.evolution`, together
 with both directions of the boundaries the specification calls directional.
 
-Three names are exempt, and the exemption is the one place this falls short of
-the portable proof ADR 0063 asks for: no pair of model descriptors can reach
-them, for the structural reason `_UNREACHABLE_FROM_A_DESCRIPTOR` states and
-`test_a_surviving_axis_cannot_change_its_endpoints` proves.
+Three names are exempt, and ADR 0063's portable-proof obligation is written to
+admit exactly them: it covers every name a pair of model descriptors can
+express, while a name only an accepted Metamodel can produce is witnessed by the
+implementation's own suite and proved unreachable here rather than asserted.
 
 The property is the CORPUS's, not one implementation's, which is why it lives in
 the harness: it fails when a name is added to the vocabulary and no case is
@@ -37,8 +37,10 @@ _CASE_SCHEMA = _REPO_ROOT / "core" / "schemas" / "compatibility-case.schema.json
 # endpoint Attributes from its dimension alone, so two endpoints agreeing on
 # (Entity, Temporal Dimension) agree on the endpoints too. The vocabulary keeps
 # the names because an accepted Metamodel reaching `m-metamodel` directly may
-# carry other endpoints; the Python unit suite witnesses them there.
-# `test_a_surviving_axis_cannot_change_its_endpoints` proves the exemption.
+# carry other endpoints, and ADR 0063 names this exemption where it states the
+# portable-proof obligation: such a name is witnessed by the implementation's
+# own suite, and the corpus proves it unreachable.
+# `test_a_surviving_axis_cannot_change_its_endpoints` is that proof.
 _UNREACHABLE_FROM_A_DESCRIPTOR: Final[frozenset[str]] = frozenset(
     {"AsOfAxisAltered", "StartAttributeChanged", "EndAttributeChanged"}
 )

@@ -1,12 +1,14 @@
-# Removing a member (m-model-evolution): coordinated, for the authoring surface
-# alone.
+# Removing a NULLABLE member (m-model-evolution): coordinated, for the authoring
+# surface alone.
 #
 # This is m-model-evolution-003 read backwards, and the classification does not
 # invert with it: removing a model-facing declaration invalidates a previously
-# valid authored operation, whatever its nullability. The reason set is
-# `AuthoringSurfaceChangeRequired` alone, because the physical Column the earlier
-# edition addressed may simply be left in place — destructive means destructive to
-# domain data or compatibility-bearing schema, not merely a `DROP` verb.
+# valid authored operation however little the database has to do about it. The
+# reason set is `AuthoringSurfaceChangeRequired` alone because `summary` admits
+# absence, so the Column the earlier edition addressed is one the later edition
+# simply stops writing and may be left in place — destructive means destructive
+# to domain data or compatibility-bearing schema, not merely a `DROP` verb. The
+# required direction of this same boundary is m-model-evolution-006.
 tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:
