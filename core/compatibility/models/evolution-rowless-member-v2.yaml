@@ -1,0 +1,43 @@
+# Ledger (v2): the endpoint of the ROWLESS MEMBER scenario where the position's
+# members are required and read-only.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-rowless-member-v1.yaml with `Provisional.memo` required and
+# `Provisional.clerk` read-only; nothing else differs. No concrete subtype
+# composes that position, so no stored value meets the narrowed domain and no
+# accepted write carries the input the flag withdraws.
+entities:
+  - name: Ledger
+    namespace: parallax.compatibility
+    table: evolution_ledger
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Provisional
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Ledger
+    attributes:
+      - name: memo
+        type: string
+        maxLength: 64
+      - name: clerk
+        type: string
+        maxLength: 32
+        readOnly: true
+  - name: Posting
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Ledger
+      tagValue: posting
+    attributes:
+      - name: amount
+        type: decimal(18,2)

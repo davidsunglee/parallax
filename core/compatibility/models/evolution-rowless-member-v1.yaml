@@ -1,0 +1,45 @@
+# Ledger (v1): the endpoint of the ROWLESS MEMBER scenario where the position's
+# members are nullable and editable.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# abstract `Provisional` composes no concrete subtype, so it resolves to an empty
+# effective concrete set while the family stays legal on `Posting`. Its own two
+# members carry the facts a write flag and a value domain are read from: the pair
+# is authored once and read in both directions, so one endpoint withdraws a write
+# and contracts a domain over rows that do not exist, and the other grants and
+# expands over the same nothing.
+entities:
+  - name: Ledger
+    namespace: parallax.compatibility
+    table: evolution_ledger
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Provisional
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Ledger
+    attributes:
+      - name: memo
+        type: string
+        maxLength: 64
+        nullable: true
+      - name: clerk
+        type: string
+        maxLength: 32
+  - name: Posting
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Ledger
+      tagValue: posting
+    attributes:
+      - name: amount
+        type: decimal(18,2)

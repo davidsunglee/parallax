@@ -246,8 +246,10 @@ Every boundary phrased over an existing stored shape, over a write the later
 edition must still accept, or over a value a later writer may store is silent
 where that set is empty — whether the position composes no concrete subtype at
 all, or the shape it denoted leaves it in the same edition — because a shape
-arriving under the position is created complete by its own addition, and one
-departing is answered for at the alteration that moves it. A boundary phrased
+arriving under the position is answered for where it arrives, a newly added
+concrete subtype by its own addition, which creates it complete, and a surviving
+one reparented in at its own inheritance alteration, and one departing is
+answered for at the alteration that moves it. A boundary phrased
 over a previously valid authored operation alone, such as a removed declaration
 or a narrowing that reached the position, reads the earlier endpoint by itself;
 what a read of a position denoting nothing still addresses are the members its
@@ -339,7 +341,11 @@ ancestry makes applicable.
   they are; each is classified at the descendant exactly as a member cut out of it
   would be, so a required one also requires database migration. Moving an existing
   subtype out of an earlier branch requires coordination, as do strategy, tag, or
-  storage changes needing physical transformation.
+  storage changes needing physical transformation. An abstract position whose role
+  turns concrete adds a shape to the family and withdraws none, so every earlier
+  narrowing stays valid and it is unilateral; the reverse withdraws the shape a
+  narrowing denoted and requires the authoring surface, while leaving the rows
+  carrying that discriminator value in place, as a concrete subtype's removal does.
 - **Concrete subtypes.** Adding one is unilateral under either supported
   strategy.
 - **Declaration order.** Reordering preserves the model-facing operation surface
@@ -354,18 +360,26 @@ coordination: a Unilateral Evolution names them, and a Coordinated Evolution
 carries none, because it is not applied through this path at all.
 
 The overlap-visible operations are making a member nullable, widening or removing
-a String maximum length, and adding a concrete subtype under **table-per-hierarchy**,
-where a later writer can place a new discriminator value in the shared Table that
-an earlier reader cannot admit. Adding a concrete subtype under
-table-per-concrete-subtype is not overlap-visible: the later subtype occupies a
-separate Table the earlier edition never reads. Neither is a concrete subtype
-whose family arrives whole with it, under either strategy: visibility is a claim
-about an earlier reader, and the earlier edition holds no position of that
-family, so neither its Table nor a selection through it. None of them is
-overlap-visible where no later writer can place the value in a shape an earlier
-reader holds: a family whose later effective Persistence Mode is `ReadOnly`
-admits no writer at all, and a position denoting no shape both editions hold
-offers none to place it in. A unique-constraint violation, a DDL failure, and an
+a String maximum length, and giving a family a new shape under
+**table-per-hierarchy**, where a later writer can place a new discriminator value
+in the shared Table that an earlier reader cannot admit. A family gains a shape
+by an added concrete subtype, and equally by a surviving abstract position whose
+role turns concrete: an abstract position owns no rows, so admitting it as a
+concrete subtype introduces its discriminator value exactly as adding one does.
+Under table-per-concrete-subtype neither is overlap-visible, because the new
+shape occupies a separate Table the earlier edition never reads; and neither is a
+shape whose family arrives whole around it, under either strategy, because
+visibility is a claim about an earlier reader and the earlier edition holds no
+position of that family, so neither its Table nor a selection through it. A
+surviving position keeping the root it had stays in the family the earlier
+edition already held; one taking another root arrives in a family as an added
+subtype does.
+
+None of them is overlap-visible where no later writer can place the value: a
+family whose later effective Persistence Mode is `ReadOnly` admits no writer at
+all. A member expansion needs, in addition, a shape both editions denote to place
+the value in, because it widens what an already stored shape admits rather than
+introducing a shape. A unique-constraint violation, a DDL failure, and an
 ordinary behavior difference are not overlap visibility.
 
 ## Behavioral Impacts

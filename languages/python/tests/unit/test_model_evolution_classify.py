@@ -481,11 +481,13 @@ def _branch_family(
     under: EntityIdentity | None,
     holds: tuple[ValueObjectOccurrenceDeclaration, ...],
     leaf_under: EntityIdentity,
+    concrete: bool = False,
 ) -> Metamodel:
     """A legal table-per-hierarchy family: root ``Instrument``, a member-less
-    abstract ``Bill``, an abstract ``Note`` declaring ``declares`` and ``holds``
-    beneath ``under``, and the family's one concrete subtype ``Bond`` beneath
-    ``leaf_under``."""
+    abstract ``Bill``, a ``Note`` declaring ``declares`` and ``holds`` beneath
+    ``under``, and the family's one concrete subtype ``Bond`` beneath
+    ``leaf_under``. ``Note`` is abstract unless ``concrete`` gives it a tag value
+    of its own."""
     root = Declaration(
         identity=_ROOT,
         container=Table("instrument"),
@@ -495,11 +497,12 @@ def _branch_family(
     sibling = Declaration(
         identity=_SIBLING, inheritance=AbstractSubtype(ExactEntityReference(_ROOT))
     )
+    parent = ExactEntityReference(under or _ROOT)
     branch = Declaration(
         identity=_BRANCH,
         attributes=declares,
         value_objects=holds,
-        inheritance=AbstractSubtype(ExactEntityReference(under or _ROOT)),
+        inheritance=ConcreteSubtype(parent, "NOTE") if concrete else AbstractSubtype(parent),
     )
     leaf = Declaration(
         identity=_LEAF,
@@ -513,11 +516,13 @@ def _rowless_branch(
     *declares: AttributeMetadata,
     under: EntityIdentity | None = None,
     holds: tuple[ValueObjectOccurrenceDeclaration, ...] = (),
+    concrete: bool = False,
 ) -> Metamodel:
     """The family with ``Bond`` hanging off the root, so ``Note`` resolves to an
     EMPTY effective concrete set while the family stays legal. ``under`` places
-    ``Note`` beneath the member-less abstract ``Bill`` instead of the root."""
-    return _branch_family(*declares, under=under, holds=holds, leaf_under=_ROOT)
+    ``Note`` beneath the member-less abstract ``Bill`` instead of the root, and
+    ``concrete`` turns ``Note`` itself into the shape it denotes."""
+    return _branch_family(*declares, under=under, holds=holds, leaf_under=_ROOT, concrete=concrete)
 
 
 def _rowful_branch(
@@ -586,10 +591,13 @@ def test_a_rowless_position_leaves_a_branch_no_narrowing_ever_came_through() -> 
     assert _verdict_on(flattening, _altered(flattening)) == _Verdict(_UNILATERAL, False)
 
 
-def _across_roots(*, moved: bool, leaf_under: EntityIdentity | None = None) -> Metamodel:
+def _across_roots(
+    *, moved: bool, leaf_under: EntityIdentity | None = None, concrete: bool = False
+) -> Metamodel:
     """Two live table-per-hierarchy families with distinct Tables and tag
-    Columns, with the abstract ``Note`` under one root or the other and the
-    concrete ``Bond`` beneath ``leaf_under``, defaulting to the first root."""
+    Columns, with ``Note`` under one root or the other and the concrete ``Bond``
+    beneath ``leaf_under``, defaulting to the first root. ``Note`` is abstract
+    unless ``concrete`` gives it a tag value of its own."""
     return form_metamodel(
         source(
             Declaration(
@@ -616,10 +624,18 @@ def _across_roots(*, moved: bool, leaf_under: EntityIdentity | None = None) -> M
             ),
             Declaration(
                 identity=_BRANCH,
-                inheritance=AbstractSubtype(ExactEntityReference(_OTHER_ROOT if moved else _ROOT)),
+                inheritance=(
+                    ConcreteSubtype(_moved_parent(moved), "NOTE")
+                    if concrete
+                    else AbstractSubtype(_moved_parent(moved))
+                ),
             ),
         )
     )
+
+
+def _moved_parent(moved: bool) -> ExactEntityReference:
+    return ExactEntityReference(_OTHER_ROOT if moved else _ROOT)
 
 
 def test_a_rowless_position_moving_between_families_carries_no_data_across() -> None:
@@ -629,6 +645,18 @@ def test_a_rowless_position_moving_between_families_carries_no_data_across() -> 
     # the family key it leaves behind, which is an authoring surface change.
     moving = evolve(_across_roots(moved=False), _across_roots(moved=True))
     assert _verdict_on(moving, _altered(moving)) == _Verdict((_AUTHORING,), False)
+
+
+def test_a_position_arriving_in_a_family_as_a_shape_leaves_its_own_behind() -> None:
+    # Turning `Note` concrete under the root it did not have places its
+    # discriminator value in a Table this position never sat in, so the shape
+    # arrives in that family exactly as an added subtype does. The root it
+    # leaves takes back the family key a read of the position addressed, so the
+    # move requires the authoring surface whatever the new role is — which is
+    # why a position arriving in a family whole is never reported as
+    # Overlap-Visible however its own verdict reads.
+    joining = evolve(_across_roots(moved=False), _across_roots(moved=True, concrete=True))
+    assert _verdict_on(joining, _altered(joining)) == _Verdict((_AUTHORING,), False)
 
 
 def _altered_on(evolution: Evolution, entity: EntityIdentity) -> EvolutionOperation:
