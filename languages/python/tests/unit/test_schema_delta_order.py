@@ -8,12 +8,14 @@ check the key against them, so the shortcut cannot silently stop being valid.
 
 from __future__ import annotations
 
-from _corpus_model_support import corpus
+from _corpus_model_support import corpus, formed
 from _inheritance_family_support import entity_with_two_indices_over_one_column
 
 from parallax.core.base import INT32, STRING
 from parallax.core.dialect import POSTGRES, PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.descriptor._records import Attribute, Entity, Index, Inheritance, Metamodel
 from parallax.evolution.model_evolution import ABSENT, EntityAdded, UnilateralEvolution, evolve
 from parallax.evolution.schema_delta._order import dependency_violations, order, order_key
 from parallax.evolution.schema_delta._physical import (
@@ -25,6 +27,7 @@ from parallax.evolution.schema_delta._physical import (
     PhysicalColumn,
     PhysicalOperation,
     member_key,
+    table_of,
 )
 from parallax.evolution.schema_delta._plan import plan
 
@@ -124,6 +127,62 @@ def test_a_prerequisite_the_plan_does_not_contain_is_no_violation() -> None:
     # An operation on a Table this delta does not create acts on one the earlier
     # edition already had, and a drop with no matching create replaces nothing.
     assert dependency_violations([_create_index("c"), _drop_index("gone")]) == ()
+
+
+def _tpcs_family_altering_a_root_declared_index(*, unique: bool) -> AcceptedMetamodel:
+    """Two concrete Tables repeating one root-declared Index, whose uniqueness varies.
+
+    One logical Index Identity with a physical projection per concrete Table is
+    what makes a prerequisite keyed by the Identity alone ambiguous.
+    """
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="code", type="string", column="code", max_length=8),
+        ),
+        indices=(Index(name="root_code_ix", attributes=("code",), unique=unique),),
+    )
+    return formed(
+        Metamodel(
+            entities=(
+                root,
+                Entity(
+                    name="Alpha",
+                    table="alpha",
+                    inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+                    attributes=(Attribute(name="x", type="int32", column="x"),),
+                ),
+                Entity(
+                    name="Zeta",
+                    table="zeta",
+                    inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+                    attributes=(Attribute(name="y", type="int32", column="y"),),
+                ),
+            )
+        )
+    )
+
+
+def test_one_logical_index_replaced_on_every_concrete_table_breaks_no_rule() -> None:
+    # Each concrete Table holds its own create/drop pair for the same root-declared
+    # Index Identity, and each drop's prerequisite is its OWN Table's create. A
+    # rule keyed by the Identity alone would compare `alpha`'s drop against
+    # `zeta`'s create and report an order that is in fact correct.
+    evolution = evolve(
+        _tpcs_family_altering_a_root_declared_index(unique=False),
+        _tpcs_family_altering_a_root_declared_index(unique=True),
+    )
+    assert isinstance(evolution, UnilateralEvolution)
+    ordered = order(plan(evolution, POSTGRES).operations)
+    assert [(type(operation).__name__, table_of(operation).name) for operation in ordered] == [
+        ("CreateIndex", "alpha"),
+        ("DropIndex", "alpha"),
+        ("CreateIndex", "zeta"),
+        ("DropIndex", "zeta"),
+    ]
+    assert dependency_violations(ordered) == ()
 
 
 def test_every_generated_plan_is_ordered_so_that_no_rule_is_broken() -> None:
