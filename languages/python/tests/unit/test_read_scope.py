@@ -8,6 +8,12 @@ holding one, and that the body it hands the policy takes its port, its
 Concurrency Preference, and its observation ledger from the inputs it was handed
 rather than from anything it closed over.
 
+A delivery is the same ladder read from the other side, and gets the same
+treatment: that a stream verb refuses everything it can before it judges the page
+size it was named with, that constructing one reaches no capability and entering
+one opens exactly the activity the policy answers, and that every page of a
+delivery comes back to the ONE scope and the ONE selection it was opened with.
+
 The recording policy here is the third adapter beside the two production ones:
 it answers a fixed selection, records every capability call, and runs each body
 with INERT activities over whichever :class:`ReadInputs` the case names. That is
@@ -53,8 +59,10 @@ from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.unit_work import Concurrency, ParticipationToken, RetainedObservation
 from parallax.snapshot import QueryTargetError, SnapshotConnectionError
 from parallax.snapshot._read_result import FindResult, HistoryFindResult, RowsResult
+from parallax.snapshot.handle import _page as handle_page
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
+from parallax.snapshot.handle._page import At, PagePlan, StreamPage
 from parallax.snapshot.handle._read_scope import (
     ReadInputs,
     ReadScope,
@@ -63,6 +71,13 @@ from parallax.snapshot.handle._read_scope import (
 from parallax.snapshot.handle._retention import ObservationLedger
 
 _ACCOUNT_ROWS: Final = (NEW_ROW,)
+
+_PAGE: Final = 2
+"""A page size that is valid, so a refusal ahead of it is the case's own subject."""
+
+
+def _account_row(account_id: int) -> dict[str, object]:
+    return {**NEW_ROW, "id": account_id}
 
 
 def _selection(model: Any = ACCOUNT, *, materializing: bool = True) -> SelectedReadModel:
@@ -230,6 +245,41 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
     return executed
 
 
+@dataclass(frozen=True, slots=True)
+class _Paged:
+    """One page the scope's own body read, and what it read it under."""
+
+    model: CatalogedModel
+    port: DbPort
+    preference: Concurrency | None
+    ledger: ObservationLedger | None
+
+
+def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_Paged]:
+    """The model, port, preference, and ledger every page of a delivery was read
+    under, spelled with the page reader's full signature for `_recorded`'s
+    reason."""
+    paged: list[_Paged] = []
+
+    def recording_read_stream_page(
+        page_plan: PagePlan,
+        at: At,
+        model: CatalogedModel,
+        port: DbPort,
+        *,
+        preference: Concurrency | None = None,
+        ledger: ObservationLedger | None = None,
+        calls: DatabaseCallScope = INERT,
+    ) -> StreamPage:
+        paged.append(_Paged(model, port, preference, ledger))
+        return handle_page.read_stream_page(
+            page_plan, at, model, port, preference=preference, ledger=ledger, calls=calls
+        )
+
+    patch.setattr(read_scope_module, "read_stream_page", recording_read_stream_page)
+    return paged
+
+
 def _delivering() -> InstalledLifecycle:
     """A handle installation currently inside one of its own lifecycle contexts."""
     installed = installed_lifecycle(RecordingLifecycleProvider())
@@ -263,8 +313,10 @@ def test_every_verb_refuses_re_entry_before_it_asks_its_policy_for_anything() ->
 
     for verb in (
         lambda: scope.find(_typed_query()),
+        lambda: scope.stream(_typed_query(), _PAGE),
         lambda: scope.read_rows(_rows_node()),
         lambda: scope.wire_find(_wire_node()),
+        lambda: scope.wire_stream(_wire_node(), _PAGE),
     ):
         with pytest.raises(ExecutionLifecycleReentryError):
             verb()
@@ -447,3 +499,129 @@ def test_the_row_form_body_threads_the_preference_and_files_into_no_ledger(
     assert (call.executor, call.port, call.preference) == ("find_rows", port, "locking")
     assert ledger.retained == []
     assert [type(op) for op in port.calls] == [ReadCall]
+
+
+# --------------------------------------------------------------------------- #
+# A stream's ladder runs at the call; its execution runs at the scope          #
+# --------------------------------------------------------------------------- #
+def test_a_stream_refuses_a_classless_selection_before_it_judges_its_page_size() -> None:
+    # The stream verbs run `find`'s ladder with one more rung on it, and the
+    # rung is LAST: what the connection can materialize at all is judged before
+    # this call's own arguments are, so a classless selection is refused with an
+    # invalid page size still unexamined. The same call under a class-backed
+    # selection reaches the page size, which is what orders the two rather than
+    # merely finding both present.
+    port = RefusingPort()
+    classless, execution = _scope(port, selected=_selection(materializing=False))
+    class_backed, _ = _scope(port)
+
+    with pytest.raises(SnapshotConnectionError) as refused:
+        classless.stream(_typed_query(), 0)
+    with pytest.raises(ValueError, match="batch_size requires a positive built-in int"):
+        class_backed.stream(_typed_query(), 0)
+
+    assert refused.value.code == "snapshot-class-backed-model-required"
+    assert execution.calls == ["begin"]
+
+
+def test_the_wire_stream_verb_crosses_no_classless_refusal_and_still_judges_its_size() -> None:
+    # A Wire delivery publishes no Entity Class instance, so it needs no graph
+    # construction — and reaches its own page size under exactly the selection
+    # the Typed stream was refused under.
+    port = RefusingPort()
+    scope, execution = _scope(port, selected=_selection(materializing=False))
+
+    with pytest.raises(ValueError, match="batch_size requires a positive built-in int"):
+        scope.wire_stream(_wire_node(), 0)
+
+    assert execution.calls == ["begin"]
+
+
+@pytest.mark.parametrize(
+    ("verb_name", "interface", "target"),
+    [
+        ("stream", "TYPED", "parallax.compatibility.Account"),
+        ("wire_stream", "WIRE", "Account"),
+    ],
+)
+def test_constructing_a_stream_reaches_no_capability_and_entering_it_opens_one(
+    verb_name: str, interface: ReadInterface, target: str
+) -> None:
+    # The stream's side-effect boundary is its scope rather than its
+    # construction: the verb selects a model and answers an inert delivery, and
+    # the activity that delivery is observed through is opened through THIS
+    # scope when the caller enters it. Which activity that is stays the
+    # execution policy's, so the scope passes the target, the interface, and the
+    # page size and decides nothing.
+    port = ScriptedPort(Read(rows=[_account_row(1)]))
+    scope, execution = _scope(port)
+    verbs: dict[str, Callable[[], Any]] = {
+        "stream": lambda: scope.stream(_typed_query(), _PAGE),
+        "wire_stream": lambda: scope.wire_stream(_wire_node(), _PAGE),
+    }
+
+    stream = verbs[verb_name]()
+
+    assert execution.calls == ["begin"]
+    assert port.calls == []
+    with stream:
+        assert execution.calls == ["begin", "open_stream"]
+        opened_on, opened_as, batch_size = execution.stream_calls[0]
+        assert (opened_on.canonical, opened_as, batch_size) == (target, interface, _PAGE)
+        assert list(stream) != []
+    assert execution.calls == ["begin", "open_stream", "page"]
+
+
+def test_every_page_of_a_delivery_is_read_under_the_one_selection_it_opened_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A delivery holds the selection its verb answered and reads every page
+    # under it, so no page of one stream is served by a second model however
+    # many pages it takes. `begin` is called once for the whole delivery, and
+    # every page reaches the SAME scope and the same policy the first one did —
+    # which is what "no scope or adapter per page" is, stated as recorded calls
+    # rather than as a byte count.
+    selected = _selection()
+    port = ScriptedPort(
+        Read(rows=[_account_row(1), _account_row(2)]),
+        Read(rows=[_account_row(2), _account_row(3)]),
+        Read(rows=[_account_row(3)]),
+    )
+    scope, execution = _scope(port, selected=selected)
+    paged = _recorded_pages(monkeypatch)
+
+    with scope.stream(_typed_query(), 1) as stream:
+        delivered = [root.id for root in stream]
+
+    assert delivered == [1, 2, 3]
+    assert execution.calls == ["begin", "open_stream", "page", "page", "page"]
+    assert [page.model for page in paged] == [selected.model] * 3
+    assert all(page.model is selected.model for page in paged)
+
+
+def test_every_page_threads_the_port_preference_and_ledger_it_was_handed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A page IS an eager read of a bounded root query, so it takes its lane off
+    # the same inputs an eager read's body does: the scope holds none of the
+    # three and a participating delivery differs from a standalone one in what
+    # its policy hands each page, never in what the loop above asks for.
+    ledger = _Ledger()
+    standalone_port = ScriptedPort(Read(rows=[_account_row(1)]))
+    participating_port = ScriptedPort(Read(rows=[_account_row(1)]))
+    standalone, _ = _scope(standalone_port)
+    participating, _ = _scope(participating_port, preference="locking", ledger=ledger)
+    paged = _recorded_pages(monkeypatch)
+
+    for scope, expected_port in (
+        (standalone, standalone_port),
+        (participating, participating_port),
+    ):
+        with scope.stream(_typed_query(), _PAGE) as stream:
+            assert list(stream) != []
+        assert paged[-1].port is expected_port
+
+    first, second = paged
+    assert (first.preference, first.ledger) == (None, None)
+    assert second.preference == "locking"
+    assert second.ledger is ledger

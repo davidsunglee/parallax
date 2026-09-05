@@ -1,10 +1,11 @@
 """``parallax.snapshot.handle._database`` — demarcation and the flush edge (spec §5).
 
 The composition root's own module: :meth:`Database.connect` wires a concrete
-``m-db-port`` adapter to a metamodel, :meth:`Database.find` and
-:meth:`Database.read_rows` delegate to the one
+``m-db-port`` adapter to a metamodel, :meth:`Database.find`,
+:meth:`Database.stream`, and :meth:`Database.read_rows` delegate to the one
 :class:`~parallax.snapshot.handle._read_scope.ReadScope` this connection owns —
-the same scope the Wire find it answers runs — and :meth:`Database.transact` is the
+the same scope the Wire reads it answers run, and the same scope every stream it
+opens is delivered through — and :meth:`Database.transact` is the
 callback demarcation — sentinel-backed options, join with the option-conflict
 check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
 into the unit of work.
@@ -65,23 +66,19 @@ from parallax.core.entity import (
     row_codec_of,
 )
 from parallax.core.entity._model import cataloged_model, class_index
-from parallax.core.execution_lifecycle import ExecutionLifecycleProvider, ReadInterface
+from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
     INERT,
-    ActivityTarget,
     InstalledLifecycle,
-    SnapshotStreamActivity,
-    StreamBatchActivity,
     TransactionAttemptActivity,
     WriteBatchActivity,
     installed_lifecycle,
-    open_snapshot_stream_root,
     open_transaction_root,
     refuse_reentry,
 )
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -101,17 +98,10 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.snapshot.handle._errors import SnapshotConnectionError
-from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._planning import build_write_planner
-from parallax.snapshot.handle._read import (
-    ResultPublication,
-    RowsResult,
-    Snapshot,
-    typed_publication,
-    wire_publication,
-)
+from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_scope import SelectedReadModel, standalone_read_scope
-from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
+from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.handle._write_lowering import stream_lowered
@@ -405,13 +395,7 @@ class Database:
         The refusal order is :meth:`find`'s: re-entry first, then a connection
         that can materialize no Snapshot at all, then this call's own arguments.
         """
-        refuse_reentry(self._lifecycle)
-        construction = self._selected.materializing()
-        return self._stream(
-            object_query_node(query),
-            typed_publication(self._selected.model.meta, construction),
-            batch_size,
-        )
+        return self._reads.stream(query, batch_size)
 
     @property
     def wire(self) -> WireDatabaseView:
@@ -434,60 +418,13 @@ class Database:
         return self._reads.wire_find(node)
 
     def _wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
-        """One Wire stream: :meth:`_stream` under the wire publication.
+        """One Wire stream: the Read Scope's own Wire stream verb.
 
         The view ``db.wire`` answers holds this method rather than the handle,
         so this — not the property that built the view — is where a Wire stream
-        enters and where re-entry is refused.
+        enters; re-entry is refused at the scope's first line.
         """
-        refuse_reentry(self._lifecycle)
-        return self._stream(node, wire_publication(self._selected.model.meta), batch_size)
-
-    def _stream(
-        self, node: ObjectQueryNode, publication: ResultPublication, batch_size: int
-    ) -> SnapshotStream[Any]:
-        """One non-transactional stream of ``node``, published through
-        ``publication`` — the whole composition both read interfaces run.
-
-        Non-transactional in the same three ways this connection's eager reads
-        are: no read lock, no Concurrency Preference, and no participation
-        stamped on the values it publishes. Constructing a stream reaches
-        nothing: the gate, the page plan, and every statement are the entered
-        scope's, so a stream nobody enters is inert.
-        """
-        check_batch_size(batch_size)
-        return SnapshotStream(
-            node,
-            self._selected.model,
-            publication,
-            self._page,
-            self._stream_root,
-            batch_size=batch_size,
-        )
-
-    def _stream_root(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int
-    ) -> SnapshotStreamActivity:
-        """One standalone stream's own Root Execution.
-
-        A stream outside any transaction is an outermost Handle operation, so it
-        owns its root exactly as a standalone read owns its Read root.
-        """
-        return open_snapshot_stream_root(
-            self._lifecycle, target=target, interface=interface, batch_size=batch_size
-        )
-
-    def _page(self, page_plan: PagePlan, at: At, batch: StreamBatchActivity) -> StreamPage:
-        """One page of a standalone stream: the page reader, inside the page's
-        own Stream Batch.
-
-        A page IS an eager read of a bounded root query, so the `1 + L` ceiling
-        applies to it exactly as it applies to a whole eager result. Nothing
-        precedes the batch here — a standalone stream flushes nothing — so it
-        opens where the page begins.
-        """
-        with batch as calls:
-            return read_stream_page(page_plan, at, self._selected.model, self._port, calls=calls)
+        return self._reads.wire_stream(node, batch_size)
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Execute ``query`` exactly once outside any transaction and return its

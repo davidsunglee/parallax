@@ -18,11 +18,14 @@ does, and opens its own Read under this transaction's attempt exactly as every
 participating read here does.
 
 The read COMPOSITION is not owned here either. :meth:`Transaction.find`,
-:meth:`Transaction.read_rows`, and the Wire read the ``tx.wire`` view answers
-all delegate to the one participating
+:meth:`Transaction.stream`, :meth:`Transaction.read_rows`, and the Wire reads the
+``tx.wire`` view answers all delegate to the one participating
 :class:`~parallax.snapshot.handle._read_scope.ReadScope` this transaction
 constructs, which runs the same ladder a ``Database``'s standalone reads run,
-under a participating execution policy rather than a standalone one.
+under a participating execution policy rather than a standalone one. A stream
+this transaction opens retains that scope too, so every page of it force-flushes
+and opens its Stream Batch through the same policy an eager read here runs
+under.
 
 The predicate-selected ``_where`` family is NOT owned here: those five public
 verbs are thin delegates that thread ``(uow, meta, conn)`` into
@@ -54,13 +57,12 @@ from parallax.core.entity import (
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
-    StreamBatchActivity,
     TransactionAttemptActivity,
     refuse_reentry,
 )
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.object_query import ObjectQueryNode
-from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.unit_work import (
     KeyedMutation,
     SettledEvidence,
@@ -74,20 +76,13 @@ from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPre
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
 from parallax.snapshot.handle._family import declaring as declaring_of
-from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
-from parallax.snapshot.handle._read import (
-    ResultPublication,
-    RowsResult,
-    Snapshot,
-    typed_publication,
-    wire_publication,
-)
+from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_scope import SelectedReadModel, participating_read_scope
-from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
+from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._wire_writes import WireWriteLane, buffer_prepared_keyed_write
 from parallax.snapshot.handle._write_inputs import (
@@ -152,7 +147,6 @@ class Transaction:
         "_lifecycle",
         "_model",
         "_reads",
-        "_selected",
         "_uow",
     )
 
@@ -167,7 +161,6 @@ class Transaction:
     ) -> None:
         self._uow = uow
         self._conn = conn
-        self._selected = selected
         # The write verbs' own metadata, which is the read selection's cataloged
         # half: a write names Entities and derives rows, so it needs the catalog
         # without the materialization capability beside it.
@@ -635,69 +628,16 @@ class Transaction:
         callback, and roots already consumed cannot be revoked, so a retried
         callback opens a fresh stream and may observe them again.
         """
-        refuse_reentry(self._lifecycle)
-        construction = self._selected.materializing()
-        return self._streamed(
-            object_query_node(query),
-            typed_publication(self._model.meta, construction),
-            batch_size,
-        )
+        return self._reads.stream(query, batch_size)
 
     def _wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
         """One participating Wire stream, published as Wire nodes one at a time.
 
         The view ``tx.wire`` answers holds this method rather than the
-        transaction, so this is where a Wire stream enters and where re-entry is
-        refused.
+        transaction, so this is where a Wire stream enters; re-entry is refused
+        at the Read Scope's first line.
         """
-        refuse_reentry(self._lifecycle)
-        return self._streamed(node, wire_publication(self._model.meta), batch_size)
-
-    def _streamed(
-        self, node: ObjectQueryNode, publication: ResultPublication, batch_size: int
-    ) -> SnapshotStream[Any]:
-        """One participating stream of ``node``, published through
-        ``publication`` — the whole composition both read interfaces run."""
-        check_batch_size(batch_size)
-        return SnapshotStream(
-            node,
-            self._model,
-            publication,
-            self._page,
-            self._attempt.snapshot_stream,
-            batch_size=batch_size,
-        )
-
-    def _page(self, page_plan: PagePlan, at: At, batch: StreamBatchActivity) -> StreamPage:
-        """One page of a participating stream: a find inside the force-flush.
-
-        The flush is per page rather than once at entry for two reasons that
-        point the same way: a page reads the database like any other
-        participating read, so read-your-own-writes has to hold at every one of
-        them rather than intermittently; and a buffer flushed once at entry
-        would grow with the result, which is the unbounded growth a stream
-        exists to remove. An empty buffer costs one truthiness check, so a
-        read-only loop pays nothing.
-
-        The Stream Batch opens INSIDE that flush, which is what makes the
-        dependency batch the page forces out an ordered SIBLING of it under the
-        same attempt rather than a scope containing it
-        (`m-execution-lifecycle`).
-        """
-        return self._uow.read(lambda: self._paged(page_plan, at, batch))
-
-    def _paged(self, page_plan: PagePlan, at: At, batch: StreamBatchActivity) -> StreamPage:
-        """One page's own activity: execute and seal, inside the page's batch."""
-        with batch as calls:
-            return read_stream_page(
-                page_plan,
-                at,
-                self._model,
-                self._conn,
-                preference=self._uow.settings.concurrency,
-                ledger=self._uow,
-                calls=calls,
-            )
+        return self._reads.wire_stream(node, batch_size)
 
     def read_rows(self, query: ObjectQueryNode) -> RowsResult:
         """Run a PARTICIPATING row-form read and return its published rows.
