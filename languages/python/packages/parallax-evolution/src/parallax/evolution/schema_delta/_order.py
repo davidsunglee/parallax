@@ -63,6 +63,12 @@ def dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, ..
     them. A rule is silent about a prerequisite the plan does not contain: an
     operation on a Table this delta does not create acts on one the earlier
     edition already had.
+
+    Every prerequisite is keyed by the physical Table beside the member, because
+    one logical definition can have a physical projection per Table: a
+    root-declared Index altered under table-per-concrete-subtype is one
+    create/drop pair on each concrete Table, and each drop's prerequisite is its
+    OWN Table's create rather than whichever Table happened to be walked last.
     """
     tables = {
         table_of(operation).name: position
@@ -75,7 +81,7 @@ def dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, ..
         if isinstance(operation, AddColumn)
     }
     indices = {
-        operation.definition.index: position
+        (table_of(operation).name, operation.definition.index): position
         for position, operation in enumerate(ordered)
         if isinstance(operation, CreateIndex)
     }
@@ -92,7 +98,7 @@ def dependency_violations(ordered: Sequence[PhysicalOperation]) -> tuple[str, ..
                 if columns.get((table, column.column.name), position) > position
             )
         if isinstance(operation, DropIndex) and (
-            indices.get(operation.definition.index, position) > position
+            indices.get((table, operation.definition.index), position) > position
         ):
             violations.append(
                 f"{position}: {operation.name.value} drops an altered Index before its "
