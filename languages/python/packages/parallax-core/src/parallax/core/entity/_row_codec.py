@@ -85,10 +85,12 @@ class AuthoredRow:
     """The two sides of one edit chain's authoring, judged by its caller.
 
     ``row`` is the identity plus every member the chain touched, at the value it
-    now holds; ``originals`` is those same members at the value the chain first
-    recorded. Both are serialized by the same rule and ordered by the same
+    now holds; ``originals`` is the touched members alone, at the value the chain
+    first recorded. Both are serialized by the same rule and ordered by the same
     candidate pass, so a caller comparing them member by member compares like
-    with like and every member appears on both sides or on neither.
+    with like. The sides are asymmetric by exactly the identity: every name in
+    ``originals`` is a name in ``row``, and what ``row`` carries beyond them is
+    the key naming the object this authoring is stated against.
 
     Effectiveness is deliberately absent. A caller holding this decides which
     touched members changed, which were restored, and what follows from either —

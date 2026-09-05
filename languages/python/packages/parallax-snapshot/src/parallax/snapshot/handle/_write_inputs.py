@@ -4,9 +4,10 @@ Everything a keyed write needs from the moment a verb is called to the moment
 the buffer holds it, including the write evidence it resolves off the source
 value it was handed, and nothing a read needs. The keyed write ingress
 (:mod:`parallax.snapshot.handle._keyed_writes`) composes the whole of it in one
-order, and the predicate-selected lane reaches the two steps a ``_where`` verb
-shares with it, which is what keeps one judgement and one buffer behind every
-representation:
+order; the Wire ingress and the predicate-selected lane each reach the steps
+they share with that order. Owning those steps here rather than in any one
+caller is what puts one judgement of a given question, and one buffer, behind
+every representation:
 
 * the bound-less destructive verb's applicability
   (:func:`reject_temporal_delete`) and build-time window validation

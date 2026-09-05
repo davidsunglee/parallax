@@ -11,8 +11,9 @@ the buffered-insert exemption, evidence, claim, and buffer — belongs to
 :mod:`parallax.snapshot.handle._keyed_writes`, and what this module supplies is
 the Typed Keyed Write Source and Keyed Insert Source: what an Entity value, its
 Change Record, and its lifecycle answer that order, and nothing about the order
-itself. The Wire verbs supply their own and the two meet in one judgement and
-one buffer.
+itself. ``tx.wire``'s verbs state those same facts off a published row and a
+Source Hint instead, and every representation's keyed write ends in the one
+buffer and the one buffered-insert ledger this transaction holds.
 
 It also carries the row-form read (:meth:`Transaction.read_rows`), which the
 conformance harness reaches and no developer surface does. It is not a second
