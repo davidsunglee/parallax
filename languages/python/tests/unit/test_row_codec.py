@@ -1,5 +1,6 @@
-"""The Entity Row Codec: ``full_row`` / ``identity_row`` / ``edited_row``, the
-``row_codec_of`` seam, and the five closed ``EntityRowError`` codes (spec §5).
+"""The Entity Row Codec: ``full_row`` / ``identity_row`` / ``edited_row`` /
+``authored_row``, the ``row_codec_of`` seam, and the five closed
+``EntityRowError`` codes (spec §5).
 
 The write path's consumption of the codec lives in ``test_transaction_writes.py``
 and ``tests/api/test_edited_row_no_drift.py``; what this suite pins is the codec
@@ -577,6 +578,75 @@ def test_whole_comparison_covers_the_nested_and_many_boundaries() -> None:
     assert not _assignment_matches_original([{"city": "Oslo"}], [])
     assert not _assignment_matches_original([{"city": "Oslo"}], {"city": "Oslo"})
     assert not _assignment_matches_original("Oslo", "Bergen")
+
+
+# --------------------------------------------------------------------------- #
+# authored_row: the same selection with no effectiveness weighed.             #
+# --------------------------------------------------------------------------- #
+def test_authored_row_answers_both_sides_of_every_touched_member() -> None:
+    authored = _accounts().authored_row(_account("100.00").edit(balance=Decimal("175.00")))
+    assert authored is not None
+    assert authored.row == {"id": 1, "balance": Decimal("175.00")}
+    assert authored.originals == {"balance": Decimal("100.00")}
+
+
+def test_authored_row_keeps_a_restored_member_edited_row_drops() -> None:
+    # The whole difference between the two operations: `edited_row` weighs
+    # effectiveness and answers `None`, and this one answers the two values a
+    # caller weighing it itself needs.
+    chained = _account("100.00").edit(balance=Decimal("150.00")).edit(balance=Decimal("100.00"))
+    assert _accounts().edited_row(chained) is None
+    authored = _accounts().authored_row(chained)
+    assert authored is not None
+    assert authored.row == {"id": 1, "balance": Decimal("100.00")}
+    assert authored.originals == {"balance": Decimal("100.00")}
+
+
+def test_authored_row_answers_none_only_for_a_chain_that_touched_nothing() -> None:
+    assert _accounts().authored_row(_account()) is None
+    assert _accounts().authored_row(_account().edit()) is None
+
+
+def test_authored_row_orders_both_sides_by_the_models_candidate_pass() -> None:
+    # One order, from the model, on both sides — so a caller zipping them member
+    # by member never pairs an authored value with another member's original.
+    edited = _account("100.00").edit(balance=Decimal("175.00"), owner="Grace")
+    authored = _accounts().authored_row(edited)
+    assert authored is not None
+    assert list(authored.row) == ["id", "owner", "balance"]
+    assert list(authored.originals) == ["owner", "balance"]
+
+
+def test_authored_row_serializes_an_occurrence_on_both_sides() -> None:
+    original = vm.Address(
+        street="Main St", city="Oslo", geo=None, phones=(vm.Phone(number="555-0100"),)
+    )
+    edited = vm.Customer(id=1, name="Ada", address=original).edit(
+        address=vm.Address(street="Main St", city="Bergen", geo=None, phones=())
+    )
+    authored = row_codec_of(vm.CUSTOMER_MODEL).authored_row(edited)
+    assert authored is not None
+    assert authored.row["address"] == {
+        "street": "Main St",
+        "city": "Bergen",
+        "geo": None,
+        "phones": [],
+    }
+    assert authored.originals["address"] == {
+        "street": "Main St",
+        "city": "Oslo",
+        "geo": None,
+        "phones": [{"number": "555-0100"}],
+    }
+
+
+def test_authored_row_refuses_the_selection_edited_row_refuses() -> None:
+    # The selection is judged from both sides before either value is read, so
+    # the two operations refuse the same value for the same reason.
+    restored = WiderWidget(id=1, label="a", extra="x").edit(extra="y").edit(extra="x")
+    with pytest.raises(EntityRowError) as refusal:
+        row_codec_of(NARROW_MODEL).authored_row(restored)
+    assert refusal.value.code == "entity-row-member-missing"
 
 
 # --------------------------------------------------------------------------- #

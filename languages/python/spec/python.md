@@ -3976,6 +3976,7 @@ These feature tests do not claim the deferred `benchmark` command or general
     full_row(value)     -> dict[str, object]
     identity_row(value) -> dict[str, object]
     edited_row(value)   -> dict[str, object] | None
+    authored_row(value) -> AuthoredRow | None      # .row / .originals
 
   row_codec_of(model: DomainModel) -> EntityRowCodec
 
@@ -4001,8 +4002,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   Members come from the model's family-effective metadata, which also supplies
   the canonical keys, and each operation selects from those candidates by its
   own rule: `full_row` selects what `model_fields_set` reports as populated,
-  `identity_row` selects the primary key, and `edited_row` selects the primary
-  key plus the members the Change Record names. Neither side alone would do:
+  `identity_row` selects the primary key, and `edited_row` and `authored_row`
+  both select the primary key plus the members the Change Record names. Neither side alone would do:
   metadata cannot know what the caller populated, and the class cannot be the
   authority on which members the model declares. A member an operation selects
   but **cannot emit** raises `entity-row-member-missing` rather than being
@@ -4044,9 +4045,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   from keeps the two as separate declaration-ordered sequences. Physical names
   never appear: the canonical-member-to-default-column rule stays authoritative,
   so `taxID` is emitted as `taxID` and its column `tax_i_d` is
-  `m-storage-layout`'s business. All three operations carry
-  **serialized** values, so a caller holding several rows of one value compares
-  like with like. Uniformity moves no emitted bind: a primary key is
+  `m-storage-layout`'s business. Every operation carries
+  **serialized** values, on both sides of the pair `authored_row` answers, so a
+  caller holding several rows of one value compares like with like. Uniformity moves no emitted bind: a primary key is
   structurally an Attribute of a scalar type, which serialization passes through
   by identity, so `identity_row`'s values are the ones the instance holds
   whatever the rule says.
@@ -4058,6 +4059,15 @@ These feature tests do not claim the deferred `benchmark` command or general
   names no change to write* — so a net-zero edit and a value no edit ever
   touched are the same answer, and "nothing to write" has exactly one
   representation whatever the value's history.
+
+  `authored_row` answers the same selection with **no** effectiveness weighed:
+  the identity plus every touched member at the value it now holds, beside those
+  same members at the value the chain first recorded. It answers `None` only
+  when the chain touched nothing, so a net-zero edit — one answer to `edited_row`
+  — is two rows here, which is the whole difference between them. It exists
+  because effectiveness is not always the codec's to weigh: a write comparing a
+  Typed value's authoring against another representation's owns the comparison
+  rule itself, and can only own it if both sides reach it unjudged.
 
   A **Change Record** is a mapping from each member the edit chain touched to
   the value that member held when it was first touched, stored in one private
@@ -4082,11 +4092,12 @@ These feature tests do not claim the deferred `benchmark` command or general
 
   **Refusals are ordered, so one input has one code.** Every operation resolves
   the value's Entity Identity first — `entity-row-not-an-entity`, then
-  `entity-row-target-not-in-model` — and judges members last. `edited_row`
-  settles the carrier in between, before the Change Record is read for names: a
-  carrier no edit wrote raises `entity-row-malformed-provenance` whatever else
-  that value populates, so `entity-row-member-missing` from `edited_row` always
-  reports a name an accepted record supplied. An absent record narrows
+  `entity-row-target-not-in-model` — and judges members last. The two operations
+  reading a Change Record settle the carrier in between, before that record is
+  read for names: a carrier no edit wrote raises
+  `entity-row-malformed-provenance` whatever else that value populates, so
+  `entity-row-member-missing` from `edited_row` or `authored_row` always reports
+  a name an accepted record supplied. An absent record narrows
   nothing: the primary-key half of the selection is judged exactly as it is for
   a net-zero chain, so a value whose class supplies no attribute for a declared
   key member is refused rather than answered `None`. `full_row` and

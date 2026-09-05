@@ -4,14 +4,20 @@ Exposed from ``parallax.core.entity`` and deliberately **not** from top-level
 ``parallax.core``: it is the seam a write path derives rows through, not
 developer surface.
 
-Three operations answer one question each — every member the caller populated,
-the identity, and the effective caller-authored changes — and a consumer asking
-for one learns nothing about Pydantic, the private Change Record slot, physical
-column names, temporal planning, or Audit Provenance. It is an **authoring**
-codec: it emits only what a caller authored, never computes or stamps a
-framework-owned value, and is never an Audit Provenance extension point. Its
-dependencies are the accepted Metamodel, the value's own class, and — for the
-private slot alone — the value's own instance storage, and nothing else.
+Four operations answer one question each — every member the caller populated,
+the identity, the effective caller-authored changes, and every member an edit
+chain named beside the original it first recorded — and a consumer asking for one
+learns nothing about Pydantic, the private Change Record slot, physical column
+names, temporal planning, or Audit Provenance. It is an **authoring** codec: it
+emits only what a caller authored, never computes or stamps a framework-owned
+value, and is never an Audit Provenance extension point. Its dependencies are the
+accepted Metamodel, the value's own class, and — for the private slot alone — the
+value's own instance storage, and nothing else.
+
+Weighing effectiveness is one operation's own rule rather than the codec's:
+:meth:`EntityRowCodec.edited_row` answers what a write with no other basis for
+comparison needs, and :meth:`EntityRowCodec.authored_row` answers the two sides
+of that comparison for a caller that judges it itself.
 
 Input validation **resolves; it does not own.** The codec resolves the Entity
 Identity the value's class declares and refuses at resolution only when its model
@@ -66,12 +72,32 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 
-__all__ = ["EntityRowCodec", "row_codec_of"]
+__all__ = ["AuthoredRow", "EntityRowCodec", "row_codec_of"]
 
 
 _NO_RECORD: Final = object()
 """Distinguishes an absent Change Record slot from one holding anything at all,
 which is what tells "no change to write" from a corrupt carrier."""
+
+
+@dataclass(frozen=True, slots=True)
+class AuthoredRow:
+    """The two sides of one edit chain's authoring, judged by its caller.
+
+    ``row`` is the identity plus every member the chain touched, at the value it
+    now holds; ``originals`` is those same members at the value the chain first
+    recorded. Both are serialized by the same rule and ordered by the same
+    candidate pass, so a caller comparing them member by member compares like
+    with like and every member appears on both sides or on neither.
+
+    Effectiveness is deliberately absent. A caller holding this decides which
+    touched members changed, which were restored, and what follows from either —
+    which is what lets a write judge a Typed value's authoring by the same rule
+    it judges another representation's.
+    """
+
+    row: dict[str, object]
+    originals: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +205,38 @@ class EntityRowCodec:
         row = self._identity_row(facts, names, value, "edited_row")
         row.update(self._serialized(facts, names, value, effective, "edited_row"))
         return row
+
+    def authored_row(self, value: object) -> AuthoredRow | None:
+        """``value``'s identity plus every member its edit chain touched, beside
+        those members' first-recorded originals — or ``None`` when the chain
+        touched nothing.
+
+        The pair :meth:`edited_row` reduces to one side of. Where that operation
+        weighs effectiveness and drops the members whose current value equals
+        their original, this one weighs none and emits both values, so a caller
+        that owns the comparison rule can apply its own. ``None`` therefore says
+        only that there is nothing to compare — a chain that nets to zero still
+        answers its touched members, which is exactly the case the two operations
+        differ on.
+
+        The selection is judged from both sides before either value is read
+        (:meth:`_touched`), identically to :meth:`edited_row`'s, so the two
+        operations refuse the same value for the same reason.
+        """
+        facts, names = self._resolved(value)
+        touched, _py_names = self._touched(facts, names, value, "authored_row")
+        if not touched:
+            return None
+        selected = frozenset(touched)
+        row = self._identity_row(facts, names, value, "authored_row")
+        row.update(self._serialized(facts, names, value, selected, "authored_row"))
+        return AuthoredRow(
+            row=row,
+            originals={
+                canonical: serialize_member(touched[canonical])
+                for canonical in self._emitted(facts, selected)
+            },
+        )
 
     def restored_members(self, value: object) -> frozenset[str]:
         """The members ``value``'s edit chain touched and then put back, keyed by
@@ -360,22 +418,28 @@ class EntityRowCodec:
         selected: frozenset[str],
         operation: str,
     ) -> dict[str, object]:
-        """``selected``'s serialized values in the model's own candidate order.
-
-        Iterating the candidates rather than the selection is what makes a row's
-        key order a function of the model, never of the order a caller populated
-        or edited members in.
-        """
-        emitted = tuple(
-            canonical
-            for canonical in facts.members
-            if canonical in selected and canonical not in facts.framework_owned
-        )
+        """``selected``'s serialized values in the model's own candidate order."""
+        emitted = self._emitted(facts, selected)
         py_names = self._require_supplied(facts, names, emitted, operation)
         return {
             canonical: serialize_member(getattr(value, py_names[canonical]))
             for canonical in emitted
         }
+
+    def _emitted(self, facts: _RowFacts, selected: frozenset[str]) -> tuple[str, ...]:
+        """``selected``'s emittable members in the model's own candidate order.
+
+        Iterating the candidates rather than the selection is what makes a row's
+        key order a function of the model, never of the order a caller populated
+        or edited members in. A framework-owned member drops out here, so an
+        operation reading current values and one reading recorded originals emit
+        the same names.
+        """
+        return tuple(
+            canonical
+            for canonical in facts.members
+            if canonical in selected and canonical not in facts.framework_owned
+        )
 
 
 def row_codec_of(model: DomainModel) -> EntityRowCodec:
