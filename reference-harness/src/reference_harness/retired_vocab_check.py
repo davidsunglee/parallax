@@ -51,10 +51,11 @@ Allow-list (explicitly labeled historical / prior-art / rejection text):
 - ``docs/research/reladomo/**`` — prior-art notes keep the vocabulary of the
   system they describe (other research documents are active prose and are
   scanned);
-- every ``adr`` directory. A decision record states the vocabulary current when
-  it was written, and one that supersedes another has to name what it replaced:
-  ADR 0055's whole subject is the retained Execution Log. Both retired families
-  are superseded designs, so neither is scanned there;
+- every ``adr`` directory. A decision record preserves the vocabulary current
+  when it was written, whether or not the decision still binds: ADR 0055's whole
+  subject is the retained Execution Log a later record superseded, while ADR
+  0021 still binds and states its required temporal terminate in the business /
+  processing terms retired since. Neither family is scanned there;
 - ``core/compatibility/descriptor-errors/`` — negative-test fixtures exist to
   spell the retired forms so serde provably rejects them;
 - glossary ``_Avoid_`` lines, the labeled ``Prior art:`` paragraph, and a table
@@ -246,10 +247,10 @@ _GENERATED_NAMES = {"uv.lock", "pnpm-lock.yaml", "package-lock.json", "yarn.lock
 # other research document is active prose and stays scanned.
 _EXEMPT_TREES = ("docs/research/reladomo", "core/compatibility/descriptor-errors")
 
-# A directory whose documents state the vocabulary current when they were
-# written, and — where one decision supersedes another — the vocabulary of what
-# it replaced. Every retired family names a superseded design, so none of them
-# applies there.
+# A directory whose documents preserve the vocabulary current when they were
+# written, including spellings retired since: a record that still binds is
+# written in the terms of its own day no less than one a later record
+# superseded. No retired family applies there.
 _DECISION_RECORD_DIR_NAME = "adr"
 
 # Repo-root-relative files exempt because they exist to spell the retired
@@ -331,17 +332,8 @@ def _masked(text: str) -> str:
 
 
 def _retired_spellings(patterns: tuple[re.Pattern[str], ...], text: str) -> Iterator[re.Match[str]]:
-    """Each retired spelling *patterns* finds in *text*, once per site.
-
-    Patterns of one family read the same compound from different sides, and one
-    site is one violation however many of them name it.
-    """
-    seen: set[tuple[int, int]] = set()
     for pattern in patterns:
-        for match in pattern.finditer(text):
-            if match.span() not in seen:
-                seen.add(match.span())
-                yield match
+        yield from pattern.finditer(text)
 
 
 def check_text(relative_path: str, text: str) -> list[str]:
