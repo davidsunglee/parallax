@@ -4,8 +4,9 @@
 # Both occurrences land on an Entity that already stores rows, and each addition
 # suppresses its own leaves. The nullable one is unilateral because every stored
 # row already satisfies it; the required one needs the existing documents to
-# carry a value they do not have, which is a database migration. Coordination is
-# per operation, so the unilateral addition beside it carries no requirement.
+# carry a value they do not have and needs every previously valid insert to
+# supply the object it now demands. Coordination is per operation, so the
+# unilateral addition beside it carries no requirement.
 tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
 shape: evolution
 when:
@@ -27,4 +28,5 @@ then:
           kind: ValueObjectOccurrenceAdded
           valueObject: parallax.compatibility.Shipment.warranty
         reasons:
+          - AuthoringSurfaceChangeRequired
           - DatabaseMigrationRequired

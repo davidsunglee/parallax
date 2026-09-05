@@ -22,6 +22,6 @@ then:
     overlapVisibleOperations: []
     coordinationRequirements:
       - operation: { kind: AttributeAdded, attribute: parallax.compatibility.Label.caption }
-        reasons: [DatabaseMigrationRequired]
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]
       - operation: { kind: AttributeRemoved, attribute: parallax.compatibility.Label.label }
         reasons: [AuthoringSurfaceChangeRequired]
