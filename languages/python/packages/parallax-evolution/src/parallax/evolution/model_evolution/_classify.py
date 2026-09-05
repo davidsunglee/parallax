@@ -118,17 +118,22 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
             return Classification(reasons=_REMOVAL, overlap_visible=False)
         case AttributeRemoved():
             return _member_removal(
-                nullable=matching.attributes.removed[operation.attribute].nullable
+                nullable=matching.attributes.removed[operation.attribute].nullable,
+                entity=_earlier_view(matching, operation.attribute.entity),
             )
         case ValueObjectOccurrenceRemoved():
             return _member_removal(
-                nullable=matching.value_objects.removed[operation.value_object].nullable
+                nullable=matching.value_objects.removed[operation.value_object].nullable,
+                entity=_earlier_view(matching, operation.value_object.entity),
             )
         case ValueObjectAttributeRemoved():
             return _member_removal(
                 nullable=matching.value_object_attributes.removed[
                     operation.value_object_attribute
-                ].nullable
+                ].nullable,
+                entity=_earlier_view(
+                    matching, operation.value_object_attribute.value_object.entity
+                ),
             )
         case EntityAltered():
             return _entity_alteration(matching.entities.surviving[operation.entity], operation)
@@ -149,7 +154,9 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
                 entity=_earlier_view(matching, operation.value_object.entity),
             )
         case ValueObjectOccurrenceAltered():
-            return _occurrence_alteration(operation)
+            return _occurrence_alteration(
+                operation, _earlier_view(matching, operation.value_object.entity)
+            )
         case ValueObjectAttributeAdded():
             return _member_addition(
                 nullable=matching.value_object_attributes.added[
@@ -160,7 +167,10 @@ def _classify_one(matching: Matching, operation: EvolutionOperation) -> Classifi
                 ),
             )
         case ValueObjectAttributeAltered():
-            return _value_object_attribute_alteration(operation)
+            return _value_object_attribute_alteration(
+                operation,
+                _earlier_view(matching, operation.value_object_attribute.value_object.entity),
+            )
         case RelationshipAltered():
             return _relationship_alteration(
                 matching.relationships.surviving[operation.relationship]
@@ -213,20 +223,21 @@ def _attribute_addition(added: AttributeMetadata, entity: InheritanceEntityView)
     )
 
 
-def _member_removal(*, nullable: bool) -> Classification:
+def _member_removal(*, nullable: bool, entity: InheritanceEntityView) -> Classification:
     """A member cut out of an Entity or Value Object that survives it.
 
     The removal invalidates a previously valid authored operation whatever the
-    member declared. A required one reaches the database too: the surviving
-    shape still demands a value the later model no longer describes, so the
-    object enforcing it must be relaxed or removed before a later write is
-    accepted. A nullable member leaves a stored form the later edition simply
-    stops writing. The verdict reads the accepted required-ness rather than the
-    physical object enforcing it, which is what keeps the rule the same for a
-    member holding a direct Column and one inside a Structured Column — the
-    mirror of the addition rule above.
+    member declared. A required one on a position storing rows reaches the
+    database too: the surviving shape still demands a value the later model no
+    longer describes, so the object enforcing it must be relaxed or removed
+    before a later write is accepted. A nullable member leaves a stored form the
+    later edition simply stops writing, and so does one leaving a position that
+    stored no row for a surviving shape to demand it of. The verdict reads the accepted
+    required-ness rather than the physical object enforcing it, which is what
+    keeps the rule the same for a member holding a direct Column and one inside
+    a Structured Column — the mirror of the addition rule above.
     """
-    if nullable:
+    if nullable or not _stores_rows(entity):
         return Classification(reasons=_REMOVAL, overlap_visible=False)
     return Classification(reasons=_BOTH, overlap_visible=False)
 
@@ -234,7 +245,7 @@ def _member_removal(*, nullable: bool) -> Classification:
 def _member_addition(
     *, nullable: bool, entity: InheritanceEntityView, caller_authored: bool = True
 ) -> Classification:
-    """A member added to an Entity or Value Object that already stores rows.
+    """A member added to an Entity or Value Object that survives its arrival.
 
     Adding a nullable member is unilateral. A required one needs the database:
     existing rows have no value for it until a default and backfill contract
@@ -244,9 +255,11 @@ def _member_addition(
     value — the member is caller-authored and the containing Entity admitted
     caller writes in the earlier edition — because that insert now omits a
     required input. A wholly new Entity may carry required members, because its
-    own addition suppresses them and creates a complete empty Table.
+    own addition suppresses them and creates a complete empty Table, and so may
+    a position the earlier edition stored no row for, which has neither a row to
+    backfill nor an insert to invalidate.
     """
-    if nullable:
+    if nullable or not _stores_rows(entity):
         return Classification(reasons=_UNILATERAL, overlap_visible=False)
     if caller_authored and _wrote_before(entity):
         return Classification(reasons=_BOTH, overlap_visible=False)
@@ -271,9 +284,34 @@ def _wrote_before(earlier: InheritanceEntityView) -> bool:
     change, so an Entity whose family was already effectively ``ReadOnly`` has
     none for a member arriving on it, or for a write flag moving over it, to
     invalidate. An Entity that becomes read-only had one, which is why the
-    withdrawal is directional rather than symmetric here.
+    withdrawal is directional rather than symmetric here. A ``ReadWrite`` family
+    is not enough on its own: a write names a concrete target, so a position
+    resolving to none carried no caller input for the move to withdraw.
     """
-    return earlier.persistence is PersistenceMode.READ_WRITE
+    return earlier.persistence is PersistenceMode.READ_WRITE and _stores_rows(earlier)
+
+
+def _stores_rows(view: InheritanceEntityView) -> bool:
+    """Whether any row is denoted by this position.
+
+    Only concrete subtypes own rows, so a position resolving to an empty
+    effective concrete set owns none: no read selects one, no Subtype Selection
+    resolves to one, and no write names one. Every reason phrased over stored
+    rows — a required member's backfill, the object enforcing it, the caller
+    input a write flag withdraws, the branch a narrowing reached it through, and
+    the Table those rows sit in — has nothing there to be about.
+    """
+    return bool(view.concrete_subtypes)
+
+
+def _domain_contraction(entity: InheritanceEntityView) -> set[CoordinationReason]:
+    """The reasons narrowing a member's admitted value domain carries.
+
+    A contraction is a claim about values already stored and about the shape a
+    later write must still be accepted in, so a position storing no rows and
+    named by no write carries no reason for it.
+    """
+    return {_MIGRATION} if _stores_rows(entity) else set()
 
 
 def _entity_alteration(
@@ -317,7 +355,9 @@ def _inheritance_reasons(
     have taken on their own, and the members a departing ancestor withdraws are
     removals from a shape that survives. Moving a position out of an earlier
     branch invalidates a narrowing through that branch, and a strategy, tag, or
-    container change needs the rows themselves transformed.
+    container change needs the rows themselves transformed. Both of those speak
+    about rows the position denotes; what survives on one denoting none is the
+    member comparison, which a read targeting it still addresses.
     """
     reasons: set[CoordinationReason] = set()
     if not _selection_preserved(earlier, later):
@@ -332,17 +372,31 @@ def _inheritance_reasons(
 
 
 def _selection_preserved(earlier: InheritanceEntityView, later: InheritanceEntityView) -> bool:
-    """Whether every earlier narrowing through this position stays valid.
+    """Whether every earlier authored reference to this position stays valid.
 
     The ancestry answers which narrowings reach it, the concrete-subtype set
     answers which rows a narrowing to it denotes, and the applicable members
-    answer what such a narrowing may address.
+    answer what a read of it may address. The member comparison is asked of
+    every position, a rowless one included: a read may target it and address the
+    members its ancestry makes applicable, and answer with nothing.
     """
     return (
-        set(earlier.ancestry) <= set(later.ancestry)
+        _reachable_by_the_same_narrowings(earlier, later)
         and set(earlier.concrete_subtypes) <= set(later.concrete_subtypes)
         and _applicable_members(earlier) <= _applicable_members(later)
     )
+
+
+def _reachable_by_the_same_narrowings(
+    earlier: InheritanceEntityView, later: InheritanceEntityView
+) -> bool:
+    """Whether every branch an earlier narrowing came through still reaches here.
+
+    A Subtype Selection resolves to the position's effective concrete set and is
+    rejected where that set is empty, so no narrowing ever reached a position
+    storing no rows and the branch it hung from carried no authored shape.
+    """
+    return not _stores_rows(earlier) or set(earlier.ancestry) <= set(later.ancestry)
 
 
 def _applicable_members(
@@ -402,12 +456,12 @@ def _inherited_removal_reasons(
     surviving = _applicable_members(later)
     withdrawn = (
         *(
-            _member_removal(nullable=attribute.nullable)
+            _member_removal(nullable=attribute.nullable, entity=earlier)
             for attribute in earlier.applicable_attributes
             if attribute.identity.entity in departing and attribute.identity not in surviving
         ),
         *(
-            _member_removal(nullable=occurrence.nullable)
+            _member_removal(nullable=occurrence.nullable, entity=earlier)
             for occurrence in earlier.applicable_value_objects
             if occurrence.identity.entity in departing and occurrence.identity not in surviving
         ),
@@ -416,7 +470,13 @@ def _inherited_removal_reasons(
 
 
 def _physically_compatible(earlier: InheritanceEntityView, later: InheritanceEntityView) -> bool:
-    """Whether the position's rows stay where they are, tagged as they were."""
+    """Whether the position's rows stay where they are, tagged as they were.
+
+    A position the earlier edition stored no row for has none to move, so a
+    Table, strategy, or tag it changes carries no data across.
+    """
+    if not _stores_rows(earlier):
+        return True
     return (
         earlier.container == later.container
         and earlier.strategy == later.strategy
@@ -445,14 +505,14 @@ def _attribute_alteration(
                 reasons |= _primary_key_reasons(earlier_key, later_key)
             case NullabilityChanged(_, nullable):
                 if nullable:
-                    overlap_visible = True
+                    overlap_visible = _stores_rows(entity)
                 else:
-                    reasons.add(_MIGRATION)
+                    reasons |= _domain_contraction(entity)
             case MaximumLengthChanged(earlier_length, later_length):
                 if _bound_relaxed(earlier_length, later_length):
-                    overlap_visible = True
+                    overlap_visible = _stores_rows(entity)
                 else:
-                    reasons.add(_MIGRATION)
+                    reasons |= _domain_contraction(entity)
             case ReadOnlyChanged() | OptimisticLockingChanged():
                 # Neither flag is the contract: what invalidates a previously
                 # valid write is caller input the later edition no longer
@@ -465,7 +525,9 @@ def _attribute_alteration(
     return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
 
 
-def _occurrence_alteration(operation: ValueObjectOccurrenceAltered) -> Classification:
+def _occurrence_alteration(
+    operation: ValueObjectOccurrenceAltered, entity: InheritanceEntityView
+) -> Classification:
     reasons: set[CoordinationReason] = set()
     overlap_visible = False
     for delta in operation.deltas:
@@ -475,16 +537,18 @@ def _occurrence_alteration(operation: ValueObjectOccurrenceAltered) -> Classific
             case MultiplicityChanged():
                 # An authored path changes between one object and a collection,
                 # and every stored document carries the shape it left behind.
-                reasons |= {_AUTHORING, _MIGRATION}
+                reasons |= {_AUTHORING} | _domain_contraction(entity)
             case NullabilityChanged(_, nullable):
                 if nullable:
-                    overlap_visible = True
+                    overlap_visible = _stores_rows(entity)
                 else:
-                    reasons.add(_MIGRATION)
+                    reasons |= _domain_contraction(entity)
     return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
 
 
-def _value_object_attribute_alteration(operation: ValueObjectAttributeAltered) -> Classification:
+def _value_object_attribute_alteration(
+    operation: ValueObjectAttributeAltered, entity: InheritanceEntityView
+) -> Classification:
     """A scalar leaf owns no Column, key, bound, or locking fact, so its two
     deltas classify exactly as the same two do on a scalar Attribute."""
     reasons: set[CoordinationReason] = set()
@@ -495,9 +559,9 @@ def _value_object_attribute_alteration(operation: ValueObjectAttributeAltered) -
                 reasons |= {_AUTHORING, _MIGRATION}
             case NullabilityChanged(_, nullable):
                 if nullable:
-                    overlap_visible = True
+                    overlap_visible = _stores_rows(entity)
                 else:
-                    reasons.add(_MIGRATION)
+                    reasons |= _domain_contraction(entity)
     return Classification(reasons=_in_fixed_order(reasons), overlap_visible=overlap_visible)
 
 

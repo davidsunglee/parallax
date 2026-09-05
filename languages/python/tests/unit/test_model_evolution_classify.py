@@ -34,6 +34,7 @@ from parallax.core.metamodel import (
     Column,
     ConcreteSubtype,
     Document,
+    EntityIdentity,
     ExactEntityReference,
     Metamodel,
     PersistenceMode,
@@ -468,6 +469,148 @@ def test_a_departing_position_takes_its_required_members_off_rows_that_stay() ->
     interposed = _hierarchy(interposed=True, declares=attribute(_BRANCH, "issuer", type=STRING))
     flattening = evolve(interposed, _hierarchy(interposed=False))
     assert _verdict_on(flattening, _altered(flattening)) == _Verdict(_BOTH, False)
+
+
+_SIBLING = identity("Bill")
+_OTHER_ROOT = identity("Security")
+_OTHER_LEAF = identity("Share")
+
+
+def _rowless_branch(
+    *declares: AttributeMetadata,
+    under: EntityIdentity | None = None,
+    holds: tuple[ValueObjectOccurrenceDeclaration, ...] = (),
+) -> Metamodel:
+    """A table-per-hierarchy family whose abstract ``Note`` composes no concrete
+    subtype of its own and declares ``declares``.
+
+    ``Bond`` is the family's one concrete subtype, so the family is legal while
+    ``Note`` resolves to an EMPTY effective concrete set. ``under`` places
+    ``Note`` beneath a member-less abstract ``Bill`` instead of beneath the root.
+    """
+    root = Declaration(
+        identity=_ROOT,
+        container=Table("instrument"),
+        attributes=(key(_ROOT),),
+        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+    )
+    sibling = Declaration(
+        identity=_SIBLING, inheritance=AbstractSubtype(ExactEntityReference(_ROOT))
+    )
+    branch = Declaration(
+        identity=_BRANCH,
+        attributes=declares,
+        value_objects=holds,
+        inheritance=AbstractSubtype(ExactEntityReference(under or _ROOT)),
+    )
+    leaf = Declaration(
+        identity=_LEAF,
+        attributes=(attribute(_LEAF, "coupon"),),
+        inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "BOND"),
+    )
+    return form_metamodel(source(root, sibling, branch, leaf))
+
+
+def test_a_position_composing_no_concrete_subtype_has_no_row_to_answer_for() -> None:
+    # Only concrete subtypes own rows. A required member arriving on a position
+    # that composes none has no stored row to backfill and no insert to
+    # invalidate, so it asks for nothing; cutting it back out leaves no
+    # surviving shape demanding a value, and stops at the authoring surface a
+    # read of the position still occupies.
+    issuer = attribute(_BRANCH, "issuer", type=STRING)
+    bare, declaring = _rowless_branch(), _rowless_branch(issuer)
+    assert _verdict(bare, declaring) == _Verdict(_UNILATERAL, False)
+    assert _verdict(declaring, bare) == _Verdict((_AUTHORING,), False)
+
+
+def test_a_flag_moving_where_no_write_names_a_target_withdraws_no_input() -> None:
+    # A ReadWrite family is not a write surface on its own: a write names a
+    # concrete target, and this position resolves to none.
+    editable = attribute(_BRANCH, "issuer", type=STRING)
+    assert _verdict(
+        _rowless_branch(editable), _rowless_branch(dataclasses.replace(editable, read_only=True))
+    ) == _Verdict(_UNILATERAL, False)
+
+
+def test_a_rowless_position_holds_no_value_a_domain_change_can_reach() -> None:
+    # Contracting a member's admitted domain is a claim about values already
+    # stored and about the shape a later write must be accepted in; expanding it
+    # is a claim about what a later writer may store an earlier reader cannot
+    # admit. Neither claim has a subject here, for a scalar Attribute, a Value
+    # Object occurrence, and a Value Object leaf alike.
+    required = attribute(_BRANCH, "issuer", type=STRING)
+    optional = dataclasses.replace(required, nullable=True)
+    assert _verdict(_rowless_branch(required), _rowless_branch(optional)) == _Verdict(
+        _UNILATERAL, False
+    )
+    assert _verdict(_rowless_branch(optional), _rowless_branch(required)) == _Verdict(
+        _UNILATERAL, False
+    )
+    absent = dataclasses.replace(_TERMS, nullable=True)
+    assert _verdict(_rowless_branch(holds=(_TERMS,)), _rowless_branch(holds=(absent,))) == _Verdict(
+        _UNILATERAL, False
+    )
+    leaf = ValueObjectAttributeDeclaration("tenor", type=STRING)
+    filled = dataclasses.replace(
+        _TERMS, shape=dataclasses.replace(_TERMS.shape, attributes=(leaf,))
+    )
+    assert _verdict(_rowless_branch(holds=(_TERMS,)), _rowless_branch(holds=(filled,))) == _Verdict(
+        _UNILATERAL, False
+    )
+
+
+def test_a_rowless_position_leaves_a_branch_no_narrowing_ever_came_through() -> None:
+    # A Subtype Selection resolving to the empty set is rejected, so nothing
+    # narrowed through `Bill` to reach `Note`. Flattening `Note` back out from
+    # under a member-less `Bill` therefore invalidates no authored shape, where
+    # the same flattening of a position owning rows invalidates the narrowing.
+    beneath, flattened = _rowless_branch(under=_SIBLING), _rowless_branch()
+    flattening = evolve(beneath, flattened)
+    assert _verdict_on(flattening, _altered(flattening)) == _Verdict(_UNILATERAL, False)
+
+
+def _across_roots(*, moved: bool) -> Metamodel:
+    """Two live table-per-hierarchy families with distinct Tables and tag
+    Columns, with the rowless abstract ``Note`` under one root or the other."""
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=_ROOT,
+                container=Table("instrument"),
+                attributes=(key(_ROOT),),
+                inheritance=AbstractRoot(TablePerHierarchy("kind")),
+            ),
+            Declaration(
+                identity=_LEAF,
+                attributes=(attribute(_LEAF, "coupon"),),
+                inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "BOND"),
+            ),
+            Declaration(
+                identity=_OTHER_ROOT,
+                container=Table("security"),
+                attributes=(key(_OTHER_ROOT, "ref"),),
+                inheritance=AbstractRoot(TablePerHierarchy("sort")),
+            ),
+            Declaration(
+                identity=_OTHER_LEAF,
+                attributes=(attribute(_OTHER_LEAF, "units"),),
+                inheritance=ConcreteSubtype(ExactEntityReference(_OTHER_ROOT), "SHARE"),
+            ),
+            Declaration(
+                identity=_BRANCH,
+                inheritance=AbstractSubtype(ExactEntityReference(_OTHER_ROOT if moved else _ROOT)),
+            ),
+        )
+    )
+
+
+def test_a_rowless_position_moving_between_families_carries_no_data_across() -> None:
+    # The move changes the position's Table, strategy tag Column, and applicable
+    # members at once. It owns no row for the Table change to transform, so the
+    # database is not asked for anything — but a read of the position addressed
+    # the family key it leaves behind, which is an authoring surface change.
+    moving = evolve(_across_roots(moved=False), _across_roots(moved=True))
+    assert _verdict_on(moving, _altered(moving)) == _Verdict((_AUTHORING,), False)
 
 
 _READING = identity("Reading")
