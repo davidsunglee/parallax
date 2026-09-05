@@ -34,6 +34,11 @@
       "type": "string",
       "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
     },
+    "indexRef": {
+      "description": "An authored Index reference: an `entityName` followed by a dot and the Index's own authored name (`Order.byCustomer`, `parallax.compatibility.Order.byCustomer`). An Index name participates in Index Identity, so a rename names a different Index.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+    },
     "nestedRef": {
       "description": "A reference into a valueObject's inner field: an `entityName`, its valueObject member, and one or more further dotted segments into the embedded document (`Customer.address.city`, `Customer.address.geo.lat`). It has an ATTRIBUTE leaf and so carries at least two member segments.",
       "type": "string",

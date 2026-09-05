@@ -1,0 +1,38 @@
+# Ledger (v2): the later endpoint of the INTERPOSED abstract subtype scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# abstract `Posting` sits between the root and `Entry` and introduces one
+# nullable member. Every narrowing the earlier model admitted still resolves,
+# and `Entry` keeps its Table, tag Column, and tag value.
+entities:
+  - name: Ledger
+    namespace: parallax.compatibility
+    table: evolution_ledger
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Posting
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Ledger
+    attributes:
+      - name: memo
+        type: string
+        maxLength: 64
+        nullable: true
+  - name: Entry
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Posting
+      tagValue: entry
+    attributes:
+      - name: amount
+        type: decimal(18,2)

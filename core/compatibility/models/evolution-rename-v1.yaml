@@ -1,0 +1,16 @@
+# Label (v1): the earlier endpoint of the RENAME scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It
+# declares `label`, which v2 spells `caption`. Nothing in the model carries an
+# identity that survives renaming, so the two endpoints share no member here.
+entity:
+  name: Label
+  namespace: parallax.compatibility
+  table: evolution_label
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: label
+      type: string
+      maxLength: 64

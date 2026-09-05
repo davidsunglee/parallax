@@ -1,0 +1,30 @@
+# Folder / Item / Note (v2): the later endpoint of the Relationship
+# ADD-AND-REMOVE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-relationship-v1.yaml with `notes` gone and `items` in its
+# place, which is one removal and one addition rather than a rename.
+entities:
+  - name: Folder
+    namespace: parallax.compatibility
+    table: evolution_folder
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+    relationships:
+      - name: items
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Item, attribute: folderId }
+  - name: Item
+    namespace: parallax.compatibility
+    table: evolution_item
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: folderId, type: int64 }
+  - name: Note
+    namespace: parallax.compatibility
+    table: evolution_note
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: folderId, type: int64 }

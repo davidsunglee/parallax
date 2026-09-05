@@ -1,0 +1,28 @@
+# Balance and Register (v1): the earlier endpoint of the OPTIMISTIC LOCKING
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Two
+# Entities move in opposite directions in v2 — `Balance.version` becomes the
+# explicit optimistic version and `Register.revision` stops being one — so one
+# pair witnesses both directions of the caller-authored to framework-owned
+# boundary in one evolution.
+entities:
+  - name: Balance
+    namespace: parallax.compatibility
+    table: evolution_balance
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: version
+        type: int64
+  - name: Register
+    namespace: parallax.compatibility
+    table: evolution_register
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: revision
+        type: int64
+        optimisticLocking: true

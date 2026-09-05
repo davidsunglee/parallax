@@ -1,0 +1,56 @@
+# Changing a Relationship's DEPENDENCY (m-model-evolution): unilateral in either
+# direction, with delete propagation changing behind the preserved surface.
+#
+# Every previously valid navigation keeps its identity, target, and result shape.
+# What changes is what deleting the source does to the rows each direction
+# reaches, which is a `DeletePropagationChanged` per Relationship and prescribes
+# no remediation.
+tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-relationship-dependency-v1.yaml
+    later: models/evolution-relationship-dependency-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Folder.items
+        deltas:
+          - kind: DependencyChanged
+            earlier: false
+            later: true
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Folder.notes
+        deltas:
+          - kind: DependencyChanged
+            earlier: true
+            later: false
+    behavioralImpacts:
+      - kind: DeletePropagationChanged
+        scope:
+          relationship: parallax.compatibility.Folder.items
+        earlier: DoesNotPropagate
+        later: Propagates
+        causedBy:
+          - kind: RelationshipAltered
+            relationship: parallax.compatibility.Folder.items
+            deltas:
+              - kind: DependencyChanged
+                earlier: false
+                later: true
+      - kind: DeletePropagationChanged
+        scope:
+          relationship: parallax.compatibility.Folder.notes
+        earlier: Propagates
+        later: DoesNotPropagate
+        causedBy:
+          - kind: RelationshipAltered
+            relationship: parallax.compatibility.Folder.notes
+            deltas:
+              - kind: DependencyChanged
+                earlier: true
+                later: false
+    overlapVisibleOperations: []
+    coordinationRequirements: []

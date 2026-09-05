@@ -1,0 +1,16 @@
+# Crate (v2): the later endpoint of the Value Object STORAGE LOCATION scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-vo-column-v1.yaml with the occurrence's Structured Column
+# renamed and nothing else changed.
+entity:
+  name: Crate
+  namespace: parallax.compatibility
+  table: evolution_crate
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: origin
+      column: origin_json
+      attributes:
+        - { name: city, type: string }

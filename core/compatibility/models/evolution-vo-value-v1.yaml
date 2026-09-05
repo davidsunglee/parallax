@@ -1,0 +1,18 @@
+# Manifest (v1): the earlier endpoint of the Value Object LEAF VALUE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. A leaf
+# owns a Neutral Type and a nullability and nothing else, which is the whole of
+# what its alteration can report; two of these three leaves sit at opposite ends
+# of the nullability boundary.
+entity:
+  name: Manifest
+  namespace: parallax.compatibility
+  table: evolution_manifest
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: origin
+      attributes:
+        - { name: city, type: string }
+        - { name: note, type: string, nullable: true }
+        - { name: zone, type: int32 }

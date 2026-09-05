@@ -1,0 +1,28 @@
+# Archive and Journal (v2): the later endpoint of the PERSISTENCE MODE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-persistence-v1.yaml with the two Entities' Persistence Modes
+# exchanged and `Archive.note` declared read-only.
+entities:
+  - name: Archive
+    namespace: parallax.compatibility
+    table: evolution_archive
+    persistence: read-only
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: note
+        type: string
+        maxLength: 64
+        readOnly: true
+  - name: Journal
+    namespace: parallax.compatibility
+    table: evolution_journal
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: entry
+        type: string
+        maxLength: 64

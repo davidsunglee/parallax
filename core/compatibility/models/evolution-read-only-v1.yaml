@@ -1,0 +1,21 @@
+# Notice (v1): the earlier endpoint of the READ-ONLY member scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The two
+# members move in opposite directions in v2 — `headline` becomes read-only and
+# `slug` becomes editable — so one pair witnesses both directions of the
+# asymmetric write-surface boundary in one evolution.
+entity:
+  name: Notice
+  namespace: parallax.compatibility
+  table: evolution_notice
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: headline
+      type: string
+      maxLength: 64
+    - name: slug
+      type: string
+      maxLength: 32
+      readOnly: true

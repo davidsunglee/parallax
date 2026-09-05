@@ -1,0 +1,86 @@
+# Moving a subtype out of its branch (m-model-evolution): coordinated for BOTH
+# reasons, on one operation.
+#
+# `Motion` leaves `Filing` for `Docket`. A narrowing through the earlier branch
+# stops resolving and the members it inherited are no longer applicable, which is
+# `AuthoringSurfaceChangeRequired`; its rows belong to a different Table, which is
+# `DatabaseMigrationRequired`. One operation requiring both appears ONCE with both
+# reasons in the fixed order. Two surviving roots change what they denote, so the
+# one operation causes two `QueryResultMembershipChanged` impacts.
+tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-branch-move-v1.yaml
+    later: models/evolution-branch-move-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Motion
+        deltas:
+          - kind: InheritanceChanged
+            earlier:
+              role: concrete-subtype
+              parent: parallax.compatibility.Filing
+              tag: { value: motion }
+            later:
+              role: concrete-subtype
+              parent: parallax.compatibility.Docket
+              tag: { value: motion }
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Docket }
+        earlier: { concreteEntities: [parallax.compatibility.Summons], axes: [] }
+        later:
+          concreteEntities: [parallax.compatibility.Motion, parallax.compatibility.Summons]
+          axes: []
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Motion
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Filing
+                  tag: { value: motion }
+                later:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Docket
+                  tag: { value: motion }
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Filing }
+        earlier:
+          concreteEntities: [parallax.compatibility.Brief, parallax.compatibility.Motion]
+          axes: []
+        later: { concreteEntities: [parallax.compatibility.Brief], axes: [] }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Motion
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Filing
+                  tag: { value: motion }
+                later:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Docket
+                  tag: { value: motion }
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Motion
+          deltas:
+            - kind: InheritanceChanged
+              earlier:
+                role: concrete-subtype
+                parent: parallax.compatibility.Filing
+                tag: { value: motion }
+              later:
+                role: concrete-subtype
+                parent: parallax.compatibility.Docket
+                tag: { value: motion }
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

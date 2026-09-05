@@ -1,0 +1,23 @@
+# Adding a NULLABLE member (m-model-evolution): unilateral, and not
+# Overlap-Visible.
+#
+# `Note.summary` is one AttributeAdded on a surviving Entity. Existing rows need
+# no value for it, so nothing has to be migrated and no previously valid query or
+# write changes shape. It is not Overlap-Visible either: an earlier edition never
+# selects or writes a member it does not know, so there is no value it could fail
+# to admit. The addition is also not a Behavioral Impact — member addition stays
+# its own operation rather than becoming an admissibility fact.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-nullable-member-v1.yaml
+    later: models/evolution-nullable-member-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      [{ kind: AttributeAdded, attribute: parallax.compatibility.Note.summary }]
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

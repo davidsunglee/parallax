@@ -1,0 +1,13 @@
+# Tote (v1): the earlier endpoint of the EQUIVALENT UNIQUENESS RULE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# Entity enforces no secondary uniqueness rule, so v2's two equivalent Indices
+# are together one new rule rather than two.
+entity:
+  name: Tote
+  namespace: parallax.compatibility
+  table: evolution_tote
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: label, type: string, maxLength: 32 }
+    - { name: region, type: string, maxLength: 32 }

@@ -1,0 +1,24 @@
+# Shipment (v2): the later endpoint of the Value Object OCCURRENCE ADDITION
+# scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-value-object-v1.yaml plus one nullable occurrence and one
+# required one, so a single evolution carries both directions of the addition
+# boundary. Each addition suppresses its own leaves.
+entity:
+  name: Shipment
+  namespace: parallax.compatibility
+  table: evolution_shipment
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: origin
+      attributes:
+        - { name: city, type: string }
+    - name: audit
+      nullable: true
+      attributes:
+        - { name: recordedBy, type: string }
+    - name: warranty
+      attributes:
+        - { name: term, type: int64 }

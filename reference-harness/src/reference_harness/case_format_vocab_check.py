@@ -1,12 +1,13 @@
-"""Assert `m-case-format.md`'s prose closed vocabularies equal the matching
+"""Assert the specs' prose closed vocabularies equal the matching
 `compatibility-case.schema.json` enums (the closed-vocabulary two-home
 consistency check)::
 
     uv run python -m reference_harness.case_format_vocab_check core/spec
 
-Two case-format vocabularies are documented in TWO places each that must never
-drift apart — the normative prose in ``core/spec/m-case-format.md`` and an
-``enum`` in ``compatibility-case.schema.json``:
+Seven vocabularies are documented in TWO places each that must never drift
+apart — the normative prose in a ``core/spec`` module specification and an
+``enum`` in ``compatibility-case.schema.json``. Two of them are the case format's
+own, parsed out of ``m-case-format.md``'s bullet prose:
 
 1. ``then.rejectedRule``, from the "Rejected cases" section against the
    schema's ``properties.then.properties.rejectedRule`` enum;
@@ -35,6 +36,13 @@ every inline-code span in that one paragraph, excluding a module reference
 ``expectError`` vocabulary is instead one NESTED bullet list under the
 "Per-step lifecycle observables" section's ``expectError`` bullet; this module
 reads the first inline-code span of every nested bullet under it.
+
+The other five are ``m-model-evolution.md``'s, and an `evolution` case spells
+each of them directly. They are documented as a fenced ``text`` block per
+vocabulary, one name per line, under a heading naming the vocabulary — so unlike
+the two above they are compared as SEQUENCES: a Behavioral Impact's variant order
+and a Coordination Requirement's reason order are themselves normative, and a
+listing that reorders them states a different contract.
 """
 
 from __future__ import annotations
@@ -47,10 +55,13 @@ from .paths import schemas_dir
 from .schemas import load_json
 
 __all__ = [
+    "EVOLUTION_VOCABULARIES",
     "VocabMismatch",
     "main",
+    "prose_evolution_vocabulary",
     "prose_expect_errors",
     "prose_rejected_rules",
+    "schema_enum",
     "schema_expect_errors",
     "schema_rejected_rules",
 ]
@@ -81,6 +92,18 @@ _MODEL_RULES_END_MARKER = "invariant)."
 
 _OBSERVABLES_HEADING_MARKER = "Per-step lifecycle observables"
 _EXPECT_ERROR_MARKER = "- **`expectError`**"
+
+# Each `m-model-evolution.md` vocabulary: the heading naming it, and the schema
+# enum it must equal.
+EVOLUTION_VOCABULARIES: dict[str, str] = {
+    "Evolution Operation vocabulary": "evolutionOperationKind",
+    "Declaration collection vocabulary": "declarationCollection",
+    "Field delta vocabulary": "evolutionFieldDeltaKind",
+    "Coordination reason vocabulary": "coordinationReason",
+    "Behavioral Impact vocabulary": "behavioralImpactKind",
+}
+
+_TEXT_FENCE = re.compile(r"^```text\n(?P<body>.*?)^```", re.MULTILINE | re.DOTALL)
 
 _EXPECT_ERROR_SCHEMA_PATH = (
     "properties",
@@ -206,6 +229,36 @@ def schema_expect_errors(schema: dict[str, object]) -> set[str]:
     )
 
 
+def prose_evolution_vocabulary(markdown: str, heading_contains: str) -> list[str]:
+    """The names one fenced ``text`` block under *heading_contains* lists, in order."""
+    fence = _TEXT_FENCE.search(_section(markdown, heading_contains))
+    if fence is None:
+        raise VocabMismatch(
+            f"no fenced text block under the {heading_contains!r} heading in m-model-evolution.md"
+        )
+    names = [line.strip() for line in fence.group("body").splitlines() if line.strip()]
+    if not names:
+        raise VocabMismatch(f"the {heading_contains!r} block lists no names")
+    return names
+
+
+def schema_enum(schema: dict[str, object], pointer: str) -> list[str]:
+    """The ordered ``enum`` ``compatibility-case.schema.json`` declares at *pointer*."""
+    defs = schema.get("$defs")
+    node = defs.get(pointer) if isinstance(defs, dict) else None
+    values = node.get("enum") if isinstance(node, dict) else None
+    if isinstance(values, list):
+        return [str(value) for value in values]
+    raise VocabMismatch(f"compatibility-case.schema.json declares no enum at $defs.{pointer}")
+
+
+def _ordered_vocabulary_errors(vocabulary: str, prose: list[str], enum: list[str]) -> list[str]:
+    """The one disagreement between an ordered vocabulary's two homes."""
+    if prose == enum:
+        return []
+    return [f"{vocabulary}: m-model-evolution.md lists {prose} and the schema enum declares {enum}"]
+
+
 def _vocabulary_errors(vocabulary: str, prose: set[str], schema_enum: set[str]) -> list[str]:
     """Both drift directions between one vocabulary's two homes."""
     errors: list[str] = []
@@ -224,14 +277,17 @@ def _vocabulary_errors(vocabulary: str, prose: set[str], schema_enum: set[str]) 
     return errors
 
 
-def check(case_format_markdown: str, schema: dict[str, object]) -> list[str]:
-    """Every inconsistency between the prose and schema homes of BOTH the
-    `rejectedRule` and `expectError` vocabularies (empty ⇒ consistent).
+def check(
+    case_format_markdown: str, model_evolution_markdown: str, schema: dict[str, object]
+) -> list[str]:
+    """Every inconsistency between the prose and schema homes of all seven
+    vocabularies (empty ⇒ consistent).
 
-    Propagates `VocabMismatch` when a home is missing or malformed; the
-    returned list covers only set-level disagreement between parsed homes.
+    Propagates `VocabMismatch` when a home is missing or malformed; the returned
+    list covers only disagreement between parsed homes — set-level for the two
+    case-format vocabularies, order included for the five evolution ones.
     """
-    return _vocabulary_errors(
+    errors = _vocabulary_errors(
         "rejectedRule",
         prose_rejected_rules(case_format_markdown),
         schema_rejected_rules(schema),
@@ -240,6 +296,13 @@ def check(case_format_markdown: str, schema: dict[str, object]) -> list[str]:
         prose_expect_errors(case_format_markdown),
         schema_expect_errors(schema),
     )
+    for heading, pointer in EVOLUTION_VOCABULARIES.items():
+        errors += _ordered_vocabulary_errors(
+            pointer,
+            prose_evolution_vocabulary(model_evolution_markdown, heading),
+            schema_enum(schema, pointer),
+        )
+    return errors
 
 
 def main(argv: list[str]) -> int:
@@ -250,16 +313,17 @@ def main(argv: list[str]) -> int:
         )
         return 2
     spec_dir = Path(argv[0])
-    case_format_path = spec_dir / "m-case-format.md"
-    if not case_format_path.is_file():
-        print(f"not a file: {case_format_path}", file=sys.stderr)
-        return 2
+    sources = {name: spec_dir / f"{name}.md" for name in ("m-case-format", "m-model-evolution")}
+    for path in sources.values():
+        if not path.is_file():
+            print(f"not a file: {path}", file=sys.stderr)
+            return 2
 
-    case_format_markdown = case_format_path.read_text(encoding="utf-8")
+    markdown = {name: path.read_text(encoding="utf-8") for name, path in sources.items()}
     schema = load_json(schemas_dir(spec_dir) / "compatibility-case.schema.json")
 
     try:
-        errors = check(case_format_markdown, schema)
+        errors = check(markdown["m-case-format"], markdown["m-model-evolution"], schema)
     except VocabMismatch as exc:
         print(f"case-format vocabulary check FAILED: {exc}", file=sys.stderr)
         return 1
@@ -274,8 +338,8 @@ def main(argv: list[str]) -> int:
         return 1
 
     print(
-        "case-format vocabulary check OK: prose and schema rejectedRule and "
-        "expectError vocabularies match"
+        "case-format vocabulary check OK: prose and schema agree on rejectedRule, "
+        "expectError, and the five evolution vocabularies"
     )
     return 0
 

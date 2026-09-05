@@ -1,0 +1,53 @@
+# Exchanging which side of an association DEFINES it (m-model-evolution):
+# unilateral, and `DeclarationFormChanged` is exclusive.
+#
+# Each declaration changes form, so each retains both complete declarations and
+# carries no accompanying delta — the defining and reverse forms do not expose
+# the same fields. Neither direction's target, cardinality, join, dependency, or
+# ordering moves, because classification and the impacts read the symmetric
+# facet rather than the declaration, so the evolution carries no impact at all.
+tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-relationship-form-v1.yaml
+    later: models/evolution-relationship-form-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Folder.items
+        deltas:
+          - kind: DeclarationFormChanged
+            earlier:
+              name: items
+              cardinality: one-to-many
+              join:
+                source: parallax.compatibility.Folder.id
+                target: parallax.compatibility.Item.folderId
+              dependent: false
+              orderBy: []
+            later:
+              name: items
+              reverseOf: parallax.compatibility.Item.folder
+              orderBy: []
+      - kind: RelationshipAltered
+        relationship: parallax.compatibility.Item.folder
+        deltas:
+          - kind: DeclarationFormChanged
+            earlier:
+              name: folder
+              reverseOf: parallax.compatibility.Folder.items
+              orderBy: []
+            later:
+              name: folder
+              cardinality: many-to-one
+              join:
+                source: parallax.compatibility.Item.folderId
+                target: parallax.compatibility.Folder.id
+              dependent: false
+              orderBy: []
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []

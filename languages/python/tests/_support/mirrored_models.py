@@ -542,6 +542,13 @@ MIRRORED: list[tuple[str, DomainModel]] = [
 ]
 """Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
 
+_EVOLUTION_ENDPOINT = (
+    "endpoint-only model: it exists as one end of a described evolution, a pure comparison of "
+    "two accepted models that no developer surface builds or executes, and it varies exactly "
+    "one declaration of a shape the mirrored families already carry"
+)
+"""Why an evolution endpoint pair is unmirrored, shared by every one of them."""
+
 UNMIRRORED: Mapping[str, str] = MappingProxyType(
     {
         "appliance": (
@@ -553,6 +560,98 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "no mirror authored; its nested one/one/many declaration is exercised by the "
             "focused predicate-write runtime model and gives the independent compatibility "
             "oracle the same recursive refusal witness"
+        ),
+        "evolution-attribute-column-v1": _EVOLUTION_ENDPOINT,
+        "evolution-attribute-column-v2": _EVOLUTION_ENDPOINT,
+        "evolution-attribute-type-v1": _EVOLUTION_ENDPOINT,
+        "evolution-attribute-type-v2": _EVOLUTION_ENDPOINT,
+        "evolution-bitemporality-v1": _EVOLUTION_ENDPOINT,
+        "evolution-bitemporality-v2": _EVOLUTION_ENDPOINT,
+        "evolution-branch-move-v1": _EVOLUTION_ENDPOINT,
+        "evolution-branch-move-v2": _EVOLUTION_ENDPOINT,
+        "evolution-concrete-subtype-tables-v1": _EVOLUTION_ENDPOINT,
+        "evolution-concrete-subtype-tables-v2": _EVOLUTION_ENDPOINT,
+        "evolution-declaration-insertion-v1": _EVOLUTION_ENDPOINT,
+        "evolution-declaration-insertion-v2": _EVOLUTION_ENDPOINT,
+        "evolution-declaration-order-v1": _EVOLUTION_ENDPOINT,
+        "evolution-declaration-order-v2": _EVOLUTION_ENDPOINT,
+        "evolution-document-members-v1": _EVOLUTION_ENDPOINT,
+        "evolution-document-members-v2": _EVOLUTION_ENDPOINT,
+        "evolution-entity-v1": _EVOLUTION_ENDPOINT,
+        "evolution-entity-v2": _EVOLUTION_ENDPOINT,
+        "evolution-hierarchy-v1": _EVOLUTION_ENDPOINT,
+        "evolution-hierarchy-v2": _EVOLUTION_ENDPOINT,
+        "evolution-index-collapse-v1": _EVOLUTION_ENDPOINT,
+        "evolution-index-collapse-v2": _EVOLUTION_ENDPOINT,
+        "evolution-index-components-v1": _EVOLUTION_ENDPOINT,
+        "evolution-index-components-v2": _EVOLUTION_ENDPOINT,
+        "evolution-index-name-v1": _EVOLUTION_ENDPOINT,
+        "evolution-index-name-v2": _EVOLUTION_ENDPOINT,
+        "evolution-index-uniqueness-v1": _EVOLUTION_ENDPOINT,
+        "evolution-index-uniqueness-v2": _EVOLUTION_ENDPOINT,
+        "evolution-index-v1": _EVOLUTION_ENDPOINT,
+        "evolution-index-v2": _EVOLUTION_ENDPOINT,
+        "evolution-interposed-subtype-v1": _EVOLUTION_ENDPOINT,
+        "evolution-interposed-subtype-v2": _EVOLUTION_ENDPOINT,
+        "evolution-nullability-v1": _EVOLUTION_ENDPOINT,
+        "evolution-nullability-v2": _EVOLUTION_ENDPOINT,
+        "evolution-nullable-member-v1": _EVOLUTION_ENDPOINT,
+        "evolution-nullable-member-v2": _EVOLUTION_ENDPOINT,
+        "evolution-optimistic-locking-v1": _EVOLUTION_ENDPOINT,
+        "evolution-optimistic-locking-v2": _EVOLUTION_ENDPOINT,
+        "evolution-persistence-v1": _EVOLUTION_ENDPOINT,
+        "evolution-persistence-v2": _EVOLUTION_ENDPOINT,
+        "evolution-primary-key-v1": _EVOLUTION_ENDPOINT,
+        "evolution-primary-key-v2": _EVOLUTION_ENDPOINT,
+        "evolution-read-only-v1": _EVOLUTION_ENDPOINT,
+        "evolution-read-only-v2": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-cardinality-v1": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-cardinality-v2": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-dependency-v1": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-dependency-v2": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-form-v1": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-form-v2": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-join-v1": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-join-v2": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-ordering-v1": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-ordering-v2": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-reverse-v1": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-reverse-v2": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-target-v1": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-target-v2": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-v1": _EVOLUTION_ENDPOINT,
+        "evolution-relationship-v2": _EVOLUTION_ENDPOINT,
+        "evolution-rename-v1": _EVOLUTION_ENDPOINT,
+        "evolution-rename-v2": _EVOLUTION_ENDPOINT,
+        "evolution-required-member-v1": _EVOLUTION_ENDPOINT,
+        "evolution-required-member-v2": _EVOLUTION_ENDPOINT,
+        "evolution-storage-container-v1": _EVOLUTION_ENDPOINT,
+        "evolution-storage-container-v2": _EVOLUTION_ENDPOINT,
+        "evolution-storage-layout-v1": _EVOLUTION_ENDPOINT,
+        "evolution-storage-layout-v2": _EVOLUTION_ENDPOINT,
+        "evolution-string-bound-v1": _EVOLUTION_ENDPOINT,
+        "evolution-string-bound-v2": _EVOLUTION_ENDPOINT,
+        "evolution-temporality-v1": _EVOLUTION_ENDPOINT,
+        "evolution-temporality-v2": _EVOLUTION_ENDPOINT,
+        "evolution-value-object-v1": _EVOLUTION_ENDPOINT,
+        "evolution-value-object-v2": _EVOLUTION_ENDPOINT,
+        "evolution-vo-column-v1": _EVOLUTION_ENDPOINT,
+        "evolution-vo-column-v2": _EVOLUTION_ENDPOINT,
+        "evolution-vo-member-v1": _EVOLUTION_ENDPOINT,
+        "evolution-vo-member-v2": _EVOLUTION_ENDPOINT,
+        "evolution-vo-multiplicity-v1": _EVOLUTION_ENDPOINT,
+        "evolution-vo-multiplicity-v2": _EVOLUTION_ENDPOINT,
+        "evolution-vo-nested-v1": _EVOLUTION_ENDPOINT,
+        "evolution-vo-nested-v2": _EVOLUTION_ENDPOINT,
+        "evolution-vo-nullability-v1": _EVOLUTION_ENDPOINT,
+        "evolution-vo-nullability-v2": _EVOLUTION_ENDPOINT,
+        "evolution-vo-value-v1": _EVOLUTION_ENDPOINT,
+        "evolution-vo-value-v2": _EVOLUTION_ENDPOINT,
+        "evolution-widget-v1": (
+            "endpoint-only model: it exists as one end of a described evolution, which is a "
+            "pure comparison of two accepted models that no developer surface builds or "
+            "executes, and its declarations are the mirrored `wallet` family's key, bounded "
+            "String, and authored non-unique index"
         ),
         "error-cases": (
             "behavioral-only model: it exists to provoke the m-db-error classes, and its only "

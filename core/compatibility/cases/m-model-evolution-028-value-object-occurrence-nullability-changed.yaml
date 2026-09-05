@@ -1,0 +1,71 @@
+# Value Object occurrence NULLABILITY (m-model-evolution): both directions of one
+# boundary in one evolution.
+#
+# Expanding the admitted domain of `origin` is unilateral; contracting
+# `courier`'s needs the existing rows that hold no occurrence to be given one.
+# Each is a `ValueAdmissibilityChanged` on its own occurrence path, whose facts
+# are the presence of a value alone. The evolution as a whole is coordinated, so
+# it names no Overlap-Visible Operation even though the expanding direction is
+# one wherever it stands alone.
+tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-vo-nullability-v1.yaml
+    later: models/evolution-vo-nullability-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: ValueObjectOccurrenceAltered
+        valueObject: parallax.compatibility.Parcel.courier
+        deltas:
+          - kind: NullabilityChanged
+            earlier: true
+            later: false
+      - kind: ValueObjectOccurrenceAltered
+        valueObject: parallax.compatibility.Parcel.origin
+        deltas:
+          - kind: NullabilityChanged
+            earlier: false
+            later: true
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope:
+          valueObject: parallax.compatibility.Parcel.courier
+        earlier:
+          nullable: true
+        later:
+          nullable: false
+        causedBy:
+          - kind: ValueObjectOccurrenceAltered
+            valueObject: parallax.compatibility.Parcel.courier
+            deltas:
+              - kind: NullabilityChanged
+                earlier: true
+                later: false
+      - kind: ValueAdmissibilityChanged
+        scope:
+          valueObject: parallax.compatibility.Parcel.origin
+        earlier:
+          nullable: false
+        later:
+          nullable: true
+        causedBy:
+          - kind: ValueObjectOccurrenceAltered
+            valueObject: parallax.compatibility.Parcel.origin
+            deltas:
+              - kind: NullabilityChanged
+                earlier: false
+                later: true
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: ValueObjectOccurrenceAltered
+          valueObject: parallax.compatibility.Parcel.courier
+          deltas:
+            - kind: NullabilityChanged
+              earlier: true
+              later: false
+        reasons:
+          - DatabaseMigrationRequired

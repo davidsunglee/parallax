@@ -1,0 +1,121 @@
+# Adding BOTH As-Of Axes at once (m-model-evolution): Valid Time precedes
+# Transaction Time in canonical order.
+#
+# One Temporality Profile derives two axes, so one evolution carries two
+# independent axis additions at one Entity, ordered by the dimension rank rather
+# than by anything the descriptor spells. Their four endpoint Attributes sort
+# ahead of both, because within one Entity every Attribute precedes every As-Of
+# Axis.
+tags: [m-model-evolution, evolution, temporal, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-bitemporality-v1.yaml
+    later: models/evolution-bitemporality-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAdded
+        attribute: parallax.compatibility.Gauge.txEnd
+      - kind: AttributeAdded
+        attribute: parallax.compatibility.Gauge.txStart
+      - kind: AttributeAdded
+        attribute: parallax.compatibility.Gauge.validEnd
+      - kind: AttributeAdded
+        attribute: parallax.compatibility.Gauge.validStart
+      - kind: AsOfAxisAdded
+        entity: parallax.compatibility.Gauge
+        dimension: valid-time
+      - kind: AsOfAxisAdded
+        entity: parallax.compatibility.Gauge
+        dimension: transaction-time
+    behavioralImpacts:
+      - kind: ConcurrencyControlChanged
+        scope:
+          entity: parallax.compatibility.Gauge
+        earlier:
+          gate: LockingFallback
+        later:
+          gate: TransactionTimeGated
+          startAttribute: parallax.compatibility.Gauge.txStart
+        causedBy:
+          - kind: AsOfAxisAdded
+            entity: parallax.compatibility.Gauge
+            dimension: transaction-time
+      - kind: QueryResultMembershipChanged
+        scope:
+          entity: parallax.compatibility.Gauge
+        earlier:
+          concreteEntities:
+            - parallax.compatibility.Gauge
+          axes: []
+        later:
+          concreteEntities:
+            - parallax.compatibility.Gauge
+          axes:
+            - dimension: valid-time
+              startAttribute: parallax.compatibility.Gauge.validStart
+              endAttribute: parallax.compatibility.Gauge.validEnd
+            - dimension: transaction-time
+              startAttribute: parallax.compatibility.Gauge.txStart
+              endAttribute: parallax.compatibility.Gauge.txEnd
+        causedBy:
+          - kind: AsOfAxisAdded
+            entity: parallax.compatibility.Gauge
+            dimension: valid-time
+          - kind: AsOfAxisAdded
+            entity: parallax.compatibility.Gauge
+            dimension: transaction-time
+      - kind: WriteCapabilityChanged
+        scope:
+          entity: parallax.compatibility.Gauge
+        earlier:
+          writes: Enabled
+          shape: NonTemporal
+        later:
+          writes: Enabled
+          shape: Bitemporal
+        causedBy:
+          - kind: AsOfAxisAdded
+            entity: parallax.compatibility.Gauge
+            dimension: valid-time
+          - kind: AsOfAxisAdded
+            entity: parallax.compatibility.Gauge
+            dimension: transaction-time
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAdded
+          attribute: parallax.compatibility.Gauge.txEnd
+        reasons:
+          - DatabaseMigrationRequired
+      - operation:
+          kind: AttributeAdded
+          attribute: parallax.compatibility.Gauge.txStart
+        reasons:
+          - DatabaseMigrationRequired
+      - operation:
+          kind: AttributeAdded
+          attribute: parallax.compatibility.Gauge.validEnd
+        reasons:
+          - DatabaseMigrationRequired
+      - operation:
+          kind: AttributeAdded
+          attribute: parallax.compatibility.Gauge.validStart
+        reasons:
+          - DatabaseMigrationRequired
+      - operation:
+          kind: AsOfAxisAdded
+          entity: parallax.compatibility.Gauge
+          dimension: valid-time
+        reasons:
+          - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired
+      - operation:
+          kind: AsOfAxisAdded
+          entity: parallax.compatibility.Gauge
+          dimension: transaction-time
+        reasons:
+          - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired

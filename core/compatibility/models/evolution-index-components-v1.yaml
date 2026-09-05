@@ -1,0 +1,15 @@
+# Bale (v1): the earlier endpoint of the INDEX COMPONENT ORDER scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# Index survives with the same components in a different order, which changes
+# the physical access path without changing the rule it enforces.
+entity:
+  name: Bale
+  namespace: parallax.compatibility
+  table: evolution_bale
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: label, type: string, maxLength: 32 }
+    - { name: region, type: string, maxLength: 32 }
+  indices:
+    - { name: bale_lookup, attributes: [region, label], unique: true }

@@ -1,0 +1,16 @@
+# Depot (v1): the earlier endpoint of the WHOLE ENTITY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The pair
+# is read in both directions: v1 to v2 adds a whole Entity with required members
+# and an authored Index, and v2 to v1 removes one.
+entity:
+  name: Depot
+  namespace: parallax.compatibility
+  table: evolution_depot
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: name
+      type: string
+      maxLength: 64

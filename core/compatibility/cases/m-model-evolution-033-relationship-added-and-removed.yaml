@@ -1,0 +1,30 @@
+# Relationship ADDITION and REMOVAL (m-model-evolution): the two directions of
+# one boundary.
+#
+# Adding a navigable direction invalidates nothing a caller already authored, so
+# it is unilateral. Removing one invalidates a previously valid navigation, and
+# the physical rows the earlier edition reached may simply be left in place, so
+# the authoring surface is the whole of what has to change. Both target Entities
+# stand at both endpoints, so nothing here is an Entity operation.
+tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-relationship-v1.yaml
+    later: models/evolution-relationship-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: RelationshipAdded
+        relationship: parallax.compatibility.Folder.items
+      - kind: RelationshipRemoved
+        relationship: parallax.compatibility.Folder.notes
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: RelationshipRemoved
+          relationship: parallax.compatibility.Folder.notes
+        reasons:
+          - AuthoringSurfaceChangeRequired

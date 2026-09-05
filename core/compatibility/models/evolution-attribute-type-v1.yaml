@@ -1,0 +1,15 @@
+# Meter (v1): the earlier endpoint of the NEUTRAL TYPE scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `reading`
+# is an int32 here and an int64 in v2 — a change the description never treats as
+# a safe widening, because it infers nothing between two accepted types.
+entity:
+  name: Meter
+  namespace: parallax.compatibility
+  table: evolution_meter
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: reading
+      type: int32

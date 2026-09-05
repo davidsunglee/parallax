@@ -25,8 +25,12 @@ spellings `validTime` / `transactionTime` in favor of the kebab-case enumerated
 values `valid-time` / `transaction-time`.
 
 **Query.** A read is an Object Query carrying a Predicate; neither is an
-*operation*. Every spelling that names a query, its grammar, its wire form, or
-the machinery that reads one an *operation* is retired: the module
+*operation*. What the family retires is naming a QUERY an operation, so a stem a
+live subject QUALIFIES is not in it: an Evolution Operation, a physical
+operation, and the unsupported one a dialect cannot render are each a named thing
+of their own (`m-model-evolution`), and none of them is a query. Every other
+spelling that names a query, its grammar, its wire form, or the machinery that
+reads one an *operation* is retired: the module
 `m-op-algebra`, the package `op_algebra`, the schema `operation.schema.json`,
 the read envelope's sibling `targetEntity` field, and the `FindQuery` /
 `LoweredFindQuery` pair. Predicate, Object Query, Includes, Deep Fetch, Subtype
@@ -86,7 +90,7 @@ Allow-list (explicitly labeled historical / prior-art / rejection text):
   change; a URL under the repository's own host is scanned, because a canonical
   schema ``$id`` is a name this repository chooses;
 - the handful of LIVE spellings a compound rule reads as retired ones, listed in
-  ``_LIVE_SPELLING_WORDS``;
+  ``_LIVE_SPELLING_WORDS``, and the qualified stems of ``_LIVE_QUALIFIED_WORDS``;
 - this module's own test file, whose fixtures spell the retired phrases.
 """
 
@@ -455,6 +459,22 @@ _LIVE_SPELLINGS = re.compile(
     rf"(?<!{_LIVE_SPELLING_EDGE})(?:{'|'.join(_LIVE_SPELLING_WORDS)})(?!{_LIVE_SPELLING_EDGE})"
 )
 
+# Qualifiers that make the stem after them a LIVE subject rather than a query
+# named as an operation: an Evolution Operation, the private physical operation a
+# Schema Delta lowers to, and the unsupported one a dialect cannot render. Each
+# is a named thing `m-model-evolution` owns, and none of them is a query, so the
+# whole qualified compound is masked wherever it is written.
+#
+# Unlike the exact identifiers above, the qualifier joins its stem the way every
+# compound in this module does: a space, a `/`, a `_`, a `-`, or a camel hump —
+# and the stem closes at the same camel boundary, so `evolutionOperationKind` is
+# the one compound it spells rather than a qualifier beside a retired one.
+_LIVE_QUALIFIED_WORDS = ("evolution", "physical", "unsupported")
+_LIVE_QUALIFIED = re.compile(
+    rf"(?:{'|'.join(_camel_first_word(word) for word in _LIVE_QUALIFIED_WORDS)})"
+    rf"(?:{_JOIN}|)(?:[Oo]perations?){_CAMEL_RIGHT}"
+)
+
 # The masking character. It is not alphanumeric, so it bounds a phrase the same
 # way punctuation does, and it is not a joiner, so masked text can never become
 # the middle of a compound that spans it.
@@ -561,7 +581,8 @@ def _masked(text: str) -> str:
         if exempt:
             masked.append(_MASK * len(line))
         else:
-            masked.append(_LIVE_SPELLINGS.sub(_blanked, _URL.sub(_blanked, line)))
+            unmasked = _URL.sub(_blanked, line)
+            masked.append(_LIVE_QUALIFIED.sub(_blanked, _LIVE_SPELLINGS.sub(_blanked, unmasked)))
     return "\n".join(masked)
 
 
@@ -584,9 +605,10 @@ def check_text(relative_path: str, text: str) -> list[str]:
     """Every retired-vocabulary violation in *text* (empty ⇒ clean).
 
     A ``_Avoid_`` line, every line of a paragraph opening ``Prior art:``, every
-    row of a table whose first header cell is ``Retired``, every foreign URL, and
-    every live spelling are masked before matching: each names something this
-    repository does not choose or has not retired. Matching runs over the whole
+    row of a table whose first header cell is ``Retired``, every foreign URL,
+    every live spelling, and every live-qualified stem are masked before
+    matching: each names something this repository does not choose or has not
+    retired. Matching runs over the whole
     document rather than line by line, so a phrase wrapped across a line break is
     caught at the line it starts on.
     """

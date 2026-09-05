@@ -1,0 +1,113 @@
+# Value Object LEAF value facts (m-model-evolution): a leaf owns a Neutral Type
+# and a nullability and nothing else.
+#
+# The type change is coordinated for both reasons, exactly as it is on a scalar
+# Attribute. Nullability is directional at a leaf exactly as it is at an
+# Attribute: expanding `city`'s admitted domain carries no requirement, and
+# contracting `note`'s needs the documents already stored to carry a value they
+# do not have. Every leaf reports a `ValueAdmissibilityChanged` whose maximum
+# length is absent, because a leaf declares no String bound.
+tags: [m-model-evolution, evolution, value-object, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-vo-value-v1.yaml
+    later: models/evolution-vo-value-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: ValueObjectAttributeAltered
+        valueObjectAttribute: parallax.compatibility.Manifest.origin.city
+        deltas:
+          - kind: NullabilityChanged
+            earlier: false
+            later: true
+      - kind: ValueObjectAttributeAltered
+        valueObjectAttribute: parallax.compatibility.Manifest.origin.note
+        deltas:
+          - kind: NullabilityChanged
+            earlier: true
+            later: false
+      - kind: ValueObjectAttributeAltered
+        valueObjectAttribute: parallax.compatibility.Manifest.origin.zone
+        deltas:
+          - kind: TypeChanged
+            earlier: int32
+            later: int64
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope:
+          valueObjectAttribute: parallax.compatibility.Manifest.origin.city
+        earlier:
+          type: string
+          nullable: false
+          maxLength: null
+        later:
+          type: string
+          nullable: true
+          maxLength: null
+        causedBy:
+          - kind: ValueObjectAttributeAltered
+            valueObjectAttribute: parallax.compatibility.Manifest.origin.city
+            deltas:
+              - kind: NullabilityChanged
+                earlier: false
+                later: true
+      - kind: ValueAdmissibilityChanged
+        scope:
+          valueObjectAttribute: parallax.compatibility.Manifest.origin.note
+        earlier:
+          type: string
+          nullable: true
+          maxLength: null
+        later:
+          type: string
+          nullable: false
+          maxLength: null
+        causedBy:
+          - kind: ValueObjectAttributeAltered
+            valueObjectAttribute: parallax.compatibility.Manifest.origin.note
+            deltas:
+              - kind: NullabilityChanged
+                earlier: true
+                later: false
+      - kind: ValueAdmissibilityChanged
+        scope:
+          valueObjectAttribute: parallax.compatibility.Manifest.origin.zone
+        earlier:
+          type: int32
+          nullable: false
+          maxLength: null
+        later:
+          type: int64
+          nullable: false
+          maxLength: null
+        causedBy:
+          - kind: ValueObjectAttributeAltered
+            valueObjectAttribute: parallax.compatibility.Manifest.origin.zone
+            deltas:
+              - kind: TypeChanged
+                earlier: int32
+                later: int64
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: ValueObjectAttributeAltered
+          valueObjectAttribute: parallax.compatibility.Manifest.origin.note
+          deltas:
+            - kind: NullabilityChanged
+              earlier: true
+              later: false
+        reasons:
+          - DatabaseMigrationRequired
+      - operation:
+          kind: ValueObjectAttributeAltered
+          valueObjectAttribute: parallax.compatibility.Manifest.origin.zone
+          deltas:
+            - kind: TypeChanged
+              earlier: int32
+              later: int64
+        reasons:
+          - AuthoringSurfaceChangeRequired
+          - DatabaseMigrationRequired

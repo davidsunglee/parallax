@@ -1,12 +1,14 @@
 # Distributions share the parallax namespace despite the PyPI squatter
 
-The five distributions — `parallax-core` (common runtime),
-`parallax-descriptor` (descriptor interchange), `parallax-snapshot`
+The six distributions — `parallax-core` (common runtime),
+`parallax-descriptor` (descriptor interchange), `parallax-evolution` (model
+evolution and schema deltas), `parallax-snapshot`
 (lifecycle extension), `parallax-postgres` (adapter), and
 `parallax-conformance` (development-only) — share the PEP 420 namespace package
 `parallax.*`, giving separately installable artifacts one coherent import
-vocabulary (`parallax.core`, `parallax.descriptor`, `parallax.snapshot`,
-`parallax.postgres`) while satisfying core's required artifact seams. All five
+vocabulary (`parallax.core`, `parallax.descriptor`, `parallax.evolution`,
+`parallax.snapshot`, `parallax.postgres`) while satisfying core's required
+artifact seams. All six
 distribution names were unoccupied on PyPI when selected.
 
 The bare name `parallax` is taken by a dormant SSH fan-out tool (v1.0.6) that

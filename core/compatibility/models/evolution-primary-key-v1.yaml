@@ -1,0 +1,27 @@
+# Voucher and Coupon (v1): the earlier endpoint of the PRIMARY KEY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Two
+# Entities carry the two independent primary-key facts a delta can report:
+# `Voucher` moves its key from `id` to `code`, which is one member joining the
+# key and another leaving it, and `Coupon.id` keeps its membership and changes
+# Primary-Key Generation.
+entities:
+  - name: Voucher
+    namespace: parallax.compatibility
+    table: evolution_voucher
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: code
+        type: string
+        maxLength: 16
+  - name: Coupon
+    namespace: parallax.compatibility
+    table: evolution_coupon
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: face
+        type: decimal(18,2)

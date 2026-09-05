@@ -1,0 +1,16 @@
+# Reading (v1): the REQUIRED end of the nullability scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The pair
+# is authored once and read in both directions: v1 to v2 expands the admitted
+# domain of a surviving member, and v2 to v1 contracts it.
+entity:
+  name: Reading
+  namespace: parallax.compatibility
+  table: evolution_reading
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: note
+      type: string
+      maxLength: 64

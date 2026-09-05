@@ -9,6 +9,7 @@ from pathlib import Path
 PRODUCTION_PACKAGES: tuple[str, ...] = (
     "parallax-core",
     "parallax-descriptor",
+    "parallax-evolution",
     "parallax-snapshot",
     "parallax-postgres",
 )
@@ -18,6 +19,7 @@ ALL_PACKAGES: tuple[str, ...] = (*PRODUCTION_PACKAGES, "parallax-conformance")
 TOP_PACKAGE_DIR: dict[str, str] = {
     "parallax-core": "parallax/core",
     "parallax-descriptor": "parallax/descriptor",
+    "parallax-evolution": "parallax/evolution",
     "parallax-snapshot": "parallax/snapshot",
     "parallax-postgres": "parallax/postgres",
     "parallax-conformance": "parallax/conformance",
@@ -26,6 +28,7 @@ TOP_PACKAGE_DIR: dict[str, str] = {
 TOP_PACKAGE_NAMES: tuple[str, ...] = (
     "parallax.core",
     "parallax.descriptor",
+    "parallax.evolution",
     "parallax.snapshot",
     "parallax.postgres",
     "parallax.conformance",

@@ -317,6 +317,32 @@ def test_a_live_spelling_is_masked_only_as_a_whole_identifier() -> None:
         assert check_text("f.py", line), line
 
 
+def test_a_live_qualified_stem_names_something_that_is_not_a_query() -> None:
+    # An Evolution Operation, the private physical operation a Schema Delta
+    # lowers to, and the unsupported one a dialect cannot render are each a named
+    # thing of their own, in every casing and joiner the compound rules read.
+    legal = [
+        "The closed Evolution Operation algebra is `EntityAdded`, ...",
+        "the private physical-operation algebra stays private",
+        "the complete unsupported-operation error it raises instead",
+        '"evolutionOperationKind": { "enum": [...] }',
+        "EVOLUTION_OPERATION_KINDS: frozenset[str] = frozenset(",
+        "for physical_operations in plan:",
+        "an UnsupportedOperationRecord names its physical location",
+    ]
+    for line in legal:
+        assert check_text("f.md", line) == [], line
+    # The qualifier has to be the word immediately before the stem; anything else
+    # is the unqualified compound the family retires.
+    flagged = [
+        "the read's own operation tree",
+        "def operation_algebra() -> None:",
+        "an evolutionary operation tree",
+    ]
+    for line in flagged:
+        assert check_text("f.py", line), line
+
+
 def test_a_repository_owned_url_is_repository_vocabulary() -> None:
     owned = '"$id": "https://{host}/schemas/{name}.schema.json"'
     assert check_text("core/schemas/x.json", owned.format(host="parallax.dev", name="operation"))

@@ -79,6 +79,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-metamodel": "parallax.core.metamodel",
     "m-model-formation": "parallax.core.model_formation",
     "m-descriptor": "parallax.descriptor",
+    "m-model-evolution": "parallax.evolution.model_evolution",
     "m-pk-gen": "parallax.core.pk_gen",
     "m-inheritance": "parallax.core.inheritance",
     "m-storage-layout": "parallax.core.storage_layout",
@@ -549,6 +550,7 @@ ROOT_PACKAGES: tuple[str, ...] = (
     "parallax.conformance",
     "parallax.core",
     "parallax.descriptor",
+    "parallax.evolution",
     "parallax.postgres",
     "parallax.snapshot",
 )

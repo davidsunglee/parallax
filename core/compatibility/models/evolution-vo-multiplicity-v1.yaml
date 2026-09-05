@@ -1,0 +1,19 @@
+# Ledger (v1): the earlier endpoint of the Value Object MULTIPLICITY scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. Two
+# occurrences sit at opposite ends of the boundary, so one evolution moves each
+# in the opposite direction.
+entity:
+  name: Ledger
+  namespace: parallax.compatibility
+  table: evolution_ledger
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: entry
+      attributes:
+        - { name: memo, type: string }
+    - name: line
+      multiplicity: many
+      attributes:
+        - { name: amount, type: int64 }

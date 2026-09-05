@@ -1,0 +1,17 @@
+# Placard (v1): the earlier endpoint of the STORAGE LOCATION scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json.
+# `caption` takes the derived default Column of its own name here and an
+# authored one in v2, so the pair differs in accepted Storage Location while the
+# logical member survives unchanged.
+entity:
+  name: Placard
+  namespace: parallax.compatibility
+  table: evolution_placard
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: caption
+      type: string
+      maxLength: 64

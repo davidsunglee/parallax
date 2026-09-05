@@ -7,6 +7,7 @@ members = [
     "parallax-conformance",
     "parallax-core",
     "parallax-descriptor",
+    "parallax-evolution",
     "parallax-postgres",
     "parallax-python",
     "parallax-snapshot",
@@ -941,6 +942,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "parallax-core" },
     { name = "parallax-descriptor" },
+    { name = "parallax-evolution" },
     { name = "parallax-postgres" },
     { name = "parallax-snapshot" },
     { name = "testcontainers" },
@@ -951,6 +953,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.21" },
     { name = "parallax-core", editable = "packages/parallax-core" },
     { name = "parallax-descriptor", editable = "packages/parallax-descriptor" },
+    { name = "parallax-evolution", editable = "packages/parallax-evolution" },
     { name = "parallax-postgres", editable = "packages/parallax-postgres" },
     { name = "parallax-snapshot", editable = "packages/parallax-snapshot" },
     { name = "testcontainers", specifier = ">=4.15.0" },
@@ -985,6 +988,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "parallax-evolution"
+version = "0.1.0"
+source = { editable = "packages/parallax-evolution" }
+dependencies = [
+    { name = "parallax-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "parallax-core", editable = "packages/parallax-core" }]
+
+[[package]]
 name = "parallax-postgres"
 version = "0.1.0"
 source = { editable = "packages/parallax-postgres" }
@@ -1006,6 +1020,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "parallax-core" },
     { name = "parallax-descriptor" },
+    { name = "parallax-evolution" },
     { name = "parallax-postgres" },
     { name = "parallax-snapshot" },
 ]
@@ -1034,6 +1049,7 @@ dev = [
 requires-dist = [
     { name = "parallax-core", editable = "packages/parallax-core" },
     { name = "parallax-descriptor", editable = "packages/parallax-descriptor" },
+    { name = "parallax-evolution", editable = "packages/parallax-evolution" },
     { name = "parallax-postgres", editable = "packages/parallax-postgres" },
     { name = "parallax-snapshot", editable = "packages/parallax-snapshot" },
 ]

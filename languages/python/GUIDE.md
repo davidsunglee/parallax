@@ -28,6 +28,7 @@ languages/python/
   packages/
     parallax-core/        the class-free engine spine (production)
     parallax-descriptor/   descriptor ingestion + export (production, optional)
+    parallax-evolution/    model evolution + schema deltas (production, optional)
     parallax-snapshot/     snapshot lifecycle + handle (production)
     parallax-postgres/     concrete psycopg adapter (production)
     parallax-conformance/  corpus/case loading + describe/compile/run CLI (dev-only)
@@ -37,7 +38,7 @@ languages/python/
   docs/adr/             per-language ADRs
 ```
 
-The five distributions share the PEP 420 `parallax.*` namespace: there is no
+The six distributions share the PEP 420 `parallax.*` namespace: there is no
 `parallax/__init__.py` at the namespace root, and each distribution ships
 `py.typed` at its own package root.
 

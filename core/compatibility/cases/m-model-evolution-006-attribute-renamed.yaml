@@ -1,0 +1,27 @@
+# A RENAME is one removal and one addition (m-model-evolution), in identity order.
+#
+# Declarations are matched by structured identity and a rename is never inferred,
+# so spelling `Label.label` as `Label.caption` produces two independent operations
+# with two independent classifications. Canonical order carries no operation-kind
+# rank — add, remove, and alter cannot tie at one identity — so the addition sorts
+# FIRST here, by `caption` preceding `label`, rather than being forced
+# removal-first.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-rename-v1.yaml
+    later: models/evolution-rename-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - { kind: AttributeAdded, attribute: parallax.compatibility.Label.caption }
+      - { kind: AttributeRemoved, attribute: parallax.compatibility.Label.label }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation: { kind: AttributeAdded, attribute: parallax.compatibility.Label.caption }
+        reasons: [DatabaseMigrationRequired]
+      - operation: { kind: AttributeRemoved, attribute: parallax.compatibility.Label.label }
+        reasons: [AuthoringSurfaceChangeRequired]

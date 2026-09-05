@@ -1,0 +1,37 @@
+# Changing an accepted Neutral Type (m-model-evolution): coordinated for BOTH
+# reasons.
+#
+# The description infers no safe widening between type families: int32 to int64 is
+# classified exactly as any other type change. It needs
+# `AuthoringSurfaceChangeRequired` because accepted operands, write inputs, and
+# decoded result values all change, and `DatabaseMigrationRequired` because the
+# stored Column cannot become the later type without transforming what it holds.
+tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-attribute-type-v1.yaml
+    later: models/evolution-attribute-type-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Meter.reading
+        deltas: [{ kind: TypeChanged, earlier: int32, later: int64 }]
+    behavioralImpacts:
+      - kind: ValueAdmissibilityChanged
+        scope: { attribute: parallax.compatibility.Meter.reading }
+        earlier: { type: int32, nullable: false, maxLength: null }
+        later: { type: int64, nullable: false, maxLength: null }
+        causedBy:
+          - kind: AttributeAltered
+            attribute: parallax.compatibility.Meter.reading
+            deltas: [{ kind: TypeChanged, earlier: int32, later: int64 }]
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Meter.reading
+          deltas: [{ kind: TypeChanged, earlier: int32, later: int64 }]
+        reasons: [AuthoringSurfaceChangeRequired, DatabaseMigrationRequired]

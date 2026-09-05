@@ -1,0 +1,61 @@
+# Withdrawing and granting persistence (m-model-evolution): one evolution, both
+# directions of the boundary, and an Entity-level impact that DOMINATES its
+# members.
+#
+# `Archive` becomes read-only, which removes valid persistence operations and so
+# needs `AuthoringSurfaceChangeRequired`; `Journal` becomes writable, which only
+# adds them and is unilateral. `Archive.note` additionally becomes read-only and
+# is classified on its own terms, but its member-level write impact is SUPPRESSED:
+# an Entity-level change in Persistence Mode dominates its members, so the
+# evolution reports the Entity fact once instead of repeating it per member. Each
+# delta reports the ACCEPTED declaration, absent at the writable end because
+# declaring nothing is the canonical spelling of the read-write default;
+# classification compares the EFFECTIVE mode the family's root fixes.
+tags: [m-model-evolution, evolution, entity, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-persistence-v1.yaml
+    later: models/evolution-persistence-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Archive
+        deltas: [{ kind: PersistenceChanged, earlier: null, later: read-only }]
+      - kind: AttributeAltered
+        attribute: parallax.compatibility.Archive.note
+        deltas: [{ kind: ReadOnlyChanged, earlier: false, later: true }]
+      - kind: EntityAltered
+        entity: parallax.compatibility.Journal
+        deltas: [{ kind: PersistenceChanged, earlier: read-only, later: null }]
+    behavioralImpacts:
+      - kind: WriteCapabilityChanged
+        scope: { entity: parallax.compatibility.Archive }
+        earlier: { writes: Enabled, shape: NonTemporal }
+        later: { writes: Disabled }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Archive
+            deltas: [{ kind: PersistenceChanged, earlier: null, later: read-only }]
+      - kind: WriteCapabilityChanged
+        scope: { entity: parallax.compatibility.Journal }
+        earlier: { writes: Disabled }
+        later: { writes: Enabled, shape: NonTemporal }
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Journal
+            deltas: [{ kind: PersistenceChanged, earlier: read-only, later: null }]
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Archive
+          deltas: [{ kind: PersistenceChanged, earlier: null, later: read-only }]
+        reasons: [AuthoringSurfaceChangeRequired]
+      - operation:
+          kind: AttributeAltered
+          attribute: parallax.compatibility.Archive.note
+          deltas: [{ kind: ReadOnlyChanged, earlier: false, later: true }]
+        reasons: [AuthoringSurfaceChangeRequired]

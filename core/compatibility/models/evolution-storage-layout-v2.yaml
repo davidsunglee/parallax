@@ -1,0 +1,19 @@
+# Parcel (v2): the RELATIONAL DOCUMENT end of the Storage Layout scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-storage-layout-v1.yaml with one shared Structured Column
+# carrying every document-resident member.
+entity:
+  name: Parcel
+  namespace: parallax.compatibility
+  table: evolution_parcel
+  layout:
+    document:
+      column: doc
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: label
+      type: string
+      maxLength: 64

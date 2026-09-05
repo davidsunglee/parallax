@@ -1,0 +1,33 @@
+# Changing the Storage Layout (m-model-evolution): coordinated, for the database
+# alone.
+#
+# `Parcel` moves from conventional Columns storage to a Relational Document
+# Layout. Every logical declaration survives with its identity, type, and caller
+# contract intact, so no authored operation changes shape; the rows themselves
+# have to be rewritten into the shared Structured Column, which is
+# `DatabaseMigrationRequired`. Declaring no layout is the only spelling of Columns
+# storage, so the earlier accepted value is absent.
+tags: [m-model-evolution, evolution, entity, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-storage-layout-v1.yaml
+    later: models/evolution-storage-layout-v2.yaml
+then:
+  evolution:
+    kind: coordinated
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Parcel
+        deltas: [{ kind: StorageLayoutChanged, earlier: null, later: { document: { column: doc } } }]
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements:
+      - operation:
+          kind: EntityAltered
+          entity: parallax.compatibility.Parcel
+          deltas:
+            - kind: StorageLayoutChanged
+              earlier: null
+              later: { document: { column: doc } }
+        reasons: [DatabaseMigrationRequired]
