@@ -170,8 +170,9 @@ _Avoid_: unsupported capability, invalid query, adapter limitation
 The one private read composition a `Database` or a `Transaction` owns and
 shares with its Wire view. Every Typed and Wire `find` and `stream`, and
 `read_rows`, delegates to it and runs its one ladder: re-entry refusal, the
-Selected Read Model, the query's own lowering and validation, execution, and
-publication. Only the bracket around execution varies, between a standalone
+Selected Read Model, the call's own arguments, the read gate, execution, and
+publication — a stream deferring the gate and the execution to the scope it is
+entered in. Only the bracket around execution varies, between a standalone
 read and one participating in a transaction. It is an implementation boundary
 rather than a public extension point, and no result, stream, or view answers it
 to a caller.

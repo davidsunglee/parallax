@@ -1,15 +1,18 @@
 """``parallax.snapshot.handle._read_scope`` — the Read Scope both Handles share.
 
 A ``Database``'s reads and a ``Transaction``'s run one ladder: re-entry is
-refused, the operation's selected read model is obtained, a classless connection
-is refused, the query is lowered, the shared gate runs, the activity opens, the
-executor runs, and the result is published. A streamed read is that ladder
-deferred rather than a second one — the verb lowers and validates what it was
-handed and answers an inert delivery, which crosses the gate and opens its own
-activity when its scope is entered and reaches back here for each page. Only the
-bracket around execution differs between a standalone read and one participating
-in a transaction, so the ladder belongs here once and the difference belongs
-below it, behind a private execution policy the two factories construct.
+refused, the operation's selected read model is obtained, this call's own
+arguments are judged — for a read publishing Entity Class instances, a selection
+that can materialize none at all first, then the query lowered to the canonical
+node — the shared gate runs, the activity opens, the executor runs, and the
+result is published. A streamed read is that ladder deferred rather than a
+second one: the verb lowers what it was handed and judges the page size it was
+named with, and answers an inert delivery, which crosses the gate and opens its
+own activity when its scope is entered and reaches back here for each page. Only
+the bracket around execution differs between a standalone read and one
+participating in a transaction, so the ladder belongs here once and the
+difference belongs below it, behind a private execution policy the two factories
+construct.
 
 The four capabilities that policy answers are the whole of what varies: which
 selected read model serves the operation, what an eager read runs inside, what a
@@ -20,9 +23,11 @@ and through nothing else — which is what makes "the gate precedes the flush" a
 "the activity opens inside the flush" the order of calls in this module rather
 than a rule two Handles each restate.
 
-This module is an implementation boundary rather than an extension point:
-nothing here is re-exported from ``parallax.snapshot.handle`` or
-``parallax.snapshot``, and module privacy is what closes construction.
+This module is an implementation boundary rather than an extension point.
+:data:`WireQuery` alone is re-exported from ``parallax.snapshot.handle``, because
+the spellings a Wire read accepts are vocabulary of a public signature; nothing
+else here crosses that boundary, nothing here reaches ``parallax.snapshot`` at
+all, and module privacy is what closes construction.
 
 Its ``spec/python.md`` §7 scope states what a read ladder reaches. Batch writes,
 Transaction-Time writes, and Bitemporal writes fall outside its closure although
@@ -234,7 +239,7 @@ class ReadScope:
     delivery's side, and they answer it from the same execution policy every
     eager read runs under. The scope itself holds no model and no page, so a
     delivery hands back the ONE selection it was opened under for each of its
-    pages and this allocates nothing per page or per root.
+    pages, and no page and no root reaches a second scope or a second policy.
     """
 
     __slots__ = ("_execution", "_lifecycle")
@@ -337,7 +342,7 @@ class ReadScope:
         """One page of a delivery, read inside this lane's own bracket.
 
         A page IS an eager read of a bounded root query, so it threads the same
-        port, Concurrency Preference, and observation ledger every other read
+        port, Concurrency Preference, and observation ledger an eager graph read
         here does — and takes its model from the delivery, which holds the one
         selection it was opened under rather than asking for a second.
         """
@@ -364,11 +369,12 @@ class ReadScope:
     ) -> SnapshotStream[Any]:
         """The stream-construction tail both read interfaces run.
 
-        Constructing a delivery reaches nothing: the gate, the page plan, and
-        every statement belong to the entered scope, so a stream nobody enters
-        observes nothing and reads nothing. What is settled here is what this
-        call named — the page size, refused before any plan and any I/O — and
-        the selection the delivery will keep through all of its pages.
+        Constructing a delivery opens no activity and reaches no executor: the
+        gate, the page plan, and every statement belong to the entered scope, so
+        a stream nobody enters observes nothing and reads nothing. What is
+        settled here is what this call named — the page size, refused before any
+        plan and any I/O — and the selection the delivery will keep through all
+        of its pages.
         """
         check_batch_size(batch_size)
         return SnapshotStream(node, selected.model, publication, self, batch_size=batch_size)
