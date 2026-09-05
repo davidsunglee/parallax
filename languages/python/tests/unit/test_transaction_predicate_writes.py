@@ -92,6 +92,7 @@ from parallax.snapshot.handle._predicate_writes import (
     _is_no_op_assignment,  # pyright: ignore[reportPrivateUsage] - the lane's own per-row no-op comparison, driven off hand-built rows so a normalization defect names itself rather than surfacing as a missing statement
     _normalize_assignment_values,  # pyright: ignore[reportPrivateUsage] - the lane's own once-per-write assignment decoding, driven directly so each encoded spelling is proved rather than inferred from the SQL a whole write emitted
 )
+from parallax.snapshot.handle._transaction import buffer_prepared_predicate_write
 
 
 # A local Transaction-Time-Only, value-object-bearing entity with the
@@ -749,6 +750,45 @@ def test_delete_where_over_a_temporal_target_is_refused_at_the_verb(
 
     with pytest.raises(_Abandon):
         Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
+
+
+def test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it() -> None:
+    # Both `_where` ingresses refuse that verb before they resolve anything, which
+    # leaves the buffering seam's own applicability check reachable only through
+    # the in-package entry the conformance engine uses. That entry takes an
+    # ALREADY-prepared instruction, and preparation judges the converse half alone
+    # — a milestone verb aimed at a target deriving no As-Of Axis — so a prepared
+    # temporal `delete` is a real instruction nothing above this seam has judged.
+    # Without the seam's own refusal it would reach the resolving read, and a read
+    # matching no row buffers nothing for the flush to refuse, so nothing would
+    # refuse it at all.
+    prepared = instructions.prepare_wire_write(
+        instructions.deserialize(
+            {
+                "mutation": "delete",
+                "target": {
+                    "entity": "parallax.compatibility.Balance",
+                    "predicate": {"eq": {"attr": "parallax.compatibility.Balance.id", "value": 1}},
+                },
+            }
+        ),
+        model_of(BALANCE),
+    )
+    assert isinstance(prepared, instructions.PreparedPredicateWrite)
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError) as refusal:
+            buffer_prepared_predicate_write(tx, prepared)
+        assert str(refusal.value) == (
+            "Temporal objects like 'Balance' do not support 'delete_where', which physically "
+            "removes rows. Use 'terminate_where' instead."
+        )
+        assert port.calls == [BeginCall()]
+        raise _Abandon
+
+    with pytest.raises(_Abandon):
+        Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
