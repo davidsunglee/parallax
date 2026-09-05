@@ -177,10 +177,11 @@ def buffer_predicate(
        not declare is named as the target failure it is rather than as a
        composition failure of every Assignment addressing it.
     4. **The bound-less destructive verb's applicability, then Valid-Time-bound
-       validation and normalization** — ``delete_where`` states no bound at all,
-       so a temporal target refuses the VERB before any bound is measured
-       (:func:`reject_temporal_delete`). Every other verb states one, and the
-       window gate judges it: the ``*Until`` forms state their window as a PAIR,
+       validation and normalization** — ``delete_where`` offers no bound ARGUMENT
+       at all, so a temporal target refuses the VERB before any bound is measured
+       (:func:`reject_temporal_delete`). Every other verb takes one, and the
+       window gate judges what the call passed: the ``*Until`` forms state their
+       window as a PAIR,
        and half of one is refused before either bound is measured; a Bitemporal
        target then requires ``valid_from`` and a Transaction-Time-Only or
        non-temporal target takes none; and ``valid_from < until`` — an equal or
@@ -296,10 +297,13 @@ def reject_temporal_delete(
     verb, and the target spells its removal ``terminate_where``.
 
     The converse half of applicability — a milestone verb aimed at a target
-    deriving no As-Of Axis — is not hoisted with it, because those verbs DO
-    state a bound: a target declaring no Valid-Time dimension answers the bound
-    it was handed, at the window gate, which is the answer the keyed surface
-    gives the same pairing.
+    deriving no As-Of Axis — is not hoisted with it, because the window gate
+    misdirects no milestone call. Those verbs all TAKE a bound: a call that
+    states one — either ``*_until_where`` form, or ``terminate_where`` handed a
+    ``valid_from`` — hears the gate refuse that bound, a true verdict on an
+    argument the caller can drop, and the keyed surface answers the same pairing
+    the same way; a boundless ``terminate_where`` clears the gate in silence and
+    reaches the quadrant prepared-write production states.
     """
     if not is_temporal(declaring_entity):
         return

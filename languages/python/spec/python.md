@@ -4503,12 +4503,16 @@ These feature tests do not claim the deferred `benchmark` command or general
   removal `terminate` ("Write verbs and temporal spellings"). Each refusal names
   the method the caller's own surface offers instead, keyed or `_where`. The
   `delete` half precedes the window stage rather than sharing preparation's
-  place in the order, because `delete` and `delete_where` take no Valid-Time
-  bound in any representation: a bitemporal target reaching the window first
-  would answer them by naming the `valid_from` its other verbs require, which
-  neither spelling offers an argument for. The milestone half keeps preparation's
-  place, because those verbs do state a bound and a target with no Valid-Time
-  dimension answers the bound it was handed.
+  place in the order, because no spelling of `delete` or `delete_where` offers a
+  Valid-Time argument at all: a bitemporal target reaching the window first would
+  answer them by naming the `valid_from` its other verbs require, which the
+  caller has no parameter to supply it through. The milestone half keeps
+  preparation's place, because the window gate misdirects no milestone call. A
+  call that states a bound — either `*_until` form, or `terminate` handed a
+  `valid_from` — hears the gate refuse that bound on a target declaring no
+  Valid-Time dimension, a true verdict on an argument the caller can drop; a
+  boundless `terminate` clears the gate in silence and reaches preparation's own
+  quadrant.
 
   **An insert enters that ingress by its own door, with no source.** `insert` and
   `insert_until` name a fresh value rather than one a read published, so there is
