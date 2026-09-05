@@ -97,15 +97,14 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._keyed_writes import KeyedWriteContext
-from parallax.snapshot.handle._predicate_writes import (
-    buffer_predicate_instruction,
-    reject_temporal_delete,
-)
+from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
 from parallax.snapshot.handle._write_inputs import (
+    UPDATE_MUTATIONS,
     KeyedWriteValueError,
     admit_and_buffer,
     cancels_a_pending_assignment,
     keyed_instruction,
+    reject_temporal_delete,
     resolve_write_evidence,
     validate_source_pin,
     validate_window,
@@ -142,8 +141,6 @@ type WirePredicateTarget = Mapping[str, object]
 canonical selection shape — never an Object Query, because ordering, the cap,
 temporal selection, result narrowing, and Include Paths all shape a RESULT and a
 set-based write has none to shape."""
-
-_UPDATE_MUTATIONS = frozenset({"update", "updateUntil"})
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
@@ -389,7 +386,7 @@ def wire_predicate_write(
     authored = _authored_changes(mutation, changes)
     entity = instructions.resolve_target(lane.keyed.model.meta, entity_name)
     declaring = declaring_of(lane.keyed.model.meta, entity)
-    reject_temporal_delete(entity, declaring, mutation)
+    reject_temporal_delete(entity, declaring, mutation, surface="predicate")
     valid_from_managed, until_managed = validate_window(declaring, mutation, valid_from, until)
     members = _row_members(lane.keyed.model.meta, entity)
     unknown = sorted(set(authored) - set(members))
@@ -447,7 +444,7 @@ def _authored_row(
     already buffered at the same claim scope, where it buffers the identity row
     alone and the merged write is eliminated instead.
     """
-    if mutation not in _UPDATE_MUTATIONS:
+    if mutation not in UPDATE_MUTATIONS:
         return dict(identity_row), frozenset()
     effective: dict[str, object] = {}
     restored: set[str] = set()
@@ -708,7 +705,7 @@ def _authored_document(value: object, described: str) -> Mapping[str, object]:
 
 def _authored_changes(mutation: KeyedMutation, changes: WireChanges | None) -> Mapping[str, object]:
     """Return validated assignments, or the empty set a destructive verb states."""
-    if changes is None and mutation not in _UPDATE_MUTATIONS:
+    if changes is None and mutation not in UPDATE_MUTATIONS:
         return {}
     return _authored_document(changes, f"a Wire `{mutation}`'s change set")
 

@@ -20,7 +20,6 @@ import pytest
 from _transact_support import (
     ACCOUNT,
     BALANCE,
-    CONTACT,
     FIND_SQL_LOCKED,
     FIND_SQL_UNLOCKED,
     FIXED,
@@ -28,7 +27,6 @@ from _transact_support import (
     INSERT_SQL,
     PAYMENT,
     PERSON,
-    SHIPMENT,
     WHERE_POSITION_META,
     WherePosition,
     account_db,
@@ -51,8 +49,8 @@ from _support.db_port import (
     WriteCall,
 )
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.read_models import CardPayment, Payment, Person
-from parallax.conformance.vo_models import CUSTOMER_MODEL, Contact, Customer, Shipment
+from parallax.conformance.read_models import CardPayment, Person
+from parallax.conformance.vo_models import CUSTOMER_MODEL, Customer
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import Row
@@ -67,12 +65,8 @@ from parallax.core.unit_work import (
     FixedClock,
     ObjectKey,
     OptimisticLockConflictError,
-    RetainedObservation,
     StaleWriteError,
-    VersionedStateKey,
-    VersionObservation,
     WriteInstructionError,
-    WriteRejectedError,
     instructions,
 )
 from parallax.snapshot import InvalidData
@@ -112,11 +106,7 @@ def test_keyed_insert_through_the_verb_follows_the_entity_layout_slot_order() ->
     # the domain slots, never appended after them and never authored.
     port = ScriptedPort(Transact(Write()))
     db_for(PAYMENT, port).transact(
-        lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-            "insert",
-            CardPayment.identity,
-            {"cardNetwork": "Visa", "id": 10, "amount": Decimal("200.00")},
-        )
+        lambda tx: tx.insert(CardPayment(id=10, amount=Decimal("200.00"), card_network="Visa"))
     )
     assert port.calls == [
         BeginCall(),
@@ -422,189 +412,46 @@ def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
     assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (1,)), CommitCall()]
 
 
-def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
-    # The instance-graduated verbs build their row from the compiled entity's
-    # OWN declared members, so an undeclared member can no longer be smuggled
-    # in through `tx.insert`; the member-name honesty gate still protects the
-    # lower-level neutral document route directly (`Transaction._buffer`). An
-    # otherwise-COMPLETE row isolates this defect from `validate_write` (which
-    # runs first, and only ever walks Account's OWN
-    # declared members — it never itself notices a stray extra key).
-    port = ScriptedPort(Transact())
-    with pytest.raises(WriteInstructionError, match="shoe_size"):
-        account_db(port).transact(
-            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert",
-                mm.Account.identity,
-                {
-                    "id": 1,
-                    "owner": "Newton",
-                    "balance": Decimal("5.00"),
-                    "version": 1,
-                    "shoe_size": 9,
-                },
-            )
-        )
-    assert WriteCall(INSERT_SQL, (1, 9)) not in port.calls
-
-
 # --------------------------------------------------------------------------- #
-# validate_write (m-value-object write validation                             #
-# x m-inheritance concrete-subtype write protocol): the SAME model-aware      #
-# validator the prepared-write producers call for the corpus's `when.write`  #
-# cases (m-value-object-039..044 / m-inheritance-086..089) — one producer,    #
-# several ingresses, pinned per rule at this seam.                            #
-# comment): its inheritance payload-shape rules classify a framework-owned    #
-# metadata key or a cross-branch field more specifically than the generic     #
-# member-name-honesty gate ever could.                                       #
+# The model-aware `validate_write` rejection matrix the corpus's own          #
+# `when.write` cases carry (m-value-object-039..044 / m-inheritance-086..089) #
+# is stated at the producer both keyed ingresses prepare through, in          #
+# `test_write_instructions.py`: no keyed VERB reaches those rows, because the  #
+# Entity Row Codec derives a Typed row from the value's own class and the      #
+# Entity constructor refuses the value-object payloads outright. What a verb   #
+# does reach is the sparse row below, and that it is one producer is what the  #
+# identity assertion pins.                                                     #
 # --------------------------------------------------------------------------- #
-def test_engine_and_transaction_buffer_share_the_prepared_write_producer() -> None:
+def test_the_engine_and_the_typed_verbs_share_the_prepared_write_producer() -> None:
     from parallax.conformance import engine as engine_module
-    from parallax.snapshot.handle import _write_inputs as write_inputs_module
+    from parallax.snapshot.handle import _transaction as transaction_module
 
     assert engine_module.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage]
     assert (
-        write_inputs_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage]
+        transaction_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage]
         is instructions.prepare_typed_write
     )
 
 
-def test_buffer_rejects_a_required_attribute_missing_at_any_depth() -> None:
-    # m-value-object-039's own payload: `address.street` (depth 1) absent.
-    port = ScriptedPort(Transact())
-    with pytest.raises(WriteRejectedError) as exc_info:
-        db_for(CONTACT, port).transact(
-            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert",
-                Contact.identity,
-                {
-                    "id": 1,
-                    "name": "Acme",
-                    "address": {
-                        "city": "Oslo",
-                        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
-                    },
-                },
-            )
-        )
-    assert exc_info.value.rule == "write-required-attribute-missing"
-
-
-def test_buffer_rejects_a_required_value_object_missing() -> None:
-    # m-value-object-044's own payload: the required top-level `destination`
-    # value object is entirely absent.
-    port = ScriptedPort(Transact())
-    with pytest.raises(WriteRejectedError) as exc_info:
-        db_for(SHIPMENT, port).transact(
-            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert", Shipment.identity, {"id": 5, "name": "Express"}
-            )
-        )
-    assert exc_info.value.rule == "write-required-value-object-missing"
-
-
-def test_buffer_rejects_a_value_type_mismatch() -> None:
-    # m-value-object-043's own payload: `address.street` bound the number 42.
-    # This corpus case's own idiomatic-surface spelling is unreachable through
-    # `tx.insert` (Pydantic's own field coercion raises first, constructing
-    # `ContactAddress(street=42, ...)` never even completes) — a SANCTIONED
-    # exception, so
-    # this proof exercises the shared validator directly through the private
-    # `_buffer` seam instead, exactly like its two siblings above.
-    port = ScriptedPort(Transact())
-    with pytest.raises(WriteRejectedError) as exc_info:
-        db_for(CONTACT, port).transact(
-            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert",
-                Contact.identity,
-                {
-                    "id": 5,
-                    "name": "Echo",
-                    "address": {
-                        "street": 42,
-                        "city": "Oslo",
-                        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
-                    },
-                },
-            )
-        )
-    assert exc_info.value.rule == "write-value-type-mismatch"
-
-
-def test_buffer_rejects_a_keyless_inheritance_write() -> None:
-    # m-inheritance-089's own payload: no primary-key attribute at all.
-    port = ScriptedPort(Transact())
-    with pytest.raises(WriteRejectedError) as exc_info:
-        db_for(PAYMENT, port).transact(
-            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert", CardPayment.identity, {"amount": 200.00, "cardNetwork": "Visa"}
-            )
-        )
-    assert exc_info.value.rule == "subtype-write-set-based-unsupported"
-
-
-def test_buffer_rejects_framework_owned_metadata() -> None:
-    # m-inheritance-087's own payload: an authored `tagValue`.
-    port = ScriptedPort(Transact())
-    with pytest.raises(WriteRejectedError) as exc_info:
-        db_for(PAYMENT, port).transact(
-            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert", CardPayment.identity, {"id": 10, "amount": 200.00, "tagValue": "card"}
-            )
-        )
-    assert exc_info.value.rule == "subtype-write-metadata-field"
-
-
-def test_buffer_rejects_a_sibling_branch_attribute() -> None:
-    # m-inheritance-086's own payload: both CardPayment's and CashPayment's
-    # own columns, so no single concrete subtype accepts every field.
-    port = ScriptedPort(Transact())
-    with pytest.raises(WriteRejectedError) as exc_info:
-        db_for(PAYMENT, port).transact(
-            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert",
-                Payment.identity,
-                {"id": 10, "amount": 200.00, "cardNetwork": "Visa", "tendered": 25.00},
-            )
-        )
-    assert exc_info.value.rule == "subtype-write-sibling-attribute"
-
-
-def test_buffer_rejects_an_abstract_write_target() -> None:
-    # m-inheritance-088's own payload: a well-formed CardPayment-shaped write
-    # aimed at the abstract root `Payment`.
-    port = ScriptedPort(Transact())
-    with pytest.raises(WriteRejectedError) as exc_info:
-        db_for(PAYMENT, port).transact(
-            lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert", Payment.identity, {"id": 10, "amount": 200.00, "cardNetwork": "Visa"}
-            )
-        )
-    assert exc_info.value.rule == "abstract-write-target"
-
-
 def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched_field() -> None:
-    # The no-drift guard for CURRENTLY-LEGAL writes: a sparse keyed update (an id +
-    # balance row omitting the required `owner`) must NOT be rejected — an absent
-    # top-level member is untouched, never a violation, on any mutation but
-    # `insert`. The row is authored straight at the buffer seam, which is what
-    # puts it in front of `validate_write` without an edited copy deriving it.
-    # The version advances from the observation the write carries, never a
-    # row-carried value (`m-opt-lock`). The `locking` preference keeps the
-    # statement ungated, so what the assertion measures is the sparse row.
-    port = ScriptedPort(Transact(Write()))
+    # The no-drift guard for CURRENTLY-LEGAL writes: a sparse keyed update (an id
+    # + balance row omitting the required `owner`) must NOT be rejected — an
+    # absent top-level member is untouched, never a violation, on any mutation
+    # but `insert`. The edited copy names `balance` alone, so the row that
+    # reaches `validate_write` is exactly that pair. The version advances from
+    # the observation the write carries, never a row-carried value
+    # (`m-opt-lock`); the `locking` preference keeps the statement ungated, so
+    # what the assertion measures is the sparse row.
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
+            Write(),
+        )
+    )
 
     def fn(tx: Transaction) -> None:
-        tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-            "update",
-            mm.Account.identity,
-            {"id": 1, "balance": Decimal("175.00")},
-            claim=RetainedObservation(
-                VersionedStateKey(ObjectKey(mm.Account.identity, (("id", 1),)), 1),
-                VersionObservation(observed_version=1),
-                None,
-            ),
-        )
+        fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx.update(fetched.edit(balance=Decimal("175.00")))
 
     account_db(port).transact(fn, concurrency="locking")
     expected = WriteCall(

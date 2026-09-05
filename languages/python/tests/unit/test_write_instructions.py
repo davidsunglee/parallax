@@ -29,6 +29,7 @@ from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import JSON
 from parallax.core.metamodel import Table
+from parallax.core.unit_work import WriteRejectedError
 from parallax.core.unit_work import instructions as wi
 
 _SCHEMAS = REPO_ROOT / "core" / "schemas"
@@ -1391,3 +1392,146 @@ def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() 
     )
     with pytest.raises(wi.WriteInstructionError, match="required attribute is absent"):
         wi.prepare_typed_write(predicate, shipment)
+
+
+# --------------------------------------------------------------------------- #
+# The model-aware `validate_write` rejection matrix, stated over the KEYED      #
+# rows the corpus's own `when.write` cases carry (m-value-object-039..044 /     #
+# m-inheritance-086..089). Every one of them is authored straight at this       #
+# producer rather than through a keyed verb, because no keyed verb can reach    #
+# them: the Entity Row Codec derives a Typed row from the value's own class, so #
+# an undeclared member, a sibling branch's column, a framework-owned metadata   #
+# key, and a keyless row have no Typed spelling, and the Entity constructor     #
+# refuses the value-object payloads before a verb could receive one. The one    #
+# ingress they can reach is a Wire document, which prepares through the wire    #
+# producer beside this one.                                                     #
+# --------------------------------------------------------------------------- #
+def test_a_keyed_row_naming_an_undeclared_member_is_rejected() -> None:
+    # An otherwise-COMPLETE row isolates this defect from `validate_write`,
+    # which runs first and only ever walks Account's OWN declared members — it
+    # never itself notices a stray extra key.
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "Account",
+            "rows": [{"id": 1, "owner": "Newton", "balance": 5.00, "shoe_size": 9}],
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="shoe_size"):
+        wi.prepare_typed_write(keyed, _ACCOUNT)
+
+
+def test_a_keyed_row_missing_a_required_attribute_at_any_depth_is_rejected() -> None:
+    # m-value-object-039's own payload: `address.street` (depth 1) absent.
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "Contact",
+            "rows": [
+                {
+                    "id": 1,
+                    "name": "Acme",
+                    "address": {
+                        "city": "Oslo",
+                        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
+                    },
+                }
+            ],
+        }
+    )
+    with pytest.raises(WriteRejectedError) as caught:
+        wi.prepare_typed_write(keyed, _MODELS["contact"])
+    assert caught.value.rule == "write-required-attribute-missing"
+
+
+def test_a_keyed_row_missing_a_required_value_object_is_rejected() -> None:
+    # m-value-object-044's own payload: the required top-level `destination`
+    # value object is entirely absent.
+    keyed = wi.deserialize(
+        {"mutation": "insert", "entity": "Shipment", "rows": [{"id": 5, "name": "Express"}]}
+    )
+    with pytest.raises(WriteRejectedError) as caught:
+        wi.prepare_typed_write(keyed, _MODELS["shipment"])
+    assert caught.value.rule == "write-required-value-object-missing"
+
+
+def test_a_keyed_row_binding_a_value_of_the_wrong_type_is_rejected() -> None:
+    # m-value-object-043's own payload: `address.street` bound the number 42.
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "Contact",
+            "rows": [
+                {
+                    "id": 5,
+                    "name": "Echo",
+                    "address": {
+                        "street": 42,
+                        "city": "Oslo",
+                        "geo": {"country": "NO", "point": {"lat": 59.9, "lon": 10.7}},
+                    },
+                }
+            ],
+        }
+    )
+    with pytest.raises(WriteRejectedError) as caught:
+        wi.prepare_typed_write(keyed, _MODELS["contact"])
+    assert caught.value.rule == "write-value-type-mismatch"
+
+
+def test_a_keyless_keyed_inheritance_row_is_rejected() -> None:
+    # m-inheritance-089's own payload: no primary-key attribute at all.
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "CardPayment",
+            "rows": [{"amount": 200.00, "cardNetwork": "Visa"}],
+        }
+    )
+    with pytest.raises(WriteRejectedError) as caught:
+        wi.prepare_typed_write(keyed, _PAYMENT)
+    assert caught.value.rule == "subtype-write-set-based-unsupported"
+
+
+def test_a_keyed_row_authoring_framework_owned_inheritance_metadata_is_rejected() -> None:
+    # m-inheritance-087's own payload: an authored `tagValue`.
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "CardPayment",
+            "rows": [{"id": 10, "amount": 200.00, "tagValue": "card"}],
+        }
+    )
+    with pytest.raises(WriteRejectedError) as caught:
+        wi.prepare_typed_write(keyed, _PAYMENT)
+    assert caught.value.rule == "subtype-write-metadata-field"
+
+
+def test_a_keyed_row_mixing_sibling_branch_attributes_is_rejected() -> None:
+    # m-inheritance-086's own payload: both CardPayment's and CashPayment's own
+    # columns, so no single concrete subtype accepts every field.
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "Payment",
+            "rows": [{"id": 10, "amount": 200.00, "cardNetwork": "Visa", "tendered": 25.00}],
+        }
+    )
+    with pytest.raises(WriteRejectedError) as caught:
+        wi.prepare_typed_write(keyed, _PAYMENT)
+    assert caught.value.rule == "subtype-write-sibling-attribute"
+
+
+def test_a_keyed_row_aimed_at_an_abstract_target_is_rejected() -> None:
+    # m-inheritance-088's own payload: a well-formed CardPayment-shaped write
+    # aimed at the abstract root `Payment`.
+    keyed = wi.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "Payment",
+            "rows": [{"id": 10, "amount": 200.00, "cardNetwork": "Visa"}],
+        }
+    )
+    with pytest.raises(WriteRejectedError) as caught:
+        wi.prepare_typed_write(keyed, _PAYMENT)
+    assert caught.value.rule == "abstract-write-target"
