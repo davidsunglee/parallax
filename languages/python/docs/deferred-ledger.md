@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-90**.
+Entry numbering is continuous and never reused. The next new number is **D-92**.
 
 ## Entries
 
@@ -834,6 +834,55 @@ it is the prerequisite for such a case, and the refusal's own tests
 (`reference-harness/tests/test_corrupt_addressing.py`,
 `tests/unit/test_engine.py::test_given_corrupt_refuses_a_temporal_entity_before_reading_anything`)
 are what have to change first, since they pin the restriction this entry lifts.
+
+### D-90 — `instruction_identity`'s authored-instruction arm is unreachable, and so is the fallback inside it
+
+*Low — dead code on a live path, kept only until a deletion sweep can judge it
+beside its neighbour.* Relates to
+`parallax.snapshot.handle._write_inputs.instruction_identity`,
+`parallax.snapshot.handle._write_inputs.admit_and_buffer`.
+
+**What.** `instruction_identity` accepts `KeyedWrite | PreparedKeyedWrite` and
+branches on which it was handed. Its only caller is `admit_and_buffer`, whose
+parameter is `PreparedKeyedWrite`, so the authored-`KeyedWrite` arm never runs —
+nor does the `entity is None` fallback nested in it, which carries its own
+`pragma: no cover`. Every keyed ingress now buffers through `admit_and_buffer`,
+so nothing else can reach the function either.
+
+**Why it is deferred rather than fixed.** Narrowing the parameter to
+`PreparedKeyedWrite` collapses the function to one field read, which is an
+argument for inlining it rather than for keeping a narrowed helper — and that is
+a shape question about the buffering step, not a repair. It is also one of two
+dead arms of the same kind in this area, and judging them together is what tells
+a genuinely unreachable arm from one whose producer simply has not been written
+yet.
+
+**When.** With the deletion sweep that also judges D-91.
+
+### D-91 — `buffer_predicate_instruction`'s non-temporal applicability arm is reachable by no producible instruction
+
+*Low — a refusal standing over a case its own producer already settles.* Relates
+to `parallax.snapshot.handle._predicate_writes.buffer_predicate_instruction`,
+`parallax.core.unit_work.instructions.non_temporal_milestone_refusal`.
+
+**What.** The seam settles target/verb applicability from a two-arm quadrant: a
+temporal target is asked for the `delete_where` refusal, a non-temporal one for
+the milestone-verb refusal. Only the first arm is reachable. The seam takes an
+ALREADY-PREPARED instruction, and prepared-write production judges exactly the
+converse half — a milestone verb aimed at a target deriving no As-Of Axis — so
+no instruction that reaches this seam can still be carrying that mistake. The
+temporal arm is the live one and is covered
+(`tests/unit/test_transaction_predicate_writes.py::test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it`).
+
+**Why it is deferred rather than fixed.** The arm is cheap and states the
+seam's own contract, which the surrounding docstring rests on: this entry point
+is reachable in-package without an ingress, so it deliberately takes nothing on
+faith. Deleting it trades a stated contract for the producer's promise to keep
+judging that quadrant first, and keeping it leaves an arm no test can drive.
+Which way that goes is a question about how much the seam is entitled to assume
+of its callers, and it is the same question D-90 raises one module over.
+
+**When.** With the deletion sweep that also judges D-90.
 
 ## Forwarding pointers
 
