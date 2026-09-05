@@ -889,14 +889,29 @@ def _case_models(case: dict[str, Any]) -> list[str]:
 
 
 def _schema_matrix_problems(case: dict[str, Any]) -> list[str]:
-    """``then.schema`` states one cell per supported Dialect, or is absent.
+    """``then.schema`` states one cell per supported Dialect for every unilateral
+    Evolution, and nothing for a coordinated one.
 
-    An omitted dialect is never an implicit skip (m-case-format): adding a
-    Dialect makes every unilateral evolution case incomplete until its cell is
-    authored, which is a static failure here rather than a quieter run later.
+    The matrix is mandatory rather than optional (m-case-format): a unilateral
+    Evolution is exactly what schema generation accepts, so a case describing one
+    and authoring no Schema Delta leaves the generator ungraded. An omitted
+    dialect is never an implicit skip either — adding a Dialect makes every
+    unilateral evolution case incomplete until its cell is authored. Both are
+    static failures here rather than quieter runs later.
     """
     then = case.get("then")
-    matrix = then.get("schema") if isinstance(then, dict) else None
+    if not isinstance(then, dict):
+        return []
+    matrix = then.get("schema")
+    evolution = then.get("evolution")
+    kind = evolution.get("kind") if isinstance(evolution, dict) else None
+    if matrix is None:
+        if kind == "unilateral":
+            return [
+                "then.evolution is unilateral and carries no then.schema; the Schema Delta "
+                f"for {sorted(DIALECT_CATALOG)} is what schema generation accepts"
+            ]
+        return []
     if not isinstance(matrix, dict):
         return []
     if set(matrix) != set(DIALECT_CATALOG):

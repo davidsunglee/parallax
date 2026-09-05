@@ -561,6 +561,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "focused predicate-write runtime model and gives the independent compatibility "
             "oracle the same recursive refusal witness"
         ),
+        "evolution-added-value-object-v1": _EVOLUTION_ENDPOINT,
+        "evolution-added-value-object-v2": _EVOLUTION_ENDPOINT,
         "evolution-attribute-column-v1": _EVOLUTION_ENDPOINT,
         "evolution-attribute-column-v2": _EVOLUTION_ENDPOINT,
         "evolution-attribute-type-v1": _EVOLUTION_ENDPOINT,
@@ -597,6 +599,10 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "evolution-index-uniqueness-v2": _EVOLUTION_ENDPOINT,
         "evolution-index-v1": _EVOLUTION_ENDPOINT,
         "evolution-index-v2": _EVOLUTION_ENDPOINT,
+        "evolution-indexed-addition-v1": _EVOLUTION_ENDPOINT,
+        "evolution-indexed-addition-v2": _EVOLUTION_ENDPOINT,
+        "evolution-inherited-column-v1": _EVOLUTION_ENDPOINT,
+        "evolution-inherited-column-v2": _EVOLUTION_ENDPOINT,
         "evolution-interposed-subtype-v1": _EVOLUTION_ENDPOINT,
         "evolution-interposed-subtype-v2": _EVOLUTION_ENDPOINT,
         "evolution-nullability-v1": _EVOLUTION_ENDPOINT,
@@ -655,6 +661,10 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "evolution-string-bound-v2": _EVOLUTION_ENDPOINT,
         "evolution-temporality-v1": _EVOLUTION_ENDPOINT,
         "evolution-temporality-v2": _EVOLUTION_ENDPOINT,
+        "evolution-unbounded-index-v1": _EVOLUTION_ENDPOINT,
+        "evolution-unbounded-index-v2": _EVOLUTION_ENDPOINT,
+        "evolution-unbounded-indices-v1": _EVOLUTION_ENDPOINT,
+        "evolution-unbounded-indices-v2": _EVOLUTION_ENDPOINT,
         "evolution-value-object-v1": _EVOLUTION_ENDPOINT,
         "evolution-value-object-v2": _EVOLUTION_ENDPOINT,
         "evolution-vo-column-v1": _EVOLUTION_ENDPOINT,
@@ -669,6 +679,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "evolution-vo-nullability-v2": _EVOLUTION_ENDPOINT,
         "evolution-vo-value-v1": _EVOLUTION_ENDPOINT,
         "evolution-vo-value-v2": _EVOLUTION_ENDPOINT,
+        "evolution-widened-domain-v1": _EVOLUTION_ENDPOINT,
+        "evolution-widened-domain-v2": _EVOLUTION_ENDPOINT,
         "evolution-widget-v1": (
             "endpoint-only model: it exists as one end of a described evolution, which is a "
             "pure comparison of two accepted models that no developer surface builds or "

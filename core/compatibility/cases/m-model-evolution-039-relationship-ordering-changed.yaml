@@ -5,7 +5,7 @@
 # reported exclusively as `QueryResultOrderingChanged`. Declaration order, Index
 # component order, and unspecified physical row order are not model-defined
 # result ordering and never reach this impact.
-tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -54,3 +54,12 @@ then:
                     nulls: last
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []

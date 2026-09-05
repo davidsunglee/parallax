@@ -6,7 +6,7 @@
 # while two editions run against one database, a later writer can store the NULL
 # an earlier reader cannot admit. The admissibility of the surviving path changed
 # too, so the same operation causes one `ValueAdmissibilityChanged`.
-tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -33,3 +33,14 @@ then:
         attribute: parallax.compatibility.Reading.note
         deltas: [{ kind: NullabilityChanged, earlier: false, later: true }]
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_reading alter column note drop not null
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_reading modify note varchar(64)
+        createdIndices: []

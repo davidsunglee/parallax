@@ -1,0 +1,22 @@
+# Archive and Excerpt (v2): the later endpoint of the UNBOUNDED INDICES scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-unbounded-indices-v1.yaml with one authored access path over
+# each unbounded String; nothing else differs.
+entities:
+  - name: Archive
+    namespace: parallax.compatibility
+    table: evolution_archive
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: body, type: string }
+    indices:
+      - { name: archive_body, attributes: [body] }
+  - name: Excerpt
+    namespace: parallax.compatibility
+    table: evolution_excerpt
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: passage, type: string }
+    indices:
+      - { name: excerpt_passage, attributes: [passage] }

@@ -6,7 +6,7 @@
 # separate Table the earlier edition never reads, so no earlier reader can meet a
 # row it cannot admit. The membership impact on the root is identical either way,
 # because it is a model-altitude fact rather than a physical one.
-tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -27,3 +27,14 @@ then:
         causedBy: [{ kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Tanker }]
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create table evolution_tanker (id bigint not null, tonnage bigint not null, capacity bigint, primary key (id))
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - create table evolution_tanker (id bigint not null, tonnage bigint not null, capacity bigint, primary key (id))
+        createdIndices: []

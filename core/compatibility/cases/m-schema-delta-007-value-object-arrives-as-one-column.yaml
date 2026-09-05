@@ -1,0 +1,35 @@
+# A Value Object occurrence arriving (m-schema-delta): one Structured Column, not
+# a Column per member.
+#
+# `Consignment.origin` is nullable, so existing rows need nothing and the
+# addition is unilateral. Physically it is one occurrence in one Column of the
+# dialect's structured-document type — `jsonb` on Postgres, `json` on MariaDB —
+# carrying both of its members, which is what distinguishes a top-level
+# occurrence from two Attributes declared beside each other. Its members are
+# suppressed operations: the occurrence's own addition describes them.
+tags: [m-model-evolution, m-schema-delta, evolution, valueObject, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-added-value-object-v1.yaml
+    later: models/evolution-added-value-object-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: ValueObjectOccurrenceAdded
+        valueObject: parallax.compatibility.Consignment.origin
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_consignment add column origin_doc jsonb
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_consignment add column origin_doc json
+        createdIndices: []

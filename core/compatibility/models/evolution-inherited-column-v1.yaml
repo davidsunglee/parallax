@@ -1,0 +1,34 @@
+# Reliquary (v1): the earlier endpoint of the INHERITED COLUMN scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `Casket`
+# hangs off the root, so the member `Warded` declares reaches `Coffer`'s Table
+# and not `Casket`'s; under table-per-concrete-subtype each concrete repeats its
+# own ancestry. Both endpoints declare every member, and only where `Casket`
+# hangs differs.
+entities:
+  - name: Reliquary
+    namespace: parallax.compatibility
+    inheritance:
+      role: root
+      strategy: table-per-concrete-subtype
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+  - name: Warded
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Reliquary
+    attributes:
+      - { name: seal, type: string, maxLength: 32, nullable: true }
+  - name: Casket
+    namespace: parallax.compatibility
+    table: evolution_casket
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Reliquary
+  - name: Coffer
+    namespace: parallax.compatibility
+    table: evolution_coffer
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Warded

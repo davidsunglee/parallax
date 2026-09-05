@@ -7,7 +7,7 @@
 # widening is: the later edition can store a value the earlier edition cannot
 # admit. String maximum length is a field of its own, so neither operation carries
 # a `TypeChanged`.
-tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -48,3 +48,16 @@ then:
         attribute: parallax.compatibility.Digest.title
         deltas: [{ kind: MaximumLengthChanged, earlier: 32, later: 128 }]
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_digest alter column body type text
+          - alter table evolution_digest alter column title type varchar(128)
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_digest modify body text not null
+          - alter table evolution_digest modify title varchar(128) not null
+        createdIndices: []

@@ -8,7 +8,7 @@
 # so no narrowing ever reached `Sketch` and the branch it hung from carried no
 # authored shape. `Bound` declares no member, so the move withdraws nothing a read
 # of the position could address, and no shape stored under `Sketch` changes Table.
-tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -31,3 +31,12 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []
