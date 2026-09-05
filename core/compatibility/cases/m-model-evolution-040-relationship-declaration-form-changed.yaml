@@ -6,7 +6,7 @@
 # the same fields. Neither direction's target, cardinality, join, dependency, or
 # ordering moves, because classification and the impacts read the symmetric
 # facet rather than the declaration, so the evolution carries no impact at all.
-tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -51,3 +51,12 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []

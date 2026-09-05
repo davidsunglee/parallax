@@ -1,0 +1,46 @@
+# A Column and an Index over it in one evolution (m-schema-delta): the Column is
+# added before the Index that references it.
+#
+# `Ticket.queue` and the access path over it arrive together, so the delta holds
+# the one dependency edge a Column can create: an Index naming a Column the same
+# delta adds cannot be created first. Statement order is executable order and is
+# independent of the operations' canonical inspection order, which reads the
+# member before the Index for a different reason entirely — the Model Location
+# rank. Both dialects add the Column and then build the path; only the derived
+# Physical Index Name differs, each prefix cut to its own identifier limit.
+tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-indexed-addition-v1.yaml
+    later: models/evolution-indexed-addition-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: AttributeAdded, attribute: parallax.compatibility.Ticket.queue }
+      - { kind: IndexAdded, index: parallax.compatibility.Ticket.ticket_queue }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_ticket add column queue varchar(32)
+          - create index pxi_evolution_ticket_parallax_f4c1b40131df35c48a8a9dea83581b39 on evolution_ticket (queue)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_ticket_parallax_f4c1b40131df35c48a8a9dea83581b39
+            physicalTable: evolution_ticket
+            logicalIndexIdentity: parallax.compatibility.Ticket.ticket_queue
+            unique: false
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_ticket add column queue varchar(32)
+          - create index pxi_evolution_ticket_parallax_c_f4c1b40131df35c48a8a9dea83581b39 on evolution_ticket (queue)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_ticket_parallax_c_f4c1b40131df35c48a8a9dea83581b39
+            physicalTable: evolution_ticket
+            logicalIndexIdentity: parallax.compatibility.Ticket.ticket_queue
+            unique: false

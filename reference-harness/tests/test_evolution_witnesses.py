@@ -71,6 +71,52 @@ def _schema_enum(name: str) -> frozenset[str]:
     return frozenset(definitions[name]["enum"])
 
 
+def _physical_operation_kinds() -> frozenset[str]:
+    """The closed physical-operation algebra, as the case schema spells it.
+
+    The algebra is private to a generator, and the one place the corpus names it
+    is the refusal an `unsupported` cell carries — which is why this enum, not a
+    `$defs` of its own, is where the vocabulary is read back from.
+    """
+    definitions = json.loads(_CASE_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    return frozenset(definitions["unsupportedSchemaOperation"]["properties"]["kind"]["enum"])
+
+
+# What each physical operation looks like once it is a statement. A `delta` cell
+# carries plain SQL and no operation kind — the algebra never crosses the
+# generator's boundary — so a kind is witnessed either by a statement of its own
+# shape or by an `unsupported` cell naming it. The shapes are the ones both
+# dialects share; a widening is the one that diverges, and the alternation is
+# that divergence rather than a second grammar.
+_PHYSICAL_OPERATION_STATEMENTS: Final[Mapping[str, str]] = {
+    "CreateTable": r"^create table\b",
+    "AddColumn": r"^alter table \S+ add column\b",
+    "ExpandColumnDomain": r"^alter table \S+ (alter column|modify)\b",
+    "CreateIndex": r"^create (unique )?index\b",
+    "DropIndex": r"^drop index\b",
+}
+
+
+def _authored_statements() -> Iterator[str]:
+    for case in _CASES:
+        for cell in (case.then.get("schema") or {}).values():
+            delta = cell.get("delta") if isinstance(cell, Mapping) else None
+            if isinstance(delta, Mapping):
+                yield from (str(statement) for statement in delta.get("statements") or [])
+
+
+def _refused_kinds() -> Iterator[str]:
+    for case in _CASES:
+        for cell in (case.then.get("schema") or {}).values():
+            unsupported = cell.get("unsupported") if isinstance(cell, Mapping) else None
+            if isinstance(unsupported, Mapping):
+                yield from (
+                    str(operation.get("kind"))
+                    for operation in unsupported.get("operations") or []
+                    if isinstance(operation, Mapping)
+                )
+
+
 def _evolution_cases() -> list[Case]:
     return [case for case in discover_cases(_COMPATIBILITY_ROOT) if case.is_evolution]
 
@@ -139,6 +185,19 @@ def test_every_field_delta_kind_has_a_witness() -> None:
     witnessed = {str(delta.get("kind")) for delta in _deltas()}
     expected = _schema_enum("evolutionFieldDeltaKind") - _UNREACHABLE_FROM_A_DESCRIPTOR
     assert expected - witnessed == set()
+
+
+def test_every_physical_operation_kind_has_a_witness() -> None:
+    # A physical operation kind no case reaches is a lowering rule no
+    # implementation is measured against, exactly as an unwitnessed Evolution
+    # Operation is.
+    statements = list(_authored_statements())
+    witnessed = {
+        kind
+        for kind, shape in _PHYSICAL_OPERATION_STATEMENTS.items()
+        if any(re.match(shape, statement) for statement in statements)
+    } | set(_refused_kinds())
+    assert _physical_operation_kinds() - witnessed == set()
 
 
 def test_every_behavioral_impact_kind_has_a_witness() -> None:

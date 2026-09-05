@@ -6,7 +6,7 @@
 # removal rule. Adding a UNIQUE one changes what the database admits, which is
 # reported as `UniquenessEnforcementChanged` and caused by that addition alone —
 # the non-unique Index leaving enforces nothing and causes nothing.
-tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -32,3 +32,24 @@ then:
             index: parallax.compatibility.Pallet.pallet_serial
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create unique index pxi_evolution_pallet_parallax_02637e5af864119c7fc32a4d07ce7617 on evolution_pallet (serial)
+          - drop index pxi_evolution_pallet_parallax_01a798a5e67fd6f1f71df41a02f619ae
+        createdIndices:
+          - physicalIndexName: pxi_evolution_pallet_parallax_02637e5af864119c7fc32a4d07ce7617
+            physicalTable: evolution_pallet
+            logicalIndexIdentity: parallax.compatibility.Pallet.pallet_serial
+            unique: true
+    mariadb:
+      delta:
+        statements:
+          - create unique index pxi_evolution_pallet_parallax_c_02637e5af864119c7fc32a4d07ce7617 on evolution_pallet (serial)
+          - drop index pxi_evolution_pallet_parallax_c_01a798a5e67fd6f1f71df41a02f619ae on evolution_pallet
+        createdIndices:
+          - physicalIndexName: pxi_evolution_pallet_parallax_c_02637e5af864119c7fc32a4d07ce7617
+            physicalTable: evolution_pallet
+            logicalIndexIdentity: parallax.compatibility.Pallet.pallet_serial
+            unique: true

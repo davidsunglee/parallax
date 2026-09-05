@@ -5,7 +5,7 @@
 # What changes is what deleting the source does to the rows each direction
 # reaches, which is a `DeletePropagationChanged` per Relationship and prescribes
 # no remediation.
-tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -54,3 +54,12 @@ then:
                 later: false
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []

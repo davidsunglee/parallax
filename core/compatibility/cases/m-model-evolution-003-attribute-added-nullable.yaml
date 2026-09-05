@@ -7,7 +7,7 @@
 # selects or writes a member it does not know, so there is no value it could fail
 # to admit. The addition is also not a Behavioral Impact — member addition stays
 # its own operation rather than becoming an admissibility fact.
-tags: [m-model-evolution, evolution, attribute, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, attribute, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -21,3 +21,14 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_note add column summary varchar(64)
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_note add column summary varchar(64)
+        createdIndices: []

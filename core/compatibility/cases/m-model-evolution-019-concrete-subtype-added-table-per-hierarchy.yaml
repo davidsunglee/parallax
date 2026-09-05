@@ -7,7 +7,7 @@
 # subtype's own member is suppressed by its addition. The root's predicate-free
 # selection now denotes a concrete set it did not before, so the addition causes
 # one `QueryResultMembershipChanged` on `Deal` and none on the subtype itself.
-tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -29,3 +29,14 @@ then:
     overlapVisibleOperations:
       [{ kind: ConcreteSubtypeAdded, entity: parallax.compatibility.Future }]
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_deal add column expiry timestamptz
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_deal add column expiry datetime(6)
+        createdIndices: []

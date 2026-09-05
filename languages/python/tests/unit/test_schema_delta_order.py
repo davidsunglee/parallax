@@ -14,7 +14,7 @@ from _inheritance_family_support import entity_with_two_indices_over_one_column
 from parallax.core.base import INT32, STRING
 from parallax.core.dialect import POSTGRES, PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
-from parallax.evolution.model_evolution import ABSENT, EntityAdded, evolve
+from parallax.evolution.model_evolution import ABSENT, EntityAdded, UnilateralEvolution, evolve
 from parallax.evolution.schema_delta._order import dependency_violations, order, order_key
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
@@ -135,5 +135,24 @@ def test_every_generated_plan_is_ordered_so_that_no_rule_is_broken() -> None:
         _MODELS["rate"],
         entity_with_two_indices_over_one_column(),
     ):
-        ordered = order(plan(evolve(ABSENT, model), POSTGRES))
+        ordered = order(plan(evolve(ABSENT, model), POSTGRES).operations)
         assert dependency_violations(ordered) == ()
+
+
+def test_every_incremental_plan_is_ordered_so_that_no_rule_is_broken() -> None:
+    # The same property where the rules can actually bind: an incremental plan
+    # is where a Column is added beside an Index over it and an altered Index is
+    # created beside the drop it replaces. Every unilateral endpoint pair the
+    # corpus authors is walked, so a lowering that grows a new dependency has to
+    # keep the key a linear extension of the rules.
+    pairs = [
+        (_MODELS[stem], _MODELS[stem.removesuffix("-v1") + "-v2"])
+        for stem in sorted(_MODELS)
+        if stem.endswith("-v1") and stem.removesuffix("-v1") + "-v2" in _MODELS
+    ]
+    assert pairs
+    for earlier, later in pairs:
+        evolution = evolve(earlier, later)
+        if not isinstance(evolution, UnilateralEvolution):
+            continue
+        assert dependency_violations(order(plan(evolution, POSTGRES).operations)) == ()

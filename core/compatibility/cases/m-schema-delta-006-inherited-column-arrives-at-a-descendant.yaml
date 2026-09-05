@@ -1,0 +1,63 @@
+# A Column no addition names (m-schema-delta): a declaration both editions carry
+# starts reaching a Table it did not reach before.
+#
+# `Casket` extends `Warded` instead of the root, and under
+# table-per-concrete-subtype each concrete's Table repeats its own ancestry, so
+# the nullable member `Warded` declared all along arrives in `Casket`'s Table. No
+# operation names that member: it is added to neither endpoint. The Column is
+# therefore caused by the inheritance alteration — the operation that changed
+# which declarations the Table materializes — which is the second way a Column
+# can arrive, beside the addition of the declaration itself. `Casket` withdraws
+# nothing and admits every narrowing it did before, so the alteration is
+# unilateral; the shape it hands `Warded`'s selection is what the impact reports.
+tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-inherited-column-v1.yaml
+    later: models/evolution-inherited-column-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - kind: EntityAltered
+        entity: parallax.compatibility.Casket
+        deltas:
+          - kind: InheritanceChanged
+            earlier:
+              role: concrete-subtype
+              parent: parallax.compatibility.Reliquary
+            later:
+              role: concrete-subtype
+              parent: parallax.compatibility.Warded
+    behavioralImpacts:
+      - kind: QueryResultMembershipChanged
+        scope: { entity: parallax.compatibility.Warded }
+        earlier: { concreteEntities: [parallax.compatibility.Coffer], axes: [] }
+        later:
+          concreteEntities: [parallax.compatibility.Casket, parallax.compatibility.Coffer]
+          axes: []
+        causedBy:
+          - kind: EntityAltered
+            entity: parallax.compatibility.Casket
+            deltas:
+              - kind: InheritanceChanged
+                earlier:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Reliquary
+                later:
+                  role: concrete-subtype
+                  parent: parallax.compatibility.Warded
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - alter table evolution_casket add column seal varchar(32)
+        createdIndices: []
+    mariadb:
+      delta:
+        statements:
+          - alter table evolution_casket add column seal varchar(32)
+        createdIndices: []

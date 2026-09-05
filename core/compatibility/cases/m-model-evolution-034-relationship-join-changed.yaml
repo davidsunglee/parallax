@@ -6,7 +6,7 @@
 # still answers with the same kind of value. WHICH rows it answers with is a
 # `QueryResultMembershipChanged` on the Relationship position rather than a
 # reason to coordinate.
-tags: [m-model-evolution, evolution, relationship, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, relationship, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -53,3 +53,12 @@ then:
                   target: parallax.compatibility.Item.ownerId
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []

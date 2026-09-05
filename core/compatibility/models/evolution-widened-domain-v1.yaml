@@ -1,0 +1,16 @@
+# Memo (v1): the NARROW end of the WIDENED DOMAIN scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. One
+# member carries both facts a stored domain is bounded by, so the pair widens
+# nullability and a String bound at the same Column.
+entity:
+  name: Memo
+  namespace: parallax.compatibility
+  table: evolution_memo
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: body
+      type: string
+      maxLength: 32

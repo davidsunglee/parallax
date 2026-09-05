@@ -1,0 +1,12 @@
+# Consignment (v1): the earlier endpoint of the ADDED VALUE OBJECT scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# Entity carries no occurrence at all here, so the later endpoint's nullable one
+# is the whole difference.
+entity:
+  name: Consignment
+  namespace: parallax.compatibility
+  table: evolution_consignment
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: reference, type: string, maxLength: 64 }

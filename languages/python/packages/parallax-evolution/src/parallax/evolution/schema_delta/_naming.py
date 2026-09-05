@@ -11,10 +11,17 @@ when an unrelated Index is added beside it.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 
 from parallax.core.dialect import Dialect, PhysicalIndexName
-from parallax.core.metamodel import IndexLocation, canonical_location_key
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    IndexIdentity,
+    IndexLocation,
+    Table,
+    canonical_location_key,
+)
 from parallax.evolution.schema_delta._physical import IndexDefinition
 from parallax.evolution.schema_delta._values import (
     CollidingIndex,
@@ -23,6 +30,8 @@ from parallax.evolution.schema_delta._values import (
 )
 
 __all__ = [
+    "NamedIndex",
+    "census",
     "collision_groups",
     "physical_index_name",
     "readable_prefix",
@@ -43,12 +52,6 @@ _EMPTY_PREFIX = "index"
 """What a readable input carrying no letter or digit at all becomes."""
 
 _UNIQUE_MARKER = {True: "unique", False: "non-unique"}
-
-_PRESENCE: Mapping[tuple[bool, bool], IndexPresence] = {
-    (True, False): IndexPresence.EARLIER,
-    (False, True): IndexPresence.LATER,
-    (True, True): IndexPresence.BOTH,
-}
 
 
 def readable_prefix(fields: Iterable[str]) -> str:
@@ -122,42 +125,81 @@ def physical_index_name(definition: IndexDefinition, dialect: Dialect) -> Physic
     return PhysicalIndexName(f"{_NAMESPACE}_{kept}_{fingerprint}")
 
 
-def collision_groups(
-    names: Mapping[IndexDefinition, PhysicalIndexName],
+@dataclass(frozen=True, slots=True)
+class NamedIndex:
+    """One physical Index definition, its derived name, and where it occurs."""
+
+    name: PhysicalIndexName
+    definition: IndexDefinition
+    presence: IndexPresence
+
+
+def census(
     earlier: Sequence[IndexDefinition],
     later: Sequence[IndexDefinition],
-) -> tuple[CollisionGroup, ...]:
+    dialect: Dialect,
+) -> tuple[NamedIndex, ...]:
+    """Every Index that exists during some prefix of the statements, named once.
+
+    An Index both endpoints define is ONE entry rather than two. The facts a name
+    is derived over are exactly the facts that decide whether two definitions are
+    the same physical object, so a Column whose stored domain widened beneath an
+    Index leaves that Index itself untouched — and two definitions still sharing
+    an entry's name while differing in one of those facts are the collision this
+    census exists to expose.
+    """
+    entries: dict[tuple[PhysicalIndexName, _Identity], NamedIndex] = {}
+    for definitions, presence in ((earlier, IndexPresence.EARLIER), (later, IndexPresence.LATER)):
+        for definition in definitions:
+            name = physical_index_name(definition, dialect)
+            key = (name, _identity(definition))
+            held = entries.get(key)
+            entries[key] = NamedIndex(
+                name=name,
+                definition=definition,
+                presence=IndexPresence.BOTH if held is not None else presence,
+            )
+    return tuple(entries.values())
+
+
+type _Identity = tuple[Table, IndexIdentity, tuple[AttributeIdentity, ...], bool]
+
+
+def _identity(definition: IndexDefinition) -> _Identity:
+    """The facts a Physical Index Name is derived over, as a comparable key."""
+    return (definition.table, definition.index, definition.components, definition.unique)
+
+
+def collision_groups(census: Sequence[NamedIndex]) -> tuple[CollisionGroup, ...]:
     """Every Physical Index Name two or more distinct definitions derived.
 
     Ordered by name; each group's definitions in canonical logical-identity
     order, each naming the endpoints it occurs in, so a report reads as a
     complete account of the clash rather than as the first pair found.
     """
-    grouped: dict[PhysicalIndexName, list[IndexDefinition]] = {}
-    for definition, name in names.items():
-        grouped.setdefault(name, []).append(definition)
-    in_earlier = frozenset(earlier)
-    in_later = frozenset(later)
+    grouped: dict[PhysicalIndexName, list[NamedIndex]] = {}
+    for entry in census:
+        grouped.setdefault(entry.name, []).append(entry)
     return tuple(
         CollisionGroup(
             name=name,
             definitions=tuple(
                 CollidingIndex(
-                    table=definition.table,
-                    index=definition.index,
-                    components=definition.components,
-                    unique=definition.unique,
-                    presence=_PRESENCE[(definition in in_earlier, definition in in_later)],
+                    table=entry.definition.table,
+                    index=entry.definition.index,
+                    components=entry.definition.components,
+                    unique=entry.definition.unique,
+                    presence=entry.presence,
                 )
-                for definition in sorted(
-                    definitions,
+                for entry in sorted(
+                    entries,
                     key=lambda held: (
-                        canonical_location_key(IndexLocation(held.index)),
-                        held.table.name,
+                        canonical_location_key(IndexLocation(held.definition.index)),
+                        held.definition.table.name,
                     ),
                 )
             ),
         )
-        for name, definitions in sorted(grouped.items(), key=lambda entry: entry[0].value)
-        if len(definitions) > 1
+        for name, entries in sorted(grouped.items(), key=lambda entry: entry[0].value)
+        if len(entries) > 1
     )

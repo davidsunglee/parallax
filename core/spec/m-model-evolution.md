@@ -452,13 +452,15 @@ its requirements.
 ## Consumer contract
 
 **`m-schema-delta`.** Consumes a `UnilateralEvolution` and nothing else: it
-reads the operations, the later endpoint, and — through `m-storage-layout` — that
-endpoint's physical shape. It never re-derives the difference, never re-classifies
-an operation, and never asks whether an evolution "should" be applied; both
-questions are already answered by the value it is handed. A Coordinated Evolution
-is not one of its inputs, so a coordination reason is never a schema-generation
-concern, and a Behavioral Impact is never one either: an impact reports what
-changes behind the surface, which no statement expresses.
+reads the operations, both retained endpoints, and — through `m-storage-layout` —
+their physical shapes. It never re-derives the MODEL difference, never
+re-classifies an operation, and never asks whether an evolution "should" be
+applied; all three questions are already answered by the value it is handed. What
+the two physical shapes differ by is a different question and the generator's
+own. A Coordinated Evolution is not one of its inputs, so a coordination reason
+is never a schema-generation concern, and a Behavioral Impact is never one
+either: an impact reports what changes behind the surface, which no statement
+expresses.
 
 The generator refusing a Dialect does not travel back here. Renderer support is a
 deployment capability rather than a model-semantic fact, so an unsupported

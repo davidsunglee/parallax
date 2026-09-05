@@ -6,7 +6,9 @@ created-Index provenance ``schema_delta`` returns for one accepted model. They
 cover what the layout answers — canonical slot order, effective physical
 nullability, the derived physical primary key, quoted reserved identifiers,
 structured-document columns — under every mapping form, plus the naming,
-ordering, refusal, and collision rules the generator itself owns.
+ordering and naming rules the generator itself owns. Its refusal and collision
+paths need a synthetic Dialect and a stubbed fingerprint, so they have suites of
+their own.
 
 The conformance provisioner is a caller of this path and holds no DDL of its own
 (``test_provision.py``), which is what makes the whole database-backed suite a
@@ -17,7 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import gc
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from types import ModuleType
 
 import pytest
@@ -36,9 +38,7 @@ from parallax.core.base import STRING
 from parallax.core.dialect import (
     POSTGRES,
     Dialect,
-    IndexColumnDdl,
     PhysicalIndexName,
-    Unsupported,
 )
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -48,7 +48,6 @@ from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evol
 from parallax.evolution.schema_delta import (
     PhysicalLocation,
     SchemaDelta,
-    UnsupportedSchemaEvolutionError,
     schema_delta,
 )
 from parallax.evolution.schema_delta._physical import (
@@ -374,50 +373,6 @@ def test_no_statement_is_idempotent() -> None:
         for statement in _statements(model):
             assert "if exists" not in statement
             assert "if not exists" not in statement
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _RefusingIndexes(Dialect):
-    """A Dialect that renders tables and refuses every Index."""
-
-    def create_index(
-        self,
-        table: str,
-        name: PhysicalIndexName,
-        columns: Sequence[IndexColumnDdl],
-        *,
-        unique: bool,
-    ) -> str | Unsupported:
-        del table, name, columns, unique
-        return Unsupported("this dialect indexes nothing")
-
-
-def _refusing() -> Dialect:
-    return _RefusingIndexes(
-        name="refusing",
-        reserved=POSTGRES.reserved,
-        quote_char=POSTGRES.quote_char,
-        error_codes=POSTGRES.error_codes,
-        max_identifier_bytes=POSTGRES.max_identifier_bytes,
-    )
-
-
-def test_every_operation_a_dialect_refuses_is_reported_at_once() -> None:
-    # No partial delta escapes: the whole plan is rendered and inspected before
-    # anything is returned, so both refusals arrive in one error rather than the
-    # first one arriving alone.
-    model = entity_with_two_indices_over_one_column()
-    with pytest.raises(UnsupportedSchemaEvolutionError) as raised:
-        schema_delta(evolve(ABSENT, model), _refusing())
-    error = raised.value
-    assert error.dialect_identity == "refusing"
-    assert [operation.kind for operation in error.operations] == ["CreateIndex", "CreateIndex"]
-    assert {operation.location.table.name for operation in error.operations} == {"widget"}
-    assert all(operation.reason == "this dialect indexes nothing" for operation in error.operations)
-    # Each refusal names the model-altitude operations that asked for it.
-    for operation in error.operations:
-        assert operation.caused_by
-        assert operation.location.index is not None
 
 
 def _reachable(root: object) -> Iterator[object]:

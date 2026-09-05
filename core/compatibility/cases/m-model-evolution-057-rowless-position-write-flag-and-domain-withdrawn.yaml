@@ -10,7 +10,7 @@
 # insert names the position to lose the input. Both facts still moved, so each
 # operation causes its own Behavioral Impact: coordination is what falls silent
 # here, not behavior.
-tags: [m-model-evolution, evolution, inheritance, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, inheritance, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -45,3 +45,12 @@ then:
             deltas: [{ kind: ReadOnlyChanged, earlier: false, later: true }]
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements: []
+        createdIndices: []
+    mariadb:
+      delta:
+        statements: []
+        createdIndices: []

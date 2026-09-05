@@ -1,0 +1,43 @@
+# A physical operation one Dialect cannot render (m-schema-delta): the cell is the
+# refusal, and the Evolution stays unilateral.
+#
+# `Transcript.body` is an unbounded String, and an authored access path over it
+# is an ordinary Index on Postgres and no Index at all on MariaDB, whose storage
+# engine has no key length to build one from. Renderer support is a deployment
+# capability rather than a model-semantic fact, so the dialect-independent
+# Evolution is unilateral in both cells: MariaDB reports the operation it cannot
+# spell — its kind, the physical position it acts on, and the Evolution Operation
+# that asked for it — and returns no partial delta beside it.
+tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-unbounded-index-v1.yaml
+    later: models/evolution-unbounded-index-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: IndexAdded, index: parallax.compatibility.Transcript.transcript_body }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create index pxi_evolution_transcript_paral_36be0cd7240a86e5f5612e9151d54d2b on evolution_transcript (body)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_transcript_paral_36be0cd7240a86e5f5612e9151d54d2b
+            physicalTable: evolution_transcript
+            logicalIndexIdentity: parallax.compatibility.Transcript.transcript_body
+            unique: false
+    mariadb:
+      unsupported:
+        operations:
+          - kind: CreateIndex
+            physicalLocation:
+              table: evolution_transcript
+              index: pxi_evolution_transcript_parall_36be0cd7240a86e5f5612e9151d54d2b
+            causedBy:
+              - { kind: IndexAdded, index: parallax.compatibility.Transcript.transcript_body }

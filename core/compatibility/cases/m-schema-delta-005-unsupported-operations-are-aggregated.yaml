@@ -1,0 +1,54 @@
+# Every operation a Dialect cannot render, at once (m-schema-delta): a refusal is
+# an aggregated value, never the first finding.
+#
+# Two Entities in two Tables each gain an access path over an unbounded String,
+# so MariaDB refuses both. The cell carries the complete sequence in the order
+# the statements would have run — physical Table first, which is what makes it a
+# deterministic account rather than whichever refusal happened to be reached —
+# and no statement escapes beside it. Postgres builds both paths, so the same
+# Evolution is a two-statement delta there.
+tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
+shape: evolution
+when:
+  evolve:
+    earlier: models/evolution-unbounded-indices-v1.yaml
+    later: models/evolution-unbounded-indices-v2.yaml
+then:
+  evolution:
+    kind: unilateral
+    operations:
+      - { kind: IndexAdded, index: parallax.compatibility.Archive.archive_body }
+      - { kind: IndexAdded, index: parallax.compatibility.Excerpt.excerpt_passage }
+    behavioralImpacts: []
+    overlapVisibleOperations: []
+    coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create index pxi_evolution_archive_parallax_4a9cbf7ae2bfa5d63714cb9a100e7d14 on evolution_archive (body)
+          - create index pxi_evolution_excerpt_parallax_d315669b31a5ae9b0347ab97bfbe3a8c on evolution_excerpt (passage)
+        createdIndices:
+          - physicalIndexName: pxi_evolution_archive_parallax_4a9cbf7ae2bfa5d63714cb9a100e7d14
+            physicalTable: evolution_archive
+            logicalIndexIdentity: parallax.compatibility.Archive.archive_body
+            unique: false
+          - physicalIndexName: pxi_evolution_excerpt_parallax_d315669b31a5ae9b0347ab97bfbe3a8c
+            physicalTable: evolution_excerpt
+            logicalIndexIdentity: parallax.compatibility.Excerpt.excerpt_passage
+            unique: false
+    mariadb:
+      unsupported:
+        operations:
+          - kind: CreateIndex
+            physicalLocation:
+              table: evolution_archive
+              index: pxi_evolution_archive_parallax_4a9cbf7ae2bfa5d63714cb9a100e7d14
+            causedBy:
+              - { kind: IndexAdded, index: parallax.compatibility.Archive.archive_body }
+          - kind: CreateIndex
+            physicalLocation:
+              table: evolution_excerpt
+              index: pxi_evolution_excerpt_parallax_d315669b31a5ae9b0347ab97bfbe3a8c
+            causedBy:
+              - { kind: IndexAdded, index: parallax.compatibility.Excerpt.excerpt_passage }

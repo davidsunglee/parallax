@@ -5385,6 +5385,13 @@ hatchling.
   driver arrives with it. Describing an evolution is pure, so the wheel declares
   no external runtime dependency at all — the fingerprint a schema consumer needs
   comes from the standard library.
+- **The provisioning path is the shipped generator.** The development-only
+  `parallax.conformance.provision.schema_statements` composes no DDL of its own:
+  it is `schema_delta(evolve(ABSENT, model), dialect)`, provisioning being the
+  Unilateral Evolution from the explicit absent endpoint. Every database-backed
+  Python test therefore executes the generator's own statements, and an authored
+  secondary Index exists in a test database as the separately named object a
+  violation can report.
 - **Lifecycle extension manifest proof.** `parallax-snapshot` depends only on
   `parallax-core`; the clean-install check proves no sibling lifecycle
   artifact, Descriptor Frontend, descriptor parser, schema validator, or

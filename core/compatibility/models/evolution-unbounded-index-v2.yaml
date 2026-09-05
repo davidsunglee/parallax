@@ -1,0 +1,14 @@
+# Transcript (v2): the later endpoint of the UNBOUNDED INDEX scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-unbounded-index-v1.yaml with one authored access path over the
+# unbounded String; nothing else differs.
+entity:
+  name: Transcript
+  namespace: parallax.compatibility
+  table: evolution_transcript
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: body, type: string }
+  indices:
+    - { name: transcript_body, attributes: [body] }

@@ -5,7 +5,7 @@
 # the pair is two operations in identity order. The rule they enforce is the same
 # unordered Attribute set at both endpoints, so nothing changed behind the
 # surface either.
-tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -22,3 +22,24 @@ then:
     behavioralImpacts: []
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create unique index pxi_evolution_carton_parallax_6592b7d70ea8e38ec12cadf28dbbabc3 on evolution_carton (serial)
+          - drop index pxi_evolution_carton_parallax_a1f8e281219ff0aca584e464239b4768
+        createdIndices:
+          - physicalIndexName: pxi_evolution_carton_parallax_6592b7d70ea8e38ec12cadf28dbbabc3
+            physicalTable: evolution_carton
+            logicalIndexIdentity: parallax.compatibility.Carton.carton_serial_lookup
+            unique: true
+    mariadb:
+      delta:
+        statements:
+          - create unique index pxi_evolution_carton_parallax_c_6592b7d70ea8e38ec12cadf28dbbabc3 on evolution_carton (serial)
+          - drop index pxi_evolution_carton_parallax_c_a1f8e281219ff0aca584e464239b4768 on evolution_carton
+        createdIndices:
+          - physicalIndexName: pxi_evolution_carton_parallax_c_6592b7d70ea8e38ec12cadf28dbbabc3
+            physicalTable: evolution_carton
+            logicalIndexIdentity: parallax.compatibility.Carton.carton_serial_lookup
+            unique: true

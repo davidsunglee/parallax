@@ -8,7 +8,7 @@
 # authoritative validation of the rows already there. The Entity reports one
 # `UniquenessEnforcementChanged` naming both causes, because a rule set is the
 # Entity's, not one Index's.
-tags: [m-model-evolution, evolution, index, slice-snapshot-1]
+tags: [m-model-evolution, m-schema-delta, evolution, index, slice-snapshot-1]
 shape: evolution
 when:
   evolve:
@@ -53,3 +53,36 @@ then:
                 later: true
     overlapVisibleOperations: []
     coordinationRequirements: []
+  schema:
+    postgres:
+      delta:
+        statements:
+          - create unique index pxi_evolution_skid_parallax_co_0229ef193d63f9dc4ecb689d4ee24de5 on evolution_skid (serial)
+          - create index pxi_evolution_skid_parallax_co_4ff3d97f39cbf73025cb2103070be368 on evolution_skid (label)
+          - drop index pxi_evolution_skid_parallax_co_7fae83a65b97afd7a1998ce620d85970
+          - drop index pxi_evolution_skid_parallax_co_92850eab1d8f6f79c28bcac8d092a829
+        createdIndices:
+          - physicalIndexName: pxi_evolution_skid_parallax_co_0229ef193d63f9dc4ecb689d4ee24de5
+            physicalTable: evolution_skid
+            logicalIndexIdentity: parallax.compatibility.Skid.skid_serial
+            unique: true
+          - physicalIndexName: pxi_evolution_skid_parallax_co_4ff3d97f39cbf73025cb2103070be368
+            physicalTable: evolution_skid
+            logicalIndexIdentity: parallax.compatibility.Skid.skid_label
+            unique: false
+    mariadb:
+      delta:
+        statements:
+          - create unique index pxi_evolution_skid_parallax_com_0229ef193d63f9dc4ecb689d4ee24de5 on evolution_skid (serial)
+          - create index pxi_evolution_skid_parallax_com_4ff3d97f39cbf73025cb2103070be368 on evolution_skid (label)
+          - drop index pxi_evolution_skid_parallax_com_7fae83a65b97afd7a1998ce620d85970 on evolution_skid
+          - drop index pxi_evolution_skid_parallax_com_92850eab1d8f6f79c28bcac8d092a829 on evolution_skid
+        createdIndices:
+          - physicalIndexName: pxi_evolution_skid_parallax_com_0229ef193d63f9dc4ecb689d4ee24de5
+            physicalTable: evolution_skid
+            logicalIndexIdentity: parallax.compatibility.Skid.skid_serial
+            unique: true
+          - physicalIndexName: pxi_evolution_skid_parallax_com_4ff3d97f39cbf73025cb2103070be368
+            physicalTable: evolution_skid
+            logicalIndexIdentity: parallax.compatibility.Skid.skid_label
+            unique: false

@@ -208,8 +208,10 @@ and about generated names — never about the model.
 
 It also owns no physical fact. Table composition, canonical Column order,
 effective physical nullability, the physical primary key, and the resolution of an
-Index component to a Column are all `m-storage-layout`'s, read through the later
-endpoint's compiled facet and re-derived nowhere.
+Index component to a Column are all `m-storage-layout`'s, read through each
+endpoint's compiled facet and re-derived nowhere. What the later edition holds
+that the earlier one does not IS the physical difference; the Evolution decides
+which operations asked for it, and so whether a difference is described at all.
 
 ## Consumer contract
 

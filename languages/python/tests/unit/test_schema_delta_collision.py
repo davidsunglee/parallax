@@ -10,19 +10,22 @@ group, every definition in it, and where each definition occurs.
 from __future__ import annotations
 
 import pytest
+from _corpus_model_support import formed
 from _inheritance_family_support import entity_with_two_indices_over_one_column
 
 from parallax.core.base import STRING
 from parallax.core.dialect import POSTGRES, PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
-from parallax.evolution.model_evolution import ABSENT, evolve
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
+from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
 from parallax.evolution.schema_delta import (
     IndexPresence,
     PhysicalIndexNameCollisionError,
     schema_delta,
 )
 from parallax.evolution.schema_delta import _naming as naming
-from parallax.evolution.schema_delta._naming import collision_groups
+from parallax.evolution.schema_delta._naming import NamedIndex, collision_groups
 from parallax.evolution.schema_delta._physical import IndexDefinition, PhysicalColumn
 
 _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
@@ -42,10 +45,18 @@ def _definition(entity: EntityIdentity, index: str, *, unique: bool = False) -> 
 _SHARED = PhysicalIndexName("pxi_widget_code_00000000000000000000000000000000")
 
 
+def _entry(
+    definition: IndexDefinition,
+    name: PhysicalIndexName = _SHARED,
+    presence: IndexPresence = IndexPresence.LATER,
+) -> NamedIndex:
+    return NamedIndex(name=name, definition=definition, presence=presence)
+
+
 def test_two_definitions_deriving_one_name_are_reported_as_a_group() -> None:
     widget = _definition(_ENTITY, "widget_code")
     gadget = _definition(_OTHER, "gadget_code", unique=True)
-    (group,) = collision_groups({widget: _SHARED, gadget: _SHARED}, [], [widget, gadget])
+    (group,) = collision_groups([_entry(widget), _entry(gadget)])
     assert group.name == _SHARED
     # Canonical logical-identity order: Gadget precedes Widget.
     assert [definition.index.entity.name for definition in group.definitions] == [
@@ -63,9 +74,7 @@ def test_a_name_only_one_definition_derives_is_no_group() -> None:
     widget = _definition(_ENTITY, "widget_code")
     gadget = _definition(_OTHER, "gadget_code")
     assert (
-        collision_groups(
-            {widget: _SHARED, gadget: PhysicalIndexName("pxi_gadget_code_1")}, [], [widget, gadget]
-        )
+        collision_groups([_entry(widget), _entry(gadget, PhysicalIndexName("pxi_gadget_code_1"))])
         == ()
     )
 
@@ -78,9 +87,11 @@ def test_each_definition_names_the_endpoints_it_occurs_in() -> None:
     created = _definition(_ENTITY, "b_created")
     surviving = _definition(_ENTITY, "c_surviving")
     (group,) = collision_groups(
-        {dropped: _SHARED, created: _SHARED, surviving: _SHARED},
-        [dropped, surviving],
-        [created, surviving],
+        [
+            _entry(dropped, presence=IndexPresence.EARLIER),
+            _entry(created, presence=IndexPresence.LATER),
+            _entry(surviving, presence=IndexPresence.BOTH),
+        ]
     )
     assert [definition.presence for definition in group.definitions] == [
         IndexPresence.EARLIER,
@@ -92,13 +103,14 @@ def test_each_definition_names_the_endpoints_it_occurs_in() -> None:
 def test_groups_are_reported_in_physical_index_name_order() -> None:
     first = PhysicalIndexName("pxi_aaa_0")
     second = PhysicalIndexName("pxi_bbb_0")
-    definitions = {
-        _definition(_ENTITY, "one"): second,
-        _definition(_OTHER, "two"): second,
-        _definition(_ENTITY, "three"): first,
-        _definition(_OTHER, "four"): first,
-    }
-    groups = collision_groups(definitions, [], list(definitions))
+    groups = collision_groups(
+        [
+            _entry(_definition(_ENTITY, "one"), second),
+            _entry(_definition(_OTHER, "two"), second),
+            _entry(_definition(_ENTITY, "three"), first),
+            _entry(_definition(_OTHER, "four"), first),
+        ]
+    )
     assert [group.name for group in groups] == [first, second]
 
 
@@ -123,3 +135,50 @@ def test_a_generated_delta_refuses_a_collision_rather_than_renaming(
         "widget_code_uq_dup",
     ]
     assert all(definition.presence is IndexPresence.LATER for definition in group.definitions)
+
+
+def test_a_collision_with_an_index_the_delta_never_touches_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The check spans the Indices that COEXIST, not the ones a statement names.
+    # An Index both editions declare is never created or dropped, and it is still
+    # an object in the database while the new one is created beside it, so a name
+    # it already holds is a name the delta cannot take.
+    def _one_fingerprint(definition: IndexDefinition) -> str:
+        del definition
+        return "0" * 32
+
+    monkeypatch.setattr(naming, "_fingerprint", _one_fingerprint)
+    with pytest.raises(PhysicalIndexNameCollisionError) as raised:
+        schema_delta(_gaining_a_second_index(), POSTGRES)
+    (group,) = raised.value.groups
+    assert [(entry.index.name, entry.presence) for entry in group.definitions] == [
+        ("widget_code_uq", IndexPresence.BOTH),
+        ("widget_code_uq_dup", IndexPresence.LATER),
+    ]
+
+
+def _gaining_a_second_index() -> UnilateralEvolution:
+    """Declaring a second Index beside one both endpoints already hold."""
+    evolution = evolve(_widget_with_one_index(), entity_with_two_indices_over_one_column())
+    assert isinstance(evolution, UnilateralEvolution)
+    return evolution
+
+
+def _widget_with_one_index() -> AcceptedMetamodel:
+    """``entity_with_two_indices_over_one_column`` before the second Index."""
+    return formed(
+        Metamodel(
+            entities=(
+                Entity(
+                    name="Widget",
+                    table="widget",
+                    attributes=(
+                        Attribute(name="id", type="int64", column="id", primary_key=True),
+                        Attribute(name="code", type="string", column="code", max_length=8),
+                    ),
+                    indices=(Index(name="widget_code_uq", attributes=("code",), unique=True),),
+                ),
+            )
+        )
+    )

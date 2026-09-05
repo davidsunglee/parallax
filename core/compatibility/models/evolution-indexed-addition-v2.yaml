@@ -1,0 +1,15 @@
+# Ticket (v2): the later endpoint of the INDEXED ADDITION scenario.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-indexed-addition-v1.yaml with one nullable member and an
+# authored access path over it; nothing else differs.
+entity:
+  name: Ticket
+  namespace: parallax.compatibility
+  table: evolution_ticket
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+    - { name: subject, type: string, maxLength: 64 }
+    - { name: queue, type: string, maxLength: 32, nullable: true }
+  indices:
+    - { name: ticket_queue, attributes: [queue] }
