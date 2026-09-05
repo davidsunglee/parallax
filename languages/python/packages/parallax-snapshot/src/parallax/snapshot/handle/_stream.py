@@ -33,7 +33,7 @@ first, in the discipline the unit of work's own scope flag already uses.
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterator
-from typing import Final, Literal, cast
+from typing import Final, Literal, Protocol, cast
 
 from parallax.core import continuation
 from parallax.core.entity._layout import CatalogedModel
@@ -61,36 +61,48 @@ from parallax.snapshot.materialize._graph import root_edges, root_scoped
 from parallax.snapshot.materialize._invalid import EXCEPTION_MACHINERY
 
 __all__ = [
-    "OpenStream",
-    "PageRead",
     "SnapshotStream",
     "SnapshotStreamContinuationError",
     "SnapshotStreamStateError",
     "check_batch_size",
 ]
 
-type PageRead = Callable[[PagePlan, At, StreamBatchActivity], StreamPage]
-"""How one page reaches the database: the executor entry its owner composed.
 
-A standalone stream's page reads straight through; a participating one's runs
-inside its unit of work's force-flush, so buffered writes reach the database
-before the page that must see them. Which it is belongs to the handle that
-opened the stream, never to the loop above it.
+class StreamExecution(Protocol):
+    """The two things a delivery reaches outside itself, as one retained object.
 
-The page is handed its own Stream Batch UNENTERED, because where that scope
-opens is part of the same answer: a participating page enters it after the
-flush, which is what leaves the dependency batch an ordered sibling of the page
-rather than a scope around it (`m-execution-lifecycle`).
-"""
+    A stream holds the composition that opened it rather than two callables cut
+    from it, so what a page runs inside and whose activity the stream is are one
+    answer given once. Which answer it is belongs to the composition, never to
+    the loop above: a standalone stream is a Root Execution of its own and its
+    pages read straight through, while a participating one is a child of the
+    current Transaction Attempt and every page of it runs inside its unit of
+    work's force-flush, so buffered writes reach the database before the page
+    that must see them.
 
-type OpenStream = Callable[[ActivityTarget, ReadInterface, int], SnapshotStreamActivity]
-"""How the stream's own Execution Activity opens: the observation seam its owner
-composed.
+    A page is handed its own Stream Batch UNENTERED, because where that scope
+    opens is part of the same answer: a participating page enters it after the
+    flush, which is what leaves the dependency batch an ordered sibling of the
+    page rather than a scope around it (`m-execution-lifecycle`).
 
-A standalone stream is a Root Execution of its own; a participating one is a
-child of the current Transaction Attempt. Which it is belongs to the handle that
-opened the stream, exactly as :data:`PageRead` does.
-"""
+    The model travels with the page rather than being held below, because the
+    stream is the holder of the ONE selection it was opened under and no page of
+    a delivery may be read under a second one.
+    """
+
+    def open_stream(
+        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+    ) -> SnapshotStreamActivity: ...
+
+    def page(
+        self,
+        page_plan: PagePlan,
+        at: At,
+        model: CatalogedModel,
+        batch: StreamBatchActivity,
+        /,
+    ) -> StreamPage: ...
+
 
 type _State = Literal["created", "open", "draining", "exhausted", "failed", "closed"]
 
@@ -251,13 +263,12 @@ class SnapshotStream[T]:
     __slots__ = (
         "_activity",
         "_batch_size",
+        "_execution",
         "_failure",
         "_milestones",
         "_model",
         "_node",
-        "_open_stream",
         "_page_plan",
-        "_page_read",
         "_pin",
         "_publication",
         "_state",
@@ -268,16 +279,14 @@ class SnapshotStream[T]:
         node: ObjectQueryNode,
         model: CatalogedModel,
         publication: ResultPublication,
-        page_read: PageRead,
-        open_stream: OpenStream,
+        execution: StreamExecution,
         *,
         batch_size: int,
     ) -> None:
         self._node = node
         self._model = model
         self._publication = publication
-        self._page_read = page_read
-        self._open_stream = open_stream
+        self._execution = execution
         self._batch_size = batch_size
         self._state: _State = _CREATED
         self._page_plan: PagePlan | None = None
@@ -311,7 +320,7 @@ class SnapshotStream[T]:
             self._pin = Pin()
         else:
             self._pin = validated_query_pin(validated.temporal)
-        self._activity = self._open_stream(
+        self._activity = self._execution.open_stream(
             self._node.target, self._publication.interface, self._batch_size
         ).__enter__()
         self._state = _OPEN
@@ -463,7 +472,9 @@ class SnapshotStream[T]:
         coordinate: ContinuationCoordinate | None = None
         emitted = 0
         while True:
-            page = self._page_read(page_plan, At(coordinate, emitted), self._activity.batch())
+            page = self._execution.page(
+                page_plan, At(coordinate, emitted), self._model, self._activity.batch()
+            )
             for position, edge in enumerate(root_edges(page.graph, self._milestones)):
                 root = self._published(page, position, edge, ordinal=emitted + position)
                 if not checked and isinstance(root, InvalidData):

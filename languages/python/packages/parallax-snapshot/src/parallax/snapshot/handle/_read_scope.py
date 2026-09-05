@@ -1,12 +1,15 @@
 """``parallax.snapshot.handle._read_scope`` — the Read Scope both Handles share.
 
-A ``Database``'s eager reads and a ``Transaction``'s run one ladder: re-entry is
+A ``Database``'s reads and a ``Transaction``'s run one ladder: re-entry is
 refused, the operation's selected read model is obtained, a classless connection
 is refused, the query is lowered, the shared gate runs, the activity opens, the
-executor runs, and the result is published. Only the bracket around execution
-differs between a standalone read and one participating in a transaction, so the
-ladder belongs here once and the difference belongs below it, behind a private
-execution policy the two factories construct.
+executor runs, and the result is published. A streamed read is that ladder
+deferred rather than a second one — the verb lowers and validates what it was
+handed and answers an inert delivery, which crosses the gate and opens its own
+activity when its scope is entered and reaches back here for each page. Only the
+bracket around execution differs between a standalone read and one participating
+in a transaction, so the ladder belongs here once and the difference belongs
+below it, behind a private execution policy the two factories construct.
 
 The four capabilities that policy answers are the whole of what varies: which
 selected read model serves the operation, what an eager read runs inside, what a
@@ -67,6 +70,7 @@ from parallax.core.unit_work import Concurrency, UnitOfWork
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
 from parallax.snapshot.handle._errors import SnapshotConnectionError
+from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
     ResultPublication,
@@ -79,6 +83,7 @@ from parallax.snapshot.handle._read import (
     wire_publication,
 )
 from parallax.snapshot.handle._retention import ObservationLedger
+from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
 
 __all__ = [
     "ReadInputs",
@@ -186,8 +191,8 @@ class _ReadExecution(Protocol):
 
 
 class ReadScope:
-    """One Handle's eager read composition: the whole-result and row-form verbs
-    its Typed surface and its Wire view both delegate to.
+    """One Handle's read composition: the whole-result, streamed, and row-form
+    verbs its Typed surface and its Wire view both delegate to.
 
     Every verb owns its refusal ladder from its own first line, so a read that
     arrives here refuses re-entry in one module rather than at one call site per
@@ -195,6 +200,13 @@ class ReadScope:
     and the executor entry are written once for both interfaces and both lanes;
     which materializer publishes a result is chosen per call and is never scope
     state.
+
+    A stream retains this object for its whole delivery, which is what
+    :meth:`open_stream` and :meth:`page` are for: they are the scope from the
+    delivery's side, and they answer it from the same execution policy every
+    eager read runs under. The scope itself holds no model and no page, so a
+    delivery hands back the ONE selection it was opened under for each of its
+    pages and this allocates nothing per page or per root.
     """
 
     __slots__ = ("_execution", "_lifecycle")
@@ -216,6 +228,24 @@ class ReadScope:
             selected,
             object_query_node(query),
             typed_publication(selected.model.meta, construction),
+        )
+
+    def stream(self, query: ObjectQuery[Any, Any], batch_size: int) -> SnapshotStream[Any]:
+        """One Typed streamed read, delivered as Entity Class instances.
+
+        The refusal order is :meth:`find`'s, with this call's own page size
+        judged among its arguments: re-entry, then a selection that can
+        materialize no Snapshot at all, then the query and the size it was
+        named with.
+        """
+        refuse_reentry(self._lifecycle)
+        selected = self._execution.begin()
+        construction = selected.materializing()
+        return self._streamed(
+            selected,
+            object_query_node(query),
+            typed_publication(selected.model.meta, construction),
+            batch_size,
         )
 
     def read_rows(self, node: ObjectQueryNode) -> RowsResult:
@@ -247,6 +277,61 @@ class ReadScope:
         refuse_reentry(self._lifecycle)
         selected = self._execution.begin()
         return self._graph(selected, node, wire_publication(selected.model.meta))
+
+    def wire_stream(self, node: ObjectQueryNode, batch_size: int) -> SnapshotStream[Any]:
+        """One Wire streamed read, delivered as frozen Wire nodes."""
+        refuse_reentry(self._lifecycle)
+        selected = self._execution.begin()
+        return self._streamed(selected, node, wire_publication(selected.model.meta), batch_size)
+
+    def open_stream(
+        self, target: ActivityTarget, interface: ReadInterface, batch_size: int
+    ) -> SnapshotStreamActivity:
+        """The activity one delivery observes itself through, opened when its
+        scope is entered and after everything that scope can refuse."""
+        return self._execution.open_stream(target, interface, batch_size)
+
+    def page(
+        self, page_plan: PagePlan, at: At, model: CatalogedModel, batch: StreamBatchActivity
+    ) -> StreamPage:
+        """One page of a delivery, read inside this lane's own bracket.
+
+        A page IS an eager read of a bounded root query, so it threads the same
+        port, Concurrency Preference, and observation ledger every other read
+        here does — and takes its model from the delivery, which holds the one
+        selection it was opened under rather than asking for a second.
+        """
+
+        def read(calls: DatabaseCallScope, inputs: ReadInputs) -> StreamPage:
+            return read_stream_page(
+                page_plan,
+                at,
+                model,
+                inputs.port,
+                preference=inputs.preference,
+                ledger=inputs.ledger,
+                calls=calls,
+            )
+
+        return self._execution.page(batch, read)
+
+    def _streamed(
+        self,
+        selected: SelectedReadModel,
+        node: ObjectQueryNode,
+        publication: ResultPublication,
+        batch_size: int,
+    ) -> SnapshotStream[Any]:
+        """The stream-construction tail both read interfaces run.
+
+        Constructing a delivery reaches nothing: the gate, the page plan, and
+        every statement belong to the entered scope, so a stream nobody enters
+        observes nothing and reads nothing. What is settled here is what this
+        call named — the page size, refused before any plan and any I/O — and
+        the selection the delivery will keep through all of its pages.
+        """
+        check_batch_size(batch_size)
+        return SnapshotStream(node, selected.model, publication, self, batch_size=batch_size)
 
     def _graph(
         self,

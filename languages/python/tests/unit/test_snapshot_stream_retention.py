@@ -409,7 +409,9 @@ class _Namespace(NamedTuple):
     The four counts are the bound restated as objects. ``fixed`` is everything
     sized by the plan and the handle rather than by the data — the schema, the
     layouts, the authored and validated query products, the continuation, the
-    delivery, and the connected model.
+    delivery, and the read composition the handle owns one of: its scope, that
+    scope's execution policy, the executor inputs the policy was built with, and
+    the model the read is served under.
     ``per_page_node`` is what the sealed page graph holds for each node it
     carries, so the page term is that count times the page's own root positions
     times one root plus its fanout. Both are counted over the roots the page
@@ -444,7 +446,7 @@ class _Namespace(NamedTuple):
 
 
 _TYPED: Final = _Namespace(
-    "typed", _typed_stream, fixed=41, per_page_node=2, per_page_root=1, per_published_node=2
+    "typed", _typed_stream, fixed=44, per_page_node=2, per_page_root=1, per_published_node=2
 )
 """The Typed lane. Two objects per page node — the Source Hint a page retains for
 it and the Object Key that hint is filed under — one per page ROOT rather than
@@ -460,7 +462,7 @@ is a delivery-lifetime cost rather than a per-root one is read on its own grid
 below."""
 
 _WIRE: Final = _Namespace(
-    "wire", _wire_stream, fixed=42, per_page_node=2, per_page_root=1, per_published_node=1
+    "wire", _wire_stream, fixed=45, per_page_node=2, per_page_root=1, per_published_node=1
 )
 """The Wire lane. The same page terms, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
@@ -714,6 +716,7 @@ _SOURCES: Final = frozenset(
         "parallax.snapshot.handle._page",
         "parallax.snapshot.handle._planning",
         "parallax.snapshot.handle._read",
+        "parallax.snapshot.handle._read_scope",
         "parallax.snapshot.handle._stream",
         "parallax.snapshot.materialize._graph",
         "parallax.snapshot.materialize._views",
@@ -730,7 +733,12 @@ this set however few of them there are, and the counts alone would price it as
 part of a coefficient.
 
 The frontier is the interesting half. The metamodel entry is the canonical
-relationship identity shared by the validated include and its view keys. There
+relationship identity shared by the validated include and its view keys. The read
+composition's entry is the one a delivery reaches back INTO for every page: it
+retains the scope the handle owns rather than callables cut from that handle, so
+the scope, its execution policy, the executor inputs that policy holds, and the
+selected read model are alive here as the handle's own — four objects whatever
+the page size and the fanout are, which is why they are in ``fixed``. There
 is no entry for the merge module, for the eager executor's own result carrier — a
 delivery holds the page it read rather than a find's — or anything under
 ``parallax.core.sql_gen``, a page being planned and compiled and the products of
