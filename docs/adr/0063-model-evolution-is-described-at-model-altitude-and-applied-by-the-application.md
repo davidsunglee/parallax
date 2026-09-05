@@ -214,18 +214,26 @@ a write flag moving over it withdraws no caller input, contracting a member's
 admitted value domain reaches no stored value, and moving it between branches or
 Tables carries no data across. Nothing on it is Overlap-Visible either, which is
 a claim about a later writer and so is equally silent on a family the later
-edition holds read-only. A shape arriving under the position is created complete
-by its own addition and one departing is answered for at the alteration that
-moves it, so neither is this position's to report. What a read of it still
+edition holds read-only. A shape arriving under the position is answered for
+where it arrives — a newly added concrete subtype by its own addition, which
+creates it complete, and a surviving one reparented in at its own inheritance
+alteration — and one departing is answered for at the alteration that moves it,
+so neither is this position's to report. What a read of it still
 addresses are the members its ancestry makes applicable, so losing one of those
 remains an authoring surface change.
 Adding a concrete subtype is unilateral under either supported inheritance
-strategy. It is Overlap-Visible under table-per-hierarchy because a later writer
-can place a new discriminator value in the shared Table that an earlier reader
-cannot admit. It is not Overlap-Visible under table-per-concrete-subtype because
-the later subtype occupies a separate Table the earlier edition never reads, and
-not where the later family's effective Persistence Mode is `ReadOnly`, because
-then no writer exists to place that value.
+strategy, and so is turning a surviving abstract position concrete, which adds a
+shape to the family and withdraws none. Both are Overlap-Visible under
+table-per-hierarchy because a later writer can place a new discriminator value in
+the shared Table that an earlier reader cannot admit; an abstract position owns
+no rows, so admitting it as a concrete subtype introduces its discriminator value
+exactly as adding one does. Neither is Overlap-Visible under
+table-per-concrete-subtype because the new shape occupies a separate Table the
+earlier edition never reads, nor where the later family's effective Persistence
+Mode is `ReadOnly`, because then no writer exists to place that value, nor where
+the family arrives whole around the shape, because then no earlier reader holds a
+position of it — which is what a surviving position keeping the root it had
+distinguishes from one taking another.
 
 Attribute classification likewise compares the effective caller contract rather
 than treating a raw flag change as decisive. Making an editable Attribute

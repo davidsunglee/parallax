@@ -1,0 +1,35 @@
+# Instrument (v2): the endpoint of the POSITION ROLE scenario where `Note` is
+# concrete.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-position-role-v1.yaml with `Note` declaring the concrete-subtype
+# role and the `note` tag value; nothing else differs. The shared Table gains a
+# discriminator value, and no member declaration moves with it.
+entities:
+  - name: Instrument
+    namespace: parallax.compatibility
+    table: evolution_instrument
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Note
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Instrument
+      tagValue: note
+  - name: Bond
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Instrument
+      tagValue: bond
+    attributes:
+      - name: coupon
+        type: decimal(18,2)
