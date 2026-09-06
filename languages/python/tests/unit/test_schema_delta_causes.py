@@ -297,6 +297,57 @@ def _tpcs_vacated_owner(
     return formed(Metamodel(entities=(root, warded, old, new, branch, other, *arriving)))
 
 
+def _tpcs_rotation(*, rotated: bool, child: bool) -> AcceptedMetamodel:
+    """A table-per-concrete-subtype family whose two alterations exchange one edge.
+
+    `Owner` declares `seal` and `seal_ix` at both endpoints. Earlier `Pivot`
+    hangs under the root with `Arm` beneath it; later `Arm` hangs under `Owner`
+    with `Pivot` beneath it, so the two moves swap the edge between them and
+    together put the concrete `Child` under `Owner`. Neither move alone does,
+    and neither can be undone on its own: restoring one leaves the other
+    pointing back at it.
+    """
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    owner = Entity(
+        name="Owner",
+        inheritance=Inheritance(role="abstract-subtype", parent="Root"),
+        attributes=(
+            Attribute(name="seal", type="string", column="seal", max_length=16, nullable=True),
+        ),
+        indices=(Index(name="seal_ix", attributes=("seal",)),),
+    )
+    arm = Entity(
+        name="Arm",
+        inheritance=Inheritance(role="abstract-subtype", parent="Owner" if rotated else "Pivot"),
+    )
+    pivot = Entity(
+        name="Pivot",
+        inheritance=Inheritance(role="abstract-subtype", parent="Arm" if rotated else "Root"),
+    )
+    other = Entity(
+        name="Other",
+        table="other",
+        inheritance=Inheritance(role="concrete-subtype", parent="Owner"),
+        attributes=(Attribute(name="z", type="int32", column="z"),),
+    )
+    arriving = (
+        (
+            Entity(
+                name="Child",
+                table="child",
+                inheritance=Inheritance(role="concrete-subtype", parent="Pivot"),
+            ),
+        )
+        if child
+        else ()
+    )
+    return formed(Metamodel(entities=(root, owner, arm, pivot, other, *arriving)))
+
+
 def _tph_siblings(*, sealed: bool, reparented: bool) -> AcceptedMetamodel:
     """A table-per-hierarchy family whose siblings share one Table.
 
@@ -648,3 +699,32 @@ def test_a_surviving_Table_names_only_the_reparent_that_carried_the_declarer() -
     )
     assert _entity_causes(_added(operations, "child")) == ["EntityAltered(Branch)"]
     assert _entity_causes(_created(operations, "child")) == ["EntityAltered(Branch)"]
+
+
+def test_a_surviving_Table_names_both_halves_of_an_edge_rotation() -> None:
+    # `Arm` moves under `Owner` and `Pivot` moves under `Arm` in one evolution,
+    # so the later path `Owner -> Arm -> Pivot -> Child` is why `child` gains
+    # `seal`, and each move alone leaves `Child` outside `Owner`. Reading the
+    # vacated position's later ancestry as a set answers neither: `Arm` left
+    # `Pivot`, and `Pivot` stands under `Owner` later only through the very edge
+    # `Arm`'s counterfactual removes. The world where `Arm` stayed is not a
+    # model at all, and an alteration the later model cannot be well-founded
+    # without is a cause of everything its move carried.
+    operations = _operations(
+        _tpcs_rotation(rotated=False, child=True), _tpcs_rotation(rotated=True, child=True)
+    )
+    expected = ["EntityAltered(Arm)", "EntityAltered(Pivot)"]
+    assert _entity_causes(_added(operations, "child")) == expected
+    assert _entity_causes(_created(operations, "child")) == expected
+
+
+def test_a_created_Table_names_both_halves_of_an_edge_rotation() -> None:
+    # The same rotation with `Child` arriving in the same evolution: `child` is
+    # created holding `seal`, and the addition that brought it names both moves
+    # beside it for the same reason the surviving Table does.
+    operations = _operations(
+        _tpcs_rotation(rotated=False, child=False), _tpcs_rotation(rotated=True, child=True)
+    )
+    expected = ["EntityAltered(Arm)", "ConcreteSubtypeAdded(Child)", "EntityAltered(Pivot)"]
+    assert _entity_causes(_creates(operations, "child")) == expected
+    assert _entity_causes(_created(operations, "child")) == expected

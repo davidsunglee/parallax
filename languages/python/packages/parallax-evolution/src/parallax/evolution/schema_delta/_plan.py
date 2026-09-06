@@ -406,6 +406,7 @@ class _Causes:
     later_materialized: Mapping[EntityIdentity, frozenset[Table]]
     earlier_held: Mapping[Table, frozenset[EntityIdentity]]
     earlier_parents: Mapping[EntityIdentity, EntityIdentity]
+    later_parents: Mapping[EntityIdentity, EntityIdentity]
     declared_in: Mapping[Table, frozenset[EntityIdentity]]
 
     @staticmethod
@@ -420,6 +421,7 @@ class _Causes:
             later_materialized=later.materialized(),
             earlier_held={} if earlier is None else earlier.holds(),
             earlier_parents={} if earlier is None else earlier.parents(),
+            later_parents=later.parents(),
             declared_in={
                 layout.table: frozenset(slot.declaring_owner for slot in layout.columns)
                 for layout in later.facet.tables
@@ -464,21 +466,36 @@ class _Causes:
         Entity that did carry one, because the position it left has since moved
         away. The edge THIS alteration replaced is the Entity's own earlier
         parent, which no other Entity's move can change.
-
-        So the counterfactual ancestry is the Entity's own position, which no move
-        takes from it, together with whatever stands over the position it left,
-        read from the LATER model: had it stayed there, it would be carried
-        wherever that position went. The alteration carried ``owner`` exactly when
-        that ancestry does not already hold it — so a reparent is never why a
-        Table materializes the moved Entity's OWN declarations, and one that left
-        a position still standing under ``owner`` carried nothing. An Entity that
-        stood under nothing, a former family root, took its whole ancestry from
-        the move.
         """
-        vacated = self.earlier_parents.get(operation.entity)
-        return owner != operation.entity and (
-            vacated is None or owner not in self.later_ancestry.get(vacated, frozenset())
-        )
+        return owner not in self._counterfactual_ancestry(operation.entity)
+
+    def _counterfactual_ancestry(self, entity: EntityIdentity) -> frozenset[EntityIdentity]:
+        """What ``entity`` would stand under had its own alteration not happened.
+
+        The counterfactual world puts ``entity`` back on the parent edge it left
+        and leaves every other Entity where the LATER model has it, since staying
+        put means being carried wherever the vacated position went. So the
+        ancestry is walked one parent at a time from that position rather than
+        read as the vacated position's later ancestry: two alterations can
+        exchange a pair of edges, and then the vacated position stands under the
+        moved Entity itself in the later model. Restoring the edge closes a loop,
+        and the walk halts there with nothing above it — which is the honest
+        answer, because a world that cannot be a model is a world where nothing
+        stands over the Entity at all, and the alteration answers for every
+        position it now stands under.
+
+        ``entity`` is in its own counterfactual ancestry because no move takes an
+        Entity from its own position, so a reparent is never why a Table
+        materializes the moved Entity's OWN declarations. An Entity that stood
+        under nothing, a former family root, takes its whole ancestry from the
+        move and this is the ancestry of one.
+        """
+        standing = {entity}
+        position = self.earlier_parents.get(entity)
+        while position is not None and position not in standing:
+            standing.add(position)
+            position = self.later_parents.get(position)
+        return frozenset(standing)
 
     def column(self, table: Table, slot: ColumnSlot) -> tuple[EvolutionOperation, ...]:
         """Why ``slot``'s Column is in ``table`` now and was not before.

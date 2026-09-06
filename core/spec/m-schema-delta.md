@@ -125,10 +125,19 @@ since moved out from under the declaring owner. Each alteration answers instead
 for what its Entity would stand under had that alteration not happened — its own
 position, which no move takes from it, together with whatever stands over the
 position it left, measured against the **later** model, since staying there means
-being carried wherever that position went. So a reparent is never why a Table
-materializes the moved Entity's own declarations, an alteration that left a
-position still standing under the declaring owner carried nothing, and the
-alteration that moved that position is named alone.
+being carried wherever that position went. That counterfactual ancestry is walked
+one parent edge at a time from the vacated position, never read as that
+position's later ancestry, because two alterations can exchange a pair of edges:
+the vacated position then stands under the moved Entity itself in the later
+model, and restoring the edge closes a loop instead of naming an ancestry. The
+walk halts at that loop with nothing above the Entity, which is the answer the
+question deserves — a world that cannot be a model is a world where the Entity
+stands under nothing, so an alteration the later model cannot be well-founded
+without is a cause of every position it now stands under. So a reparent is never
+why a Table materializes the moved Entity's own declarations, an alteration that
+left a position still standing under the declaring owner carried nothing, the
+alteration that moved that position is named alone, and both halves of a rotation
+are named together.
 And an operation that moved only facts the database does not hold — a write flag,
 a declaration order, an optimistic-locking marker — is a cause of nothing, even
 where it alters the very declaration a widened Column materializes: a stored
