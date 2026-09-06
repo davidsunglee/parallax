@@ -5482,6 +5482,100 @@
       ]
     }
   },
+  "models/evolution-rowless-domain-v1.yaml": {
+    "evolution_registry": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Filing"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Registry.id",
+          "declaringOwner": "parallax.compatibility.Registry",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Filing"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Registry",
+          "declaringOwner": "parallax.compatibility.Registry",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Filing"
+          ],
+          "column": "folio",
+          "contributor": "attribute:parallax.compatibility.Filing.folio",
+          "declaringOwner": "parallax.compatibility.Filing",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [],
+          "column": "caption",
+          "contributor": "attribute:parallax.compatibility.Draft.caption",
+          "declaringOwner": "parallax.compatibility.Draft",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/evolution-rowless-domain-v2.yaml": {
+    "evolution_registry": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Filing"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Registry.id",
+          "declaringOwner": "parallax.compatibility.Registry",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Filing"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Registry",
+          "declaringOwner": "parallax.compatibility.Registry",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Filing"
+          ],
+          "column": "folio",
+          "contributor": "attribute:parallax.compatibility.Filing.folio",
+          "declaringOwner": "parallax.compatibility.Filing",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [],
+          "column": "caption",
+          "contributor": "attribute:parallax.compatibility.Draft.caption",
+          "declaringOwner": "parallax.compatibility.Draft",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/evolution-rowless-member-v1.yaml": {
     "evolution_ledger": {
       "columns": [

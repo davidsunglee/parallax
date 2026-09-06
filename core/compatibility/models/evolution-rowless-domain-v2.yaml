@@ -1,0 +1,40 @@
+# Registry (v2): the endpoint of the ROWLESS DOMAIN scenario where the position's
+# String bound is the narrower one.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. It is
+# models/evolution-rowless-domain-v1.yaml with `Draft.caption` bounded at 32
+# instead of 64; nothing else differs. No concrete subtype composes that
+# position, so no stored value meets the contracted domain — but the Column the
+# position materializes in the shared Table is real, and its declared width is
+# what a fresh provisioning of this endpoint would give it.
+entities:
+  - name: Registry
+    namespace: parallax.compatibility
+    table: evolution_registry
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Draft
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Registry
+    attributes:
+      - name: caption
+        type: string
+        maxLength: 32
+  - name: Filing
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Registry
+      tagValue: filing
+    attributes:
+      - name: folio
+        type: int32

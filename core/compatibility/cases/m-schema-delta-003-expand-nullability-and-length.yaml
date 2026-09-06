@@ -2,7 +2,7 @@
 # many facts it widens.
 #
 # `Memo.body` becomes nullable and four times as long at once. Both moves widen
-# the stored domain, so they are one `ExpandColumnDomain` over one Column rather
+# the stored domain, so they are one `RestateColumnDomain` over one Column rather
 # than two operations that happen to name it — which is why each dialect spells
 # them in ONE statement: Postgres as two actions of a single `alter table`, and
 # MariaDB by restating the whole column. The two facts stay separate at model

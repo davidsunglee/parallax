@@ -371,20 +371,25 @@ def test_add_column_carries_the_same_column_clause(dialect: Dialect) -> None:
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
-def test_expand_column_spells_each_widening_as_its_own_action(dialect: Dialect) -> None:
+def test_restate_column_spells_each_moved_fact_as_its_own_action(dialect: Dialect) -> None:
     # Postgres factors a type change and a relaxed `not null` into two actions of
     # one statement, which is why the primitive receives the whole change rather
-    # than one clause at a time.
+    # than one clause at a time. The type action is the same spelling whichever
+    # way the domain moved: the seam renders a target domain and never judges it,
+    # since which restatements are legal is `m-schema-delta`'s question.
     narrower = ColumnDdl("label", "varchar(8)", False)
-    assert dialect.expand_column("widget", narrower, ColumnDdl("label", "text", False)) == (
+    assert dialect.restate_column("widget", narrower, ColumnDdl("label", "text", False)) == (
         "alter table widget alter column label type text"
     )
-    assert dialect.expand_column("widget", narrower, ColumnDdl("label", "varchar(8)", True)) == (
+    assert dialect.restate_column("widget", narrower, ColumnDdl("label", "varchar(8)", True)) == (
         "alter table widget alter column label drop not null"
     )
-    assert dialect.expand_column("widget", narrower, ColumnDdl("label", "text", True)) == (
+    assert dialect.restate_column("widget", narrower, ColumnDdl("label", "text", True)) == (
         "alter table widget alter column label type text, alter column label drop not null"
     )
+    assert dialect.restate_column(
+        "widget", ColumnDdl("label", "varchar(64)", True), ColumnDdl("label", "varchar(32)", True)
+    ) == ("alter table widget alter column label type varchar(32)")
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

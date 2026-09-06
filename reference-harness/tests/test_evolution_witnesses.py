@@ -86,12 +86,12 @@ def _physical_operation_kinds() -> frozenset[str]:
 # carries plain SQL and no operation kind — the algebra never crosses the
 # generator's boundary — so a kind is witnessed either by a statement of its own
 # shape or by an `unsupported` cell naming it. The shapes are the ones both
-# dialects share; a widening is the one that diverges, and the alternation is
-# that divergence rather than a second grammar.
+# dialects share; a domain restatement is the one that diverges, and the
+# alternation is that divergence rather than a second grammar.
 _PHYSICAL_OPERATION_STATEMENTS: Final[Mapping[str, str]] = {
     "CreateTable": r"^create table\b",
     "AddColumn": r"^alter table \S+ add column\b",
-    "ExpandColumnDomain": r"^alter table \S+ (alter column|modify)\b",
+    "RestateColumnDomain": r"^alter table \S+ (alter column|modify)\b",
     "CreateIndex": r"^create (unique )?index\b",
     "DropIndex": r"^drop index\b",
 }

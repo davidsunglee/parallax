@@ -55,9 +55,9 @@ from parallax.evolution.schema_delta._physical import (
     CreateIndex,
     CreateTable,
     DropIndex,
-    ExpandColumnDomain,
     IndexDefinition,
     PhysicalColumn,
+    RestateColumnDomain,
     location_of,
     member_key,
 )
@@ -366,6 +366,21 @@ def test_equal_endpoints_produce_an_empty_delta() -> None:
     assert schema_delta(evolution, POSTGRES) == SchemaDelta(statements=(), created_indices=())
 
 
+def test_a_domain_is_restated_downward_only_where_no_shape_stores_the_column() -> None:
+    # The restatement arm's second legality shape and the reason it is safe, as
+    # one pair. `Draft` composes no concrete subtype, so `caption` narrowing is
+    # unilateral AND holds no value; the same contraction over a Column a shape
+    # stores is not a Unilateral Evolution at all, so it never reaches the
+    # generator and the arm never has to refuse it.
+    rowless = evolve(_MODELS["evolution-rowless-domain-v1"], _MODELS["evolution-rowless-domain-v2"])
+    assert isinstance(rowless, UnilateralEvolution)
+    assert schema_delta(rowless, POSTGRES).statements == (
+        "alter table evolution_registry alter column caption type varchar(32)",
+    )
+    stored = evolve(_MODELS["evolution-widened-domain-v2"], _MODELS["evolution-widened-domain-v1"])
+    assert not isinstance(stored, UnilateralEvolution)
+
+
 def test_no_statement_is_idempotent() -> None:
     # A delta states what must happen to a database at the earlier edition, so
     # nothing it emits reconciles an unknown one.
@@ -433,8 +448,8 @@ def test_adding_a_column_renders_and_addresses_that_column() -> None:
     assert location_of(operation) == PhysicalLocation(table=_TABLE, column=Column(name="label"))
 
 
-def test_expanding_a_column_renders_the_whole_widening_and_addresses_the_later_column() -> None:
-    operation = ExpandColumnDomain(table=_TABLE, earlier=_LABEL, later=_WIDER, caused_by=())
+def test_restating_a_domain_renders_every_moved_fact_and_addresses_the_later_column() -> None:
+    operation = RestateColumnDomain(table=_TABLE, earlier=_LABEL, later=_WIDER, caused_by=())
     assert render(operation, POSTGRES) == (
         "alter table widget alter column label type varchar(16), alter column label drop not null"
     )

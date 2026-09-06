@@ -7,7 +7,7 @@ row-limit rendering, optimizer fences, shared-read-lock application, the neutral
 mapping, the structured-document extraction / typed-cast forms, the bytes
 projection shape, the canonical `?` → driver placeholder translation, the
 infinity representation, the five schema DDL primitives ``create_table`` /
-``add_column`` / ``expand_column`` / ``create_index`` / ``drop_index``
+``add_column`` / ``restate_column`` / ``create_index`` / ``drop_index``
 (`m-schema-delta`), and the SQLSTATE → neutral-category table (`m-db-error`).
 It performs no I/O and imports no driver. ``m-dialect`` depends only on ``m-core``.
 """
@@ -605,15 +605,17 @@ class Dialect:
         """``alter table … add column`` for one new physical Column."""
         return f"alter table {table} add column {_column_clause(column)}"
 
-    def expand_column(self, table: str, earlier: ColumnDdl, later: ColumnDdl) -> str | Unsupported:
-        """Widen one Column's stored domain, or why this dialect cannot.
+    def restate_column(self, table: str, earlier: ColumnDdl, later: ColumnDdl) -> str | Unsupported:
+        """Restate one Column's value domain as ``later``, or why this dialect cannot.
 
         The whole earlier-to-later change arrives at once because the two
         dialects factor it differently: Postgres spells a type change and a
         dropped ``not null`` as separate actions of one ``alter table``, while
-        MariaDB restates the whole column with ``modify``. Only a widening is
-        ever asked for — relaxed nullability, a longer or removed String bound —
-        so no action here narrows a domain.
+        MariaDB restates the whole column with ``modify``. Nullability only ever
+        relaxes across this seam — a Column rows are stored against is never
+        asked to tighten, and one no shape stores is nullable at both endpoints —
+        so a dropped ``not null`` is the only nullability action a caller can
+        request.
         """
         actions: list[str] = []
         if earlier.type_sql != later.type_sql:

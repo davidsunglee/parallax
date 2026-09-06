@@ -1825,7 +1825,7 @@
       "additionalProperties": false,
       "required": ["kind", "physicalLocation", "causedBy"],
       "properties": {
-        "kind": {"enum": ["CreateTable", "AddColumn", "ExpandColumnDomain", "CreateIndex", "DropIndex"]},
+        "kind": {"enum": ["CreateTable", "AddColumn", "RestateColumnDomain", "CreateIndex", "DropIndex"]},
         "physicalLocation": {
           "type": "object",
           "additionalProperties": false,

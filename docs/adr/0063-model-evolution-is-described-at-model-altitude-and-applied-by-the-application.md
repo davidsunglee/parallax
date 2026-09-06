@@ -164,13 +164,24 @@ operation remain contiguous and preserve renderer order. Independent operations
 use stable physical-location and operation-kind tie-breakers rather than a
 global phase order.
 The private physical-operation algebra is the closed choice of `CreateTable`,
-`AddColumn`, `ExpandColumnDomain`, `CreateIndex`, and `DropIndex`.
+`AddColumn`, `RestateColumnDomain`, `CreateIndex`, and `DropIndex`.
 `CreateTable` carries the complete target Table Layout, including Columns and
 the inline derived primary key but excluding authored secondary Indices.
-`AddColumn` carries its target Column Slot. `ExpandColumnDomain` carries the
-earlier and later physical Column facts and may only relax nullability, widen a
-bounded String, remove its bound, or combine those expansions; it is not a
-generic column alteration. Index operations carry the target or earlier
+`AddColumn` carries its target Column Slot. `RestateColumnDomain` carries the
+earlier and later physical Column facts and restates a surviving Column's value
+domain as the later edition's; it is not a generic column alteration, being legal
+in exactly two shapes that each leave every stored value where it is. Either the
+later domain admits every value the earlier did — relaxed nullability, a widened
+bounded String, a removed bound, or those combined — or no shape stores the
+Column at either endpoint, so it holds no value the restatement could reach. The
+second shape is the physical face of the classification rule above rather than an
+exception to it: an abstract position composing no concrete subtype materializes
+the Columns it declares without ever storing a row against them, and that empty
+effective concrete set at both endpoints is the same fact that makes a
+value-domain contraction there unilateral. Narrowing a domain that rows are
+stored against is never unilateral and never reaches the generator, so the
+distinction the operation draws is whether the Column stores a shape, never
+whether the domain grew. Index operations carry the target or earlier
 Physical Index definition respectively. Schema-neutral unilateral operations
 lower to no physical operation. Drop-table, drop-column, rename,
 primary-key-alteration, and arbitrary-SQL variants are deliberately absent

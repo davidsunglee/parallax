@@ -1,0 +1,40 @@
+# Registry (v1): the endpoint of the ROWLESS DOMAIN scenario where the position's
+# String bound is the wider one.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. The
+# abstract `Draft` composes no concrete subtype, so it resolves to an empty
+# effective concrete set while the family stays legal on `Filing`. Its `caption`
+# still occupies a Column of the family's shared Table, and no row is ever
+# written against it: the pair is authored once and read in one direction, so the
+# later endpoint contracts a value domain over a Column that stores nothing.
+entities:
+  - name: Registry
+    namespace: parallax.compatibility
+    table: evolution_registry
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag:
+        column: kind
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+  - name: Draft
+    namespace: parallax.compatibility
+    inheritance:
+      role: abstract-subtype
+      parent: parallax.compatibility.Registry
+    attributes:
+      - name: caption
+        type: string
+        maxLength: 64
+  - name: Filing
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: parallax.compatibility.Registry
+      tagValue: filing
+    attributes:
+      - name: folio
+        type: int32

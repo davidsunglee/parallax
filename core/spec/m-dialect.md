@@ -502,7 +502,7 @@ its single edge to `m-core`.
 ```text
 createTable(table, columns, primaryKey)                -> statement
 addColumn(table, column)                               -> statement
-expandColumn(table, earlier, later)                    -> statement | Unsupported
+restateColumn(table, earlier, later)                   -> statement | Unsupported
 createIndex(table, name, columns, unique)              -> statement | Unsupported
 dropIndex(table, name)                                 -> statement
 
@@ -519,11 +519,13 @@ never be unsupported. A primitive answers with **the statement or with why not**
 which is what keeps a capability predicate from drifting away from the renderer it
 is supposed to describe.
 
-`expandColumn` receives the whole earlier-to-later Column change rather than one
+`restateColumn` receives the whole earlier-to-later Column change rather than one
 clause, because the dialects factor it differently: Postgres spells a type change
 and a relaxed `not null` as separate actions of one `alter table`, while MariaDB
-restates the whole Column with `modify`. Only a widening is ever asked for, so no
-action a caller can request narrows a stored domain.
+restates the whole Column with `modify`. Nullability only ever relaxes across this
+seam — `m-schema-delta` asks for a domain restatement in exactly two shapes, and
+neither can tighten one — so a dropped `not null` is the only nullability action a
+caller can request.
 
 `createIndex` receives each component's Neutral Type and String bound beside its
 Column, because that is what index admissibility depends on: Postgres indexes

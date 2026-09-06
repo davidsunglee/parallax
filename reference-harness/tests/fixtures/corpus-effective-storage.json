@@ -2016,6 +2016,52 @@
       "valueObject": {}
     }
   },
+  "models/evolution-rowless-domain-v1.yaml": {
+    "parallax.compatibility.Draft": {
+      "attribute": {
+        "caption": "caption"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Filing": {
+      "attribute": {
+        "folio": "folio"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Registry": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/evolution-rowless-domain-v2.yaml": {
+    "parallax.compatibility.Draft": {
+      "attribute": {
+        "caption": "caption"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Filing": {
+      "attribute": {
+        "folio": "folio"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Registry": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/evolution-rowless-member-v1.yaml": {
     "parallax.compatibility.Ledger": {
       "attribute": {

@@ -23,8 +23,8 @@ from parallax.evolution.schema_delta._physical import (
     CreateIndex,
     CreateTable,
     DropIndex,
-    ExpandColumnDomain,
     PhysicalOperation,
+    RestateColumnDomain,
     member_key,
     table_of,
 )
@@ -34,7 +34,7 @@ __all__ = ["dependency_violations", "order", "order_key"]
 KIND_RANK: Final[Mapping[type, int]] = {
     CreateTable: 0,
     AddColumn: 1,
-    ExpandColumnDomain: 2,
+    RestateColumnDomain: 2,
     CreateIndex: 3,
     DropIndex: 4,
 }

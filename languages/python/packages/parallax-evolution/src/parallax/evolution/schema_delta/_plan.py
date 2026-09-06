@@ -70,10 +70,10 @@ from parallax.evolution.schema_delta._physical import (
     CreateIndex,
     CreateTable,
     DropIndex,
-    ExpandColumnDomain,
     IndexDefinition,
     PhysicalColumn,
     PhysicalOperation,
+    RestateColumnDomain,
 )
 
 __all__ = ["Plan", "plan"]
@@ -230,12 +230,14 @@ def _columns(
     earlier: _Endpoint,
     causes: _Causes,
 ) -> Iterator[PhysicalOperation]:
-    """Each Column this Table gains, and each whose stored domain widens.
+    """Each Column this Table gains, and each whose value domain moved.
 
-    A Column both editions hold whose domain is not a widening asks for no
-    statement: the algebra has no narrowing arm, because every prefix of a
-    Schema Delta must leave the earlier edition operable and destroy no stored
-    value.
+    A Column both editions hold identically asks for nothing. One whose domain
+    moved is restated as the later edition's, and the restatement is legal in
+    exactly the two shapes that destroy no stored value: the later domain admits
+    every value the earlier did, or the Column stores no shape at either endpoint
+    and so holds no value at all. Narrowing a domain rows are stored against is
+    not unilateral, so no accepted input reaches this Column any other way.
     """
     for slot in layout.columns:
         held = before.column(slot.column)
@@ -248,31 +250,47 @@ def _columns(
             )
             continue
         source = _physical_column(earlier.model, held)
-        if _expands(source, target):
-            yield ExpandColumnDomain(
-                table=layout.table,
-                earlier=source,
-                later=target,
-                caused_by=causes.expansion(
-                    layout.table, slot, relaxed=source.nullable != target.nullable
-                ),
+        if source == target:
+            continue
+        if not _expands(source, target) and not _stores_nothing(held, slot):
+            raise ValueError(  # pragma: no cover - classification refuses this pair
+                f"{layout.table.name}.{slot.column.name}: a stored domain narrowed"
             )
+        yield RestateColumnDomain(
+            table=layout.table,
+            earlier=source,
+            later=target,
+            caused_by=causes.domain(
+                layout.table, slot, moved_nullability=source.nullable != target.nullable
+            ),
+        )
 
 
 def _expands(earlier: PhysicalColumn, later: PhysicalColumn) -> bool:
-    """Whether ``later`` admits every value ``earlier`` did, and more.
+    """Whether ``later`` admits every value ``earlier`` did.
 
     A widening is relaxed nullability, a longer String bound, a removed String
     bound, or those together. Every other difference is a narrowing or a Neutral
-    Type change, neither of which a Unilateral Evolution can ask for, and a
-    Column that did not change at all asks for nothing.
+    Type change, and neither is safe over a Column that holds a stored value.
     """
     return (
-        earlier != later
-        and earlier.neutral_type == later.neutral_type
+        earlier.neutral_type == later.neutral_type
         and (later.nullable or not earlier.nullable)
         and _bound_admits(earlier.max_length, later.max_length)
     )
+
+
+def _stores_nothing(earlier: ColumnSlot, later: ColumnSlot) -> bool:
+    """Whether no shape stores this Column at either endpoint.
+
+    An abstract inheritance position composing no concrete subtype still
+    materializes the Columns it declares in its family's Table, and no row is
+    ever written against them. That empty applicable set at BOTH endpoints is
+    exactly the condition under which `m-model-evolution` reads a domain
+    contraction here as unilateral, so it is the same fact that makes restating
+    the Column destroy nothing.
+    """
+    return not earlier.applicable_entities and not later.applicable_entities
 
 
 def _bound_admits(earlier: int | None, later: int | None) -> bool:
@@ -319,10 +337,10 @@ class _Causes:
     difference several operations were each needed for names all of them.
 
     A Column is in a Table because its declaration exists AND because that
-    declaration reaches the rows the Table holds. A stored domain is wider
-    because the declared domain widened, or because the set of shapes the Table
-    stores changed — a Column required of every shape a Table stored is nullable
-    once it stores one more.
+    declaration reaches the rows the Table holds. A stored domain is not the one
+    it was because the declared domain moved, or because the set of shapes the
+    Table stores changed — a Column required of every shape a Table stored is
+    nullable once it stores one more.
     """
 
     operations: tuple[EvolutionOperation, ...]
@@ -379,21 +397,21 @@ class _Causes:
             or self._carries_declarations(operation, table, slot.declaring_owner)
         )
 
-    def expansion(
-        self, table: Table, slot: ColumnSlot, *, relaxed: bool
+    def domain(
+        self, table: Table, slot: ColumnSlot, *, moved_nullability: bool
     ) -> tuple[EvolutionOperation, ...]:
-        """Why ``slot``'s stored domain is wider than it was.
+        """Why ``slot``'s stored domain is not the one it was.
 
-        A relaxed nullability additionally answers to whatever changed the shapes
-        ``table`` stores, because a Column is required exactly while every one of
-        them declares it. Nothing a row-set change does can lengthen a String
-        bound, so a widening that only moved the bound never names one.
+        A nullability that moved additionally answers to whatever changed the
+        shapes ``table`` stores, because a Column is required exactly while every
+        one of them declares it. Nothing a row-set change does can move a String
+        bound, so a domain that only moved the bound never names one.
         """
         return tuple(
             operation
             for operation in self.operations
-            if _widens_declaration(operation, slot)
-            or (relaxed and self._changes_stored_shapes(operation, table))
+            if _moves_declared_domain(operation, slot)
+            or (moved_nullability and self._changes_stored_shapes(operation, table))
         )
 
     def index(self, definition: IndexDefinition) -> tuple[EvolutionOperation, ...]:
@@ -453,29 +471,29 @@ def _brings_declaration(operation: EvolutionOperation, slot: ColumnSlot) -> bool
             return False
 
 
-def _widens_declaration(operation: EvolutionOperation, slot: ColumnSlot) -> bool:
-    """Whether ``operation`` is the member alteration that widened ``slot``'s domain.
+def _moves_declared_domain(operation: EvolutionOperation, slot: ColumnSlot) -> bool:
+    """Whether ``operation`` is the member alteration that moved ``slot``'s domain.
 
     A physical Column holds a Neutral Type, a String bound, and a nullability and
     nothing else, so altering the same declaration's write flag, key membership,
-    storage location, or occurrence multiplicity widened no stored domain. The
+    storage location, or occurrence multiplicity moved no stored domain. The
     question is which FACT moved, never which declaration the operation names.
     """
     match operation:
         case AttributeAltered():
-            return operation.attribute == slot.contributor and _widens_domain(operation.deltas)
+            return operation.attribute == slot.contributor and _moves_domain(operation.deltas)
         case ValueObjectOccurrenceAltered():
-            return operation.value_object == slot.contributor and _widens_domain(operation.deltas)
+            return operation.value_object == slot.contributor and _moves_domain(operation.deltas)
         case _:
             return False
 
 
-def _widens_domain(deltas: Sequence[AttributeDelta | ValueObjectOccurrenceDelta]) -> bool:
-    """Whether any delta moved a fact a stored domain can be widened along.
+def _moves_domain(deltas: Sequence[AttributeDelta | ValueObjectOccurrenceDelta]) -> bool:
+    """Whether any delta moved a fact a stored domain is made of.
 
     A Neutral Type change is never unilateral, so the two facts left are the
     String bound and nullability — the same pair `m-model-evolution`'s value-domain
-    boundary is phrased over.
+    boundary is phrased over, in either direction.
     """
     return any(isinstance(delta, (NullabilityChanged, MaximumLengthChanged)) for delta in deltas)
 
