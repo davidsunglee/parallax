@@ -79,11 +79,18 @@ depending inward on the common Python runtime.
 _Avoid_: model method, core descriptor module, serialization registry, runtime plugin
 
 **Domain Model Provider**:
-The Python realization of the core Metamodel Provider: the protocol a Database
-consults to obtain the Domain Model and Model Edition it currently serves. A
-Domain Model handed directly to a Database is served through a provider whose
-answer never changes.
-_Avoid_: model registry, model factory, model loader, DomainModel holder
+`PublishedModelProvider`, the Python realization of the Published Model Provider:
+the standard publication module holding one complete Model Selection for
+Databases to adopt. A Database serving a static Domain Model uses the same
+provider with one unchanged selection.
+_Avoid_: provider protocol, model registry, model factory, model loader, DomainModel holder
+
+**Model Selection**:
+The opaque, immutable preparation of one Domain Model and its Model Edition,
+ready for adoption by a Database's reads and transactions. Its Selected Read
+Model and Selected Write Model share one cataloged model and contain the
+model-dependent execution facts fixed before publication.
+_Avoid_: PreparedModel, connected model, runtime model, model cache entry
 
 **Class Index**:
 The immutable bidirectional association between core Entity Identities and the
@@ -94,15 +101,16 @@ connection requires in order to materialize Entity Class instances.
 _Avoid_: Metamodel Binding, Entity Class Binding, bound model, runtime model, model context, metadata copy
 
 **Selected Read Model**:
-The narrow immutable value one read is served under: the cataloged model it
-resolves, plans, and converts its rows against, together with the Entity Graph
-Construction that materializes them — present for a class-backed Domain Model
-and absent for a descriptor-backed one, which is what makes a modeled read
-refusable before any I/O under `snapshot-class-backed-model-required`. It never
-carries the Entity Row Codec, because a read derives no row, and it is a
-property of the operation rather than of the handle: one stream keeps the one it
-opened under through all of its pages.
+The read projection of a Model Selection: its cataloged model and, for a
+class-backed Domain Model, the Entity Graph Construction needed for typed
+materialization. A descriptor-backed selection has no Entity Class
+materialization.
 _Avoid_: Entity Runtime, connected model, raw binding, sealed model pair, runtime registry, capability bag
+
+**Selected Write Model**:
+The write projection of a Model Selection: its cataloged model together with
+the Entity Row Codec and Write Planner prepared for that model.
+_Avoid_: write context, transaction model, write model cache, capability bag
 
 ### Queries And Results
 
