@@ -330,14 +330,20 @@ def keyed_write(
     transaction's own insert, and the evidence exemption, which is why the write
     that follows settles bare — the row it revises is the one that insert opens,
     so there is no prior row for a second intent to compete for. One step past
-    the buffer writes it: a destructive write of an object the ledger holds
-    retires that object, because the flush will annihilate the pair and emit
-    nothing for it, so from here on an insert of it is a first opening and an
-    update of it addresses nothing. Retirement follows the buffer rather than
-    preceding it for the guarantee the claim ledger already gives — a refused
-    write leaves every ledger as it found it. It runs on the reread route too:
-    the insert already flushed, the destructive write will remove the row, and
-    a later insert or update answers for a row the store will no longer hold.
+    the buffer writes it: a destructive write that cancels an insert of the same
+    object still PENDING in the unit of work retires that object, because the
+    flush will annihilate that pair and emit nothing for it, so from here on an
+    insert of it is a first opening and an update of it addresses nothing.
+
+    Pending is asked of the unit of work
+    (:meth:`~parallax.core.unit_work.UnitOfWork.pending_insert`) and read BEFORE
+    the buffer, because buffering this very write is what ends the pair. It is
+    the whole condition, and an object whose insert already flushed is not one:
+    that row exists, so a second insert of it would collide with it — the flush
+    emits every surviving insert ahead of every delete, so a delete and a
+    re-insert of one flushed row cannot even be ordered as authored. Retiring
+    follows the buffer rather than preceding it for the guarantee the claim
+    ledger already gives: a refused write leaves every ledger as it found it.
     """
     refuse_reentry(ctx.lifecycle)
     source.capture(mutation)
@@ -347,11 +353,12 @@ def keyed_write(
     written = (
         None if identity_row is None else written_object_of_row(resolved.entity, meta, identity_row)
     )
+    opened_by = ctx.inserts.opened_by(written)
     validate_provenance(
         resolved.entity.identity,
         resolved.provenance,
         mutation,
-        inserted=ctx.inserts.holds(written),
+        inserted=opened_by is not None,
         representation=resolved.representation,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
@@ -364,7 +371,7 @@ def keyed_write(
         return
     evidence: SettledEvidence | None = (
         None
-        if ctx.inserts.holds(written)
+        if opened_by is not None
         else resolve_write_evidence(
             meta,
             resolved.entity,
@@ -375,6 +382,9 @@ def keyed_write(
             participation=ctx.uow.participation,
         )
     )
+    cancels_pending_insert = mutation in DESTRUCTIVE_MUTATIONS and ctx.uow.pending_insert(
+        prepared.object_key
+    )
     admit_and_buffer(
         ctx.uow,
         meta,
@@ -382,7 +392,7 @@ def keyed_write(
         evidence,
         restorations=restorations,
     )
-    if mutation in DESTRUCTIVE_MUTATIONS:
+    if cancels_pending_insert:
         ctx.inserts.retire(written)
 
 
@@ -414,9 +424,11 @@ def keyed_insert(
     canonical only once the row is — so pin, provenance, window, and preparation
     are all heard ahead of it, on both lanes.
 
-    The row this opens is recorded in that ledger, which is what licenses the
-    keyed write that follows it, and the answer names the row so a caller holding
-    no Entity Class can revise it.
+    The row this opens is recorded in that ledger under the representation that
+    opened it, which is what licenses the keyed write that follows and what the
+    refusal names the way out in: the caller is sent to the update verb over the
+    carrier THIS call produced, which the opposite interface has no spelling for.
+    The answer names the row so a caller holding no Entity Class can revise it.
     """
     refuse_reentry(ctx.lifecycle)
     opening.capture(mutation)
@@ -439,11 +451,10 @@ def keyed_insert(
     refuse_repeated_insert(
         resolved.entity.identity,
         mutation,
-        inserted=ctx.inserts.holds(written),
-        representation=resolved.representation,
+        opened_by=ctx.inserts.opened_by(written),
     )
     admit_and_buffer(ctx.uow, meta, prepared, None)
-    ctx.inserts.record(written)
+    ctx.inserts.record(written, resolved.representation)
     opened = object_key(prepared, meta)
     # A Create Payload is a complete document, so the row it buffers always names
     # its own object by the time validation has admitted it.

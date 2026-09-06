@@ -225,7 +225,9 @@ or leaves the skip map, no case changes lane, and no grade moves.
 **What.** `tx.insert(a)` exempts a later keyed write of `a` from the
 provenance rule, because a row this unit of work inserted is a row it stores. The
 exemption is keyed by the object and is retired only by a destructive keyed
-write of it, never by a flush. So the sequence
+write that cancels an insert of it still PENDING in the unit of work — never by
+a flush, and never by a destructive write after one, since a flushed insert is
+not pending. So the sequence
 `tx.insert(a)`, then a participating read that force-flushes the buffer, then a
 keyed write of that same object, resolves **no** evidence: the insert is no
 longer pending, the value the caller still holds carries no Source Hint, and the

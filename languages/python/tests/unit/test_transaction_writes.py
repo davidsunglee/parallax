@@ -1398,10 +1398,10 @@ def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert(
 
 
 def test_an_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() -> None:
-    # A `delete` of an object this transaction buffered an insert of cancels the
-    # pair — the flush emits nothing for it — and retires the object from the
-    # ledger at the verb, so the third verb is a FIRST opening rather than a
-    # repeat: admitted, and the one INSERT the transaction commits.
+    # A `delete` of an object this transaction holds a still-PENDING insert of
+    # cancels the pair — the flush emits nothing for it — and retires the object
+    # from the ledger at the verb, so the third verb is a FIRST opening rather
+    # than a repeat: admitted, and the one INSERT the transaction commits.
     port = ScriptedPort(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
@@ -1417,7 +1417,7 @@ def test_an_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() ->
 
 
 def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row() -> None:
-    # The same retirement read from the exemption's side: with the pair
+    # The same retirement read from the exemption's side: with the pending pair
     # cancelled the transaction holds no insert of the object, so an update of
     # it is a write of a row nothing stores and is refused as one — rather than
     # admitted as an UPDATE of a row the store will never hold.
@@ -1433,6 +1433,79 @@ def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row(
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
+
+
+def test_an_insert_after_a_delete_of_a_flushed_insert_is_still_refused_as_a_repeat() -> None:
+    # The other side of the pending condition. A participating read force-flushes
+    # the insert, so the `delete` after it cancels NOTHING — the row exists and
+    # the DELETE will be issued against it — and the object stays in the ledger.
+    # A third verb opening it again is a repeat, refused at the verb: the flush
+    # emits every surviving insert ahead of every delete, so admitting it would
+    # send a second INSERT of one primary key to the database ahead of the
+    # DELETE that was supposed to clear the way.
+    port = ScriptedPort(Transact(Write(), Read(rows=[{"id": 9, "name": "Newton"}]), Write(times=3)))
+
+    def fn(tx: Transaction) -> None:
+        fresh = mm.Person(id=9, name="Newton")
+        tx.insert(fresh)
+        tx.find(Person.where(Person.id == 9)).result()
+        tx.delete(fresh)
+        tx.insert(fresh)
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db_for(PERSON, port).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    assert [op for op in port.calls if isinstance(op, WriteCall)] == [
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Newton"))
+    ]
+
+
+def test_an_insert_after_a_terminate_until_of_a_pending_insert_opens_the_row_again() -> None:
+    # `terminate_until` removes a bounded Valid-Time window and preserves head
+    # and tail of an EXISTING row, but against a still-pending insert there is
+    # no such row: the flush annihilates the pair whole, window-blind, exactly
+    # as it does for `delete`. The re-opening is therefore admitted and the
+    # transaction commits one INSERT.
+    port = ScriptedPort(Transact(Write(times=6)))
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+    opened_from = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        fresh = WherePosition(id=1, acct_num="A", value=Decimal("100.00"))
+        tx.insert(fresh, valid_from=opened_from)
+        tx.terminate_until(fresh, valid_from=valid_from, until=until)
+        tx.insert(fresh, valid_from=opened_from)
+
+    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert len(writes) == 1
+    assert writes[0].sql.startswith("insert into")
+
+
+def test_an_insert_after_a_terminate_until_of_a_flushed_insert_is_still_refused() -> None:
+    # The same verb over a row the flush already wrote holes only
+    # `[valid_from, until)` and preserves head and tail (m-bitemp-write), so the
+    # object is anything but absent — and the ledger keeps it, because the
+    # insert it holds is no longer pending. The re-opening is a repeat.
+    port = ScriptedPort(Transact(Write(), Read(rows=[_position_row_dt()]), Write(times=6)))
+    valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+    opened_from = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        fresh = WherePosition(id=1, acct_num="A", value=Decimal("100.00"))
+        tx.insert(fresh, valid_from=opened_from)
+        tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)).result()
+        tx.terminate_until(fresh, valid_from=valid_from, until=until)
+        tx.insert(fresh, valid_from=opened_from)
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    writes = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert len(writes) == 1
+    assert writes[0].sql.startswith("insert into")
 
 
 def test_an_insert_after_a_cancelled_insert_terminate_pair_opens_the_milestone_again() -> None:

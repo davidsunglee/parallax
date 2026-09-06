@@ -349,7 +349,8 @@ class ClaimLedger(Protocol):
 
 
 class BufferedInserts:
-    """The objects one transaction holds a buffered insert of.
+    """The objects one transaction holds a buffered insert of, and which
+    interface opened each.
 
     Shared by BOTH keyed doors rather than kept per representation: a Typed
     insert followed by a Wire update of the same object is one
@@ -363,14 +364,23 @@ class BufferedInserts:
     that same row is already opening, so a second insert of its object names a
     row already held (:func:`refuse_repeated_insert`).
 
+    The refusal also needs the OPENER's representation, which is why an entry is
+    a :data:`WriteRepresentation` and not merely presence: the way out of a
+    repeat is the update verb over the carrier the first insert produced, and
+    only the interface that opened the row has one. Selecting that spelling from
+    the refusing call instead would name a Wire node after a Typed insert
+    answered none, and a Typed ``.edit`` after a Wire insert took a mapping.
+
     An object leaves it by one route, :meth:`retire`, taken when a destructive
-    keyed write of that object is buffered: the flush annihilates the pair and
-    emits nothing for the object (`m-unit-work` "Insert-then-delete cancels"),
-    so from that verb on the transaction holds no insert of it, a later insert
-    is a first opening, and a later update addresses nothing. A flush retires
-    nothing — the row it wrote is a row this transaction stores, and what a
-    write of it then owes is the question :func:`resolve_write_evidence` leaves
-    open.
+    keyed write cancels an insert of it that is still PENDING in the buffer: the
+    flush annihilates that pair and emits nothing for the object (`m-unit-work`
+    "Insert-then-delete cancels"), so from that verb on the transaction holds no
+    insert of it, a later insert is a first opening, and a later update
+    addresses nothing. A destructive write of an object whose insert already
+    flushed retires nothing — that row exists, and a second insert of it would
+    collide with it, since a flush emits every surviving insert ahead of every
+    delete. A flush retires nothing either, and what a write of a flushed row
+    then owes is the question :func:`resolve_write_evidence` leaves open.
 
     A member is the total reading :func:`written_object_of_row` answers for an
     identity row, never a row and never an
@@ -384,30 +394,35 @@ class BufferedInserts:
     __slots__ = ("_objects",)
 
     def __init__(self) -> None:
-        self._objects: set[WrittenObject | None] = set()
+        self._objects: dict[WrittenObject | None, WriteRepresentation] = {}
 
-    def record(self, written: WrittenObject | None) -> None:
-        """Record the object a just-buffered insert opens."""
-        self._objects.add(written)
+    def record(self, written: WrittenObject | None, opened_by: WriteRepresentation) -> None:
+        """Record the object a just-buffered insert opens, and the interface
+        that opened it."""
+        self._objects[written] = opened_by
 
-    def holds(self, written: WrittenObject | None) -> bool:
-        """Whether this transaction already buffered an insert of ``written``.
+    def opened_by(self, written: WrittenObject | None) -> WriteRepresentation | None:
+        """Which interface opened the insert this transaction holds of
+        ``written``, or ``None`` where it holds none.
 
-        ``None`` never matches: a value that names no object is no object this
-        transaction inserted.
+        ``None`` is the whole "not held" answer, and a value naming no object is
+        never held: a value that names no object is no object this transaction
+        inserted.
         """
-        return written is not None and written in self._objects
+        if written is None:
+            return None
+        return self._objects.get(written)
 
     def retire(self, written: WrittenObject | None) -> None:
         """Forget the object a just-buffered destructive write cancelled the
-        insert of.
+        pending insert of.
 
         Called once that write is in the buffer and never before: a refused
         write leaves the ledger as it found it, exactly as it leaves the claim
         ledger. Total over what :func:`written_object_of_row` answers — an
         object the ledger does not hold, and ``None``, retire nothing.
         """
-        self._objects.discard(written)
+        self._objects.pop(written, None)
 
 
 def keyed_instruction(
@@ -851,16 +866,22 @@ _REPEATED_INSERT_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
 }
 """How each interface spells the verb that revises a row this transaction opened.
 
-Both name the carrier the FIRST insert produced rather than the value just
-refused, because the two need not be the same object at all: two instances of one
-primary key open one row, and an edit of the refused instance authors its change
-against a value nothing buffered, so following that advice would commit the first
-insert unaltered. A payload is no keyed source either, so what a Wire caller
-revises the row through is the node that first insert answered.
+Keyed by the interface that OPENED the row, never by the one being refused, and
+naming the carrier that first insert produced rather than the value just refused.
+Two things force both halves. The two values need not be the same object at all —
+two instances of one primary key open one row, and an edit of the refused
+instance authors its change against a value nothing buffered, so following that
+advice would commit the first insert unaltered. And only the opener has a carrier
+to name: ``tx.insert`` answers nothing and leaves the caller holding the instance
+it passed, while ``tx.wire.insert`` answers a frozen node and took a mapping that
+is no keyed source. Selecting by the refusing call would therefore send a Wire
+caller to a node no Typed insert produced, and a Typed caller to ``.edit`` on a
+payload that has no such method.
 
 The already-stored refusal keeps its own advice
 (:data:`_ALREADY_STORED_ADVICE`), where the value handed in IS the stored one and
-editing it is the whole repair."""
+editing it is the whole repair — so it is the refusing call's spelling, because
+there is no earlier insert whose carrier could be named instead."""
 
 
 def validate_provenance(
@@ -949,42 +970,43 @@ def refuse_repeated_insert(
     identity: EntityIdentity,
     mutation: KeyedMutation,
     *,
-    inserted: bool,
-    representation: WriteRepresentation,
+    opened_by: WriteRepresentation | None,
 ) -> None:
     """Refuse an insert of an object this transaction already buffered an insert
     of, whichever value spells the repeat and whichever representation opened
     the row.
 
     The insert family's half of read-your-own-writes, read off the same ledger
-    whose ``True`` lifts ``write-value-not-stored`` from an update: a row this
+    whose entry lifts ``write-value-not-stored`` from an update: a row this
     unit of work opens is a row it stores, so a second opening of it names a row
     already held, exactly as a value this store published does — and it carries
     that value's code, because what is wrong is the same thing. `m-unit-work`'s
     coalescing rules name insert-then-update and insert-then-delete and are
     silent on insert-then-insert, whose only other outcome is the database
-    refusing the pair at commit; the verb answers instead, and names the update
-    verb the caller reaches for in the interface they called
-    (:data:`WriteRepresentation`).
+    refusing the pair at commit; the verb answers instead.
 
-    ``inserted`` is the ledger's answer for the object the PREPARED row names
+    ``opened_by`` is the ledger's answer for the object the PREPARED row names
     (:func:`written_object_of_row`), which is why this stands after preparation
     rather than beside the provenance question: a Wire payload's key members are
     canonical only once its row is prepared. A Typed instance could answer
     earlier and does not, so both representations hear pin, provenance, window,
-    and preparation ahead of this. The answer is about an insert that still
-    STANDS buffered: a destructive write that cancelled the pair retired the
-    object (:meth:`BufferedInserts.retire`), so an insert after it is a first
-    opening and is not refused.
+    and preparation ahead of this. ``None`` is the whole "not held" answer, so
+    the refusal and the spelling of the way out come from one reading: the
+    advice names the update verb over the carrier the OPENING interface produced
+    (:data:`_REPEATED_INSERT_ADVICE`), which is the only carrier that exists,
+    and the refusing call's own interface never decides it. The answer is about
+    an insert that still STANDS buffered: a destructive write that cancelled a
+    pending pair retired the object (:meth:`BufferedInserts.retire`), so an
+    insert after it is a first opening and is not refused.
     """
-    if not inserted:
+    if opened_by is None:
         return
     raise KeyedWriteValueError(
         code="write-value-already-stored",
         message=(
             f"{identity.canonical}: {mutation!r} was handed a value naming an object this "
             "transaction already buffered an insert of, so there is no row to open; "
-            f"{_REPEATED_INSERT_ADVICE[representation]}"
+            f"{_REPEATED_INSERT_ADVICE[opened_by]}"
         ),
         identity=identity,
     )

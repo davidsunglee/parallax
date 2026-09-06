@@ -1165,9 +1165,10 @@ def test_a_wire_delete_of_a_row_the_same_unit_inserted_cancels_to_no_dml() -> No
 
 
 def test_a_wire_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() -> None:
-    # The delete of the opened node retires the object from the one ledger, so
-    # the payload stated again is a first opening rather than the repeat the
-    # ledger refuses: one INSERT, and it is the second one's values.
+    # The delete of the opened node cancels an insert still pending in the
+    # buffer, so it retires the object from the one ledger and the payload stated
+    # again is a first opening rather than the repeat the ledger refuses: one
+    # INSERT, and it is the second one's values.
     port = ScriptedPort(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
@@ -1235,32 +1236,51 @@ def test_an_insert_refuses_the_payload_a_previous_insert_opened_a_row_with() -> 
 
 def test_a_wire_insert_of_an_object_a_typed_insert_opened_is_refused() -> None:
     # One ledger, read from the insert side: the Typed verb recorded the object,
-    # and the Wire payload naming it is a second opening.
-    port = ScriptedPort(Transact())
+    # and the Wire payload naming it is a second opening. The advice is the
+    # TYPED one although the Wire verb was refused, because the way out is the
+    # update verb over the carrier the first insert produced and only the opener
+    # has one — `tx.insert` answers nothing, so there is no Wire node to name.
+    # Following it commits the recovered value as the one INSERT.
+    port = ScriptedPort(Transact(Write()))
+    refused: list[str] = []
 
     def fn(tx: Transaction) -> None:
-        tx.insert(mm.Person(id=9, name="Newton"))
-        tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+        inserted = mm.Person(id=9, name="Newton")
+        tx.insert(inserted)
+        try:
+            tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Grace"})
+        except KeyedWriteValueError as refusal:
+            refused.append(refusal.message)
+            tx.update(inserted.edit(name="Grace"))
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
-        db_for(PERSON, port).transact(fn)
-    assert refusal.value.code == "write-value-already-stored"
-    assert "tx.wire.update(opened, {...})" in refusal.value.message
-    assert _writes(port) == []
+    db_for(PERSON, port).transact(fn)
+    assert "tx.update(inserted.edit(...))" in refused[0]
+    assert _writes(port) == [
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
+    ]
 
 
 def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
-    port = ScriptedPort(Transact())
+    # The mirror, and the mirror of the advice: the Wire insert answered a node,
+    # so the refused Typed caller is sent to `tx.wire.update` over it — the
+    # payload the first insert took is a mapping with no `.edit`. Following the
+    # advice commits the recovered value as the one INSERT.
+    port = ScriptedPort(Transact(Write()))
+    refused: list[str] = []
 
     def fn(tx: Transaction) -> None:
-        tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
-        tx.insert(mm.Person(id=9, name="Newton"))
+        opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+        try:
+            tx.insert(mm.Person(id=9, name="Grace"))
+        except KeyedWriteValueError as refusal:
+            refused.append(refusal.message)
+            tx.wire.update(opened, {"name": "Grace"})
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
-        db_for(PERSON, port).transact(fn)
-    assert refusal.value.code == "write-value-already-stored"
-    assert "tx.update(inserted.edit(...))" in refusal.value.message
-    assert _writes(port) == []
+    db_for(PERSON, port).transact(fn)
+    assert "tx.wire.update(opened, {...})" in refused[0]
+    assert _writes(port) == [
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
+    ]
 
 
 def test_a_typed_update_of_a_row_a_wire_insert_opened_coalesces_in_place() -> None:

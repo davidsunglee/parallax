@@ -44,9 +44,11 @@ from weakref import WeakValueDictionary
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.claims import ClaimScope, ClaimTable, ClaimVerdict, WriteIntent
 from parallax.core.unit_work.clock import Clock, TransactionInstant
-from parallax.core.unit_work.materialized import BufferItem
+from parallax.core.unit_work.instructions import DESTRUCTIVE_MUTATIONS, INSERT_MUTATIONS
+from parallax.core.unit_work.materialized import BufferItem, buffered_instruction
 from parallax.core.unit_work.plan import WritePlan
-from parallax.core.unit_work.planner import ObservedStateKey
+from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey, Targets, resolve_object_key
+from parallax.core.unit_work.planner import targets as resolved_targets
 from parallax.core.unit_work.retain import ParticipationToken, RetainedObservation
 from parallax.core.unit_work.strategy import Concurrency
 from parallax.core.unit_work.write_planner import PlanningRequest, SubjectIdentity, WritePlanner
@@ -176,10 +178,12 @@ class UnitOfWork:
         "_frame_depth",
         "_observations",
         "_participation",
+        "_pending_inserts",
         "_planner",
         "_rollback_cause",
         "_rollback_only",
         "_subject_identity",
+        "_targets",
         "_transaction_instant",
         "clock",
         "companion",
@@ -232,6 +236,17 @@ class UnitOfWork:
         # a flush spends what it planned, so what a later write may claim
         # is decided by what is still pending.
         self._claims = ClaimTable()
+        # The objects the buffer currently holds an unflushed insert of: the
+        # planner's own `pending_insert` map, kept live as writes arrive instead
+        # of rebuilt when they are planned. `buffer` and `_coalesce` read the
+        # SAME two mutation families over the same object key, so a verb asking
+        # what the flush will do with an insert cannot be told one thing while
+        # the flush does another.
+        self._pending_inserts: set[ObjectKey] = set()
+        # Key resolution needs the flush context the planner builds per flush;
+        # the Metamodel is fixed for this scope's life, so it is built once, on
+        # the first keyed write, and never for a scope that only reads.
+        self._targets: Targets | None = None
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
         # disappears with the last of them (`m-unit-work` "Observation lifetime").
@@ -278,9 +293,44 @@ class UnitOfWork:
         the source value it came from, and what a successful flush spends it
         through. A write the flush's earlier stages retire takes its claim out
         of that flush with it.
+
+        Buffering also maintains :meth:`pending_insert`: an insert records the
+        object it opens and a destructive write of that object discards it,
+        which is the cancellation the flush will perform, recognized at the
+        moment the pair is complete rather than when it is planned.
         """
         self._ensure_open()
         self._buffer.append(instruction)
+        self._track_pending_insert(instruction)
+
+    def pending_insert(self, key: ObjectKey) -> bool:
+        """Whether this buffer holds an insert of ``key`` that no destructive
+        write has cancelled and no flush has emitted.
+
+        The frontend's question when it has to know what the flush would do with
+        an insert that is still the flush's to decide — which is only true while
+        the insert is unflushed, because a flush plans the buffer it has and
+        leaves nothing pending. It answers about the BUFFER, so it is not the
+        question "did this transaction insert this object", which the writes
+        that have already reached the database are also part of.
+        """
+        self._ensure_open()
+        return key in self._pending_inserts
+
+    def _track_pending_insert(self, item: BufferItem) -> None:
+        instruction = buffered_instruction(item)
+        mutation = instruction.mutation
+        if mutation not in INSERT_MUTATIONS and mutation not in DESTRUCTIVE_MUTATIONS:
+            return
+        if self._targets is None:
+            self._targets = resolved_targets(self.meta)
+        key = resolve_object_key(instruction, self._targets)
+        if key is None:
+            return
+        if mutation in INSERT_MUTATIONS:
+            self._pending_inserts.add(key)
+        else:
+            self._pending_inserts.discard(key)
 
     def claim(self, key: ClaimScope, intent: WriteIntent) -> ClaimVerdict:
         """Take ``intent``'s claim at the scope ``key`` names, answering
@@ -395,6 +445,7 @@ class UnitOfWork:
         finalized = self._planner.finalize(request)
         self._buffer.clear()
         self._claims.clear()
+        self._pending_inserts.clear()
         self.flush_executor(finalized.plan, trigger=trigger)
         for claim in finalized.claims:
             claim.consume()
@@ -429,6 +480,7 @@ class UnitOfWork:
         # survives, so evidence a later scope is handed is still about stored state.
         self._buffer.clear()
         self._claims.clear()
+        self._pending_inserts.clear()
         self._observations.clear()
 
     def run_outermost[T](self, body: Callable[[UnitOfWork], T]) -> T:
