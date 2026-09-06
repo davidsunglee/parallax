@@ -403,7 +403,6 @@ class _Causes:
     later_rows: Mapping[EntityIdentity, Table]
     earlier_rows: Mapping[EntityIdentity, Table]
     later_ancestry: Mapping[EntityIdentity, frozenset[EntityIdentity]]
-    earlier_ancestry: Mapping[EntityIdentity, frozenset[EntityIdentity]]
     later_materialized: Mapping[EntityIdentity, frozenset[Table]]
     earlier_held: Mapping[Table, frozenset[EntityIdentity]]
     earlier_parents: Mapping[EntityIdentity, EntityIdentity]
@@ -418,7 +417,6 @@ class _Causes:
             later_rows=later.rows(),
             earlier_rows={} if earlier is None else earlier.rows(),
             later_ancestry=later.ancestry(),
-            earlier_ancestry={} if earlier is None else earlier.ancestry(),
             later_materialized=later.materialized(),
             earlier_held={} if earlier is None else earlier.holds(),
             earlier_parents={} if earlier is None else earlier.parents(),
@@ -467,12 +465,13 @@ class _Causes:
         surviving Table's question — did this Table already hold that position? —
         has no answer here, and asking it anyway names every reparent beneath
         every owner the new Table happens to hold. What a reparent can have
-        changed is where the Entity it moved stands, so the baseline is that
-        Entity's own earlier ancestry: the move carried ``owner`` here only when
-        the Entity did not already stand under ``owner`` before moving, and would
-        not stand under it still had it stayed where it was. A move within
-        ``owner``'s subtree leaves the created Table under exactly the declaring
-        positions it would have held anyway.
+        changed is where the Entity it moved stands, so that is the whole
+        question here: the move carried ``owner`` into this Table when the Table
+        materializes the moved Entity's declarations and the Entity would not
+        stand under ``owner`` had it stayed where it was. Where the Entity stood
+        BEFORE decides nothing — the position it left may itself have moved out
+        from under ``owner``, and then staying would have left the created Table
+        without ``owner``'s Columns.
         """
         return (
             isinstance(operation, EntityAltered)
@@ -480,25 +479,34 @@ class _Causes:
             and self._moved_under(operation, owner)
             and table in self.later_materialized.get(operation.entity, frozenset())
             and owner in self.later_ancestry.get(operation.entity, frozenset())
-            and owner not in self.earlier_ancestry.get(operation.entity, frozenset())
         )
 
     def _moved_under(self, operation: EntityAltered, owner: EntityIdentity) -> bool:
         """Whether the edge THIS alteration changed is why its Entity stands under ``owner``.
 
-        Neither endpoint's ancestry can answer that, because one evolution moves
-        as many positions as it likes: an Entity whose own ancestor moved stands
-        under a declaring owner it did not stand under before, having carried
-        nothing anywhere itself, and both alterations would be named for the one
-        move. An ancestry is transitive and so carries every other move in it;
-        the edge THIS alteration replaced is the Entity's own earlier parent. So
-        the position the Entity left is that one edge, and what stands over that
-        position is read from the LATER model: had this Entity stayed there, it
-        would stand under whatever stands over it now. An Entity that stood under
-        nothing, a former family root, took its whole ancestry from the move.
+        The question is what the Entity would stand under had this alteration not
+        happened. Neither endpoint's ancestry answers it, because one evolution
+        moves as many positions as it likes: an ancestry is transitive and so
+        carries every other move in it, and reading one names an Entity whose own
+        ancestor moved for a position it carried nowhere itself — or clears an
+        Entity that did carry one, because the position it left has since moved
+        away. The edge THIS alteration replaced is the Entity's own earlier
+        parent, which no other Entity's move can change.
+
+        So the counterfactual ancestry is the Entity's own position, which no move
+        takes from it, together with whatever stands over the position it left,
+        read from the LATER model: had it stayed there, it would be carried
+        wherever that position went. The alteration carried ``owner`` exactly when
+        that ancestry does not already hold it — so a reparent is never why a
+        Table materializes the moved Entity's OWN declarations, and one that left
+        a position still standing under ``owner`` carried nothing. An Entity that
+        stood under nothing, a former family root, took its whole ancestry from
+        the move.
         """
         vacated = self.earlier_parents.get(operation.entity)
-        return vacated is None or owner not in self.later_ancestry.get(vacated, frozenset())
+        return owner != operation.entity and (
+            vacated is None or owner not in self.later_ancestry.get(vacated, frozenset())
+        )
 
     def column(self, table: Table, slot: ColumnSlot) -> tuple[EvolutionOperation, ...]:
         """Why ``slot``'s Column is in ``table`` now and was not before.
@@ -559,10 +567,10 @@ class _Causes:
         The reparented Entity carries ``owner``'s position into ``table`` when
         its own move put it under ``owner`` and ``table`` materializes its
         declarations — but that carries nothing to a Table already materializing
-        that position for anything else, whether a sibling left where it was, an
-        ancestry the Entity already stood under, or the Entity's own position.
-        Such a Table was going to hold this Column however the reparent went, so
-        the question is asked of the Table and never of the Entity that moved.
+        that position for anything else, whether a sibling left where it was or
+        an ancestry the Entity already stood under. Such a Table was going to
+        hold this Column however the reparent went, so the question is asked of
+        the Table and never of the Entity that moved.
 
         The decisive clause reads what ``table`` held earlier, so it answers only
         for a Table both endpoints hold; a Table created here is asked
