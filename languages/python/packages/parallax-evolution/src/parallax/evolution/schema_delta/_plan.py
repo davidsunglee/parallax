@@ -39,6 +39,7 @@ from parallax.core.metamodel import (
     Table,
     ValueObjectIdentity,
     derive_primary_key_index,
+    inheritance_parent,
 )
 from parallax.core.storage_layout import (
     ColumnSlot,
@@ -203,6 +204,19 @@ class _Endpoint:
             entity.identity: frozenset(view.ancestry)
             for entity in self.model.entities
             if (view := self.family.entity(entity.identity)) is not None
+        }
+
+    def parents(self) -> Mapping[EntityIdentity, EntityIdentity]:
+        """The one position each Entity extends; absent for one extending nothing.
+
+        This is the single edge an inheritance alteration replaces, and unlike an
+        ancestry it is the Entity's own recorded fact: no other Entity's move
+        changes it.
+        """
+        return {
+            entity.identity: parent
+            for entity in self.model.entities
+            if (parent := inheritance_parent(entity.inheritance)) is not None
         }
 
     def materialized(self) -> Mapping[EntityIdentity, frozenset[Table]]:
@@ -392,6 +406,7 @@ class _Causes:
     earlier_ancestry: Mapping[EntityIdentity, frozenset[EntityIdentity]]
     later_materialized: Mapping[EntityIdentity, frozenset[Table]]
     earlier_held: Mapping[Table, frozenset[EntityIdentity]]
+    earlier_parents: Mapping[EntityIdentity, EntityIdentity]
     declared_in: Mapping[Table, frozenset[EntityIdentity]]
 
     @staticmethod
@@ -406,6 +421,7 @@ class _Causes:
             earlier_ancestry={} if earlier is None else earlier.ancestry(),
             later_materialized=later.materialized(),
             earlier_held={} if earlier is None else earlier.holds(),
+            earlier_parents={} if earlier is None else earlier.parents(),
             declared_in={
                 layout.table: frozenset(slot.declaring_owner for slot in layout.columns)
                 for layout in later.facet.tables
@@ -453,17 +469,36 @@ class _Causes:
         every owner the new Table happens to hold. What a reparent can have
         changed is where the Entity it moved stands, so the baseline is that
         Entity's own earlier ancestry: the move carried ``owner`` here only when
-        the Entity did not already stand under ``owner`` before moving. A move
-        within ``owner``'s subtree leaves the created Table under exactly the
-        declaring positions it would have held anyway.
+        the Entity did not already stand under ``owner`` before moving, and would
+        not stand under it still had it stayed where it was. A move within
+        ``owner``'s subtree leaves the created Table under exactly the declaring
+        positions it would have held anyway.
         """
         return (
             isinstance(operation, EntityAltered)
             and _reparents(operation)
+            and self._moved_under(operation, owner)
             and table in self.later_materialized.get(operation.entity, frozenset())
             and owner in self.later_ancestry.get(operation.entity, frozenset())
             and owner not in self.earlier_ancestry.get(operation.entity, frozenset())
         )
+
+    def _moved_under(self, operation: EntityAltered, owner: EntityIdentity) -> bool:
+        """Whether the edge THIS alteration changed is why its Entity stands under ``owner``.
+
+        Neither endpoint's ancestry can answer that, because one evolution moves
+        as many positions as it likes: an Entity whose own ancestor moved stands
+        under a declaring owner it did not stand under before, having carried
+        nothing anywhere itself, and both alterations would be named for the one
+        move. An ancestry is transitive and so carries every other move in it;
+        the edge THIS alteration replaced is the Entity's own earlier parent. So
+        the position the Entity left is that one edge, and what stands over that
+        position is read from the LATER model: had this Entity stayed there, it
+        would stand under whatever stands over it now. An Entity that stood under
+        nothing, a former family root, took its whole ancestry from the move.
+        """
+        vacated = self.earlier_parents.get(operation.entity)
+        return vacated is None or owner not in self.later_ancestry.get(vacated, frozenset())
 
     def column(self, table: Table, slot: ColumnSlot) -> tuple[EvolutionOperation, ...]:
         """Why ``slot``'s Column is in ``table`` now and was not before.
@@ -521,8 +556,8 @@ class _Causes:
     ) -> bool:
         """Whether ``operation`` is why a surviving ``table`` materializes ``owner``.
 
-        The reparented Entity carries ``owner``'s position into ``table`` when it
-        stands under ``owner`` after the move and ``table`` materializes its
+        The reparented Entity carries ``owner``'s position into ``table`` when
+        its own move put it under ``owner`` and ``table`` materializes its
         declarations — but that carries nothing to a Table already materializing
         that position for anything else, whether a sibling left where it was, an
         ancestry the Entity already stood under, or the Entity's own position.
@@ -536,6 +571,7 @@ class _Causes:
         return (
             isinstance(operation, EntityAltered)
             and _reparents(operation)
+            and self._moved_under(operation, owner)
             and owner in self.later_ancestry.get(operation.entity, frozenset())
             and table in self.later_materialized.get(operation.entity, frozenset())
             and owner not in self.earlier_held.get(table, frozenset())
