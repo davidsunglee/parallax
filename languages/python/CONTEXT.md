@@ -213,8 +213,8 @@ something a consumer reads off the mapping rather than assuming, and the mapping
 the same document the Typed value of that row serializes to.
 It may retain a core Source Hint privately without changing its mapping value.
 The hint identifies the concrete Entity and original Object Key and optionally
-an exact observed state; an unversioned Non-Temporal source has no observed
-state.
+an exact observed state; an unversioned Non-Temporal source and the node
+`tx.wire.insert` opened a row with have none.
 The returned mapping and every nested dictionary or list are frozen; ordinary
 mutation raises `TypeError`. They retain ordinary structural equality with
 plain dictionaries and lists and remain unhashable. Only the verb's separate
@@ -226,11 +226,12 @@ Hint; decoding returns plain dictionaries and lists. A keyed Wire verb accepts
 only a frozen value Parallax published — a Wire read's result, or the node
 `tx.wire.insert` answered for the row it opened; an ordinary mapping is
 malformed source input and must be reread before writing. Every existing-object
-keyed write requires an authentic Parallax source, and one this transaction's
-own insert opened is licensed by that buffered insert rather than by an
-observation. Under the source Entity's effective Locking strategy that
-source must have participated in the current transaction, proving that it
-acquired and still holds the shared row lock. Under its effective Optimistic strategy an authentic
+keyed write requires an authentic Parallax source, and a write naming an object
+this transaction's own insert opened resolves no evidence at all: that buffered
+insert licenses it. Every other keyed write resolves evidence under the source
+Entity's effective concurrency strategy. Under an effective Locking strategy
+that source must have participated in the current transaction, proving that it
+acquired and still holds the shared row lock. Under an effective Optimistic strategy an authentic
 versioned or temporal source from `db.wire.find` may instead contribute its
 privately retained version or milestone evidence; the emitted database gate
 detects intervening writes. An unversioned Non-Temporal source has no optimistic

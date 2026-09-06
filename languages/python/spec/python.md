@@ -4151,7 +4151,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   produced — a read's result, or the value the insert that opened the row
   answered, whose write the buffered insert licenses instead; neither an
   ordinary mapping nor a caller-authored version is evidence. The framework never issues an implicit resolving `SELECT` on behalf
-  of a keyed verb. After ordinary no-op and assignment legality rules, the target
+  of a keyed verb. After ordinary no-op and assignment legality rules, a write
+  naming an object this Unit Work has already buffered an insert of resolves no
+  evidence at all — that insert licenses it — and for every other the target
   Entity's Effective Concurrency Strategy decides what evidence that authentic
   source must supply. Under **Locking**, the source must have been read by this
   transaction through `tx.find` or `tx.wire.find`, proving that the current
@@ -4234,10 +4236,14 @@ These feature tests do not claim the deferred `benchmark` command or general
   (`insertForRecovery`, `purge`, `inactivateForArchiving`) sit outside the
   required parity surface and are not offered.
 - **A keyed write verb accepts a value by its provenance.** Which verbs accept
-  a given value is decided by which framework-managed source, if any, produced
-  it from a read (`m-unit-work` *Write value provenance*) — together with the
+  a given value is decided by which framework-managed source, if any, published
+  it — together with the
   read-your-own-writes exemption an object this transaction already buffered an
-  insert for earns — never by whether an author has since changed it. The three answers partition the values a verb
+  insert for earns — never by whether an author has since changed it.
+  `m-unit-work` *Write value provenance* states its three answers over the values
+  a **read** produced; the answer this binding derives is over the values a
+  managed source **published**, which on the Wire door includes the node
+  `tx.wire.insert` opened a row with. The three answers partition the values a verb
   can be handed, so a refused value carries exactly one code of exported
   `KEYED_WRITE_VALUE_CODES` on exported `KeyedWriteValueError` — a `ValueError`
   for the reason `TransactionTimePinReadOnlyError` is one, since both refuse a
@@ -4245,7 +4251,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   reached from `parallax.snapshot` and from `parallax.snapshot.handle`: a
   developer catches the class on the ordinary `connect` / `transact` path, and
   names the codes from the module they caught it in. `update` / `update_until`
-  handed a value **no** read of this store produced raise
+  handed a value **no** source of this store published raise
   `write-value-not-stored`, whose message names `tx.insert(...)`; `insert` /
   `insert_until` handed a value this store already published — from its own
   read, or from an insert this transaction buffered — raise
@@ -4253,7 +4259,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   interface the call arrived through — `value.edit(...)` and `tx.update(...)`
   where a Typed verb was handed it, `tx.wire.update(value, {...})` where a Wire
   one was, since a caller reaches for the verb in the interface they called; and
-  both families refuse a value **another** framework-managed source produced with
+  both families refuse a value **another** framework-managed source published with
   `write-value-foreign-lifecycle`. The classifier's axis is which managed
   **lifecycle** attached the value's state, never which `Database` issued the
   read: every `Database` over one store shares this one lifecycle, so a value a
@@ -4263,8 +4269,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   than provenance's: an effective Locking strategy requires this transaction's
   participating read, while an effective Optimistic strategy may accept the
   authentic standalone source's retained version or milestone. On the **update**
-  side the two families now overlap — a value no managed read produced, and a
-  value another source produced, both carry no usable evidence either — and
+  side the two families now overlap — a value no managed source published, and a
+  value another source published, both carry no usable evidence either — and
   provenance keeps precedence because it is the more specific diagnosis: it names
   the verb that does accept the value rather than reporting only that evidence
   was missing. The **insert** side does not overlap at all: an insert observes no

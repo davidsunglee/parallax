@@ -252,8 +252,11 @@ def wire_keyed_write(
     ``observed`` is a frozen Entity mapping Parallax published for the row, from
     a read or from the insert that opened it; its private Source Hint supplies
     the concrete Entity, the object the write addresses, the pin the source
-    stands at, and the evidence the target Entity's Effective Concurrency
-    Strategy weighs. ``changes`` is the authored
+    stands at, and — where a read published it — the evidence the target
+    Entity's Effective Concurrency Strategy weighs. A write naming an object this
+    transaction already buffered an insert of resolves no evidence at all: that
+    insert licenses it, and the hint the insert door filed carries none.
+    ``changes`` is the authored
     assignment document for the update family and absent for the destructive
     and close verbs, which key off the source alone.
 
@@ -652,9 +655,9 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
             f"a keyed `{mutation}` on `tx.wire` takes a frozen Entity mapping Parallax "
             f"published — a `tx.wire.find` result, or the node `tx.wire.insert` answered — and "
             f"{type(observed).__name__} carries no such provenance: an ordinary mapping, a "
-            "`dict(...)` conversion, and a serialized round trip all lose the identity and "
-            "evidence a keyed write is addressed and licensed by; read the row through "
-            "`tx.wire.find` and write what it returned"
+            "`dict(...)` conversion, and a serialized round trip all lose the identity a "
+            "keyed write is addressed by and the evidence or buffered insert that licenses "
+            "it; read the row through `tx.wire.find` and write what it returned"
         )
     assert isinstance(observed, WireEntity)  # a hint rides an Entity node alone
     return observed, hint
