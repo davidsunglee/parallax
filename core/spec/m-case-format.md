@@ -1047,20 +1047,19 @@ table state shows which rows changed or were removed.
 
 #### Resolving reads a write owes
 
-A keyed write against an **existing** row is licensed in exactly one of two ways
-(`m-unit-work` *Write value provenance*): by a value **a managed read of the
-source this verb writes through produced**, or — for a row this unit of work has
-itself inserted — by the **object-keyed buffered-insert exemption**, whose value
-keeps the `NotStored` provenance because no read produced it and which no other
-unit of work's buffer can lift. An `insert` is licensed by no source value at
-all: it opens a row rather than revising one. Only the first of the two is a
-read, and a source is **not** a transaction, so that read need not run inside the
+`then.roundTrips` counts every call that reached the database, so a case's total
+is the DML it authors plus the **resolving reads** its choreography owes — the
+reads a unit runs to hold the state it writes against. This section states how
+many of those a case document accounts for and where they run, never what
+entitles a verb to write: `m-unit-work` *Write value provenance* owns which
+values a value-taking verb accepts, and *Write Observation* with the evidence
+rules beside it owns what a surviving write against existing state retains,
+which is what `delete`, `terminate`, and `terminateUntil` answer to — those
+verbs take no position on provenance at all.
+
+A source is **not** a transaction, so a resolving read need not run inside the
 unit that writes; *where* it runs is settled per shape below and never decides
-whether it is owed. What every shape shares is that a write against **existing**
-state — state a read published, never state this unit of work opened itself —
-owes a read at all, so a choreography unit writing against existing state **reads
-that state first**, and `then.roundTrips` — which counts every call that reached
-the database — counts those reads beside the DML.
+whether it is owed.
 
 The count is structural, derivable from the case document and its model alone.
 For each choreography unit — one `writeSequence` entry, or one ungrouped scenario
@@ -1091,9 +1090,10 @@ their own `roundTrips`.
 
 A **non-temporal conflict attempt** owes one, and a `when.attempts` sequence owes
 one PER attempt, because every attempt settles against a state of its own
-(*Conflict cases*). That read stands OUTSIDE the transaction it licenses instead
-of inside it, which decides WHERE it happens and not whether it counts. A
-temporal close settles against a coordinate the case names and owes none.
+(*Conflict cases*). That read stands OUTSIDE the transaction whose attempt it
+feeds instead of inside it, which decides WHERE it happens and not whether it
+counts. A temporal close settles against a coordinate the case names and owes
+none.
 
 A resolving read is counted and never authored: `then.statements` is the DML a
 case states, so no resolving read appears in it, and none names a statement
