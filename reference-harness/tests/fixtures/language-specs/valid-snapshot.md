@@ -67,7 +67,7 @@ shared-node states remain distinct without issuing later SQL.
 | `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
 | `m-model-formation` | src/model-formation | model-formation | `m-metamodel` | depcheck.toml |
 | `m-model-evolution` | src/model-evolution | model-evolution | `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | depcheck.toml |
-| `m-schema-delta` | src/schema-delta | schema-delta | `m-model-evolution`, `m-metamodel`, `m-storage-layout`, `m-dialect` | depcheck.toml |
+| `m-schema-delta` | src/schema-delta | schema-delta | `m-model-evolution`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-dialect` | depcheck.toml |
 | `m-navigate` | src/navigate | navigate | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |
 | `m-object-query` | src/object-query | object-query | `m-predicate`, `m-metamodel`, `m-inheritance`, `m-wire` | depcheck.toml |
 | `m-predicate` | src/predicate | predicate | `m-metamodel`, `m-inheritance`, `m-wire` | depcheck.toml |

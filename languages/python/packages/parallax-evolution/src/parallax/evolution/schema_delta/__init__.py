@@ -12,6 +12,7 @@ later Model Edition is published only after every one of them succeeds.
 
 ``m-schema-delta`` depends on ``m-model-evolution`` for the description it
 lowers, on ``m-metamodel`` for the declarations an operation names, on
+``m-inheritance`` for the position each Table materializes, on
 ``m-storage-layout`` for every physical fact, and on ``m-dialect`` for the
 spellings. It branches on no dialect name: a Dialect value determines the whole
 output.

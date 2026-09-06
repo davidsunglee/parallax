@@ -4971,7 +4971,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-storage-layout` | `parallax.core.storage_layout` | `parallax.core.storage_layout` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-model-evolution` | `parallax.evolution.model_evolution` | `parallax.evolution.model_evolution` | `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts + cross-package contract |
-| `m-schema-delta` | `parallax.evolution.schema_delta` | `parallax.evolution.schema_delta` | `m-model-evolution`, `m-metamodel`, `m-storage-layout`, `m-dialect` | generated forbidden contracts + cross-package contract |
+| `m-schema-delta` | `parallax.evolution.schema_delta` | `parallax.evolution.schema_delta` | `m-model-evolution`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-dialect` | generated forbidden contracts + cross-package contract |
 | `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-document-codec` | `parallax.core.document_codec` | `parallax.core.document_codec` | `m-core`, `m-metamodel`, `m-wire` | generated forbidden contracts |
 | `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
