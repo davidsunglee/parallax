@@ -54,10 +54,11 @@ question.
 What a caller authored and what the source published under those same names are
 converted by the one Wire decode, so the ingress weighs effectiveness over one
 carrier per value and no source decides its own. Judgement is asked of the
-authored side alone: the published side is state this store already wrote, and
-re-judging it would refuse a write for the very state it is addressed against —
-the correction of a row a read published as a hydratable classified record is
-that refusal's plainest victim. Caller-owned input is owned by preparation before
+authored side alone: the published side is persisted state rather than caller
+input, it is under no obligation to satisfy the accepted model, and judging it
+would refuse a write for the very state it is addressed against — the correction
+of a row a read published as a hydratable classified record is that refusal's
+plainest victim. Caller-owned input is owned by preparation before
 the verb returns: shape is validated without copying, and preparation converts
 and freezes the retained product in one traversal. A keyed source is already
 deeply frozen; the write retains only its identity, resolved evidence, and
@@ -431,11 +432,11 @@ def _published_originals(
     for, which is exactly the original a restoration of such a member is measured
     against — and is what the row would state back.
 
-    Decoded and judged by nothing. This store wrote these values, and judging
-    them again would refuse a write for the state it is addressed against: the
-    row a read published as a hydratable classified record is a keyed source, so
-    the write that CORRECTS the member its classification names has to reach the
-    buffer.
+    Decoded and judged by nothing. These are persisted values rather than caller
+    input, and they need not satisfy the accepted model: the row a read published
+    as a hydratable classified record is a keyed source, so judging them would
+    refuse the write that CORRECTS the member that classification names, which
+    has to reach the buffer.
     """
     published = {
         **_published_identity(source),
