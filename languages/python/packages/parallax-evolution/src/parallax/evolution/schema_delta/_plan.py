@@ -439,7 +439,11 @@ class _Causes:
         return tuple(
             operation
             for operation in self.operations
-            if self._adds_to(operation, table) or self._carries_any_position(operation, table)
+            if self._adds_to(operation, table)
+            or any(
+                self._carries_declarations(operation, table, owner)
+                for owner in self.declared_in.get(table, frozenset())
+            )
         )
 
     def _adds_to(self, operation: EvolutionOperation, table: Table) -> bool:
@@ -447,38 +451,6 @@ class _Causes:
         return isinstance(operation, (EntityAdded, ConcreteSubtypeAdded)) and (
             self.later_rows.get(operation.entity) == table
             or operation.entity in self.declared_in.get(table, frozenset())
-        )
-
-    def _carries_any_position(self, operation: EvolutionOperation, table: Table) -> bool:
-        """Whether ``operation`` is why a Table created here stands under a declaring owner."""
-        return any(
-            self._carries_position(operation, table, owner)
-            for owner in self.declared_in.get(table, frozenset())
-        )
-
-    def _carries_position(
-        self, operation: EvolutionOperation, table: Table, owner: EntityIdentity
-    ) -> bool:
-        """Whether ``operation`` is why a Table created here materializes ``owner``.
-
-        A Table that did not exist before materialized nothing before, so the
-        surviving Table's question — did this Table already hold that position? —
-        has no answer here, and asking it anyway names every reparent beneath
-        every owner the new Table happens to hold. What a reparent can have
-        changed is where the Entity it moved stands, so that is the whole
-        question here: the move carried ``owner`` into this Table when the Table
-        materializes the moved Entity's declarations and the Entity would not
-        stand under ``owner`` had it stayed where it was. Where the Entity stood
-        BEFORE decides nothing — the position it left may itself have moved out
-        from under ``owner``, and then staying would have left the created Table
-        without ``owner``'s Columns.
-        """
-        return (
-            isinstance(operation, EntityAltered)
-            and _reparents(operation)
-            and self._moved_under(operation, owner)
-            and table in self.later_materialized.get(operation.entity, frozenset())
-            and owner in self.later_ancestry.get(operation.entity, frozenset())
         )
 
     def _moved_under(self, operation: EntityAltered, owner: EntityIdentity) -> bool:
@@ -562,7 +534,7 @@ class _Causes:
     def _carries_declarations(
         self, operation: EvolutionOperation, table: Table, owner: EntityIdentity
     ) -> bool:
-        """Whether ``operation`` is why a surviving ``table`` materializes ``owner``.
+        """Whether ``operation`` is why ``table`` materializes ``owner``.
 
         The reparented Entity carries ``owner``'s position into ``table`` when
         its own move put it under ``owner`` and ``table`` materializes its
@@ -572,9 +544,10 @@ class _Causes:
         hold this Column however the reparent went, so the question is asked of
         the Table and never of the Entity that moved.
 
-        The decisive clause reads what ``table`` held earlier, so it answers only
-        for a Table both endpoints hold; a Table created here is asked
-        `_carries_position` instead.
+        A Table created here answers to this same rule rather than one of its
+        own: it materialized nothing before, so the last clause can only find
+        that it did not already hold the position, and the counterfactual decides
+        alone.
         """
         return (
             isinstance(operation, EntityAltered)
