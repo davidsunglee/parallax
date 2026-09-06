@@ -4294,7 +4294,28 @@ These feature tests do not claim the deferred `benchmark` command or general
   coalesces in place*) — the same read-your-own-writes provenance the bullet
   below grants a keyed temporal close. The exemption is keyed by the OBJECT,
   so a value naming a primary key this transaction never inserted is refused
-  exactly as any other value no read produced is. Which object a value names is
+  exactly as any other value no read produced is. **That exemption is one half
+  of read-your-own-writes, and the other half is a refusal**: an `insert` /
+  `insert_until` of an object this transaction already buffered an insert of is
+  refused `write-value-already-stored`, keyed by that same object, whichever
+  representation opened the row and whichever value spells the repeat — the
+  same Typed instance again, another instance of the same primary key, the same
+  Wire payload again, or the node the first Wire insert answered, which the
+  provenance answer already refuses under the same code. The rule is this
+  binding's rather than core's: `m-unit-work` names insert-then-update and
+  insert-then-delete and is silent on insert-then-insert, whose only other
+  outcome is the database refusing the pair at commit as a primary-key
+  violation, and the case format cannot author an accepted `insert` step, so no
+  corpus case can witness it. Core's provenance answer for a value an insert
+  returned is unchanged — no read produced it — because the ledger, not the
+  taxonomy, is what knows the row is already opening. The refusal stands after
+  preparation: a Wire payload's key members are canonical only once its row is
+  prepared, so pin, provenance, window, and preparation are all heard ahead of
+  it on both lanes. And it reads the same ledger the exemption reads, which is
+  never retired: a participating read that force-flushed the insert retires
+  nothing, so the row the store now holds is refused a second opening at the
+  verb rather than at commit, and an insert-then-delete pair that cancelled to
+  no DML leaves its object refused a third opening. Which object a value names is
   read off its own primary-key members rather than derived through the Entity Row
   Codec, because the refusal this exemption lifts is decided before any row
   exists. That reading is therefore TOTAL over every value whose key members
@@ -4574,10 +4595,12 @@ These feature tests do not claim the deferred `benchmark` command or general
   `insert_until` name a fresh value rather than one this store published, so
   there is no source to resolve and none is invented: the door they enter runs reentry;
   representation-only shape; the pin the value's own view carries; the provenance
-  the value itself states; window; member names, values, and preparation; then
-  buffer, recording the row it opened in the one ledger the exemption above
-  reads. An opening row observed nothing, so it reduces no effective change set,
-  resolves no evidence, and takes no claim. The pin precedes the provenance here
+  the value itself states; window; member names, values, and preparation; the
+  buffered-insert refusal, which asks the one ledger the exemption above reads
+  whether the object the PREPARED row names is already opening here; then
+  buffer, recording the row it opened in that same ledger. An opening row
+  observed nothing, so it reduces no effective change set, resolves no
+  evidence, and takes no claim. The pin precedes the provenance here
   where the order above places it after, and the difference is which refusals can
   stand over one value at once: a pinned value is one this store's own read
   published, so an insert handed one has both refusals coming and the read-only
@@ -4619,7 +4642,13 @@ These feature tests do not claim the deferred `benchmark` command or general
   an earlier insert answered — under the same `write-value-already-stored` code
   the Typed provenance rule uses — and answers
   that value's own view first, exactly as the Typed door does, so a payload a
-  pinned read published hears the read-only refusal instead.
+  pinned read published hears the read-only refusal instead. A fresh payload
+  naming an object this transaction already buffered an insert of — the same
+  payload twice, or a Typed insert's object restated as a document — is refused
+  under that code too, by the buffered-insert ledger once its row is prepared
+  rather than by provenance, since a document is no source; the advice names
+  `tx.wire.update(opened, {...})` over the node the first insert answered, the
+  only value a Wire caller can revise that row through.
 
   **Wire values are the accepted wire spellings of their declared types.** A
   changes document, an insert payload, and a predicate assignment all cross the

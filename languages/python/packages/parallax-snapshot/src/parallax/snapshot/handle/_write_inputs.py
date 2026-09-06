@@ -35,8 +35,10 @@ of a given question, and one buffer, behind every representation:
   (:func:`admit_and_buffer`, :func:`instruction_identity`), the question a
   wholly restoring edit asks before it decides whether it cancels anything
   (:func:`cancels_a_pending_assignment`), and the read-your-own-writes ledger
-  every ingress records into and reads (:class:`BufferedInserts`,
-  :func:`written_object_of_row`).
+  every ingress records into and both of its rules read — the exemption an
+  update earns and the refusal a repeated insert earns
+  (:class:`BufferedInserts`, :func:`written_object_of_row`,
+  :func:`refuse_repeated_insert`).
 
 Family facts come from the accepted Metamodel and its facets, reached through
 :mod:`parallax.snapshot.handle._family` as two SEMANTIC answers and no others:
@@ -126,6 +128,7 @@ __all__ = [
     "instruction_identity",
     "keyed_instruction",
     "metadata_of_instance",
+    "refuse_repeated_insert",
     "reject_temporal_delete",
     "resolve_write_evidence",
     "source_hint_of",
@@ -354,11 +357,17 @@ class ClaimLedger(Protocol):
 class BufferedInserts:
     """The objects one transaction has buffered an insert of.
 
-    Shared by BOTH keyed ingresses rather than kept per representation: a
-    Typed insert followed by a Wire update of the same object is one
-    read-your-own-writes pair, and so is the reverse, so the exemption has to be
-    one ledger or the two verbs would disagree about what this transaction
-    stores.
+    Shared by BOTH keyed doors rather than kept per representation: a Typed
+    insert followed by a Wire update of the same object is one
+    read-your-own-writes pair, and so is the reverse, so the ledger has to be
+    one or the two verbs would disagree about what this transaction stores.
+
+    Two rules read it, and they are the two halves of read-your-own-writes. A
+    write over existing state reads it for the EXEMPTION: a row this transaction
+    opened is a row it stores, so a value naming that object is not refused as
+    unstored (:func:`validate_provenance`). An insert reads it for the REFUSAL:
+    that same row is already opening, so a second insert of its object names a
+    row already held (:func:`refuse_repeated_insert`).
 
     A member is the total reading :func:`written_object_of_row` answers for an
     identity row, never a row and never an
@@ -816,6 +825,20 @@ source-backed door alone, and a Wire keyed source answers neither: a hintless
 argument is refused as no source at all before provenance is asked, so every
 source that reaches the question is a node this store published."""
 
+_REPEATED_INSERT_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
+    "typed": _ALREADY_STORED_ADVICE["typed"],
+    "wire": (
+        "write the change with `tx.wire.update(opened, {...})`, where `opened` is the node "
+        "the first insert answered"
+    ),
+}
+"""How each interface spells the verb that revises a row this transaction opened.
+
+The Typed spelling is the already-stored one, because the caller still holds the
+instance it inserted. The Wire spelling cannot be: what a Wire caller holds is
+the payload, and a payload is no keyed source, so the node the FIRST insert
+answered is the only value that names the buffered row to ``tx.wire.update``."""
+
 
 def validate_provenance(
     identity: EntityIdentity,
@@ -856,7 +879,10 @@ def validate_provenance(
     (:func:`source_identity_row`, :func:`written_object_of_row`), never through a
     row derived for the purpose, so a value whose class can key no row still
     reaches THIS refusal rather than an
-    :class:`~parallax.core.entity.EntityRowError` raised on its behalf.
+    :class:`~parallax.core.entity.EntityRowError` raised on its behalf. It is the
+    UPDATE family's exemption only: the insert family reads the same ledger for
+    the opposite verdict, and that refusal is :func:`refuse_repeated_insert`'s,
+    asked once the row is prepared rather than here.
     """
     if mutation not in UPDATE_MUTATIONS and mutation not in INSERT_MUTATIONS:
         return
@@ -894,6 +920,48 @@ def validate_provenance(
             ),
             identity=identity,
         )
+
+
+def refuse_repeated_insert(
+    identity: EntityIdentity,
+    mutation: KeyedMutation,
+    *,
+    inserted: bool,
+    representation: WriteRepresentation,
+) -> None:
+    """Refuse an insert of an object this transaction already buffered an insert
+    of, whichever value spells the repeat and whichever representation opened
+    the row.
+
+    The insert family's half of read-your-own-writes, read off the same ledger
+    whose ``True`` lifts ``write-value-not-stored`` from an update: a row this
+    unit of work opens is a row it stores, so a second opening of it names a row
+    already held, exactly as a value this store published does — and it carries
+    that value's code, because what is wrong is the same thing. `m-unit-work`'s
+    coalescing rules name insert-then-update and insert-then-delete and are
+    silent on insert-then-insert, whose only other outcome is the database
+    refusing the pair at commit; the verb answers instead, and names the update
+    verb the caller reaches for in the interface they called
+    (:data:`WriteRepresentation`).
+
+    ``inserted`` is the ledger's answer for the object the PREPARED row names
+    (:func:`written_object_of_row`), which is why this stands after preparation
+    rather than beside the provenance question: a Wire payload's key members are
+    canonical only once its row is prepared. A Typed instance could answer
+    earlier and does not, so both representations hear pin, provenance, window,
+    and preparation ahead of this.
+    """
+    if not inserted:
+        return
+    raise KeyedWriteValueError(
+        code="write-value-already-stored",
+        message=(
+            f"{identity.canonical}: {mutation!r} was handed a value naming an object this "
+            "transaction already buffered an insert of, so there is no row to open; "
+            f"{_REPEATED_INSERT_ADVICE[representation]}"
+        ),
+        identity=identity,
+    )
 
 
 def reject_temporal_delete(

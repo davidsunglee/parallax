@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-92**.
+Entry numbering is continuous and never reused. The next new number is **D-94**.
 
 ## Entries
 
@@ -231,7 +231,15 @@ longer pending, the value the caller still holds carries no Source Hint, and the
 write reaches settlement with nothing to advance from or gate on. A versioned
 target fails at settlement despite the transaction holding a perfectly fresh
 observation of the row the flush just wrote. It reproduces identically through
-both representations, because they share one buffer and one ledger.
+both representations, because they share one buffer and one ledger. The insert
+door reads that same ledger for the opposite verdict
+(`_write_inputs.refuse_repeated_insert`), so the non-retirement has a second
+face: after the flush the object can be neither written with evidence nor
+inserted again, and an insert-then-delete pair that cancelled to no DML leaves
+its object refused a third opening. Both are pinned as fixed expectations
+(`tests/unit/test_keyed_write_order.py`'s reread axis and
+`tests/unit/test_transaction_writes.py`), and both move with whatever answer
+retirement gets.
 
 **Why it is deferred rather than fixed.** It is an evidence-**lifetime** question
 rather than an ingress one: what has to be decided is when an insert's exemption
@@ -883,6 +891,56 @@ Which way that goes is a question about how much the seam is entitled to assume
 of its callers, and it is the same question D-90 raises one module over.
 
 **When.** With the deletion sweep that also judges D-90.
+
+### D-92 — ADR 0057 limits Source Hints to Wire-read results, and the node a Wire insert answers is a hinted source too
+
+*Low — a decision record's enumeration lags the second door the code has.*
+Relates to
+`docs/adr/0057-typed-and-wire-are-peer-interfaces-over-one-transaction.md`,
+`parallax.snapshot.handle._wire_writes.wire_insert`. Owner: `docs/adr`; surfaced
+by this target, whose spec and glossary already state both doors.
+
+**What.** The ADR says a Wire Entity "returned by a Parallax Wire read may carry
+an opaque Source Hint" and describes the hint as selecting "the authentic
+source's privately retained evidence". `tx.wire.insert` also answers a hinted
+node: its hint names the concrete Entity, the object, and this transaction's
+participation and carries no observation, because the row it opened had observed
+nothing — the buffered insert licenses the write that follows. That node is a
+keyed write source in every respect the read-published one is, and
+`spec/python.md` §5 (*A keyed source is a hinted node Parallax published*) and
+`CONTEXT.md` (*Wire Keyed Write Source*) state both doors; the ADR states one.
+
+**Why it is deferred rather than fixed.** A note amending or superseding an ADR
+is a decision record and is authored as one, not as a wording repair made in
+passing. Nothing in the decision itself — two peer interfaces over one
+transaction — is contradicted by the second door; only its account of where a
+hint comes from is incomplete.
+
+**When.** With the next decision record that touches the write surface, or as a
+note on 0057 when one is authored.
+
+### D-93 — `m-case-format` *Resolving reads a write owes* cites an `m-unit-work` section that does not exist, and rests on a universal read-your-own-writes contradicts
+
+*Low — a citation and a premise in a core specification, neither read by any
+grader.* Relates to `core/spec/m-case-format.md` *Resolving reads a write owes*,
+`core/spec/m-unit-work.md` *Write value provenance*. Owner: `core/spec`;
+surfaced by this target's keyed-write work.
+
+**What.** The section opens: "A keyed write verb is addressed and licensed by a
+value a read published (`m-unit-work` *Write evidence*)". `m-unit-work` has no
+section of that name — the provenance rule is *Write value provenance*, and
+licensing is the evidence rule under each strategy — and the universal is
+contradicted by the section's own third bullet: a row an earlier entry of the
+same unit inserted owes no read, because the buffered insert licenses the write,
+not a value a read published. The count the section defines is correct; its
+stated premise and its citation are not.
+
+**Why it is deferred rather than fixed.** The repair is to a core specification,
+and a language target does not alter core contracts to suit its own reading;
+nothing graded depends on the sentence, so it waits for a core pass rather than
+riding a Python change.
+
+**When.** With the next `core/spec` pass over `m-case-format` or `m-unit-work`.
 
 ## Forwarding pointers
 

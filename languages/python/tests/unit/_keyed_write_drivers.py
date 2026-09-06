@@ -541,7 +541,9 @@ class Scenario:
     spelling for, and the argument the shape of an authored document is judged
     ahead of."""
     wire_changes: Mapping[str, object] | None = None
-    """A Wire-only authored document, for shapes no Typed caller can express."""
+    """A Wire-only authored document, for shapes no Typed caller can express: the
+    change set of an update verb, or the members an insert's payload states over
+    and above the fixture's own."""
     typed_changes: Mapping[str, object] | None = None
     """The Typed spelling of the same authoring, for the rows that pin where a
     Typed assignment the model does not admit is judged."""
@@ -576,9 +578,16 @@ def reachable(scenario: Scenario, representation: Representation) -> bool:
     insert first, so the pair it would have coalesced is already two writes by
     the time the source exists. That route is the ``reread`` source, which every
     representation can spell; it is a different scenario, not this one.
+
+    The exclusion is about SOURCE verbs. A Wire insert after a Typed insert of
+    the same object needs no source — its payload is fresh — so that crossing is
+    reachable, and is exactly the one the repeated-insert refusal is asked over.
     """
     return not (
-        representation == "wire" and scenario.opened_by == "typed" and scenario.source != "reread"
+        representation == "wire"
+        and scenario.opened_by == "typed"
+        and scenario.source != "reread"
+        and scenario.verb not in _INSERT_VERBS
     )
 
 
@@ -705,10 +714,32 @@ def _body(
 def _typed(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
     target = scenario.target
     if scenario.verb in _INSERT_VERBS and scenario.source != "pinned":
+        _open_ahead_of_the_insert(tx, scenario, "typed")
         _call_typed(tx, scenario, target.fresh())
         return
     source = cast("EntityBase", _typed_source(tx, scenario, prior))
     _call_typed(tx, scenario, _typed_authored(scenario, source))
+
+
+def _open_ahead_of_the_insert(
+    tx: Transaction, scenario: Scenario, representation: Representation
+) -> None:
+    """Buffer the same-transaction insert an INSERT scenario repeats, and on the
+    ``reread`` route run the participating read that force-flushes it.
+
+    What the read returned is discarded: the insert that follows authors a fresh
+    value either way, because what the scenario states is a second opening of
+    the OBJECT, not a write over the value a read published.
+    """
+    if scenario.opened_by is None:
+        return
+    _open(tx, scenario)
+    if scenario.source != "reread":
+        return
+    if representation == "typed":
+        tx.find(scenario.target.inserted_typed_query).result()
+    else:
+        tx.wire.find(scenario.target.inserted_wire_query).result()
 
 
 def _typed_source(tx: Transaction, scenario: Scenario, prior: object | None) -> object:
@@ -768,6 +799,7 @@ def _call_typed(tx: Transaction, scenario: Scenario, value: EntityBase) -> None:
 def _wire(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
     target = scenario.target
     if scenario.verb in _INSERT_VERBS and scenario.source != "pinned":
+        _open_ahead_of_the_insert(tx, scenario, "wire")
         _call_wire(tx, scenario, target.payload, {})
         return
     source = _wire_source(tx, scenario, prior)
@@ -837,14 +869,15 @@ def _call_wire(
 def _wire_payload(scenario: Scenario, source: object) -> Mapping[str, object]:
     """The Create Payload an insert states.
 
-    A fresh document copied off the fixture, or — where the scenario states a
-    pinned source — the published node itself, which is the argument the insert
-    door's own pin refusal is about and which a ``dict(...)`` copy would strip the
-    view off.
+    A fresh document copied off the fixture, carrying whatever Wire-only members
+    the scenario states beside it, or — where the scenario states a pinned
+    source — the published node itself, which is the argument the insert door's
+    own pin refusal is about and which a ``dict(...)`` copy would strip the view
+    off.
     """
     if scenario.source == "pinned":
         return cast("Mapping[str, object]", source)
-    return dict(scenario.target.payload)
+    return {**scenario.target.payload, **(scenario.wire_changes or {})}
 
 
 def _bounded_window(scenario: Scenario) -> tuple[dt.datetime, dt.datetime]:

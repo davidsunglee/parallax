@@ -1181,8 +1181,10 @@ def test_writing_back_what_an_insert_published_is_the_ordinary_no_op() -> None:
 
 
 def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
-    # It names a row this unit of work already opened, so the verb for it is
-    # `tx.wire.update` — the same provenance refusal a read result earns.
+    # The node is refused at the PROVENANCE stage — a hinted node is a value this
+    # store published, and the verb for one is `tx.wire.update` — under the same
+    # code the ledger refuses the repeated payload with (below), so a caller
+    # repeating an insert hears one answer whichever value spells the repeat.
     port = ScriptedPort(Transact())
 
     def fn(tx: Transaction) -> None:
@@ -1191,6 +1193,57 @@ def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
 
     with pytest.raises(KeyedWriteValueError, match="write-value-already-stored"):
         db_for(PERSON, port).transact(fn)
+    assert _writes(port) == []
+
+
+def test_an_insert_refuses_the_payload_a_previous_insert_opened_a_row_with() -> None:
+    # A payload is no keyed source, so the provenance rule has nothing to say
+    # about it; the buffered-insert ledger does, once the row is prepared: the
+    # object it names is one this unit of work already opened. The advice points
+    # at the node the first insert answered, the only value a Wire caller can
+    # revise the row through.
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+        tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db_for(PERSON, port).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    assert "already buffered an insert of" in refusal.value.message
+    assert "tx.wire.update(opened, {...})" in refusal.value.message
+    assert _writes(port) == []
+
+
+def test_a_wire_insert_of_an_object_a_typed_insert_opened_is_refused() -> None:
+    # One ledger, read from the insert side: the Typed verb recorded the object,
+    # and the Wire payload naming it is a second opening.
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        tx.insert(mm.Person(id=9, name="Newton"))
+        tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db_for(PERSON, port).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    assert "tx.wire.update(opened, {...})" in refusal.value.message
+    assert _writes(port) == []
+
+
+def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+        tx.insert(mm.Person(id=9, name="Newton"))
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db_for(PERSON, port).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    assert "tx.update(...)" in refusal.value.message
+    assert _writes(port) == []
 
 
 def test_a_typed_update_of_a_row_a_wire_insert_opened_coalesces_in_place() -> None:

@@ -1321,6 +1321,79 @@ def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
     assert not any(isinstance(op, WriteCall) for op in port.calls)  # refused before any DML
 
 
+def test_a_second_insert_of_the_same_instance_is_refused_before_any_dml() -> None:
+    # The insert family's half of read-your-own-writes: the ledger that lifts
+    # `write-value-not-stored` from an update of a row this transaction opened
+    # imposes `write-value-already-stored` on a second opening of it. The verb
+    # answers, naming the update verb the caller wants, where the database would
+    # otherwise refuse the pair at commit as a primary-key violation.
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        fresh = new_account()
+        tx.insert(fresh)
+        tx.insert(fresh)
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        account_db(port).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    assert refusal.value.identity == mm.Account.identity
+    assert "already buffered an insert of" in refusal.value.message
+    assert "tx.update(...)" in refusal.value.message
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
+
+
+def test_a_second_insert_of_the_same_object_is_refused_whatever_instance_spells_it() -> None:
+    # Keyed by the OBJECT, exactly as the exemption is: two instances of one
+    # primary key open one row, so the second is refused whether or not their
+    # other members agree.
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        tx.insert(mm.Person(id=9, name="Newton"))
+        tx.insert(mm.Person(id=9, name="Grace"))
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db_for(PERSON, port).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
+
+
+def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert() -> None:
+    # The other half of the same ledger is untouched by the refusal: the update
+    # is licensed by the buffered insert and folds into its one statement.
+    port = ScriptedPort(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        fresh = mm.Person(id=9, name="Newton")
+        tx.insert(fresh)
+        tx.update(fresh.edit(name="Grace"))
+
+    db_for(PERSON, port).transact(fn)
+    assert [op for op in port.calls if isinstance(op, WriteCall)] == [
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
+    ]
+
+
+def test_an_insert_after_a_cancelled_insert_delete_pair_is_refused_as_a_repeat() -> None:
+    # The ledger has no retirement operation, so a `delete` that cancels the
+    # buffered pair to no DML leaves the object recorded, and a third verb
+    # opening it again is a repeat by the ledger's reading: refused at the verb,
+    # nothing emitted.
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        fresh = mm.Person(id=9, name="Newton")
+        tx.insert(fresh)
+        tx.delete(fresh)
+        tx.insert(fresh)
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db_for(PERSON, port).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
+
+
 @pytest.mark.parametrize("verb", ["insert", "update"], ids=["insert", "update"])
 def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb: str) -> None:
     # A value's stored counterpart is only the one the writing source itself
