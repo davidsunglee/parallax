@@ -16,7 +16,7 @@
 #
 # `roundTrips: 2` and the lifecycle oracle state the OTHER call this shape costs:
 # the resolving read whose retained observation licenses the write (`m-unit-work`
-# "Write evidence"). It is a Root Execution of its own because it stands outside
+# "Write Observation"). It is a Root Execution of its own because it stands outside
 # the transaction it licenses — that is what lets a concurrent writer commit
 # between the two in m-opt-lock-005 — and its Database Call names NO statement,
 # because `then.statements` authors the DML alone and a resolving read has no

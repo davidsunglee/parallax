@@ -1339,7 +1339,7 @@ def test_a_second_insert_of_the_same_instance_is_refused_before_any_dml() -> Non
     assert refusal.value.code == "write-value-already-stored"
     assert refusal.value.identity == mm.Account.identity
     assert "already buffered an insert of" in refusal.value.message
-    assert "tx.update(...)" in refusal.value.message
+    assert "tx.update(inserted.edit(...))" in refusal.value.message
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
@@ -1356,7 +1356,29 @@ def test_a_second_insert_of_the_same_object_is_refused_whatever_instance_spells_
     with pytest.raises(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
+    assert "tx.update(inserted.edit(...))" in refusal.value.message
     assert not any(isinstance(op, WriteCall) for op in port.calls)
+
+
+def test_the_repeated_insert_advice_carries_the_refused_values_into_the_opened_row() -> None:
+    # The advice names the value the FIRST insert took, and following it writes
+    # what the refused instance carried. Editing the REFUSED instance instead
+    # would author no change — its members already hold those values — and the
+    # transaction would commit the first insert unaltered, which is why the
+    # advice cannot be the already-stored refusal's.
+    port = ScriptedPort(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        inserted = mm.Person(id=9, name="Newton")
+        tx.insert(inserted)
+        with pytest.raises(KeyedWriteValueError):
+            tx.insert(mm.Person(id=9, name="Grace"))
+        tx.update(inserted.edit(name="Grace"))
+
+    db_for(PERSON, port).transact(fn)
+    assert [op for op in port.calls if isinstance(op, WriteCall)] == [
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
+    ]
 
 
 def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert() -> None:

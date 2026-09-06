@@ -919,35 +919,13 @@ hint comes from is incomplete.
 **When.** With the next decision record that touches the write surface, or as a
 note on 0057 when one is authored.
 
-### D-93 — `m-case-format` *Resolving reads a write owes* cites an `m-unit-work` section that does not exist, and rests on a universal read-your-own-writes contradicts
-
-*Low — a citation and a premise in a core specification, neither read by any
-grader.* Relates to `core/spec/m-case-format.md` *Resolving reads a write owes*,
-`core/spec/m-unit-work.md` *Write value provenance*. Owner: `core/spec`;
-surfaced by this target's keyed-write work.
-
-**What.** The section opens: "A keyed write verb is addressed and licensed by a
-value a read published (`m-unit-work` *Write evidence*)". `m-unit-work` has no
-section of that name — the provenance rule is *Write value provenance*, and
-licensing is the evidence rule under each strategy — and the universal is
-contradicted by the section's own third bullet: a row an earlier entry of the
-same unit inserted owes no read, because the buffered insert licenses the write,
-not a value a read published. The count the section defines is correct; its
-stated premise and its citation are not.
-
-**Why it is deferred rather than fixed.** The repair is to a core specification,
-and a language target does not alter core contracts to suit its own reading;
-nothing graded depends on the sentence, so it waits for a core pass rather than
-riding a Python change.
-
-**When.** With the next `core/spec` pass over `m-case-format` or `m-unit-work`.
-
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a
 line once nothing cites it. This section is not an entry list and must never grow
 prose.
 
+- **D-93** → fixed. `m-case-format` *Resolving reads a write owes* states what its own bullets already carried — a keyed write verb is addressed and licensed by a value this unit of work produced, a read of its own or an insert it has itself buffered — and cites `m-unit-work` *Write value provenance*, the section that exists; the same dangling *Write evidence* citation is repaired in `parallax.conformance.engine` and in `m-opt-lock-006-success`, where the rule meant was *Write Observation*.
 - **D-87** → closed by [COR-114](https://linear.app/flimflam/issue/COR-114) Phase 6. The reported form is the bind role's own and needs no second rendering rule: `m-sql` *Continuation coordinates* now states it, `m-case-format` *Corrupting stored state* states the authoring restriction that follows, and both reachable forms are graded at the m-sql seam. A comparison-text bind reports the extracted text as it stands, so a corrupt text-compared coordinate reports whatever the document held; a managed bind reports the canonical Wire of the engine's own cast result, which is in the declared value space by construction. The one shape left undefined — a direct Column holding a value outside its declared type — conforming DDL cannot store, so it is unreachable rather than unreported.
 - **D-38** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P7. Mirror the remaining 15 corpus models.
 - **D-40** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P4. Eager `fetchall` at the adapter boundary; port-level streaming is [COR-83](https://linear.app/flimflam/issue/COR-83/stream-deep-fetch-reads-at-fixed-memory).

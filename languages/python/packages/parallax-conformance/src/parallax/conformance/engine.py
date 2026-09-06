@@ -4538,7 +4538,7 @@ def _group_source_node(
     raise EngineError(
         f"{entity_name!r}: a keyed write addresses {key!r}, which no read of its own "
         "choreography unit published and no write of it opened — a keyed write is addressed "
-        "and licensed by a value this transaction produced (m-unit-work 'Write evidence')"
+        "and licensed by a value this transaction produced (m-unit-work 'Write value provenance')"
     )
 
 
@@ -6359,7 +6359,7 @@ def _conflict_source_node(
             f"{target!r}: a conflict attempt writes {write.row!r}, which its own source read "
             "found no row for — a keyed write is addressed and licensed by a value a read "
             "published, so a case whose target is already gone describes a write no verb can "
-            "author (m-unit-work 'Write evidence')"
+            "author (m-unit-work 'Write value provenance')"
         )
     return node
 
