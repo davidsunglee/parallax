@@ -77,6 +77,41 @@ def _tpcs(*, sealed: bool, reparented: bool, own_lid: bool = False) -> AcceptedM
     return formed(Metamodel(entities=(root, warded, casket, other)))
 
 
+def _tph_siblings(*, sealed: bool, reparented: bool) -> AcceptedMetamodel:
+    """A table-per-hierarchy family whose siblings share one Table.
+
+    `Casket` hangs directly under the root or under `Warded`, and `Other` — a
+    sibling `Casket` never inherits from — declares the members that arrive. One
+    Table therefore holds a declaration the reparent did not carry anywhere.
+    """
+    root = Entity(
+        name="Root",
+        table="vault",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    warded = Entity(name="Warded", inheritance=Inheritance(role="abstract-subtype", parent="Root"))
+    casket = Entity(
+        name="Casket",
+        inheritance=Inheritance(
+            role="concrete-subtype",
+            parent="Warded" if reparented else "Root",
+            tag_value="casket",
+        ),
+    )
+    other = Entity(
+        name="Other",
+        inheritance=Inheritance(role="concrete-subtype", parent="Warded", tag_value="other"),
+        attributes=(
+            (Attribute(name="seal", type="string", column="seal", max_length=16, nullable=True),)
+            if sealed
+            else ()
+        ),
+        indices=(Index(name="seal_ix", attributes=("seal",)),) if sealed else (),
+    )
+    return formed(Metamodel(entities=(root, warded, casket, other)))
+
+
 def _tph_position_role(*, note_concrete: bool, coupon_read_only: bool) -> AcceptedMetamodel:
     """A table-per-hierarchy family whose stored shapes and a write flag both vary.
 
@@ -193,6 +228,19 @@ def test_a_reparent_is_no_cause_of_a_column_the_reparented_entity_declares() -> 
         _tpcs(sealed=False, reparented=True, own_lid=True),
     )
     assert _causes(_added(operations, "casket")) == ["AttributeAdded"]
+
+
+def test_a_reparent_is_no_cause_of_a_sibling_declaration_sharing_the_Table() -> None:
+    # `Casket` moving under `Warded` and `Other` gaining `seal` land in one
+    # table-per-hierarchy Table, but `Casket` never inherits from `Other`, so the
+    # reparent carried this declaration to no rows at all. Asking only whether
+    # the owner was absent EARLIER would name it: every sibling's owner is.
+    operations = _operations(
+        _tph_siblings(sealed=False, reparented=False),
+        _tph_siblings(sealed=True, reparented=True),
+    )
+    assert _causes(_added(operations, "vault")) == ["AttributeAdded"]
+    assert _causes(_created(operations, "vault")) == ["IndexAdded"]
 
 
 def test_an_alteration_moving_no_physical_fact_causes_nothing() -> None:

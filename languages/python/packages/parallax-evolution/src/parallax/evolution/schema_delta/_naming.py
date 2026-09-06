@@ -11,7 +11,7 @@ when an unrelated Index is added beside it.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 
 from parallax.core.dialect import Dialect, PhysicalIndexName
@@ -22,7 +22,8 @@ from parallax.core.metamodel import (
     Table,
     canonical_location_key,
 )
-from parallax.evolution.schema_delta._physical import IndexDefinition
+from parallax.evolution.schema_delta._order import order_key
+from parallax.evolution.schema_delta._physical import CreateIndex, DropIndex, IndexDefinition
 from parallax.evolution.schema_delta._values import (
     CollidingIndex,
     CollisionGroup,
@@ -139,14 +140,19 @@ def census(
     later: Sequence[IndexDefinition],
     dialect: Dialect,
 ) -> tuple[NamedIndex, ...]:
-    """Every Index either endpoint defines, named once.
+    """Every Index either endpoint defines, named once and told where it occurs.
 
     An Index both endpoints define is ONE entry rather than two. The facts a name
     is derived over are exactly the facts that decide whether two definitions are
     the same physical object, so a Column whose stored domain moved beneath an
     Index leaves that Index itself untouched — and two definitions still sharing
-    an entry's name while differing in one of those facts are the collision this
-    census exists to expose.
+    an entry's name while differing in one of those facts are the candidate
+    collision this census exists to expose.
+
+    Comparing the definitions is also what establishes each one's intended
+    lifetime, before any name-keyed plan exists: an entry present at one endpoint
+    alone is the one the delta creates or drops, and one present at both is an
+    object the database holds throughout.
     """
     entries: dict[tuple[PhysicalIndexName, _Identity], NamedIndex] = {}
     for definitions, presence in ((earlier, IndexPresence.EARLIER), (later, IndexPresence.LATER)):
@@ -170,8 +176,19 @@ def _identity(definition: IndexDefinition) -> _Identity:
     return (definition.table, definition.index, definition.components, definition.unique)
 
 
-def collision_groups(census: Sequence[NamedIndex]) -> tuple[CollisionGroup, ...]:
-    """Every Physical Index Name two or more distinct definitions derived.
+def collision_groups(
+    census: Sequence[NamedIndex], surviving: Collection[Table]
+) -> tuple[CollisionGroup, ...]:
+    """Every Physical Index Name two coexisting distinct definitions derived.
+
+    A shared name is a clash only where the database would hold both definitions
+    at once during some prefix of the delta. That question is asked of the
+    definitions and of the ordering rule, never of the emitted statements: a plan
+    is built by telling definitions apart BY their derived names, so under a
+    collision the create and the drop that would bound two lifetimes are exactly
+    the statements it fails to emit. ``surviving`` is the Tables the later
+    endpoint still holds, because an Index the delta does not carry a Table
+    forward for is never dropped and so is present throughout.
 
     Ordered by name; each group's definitions in canonical logical-identity
     order, each naming the endpoints it occurs in, so a report reads as a
@@ -201,5 +218,47 @@ def collision_groups(census: Sequence[NamedIndex]) -> tuple[CollisionGroup, ...]
             ),
         )
         for name, entries in sorted(grouped.items(), key=lambda entry: entry[0].value)
-        if len(entries) > 1
+        if _coexist(entries, surviving)
     )
+
+
+def _coexist(entries: Sequence[NamedIndex], surviving: Collection[Table]) -> bool:
+    """Whether two of these definitions are ever objects in the database at once."""
+    return any(
+        _overlap(one, other, surviving)
+        for position, one in enumerate(entries)
+        for other in entries[position + 1 :]
+    )
+
+
+def _overlap(one: NamedIndex, other: NamedIndex, surviving: Collection[Table]) -> bool:
+    """Whether the database holds both of these definitions during some prefix.
+
+    A definition either endpoint holds while the other does not is the only one
+    whose lifetime is bounded at all, so a pair can be disjoint only when one is
+    dropped and the other created — and only when the drop is emitted first. Two
+    definitions the earlier endpoint both holds are already there before the first
+    statement, and two the later endpoint both holds are both there after the
+    last.
+    """
+    dropped, created = (one, other) if one.presence is IndexPresence.EARLIER else (other, one)
+    return not (
+        dropped.presence is IndexPresence.EARLIER
+        and created.presence is IndexPresence.LATER
+        and dropped.definition.table in surviving
+        and _drop_precedes_create(dropped, created)
+    )
+
+
+def _drop_precedes_create(dropped: NamedIndex, created: NamedIndex) -> bool:
+    """Whether the delta's own statement order emits the drop before the create.
+
+    The order key is a function of the Table, the operation kind, and the member
+    addressed, all of which a definition carries, so the two statements can be
+    ranked against each other without the plan that would emit them. Asking the
+    owner of the order rather than restating it here is what keeps the two from
+    drifting apart.
+    """
+    return order_key(
+        DropIndex(definition=dropped.definition, name=dropped.name, caused_by=())
+    ) < order_key(CreateIndex(definition=created.definition, name=created.name, caused_by=()))

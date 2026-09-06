@@ -217,24 +217,29 @@ Evolution Operations in canonical operation order. This does **not** reclassify
 the dialect-independent Unilateral Evolution as coordinated: renderer support is a
 deployment capability, not a model-semantic fact.
 
-**Physical Index Name collision.** If two distinct physical Index definitions
-either endpoint holds derive one name, generation refuses rather than silently
-renaming either. The census spans **every** Index of both endpoints — not only the
-ones this delta creates or drops, and deliberately not only the ones whose
-lifetimes overlap in the emitted order. An Index the delta never mentions is still
-an object in the database while a new one is created beside it, and the emitted
-order cannot be the test: a plan is built by telling definitions apart **by their
-derived names**, so under a collision the two are already indistinguishable and
-the create and the drop that would have bounded their lifetimes are exactly the
-statements the plan fails to emit. Asking of the definitions rather than of the
-plan is what keeps the check off the assumption it exists to falsify; the price is
-that a name shared by two definitions that would never in fact have overlapped is
-refused too, which errs toward refusal on a path no sound fingerprint reaches. The
-error carries the Dialect Identity and every collision group in Physical Index
-Name order; each group carries the shared name and at least two colliding
-definitions in canonical logical-identity order, each naming its physical Table,
-logical Index Identity, ordered components, uniqueness, and whether it occurs in
-the earlier endpoint, the later endpoint, or both. This is a defensive backstop
+**Physical Index Name collision.** If two distinct physical Index definitions the
+database would hold **at once** derive one name, generation refuses rather than
+silently renaming either. The census spans every Index of both endpoints, not only
+the ones this delta creates or drops: an Index the delta never mentions is still
+an object in the database while a new one is created beside it. Within that
+census, two definitions coexist unless one is dropped before the other is created
+— which is decided over the definitions and the statement-order rule above, and
+never over the emitted statements. A plan is built by telling definitions apart
+**by their derived names**, so under a collision the two are already
+indistinguishable there and the create and the drop that would have bounded their
+lifetimes are exactly the statements it fails to emit. Comparing the definitions
+is what establishes their lifetimes without resting on the assumption the check
+exists to falsify: a definition one endpoint alone holds is the one this delta
+creates or drops, one both endpoints hold is present throughout, and one whose
+Table the later endpoint no longer holds is never dropped and so is present
+throughout too. Because statements run Table by Table and a Table creates before
+it drops, a definition dropped from an earlier Table in that order frees its name
+before a later Table takes it, and only then. The error carries the Dialect
+Identity and every collision group in Physical Index Name order; each group
+carries the shared name and at least two colliding definitions in canonical
+logical-identity order, each naming its physical Table, logical Index Identity,
+ordered components, uniqueness, and whether it occurs in the earlier endpoint,
+the later endpoint, or both. This is a defensive backstop
 for an unexpected 128-bit fingerprint collision, not an ordinary control path and
 not a dialect-capability error.
 

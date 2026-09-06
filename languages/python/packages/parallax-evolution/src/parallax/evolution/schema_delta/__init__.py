@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from parallax.core.dialect import Dialect, Unsupported
 from parallax.evolution.model_evolution import UnilateralEvolution
-from parallax.evolution.schema_delta._naming import collision_groups
 from parallax.evolution.schema_delta._order import order
 from parallax.evolution.schema_delta._physical import (
     CreateIndex,
@@ -106,14 +105,6 @@ def _refusal(operation: PhysicalOperation, result: Unsupported) -> UnsupportedSc
 
 
 def _reject_collisions(built: Plan, dialect: Dialect) -> None:
-    """Refuse a name two distinct Index definitions both derived.
-
-    The check spans every Index of both endpoints, not only the ones this delta
-    creates or drops: an Index it never mentions is still an object in the
-    database while a new one is created beside it. It is asked of the definitions
-    and never of the plan, because the plan already told two colliding definitions
-    apart by the name they share.
-    """
-    groups = collision_groups(built.indices)
-    if groups:
-        raise PhysicalIndexNameCollisionError(dialect.name, groups)
+    """Refuse a name two Index definitions the database holds at once both derived."""
+    if built.collisions:
+        raise PhysicalIndexNameCollisionError(dialect.name, built.collisions)

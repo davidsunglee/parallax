@@ -443,16 +443,10 @@ the physical Table, the structured declaring Entity Identity, authored Index
 name, ordered structured Attribute Identities, and uniqueness, rendered as 32
 lowercase hexadecimal characters. Only the readable prefix is truncated to
 satisfy the Dialect's byte limit; the fingerprint is never truncated. The
-generator rejects a collision between distinct physical definitions across every
-Index either endpoint holds, rather than silently renaming either definition.
-The census is over the definitions and not over the emitted plan: a plan tells
-definitions apart by their derived names, so under a collision the create and the
-drop that would bound two definitions' lifetimes are exactly the statements it
-fails to emit, and a lifetime test read from it would rest on the assumption the
-check exists to falsify. Refusing a name shared by two definitions whose emitted
-lifetimes would not in fact have overlapped is the accepted cost on a path no
-sound fingerprint reaches. A definition's name is therefore stable independently
-of other Indices in the model.
+generator rejects a collision between distinct physical definitions across all
+earlier and later Indices that can coexist during any statement prefix rather
+than silently renaming either definition. A definition's name is therefore
+stable independently of other Indices in the model.
 Name collision raises one aggregated `PhysicalIndexNameCollisionError` carrying
 the Dialect Identity and every collision group in Physical Index Name order.
 Each group retains the shared Physical Index Name and at least two colliding
