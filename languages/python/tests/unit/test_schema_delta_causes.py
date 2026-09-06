@@ -28,7 +28,13 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
-from parallax.evolution.model_evolution import UnilateralEvolution, evolve
+from parallax.evolution.model_evolution import (
+    ConcreteSubtypeAdded,
+    EntityAdded,
+    EntityAltered,
+    UnilateralEvolution,
+    evolve,
+)
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
     CreateIndex,
@@ -181,6 +187,61 @@ def _tpcs_within_owner(*, moved: bool, child: bool) -> AcceptedMetamodel:
     return formed(Metamodel(entities=(root, warded, left, right, branch, other, *arriving)))
 
 
+def _tpcs_two_reparents(*, branch_warded: bool, twig_far: bool, child: bool) -> AcceptedMetamodel:
+    """A table-per-concrete-subtype family two inheritance alterations move at once.
+
+    `Warded` declares `seal` and `seal_ix` at both endpoints. `Branch` hangs
+    directly under the root or under `Warded`, and `Near` and its own child `Far`
+    are declaration-free positions beneath `Branch`, so `Twig` moving from one to
+    the other never leaves `Branch`'s subtree — yet `Warded` enters `Twig`'s
+    ancestry across the same evolution, because `Branch` moved. The concrete
+    `Child` beneath `Twig` puts a Table under both moves at once.
+    """
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    warded = Entity(
+        name="Warded",
+        inheritance=Inheritance(role="abstract-subtype", parent="Root"),
+        attributes=(
+            Attribute(name="seal", type="string", column="seal", max_length=16, nullable=True),
+        ),
+        indices=(Index(name="seal_ix", attributes=("seal",)),),
+    )
+    branch = Entity(
+        name="Branch",
+        inheritance=Inheritance(
+            role="abstract-subtype", parent="Warded" if branch_warded else "Root"
+        ),
+    )
+    near = Entity(name="Near", inheritance=Inheritance(role="abstract-subtype", parent="Branch"))
+    far = Entity(name="Far", inheritance=Inheritance(role="abstract-subtype", parent="Near"))
+    twig = Entity(
+        name="Twig",
+        inheritance=Inheritance(role="abstract-subtype", parent="Far" if twig_far else "Near"),
+    )
+    other = Entity(
+        name="Other",
+        table="other",
+        inheritance=Inheritance(role="concrete-subtype", parent="Warded"),
+        attributes=(Attribute(name="z", type="int32", column="z"),),
+    )
+    arriving = (
+        (
+            Entity(
+                name="Child",
+                table="child",
+                inheritance=Inheritance(role="concrete-subtype", parent="Twig"),
+            ),
+        )
+        if child
+        else ()
+    )
+    return formed(Metamodel(entities=(root, warded, branch, near, far, twig, other, *arriving)))
+
+
 def _tph_siblings(*, sealed: bool, reparented: bool) -> AcceptedMetamodel:
     """A table-per-hierarchy family whose siblings share one Table.
 
@@ -317,6 +378,16 @@ def _operations(
 
 def _causes(operation: PhysicalOperation) -> list[str]:
     return [type(cause).__name__ for cause in operation.caused_by]
+
+
+def _entity_causes(operation: PhysicalOperation) -> list[str]:
+    """Every cause, naming its Entity where it has one, to tell two alterations apart."""
+    return [
+        f"{type(cause).__name__}({cause.entity.name})"
+        if isinstance(cause, (ConcreteSubtypeAdded, EntityAdded, EntityAltered))
+        else type(cause).__name__
+        for cause in operation.caused_by
+    ]
 
 
 def _added(operations: tuple[PhysicalOperation, ...], table: str) -> AddColumn:
@@ -474,3 +545,34 @@ def test_a_created_Table_names_no_reparent_that_stayed_under_the_same_declarer()
     )
     assert _causes(_creates(operations, "child")) == ["ConcreteSubtypeAdded"]
     assert _causes(_created(operations, "child")) == ["ConcreteSubtypeAdded"]
+
+
+def test_a_created_Table_names_only_the_reparent_that_carried_the_declarer() -> None:
+    # `Branch` moving under `Warded` is why `child` repeats `Warded`'s members;
+    # `Twig` moving between two positions inside `Branch` carried nothing, and
+    # gained `Warded` in its ancestry only because `Branch` moved. Reading that
+    # gain off the two endpoints' ancestries names both alterations for one
+    # move, so each alteration answers for the edge IT changed: `Twig` left a
+    # position that stands under `Warded` in the later model, and `Branch` did
+    # not.
+    operations = _operations(
+        _tpcs_two_reparents(branch_warded=False, twig_far=False, child=False),
+        _tpcs_two_reparents(branch_warded=True, twig_far=True, child=True),
+    )
+    expected = ["EntityAltered(Branch)", "ConcreteSubtypeAdded(Child)"]
+    assert _entity_causes(_creates(operations, "child")) == expected
+    assert _entity_causes(_created(operations, "child")) == expected
+
+
+def test_a_surviving_Table_names_only_the_reparent_that_carried_the_declarer() -> None:
+    # The same two moves over a `child` both endpoints hold: the Table gains
+    # `seal` and `seal_ix` because `Branch` came under `Warded`, and `Twig`'s
+    # move within `Branch` is no more a cause here than it is of a Table created
+    # in the same evolution. The Table's own history cannot rule it out — `child`
+    # held no `Warded` position earlier either.
+    operations = _operations(
+        _tpcs_two_reparents(branch_warded=False, twig_far=False, child=True),
+        _tpcs_two_reparents(branch_warded=True, twig_far=True, child=True),
+    )
+    assert _entity_causes(_added(operations, "child")) == ["EntityAltered(Branch)"]
+    assert _entity_causes(_created(operations, "child")) == ["EntityAltered(Branch)"]

@@ -116,6 +116,15 @@ is asked of the **Table** and never of the Entity that moved: a Table holding an
 other shape under that ancestor — a sibling left where it was, or an abstract
 position composing no concrete subtype — was going to materialize the new Column
 however the reparent went, so the reparent moved no fact that addition is made of.
+Which ancestry a reparent carried is read from the edge **it** changed and never
+from the two endpoints' ancestries, because one evolution moves as many positions
+as it likes: an Entity whose own ancestor moved stands under a declaring owner it
+did not stand under before, having carried nothing anywhere itself, and reading
+the endpoints would name both alterations for the one move. Each alteration
+answers for the position it left, measured against the **later** model — had the
+Entity stayed there, it would stand under whatever stands over that position now
+— so an alteration that left a position already under the declaring owner carried
+nothing, and the alteration that moved that position is named alone.
 And an operation that moved only facts the database does not hold — a write flag,
 a declaration order, an optimistic-locking marker — is a cause of nothing, even
 where it alters the very declaration a widened Column materializes: a stored
@@ -136,7 +145,8 @@ asked what it already held: what the alteration can have changed is where the
 Entity it moved stands. An inheritance alteration is therefore a cause of a
 created Table exactly when the Table materializes the moved Entity's declarations
 and the move placed that Entity under a declaring owner it did **not** already
-stand under. A move within that owner's subtree — between two abstract positions
+stand under and would **not** stand under had it stayed where it was. A move
+within that owner's subtree — between two abstract positions
 sharing it — leaves the created Table under every declaring position it would
 have held anyway, so the addition that brought the Table is its only cause.
 
