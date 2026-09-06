@@ -377,9 +377,13 @@ _Avoid_: null source, synthetic keyed source, insert strategy
 **Write Representation**:
 Which calling interface stated a write, Typed or Wire — a fact only the calling
 interface knows, answered by a source exactly as provenance is. One rule, one
-error class, and one code serve both; what the representation selects is the
-spelling of the verb a refusal advises instead, since a caller reaches for the
-verb in the interface they called.
+error class, and one code serve both; a representation selects only the spelling
+of the verb a refusal advises instead. WHICH representation spells it is the
+refusal's question rather than always the calling one: a provenance refusal
+re-authors the value handed in, so it advises in the interface the call arrived
+through, while a repeat of a buffered insert is revisable only through the
+carrier the first insert produced, so it advises in the interface that opened
+the row.
 _Avoid_: write mode, ingress flavor, caller kind, surface flag
 
 **InvalidData**:
