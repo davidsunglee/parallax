@@ -134,6 +134,53 @@ def _tpcs_new_branch(*, reparented: bool, child: bool, stray: bool) -> AcceptedM
     return formed(Metamodel(entities=(root, warded, branch, other, *arriving)))
 
 
+def _tpcs_within_owner(*, moved: bool, child: bool) -> AcceptedMetamodel:
+    """A table-per-concrete-subtype family whose reparent stays under one declarer.
+
+    `Warded` declares `seal` and `seal_ix` at both endpoints, and `Left` and
+    `Right` are abstract positions directly beneath it declaring nothing, so
+    `Branch` moving from one to the other stands under `Warded` throughout. The
+    concrete `Child` arrives beneath `Branch` in the same evolution.
+    """
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    warded = Entity(
+        name="Warded",
+        inheritance=Inheritance(role="abstract-subtype", parent="Root"),
+        attributes=(
+            Attribute(name="seal", type="string", column="seal", max_length=16, nullable=True),
+        ),
+        indices=(Index(name="seal_ix", attributes=("seal",)),),
+    )
+    left = Entity(name="Left", inheritance=Inheritance(role="abstract-subtype", parent="Warded"))
+    right = Entity(name="Right", inheritance=Inheritance(role="abstract-subtype", parent="Warded"))
+    branch = Entity(
+        name="Branch",
+        inheritance=Inheritance(role="abstract-subtype", parent="Right" if moved else "Left"),
+    )
+    other = Entity(
+        name="Other",
+        table="other",
+        inheritance=Inheritance(role="concrete-subtype", parent="Warded"),
+        attributes=(Attribute(name="z", type="int32", column="z"),),
+    )
+    arriving = (
+        (
+            Entity(
+                name="Child",
+                table="child",
+                inheritance=Inheritance(role="concrete-subtype", parent="Branch"),
+            ),
+        )
+        if child
+        else ()
+    )
+    return formed(Metamodel(entities=(root, warded, left, right, branch, other, *arriving)))
+
+
 def _tph_siblings(*, sealed: bool, reparented: bool) -> AcceptedMetamodel:
     """A table-per-hierarchy family whose siblings share one Table.
 
@@ -412,3 +459,18 @@ def test_a_created_Table_the_reparent_did_not_reach_names_its_addition_alone() -
     )
     assert _causes(_creates(operations, "stray")) == ["ConcreteSubtypeAdded"]
     assert _causes(_created(operations, "stray")) == ["ConcreteSubtypeAdded"]
+
+
+def test_a_created_Table_names_no_reparent_that_stayed_under_the_same_declarer() -> None:
+    # `Branch` moves between two abstract positions that both hang under
+    # `Warded`, so `child` stands under `Warded` — the only declarer it holds a
+    # Column from — however the move went. A created Table held nothing earlier,
+    # so the surviving Table's "did it already materialize this position" clause
+    # is vacuous here and would name the move; the baseline is where `Branch`
+    # itself stood.
+    operations = _operations(
+        _tpcs_within_owner(moved=False, child=False),
+        _tpcs_within_owner(moved=True, child=True),
+    )
+    assert _causes(_creates(operations, "child")) == ["ConcreteSubtypeAdded"]
+    assert _causes(_created(operations, "child")) == ["ConcreteSubtypeAdded"]
