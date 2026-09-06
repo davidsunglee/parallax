@@ -1064,12 +1064,14 @@ def decode_wire_row(
     """``row``'s members in the managed carriers :func:`prepare_wire_write`
     produces, judged by nothing.
 
-    For PERSISTED state, read back to be weighed against what a caller authored.
-    The weighing needs one carrier per value, which is the decode alone. Stored
-    state is held to no rule a caller's input is held to and may contradict the
-    accepted model outright, so judging it would refuse a write for the very
-    state that write revises. No name, value, assignment, or temporal rule is
-    applied here, and this is never a door for caller input.
+    For the state a write is addressed AGAINST, read back to be weighed against
+    what that write's caller authored. The weighing needs one carrier per value,
+    which is the decode alone. Every rule preparation applies is a rule about
+    what a caller states in the call being prepared, and this side states nothing
+    in it: what admits it was settled at the door that published it. Applying
+    those rules here would refuse a write for the state that write revises. No
+    name, value, assignment, or temporal rule is applied here, and this is never
+    a door for caller input.
     """
     return _transform_row(
         model, entity, row, converter=_decode_wire_leaf, fill_missing_many=False

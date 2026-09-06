@@ -425,7 +425,7 @@ def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A keyed source is a Parallax Wire read result, and nothing else.            #
+# A keyed source is a hinted node Parallax published, and nothing else.       #
 # --------------------------------------------------------------------------- #
 def _lost_provenance(node: WireEntity) -> list[object]:
     """Every way a caller can hold the same data and no longer hold the source."""
@@ -443,7 +443,9 @@ def test_a_mapping_that_lost_its_provenance_is_no_keyed_source() -> None:
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
         for candidate in _lost_provenance(node):
-            with pytest.raises(instructions.WriteInstructionError, match="Parallax Wire read"):
+            with pytest.raises(
+                instructions.WriteInstructionError, match="carries no such provenance"
+            ):
                 tx.wire.update(cast("WireEntity", candidate), {"balance": "125.00"})
 
     db_for(ACCOUNT, port).transact(fn)

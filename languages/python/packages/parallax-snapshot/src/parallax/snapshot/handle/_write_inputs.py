@@ -210,7 +210,7 @@ def written_object_key(
     record: EntityMetadata, meta: Metamodel, row: Mapping[str, object]
 ) -> ObjectKey:
     """The object a WRITTEN instance addresses — the same
-    :class:`~parallax.core.unit_work.ObjectKey` a read's own Source Hints name
+    :class:`~parallax.core.unit_work.ObjectKey` a source's own Source Hints name
     their objects by (the instance's OWN Entity Identity, never
     family-normalized; pk pairs by canonical attribute name, in the
     family-effective primary key's own order) and `unit_work.object_key`
@@ -612,7 +612,7 @@ class WriteEvidenceError(LookupError):
 
 def source_hint_of(instance: object) -> SourceHint | None:
     """The private :class:`~parallax.core.unit_work.SourceHint` ``instance``
-    carries, or ``None`` for a value no Parallax read produced.
+    carries, or ``None`` for a value Parallax never published.
 
     An edited copy answers the node's own hint, because an edit preserves every
     kind of instance state outside the declared members (``Entity.edit``) — which
@@ -778,8 +778,8 @@ def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
 
 type Provenance = Literal["none", "foreign", "this"]
 """Which framework-managed source produced a written value: no managed read
-produced it at all, another managed source did, or the writing Snapshot
-lifecycle's own read did.
+produced it at all, another managed source did, or this store's own did — by a
+read, or, on the Wire door, by the insert that opened the row.
 
 The three partition the values a keyed verb can be handed, which is what makes
 :func:`validate_provenance` total over them and lets each refusal name the verb
@@ -810,7 +810,7 @@ Only this refusal is reachable from both representations. The other two — a
 value no read produced, and one another lifecycle produced — arise on the
 source-backed door alone, and a Wire keyed source answers neither: a hintless
 argument is refused as no source at all before provenance is asked, so every
-source that reaches the question was published by a read of this store."""
+source that reaches the question is a node this store published."""
 
 
 def validate_provenance(
@@ -883,8 +883,9 @@ def validate_provenance(
         raise KeyedWriteValueError(
             code="write-value-already-stored",
             message=(
-                f"{identity.canonical}: {mutation!r} was handed a value this store's own read "
-                "produced, so the row it names is already stored; "
+                f"{identity.canonical}: {mutation!r} was handed a value this store published "
+                "for a row it already holds — from its own read, or from an insert this "
+                "transaction buffered — so there is no row to open; "
                 f"{_ALREADY_STORED_ADVICE[representation]}"
             ),
             identity=identity,

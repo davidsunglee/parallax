@@ -134,8 +134,8 @@ def provenance_of(value: EntityBase) -> Provenance:
 
     It lives beside the Typed verbs because only a Typed value carries a
     lifecycle to read: a Wire source answers the same fact from the Source Hint
-    its read filed, and what the keyed write judges is the answer rather than
-    either carrier.
+    the door that published it filed, and what the keyed write judges is the
+    answer rather than either carrier.
     """
     if lifecycle_state_of(value) is None:
         return "none"
@@ -334,8 +334,9 @@ class Transaction:
     first-party row-form read, not a third public result format. There is no
     write peer of it: every write, first-party callers included, is stated
     through the keyed and predicate verbs, Typed or Wire — an existing row
-    addressed by a value a read published, a fresh row by the payload an insert
-    opens it with, and a set by a selection plus its assignments.
+    addressed by a value this store published, from a read or from the insert
+    that opened the row, a fresh row by the payload an insert opens it with, and
+    a set by a selection plus its assignments.
     """
 
     __slots__ = (
