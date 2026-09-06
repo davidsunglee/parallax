@@ -826,7 +826,10 @@ argument is refused as no source at all before provenance is asked, so every
 source that reaches the question is a node this store published."""
 
 _REPEATED_INSERT_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
-    "typed": _ALREADY_STORED_ADVICE["typed"],
+    "typed": (
+        "write the change with `tx.update(inserted.edit(...))`, where `inserted` is the value "
+        "the first insert took"
+    ),
     "wire": (
         "write the change with `tx.wire.update(opened, {...})`, where `opened` is the node "
         "the first insert answered"
@@ -834,10 +837,16 @@ _REPEATED_INSERT_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
 }
 """How each interface spells the verb that revises a row this transaction opened.
 
-The Typed spelling is the already-stored one, because the caller still holds the
-instance it inserted. The Wire spelling cannot be: what a Wire caller holds is
-the payload, and a payload is no keyed source, so the node the FIRST insert
-answered is the only value that names the buffered row to ``tx.wire.update``."""
+Both name the carrier the FIRST insert produced rather than the value just
+refused, because the two need not be the same object at all: two instances of one
+primary key open one row, and an edit of the refused instance authors its change
+against a value nothing buffered, so following that advice would commit the first
+insert unaltered. A payload is no keyed source either, so what a Wire caller
+revises the row through is the node that first insert answered.
+
+The already-stored refusal keeps its own advice
+(:data:`_ALREADY_STORED_ADVICE`), where the value handed in IS the stored one and
+editing it is the whole repair."""
 
 
 def validate_provenance(

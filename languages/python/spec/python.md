@@ -4301,7 +4301,13 @@ These feature tests do not claim the deferred `benchmark` command or general
   representation opened the row and whichever value spells the repeat — the
   same Typed instance again, another instance of the same primary key, the same
   Wire payload again, or the node the first Wire insert answered, which the
-  provenance answer already refuses under the same code. The rule is this
+  provenance answer already refuses under the same code. Its advice names the
+  carrier the FIRST insert produced — `tx.update(inserted.edit(...))` on the
+  Typed lane, `tx.wire.update(opened, {...})` on the Wire one — and never the
+  value just refused, because the two need not be one value: two instances of a
+  primary key open one row, and an edit of the refused instance would author its
+  change against a value nothing buffered, leaving the transaction to commit the
+  first insert unaltered. The rule is this
   binding's rather than core's: `m-unit-work` names insert-then-update and
   insert-then-delete and is silent on insert-then-insert, whose only other
   outcome is the database refusing the pair at commit as a primary-key

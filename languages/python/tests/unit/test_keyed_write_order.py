@@ -28,8 +28,8 @@ provenance rather than leaving it unstated.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from typing import Final, cast
 
 import pytest
@@ -222,7 +222,28 @@ def _applicability_refusal(scenario: Scenario, *, statements: int = 0) -> Answer
     return None
 
 
-def _answers(scenario: Scenario, expected: Answer | Callable[[Representation], Answer]) -> None:
+@dataclass(frozen=True, slots=True)
+class _Advised:
+    """One :class:`Answer` whose message ends in a clause each interface spells
+    its own way.
+
+    The class, the code, the landing point, the DML, and everything the message
+    says before ``answer.message`` ends are the one expectation both lanes are
+    held to; ``advice`` supplies the closing clause alone. Stating the divergence
+    as a per-representation SUFFIX rather than a per-representation ``Answer`` is
+    what keeps it unable to grow: no expectation written this way can vary a
+    refusal's class, code, phase, or statement count between the lanes, which is
+    the agreement this suite exists to fix.
+    """
+
+    answer: Answer
+    advice: Mapping[Representation, str]
+
+    def stated(self, representation: Representation) -> Answer:
+        return replace(self.answer, message=f"{self.answer.message}{self.advice[representation]}")
+
+
+def _answers(scenario: Scenario, expected: Answer | _Advised) -> None:
     """Assert both representations answer ``scenario`` with ``expected``.
 
     One expectation asserted twice rather than one lane measured against the
@@ -230,13 +251,13 @@ def _answers(scenario: Scenario, expected: Answer | Callable[[Representation], A
     together, and the ingress is what makes their agreeing structural.
 
     The one refusal whose closing advice clause is spelled per interface — the
-    update verb a repeated insert is redirected to — states its expectation as a
-    function of the representation; the class, code, landing point, and DML it
-    fixes are still one answer, stated once.
+    update verb a repeated insert is redirected to — states that clause through
+    :class:`_Advised`; the class, code, landing point, and DML it fixes are still
+    one answer, stated once.
     """
     for representation in REPRESENTATIONS:
         if reachable(scenario, representation):
-            stated = expected(representation) if callable(expected) else expected
+            stated = expected.stated(representation) if isinstance(expected, _Advised) else expected
             assert answer(scenario, representation) == stated, representation
 
 
@@ -462,7 +483,10 @@ def test_a_write_over_a_reread_insert_settles_bare_whoever_opened_it(
 # preparation, so a target that admits no such verb answers that first.       #
 # --------------------------------------------------------------------------- #
 _REPEATED_INSERT_ADVICE: Final[Mapping[Representation, str]] = {
-    "typed": "change it with `value.edit(...)` and write it with `tx.update(...)`",
+    "typed": (
+        "write the change with `tx.update(inserted.edit(...))`, where `inserted` is the value "
+        "the first insert took"
+    ),
     "wire": (
         "write the change with `tx.wire.update(opened, {...})`, where `opened` is the node "
         "the first insert answered"
@@ -470,27 +494,24 @@ _REPEATED_INSERT_ADVICE: Final[Mapping[Representation, str]] = {
 }
 """The update verb the refusal redirects to, in the interface the caller typed —
 the one clause of the message that is the representation's rather than the
-order's, because a payload is no keyed source and only the node the first insert
-answered names the buffered row to a Wire caller."""
+order's. Each names the carrier the FIRST insert produced, never the value just
+refused: two instances of one primary key open one row, and a Wire payload is no
+keyed source at all."""
 
 
-def _repeated_insert(
-    scenario: Scenario, *, statements: int = 0
-) -> Callable[[Representation], Answer]:
+def _repeated_insert(scenario: Scenario, *, statements: int = 0) -> _Advised:
     """What a second insert of an object this unit of work already opened answers."""
-
-    def stated(representation: Representation) -> Answer:
-        return _refused(
+    return _Advised(
+        _refused(
             KeyedWriteValueError,
             f"write-value-already-stored: {scenario.target.entity}: "
             f"{_MUTATIONS[scenario.verb]!r} was handed a value naming an object this "
-            "transaction already buffered an insert of, so there is no row to open; "
-            f"{_REPEATED_INSERT_ADVICE[representation]}",
+            "transaction already buffered an insert of, so there is no row to open; ",
             code="write-value-already-stored",
             statements=statements,
-        )
-
-    return stated
+        ),
+        _REPEATED_INSERT_ADVICE,
+    )
 
 
 @pytest.mark.parametrize(

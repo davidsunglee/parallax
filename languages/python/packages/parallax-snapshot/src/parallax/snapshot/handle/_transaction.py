@@ -6,8 +6,10 @@ keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
 temporal-window family) and the participating :meth:`Transaction.find`.
 
 What a keyed verb here OWNS is one adapter and one call. The order every keyed
-write runs — re-entry, source, pin, window, preparation, effective changes,
-the buffered-insert exemption, evidence, claim, and buffer — belongs to
+write runs — over a source, re-entry, source, pin, window, preparation,
+effective changes, the buffered-insert exemption, evidence, claim, and buffer;
+through the insert's own door, re-entry, pin, provenance, window, preparation,
+the buffered-insert REFUSAL, and buffer — belongs to
 :mod:`parallax.snapshot.handle._keyed_writes`, and what this module supplies is
 the Typed Keyed Write Source and Keyed Insert Source: what an Entity value, its
 Change Record, and its lifecycle answer that order, and nothing about the order

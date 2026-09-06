@@ -1,9 +1,11 @@
 """``parallax.snapshot.handle._wire_writes`` — the Wire write representation (spec §5).
 
 What ``tx.wire``'s write verbs state differently from their Typed peers, and
-nothing else. What a keyed verb here OWNS is one source and one call: the order
-every keyed write runs — re-entry, source, pin, window, preparation, effective
-changes, the buffered-insert exemption, evidence, claim, and buffer — belongs to
+nothing else. What a keyed verb here OWNS is one source and one call: the order every keyed
+write runs — over a source, re-entry, source, pin, window, preparation,
+effective changes, the buffered-insert exemption, evidence, claim, and buffer;
+through the insert's own door, re-entry, pin, provenance, window, preparation,
+the buffered-insert REFUSAL, and buffer — belongs to
 :mod:`parallax.snapshot.handle._keyed_writes`, and what this module supplies is
 the Wire Keyed Write Source and Keyed Insert Source, plus the one the conformance
 conflict lane enters through. The predicate-selected verb keeps a composition of

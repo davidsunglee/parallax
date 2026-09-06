@@ -1242,7 +1242,7 @@ def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
     with pytest.raises(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
-    assert "tx.update(...)" in refusal.value.message
+    assert "tx.update(inserted.edit(...))" in refusal.value.message
     assert _writes(port) == []
 
 

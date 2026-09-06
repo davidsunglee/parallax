@@ -1047,8 +1047,9 @@ table state shows which rows changed or were removed.
 
 #### Resolving reads a write owes
 
-A keyed write verb is **addressed and licensed by a value a read published**
-(`m-unit-work` *Write evidence*), so a choreography unit writing against existing
+A keyed write verb is **addressed and licensed by a value this unit of work
+produced** (`m-unit-work` *Write value provenance*) — a read of its own, or an
+insert it has itself buffered — so a choreography unit writing against **existing**
 state **reads that state first**, and `then.roundTrips` — which counts every call
 that reached the database — counts those reads beside the DML.
 
