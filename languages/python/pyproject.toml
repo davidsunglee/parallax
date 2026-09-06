@@ -1946,6 +1946,8 @@ forbidden_modules = [
     "parallax.core.read_lock",
     "parallax.core.txtime_write",
     "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
     "parallax.postgres",
     "parallax.snapshot._read_result",
     "parallax.snapshot.materialize",
