@@ -1,32 +1,36 @@
-"""The Keyed Write Validation Order, characterized across both representations.
+"""The Keyed Write Validation Order, stated once and asserted of both representations.
 
 Every keyed verb runs one order, and that order is what a caller observes as
 refusal precedence (`python.md` §5 "The Keyed Write Validation Order is one
-order"). This suite drives each row through the Typed verbs and through
-``tx.wire``'s against a scripted port and asserts that both answer it the same
-way — every statement and boundary the transaction ran, or the class, code,
-message, and phase of the refusal it raised — so the order is pinned once rather
-than once per representation.
+order"). One private ingress owns it and each representation answers only source
+facts into it, so what a row here fixes is the ANSWER — the refusal's class,
+code, message, and the point it landed at, or the DML a completing write emitted
+— and each row asserts that same answer of the Typed verbs and of ``tx.wire``'s
+in turn. Nothing here compares one representation to the other: two lanes
+agreeing is what the order used to have to be characterized for, and what the
+ingress now makes structural.
 
-A shape only one representation can express carries one assertion instead of a
-comparison, beside the row that proves the other representation cannot express
-it. A malformed change document, an undeclared member, and an illegal assignment
-are Wire-only because ``edit()`` judges a Typed assignment before ``tx.update()``
+The expectations are stated as the order's own rules rather than as a golden per
+row. :func:`_admits` is the applicability half — which verb a target's As-Of Axes
+admit and which window it may state — and reads as the three stages that decide
+it, in the order the ingress runs them. What each admitted verb then emits is
+:data:`_STATEMENTS`, keyed by the target's temporal profile, because how many
+statements a write lowers to is a fact about the profile rather than about the
+fixture.
+
+A shape only one representation can express carries one assertion instead of two,
+beside the row that proves the other representation cannot express it. A
+malformed change document, an undeclared member, and an illegal assignment are
+Wire-only because ``edit()`` judges a Typed assignment before ``tx.update()``
 receives a value, and the Typed rows here assert that pre-emption over each
 provenance rather than leaving it unstated.
-
-One shape still asserts the outcome the specification names rather than the one
-the code produces, and carries an expected failure whose reason states that gap:
-`delete` against a temporal target, which the Wire lane does not yet refuse at
-the verb. The mark is per representation, because the two lanes reach the
-specified answer separately and the Typed one already has.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from typing import cast
+from typing import Final, cast
 
 import pytest
 from _keyed_write_drivers import (
@@ -40,30 +44,24 @@ from _keyed_write_drivers import (
     POSITION_TARGET,
     REPRESENTATIONS,
     TARGETS,
+    TX_PIN,
+    UNTIL,
+    VALID_FROM,
     VERBS,
+    Answer,
     Change,
     Completed,
     Concurrency,
-    Outcome,
-    Refused,
+    Profile,
     Representation,
     Scenario,
     Source,
     Target,
     Verb,
     Window,
+    answer,
     outcome,
     reachable,
-)
-
-from _support.db_port import WriteCall
-
-# The Typed lane refuses a temporal `delete` at the verb and the Wire lane does
-# not yet, so a temporal `delete` has no shared answer to compare until the Wire
-# verbs enter the ingress too. `test_a_temporal_target_refuses_delete_at_the_verb`
-# states the answer the specification names for both.
-_TEMPORAL_DELETE: frozenset[tuple[str, str]] = frozenset(
-    {("balance", "delete"), ("position", "delete")}
 )
 
 _SOURCE_VERBS: tuple[Verb, ...] = (
@@ -74,7 +72,43 @@ _SOURCE_VERBS: tuple[Verb, ...] = (
     "terminate_until",
 )
 _BOUNDED_VERBS: tuple[Verb, ...] = ("insert_until", "update_until", "terminate_until")
+_UPDATE_VERBS: frozenset[str] = frozenset({"update", "update_until"})
 _ALL_TARGETS: tuple[Target, ...] = TARGETS + DOCUMENT_TARGETS
+
+_MUTATIONS: Final[Mapping[Verb, str]] = {
+    "insert": "insert",
+    "insert_until": "insertUntil",
+    "update": "update",
+    "update_until": "updateUntil",
+    "delete": "delete",
+    "terminate": "terminate",
+    "terminate_until": "terminateUntil",
+}
+"""The mutation token a refusal names, per verb: refusals about a target's own
+rules spell the mutation, and the two applicability ones spell the method."""
+
+_STATEMENTS: Final[Mapping[tuple[Profile, Verb], int]] = {
+    ("non_temporal", "insert"): 1,
+    ("non_temporal", "update"): 1,
+    ("non_temporal", "delete"): 1,
+    ("transaction_time", "insert"): 1,
+    ("transaction_time", "update"): 2,
+    ("transaction_time", "terminate"): 1,
+    ("bitemporal", "insert"): 1,
+    ("bitemporal", "insert_until"): 1,
+    ("bitemporal", "update"): 3,
+    ("bitemporal", "update_until"): 4,
+    ("bitemporal", "terminate"): 2,
+    ("bitemporal", "terminate_until"): 3,
+}
+"""How much DML each admitted verb emits, by the target's temporal profile.
+
+A non-temporal row is written in place. A Transaction-Time-Only update closes the
+current milestone and opens the next; a `terminate` only closes. A Bitemporal
+write additionally splits the observed rectangle around the window it states,
+which is why its counts are the largest and why a bounded verb's differ from its
+plain peer's. Every pair this omits is one :func:`_admits` refuses.
+"""
 
 
 def _short(target: Target) -> str:
@@ -82,33 +116,92 @@ def _short(target: Target) -> str:
     return target.entity.rsplit(".", 1)[-1]
 
 
-def _agrees(scenario: Scenario) -> None:
-    """Assert both representations answer ``scenario`` identically."""
-    assert outcome(scenario, "typed") == outcome(scenario, "wire")
+def _wrote(statements: int) -> Answer:
+    return Answer(None, None, None, None, statements)
 
 
-def _crossings_agree(scenario: Scenario, crossings: int) -> None:
-    """Assert every reachable opener/writer crossing of ``scenario`` answers alike.
+def _refused(error: str, message: str, *, code: str | None = None, statements: int = 0) -> Answer:
+    """A refusal the VERB raised, stated in full."""
+    return Answer(error, code, message, "verb", statements)
 
-    ``crossings`` is how many of the four the scenario's source admits, so a row
-    states the reachability it relies on rather than silently covering fewer.
+
+def _refused_at_flush(error: str, *, statements: int) -> Answer:
+    """A refusal the FLUSH raised over a write this order admitted.
+
+    Its wording belongs to the lowering suite that owns the rule, so what is
+    stated here is the class, the point it landed at, and the DML the transaction
+    had already emitted when it did.
     """
-    answers: dict[str, Outcome] = {
-        f"{opener}-insert/{writer}-write": outcome(replace(scenario, opened_by=opener), writer)
-        for opener in REPRESENTATIONS
-        for writer in REPRESENTATIONS
-        if reachable(replace(scenario, opened_by=opener), writer)
-    }
-    assert len(answers) == crossings, tuple(answers)
-    first = next(iter(answers.values()))
-    assert all(answer == first for answer in answers.values()), answers
+    return Answer(error, None, None, "flush", statements)
+
+
+def _admits(scenario: Scenario, *, statements: int = 0) -> Answer | None:
+    """The refusal ``scenario``'s target gives its verb, or ``None`` for a call the
+    target admits and whose window it accepts.
+
+    Three stages of the order, in the order they run. ``delete`` states no
+    Valid-Time bound in any spelling, so a target that milestones its rows judges
+    the VERB before the window gate is reached at all. The window gate then
+    measures the bound a bounded verb states, which only a Bitemporal target
+    admits, and orders the pair it accepted. A boundless ``terminate`` states
+    nothing for that gate to measure and reaches preparation, which is where the
+    converse half of applicability — a milestone verb aimed at a target deriving
+    no As-Of Axis — is answered.
+
+    ``statements`` is the DML already emitted when the refusal lands, which is
+    non-zero only where a force-flushing read ran ahead of the verb.
+    """
+    target, verb = scenario.target, scenario.verb
+    if verb == "delete" and target.profile != "non_temporal":
+        return _refused(
+            "WriteInstructionError",
+            f"Temporal objects like {_short(target)!r} do not support 'delete', "
+            "which physically removes rows. Use 'terminate' instead.",
+            statements=statements,
+        )
+    if verb in _BOUNDED_VERBS and target.profile != "bitemporal":
+        shape = (
+            "a Transaction-Time-Only" if target.profile == "transaction_time" else "a non-temporal"
+        )
+        return _refused(
+            "WriteInstructionError",
+            f"{_short(target)}: {shape} {_MUTATIONS[verb]!r} takes no valid_from "
+            f"({_short(target)!r} declares no Valid-Time dimension to bound)",
+            statements=statements,
+        )
+    if verb in _BOUNDED_VERBS and scenario.window == "reversed":
+        return _refused(
+            "WriteInstructionError",
+            f"{_short(target)}: {_MUTATIONS[verb]!r} requires valid_from < until "
+            f"(python.md §5) — got valid_from={UNTIL!r}, until={VALID_FROM!r}",
+            statements=statements,
+        )
+    if verb == "terminate" and target.profile == "non_temporal":
+        return _refused(
+            "WriteInstructionError",
+            f"Non-temporal objects like {_short(target)!r} do not support 'terminate', "
+            "which closes a row's history instead of removing it. Use 'delete' instead.",
+            statements=statements,
+        )
+    return None
+
+
+def _answers(scenario: Scenario, expected: Answer) -> None:
+    """Assert both representations answer ``scenario`` with ``expected``.
+
+    One expectation asserted twice rather than one lane measured against the
+    other: a row that compared them would pass on two lanes that had drifted
+    together, and the ingress is what makes their agreeing structural.
+    """
+    for representation in REPRESENTATIONS:
+        if reachable(scenario, representation):
+            assert answer(scenario, representation) == expected, representation
 
 
 def _grid(
     targets: tuple[Target, ...] = TARGETS,
     verbs: tuple[Verb, ...] = VERBS,
     *,
-    exempt: frozenset[tuple[str, str]] = frozenset(),
     source: Source = "participating",
     change: Change = "ordinary",
     window: Window = "stated",
@@ -125,7 +218,6 @@ def _grid(
         for target in targets
         for verb in verbs
         for concurrency in CONCURRENCIES
-        if (target.name, verb) not in exempt
     )
 
 
@@ -134,14 +226,17 @@ def _grid(
 # under both Concurrency Preferences. An invalid verb/temporality pair is a    #
 # refusal row rather than an omission.                                         #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("scenario", _grid(targets=_ALL_TARGETS, exempt=_TEMPORAL_DELETE), ids=str)
-def test_one_verb_over_a_participating_source_answers_one_way(scenario: Scenario) -> None:
-    _agrees(scenario)
+@pytest.mark.parametrize("scenario", _grid(targets=_ALL_TARGETS), ids=str)
+def test_one_verb_over_a_participating_source_answers_its_target(scenario: Scenario) -> None:
+    _answers(
+        scenario,
+        _admits(scenario) or _wrote(_STATEMENTS[scenario.target.profile, scenario.verb]),
+    )
 
 
 # --------------------------------------------------------------------------- #
 # The change axis. A net-zero chain and an untouched copy are the two ways a   #
-# keyed update names members and changes nothing; both must reduce to the same #
+# keyed update names members and changes nothing; both reduce to the same      #
 # no-op the Wire lane reaches by comparing against what its source published,  #
 # which is what licenses one comparison rule behind both representations. The  #
 # document targets carry it past a scalar: a Value Object occurrence with a    #
@@ -154,40 +249,65 @@ def test_one_verb_over_a_participating_source_answers_one_way(scenario: Scenario
     + _grid(targets=_ALL_TARGETS, verbs=("update", "update_until"), change="untouched"),
     ids=str,
 )
-def test_a_change_set_that_changes_nothing_answers_one_way(scenario: Scenario) -> None:
-    _agrees(scenario)
+def test_a_change_set_that_changes_nothing_buffers_nothing(scenario: Scenario) -> None:
+    _answers(scenario, _admits(scenario) or _wrote(0))
 
 
 # --------------------------------------------------------------------------- #
 # The source axis: a standalone read, whose evidence a participating read's    #
-# shared lock would have supplied. Under `locking` it licenses nothing, so the #
-# row is the evidence refusal; under `optimistic` a versioned or temporal      #
-# source supplies its own gate and the row is the ordinary write.              #
+# shared lock would have supplied. Under an effective Locking strategy it      #
+# licenses nothing; where the target supplies its own gate and the preference  #
+# is Optimistic, the retained observation is the evidence and the write runs.  #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(
-    "scenario",
-    _grid(
-        verbs=_SOURCE_VERBS,
-        exempt=_TEMPORAL_DELETE,
-        source="standalone",
-    ),
-    ids=str,
-)
-def test_a_standalone_source_answers_one_way(scenario: Scenario) -> None:
-    _agrees(scenario)
+def _unusable_evidence(target: Target) -> Answer:
+    return _refused(
+        "WriteEvidenceError",
+        f"write-evidence-unavailable: {target.entity}: the Locking strategy licenses this "
+        "write through the shared row lock a read of THIS transaction holds, and the value "
+        "handed to the verb came from no such read; read the row through this transaction "
+        "and write what that read returned",
+        code="write-evidence-unavailable",
+    )
+
+
+@pytest.mark.parametrize("scenario", _grid(verbs=_SOURCE_VERBS, source="standalone"), ids=str)
+def test_a_standalone_source_answers_the_strategy_its_target_derives(scenario: Scenario) -> None:
+    target = scenario.target
+    locking = scenario.concurrency == "locking" or target.gate == "none"
+    _answers(
+        scenario,
+        _admits(scenario)
+        or (
+            _unusable_evidence(target)
+            if locking
+            else _wrote(_STATEMENTS[target.profile, scenario.verb])
+        ),
+    )
 
 
 # --------------------------------------------------------------------------- #
 # A finite Transaction-Time pin is read-only, and the refusal precedes         #
-# everything the model or the change set decides.                             #
+# everything the model or the change set decides — on the insert door too,     #
+# whose argument here is the published node itself.                            #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "scenario",
     tuple(Scenario(target=POSITION_TARGET, verb=verb, source="pinned") for verb in VERBS),
     ids=str,
 )
-def test_a_pinned_source_answers_one_way(scenario: Scenario) -> None:
-    _agrees(scenario)
+def test_a_pinned_source_is_read_only_whatever_verb_was_aimed_at_it(scenario: Scenario) -> None:
+    _answers(
+        scenario,
+        _refused(
+            "TransactionTimePinReadOnlyError",
+            f"{scenario.target.entity}: the write's source view is pinned at the finite "
+            f"Transaction-Time instant {TX_PIN.isoformat()} and is read-only — the "
+            "Transaction-Time past records what the system knew and is never rewritten "
+            "(transaction-time-pin-read-only); read the current milestone "
+            "(Transaction Time Latest) to mutate it",
+            code="transaction-time-pin-read-only",
+        ),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -201,33 +321,51 @@ def test_a_pinned_source_answers_one_way(scenario: Scenario) -> None:
     + _grid(verbs=("update_until",), window="reversed", change="net_zero"),
     ids=str,
 )
-def test_a_reversed_window_answers_one_way(scenario: Scenario) -> None:
-    _agrees(scenario)
+def test_a_reversed_window_is_refused_before_the_change_set_is_weighed(
+    scenario: Scenario,
+) -> None:
+    refusal = _admits(scenario)
+    assert refusal is not None  # every bounded verb states the reversed pair
+    _answers(scenario, refusal)
 
 
 # --------------------------------------------------------------------------- #
 # The provenance axis. One buffered-insert ledger serves both representations, #
 # so a write over a row THIS unit of work opened answers the same way whoever  #
-# opened it. Three of the four crossings write the source the insert itself    #
-# yielded; the fourth needs a read to produce a Wire source from a Typed       #
-# insert, and that read force-flushes, which is a different scenario rather    #
-# than the same one spelled differently (see `reachable`).                     #
+# opened it: the pair coalesces into the insert's own statement, and a         #
+# destructive verb cancels it to no DML at all. Three of the four crossings    #
+# write the source the insert itself yielded; the fourth needs a read to       #
+# produce a Wire source from a Typed insert, and that read force-flushes,      #
+# which is a different scenario rather than the same one spelled differently   #
+# (see `reachable`).                                                          #
 # --------------------------------------------------------------------------- #
+def _over_a_buffered_insert(scenario: Scenario) -> Answer:
+    """What a write over a row this unit of work still holds buffered answers.
+
+    The insert is the only statement either way: an assignment merges into the
+    row the insert opens, and a `delete` or a `terminate` cancels the pair
+    outright, so the transaction commits nothing at all.
+    """
+    if scenario.verb in _UPDATE_VERBS:
+        return _wrote(1)
+    return _wrote(0)
+
+
 @pytest.mark.parametrize(
     "scenario",
     tuple(
-        Scenario(target=target, verb=verb, change=change)
+        Scenario(target=target, verb=verb, change=change, opened_by=opener)
         for target in _ALL_TARGETS
         for verb in _SOURCE_VERBS
         for change in ("ordinary", "net_zero")
-        if (target.name, verb) not in _TEMPORAL_DELETE
+        for opener in REPRESENTATIONS
     ),
     ids=str,
 )
 def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
     scenario: Scenario,
 ) -> None:
-    _crossings_agree(scenario, crossings=3)
+    _answers(scenario, _admits(scenario) or _over_a_buffered_insert(scenario))
 
 
 # --------------------------------------------------------------------------- #
@@ -235,37 +373,71 @@ def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
 # The read force-flushes, so the pair no longer coalesces — and this is the    #
 # only route by which a Wire verb writes a row a TYPED insert opened, so it is #
 # where all four crossings exist.                                             #
+#                                                                             #
+# The exemption is what makes it interesting: the ledger has no retirement     #
+# operation, so the write that follows is STILL exempted from resolving        #
+# evidence and settles bare, discarding the observation the read supplied. The #
+# flush then has nothing to gate on and refuses — a versioned row for its      #
+# missing version, a temporal one for its missing observation — where an       #
+# unversioned Non-Temporal row, which observes no state at all, writes.        #
 # --------------------------------------------------------------------------- #
+def _over_a_reread_insert(scenario: Scenario) -> Answer:
+    if scenario.verb in _UPDATE_VERBS and scenario.change == "net_zero":
+        return _wrote(1)
+    if scenario.target.profile != "non_temporal":
+        return _refused_at_flush("WritePlanningError", statements=1)
+    if scenario.target.gate == "version":
+        return _refused_at_flush("UnobservedVersionError", statements=1)
+    return _wrote(2)
+
+
 @pytest.mark.parametrize(
     "scenario",
     tuple(
-        Scenario(target=target, verb=verb, change=change, source="reread")
+        Scenario(target=target, verb=verb, change=change, source="reread", opened_by=opener)
         for target in _ALL_TARGETS
         for verb in _SOURCE_VERBS
         for change in ("ordinary", "net_zero")
-        if (target.name, verb) not in _TEMPORAL_DELETE
+        for opener in REPRESENTATIONS
     ),
     ids=str,
 )
-def test_a_write_over_a_reread_insert_answers_one_way_whoever_opened_it(
+def test_a_write_over_a_reread_insert_settles_bare_whoever_opened_it(
     scenario: Scenario,
 ) -> None:
-    _crossings_agree(scenario, crossings=4)
+    _answers(scenario, _admits(scenario, statements=1) or _over_a_reread_insert(scenario))
 
 
 # --------------------------------------------------------------------------- #
 # Two defects at once: which one the caller hears.                            #
 # --------------------------------------------------------------------------- #
+_PINNED_AND_REVERSED: Final = Scenario(
+    target=POSITION_TARGET,
+    verb="update_until",
+    source="pinned",
+    window="reversed",
+    label="pin-beats-window",
+)
+
+
+def test_a_pinned_source_beats_the_window_it_stated() -> None:
+    _answers(
+        _PINNED_AND_REVERSED,
+        _refused(
+            "TransactionTimePinReadOnlyError",
+            f"{POSITION_TARGET.entity}: the write's source view is pinned at the finite "
+            f"Transaction-Time instant {TX_PIN.isoformat()} and is read-only — the "
+            "Transaction-Time past records what the system knew and is never rewritten "
+            "(transaction-time-pin-read-only); read the current milestone "
+            "(Transaction Time Latest) to mutate it",
+            code="transaction-time-pin-read-only",
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     "scenario",
     (
-        Scenario(
-            target=POSITION_TARGET,
-            verb="update_until",
-            source="pinned",
-            window="reversed",
-            label="pin-beats-window",
-        ),
         Scenario(
             target=ACCOUNT_TARGET,
             verb="update",
@@ -285,8 +457,13 @@ def test_a_write_over_a_reread_insert_answers_one_way_whoever_opened_it(
     ),
     ids=str,
 )
-def test_two_defects_answer_one_way(scenario: Scenario) -> None:
-    _agrees(scenario)
+def test_a_net_zero_change_set_is_dropped_before_evidence_is_asked_for(
+    scenario: Scenario,
+) -> None:
+    # The source could license nothing, and the write asks it for nothing: the
+    # no-op return precedes the evidence question, so a chain that took itself
+    # back over an unusable source is silence rather than a refusal.
+    _answers(scenario, _wrote(0))
 
 
 # --------------------------------------------------------------------------- #
@@ -294,38 +471,68 @@ def test_two_defects_answer_one_way(scenario: Scenario) -> None:
 # every opener the source admits: whichever representation opened the row, the #
 # window refusal and the net-zero no-op land in the same order.                #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(
-    ("scenario", "crossings"),
+_INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
     (
-        (
-            Scenario(
-                target=POSITION_TARGET,
-                verb="update_until",
-                window="reversed",
-                label="window-beats-the-insert-exemption",
-            ),
-            3,
+        Scenario(
+            target=POSITION_TARGET,
+            verb="update_until",
+            window="reversed",
+            label="window-beats-the-insert-exemption",
         ),
-        (
-            Scenario(
-                target=POSITION_TARGET,
-                verb="update_until",
-                window="reversed",
-                opened_until=True,
-                label="window-beats-a-bounded-insert-exemption",
-            ),
-            3,
+        _wrote(0),
+    ),
+    (
+        Scenario(
+            target=POSITION_TARGET,
+            verb="update_until",
+            window="reversed",
+            opened_until=True,
+            label="window-beats-a-bounded-insert-exemption",
         ),
-        (
-            Scenario(
-                target=POSITION_TARGET,
-                verb="update_until",
-                window="reversed",
-                change="net_zero",
-                label="window-beats-a-net-zero-insert-source",
-            ),
-            3,
+        _wrote(0),
+    ),
+    (
+        Scenario(
+            target=POSITION_TARGET,
+            verb="update_until",
+            window="reversed",
+            change="net_zero",
+            label="window-beats-a-net-zero-insert-source",
         ),
+        _wrote(0),
+    ),
+    (
+        Scenario(
+            target=POSITION_TARGET,
+            verb="update_until",
+            window="reversed",
+            source="reread",
+            label="window-beats-a-reread-insert-source",
+        ),
+        _wrote(1),
+    ),
+)
+"""Each row's second half is the DML the transaction had already emitted when the
+window refusal landed: nothing at all while the insert is still buffered, and the
+insert's own statement once a participating read has force-flushed it."""
+
+
+@pytest.mark.parametrize(
+    ("scenario", "already"), _INSERT_SOURCE_DEFECTS, ids=lambda value: str(value)
+)
+@pytest.mark.parametrize("opener", REPRESENTATIONS)
+def test_the_window_is_judged_over_an_inserted_source_too(
+    scenario: Scenario, already: Answer, opener: Representation
+) -> None:
+    opened = replace(scenario, opened_by=opener)
+    refusal = _admits(opened, statements=already.statements)
+    assert refusal is not None  # every row above states a reversed window
+    _answers(opened, refusal)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "statements"),
+    (
         (
             Scenario(
                 target=ACCOUNT_TARGET,
@@ -333,17 +540,7 @@ def test_two_defects_answer_one_way(scenario: Scenario) -> None:
                 change="net_zero",
                 label="a-net-zero-write-of-an-inserted-row",
             ),
-            3,
-        ),
-        (
-            Scenario(
-                target=POSITION_TARGET,
-                verb="update_until",
-                window="reversed",
-                source="reread",
-                label="window-beats-a-reread-insert-source",
-            ),
-            4,
+            1,
         ),
         (
             Scenario(
@@ -353,15 +550,16 @@ def test_two_defects_answer_one_way(scenario: Scenario) -> None:
                 source="reread",
                 label="a-net-zero-write-of-a-reread-inserted-row",
             ),
-            4,
+            1,
         ),
     ),
     ids=lambda value: str(value),
 )
-def test_two_defects_over_an_inserted_source_answer_one_way(
-    scenario: Scenario, crossings: int
+@pytest.mark.parametrize("opener", REPRESENTATIONS)
+def test_a_net_zero_write_of_an_inserted_row_leaves_the_insert_alone(
+    scenario: Scenario, statements: int, opener: Representation
 ) -> None:
-    _crossings_agree(scenario, crossings=crossings)
+    _answers(replace(scenario, opened_by=opener), _wrote(statements))
 
 
 # --------------------------------------------------------------------------- #
@@ -428,11 +626,12 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
 
 @pytest.mark.parametrize(("scenario", "expected"), _MALFORMED, ids=lambda value: str(value))
 def test_malformed_wire_input_earns_a_static_refusal(scenario: Scenario, expected: str) -> None:
-    refused = outcome(scenario, "wire")
-    assert isinstance(refused, Refused)
+    refused = answer(scenario, "wire")
     assert refused.error == "WriteInstructionError"
     assert refused.phase == "verb"
+    assert refused.message is not None
     assert expected in refused.message
+    assert refused.statements == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -468,12 +667,12 @@ _TYPED_AUTHORING_SOURCES: tuple[Scenario, ...] = (
 def test_the_typed_lane_refuses_that_authoring_before_a_verb_receives_it(
     source: Scenario, assignment: Mapping[str, object], expected: str
 ) -> None:
-    refused = outcome(replace(source, typed_changes=assignment), "typed")
-    assert isinstance(refused, Refused)
+    refused = answer(replace(source, typed_changes=assignment), "typed")
     assert refused.error == "EditError"
     assert refused.phase == "verb"
+    assert refused.message is not None
     assert expected in refused.message
-    assert not any(isinstance(call, WriteCall) for call in refused.calls)
+    assert refused.statements == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -483,25 +682,24 @@ def test_the_typed_lane_refuses_that_authoring_before_a_verb_receives_it(
 # evidence resolves, so the caller hears which verb the target takes rather    #
 # than that the value it was handed proves nothing.                            #
 # --------------------------------------------------------------------------- #
-_MILESTONE_ROWS: tuple[Scenario, ...] = (
-    Scenario(target=ACCOUNT_TARGET, verb="terminate", source="standalone", concurrency="locking"),
-    Scenario(target=PERSON_TARGET, verb="terminate", source="standalone", concurrency="locking"),
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        Scenario(
+            target=ACCOUNT_TARGET, verb="terminate", source="standalone", concurrency="locking"
+        ),
+        Scenario(
+            target=PERSON_TARGET, verb="terminate", source="standalone", concurrency="locking"
+        ),
+    ),
+    ids=str,
 )
-
-
-@pytest.mark.parametrize("representation", REPRESENTATIONS)
-@pytest.mark.parametrize("scenario", _MILESTONE_ROWS, ids=str)
 def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
-    scenario: Scenario, representation: Representation
+    scenario: Scenario,
 ) -> None:
-    refused = outcome(scenario, representation)
-    assert isinstance(refused, Refused)
-    assert refused.error == "WriteInstructionError"
-    assert refused.phase == "verb"
-    assert refused.message == (
-        f"Non-temporal objects like {_short(scenario.target)!r} do not support 'terminate', "
-        "which closes a row's history instead of removing it. Use 'delete' instead."
-    )
+    refusal = _admits(scenario)
+    assert refusal is not None  # `terminate` closes a history a non-temporal row has none of
+    _answers(scenario, refusal)
 
 
 # --------------------------------------------------------------------------- #
@@ -510,7 +708,7 @@ def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
 # removal `terminate` and refuses `delete` at the verb, whichever              #
 # representation asked and whatever the source (`python.md` §5) — including    #
 # over a row this unit of work itself inserted, where the pair would otherwise #
-# cancel and commit no DML at all rather than name the verb.                    #
+# cancel and commit no DML at all rather than name the verb.                   #
 # --------------------------------------------------------------------------- #
 _TEMPORAL_DELETE_SOURCES: tuple[tuple[Source, Concurrency, Representation | None], ...] = (
     ("participating", "optimistic", None),
@@ -530,26 +728,12 @@ _TEMPORAL_DELETE_ROWS: tuple[Scenario, ...] = tuple(
     for opener in REPRESENTATIONS
 )
 
-_TEMPORAL_DELETE_CASES = tuple(
-    pytest.param(scenario, representation, id=f"{scenario}-{representation}")
-    for scenario in _TEMPORAL_DELETE_ROWS
-    for representation in REPRESENTATIONS
-    if reachable(scenario, representation)
-)
 
-
-@pytest.mark.parametrize(("scenario", "representation"), _TEMPORAL_DELETE_CASES)
-def test_a_temporal_target_refuses_delete_at_the_verb(
-    scenario: Scenario, representation: Representation
-) -> None:
-    refused = outcome(scenario, representation)
-    assert isinstance(refused, Refused)
-    assert refused.error == "WriteInstructionError"
-    assert refused.phase == "verb"
-    assert refused.message == (
-        f"Temporal objects like {_short(scenario.target)!r} do not support 'delete', "
-        "which physically removes rows. Use 'terminate' instead."
-    )
+@pytest.mark.parametrize("scenario", _TEMPORAL_DELETE_ROWS, ids=str)
+def test_a_temporal_target_refuses_delete_at_the_verb(scenario: Scenario) -> None:
+    refusal = _admits(scenario)
+    assert refusal is not None  # a milestoning target spells its removal `terminate`
+    _answers(scenario, refusal)
 
 
 # --------------------------------------------------------------------------- #
