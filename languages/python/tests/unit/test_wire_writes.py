@@ -1164,6 +1164,23 @@ def test_a_wire_delete_of_a_row_the_same_unit_inserted_cancels_to_no_dml() -> No
     assert _writes(port) == []
 
 
+def test_a_wire_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() -> None:
+    # The delete of the opened node retires the object from the one ledger, so
+    # the payload stated again is a first opening rather than the repeat the
+    # ledger refuses: one INSERT, and it is the second one's values.
+    port = ScriptedPort(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
+        tx.wire.delete(opened)
+        tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Grace"})
+
+    db_for(PERSON, port).transact(fn)
+    assert _writes(port) == [
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Grace"))
+    ]
+
+
 def test_writing_back_what_an_insert_published_is_the_ordinary_no_op() -> None:
     # The node is rendered through the SAME canonical encoding a read publishes,
     # so a member written back off it restores rather than assigns — which is

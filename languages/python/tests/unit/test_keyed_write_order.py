@@ -438,8 +438,8 @@ def test_a_same_transaction_insert_licenses_the_write_whoever_opened_it(
 # only route by which a Wire verb writes a row a TYPED insert opened, so it is #
 # where all four crossings exist.                                             #
 #                                                                             #
-# The exemption is what makes it interesting: the ledger has no retirement     #
-# operation, so the write that follows is STILL exempted from resolving        #
+# The exemption is what makes it interesting: a flush retires nothing from the #
+# ledger, so the write that follows is STILL exempted from resolving           #
 # evidence and settles bare, discarding the observation the read supplied. The #
 # flush then has nothing to gate on and refuses — a versioned row for its      #
 # missing version, a temporal one for its missing observation — where an       #
@@ -541,8 +541,9 @@ def test_a_second_insert_of_an_object_this_unit_of_work_opened_is_refused_whoeve
     ids=str,
 )
 def test_a_flushed_insert_still_refuses_a_second_insert_of_its_object(scenario: Scenario) -> None:
-    # The ledger has no retirement operation, so the participating read that
-    # force-flushed the insert retires nothing: the row the store now holds is
+    # A flush retires nothing from the ledger — only a destructive write of the
+    # object does — so the participating read that force-flushed the insert
+    # leaves it recorded: the row the store now holds is
     # refused a second opening at the verb rather than reaching the database as
     # a primary-key violation, and the insert's own statement is the only DML.
     _answers(

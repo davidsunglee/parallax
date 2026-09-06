@@ -4317,11 +4317,21 @@ These feature tests do not claim the deferred `benchmark` command or general
   taxonomy, is what knows the row is already opening. The refusal stands after
   preparation: a Wire payload's key members are canonical only once its row is
   prepared, so pin, provenance, window, and preparation are all heard ahead of
-  it on both lanes. And it reads the same ledger the exemption reads, which is
-  never retired: a participating read that force-flushed the insert retires
-  nothing, so the row the store now holds is refused a second opening at the
-  verb rather than at commit, and an insert-then-delete pair that cancelled to
-  no DML leaves its object refused a third opening. Which object a value names is
+  it on both lanes. **An object leaves the ledger when a destructive keyed write
+  of it is buffered.** `delete`, `terminate`, and `terminate_until` over an
+  object the ledger holds retire it once the write is in the buffer — never
+  before, since a refused write leaves the ledger as it found it, the guarantee
+  the claim ledger already gives — mirroring at the verb the rule the flush
+  applies to the same pair (`m-unit-work` *Insert-then-delete cancels*: the two
+  writes annihilate and no DML is emitted for the object). From that verb on
+  the transaction holds no insert of the object, so an `insert` of it is a
+  first opening and is admitted, and an `update` of it is refused
+  `write-value-not-stored` rather than admitted as a write of a row the store
+  will never hold. A flush retires nothing: a participating read that
+  force-flushed the insert leaves the object recorded, so the row the store now
+  holds is refused a second opening at the verb rather than at commit, and a
+  destructive write on that route retires it exactly as it does while the
+  insert is buffered — the row is gone either way. Which object a value names is
   read off its own primary-key members rather than derived through the Entity Row
   Codec, because the refusal this exemption lifts is decided before any row
   exists. That reading is therefore TOTAL over every value whose key members
