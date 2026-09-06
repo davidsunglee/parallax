@@ -4538,7 +4538,9 @@ def _group_source_node(
     raise EngineError(
         f"{entity_name!r}: a keyed write addresses {key!r}, which no read of its own "
         "choreography unit published and no write of it opened — a keyed write is addressed "
-        "and licensed by a value this transaction produced (m-unit-work 'Write value provenance')"
+        "and licensed by a value a framework-managed source published (m-unit-work 'Write "
+        "value provenance'), and the only such values a choreography unit holds are the ones "
+        "it read or opened itself"
     )
 
 
