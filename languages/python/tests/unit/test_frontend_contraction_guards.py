@@ -211,9 +211,13 @@ def test_snapshot_holds_none_of_the_codecs_row_vocabulary() -> None:
     refusals = _codec_refusals()
     assert "EntityRowError" in refusals, "the refusal registry came back without the refusal"
     assert _row_vocabulary_sites(sources(SNAPSHOT_SRC), refusals) == []
-    assert [
-        (one.importer, one.source) for one in snapshot_imports() if one.name == "row_codec_of"
-    ] == [("parallax.snapshot.handle._database", ENTITY_PACKAGE)]
+    assert sorted(
+        (one.importer, one.source) for one in snapshot_imports() if one.name == "EntityRowCodec"
+    ) == [
+        ("parallax.snapshot.handle._database", ENTITY_PACKAGE),
+        ("parallax.snapshot.handle._publication", ENTITY_PACKAGE),
+        ("parallax.snapshot.handle._transaction", ENTITY_PACKAGE),
+    ]
 
 
 def test_the_row_vocabulary_guard_names_what_is_held_and_passes_what_resembles_it() -> None:

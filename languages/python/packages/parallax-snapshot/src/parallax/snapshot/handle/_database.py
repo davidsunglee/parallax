@@ -1,6 +1,9 @@
-"""``parallax.snapshot.handle._database`` — demarcation and the flush edge (spec §5).
+"""``parallax.snapshot.handle._database`` — preparation, demarcation, and the flush edge.
 
-The composition root's own module: :meth:`Database.connect` wires a concrete
+The composition root's own module: :func:`prepare_model` runs every finite,
+fallible model-only derivation into one complete
+:class:`~parallax.snapshot.handle._publication.ModelSelection`,
+:meth:`Database.connect` wires a concrete
 ``m-db-port`` adapter to a metamodel, :meth:`Database.find`,
 :meth:`Database.stream`, and :meth:`Database.read_rows` delegate to the one
 :class:`~parallax.snapshot.handle._read_scope.ReadScope` this connection owns —
@@ -19,17 +22,26 @@ force-flushed writes with everything else. ``parallax.core.auto_retry`` may not
 import ``parallax.core.opt_lock``, so the ``retry_optimistic_conflicts`` opt-in's
 classification branch (``_optimistic_conflict_retriable``) is composed here too.
 
+Preparation lives here rather than beside the selection it builds because a
+Write Planner's strategy adapters reach the SQL-lowering group, which the sealed
+:mod:`~parallax.snapshot.handle._publication` scope may not; that scope owns the
+one :class:`~parallax.snapshot.handle._publication.ModelSelection` constructor,
+and this module is its one caller. A ``Database`` connected to a bare Domain
+Model prepares it once under a generated edition and keeps the projections of
+that one selection for its life.
+
 This is the TOP of the package's internal graph: it imports
 :mod:`parallax.snapshot.handle._read`, :mod:`~parallax.snapshot.handle._transaction`,
 :mod:`~parallax.snapshot.handle._read_scope` for the read composition it owns one of,
+:mod:`~parallax.snapshot.handle._publication` for the selection it prepares,
 :mod:`~parallax.snapshot.handle._write_lowering` and
-:mod:`~parallax.snapshot.handle._planning` for the one Write Planner it builds
-once per connected Metamodel, and nothing in the package imports it except
-``handle/__init__.py``, which re-exports its five public names
-(:class:`Database`, :func:`connect`, :class:`TransactionOptionConflictError`,
-:class:`TransactionOwnershipError`, :class:`TransactionRollbackError`) through
-the frozen ``__all__``. Because only
-those five cross the boundary, every helper here keeps its leading underscore —
+:mod:`~parallax.snapshot.handle._planning` for the one Write Planner each
+selection carries, and nothing in the package imports it except
+``handle/__init__.py``, which re-exports its six public names
+(:class:`Database`, :func:`connect`, :func:`prepare_model`,
+:class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
+:class:`TransactionRollbackError`) through the frozen ``__all__``. Because only
+those six cross the boundary, every helper here keeps its leading underscore —
 the cross-module bare-name convention the sibling modules follow has nothing to
 bite on.
 """
@@ -39,6 +51,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final
+from uuid import uuid4
 
 from parallax.core.auto_retry import check_retry_bound, run_with_retry
 from parallax.core.db_port import (
@@ -58,15 +71,11 @@ from parallax.core.db_port import (
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
 # First-party support, deliberately absent from `parallax.core.entity`'s exports:
-# this composition root connects to an accepted `Metamodel` and materializes
-# rows, so it needs both facts out of a Domain Model.
-from parallax.core.entity import (
-    DomainModel,
-    EntityRowCodec,
-    graph_construction_of,
-    row_codec_of,
-)
-from parallax.core.entity._model import cataloged_model, class_index
+# preparation derives every model-bound capability from the accepted `Metamodel`
+# and the class index, which are the two facts a Domain Model answers.
+from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import class_index, model_of
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -100,8 +109,16 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
+from parallax.snapshot.handle._publication import (
+    ModelSelection,
+    SelectedReadModel,
+    SelectedWriteModel,
+    check_edition,
+    read_projection,
+    write_projection,
+)
 from parallax.snapshot.handle._read import RowsResult, Snapshot
-from parallax.snapshot.handle._read_scope import SelectedReadModel, standalone_read_scope
+from parallax.snapshot.handle._read_scope import standalone_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import WireDatabaseView
@@ -113,6 +130,7 @@ __all__ = [
     "TransactionOwnershipError",
     "TransactionRollbackError",
     "connect",
+    "prepare_model",
 ]
 
 # The audit-neutral Subject Identity every production planning request carries
@@ -246,6 +264,49 @@ class _Demarcation:
     attempt: TransactionAttemptActivity
 
 
+def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
+    """Prepare ``model`` under ``edition``: one complete selection, or raise.
+
+    Preparing means constructing every model-bound capability whole — the
+    exact-model layouts, the row codec's per-Entity facts, and, for a
+    class-backed model, the graph construction's — so nothing fallible that
+    depends on the model alone remains to run on a request path. Each
+    collaborator raises on its first refusal and no partial selection escapes.
+    A descriptor-backed model prepares with no graph construction: it serves
+    Wire and the write lanes and refuses Typed materialization at the read call.
+
+    Preparation runs no query, inspects no schema, and promises nothing about
+    stored data, future queries, or database availability. The selection is
+    process-local and holds no connection, transaction, Clock, or lifecycle
+    provider. ``edition`` is an opaque nonempty token compared only for
+    equality; :class:`ValueError` refuses an empty one before any derivation,
+    and :class:`TypeError` refuses a value that is no Domain Model.
+    """
+    check_edition(edition)
+    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so an untyped caller is named
+        raise TypeError(
+            f"prepare_model takes a Domain Model — one composed from Entity Classes, or one a "
+            f"descriptor produced — not {model!r}"
+        )
+    catalog = CatalogedModel(model_of(model))
+    codec = EntityRowCodec(catalog.meta)
+    classes = class_index(model)
+    construction = (
+        None if classes is None else EntityGraphConstruction(catalog.meta, classes, catalog.layouts)
+    )
+    return ModelSelection(
+        edition,
+        model,
+        SelectedReadModel(edition=edition, model=catalog, construction=construction),
+        SelectedWriteModel(
+            edition=edition,
+            model=catalog,
+            codec=codec,
+            planner=build_write_planner(catalog.meta),
+        ),
+    )
+
+
 class Database:
     """A connected Parallax database handle: one adapter, one metamodel (spec §5)."""
 
@@ -269,12 +330,14 @@ class Database:
     ) -> None:
         """Connect to ``model``, a Domain Model of either provenance.
 
-        Every connection reaches its accepted Metamodel through a Domain Model,
-        so per-model derived state hangs on that model behind one lookup door.
-        Provenance decides capability rather than which constructor ran: a
-        descriptor-backed model composes no Entity Class, so it serves Wire and
-        the write lanes — which name Entities rather than classes — and refuses
-        every modeled read at the read call.
+        The model is prepared once, here, under a generated opaque edition that
+        stays fixed for this connection's life, and the connection keeps that
+        one selection's projections: every read and every write it serves runs
+        against products derived whole at connect. Provenance decides capability
+        rather than which constructor ran: a descriptor-backed model composes no
+        Entity Class, so it serves Wire and the write lanes — which name
+        Entities rather than classes — and refuses every modeled read at the
+        read call.
         """
         if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, so an untyped caller is named rather than failing on a missing attribute
             raise SnapshotConnectionError(
@@ -282,16 +345,15 @@ class Database:
                 "one a descriptor produced; a bare accepted Metamodel names no model a "
                 "connection can serve (snapshot-class-backed-model-required)"
             )
-        # The read half and the write half stay separate references: neither is
-        # a function of the other, and only the construction can be absent at
-        # all — a row and a member layout are both derived from accepted
-        # metadata alone, so a descriptor-backed model reaches a fully
-        # functional codec and catalog while reaching no materializer.
-        self._selected = SelectedReadModel(
-            model=cataloged_model(model),
-            construction=(None if class_index(model) is None else graph_construction_of(model)),
-        )
-        self._codec: EntityRowCodec = row_codec_of(model)
+        # One static selection, prepared whole before this handle can serve: the
+        # read projection is what every read runs under, and the write
+        # projection's codec and planner are what every transaction writes
+        # through. Two independent connections over one model carry two
+        # generated editions; sharing one is explicit preparation's job.
+        selection = prepare_model(model, edition=f"static-{uuid4().hex}")
+        write = write_projection(selection)
+        self._selected = read_projection(selection)
+        self._codec: EntityRowCodec = write.codec
         self._port = port
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
@@ -309,10 +371,10 @@ class Database:
         self._reads = standalone_read_scope(
             lifecycle=self._lifecycle, selected=self._selected, port=port
         )
-        # One Write Planner per connected Metamodel, reused across every
+        # One Write Planner per prepared selection, reused across every
         # `transact()` attempt (`m-unit-work`: the planner is constructed once
         # per accepted Metamodel with its strategy adapters already wired).
-        self._planner: WritePlanner = build_write_planner(self._selected.model.meta)
+        self._planner: WritePlanner = write.planner
 
     @classmethod
     def connect(

@@ -30,6 +30,7 @@ from typing import Any, cast
 import pytest
 from _compact_support import carries_instance_storage, layout_slots, raw_row
 
+from _support.model_capabilities import graph_construction_for, row_codec_for
 from parallax.core.entity import (
     MANY_TO_ONE,
     UNLOADED,
@@ -40,11 +41,9 @@ from parallax.core.entity import (
     Rel,
     ValueObject,
     attr,
-    graph_construction_of,
     lifecycle_state_of,
     rel,
     relationship_value_of,
-    row_codec_of,
     to_document,
 )
 from parallax.core.entity._construction_input import ABSENT
@@ -55,7 +54,7 @@ from parallax.core.entity._graph_construction import (
 )
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
 from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.entity._model import DomainModel, model_of
+from parallax.core.entity._model import DomainModel, class_index, model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity, ValueObjectIdentity
 
 _NS = "publication"
@@ -134,7 +133,7 @@ _ROUTE_ROW: tuple[object, ...] = (
 
 
 def _published(build: Any = _one_parcel, *, state_factory: Any = None) -> Any:
-    (root,) = graph_construction_of(PARCELS).construct(build, state_factory=state_factory)
+    (root,) = graph_construction_for(PARCELS).construct(build, state_factory=state_factory)
     return root
 
 
@@ -185,7 +184,7 @@ def test_publication_enters_neither_constructor_at_any_containment_depth(
         writer.populate(handle, (1, _ROUTE_ROW), ())
         return (handle,)
 
-    (root,) = graph_construction_of(SHIPMENTS).construct(build)
+    (root,) = graph_construction_for(SHIPMENTS).construct(build)
     shipment = cast("Shipment", root)
     route = cast("_Route", shipment.route)
     assert route.leg is not None
@@ -303,7 +302,7 @@ def test_no_framework_read_of_a_published_graph_creates_its_storage() -> None:
         return state
 
     root = _published(state_factory=factory)
-    codec = row_codec_of(PARCELS)
+    codec = row_codec_for(PARCELS)
 
     assert codec.full_row(root)
     assert to_document(root.tag)
@@ -334,7 +333,7 @@ def test_class_metadata_count_is_independent_of_published_instance_count() -> No
     # nodes derives no more metadata. The per-Entity facts and the member layout
     # are each derived once per model and answered from thereafter, whether one
     # node or a hundred are published against them.
-    construction = graph_construction_of(PARCELS)
+    construction = graph_construction_for(PARCELS)
     facts = construction.facts_for(_PARCEL)
 
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
@@ -360,7 +359,7 @@ def test_a_cyclic_published_graph_is_collected_whole() -> None:
         writer.populate(right, (2, "r", ABSENT, 1, ABSENT), (left,))
         return (left, right)
 
-    roots = graph_construction_of(PARCELS).construct(build)
+    roots = graph_construction_for(PARCELS).construct(build)
     alive = [weakref.ref(cast("Any", node)) for node in roots]
     assert cast("Any", roots[0]).peer is roots[1]
 
@@ -512,17 +511,16 @@ def _disagreeing(composed: type[Entity], variant: type[Entity]) -> GraphConstruc
     """The refusal one construction earns when the model it derives its layout
     from is ``variant``'s and the class it publishes is ``composed``'s.
 
-    Only a test can hold a construction in that state: a composition root always
-    takes the accepted metadata and the composed classes off one Domain Model, so
-    the two halves are substituted here the way the graph suites substitute a
-    merge's model.
+    Only a test can hand a construction that pair: a composition root always
+    takes the accepted metadata and the composed classes off one Domain Model,
+    so the two halves are handed in disagreeing here, and the constructor —
+    which derives every Entity's facts as it is built — refuses there.
     """
-    construction = EntityGraphConstruction(DomainModel(composed, CorrPeer))
+    classes = class_index(DomainModel(composed, CorrPeer))
+    assert classes is not None
     meta = model_of(DomainModel(variant, CorrPeer))
-    construction._model = meta  # pyright: ignore[reportPrivateUsage] - the disagreeing pair a root cannot build
-    construction._layouts = LayoutCatalog(meta)  # pyright: ignore[reportPrivateUsage] - same
     with pytest.raises(GraphConstructionError) as refusal:
-        construction.facts_for(cast("EntityIdentity", cast("Any", composed).identity))
+        EntityGraphConstruction(meta, classes, LayoutCatalog(meta))
     assert refusal.value.code == "entity-graph-layout-mismatch"
     return refusal.value
 
@@ -531,7 +529,7 @@ def test_the_pair_that_agrees_is_not_refused() -> None:
     # The control: `_Composed` against its own model is the shape every other
     # case is one deviation from, so a refusal below is that deviation rather
     # than the check refusing everything.
-    facts = EntityGraphConstruction(DomainModel(_Composed, CorrPeer)).facts_for(_CORR)
+    facts = graph_construction_for(DomainModel(_Composed, CorrPeer)).facts_for(_CORR)
     assert tuple(attribute.py_name for attribute in facts.attributes) == (
         "id",
         "label",
@@ -589,11 +587,12 @@ def test_a_row_laid_out_against_another_models_layout_is_refused() -> None:
     # order, neither derived from the other. A row laid out against a different
     # model's layout is what a disagreement between them would install, member by
     # member, with nothing left to notice it.
-    construction = EntityGraphConstruction(DomainModel(_Composed, CorrPeer))
+    own = DomainModel(_Composed, CorrPeer)
+    classes = class_index(own)
+    assert classes is not None
     foreign = model_of(DomainModel(_ReorderedMembers, CorrPeer))
-    construction._layouts = LayoutCatalog(foreign)  # pyright: ignore[reportPrivateUsage] - a pair a root cannot build
     with pytest.raises(GraphConstructionError) as refusal:
-        construction.facts_for(_CORR)
+        EntityGraphConstruction(model_of(own), classes, LayoutCatalog(foreign))
     assert refusal.value.code == "entity-graph-layout-mismatch"
     assert "the member layout lays out" in refusal.value.message
     assert "this collaboration reads" in refusal.value.message

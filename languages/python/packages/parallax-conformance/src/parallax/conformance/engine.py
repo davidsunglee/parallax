@@ -169,6 +169,7 @@ __all__ = [
     "EngineError",
     "RunOnly",
     "ScenarioRun",
+    "case_edition",
     "compile_read_case",
     "compile_scenario_case",
     "compile_write_sequence_case",
@@ -344,6 +345,17 @@ def load_case_domain_model(case: case_format.Case) -> DomainModel:
     serving the connection and every neutral surface beside it.
     """
     return models.load_domain_model(_case_model_path(case))
+
+
+def case_edition(case: case_format.Case) -> str:
+    """The Model Edition a case's model is prepared under: the model
+    descriptor's file stem, ``"account"`` for ``models/account.yaml``.
+
+    One rule, so every lane preparing a case's model — and every fixture
+    asserting the edition an execution adopted — derives the same literal from
+    the same fact about the case.
+    """
+    return _case_model_path(case).stem
 
 
 def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:

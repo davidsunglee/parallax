@@ -42,6 +42,7 @@ from _support.db_port import (
     Write,
     WriteCall,
 )
+from _support.model_capabilities import graph_construction_for
 from parallax.conformance import vo_models as vo
 from parallax.conformance.read_models import Person
 from parallax.core import Attr, Entity, attr
@@ -50,7 +51,6 @@ from parallax.core.entity import (
     EntityDefinitionError,
     EntityGraphWriter,
     NodeHandle,
-    graph_construction_of,
 )
 from parallax.core.entity._declaration import LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import lifecycle_state
@@ -523,7 +523,7 @@ def test_a_class_diverting_the_lifecycle_slot_is_refused_all_the_same() -> None:
         writer.populate(node, (7,), ())
         return (node,)
 
-    (root,) = graph_construction_of(_DIVERTED_MODEL).construct(
+    (root,) = graph_construction_for(_DIVERTED_MODEL).construct(
         build, state_factory=lambda _view, _handle: state
     )
     assert lifecycle_state(cast("_DivertedSlotNode", root)) is state

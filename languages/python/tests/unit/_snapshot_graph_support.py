@@ -20,8 +20,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
+from _support.model_capabilities import graph_construction_for
 from parallax.core import DomainModel
-from parallax.core.entity import graph_construction_of
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
@@ -242,5 +242,5 @@ class GraphFixture:
         contradicted is its :class:`InvalidData` record instead.
         """
         return materialize_graph(
-            self.graph(*roots, pin=pin), self._model, graph_construction_of(self._domain)
+            self.graph(*roots, pin=pin), self._model, graph_construction_for(self._domain)
         )

@@ -89,6 +89,7 @@ from typing import Any, Final, cast
 
 from pydantic import BaseModel, PrivateAttr
 
+from _support.model_capabilities import cataloged_for, graph_construction_for
 from parallax.core import (
     MANY_TO_ONE,
     AbstractRoot,
@@ -110,11 +111,11 @@ from parallax.core.entity import (
 from parallax.core.entity._construction_input import ABSENT, NodeHandle
 from parallax.core.entity._declaration import shape_of
 from parallax.core.entity._entity import attach_lifecycle_state, wire_names_of
-from parallax.core.entity._graph_construction import EntityGraphWriter, graph_construction_of
+from parallax.core.entity._graph_construction import EntityGraphWriter
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.entity._model import DomainModel as ModelType
-from parallax.core.entity._model import cataloged_model, class_index
+from parallax.core.entity._model import class_index
 from parallax.core.entity._pydantic_storage import attach_instance_state, instance_state
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -391,7 +392,7 @@ class Scenario:
     @cached_property
     def layout(self) -> EntityLayout:
         """The exact Entity's member layout — the order ``values`` is read in."""
-        return cataloged_model(self.model).layouts.entity(self.entity)
+        return cataloged_for(self.model).layouts.entity(self.entity)
 
     @cached_property
     def unloaded(self) -> tuple[object, ...]:
@@ -491,7 +492,7 @@ def compact_publication(scenario: Scenario, state: object | None) -> object:
     step with production, because it IS production — which is the half of the
     comparison the legacy arm cannot be.
     """
-    construction = graph_construction_of(scenario.model)
+    construction = graph_construction_for(scenario.model)
     entity = scenario.entity
     members = scenario.values
     relationships = scenario.unloaded
@@ -609,7 +610,7 @@ def compact_graph(scenario: Scenario, count: int) -> tuple[object, ...]:
     state per node, so the only thing that varies with ``count`` is how many
     nodes one call's scaffolding is spread over.
     """
-    construction = graph_construction_of(scenario.model)
+    construction = graph_construction_for(scenario.model)
     entity = scenario.entity
     members = scenario.values
     relationships = scenario.unloaded
@@ -699,7 +700,7 @@ def compact_common_work_ns(scenario: Scenario, count: int) -> float:
     the residue is this figure subtracted from a timing of :func:`compact_graph`,
     so only what is counted INTO it can move the correction.
     """
-    construction = graph_construction_of(scenario.model)
+    construction = graph_construction_for(scenario.model)
     entity = scenario.entity
     members = scenario.values
     relationships = scenario.unloaded

@@ -106,8 +106,9 @@ from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
+from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.handle._read import RowsResult, Snapshot
-from parallax.snapshot.handle._read_scope import SelectedReadModel, participating_read_scope
+from parallax.snapshot.handle._read_scope import participating_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire import WireTransactionView
 from parallax.snapshot.handle._wire_writes import (

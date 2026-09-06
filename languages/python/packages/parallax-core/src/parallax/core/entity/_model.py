@@ -14,6 +14,11 @@ holds is an index of the classes it composed, which exists so a materializing
 runtime can decide which class a returned row instantiates. The same class may
 legitimately mean different things in two models: partial inheritance families
 compose, so an Entity's effective concrete-subtype set is a per-model fact.
+
+A model holds nothing derived from itself. The layouts, row codec, and graph
+construction a runtime needs are pure functions of the accepted Metamodel and
+the class index, so the runtime that composes them derives them once, whole,
+from the two accessors below, and retains its own products.
 """
 
 from __future__ import annotations
@@ -34,7 +39,6 @@ from parallax.core.entity._errors import (
     MetamodelDefinitionError,
     MetamodelLookupError,
 )
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -50,7 +54,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.relationship import view as relationship_view
 
-__all__ = ["ClassIndex", "DomainModel", "cataloged_model", "class_index", "model_of"]
+__all__ = ["ClassIndex", "DomainModel", "class_index", "model_of"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,30 +98,10 @@ class DomainModel:
     the identical compiler-owned accepted metadata.
     """
 
-    __slots__ = ("_cataloged", "_classes", "_graph_construction", "_model", "_row_codec")
+    __slots__ = ("_classes", "_model")
 
     _model: Metamodel
     _classes: ClassIndex | None
-    _cataloged: CatalogedModel | None
-    """This model's accepted metadata paired with the exact-model member layouts
-    derived from it, created on first reach.
-
-    Typed concretely rather than opaquely, unlike its two siblings: the record is
-    stated over the accepted Metamodel alone and its module sits BELOW this one,
-    so naming the type here inverts no edge."""
-    _graph_construction: object | None
-    """The Entity Graph Construction collaboration this model reached, created on
-    first reach. It is typed as opaque here because the construction seam depends
-    on this module and never the reverse; what fills the slot is
-    ``parallax.core.entity._graph_construction.graph_construction_of``."""
-    _row_codec: object | None
-    """The Entity Row Codec this model reached, created on first reach and typed
-    opaque for its sibling's reason; what fills the slot is
-    ``parallax.core.entity._row_codec.row_codec_of``.
-
-    One slot per capability rather than one composite or one keyed bag: read
-    materialization crosses graph construction alone and write preparation
-    crosses the codec alone, so nothing wants the pair as a value."""
 
     def __init__(self, *classes: UnresolvedEntityDeclaration) -> None:
         """Compose ``classes`` into one sealed model, or raise.
@@ -159,9 +143,6 @@ class DomainModel:
         """Complete the model's own state in one step."""
         self._model = model
         self._classes = classes
-        self._graph_construction = None
-        self._cataloged = None
-        self._row_codec = None
 
     @property
     def entities(self) -> Sequence[EntityMetadata]:
@@ -218,43 +199,16 @@ def model_of(model: DomainModel) -> Metamodel:
     return model._model  # pyright: ignore[reportPrivateUsage] - first-party seam reads the model's own sealed metamodel
 
 
-def cataloged_model(model: DomainModel) -> CatalogedModel:
-    """``model``'s accepted Metamodel paired with the layouts derived from it —
-    the one door to either half.
-
-    The record derives its own catalog, so pairing and derivation are one act and
-    the two halves a runtime carries can never name two models. It is created on
-    the first reach and retained by the model itself, so every later reach is
-    answered the record already in the slot, every read served by one record
-    shares the per-Entity layouts derived into it, and the retained catalog count
-    is a function of the models a process connects to rather than of the graphs
-    it materializes — one apiece, plus whatever the race below adds.
-
-    Unsynchronized check-then-set, like its two capability siblings: concurrent
-    first reaches each build a record and each are answered their own, and
-    whichever landed last is what every later reach is answered. A caller holding
-    one of the others keeps it — and keeps deriving into its catalog — for as
-    long as that caller lives, so a race between two callers that each retain a
-    model's record retains two catalogs rather than one. That is safe because a
-    catalog is a pure function of the accepted immutable Metamodel — two catalogs
-    for one model are structurally identical — and because layout identity is
-    never load-bearing: nothing compares layouts by identity, and every consumer
-    keys by Entity Identity or Value Object Identity, both value types.
-    """
-    cataloged = model._cataloged  # pyright: ignore[reportPrivateUsage] - first-party seam
-    if cataloged is None:
-        cataloged = CatalogedModel(model_of(model))
-        model._cataloged = cataloged  # pyright: ignore[reportPrivateUsage] - first-party seam
-    return cataloged
-
-
 def class_index(model: DomainModel) -> ClassIndex | None:
     """``model``'s Entity Class index, absent exactly for a descriptor-backed one.
 
     The companion of :func:`model_of` for the one capability that needs classes:
     a runtime that instantiates result rows. Reachable only through this private
     module — ``parallax.core.entity`` exports neither function — so the pair is
-    first-party support rather than developer surface.
+    first-party support rather than developer surface. Together they are the
+    whole of what a preparing runtime reads out of a model: it derives every
+    model-bound capability from the accepted Metamodel and this index itself,
+    and the model retains none of what it derives.
     """
     return model._classes  # pyright: ignore[reportPrivateUsage] - first-party seam reads the model's own class index
 

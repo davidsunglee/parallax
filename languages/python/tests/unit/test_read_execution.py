@@ -25,10 +25,9 @@ from typing import Any, Final
 from _transact_support import ACCOUNT, FIXED
 
 from _support.db_port import RefusingPort
+from _support.model_capabilities import cataloged_for, graph_construction_for
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.db_port import DbPort
-from parallax.core.entity import graph_construction_of
-from parallax.core.entity._model import cataloged_model
 from parallax.core.execution_lifecycle import ExecutionEvent
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
@@ -53,7 +52,8 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle import build_write_planner
-from parallax.snapshot.handle._read_scope import ReadInputs, SelectedReadModel
+from parallax.snapshot.handle._publication import SelectedReadModel
+from parallax.snapshot.handle._read_scope import ReadInputs
 
 # The two production adapters are what this suite grades, and module privacy is
 # what closes their construction — so they are reached here exactly as the
@@ -61,9 +61,9 @@ from parallax.snapshot.handle._read_scope import ReadInputs, SelectedReadModel
 _Standalone: Final = read_scope_module._StandaloneExecution  # pyright: ignore[reportPrivateUsage]
 _Participating: Final = read_scope_module._ParticipatingExecution  # pyright: ignore[reportPrivateUsage]
 
-_META: Final = cataloged_model(ACCOUNT).meta
+_META: Final = cataloged_for(ACCOUNT).meta
 _SELECTED: Final = SelectedReadModel(
-    model=cataloged_model(ACCOUNT), construction=graph_construction_of(ACCOUNT)
+    edition="test", model=cataloged_for(ACCOUNT), construction=graph_construction_for(ACCOUNT)
 )
 
 

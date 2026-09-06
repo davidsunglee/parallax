@@ -77,6 +77,7 @@ from parallax.core.unit_work import Concurrency, UnitOfWork
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.handle._read import (
     ResultPublication,
     RowsResult,
@@ -93,8 +94,8 @@ from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
 __all__ = [
     "ReadInputs",
     "ReadScope",
-    "SelectedReadModel",
     "WireQuery",
+    "materializing",
     "participating_read_scope",
     "standalone_read_scope",
     "wire_query_node",
@@ -127,45 +128,23 @@ def wire_query_node(query: WireQuery) -> ObjectQueryNode:
     return object_query_node(query)
 
 
-@dataclass(frozen=True, slots=True)
-class SelectedReadModel:
-    """The model ONE read is served under: the cataloged model it resolves,
-    plans, and converts against, and — for a class-backed model — the Entity
-    Graph Construction collaboration that materializes its rows into instances.
+def materializing(selected: SelectedReadModel, /) -> EntityGraphConstruction:
+    """The graph construction a modeled read needs, or refuse before any I/O.
 
-    A property of the operation rather than of the Handle. A ``Database`` may
-    answer the same value for every read it serves and a ``Transaction`` answers
-    one fixed value for its whole life, but the scope above assumes neither: it
-    takes the record its execution policy hands back for THIS operation, and a
-    stream keeps the one it opened under through all of its pages.
-
-    The write codec is deliberately absent. A read never derives a row, so a
-    record carrying one would offer the write half to every read composition
-    that holds it. The construction is the only half that can be missing at all:
-    a member layout and a row are both derived from accepted metadata, so a
-    descriptor-backed model reaches a fully functional catalog while reaching no
-    materializer — which is exactly the refusal :meth:`materializing` states.
+    Absent exactly for a descriptor-backed Domain Model, which composes no
+    Entity Class and therefore serves the Wire and write lanes while
+    materializing nothing. The refusal lands before the shared gate and
+    therefore before a participating read's force-flush, so a Handle that
+    cannot materialize a Snapshot at all answers that before it answers
+    anything about the query. It is a function here rather than a method of the
+    record because the record's sealed scope may not name the refusal.
     """
-
-    model: CatalogedModel
-    construction: EntityGraphConstruction | None
-
-    def materializing(self) -> EntityGraphConstruction:
-        """The graph construction a modeled read needs, or refuse before any I/O.
-
-        Absent exactly for a descriptor-backed Domain Model, which composes no
-        Entity Class and therefore serves the Wire and write lanes while
-        materializing nothing. The refusal lands before the shared gate and
-        therefore before a participating read's force-flush, so a Handle that
-        cannot materialize a Snapshot at all answers that before it answers
-        anything about the query.
-        """
-        if self.construction is None:
-            raise SnapshotConnectionError(
-                "this read is served under a model that composed no Entity Class, so it "
-                "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
-            )
-        return self.construction
+    if selected.construction is None:
+        raise SnapshotConnectionError(
+            "this read is served under a model that composed no Entity Class, so it "
+            "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
+        )
+    return selected.construction
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,7 +235,7 @@ class ReadScope:
         # them is even consulted (`m-execution-lifecycle`).
         refuse_reentry(self._lifecycle)
         selected = self._execution.begin()
-        construction = selected.materializing()
+        construction = materializing(selected)
         return self._graph(
             selected,
             object_query_node(query),
@@ -273,7 +252,7 @@ class ReadScope:
         """
         refuse_reentry(self._lifecycle)
         selected = self._execution.begin()
-        construction = selected.materializing()
+        construction = materializing(selected)
         return self._streamed(
             selected,
             object_query_node(query),

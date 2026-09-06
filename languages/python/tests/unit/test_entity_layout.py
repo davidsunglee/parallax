@@ -35,7 +35,7 @@ from parallax.core.entity._layout import (
     LayoutCatalog,
     ValueObjectLayout,
 )
-from parallax.core.entity._model import cataloged_model, model_of
+from parallax.core.entity._model import model_of
 from parallax.core.inheritance import FACET_KEY as INHERITANCE_FACET_KEY
 from parallax.core.inheritance import InheritanceEntityView, InheritanceFacet
 from parallax.core.inheritance import view as inheritance_view
@@ -478,7 +478,7 @@ def test_the_layouts_view_order_is_the_order_the_merge_walks_and_publishes() -> 
 
 
 # --------------------------------------------------------------------------- #
-# Ownership: the catalog a Domain Model retains, entries on first reach.       #
+# Construction: one catalog per model, every Entity derived at once.           #
 # --------------------------------------------------------------------------- #
 
 
@@ -486,20 +486,12 @@ def _domain_models() -> dict[str, Any]:
     return models.load_domain_models(Path(models.default_models_dir()))
 
 
-def test_one_domain_model_reaches_one_catalog_and_two_reach_two() -> None:
-    loaded = _domain_models()
-    orders, animal = loaded["orders"], loaded["animal"]
-    assert cataloged_model(orders) is cataloged_model(orders)
-    assert cataloged_model(orders).layouts is not cataloged_model(animal).layouts
-
-
 def test_the_cataloged_model_pairs_one_models_metadata_with_the_catalog_it_derived() -> None:
     # A record derives its own catalog from the metadata it carries, so the two
-    # halves a read carries can never name two models — and so the model's own
-    # retained record, not a second record over the same metadata, is what a
-    # runtime holds to share one model's layouts.
+    # halves a read carries can never name two models — and a runtime shares
+    # one record rather than forming a second beside it.
     orders = _domain_models()["orders"]
-    cataloged = cataloged_model(orders)
+    cataloged = CatalogedModel(model_of(orders))
     assert cataloged.meta is model_of(orders)
     assert CatalogedModel(cataloged.meta).layouts is not cataloged.layouts
 
@@ -507,8 +499,8 @@ def test_the_cataloged_model_pairs_one_models_metadata_with_the_catalog_it_deriv
 def test_a_cataloged_model_is_the_model_it_carries_and_not_the_catalog_it_derived() -> None:
     # The catalog is a function of the metadata, so it distinguishes no two
     # records the metadata does not, and comparing it by identity would make two
-    # records a first-reach race published over one model unequal — the identity
-    # no consumer is allowed to depend on.
+    # records over one model unequal — the identity no consumer is allowed to
+    # depend on.
     meta = model_of(_domain_models()["orders"])
     one, other = CatalogedModel(meta), CatalogedModel(meta)
     assert one.layouts is not other.layouts
@@ -517,9 +509,9 @@ def test_a_cataloged_model_is_the_model_it_carries_and_not_the_catalog_it_derive
 
 
 def test_a_descriptor_backed_domain_model_reaches_a_working_catalog() -> None:
-    # The class-less path `graph_construction_of` refuses: a layout depends on
-    # the accepted metadata alone, so this one must not.
-    catalog = cataloged_model(_domain_models()["orders"]).layouts
+    # A descriptor-backed model prepares no graph construction: a layout depends
+    # on the accepted metadata alone, so its catalog is complete regardless.
+    catalog = CatalogedModel(model_of(_domain_models()["orders"])).layouts
     assert catalog.entity(_identity("Order")).concrete == _identity("Order")
 
 
@@ -528,25 +520,15 @@ def test_one_entity_reached_twice_answers_the_same_layout() -> None:
     assert catalog.entity(_identity("Order")) is catalog.entity(_identity("Order"))
 
 
-def test_a_fresh_catalog_derives_nothing_until_an_entity_is_reached() -> None:
-    catalog = LayoutCatalog(corpus_model("orders"))
-    assert catalog._cache == {}  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-    catalog.entity(_identity("Order"))
-    assert set(catalog._cache) == {  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-        _identity("Order")
-    }
-
-
-def test_reaching_one_family_derives_no_layout_for_an_unrelated_one() -> None:
-    catalog = LayoutCatalog(corpus_model("animal"))
-    catalog.entity(_identity("Cat"))
-    assert set(catalog._cache) == {  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
-        _identity("Cat")
-    }
+def test_a_catalog_derives_every_declared_entity_at_construction() -> None:
+    model = corpus_model("animal")
+    catalog = LayoutCatalog(model)
+    derived = catalog._layouts  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    assert set(derived) == {entity.identity for entity in model.entities}
 
 
 # --------------------------------------------------------------------------- #
-# Refusals: model defects, raised at first reach.                              #
+# Refusals: model defects refuse the whole catalog where it is constructed.    #
 # --------------------------------------------------------------------------- #
 
 
@@ -562,7 +544,7 @@ def test_two_members_claiming_one_position_refuse_the_whole_layout() -> None:
     attributes = tuple(_view(model, identity).applicable_attributes)
     doctored = _with_applicable_attributes(model, identity, (*attributes, attributes[0]))
     with pytest.raises(ValueError, match="two members under one identity"):
-        LayoutCatalog(doctored).entity(identity)
+        CatalogedModel(doctored)
 
 
 def test_a_family_key_the_row_does_not_express_refuses_the_whole_layout() -> None:
@@ -575,7 +557,7 @@ def test_a_family_key_the_row_does_not_express_refuses_the_whole_layout() -> Non
     )
     doctored = _with_applicable_attributes(model, identity, attributes)
     with pytest.raises(ValueError, match="no position for the primary key"):
-        LayoutCatalog(doctored).entity(identity)
+        CatalogedModel(doctored)
 
 
 def test_a_refusal_is_raised_rather_than_classified_as_stored_data() -> None:
@@ -586,7 +568,7 @@ def test_a_refusal_is_raised_rather_than_classified_as_stored_data() -> None:
     attributes = tuple(_view(model, identity).applicable_attributes)
     doctored = _with_applicable_attributes(model, identity, (*attributes, attributes[0]))
     with pytest.raises(ValueError) as excinfo:
-        LayoutCatalog(doctored).entity(identity)
+        CatalogedModel(doctored)
     assert not hasattr(excinfo.value, "code")
 
 

@@ -3,7 +3,12 @@
 Snapshot graph materialization and the developer handle over the spine. The
 package re-exports exactly the spec §8 surface: :func:`connect` (the
 composition-root entry point — application code constructs a concrete adapter
-and calls ``parallax.snapshot.connect(adapter, model)``), :class:`Snapshot`
+and calls ``parallax.snapshot.connect(adapter, model)``), the preparation and
+publication surface beside it — :func:`prepare_model`, which prepares one
+Domain Model under one Model Edition into an opaque, complete
+:class:`ModelSelection`; :class:`ServingModel`, the single concrete holder of
+the selection executions adopt; and :class:`PublicationConflictError`, its
+refusal of a stale publication — :class:`Snapshot`
 (``Snapshot[T]``) with :class:`CheckedSnapshot` (``CheckedSnapshot[T]``), its
 checked view, the in-band invalid-result vocabulary a classified root publishes
 — :class:`InvalidData`, :class:`StoredDataIssue`, :class:`ObjectKey` (the
@@ -83,9 +88,12 @@ from parallax.snapshot.handle import (
     InvalidData,
     InvalidDataError,
     KeyedWriteValueError,
+    ModelSelection,
     NoResultFound,
     ObjectKey,
+    PublicationConflictError,
     QueryTargetError,
+    ServingModel,
     Snapshot,
     SnapshotConnectionError,
     SnapshotMaterializationError,
@@ -101,6 +109,7 @@ from parallax.snapshot.handle import (
     WriteEvidenceErrorCode,
     WriteInstructionError,
     connect,
+    prepare_model,
 )
 from parallax.snapshot.materialize import MISSING_STORED_VALUE, SnapshotDecodingError
 
@@ -113,9 +122,12 @@ __all__ = [
     "InvalidData",
     "InvalidDataError",
     "KeyedWriteValueError",
+    "ModelSelection",
     "NoResultFound",
     "ObjectKey",
+    "PublicationConflictError",
     "QueryTargetError",
+    "ServingModel",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotDecodingError",
@@ -137,5 +149,6 @@ __all__ = [
     "edge_of",
     "is_view_loaded",
     "pin_of",
+    "prepare_model",
     "view",
 ]

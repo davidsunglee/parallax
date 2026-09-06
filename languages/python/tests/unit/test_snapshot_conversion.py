@@ -37,6 +37,7 @@ from _snapshot_graph_support import (
     rendered_occurrence,
 )
 
+from _support.model_capabilities import graph_construction_for
 from parallax.conformance import vo_models
 from parallax.core.base import (
     BOOLEAN,
@@ -56,7 +57,6 @@ from parallax.core.base import (
     UnknownFamilyTag,
 )
 from parallax.core.document_codec import DocumentFinding, encode_leaf
-from parallax.core.entity import graph_construction_of
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -832,7 +832,7 @@ def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], 
     (root,) = materialize_graph(
         graph,
         CUSTOMER,
-        graph_construction_of(vo_models.CUSTOMER_MODEL),
+        graph_construction_for(vo_models.CUSTOMER_MODEL),
     )
     published = invalid_record(root)
     assert published.data is None

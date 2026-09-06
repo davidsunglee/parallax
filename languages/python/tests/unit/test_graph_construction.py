@@ -27,6 +27,7 @@ from typing import Any, cast
 import pytest
 
 from _support import snapshot_models as sm
+from _support.model_capabilities import graph_construction_for
 from parallax.core import Attr, Bitemporal, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
@@ -36,7 +37,6 @@ from parallax.core.entity import (
     GraphConstructionError,
     NodeHandle,
     ResolutionView,
-    graph_construction_of,
     lifecycle_state_of,
     relationship_value_of,
 )
@@ -47,7 +47,6 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
     RelationshipIdentity,
-    UnresolvedEntityDeclaration,
 )
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
@@ -73,17 +72,7 @@ _ITEM_UNLOADED: tuple[object, ...] = (UNLOADED, UNLOADED)
 
 
 def _construct(build: Any, *, state_factory: Any = None) -> tuple[object, ...]:
-    return graph_construction_of(_ORDERS).construct(build, state_factory=state_factory)
-
-
-class _ClasslessSource:
-    """A minimal Unresolved Metamodel composing no Entity Class — the descriptor
-    frontend's own formation input, and the one route to a model with no class
-    index."""
-
-    @property
-    def entities(self) -> tuple[UnresolvedEntityDeclaration, ...]:
-        return (sm.SnapOrderStatus,)
+    return graph_construction_for(_ORDERS).construct(build, state_factory=state_factory)
 
 
 class _CallerDefinedTuple(tuple[Any, ...]):
@@ -506,7 +495,7 @@ def test_the_writers_relationship_order_is_the_layouts_own() -> None:
     # wrong direction silently, which is the one hazard a positional row adds and
     # the sparse algebra's identities used to rule out.
     catalog = LayoutCatalog(model_of(_ORDERS))
-    construction = graph_construction_of(_ORDERS)
+    construction = graph_construction_for(_ORDERS)
     for entity in (_ORDER, _ITEM, sm.SnapOrderStatus.identity):
         facts = construction.facts_for(entity)
         assert tuple(direction.identity for direction in facts.relationships) == (
@@ -643,7 +632,7 @@ def _bound(name: str) -> tuple[object, ...]:
         )
         return (node,)
 
-    return graph_construction_of(_MILESTONES).construct(build)
+    return graph_construction_for(_MILESTONES).construct(build)
 
 
 @pytest.mark.parametrize("name", ["txEnd", "validEnd"])
@@ -680,7 +669,7 @@ def _cat(members: tuple[object, ...]) -> Any:
         writer.populate(node, members, ())
         return (node,)
 
-    (root,) = graph_construction_of(sm.ANIMAL_MODEL).construct(build)
+    (root,) = graph_construction_for(sm.ANIMAL_MODEL).construct(build)
     return cast("Any", root)
 
 
@@ -864,9 +853,17 @@ def test_reading_a_relationship_the_class_family_does_not_declare_is_refused() -
     assert refusal.value.code == "entity-graph-invalid-member"
 
 
-def test_one_construction_is_reused_for_one_domain_model() -> None:
-    assert graph_construction_of(_ORDERS) is graph_construction_of(_ORDERS)
-    assert graph_construction_of(_ORDERS) is not graph_construction_of(sm.ANIMAL_MODEL)
+def test_a_construction_derives_every_declared_entity_at_construction() -> None:
+    construction = graph_construction_for(_ORDERS)
+    derived = construction._facts  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    assert set(derived) == {entity.identity for entity in _ORDERS.entities}
+
+
+def test_an_entity_the_model_does_not_declare_is_refused_at_lookup() -> None:
+    with pytest.raises(GraphConstructionError) as refusal:
+        graph_construction_for(_ORDERS).facts_for(sm.Cat.identity)
+    assert refusal.value.code == "entity-graph-invalid-entity"
+    assert refusal.value.identity == sm.Cat.identity
 
 
 # --------------------------------------------------------------------------- #
@@ -898,18 +895,6 @@ def test_the_code_set_is_closed_against_an_unlisted_code() -> None:
     assert len(GRAPH_CONSTRUCTION_CODES) == 10
     with pytest.raises(ValueError, match="not a graph construction code"):
         GraphConstructionError(code="entity-graph-nosuch", message="invented")
-
-
-def test_a_model_that_composed_no_entity_class_can_construct_no_graph() -> None:
-    descriptor_backed = DomainModel._from_unresolved(_ClasslessSource())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
-
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        writer.allocate(_ORDER)
-        raise AssertionError("unreachable")
-
-    with pytest.raises(GraphConstructionError) as refusal:
-        graph_construction_of(descriptor_backed).construct(build)
-    assert refusal.value.code == "entity-graph-invalid-entity"
 
 
 @pytest.mark.parametrize(

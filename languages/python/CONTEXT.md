@@ -78,12 +78,13 @@ checks, value conversion, serialization, and descriptor-specific errors while
 depending inward on the common Python runtime.
 _Avoid_: model method, core descriptor module, serialization registry, runtime plugin
 
-**Domain Model Provider**:
-`PublishedModelProvider`, the Python realization of the Published Model Provider:
-the standard publication module holding one complete Model Selection for
-Databases to adopt. A Database serving a static Domain Model uses the same
-provider with one unchanged selection.
-_Avoid_: provider protocol, model registry, model factory, model loader, DomainModel holder
+**Serving Model**:
+`ServingModel`, the Python realization of the Serving Model: the single
+concrete holder of one complete Model Selection for Databases to adopt,
+publishing a candidate by identity compare-and-replace and refusing a stale one
+with `PublicationConflictError`. A Database serving a static Domain Model uses
+the same holder with one unchanged selection.
+_Avoid_: PublishedModelProvider, provider, provider protocol, model registry, model factory, model loader, DomainModel holder
 
 **Model Selection**:
 The opaque, immutable preparation of one Domain Model and its Model Edition,
