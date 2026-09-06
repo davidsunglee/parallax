@@ -85,6 +85,7 @@ from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     BOUNDED_MUTATIONS,
     INSERT_MUTATIONS,
+    UPDATE_MUTATIONS,
     BufferItem,
     ClaimScope,
     ClaimVerdict,
@@ -110,9 +111,7 @@ from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._family import family_primary_key, is_temporal
 
 __all__ = [
-    "DESTRUCTIVE_MUTATIONS",
     "KEYED_WRITE_VALUE_CODES",
-    "UPDATE_MUTATIONS",
     "WRITE_EVIDENCE_CODES",
     "BufferedInserts",
     "ClaimLedger",
@@ -141,21 +140,6 @@ __all__ = [
     "written_object_key",
     "written_object_of_row",
 ]
-
-UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
-"""The keyed mutations that write against an existing row from a value's own
-effective changes — the family a value no managed source published is refused for.
-:data:`~parallax.core.unit_work.INSERT_MUTATIONS` is the complementary family;
-every other keyed mutation derives an identity row alone."""
-
-DESTRUCTIVE_MUTATIONS: Final[frozenset[str]] = frozenset({"delete", "terminate", "terminateUntil"})
-"""The keyed mutations that end a row's existence or its current milestone, and
-so cancel a buffered insert of the same object (`m-unit-work`
-"Insert-then-delete cancels"). The set the flush's own cancellation rule keys on,
-restated here because it is what retires an object from :class:`BufferedInserts`
-at the verb: the ledger must stop holding the object at the same moment the
-buffer stops holding a row for it, or the two halves of read-your-own-writes
-would answer for a row that will never exist."""
 
 KEYED_WRITE_VALUE_CODES: Final[frozenset[str]] = frozenset(
     {

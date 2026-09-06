@@ -96,6 +96,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.unit_work import (
+    UPDATE_MUTATIONS,
     KeyedMutation,
     PredicateMutation,
     PredicateWrite,
@@ -120,7 +121,6 @@ from parallax.snapshot.handle._keyed_writes import (
 )
 from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
 from parallax.snapshot.handle._write_inputs import (
-    UPDATE_MUTATIONS,
     keyed_instruction,
     reject_temporal_delete,
     validate_window,

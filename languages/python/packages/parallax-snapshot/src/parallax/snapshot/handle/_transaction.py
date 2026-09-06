@@ -75,6 +75,7 @@ from parallax.core.metamodel import EntityMetadata, Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.unit_work import (
+    UPDATE_MUTATIONS,
     KeyedMutation,
     UnitOfWork,
     instructions,
@@ -114,7 +115,6 @@ from parallax.snapshot.handle._wire_writes import (
     WireWriteLane,
 )
 from parallax.snapshot.handle._write_inputs import (
-    UPDATE_MUTATIONS,
     BufferedInserts,
     keyed_instruction,
     metadata_of_instance,

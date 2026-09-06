@@ -74,7 +74,9 @@ from parallax.core.unit_work.columns import (
     freeze_retained_value,
 )
 from parallax.core.unit_work.instructions import (
+    DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
+    UPDATE_MUTATIONS,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     PreparedWrite,
@@ -178,9 +180,6 @@ unversioned write as the bare instruction they measure every other one by.
 # or `*Until` predicate write names a milestone, so its only legal targets
 # materialize to keyed writes long before finalization.
 _READLESS_VERBS: Final[frozenset[str]] = frozenset({"update", "delete"})
-
-_UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
-_DELETE_VERBS: Final[frozenset[str]] = frozenset({"delete", "terminate", "terminateUntil"})
 
 # A scalar cell's recognized DB-computed marker kinds
 # (`write-instruction.schema.json#/$defs/writeComputedMarker`), classified by
@@ -397,7 +396,7 @@ class WritePlanner:
             if verb in INSERT_MUTATIONS:
                 result.append(item)
                 pending_insert[key] = len(result) - 1
-            elif verb in _UPDATE_VERBS and key in pending_insert:
+            elif verb in UPDATE_MUTATIONS and key in pending_insert:
                 index = pending_insert[key]
                 base = result[index]
                 # Neither carrier wraps an insert, so a pending-insert slot is
@@ -405,7 +404,7 @@ class WritePlanner:
                 # yields an insert, which is why the merged item stays bare.
                 assert isinstance(base, PreparedKeyedWrite)
                 result[index] = _merge_update_into_insert(base, instruction, resolved)
-            elif verb in _DELETE_VERBS and key in pending_insert:
+            elif verb in DESTRUCTIVE_MUTATIONS and key in pending_insert:
                 result[pending_insert.pop(key)] = None
             elif isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
                 _combine_claimed(item, key, result, pending)
@@ -499,8 +498,8 @@ class WritePlanner:
 
         def order_region(region: Sequence[_CoalescedItem]) -> list[_CoalescedItem]:
             inserts = [i for i in region if mutation(i) in INSERT_MUTATIONS]
-            updates = [i for i in region if mutation(i) in _UPDATE_VERBS]
-            deletes = [i for i in region if mutation(i) in _DELETE_VERBS]
+            updates = [i for i in region if mutation(i) in UPDATE_MUTATIONS]
+            deletes = [i for i in region if mutation(i) in DESTRUCTIVE_MUTATIONS]
             inserts.sort(key=rank)
             deletes.sort(key=lambda i: -rank(i))
             return [*inserts, *updates, *deletes]
@@ -1821,7 +1820,7 @@ def _require_unobserved(entity: EntityMetadata, mutation: str, observation: obje
 
 
 def _splits_into_rows(item: PreparedKeyedWrite, resolved: Targets) -> bool:
-    if len(item.rows) < 2 or item.mutation not in _UPDATE_VERBS:
+    if len(item.rows) < 2 or item.mutation not in UPDATE_MUTATIONS:
         return False
     entity = item.target
     return not resolved.declaring(entity).declared_as_of_axes
@@ -1920,7 +1919,10 @@ def _without_noop_rows(item: _CoalescedItem, resolved: Targets) -> _CoalescedIte
     narrower instruction.
     """
     instruction = buffered_instruction(item)
-    if not isinstance(instruction, PreparedKeyedWrite) or instruction.mutation not in _UPDATE_VERBS:
+    if (
+        not isinstance(instruction, PreparedKeyedWrite)
+        or instruction.mutation not in UPDATE_MUTATIONS
+    ):
         return item
     entity = instruction.target
     if len(instruction.rows) > 1 and resolved.declaring(entity).declared_as_of_axes:

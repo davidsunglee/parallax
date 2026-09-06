@@ -71,6 +71,8 @@ from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refu
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
+    DESTRUCTIVE_MUTATIONS,
+    UPDATE_MUTATIONS,
     KeyedMutation,
     ObjectKey,
     SettledEvidence,
@@ -91,8 +93,6 @@ from parallax.core.unit_work.instructions import (
 # per-name underscores.
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._write_inputs import (
-    DESTRUCTIVE_MUTATIONS,
-    UPDATE_MUTATIONS,
     BufferedInserts,
     Provenance,
     WriteRepresentation,

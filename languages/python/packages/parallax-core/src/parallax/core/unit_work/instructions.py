@@ -66,9 +66,11 @@ from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode
 
 __all__ = [
     "BOUNDED_MUTATIONS",
+    "DESTRUCTIVE_MUTATIONS",
     "INSERT_MUTATIONS",
     "MILESTONE_MUTATIONS",
     "TEMPORAL_KEYED_WRITE_MULTI_ROW",
+    "UPDATE_MUTATIONS",
     "InstructionRejectedError",
     "KeyedMutation",
     "KeyedWrite",
@@ -107,6 +109,21 @@ one, which is what makes them the mutations that carry no Write Observation
 (`m-unit-work` "Absence is structural"). Shared so the buffered carrier's own
 refusal and the planner's coalescing both answer "is this an insert?" from one
 definition."""
+
+UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
+"""The keyed mutations that write an EXISTING row from a value's own effective
+changes. Shared for :data:`INSERT_MUTATIONS`' reason: the frontend refusal that
+asks which verb accepts a value and the planner's insert-then-update coalescing
+must answer "is this an update?" from one definition, or a verb one folds is a
+verb the other refuses."""
+
+DESTRUCTIVE_MUTATIONS: Final[frozenset[str]] = frozenset({"delete", "terminate", "terminateUntil"})
+"""The keyed mutations that end a row's existence or its current milestone, and
+so CANCEL a buffered insert of the same object still pending in the same flush
+(`m-unit-work` "Insert-then-delete cancels"). Shared for
+:data:`INSERT_MUTATIONS`' reason: the planner's cancellation rule and any
+frontend gate that has to agree with it must answer "is this destructive?" from
+one definition."""
 
 MILESTONE_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"insertUntil", "terminate", "terminateUntil", "updateUntil"}
