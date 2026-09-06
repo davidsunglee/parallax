@@ -3881,10 +3881,10 @@ def _unit_source_reads(
 ) -> list[dict[str, object]]:
     """Every resolving read one choreography unit owes, in target order.
 
-    A keyed verb is addressed and licensed by a value a read published, so each
-    Entity this unit writes against EXISTING state needs one — except for a row
-    this same unit opened, which read-your-own-writes covers and which no read
-    could return anyway, since the insert has not flushed. Insert rows are
+    A keyed verb is stated against a value the caller holds, so each Entity this
+    unit writes against EXISTING state needs one read to hold it by — except for
+    a row this same unit opened, which read-your-own-writes covers and which no
+    read could return anyway, since the insert has not flushed. Insert rows are
     therefore gathered first and the reads derived from what is left.
 
     The membership is over OBJECTS rather than over authored rows: two entries
@@ -4537,11 +4537,10 @@ def _group_source_node(
             return node
     raise EngineError(
         f"{entity_name!r}: a keyed write addresses {key!r}, which no read of its own "
-        "choreography unit published and no write of it opened — a keyed write against an "
-        "existing row is licensed by a value a managed read of the source it writes through "
-        "produced, or by an insert of that object this unit of work has itself buffered "
-        "(m-unit-work 'Write value provenance'), and a choreography unit holds neither "
-        "except by reading or opening the row itself"
+        "choreography unit published and no write of it opened — every keyed write here is "
+        "stated through the public verb its mutation names, against a value the caller holds, "
+        "and a choreography unit comes to hold one only by reading the row or by opening it "
+        "with its own insert (m-case-format 'Resolving reads a write owes')"
     )
 
 
@@ -6360,9 +6359,9 @@ def _conflict_source_node(
     if node is None:
         raise EngineError(
             f"{target!r}: a conflict attempt writes {write.row!r}, which its own source read "
-            "found no row for — a keyed write is addressed and licensed by a value a read "
-            "published, so a case whose target is already gone describes a write no verb can "
-            "author (m-unit-work 'Write value provenance')"
+            "found no row for — the attempt is stated against the value that read published, "
+            "so a case whose target is already gone describes a write no verb can author "
+            "(m-case-format 'Conflict cases')"
         )
     return node
 

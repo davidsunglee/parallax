@@ -625,9 +625,9 @@ class FakeWritePort:
 
 # The rows a fake port answers the RESOLVING READ a keyed write owes
 # (`m-case-format` *Resolving reads a write owes*). A write against existing
-# state is addressed and licensed by a value a read published, so a fake driving
-# one of these lanes has to publish that value — the canned run stands in for the
-# one current milestone the real database holds, keyed by the projection's own
+# state is stated against a value a read published, so a fake driving one of
+# these lanes has to publish that value — the canned run stands in for the one
+# current milestone the real database holds, keyed by the projection's own
 # physical column names.
 _OPEN_MILESTONE: Final[TemporalBound] = INFINITY
 

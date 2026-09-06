@@ -110,11 +110,11 @@ def unit_resolving_reads(case: Case, entries: list[dict[str, Any]]) -> int:
     """The resolving reads ONE choreography unit owes: one per target Entity whose
     existing-row keyed writes address a row this unit did not itself open.
 
-    A keyed write verb is addressed and licensed by a value a read published, so
-    a unit writing against existing state reads it first — once per Entity,
-    resolving every row of that Entity the unit addresses, because a read
-    interleaved between two writes would force-flush the first and destroy the
-    batch collapse the goldens pin. Three kinds of entry owe nothing: an insert
+    A keyed write verb is stated against a value the caller holds, so a unit
+    writing against existing state reads it first — once per Entity, resolving
+    every row of that Entity the unit addresses, because a read interleaved
+    between two writes would force-flush the first and destroy the batch collapse
+    the goldens pin. Three kinds of entry owe nothing: an insert
     OPENS its row, a row an earlier entry of the same unit opened is
     read-your-own-writes, and an entry carrying a DB-computed write marker states
     the framework's own bookkeeping, which no public verb accepts.
