@@ -143,7 +143,7 @@ def census(
 
     An Index both endpoints define is ONE entry rather than two. The facts a name
     is derived over are exactly the facts that decide whether two definitions are
-    the same physical object, so a Column whose stored domain widened beneath an
+    the same physical object, so a Column whose stored domain moved beneath an
     Index leaves that Index itself untouched — and two definitions still sharing
     an entry's name while differing in one of those facts are the collision this
     census exists to expose.

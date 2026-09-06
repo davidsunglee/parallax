@@ -14,10 +14,10 @@ from parallax.evolution.schema_delta._physical import (
     CreateIndex,
     CreateTable,
     DropIndex,
-    ExpandColumnDomain,
     IndexDefinition,
     PhysicalColumn,
     PhysicalOperation,
+    RestateColumnDomain,
 )
 
 __all__ = ["render"]
@@ -36,8 +36,8 @@ def render(operation: PhysicalOperation, dialect: Dialect) -> str | Unsupported:
             return dialect.add_column(
                 dialect.quote(operation.table.name), _column(operation.column, dialect)
             )
-        case ExpandColumnDomain():
-            return dialect.expand_column(
+        case RestateColumnDomain():
+            return dialect.restate_column(
                 dialect.quote(operation.table.name),
                 _column(operation.earlier, dialect),
                 _column(operation.later, dialect),

@@ -72,17 +72,33 @@ boundary in either direction.
 CreateTable          the complete target Table Layout: every target Column and the
                      derived primary key inline, EXCLUDING authored secondary Indices
 AddColumn            one target Column Slot
-ExpandColumnDomain   the earlier and later physical Column facts; may only relax
-                     nullability, widen a bounded String, remove its bound, or
-                     combine those expansions
+RestateColumnDomain  the earlier and later physical Column facts, restating a
+                     surviving Column's value domain as the later edition's
 CreateIndex          one target physical Index definition
 DropIndex            one earlier physical Index definition
 ```
 
 Drop-table, drop-column, rename, primary-key-alteration, and arbitrary-SQL
 variants are deliberately absent, because no Unilateral Evolution can produce
-one. `ExpandColumnDomain` is not a generic column alteration: nothing that
-narrows a stored domain is unilateral.
+one.
+
+`RestateColumnDomain` is not a generic column alteration either. It is legal in
+exactly two shapes, and both leave every stored value where it is:
+
+- the later domain **admits every value the earlier did** — relaxed nullability,
+  a widened bounded String, a removed bound, or those combined; or
+- **no shape stores the Column at either endpoint**, so it holds no value the
+  restatement could reach. An abstract inheritance position composing no concrete
+  subtype still materializes the Columns it declares in its family's Table, and
+  nothing is ever written against them.
+
+The second shape is the physical face of one classification rule and not a
+loophole beside it: an empty effective concrete set at both endpoints is exactly
+why `m-model-evolution` reads a value-domain contraction at such a position as
+unilateral, so the same fact that makes the evolution unilateral makes restating
+the Column destroy nothing. Narrowing a domain that rows ARE stored against is
+never unilateral and therefore never reaches this module — the distinction to
+draw is whether the Column stores a shape, never whether the domain grew.
 
 Each physical operation carries its **causal Evolution Operations** — all and
 only the operations whose changed facts asked for it, in canonical operation
@@ -127,7 +143,7 @@ admits a total key —
 ```text
 orderKey(operation) = (physical Table, physicalOperationKindRank, member addressed)
 physicalOperationKindRank:
-    CreateTable < AddColumn < ExpandColumnDomain < CreateIndex < DropIndex
+    CreateTable < AddColumn < RestateColumnDomain < CreateIndex < DropIndex
 ```
 
 — which is a linear extension of the dependency relation, so sorting by it emits

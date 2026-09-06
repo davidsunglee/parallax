@@ -641,6 +641,8 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
         "evolution-required-member-v2": _EVOLUTION_ENDPOINT,
         "evolution-rowless-branch-v1": _EVOLUTION_ENDPOINT,
         "evolution-rowless-branch-v2": _EVOLUTION_ENDPOINT,
+        "evolution-rowless-domain-v1": _EVOLUTION_ENDPOINT,
+        "evolution-rowless-domain-v2": _EVOLUTION_ENDPOINT,
         "evolution-rowless-member-v1": _EVOLUTION_ENDPOINT,
         "evolution-rowless-member-v2": _EVOLUTION_ENDPOINT,
         "evolution-long-names-v1": (

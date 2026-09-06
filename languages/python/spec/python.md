@@ -4612,7 +4612,7 @@ remains observable rather than making Python its own oracle.
   bind representation, placeholder translation (canonical `?` → psycopg `%s`),
   typed bind normalization, precision-sensitive value parsing, the declared
   identifier byte limit, the five schema DDL primitives (`create_table`'s inline
-  key, `add_column`, each widening `expand_column` spells, `create_index`'s
+  key, `add_column`, each action `restate_column` spells, `create_index`'s
   uniqueness and component order, `drop_index`) with their identifiers quoted by
   the same rule as every other, and native
   error-code classification predicates. Runs in `uv run pytest tests/dialect`

@@ -7,7 +7,7 @@ each needed for names all of them, and an operation that moved only facts the
 database does not hold — a write flag, a read-only marker — names nothing.
 
 These read the plan directly because most of the attribution has no public
-surface. Only `expand_column` and `create_index` can be refused, so
+surface. Only `restate_column` and `create_index` can be refused, so
 `UnsupportedSchemaOperation` exposes the causes of those two alone
 (`test_schema_delta_errors.py`); a Column addition's causes are reachable
 nowhere else.
@@ -32,8 +32,8 @@ from parallax.evolution.model_evolution import UnilateralEvolution, evolve
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
     CreateIndex,
-    ExpandColumnDomain,
     PhysicalOperation,
+    RestateColumnDomain,
 )
 from parallax.evolution.schema_delta._plan import plan
 
@@ -205,7 +205,7 @@ def test_an_alteration_moving_no_physical_fact_causes_nothing() -> None:
         _tph_position_role(note_concrete=True, coupon_read_only=False),
     )
     (widened,) = [
-        operation for operation in operations if isinstance(operation, ExpandColumnDomain)
+        operation for operation in operations if isinstance(operation, RestateColumnDomain)
     ]
     assert widened.later.column.name == "coupon"
     assert _causes(widened) == ["EntityAltered"]
@@ -217,7 +217,7 @@ def test_a_relaxed_value_object_occurrence_names_its_own_alteration() -> None:
     # Attribute alterations would leave this widening caused by nothing.
     operations = _operations(_parcel(origin_nullable=False), _parcel(origin_nullable=True))
     (widened,) = [
-        operation for operation in operations if isinstance(operation, ExpandColumnDomain)
+        operation for operation in operations if isinstance(operation, RestateColumnDomain)
     ]
     assert widened.later.column.name == "origin"
     assert _causes(widened) == ["ValueObjectOccurrenceAltered"]

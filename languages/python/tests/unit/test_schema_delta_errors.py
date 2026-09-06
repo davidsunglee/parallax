@@ -41,7 +41,7 @@ _WIDENING_REFUSAL = "this dialect widens nothing"
 class _RefusingDialect(Dialect):
     """A Dialect that creates and alters Tables and refuses the other two primitives."""
 
-    def expand_column(self, table: str, earlier: ColumnDdl, later: ColumnDdl) -> str | Unsupported:
+    def restate_column(self, table: str, earlier: ColumnDdl, later: ColumnDdl) -> str | Unsupported:
         del table, earlier, later
         return Unsupported(_WIDENING_REFUSAL)
 
@@ -118,7 +118,7 @@ def test_refusals_from_two_primitives_arrive_in_statement_order() -> None:
         schema_delta(evolution, _refusing())
     error = raised.value
     assert [operation.kind for operation in error.operations] == [
-        "ExpandColumnDomain",
+        "RestateColumnDomain",
         "CreateIndex",
     ]
     assert [operation.reason for operation in error.operations] == [

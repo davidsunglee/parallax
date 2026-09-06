@@ -70,6 +70,8 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "evolution-position-role-v2",
     "evolution-rowless-branch-v1",
     "evolution-rowless-branch-v2",
+    "evolution-rowless-domain-v1",
+    "evolution-rowless-domain-v2",
     "evolution-rowless-member-v1",
     "evolution-rowless-member-v2",
     "evolution-rowless-position-v1",

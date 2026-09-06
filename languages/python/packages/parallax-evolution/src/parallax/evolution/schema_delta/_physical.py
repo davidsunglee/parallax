@@ -28,10 +28,10 @@ __all__ = [
     "CreateIndex",
     "CreateTable",
     "DropIndex",
-    "ExpandColumnDomain",
     "IndexDefinition",
     "PhysicalColumn",
     "PhysicalOperation",
+    "RestateColumnDomain",
     "location_of",
     "member_key",
     "table_of",
@@ -94,12 +94,15 @@ class AddColumn:
 
 
 @dataclass(frozen=True, slots=True)
-class ExpandColumnDomain:
-    """Widen one surviving Column's stored domain.
+class RestateColumnDomain:
+    """Restate one surviving Column's value domain as the later edition's.
 
-    Only an expansion: relaxed nullability, a longer or removed String bound, or
-    both together. It is not a generic column alteration, because nothing that
-    narrows a domain is unilateral.
+    Not a generic column alteration: it is legal in exactly two shapes, and both
+    leave every stored value where it is. Either ``later`` admits every value
+    ``earlier`` did — relaxed nullability, a longer or removed String bound, or
+    those together — or the Column stores no shape at either endpoint, so it holds
+    no value the restatement could reach. Narrowing a domain rows are stored
+    against is never unilateral and never arrives here.
     """
 
     table: Table
@@ -126,7 +129,7 @@ class DropIndex:
     caused_by: tuple[EvolutionOperation, ...]
 
 
-type PhysicalOperation = CreateTable | AddColumn | ExpandColumnDomain | CreateIndex | DropIndex
+type PhysicalOperation = CreateTable | AddColumn | RestateColumnDomain | CreateIndex | DropIndex
 """Everything a Unilateral Evolution can ask a relational schema to do."""
 
 
@@ -138,7 +141,7 @@ def table_of(operation: PhysicalOperation) -> Table:
     statement order one sort rather than a graph traversal.
     """
     match operation:
-        case CreateTable() | AddColumn() | ExpandColumnDomain():
+        case CreateTable() | AddColumn() | RestateColumnDomain():
             return operation.table
         case CreateIndex() | DropIndex():
             return operation.definition.table
@@ -154,7 +157,7 @@ def member_key(operation: PhysicalOperation) -> str:
             return ""
         case AddColumn():
             return operation.column.column.name
-        case ExpandColumnDomain():
+        case RestateColumnDomain():
             return operation.later.column.name
         case CreateIndex() | DropIndex():
             return operation.name.value
@@ -167,7 +170,7 @@ def location_of(operation: PhysicalOperation) -> PhysicalLocation:
             return PhysicalLocation(table=operation.table)
         case AddColumn():
             return PhysicalLocation(table=operation.table, column=operation.column.column)
-        case ExpandColumnDomain():
+        case RestateColumnDomain():
             return PhysicalLocation(table=operation.table, column=operation.later.column)
         case CreateIndex() | DropIndex():
             return PhysicalLocation(table=operation.definition.table, index=operation.name)
