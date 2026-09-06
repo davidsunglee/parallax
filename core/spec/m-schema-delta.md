@@ -107,14 +107,19 @@ than of a category: an Evolution Operation is causal exactly when a fact **it**
 moved is one of the facts the physical difference is made of. Both edges follow
 from that single test. A difference several operations were each needed for names
 every one of them — a Column is in a Table because its declaration exists **and**
-because that declaration reaches the rows the Table holds, so a member added on an
-ancestor and the inheritance alteration that carried the ancestor's members to a
-descendant's rows are named together, while a Table already holding that ancestry
-names the addition alone. And an operation that moved only facts the database does
-not hold — a write flag, a declaration order, an optimistic-locking marker — is a
-cause of nothing, even where it alters the very declaration a widened Column
-materializes: a stored domain is a Neutral Type, a String bound, and a
-nullability, so those are the only facts a widening can answer to.
+because the Table materializes the position that declares it, so a member added on
+an ancestor and the inheritance alteration that first carried that ancestor's
+position into a Table are named together, while a Table already materializing that
+position names the addition alone. Whether a Table already materializes a position
+is asked of the **Table** and never of the Entity that moved: a Table holding any
+other shape under that ancestor — a sibling left where it was, or an abstract
+position composing no concrete subtype — was going to materialize the new Column
+however the reparent went, so the reparent moved no fact that addition is made of.
+And an operation that moved only facts the database does not hold — a write flag,
+a declaration order, an optimistic-locking marker — is a cause of nothing, even
+where it alters the very declaration a widened Column materializes: a stored
+domain is a Neutral Type, a String bound, and a nullability, so those are the only
+facts a widening can answer to.
 
 An entity-level addition brings a whole Table with it and suppresses operations
 for the members it contains, so the Columns and authored Indices of an added

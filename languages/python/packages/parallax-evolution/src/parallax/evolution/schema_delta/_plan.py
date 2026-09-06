@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from parallax.core import storage_layout
 from parallax.core.base import JSON, STRING, NeutralType
 from parallax.core.dialect import Dialect, PhysicalIndexName
+from parallax.core.inheritance import InheritanceFacet
+from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
@@ -162,14 +164,17 @@ def _lower(
 
 @dataclass(frozen=True, slots=True)
 class _Endpoint:
-    """One accepted Metamodel beside its compiled layouts."""
+    """One accepted Metamodel beside the compiled facets the lowering reads."""
 
     model: Metamodel
     facet: StorageLayoutFacet
+    family: InheritanceFacet
 
     @staticmethod
     def of(model: Metamodel) -> _Endpoint:
-        return _Endpoint(model=model, facet=storage_layout.view(model))
+        return _Endpoint(
+            model=model, facet=storage_layout.view(model), family=inheritance_view(model)
+        )
 
     def table(self, table: Table) -> TableLayout | None:
         return self.facet.table(table)
@@ -186,18 +191,50 @@ class _Endpoint:
             if (view := self.facet.entity(entity.identity)) is not None
         }
 
-    def owners(self) -> Mapping[EntityIdentity, frozenset[EntityIdentity]]:
-        """The Entities whose declarations already reach each row-owning Entity.
+    def ancestry(self) -> Mapping[EntityIdentity, frozenset[EntityIdentity]]:
+        """The ancestors-or-self each Entity stands under.
 
-        This is what an inheritance alteration changes, read off the layout rather
-        than walked: a declaration reaches an Entity's rows exactly while one of
-        its ancestors-or-self contributes a Column the Entity's own view selects.
+        This is the position an inheritance alteration moves, and it is not the
+        set of Entities that declare a Column the Entity selects: an ancestor
+        declaring nothing yet still stands over it, and gains a Column here the
+        moment it declares one.
         """
         return {
-            entity.identity: frozenset(slot.declaring_owner for slot in view.columns)
+            entity.identity: frozenset(view.ancestry)
             for entity in self.model.entities
-            if (view := self.facet.entity(entity.identity)) is not None
+            if (view := self.family.entity(entity.identity)) is not None
         }
+
+    def materialized(self) -> Mapping[EntityIdentity, frozenset[Table]]:
+        """The Tables whose Columns hold each Entity's declarations.
+
+        An Entity's declarations materialize where its own position is stored and
+        wherever a concrete descendant repeats them, which is one Table for a
+        table-per-hierarchy family — the root's, holding every member's
+        declarations whether or not a concrete subtype composes them — and one
+        per concrete descendant under table-per-concrete-subtype.
+        """
+        views = {
+            entity.identity: view
+            for entity in self.model.entities
+            if (view := self.family.entity(entity.identity)) is not None
+        }
+        return {
+            identity: frozenset(
+                container
+                for position in (view, *(views[concrete] for concrete in view.concrete_subtypes))
+                if (container := position.container) is not None
+            )
+            for identity, view in views.items()
+        }
+
+    def holds(self) -> Mapping[Table, frozenset[EntityIdentity]]:
+        """The ancestry each Table materializes, as Entities whose declarations it holds."""
+        held: dict[Table, set[EntityIdentity]] = {}
+        for identity, tables in self.materialized().items():
+            for table in tables:
+                held.setdefault(table, set()).add(identity)
+        return {table: frozenset(identities) for table, identities in held.items()}
 
 
 def _create(
@@ -341,18 +378,19 @@ class _Causes:
     whole operation sequence rather than a choice between categories: a
     difference several operations were each needed for names all of them.
 
-    A Column is in a Table because its declaration exists AND because that
-    declaration reaches the rows the Table holds. A stored domain is not the one
-    it was because the declared domain moved, or because the set of shapes the
-    Table stores changed — a Column required of every shape a Table stored is
-    nullable once it stores one more.
+    A Column is in a Table because its declaration exists AND because the Table
+    materializes the position that declares it. A stored domain is not the one it
+    was because the declared domain moved, or because the set of shapes the Table
+    stores changed — a Column required of every shape a Table stored is nullable
+    once it stores one more.
     """
 
     operations: tuple[EvolutionOperation, ...]
     later_rows: Mapping[EntityIdentity, Table]
     earlier_rows: Mapping[EntityIdentity, Table]
-    later_owners: Mapping[EntityIdentity, frozenset[EntityIdentity]]
-    earlier_owners: Mapping[EntityIdentity, frozenset[EntityIdentity]]
+    later_ancestry: Mapping[EntityIdentity, frozenset[EntityIdentity]]
+    later_materialized: Mapping[EntityIdentity, frozenset[Table]]
+    earlier_held: Mapping[Table, frozenset[EntityIdentity]]
     declared_in: Mapping[Table, frozenset[EntityIdentity]]
 
     @staticmethod
@@ -363,8 +401,9 @@ class _Causes:
             operations=tuple(operations),
             later_rows=later.rows(),
             earlier_rows={} if earlier is None else earlier.rows(),
-            later_owners=later.owners(),
-            earlier_owners={} if earlier is None else earlier.owners(),
+            later_ancestry=later.ancestry(),
+            later_materialized=later.materialized(),
+            earlier_held={} if earlier is None else earlier.holds(),
             declared_in={
                 layout.table: frozenset(slot.declaring_owner for slot in layout.columns)
                 for layout in later.facet.tables
@@ -393,9 +432,9 @@ class _Causes:
         """Why ``slot``'s Column is in ``table`` now and was not before.
 
         Both halves are named together when both were needed: a member added on
-        an ancestor lands in a descendant's Table only because the descendant was
-        also reparented under that ancestor, and neither operation alone put the
-        Column there.
+        an ancestor lands in a Table that materializes that ancestor for the
+        first time only because a reparent carried the ancestor's position here,
+        and neither operation alone put the Column there.
         """
         return tuple(
             operation
@@ -426,8 +465,8 @@ class _Causes:
 
         An Index whose own operation describes it names it; one an entity-level
         addition brought silently is caused by that addition, exactly as the
-        Columns beside it are; and one that reaches this Table only because a
-        reparent carried its declaring Entity's members here names that too.
+        Columns beside it are; and one whose Table materializes its declaring
+        Entity only because a reparent carried that position here names that too.
         """
         return tuple(
             operation
@@ -443,22 +482,22 @@ class _Causes:
     def _carries_declarations(
         self, operation: EvolutionOperation, table: Table, owner: EntityIdentity
     ) -> bool:
-        """Whether ``operation`` is why ``owner``'s declarations reach ``table``'s rows.
+        """Whether ``operation`` is why ``table`` materializes ``owner``'s declarations.
 
-        The reparented Entity must hold ``owner``'s declarations after the move
-        and not before: a Table also materializes declarations that reach only
-        its OTHER shapes, and a reparent carried none of those. An Entity always
-        held its own declarations, and one whose earlier ancestry already reached
-        ``owner`` held that ancestor's too, so in neither case did this
-        alteration bring anything to these rows.
+        The reparented Entity carries ``owner``'s position into ``table`` when it
+        stands under ``owner`` after the move and ``table`` materializes its
+        declarations — but that carries nothing to a Table already materializing
+        that position for anything else, whether a sibling left where it was, an
+        ancestry the Entity already stood under, or the Entity's own position.
+        Such a Table was going to hold this Column however the reparent went, so
+        the question is asked of the Table and never of the Entity that moved.
         """
         return (
             isinstance(operation, EntityAltered)
             and _reparents(operation)
-            and self.later_rows.get(operation.entity) == table
-            and owner != operation.entity
-            and owner in self.later_owners.get(operation.entity, frozenset())
-            and owner not in self.earlier_owners.get(operation.entity, frozenset())
+            and owner in self.later_ancestry.get(operation.entity, frozenset())
+            and table in self.later_materialized.get(operation.entity, frozenset())
+            and owner not in self.earlier_held.get(table, frozenset())
         )
 
     def _changes_stored_shapes(self, operation: EvolutionOperation, table: Table) -> bool:
