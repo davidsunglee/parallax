@@ -61,8 +61,10 @@ from parallax.core.unit_work.effects import (
 )
 from parallax.core.unit_work.instructions import (
     BOUNDED_MUTATIONS,
+    DESTRUCTIVE_MUTATIONS,
     INSERT_MUTATIONS,
     TEMPORAL_KEYED_WRITE_MULTI_ROW,
+    UPDATE_MUTATIONS,
     InstructionRejectedError,
     KeyedMutation,
     KeyedWrite,
@@ -230,6 +232,7 @@ __all__ = [
     "BOUNDED_MUTATIONS",
     "CARRIED_STATE",
     "CHANGED_STATE",
+    "DESTRUCTIVE_MUTATIONS",
     "INFINITY",
     "INSERT_MUTATIONS",
     "MAX_PLUS_ONE",
@@ -247,6 +250,7 @@ __all__ = [
     "TERMINATED",
     "UNGATED",
     "UNVERSIONED",
+    "UPDATE_MUTATIONS",
     "AddressedTarget",
     "AffectedRows",
     "AnyCount",
