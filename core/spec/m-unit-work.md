@@ -225,27 +225,24 @@ retain the immutable product and do not decode or recursively copy it again.
 
 A keyed frontend verb is handed a **value**, not an instruction: the instruction's
 row is derived from that value. Which verbs accept a given value is decided by the
-value's **provenance** — which framework-managed source, if any, **published** it
-— and never by whether an author has since changed it. Editedness answers a
+value's **provenance** — which framework-managed source, if any, produced it from a
+read — and never by whether an author has since changed it. Editedness answers a
 different question: it decides what a write *contains*, not whether the verb the
 author called was the right one.
 
 A **framework-managed source** is one managed value lifecycle: the machinery that
-materializes values and attaches to each the state by which it later recognizes
-its own. It **publishes** a value when it hands one of those materialized values
-to a caller. A read always publishes; a verb that hands back the value it opened
-a row with publishes too, and no verb is obliged to hand one back. A source is
-not a connection, a handle, or a transaction. Any number of those sharing one
-lifecycle over one store are **one** source, and a value any of them published is
-a value that source produced. Provenance therefore carries no cross-read
-guarantee, and none is asked of it: whether a write may proceed from a row an
-earlier read returned is settled by whether the writing unit of work **observed**
-that row, which the observation requirements decide on their own and
-independently of which reader produced the value.
+materializes values from reads and attaches to each the state by which it later
+recognizes its own. A source is not a connection, a handle, or a transaction. Any
+number of those sharing one lifecycle over one store are **one** source, and a
+value any of them read is a value that source produced. Provenance therefore
+carries no cross-read guarantee, and none is asked of it: whether a write may
+proceed from a row an earlier read returned is settled by whether the writing unit
+of work **observed** that row, which the observation requirements decide on their
+own and independently of which reader produced the value.
 
 Provenance has exactly three answers for a given verb, and they **partition** the
-values that verb can be handed: no managed source published the value, the source
-this verb writes through published it, or a **different** managed source did. Each
+values that verb can be handed: no managed read produced the value, the source
+this verb writes through produced it, or a **different** managed source did. Each
 answer is a refusal for one family of verbs, so a refused value always has exactly
 one code:
 
@@ -254,18 +251,17 @@ WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
 ```
 
 - **NotStored** (`write-value-not-stored`) — an `update` / `updateUntil` verb was
-  handed a value **no** managed source published. No stored row exists for it to
+  handed a value **no** managed read produced. No stored row exists for it to
   address, so the refusal names the `insert` verb as the one that accepts it —
   **unless the writing unit of work has itself already buffered an insert of that
   object**, in which case the value is accepted and the pair coalesces in place
   (*Same-transaction write coalescing*).
 - **AlreadyStored** (`write-value-already-stored`) — an `insert` / `insertUntil`
-  verb was handed a value **the very source this verb writes through** published
-  — by a read, or by an insert this unit of work has already buffered, where that
-  verb hands the opened row's value back. That value already denotes a row that
-  source stores, so the refusal names the `update` verb.
-- **ForeignLifecycle** (`write-value-foreign-lifecycle`) — the value was
-  published by some **other** framework-managed source than the one this verb
+  verb was handed a value produced by a read through **the very source this verb
+  writes through**. That value already denotes a row that source stores, so the
+  refusal names the `update` verb.
+- **ForeignLifecycle** (`write-value-foreign-lifecycle`) — the value was produced
+  by a read through some **other** framework-managed source than the one this verb
   writes through. Both families refuse it, including when that other lifecycle
   reads the same store: a value's stored counterpart is only the one the writing
   source itself produced, and no verb may treat another source's value as its own.
@@ -273,7 +269,7 @@ WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
 The set is **closed**, and the tags are **neutral**: each names a class of value a
 verb rejects, never a language's exception type. The one fact an implementation
 **MUST** be able to decide about a value it is handed is *which of those three
-answers holds* — no managed source published it, this verb's own source did, or
+answers holds* — no managed read produced it, this verb's own source did, or
 another managed source did — which any implementation that materializes values
 already knows at the moment it materializes them. How that fact is retained —
 carried on the value, held in an identity map, held in an implementation-owned
@@ -282,31 +278,19 @@ on the choice.
 
 The partition is over **provenance**; whether a given answer *refuses* is the
 verb's question, and NotStored is the one answer whose refusal a second fact can
-lift. A caller writing an object it authored holds a value nothing published, so
-the value of an object the writing unit of work has already buffered an insert
-for keeps the NotStored provenance — no source published it — but there is now a
-row for the update to address, because that unit of work is the one storing it.
-**Read-your-own-writes** is therefore normative: an implementation that refused
-such a value would refuse the developer spelling of *Insert-then-update coalesces
-in place*, and its refusal would name the `insert` verb the developer had just
-called. The exemption is keyed by the **object**: a value naming an object this
-unit of work never inserted is refused exactly as any other value no source
-published is, and no other unit of work's buffer lifts anything.
-
-Where the `insert` verb itself **publishes** the value it opened the row with,
-that value reaches the same outcome by the partition alone and needs no
-exemption. This source published it, so it carries the AlreadyStored answer: the
-`update` family accepts it as it accepts every value of this source, and the
-`insert` family refuses it because the row it names is one this source already
-stores — the same reason a read's value earns that refusal. An implementation
-whose `insert` hands nothing back has no such value to classify, and the
-exemption above is the whole of its read-your-own-writes. Both spellings reach
-*Insert-then-update coalesces in place*, which is the behavior this rule exists
-to protect, and neither reads a fourth answer out of the partition.
+lift. The value of an object the writing unit of work has already buffered an
+insert for keeps the NotStored provenance — no read produced it — but there is
+now a row for the update to address, because that unit of work is the one storing
+it. **Read-your-own-writes** is therefore normative: an implementation that
+refused such a value would refuse the developer spelling of *Insert-then-update
+coalesces in place*, and its refusal would name the `insert` verb the developer
+had just called. The exemption is keyed by the **object**: a value naming an
+object this unit of work never inserted is refused exactly as any other value no
+read produced is, and no other unit of work's buffer lifts anything.
 
 Three consequences are normative:
 
-- A value this verb's own source published that no author has changed is **not** a
+- A value this verb's own source produced that no author has changed is **not** a
   refusal for an `update` verb. It buffers nothing, issues no statement, and raises nothing —
   the same outcome as an edit whose net change is empty. Requiring an author to
   test each value before writing it would defeat the change tracking the framework

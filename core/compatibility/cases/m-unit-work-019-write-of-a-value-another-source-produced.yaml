@@ -1,4 +1,4 @@
-# BOTH keyed write families refuse a value published by some OTHER
+# BOTH keyed write families refuse a value produced by a read through some OTHER
 # framework-managed source (m-unit-work *Write value provenance*): a value's
 # stored counterpart is only the one the writing source itself produced, so no
 # verb may treat another source's value as its own — the same store or not. The
@@ -12,8 +12,8 @@
 # schema-validates it and each language's API Conformance Suite returns and
 # verifies the error observations. How an implementation arranges the value is its
 # own affair — one whose runtime is a single managed lifecycle supplies the second
-# source itself — but the value MUST be one that second source published, which
-# is the provenance the case states.
+# source itself — but the value MUST be one a read through that second source
+# produced, which is the provenance the case states.
 model: models/account.yaml
 lane: api-conformance
 tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]
