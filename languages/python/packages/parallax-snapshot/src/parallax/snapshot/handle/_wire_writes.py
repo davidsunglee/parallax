@@ -220,7 +220,10 @@ def wire_insert(
     this transaction already buffered an insert of, the same payload twice
     included: the provenance rule has nothing to say about a document, and the
     buffered-insert ledger refuses it once its row is prepared, under the same
-    code, advising the node the FIRST insert answered.
+    code, advising the update verb of whichever interface OPENED the row — the
+    node this verb answered where a Wire insert did, and the instance the caller
+    still holds where a Typed one did, which is the only carrier that exists in
+    each case.
 
     The returned node is what closes the one Typed/Wire parity gap on the write
     surface: ``tx.insert(a)`` leaves the Typed caller holding ``a``, so a pure

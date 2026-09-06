@@ -1047,15 +1047,20 @@ table state shows which rows changed or were removed.
 
 #### Resolving reads a write owes
 
-A keyed write verb is **addressed and licensed by a value a framework-managed
-source published** (`m-unit-work` *Write value provenance*) — a read through that
-source, or an insert the writing unit of work has itself buffered. A source is
-**not** a transaction, so the licensing read need not run inside the unit that
-writes; *where* it runs is settled per shape below and never decides whether it
-is owed. What every shape shares is that a write against **existing** state owes
-a read at all, so a choreography unit writing against existing state **reads that
-state first**, and `then.roundTrips` — which counts every call that reached the
-database — counts those reads beside the DML.
+A keyed write against an **existing** row is licensed in exactly one of two ways
+(`m-unit-work` *Write value provenance*): by a value **a managed read of the
+source this verb writes through produced**, or — for a row this unit of work has
+itself inserted — by the **object-keyed buffered-insert exemption**, whose value
+keeps the `NotStored` provenance because no read produced it and which no other
+unit of work's buffer can lift. An `insert` is licensed by no source value at
+all: it opens a row rather than revising one. Only the first of the two is a
+read, and a source is **not** a transaction, so that read need not run inside the
+unit that writes; *where* it runs is settled per shape below and never decides
+whether it is owed. What every shape shares is that a write against **existing**
+state — state a read published, never state this unit of work opened itself —
+owes a read at all, so a choreography unit writing against existing state **reads
+that state first**, and `then.roundTrips` — which counts every call that reached
+the database — counts those reads beside the DML.
 
 The count is structural, derivable from the case document and its model alone.
 For each choreography unit — one `writeSequence` entry, or one ungrouped scenario
