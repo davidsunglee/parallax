@@ -866,8 +866,8 @@ def validate_provenance(
         raise KeyedWriteValueError(
             code="write-value-not-stored",
             message=(
-                f"{identity.canonical}: {mutation!r} was handed a value no read of this "
-                "store produced, so it addresses no stored row; write it with "
+                f"{identity.canonical}: {mutation!r} was handed a value no source of this "
+                "store published, so it addresses no stored row; write it with "
                 "`tx.insert(...)`, or update a value a `find` returned"
             ),
             identity=identity,
@@ -877,7 +877,7 @@ def validate_provenance(
             code="write-value-foreign-lifecycle",
             message=(
                 f"{identity.canonical}: {mutation!r} was handed a value another "
-                "framework-managed source produced, and no verb writes another source's "
+                "framework-managed source published, and no verb writes another source's "
                 "value through this one; read the row through this transaction and write "
                 "what that read returns"
             ),
