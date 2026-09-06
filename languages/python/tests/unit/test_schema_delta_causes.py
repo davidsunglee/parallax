@@ -32,6 +32,7 @@ from parallax.evolution.model_evolution import UnilateralEvolution, evolve
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
     CreateIndex,
+    CreateTable,
     PhysicalOperation,
     RestateColumnDomain,
 )
@@ -75,6 +76,62 @@ def _tpcs(*, sealed: bool, reparented: bool, own_lid: bool = False) -> AcceptedM
         attributes=(Attribute(name="z", type="int32", column="z"),),
     )
     return formed(Metamodel(entities=(root, warded, casket, other)))
+
+
+def _tpcs_new_branch(*, reparented: bool, child: bool, stray: bool) -> AcceptedMetamodel:
+    """A table-per-concrete-subtype family gaining whole Tables under two branches.
+
+    `Warded` declares `seal` and `seal_ix` at both endpoints. `Branch` hangs
+    directly under the root or under `Warded` and carries the concrete `Child`,
+    while `Stray` arrives under `Warded` wherever `Branch` goes, so one created
+    Table depends on the move and the other does not.
+    """
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    warded = Entity(
+        name="Warded",
+        inheritance=Inheritance(role="abstract-subtype", parent="Root"),
+        attributes=(
+            Attribute(name="seal", type="string", column="seal", max_length=16, nullable=True),
+        ),
+        indices=(Index(name="seal_ix", attributes=("seal",)),),
+    )
+    branch = Entity(
+        name="Branch",
+        inheritance=Inheritance(role="abstract-subtype", parent="Warded" if reparented else "Root"),
+    )
+    other = Entity(
+        name="Other",
+        table="other",
+        inheritance=Inheritance(role="concrete-subtype", parent="Warded"),
+        attributes=(Attribute(name="z", type="int32", column="z"),),
+    )
+    arriving = tuple(
+        entity
+        for entity, present in (
+            (
+                Entity(
+                    name="Child",
+                    table="child",
+                    inheritance=Inheritance(role="concrete-subtype", parent="Branch"),
+                ),
+                child,
+            ),
+            (
+                Entity(
+                    name="Stray",
+                    table="stray",
+                    inheritance=Inheritance(role="concrete-subtype", parent="Warded"),
+                ),
+                stray,
+            ),
+        )
+        if present
+    )
+    return formed(Metamodel(entities=(root, warded, branch, other, *arriving)))
 
 
 def _tph_siblings(*, sealed: bool, reparented: bool) -> AcceptedMetamodel:
@@ -224,6 +281,15 @@ def _added(operations: tuple[PhysicalOperation, ...], table: str) -> AddColumn:
     return added
 
 
+def _creates(operations: tuple[PhysicalOperation, ...], table: str) -> CreateTable:
+    (created,) = [
+        operation
+        for operation in operations
+        if isinstance(operation, CreateTable) and operation.table.name == table
+    ]
+    return created
+
+
 def _created(operations: tuple[PhysicalOperation, ...], table: str) -> CreateIndex:
     (created,) = [
         operation
@@ -321,3 +387,28 @@ def test_a_relaxed_value_object_occurrence_names_its_own_alteration() -> None:
     ]
     assert widened.later.column.name == "origin"
     assert _causes(widened) == ["ValueObjectOccurrenceAltered"]
+
+
+def test_a_created_Table_names_the_reparent_that_carried_a_declaration_into_it() -> None:
+    # `child` holds `seal` only because BOTH `Branch` moved under `Warded` and
+    # `Child` arrived beneath `Branch`: without the move the new Table repeats no
+    # `Warded` member, and without the addition there is no Table. A created
+    # Table is all of its Columns at once, so it answers to the rule an added
+    # Column answers to, and the Index created with it carries the same causes.
+    operations = _operations(
+        _tpcs_new_branch(reparented=False, child=False, stray=False),
+        _tpcs_new_branch(reparented=True, child=True, stray=True),
+    )
+    assert _causes(_creates(operations, "child")) == ["EntityAltered", "ConcreteSubtypeAdded"]
+    assert _causes(_created(operations, "child")) == ["EntityAltered", "ConcreteSubtypeAdded"]
+
+
+def test_a_created_Table_the_reparent_did_not_reach_names_its_addition_alone() -> None:
+    # `Stray` arrived under `Warded`, which it stood beneath however `Branch`
+    # moved, so the same evolution's reparent carried nothing into `stray`.
+    operations = _operations(
+        _tpcs_new_branch(reparented=False, child=False, stray=False),
+        _tpcs_new_branch(reparented=True, child=True, stray=True),
+    )
+    assert _causes(_creates(operations, "stray")) == ["ConcreteSubtypeAdded"]
+    assert _causes(_created(operations, "stray")) == ["ConcreteSubtypeAdded"]

@@ -127,7 +127,11 @@ for the members it contains, so the Columns and authored Indices of an added
 Entity are read off the later model rather than arriving as operations of their
 own; every addition that contributes a Column to a Table, or owns rows in it, is a
 cause of that Table's creation, and an Index created as part of creating its Table
-carries the same causes as the Table.
+carries the same causes as the Table. A created Table is all of its Columns at
+once, so its causes are decided by the same rule each Column's are, asked of the
+Table for every position it materializes: an inheritance alteration that carried a
+declaring position into a Table created here is a cause of it, and of the Indices
+created with it, exactly as it is of a Column added to a Table that survived.
 
 A schema-neutral unilateral operation lowers to no physical operation at all.
 
