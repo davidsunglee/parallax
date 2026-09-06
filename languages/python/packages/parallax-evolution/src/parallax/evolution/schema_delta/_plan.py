@@ -64,7 +64,7 @@ from parallax.evolution.model_evolution import (
     ValueObjectOccurrenceAltered,
     ValueObjectOccurrenceDelta,
 )
-from parallax.evolution.schema_delta._naming import NamedIndex, census, physical_index_name
+from parallax.evolution.schema_delta._naming import census, collision_groups, physical_index_name
 from parallax.evolution.schema_delta._physical import (
     AddColumn,
     CreateIndex,
@@ -75,6 +75,7 @@ from parallax.evolution.schema_delta._physical import (
     PhysicalOperation,
     RestateColumnDomain,
 )
+from parallax.evolution.schema_delta._values import CollisionGroup
 
 __all__ = ["Plan", "plan"]
 
@@ -87,18 +88,19 @@ _TAG_MAX_LENGTH = 32
 
 @dataclass(frozen=True, slots=True)
 class Plan:
-    """What the database is asked to do, and every Index either endpoint defines.
+    """What the database is asked to do, and every name clash that would outlive it.
 
-    The census spans both endpoints' complete Index sets rather than the
-    operations below it. An Index the delta never mentions is still an object in
-    the database while a new one is created beside it — and the operations could
-    not answer the question anyway, because they are built by telling definitions
-    apart BY their derived names, so under a collision the two are already one and
-    the statements bounding their lifetimes are the ones never emitted.
+    The census the clashes are read from spans both endpoints' complete Index
+    sets rather than the operations below it. An Index the delta never mentions
+    is still an object in the database while a new one is created beside it — and
+    the operations could not answer the question anyway, because they are built
+    by telling definitions apart BY their derived names, so under a collision the
+    two are already one and the statements bounding their lifetimes are the ones
+    never emitted. Comparing the definitions establishes those lifetimes instead.
     """
 
     operations: tuple[PhysicalOperation, ...]
-    indices: tuple[NamedIndex, ...]
+    collisions: tuple[CollisionGroup, ...]
 
 
 def plan(evolution: UnilateralEvolution, dialect: Dialect) -> Plan:
@@ -117,7 +119,10 @@ def plan(evolution: UnilateralEvolution, dialect: Dialect) -> Plan:
             for layout in later.facet.tables
             for operation in _lower(layout, later, earlier, causes, dialect)
         ),
-        indices=census(_authored_indices(earlier), _authored_indices(later), dialect),
+        collisions=collision_groups(
+            census(_authored_indices(earlier), _authored_indices(later), dialect),
+            surviving=frozenset(layout.table for layout in later.facet.tables),
+        ),
     )
 
 
@@ -346,6 +351,7 @@ class _Causes:
     operations: tuple[EvolutionOperation, ...]
     later_rows: Mapping[EntityIdentity, Table]
     earlier_rows: Mapping[EntityIdentity, Table]
+    later_owners: Mapping[EntityIdentity, frozenset[EntityIdentity]]
     earlier_owners: Mapping[EntityIdentity, frozenset[EntityIdentity]]
     declared_in: Mapping[Table, frozenset[EntityIdentity]]
 
@@ -357,6 +363,7 @@ class _Causes:
             operations=tuple(operations),
             later_rows=later.rows(),
             earlier_rows={} if earlier is None else earlier.rows(),
+            later_owners=later.owners(),
             earlier_owners={} if earlier is None else earlier.owners(),
             declared_in={
                 layout.table: frozenset(slot.declaring_owner for slot in layout.columns)
@@ -438,15 +445,19 @@ class _Causes:
     ) -> bool:
         """Whether ``operation`` is why ``owner``'s declarations reach ``table``'s rows.
 
-        An Entity always held its own declarations, and one whose earlier
-        ancestry already reached ``owner`` held that ancestor's too, so in
-        neither case did this alteration bring anything to these rows.
+        The reparented Entity must hold ``owner``'s declarations after the move
+        and not before: a Table also materializes declarations that reach only
+        its OTHER shapes, and a reparent carried none of those. An Entity always
+        held its own declarations, and one whose earlier ancestry already reached
+        ``owner`` held that ancestor's too, so in neither case did this
+        alteration bring anything to these rows.
         """
         return (
             isinstance(operation, EntityAltered)
             and _reparents(operation)
             and self.later_rows.get(operation.entity) == table
             and owner != operation.entity
+            and owner in self.later_owners.get(operation.entity, frozenset())
             and owner not in self.earlier_owners.get(operation.entity, frozenset())
         )
 
