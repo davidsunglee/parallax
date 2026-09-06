@@ -496,24 +496,25 @@ _Avoid_: payload column, entity JSON column, document root column, JSON blob
 
 ### Model Evolution
 
-**Metamodel Provider**:
-The one seam through which a Parallax Handle obtains the accepted Metamodel it
-serves, answering every request with the current Model Edition; a static model
-is a provider whose answer never changes. How and when a provider re-reads its
-own source is its private policy.
-_Avoid_: model registry, model loader, schema registry, model reloader, ambient model
+**Published Model Provider**:
+The holder of the current, fully prepared Model Selection available for adoption
+by new Parallax executions.
+_Avoid_: Metamodel Provider, model registry, model loader, schema registry, model reloader, ambient model
+
+**Model Selection**:
+One accepted model paired with its Model Edition and fully prepared for adoption
+by Parallax executions. Preparation establishes structural readiness, not
+physical schema readiness or the success of a particular operation.
+_Avoid_: Prepared Model, runtime model, model cache, compiled model bundle
 
 **Model Edition**:
-The opaque, equality-only token a Metamodel Provider attaches to one accepted
-Metamodel so that a Parallax Handle can tell whether the model it currently
-serves is the one the provider now answers. Editions are compared for equality
-only and never ordered.
+The opaque token identifying one model throughout a Published Model Provider's
+history. Model Editions have equality but no ordering.
 _Avoid_: model version, schema version, revision, model hash, generation
 
 **Adopted Edition**:
-The single Model Edition a Parallax Transaction or a standalone read serves for
-its whole life, chosen when it opens; a joining nested transaction inherits it
-and a retried attempt chooses afresh.
+The single Model Edition retained by one Parallax Transaction attempt or
+standalone read execution, including a stream, for its whole life.
 _Avoid_: pinned model, bound model, transaction model version, current model
 
 **Edition Overlap**:
@@ -583,7 +584,7 @@ realized on one physical Table. `m-schema-delta` derives it deterministically
 with a readable base and a stable fingerprint of ordered components and
 uniqueness. Schema Delta provenance and structured database-error diagnostics
 retain the same value so a violation can be correlated with a rollout without
-consulting the Metamodel Provider.
+consulting the Published Model Provider.
 _Avoid_: authored index name, constraint alias, generated key
 
 ### Expressions And Reads

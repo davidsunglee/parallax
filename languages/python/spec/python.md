@@ -67,6 +67,11 @@ never something an application developer hand-writes.
   `--parallax-tags <m-slug>[,…]`. Filename prefixes are never a conformance
   target.
 
+Prepared model publication is a deferred extension with its adopted contract in
+[§9](#prepared-model-publication) and implementation tracked in
+[COR-123](https://linear.app/flimflam/issue/COR-123). It adds no completed
+developer-surface or lifecycle-oracle claim to the current contract above.
+
 ## 2. Shared developer API and model surface
 
 ### Temporal vocabulary and configuration
@@ -5692,10 +5697,175 @@ hatchling.
 ## 9. Conditional capability decisions
 
 `m-storage-layout` is claimed, so the Relational Document Layout decision below
-is recorded. Every other conditional subsection of the template is deleted from
-this completed spec: process caches, cross-process coherence, aggregation,
-additional dialects, and benchmarks are all outside `slice-snapshot-1` and
-recorded as deferred in §1.
+is recorded. Prepared model publication is an adopted extension deferred in §1.
+The other conditional subsections of the template are deleted: process caches,
+cross-process coherence, aggregation, additional dialects, and benchmarks are
+outside `slice-snapshot-1` and recorded as deferred in §1.
+
+### Prepared model publication
+
+[ADR 0062](../../../docs/adr/0062-transactions-adopt-one-model-edition-at-open.md)
+records the decision and its alternatives. This section defines the extension
+contract; activation replaces the affected contracts in §§2–5 and updates the
+owning core specifications, lifecycle schemas, compatibility cases, API
+Conformance Suite, and generated topology together. Until that migration, the
+existing static connection and lifecycle oracle remain the current claim.
+
+**Preparation and publication.** The public interface is:
+
+```python
+prepare_model(model: DomainModel, *, edition: str) -> ModelSelection
+
+class ModelSelection:
+    @property
+    def model(self) -> DomainModel: ...
+    @property
+    def edition(self) -> str: ...
+
+class PublishedModelProvider:
+    def __init__(self, initial: ModelSelection) -> None: ...
+    def current(self) -> ModelSelection: ...
+    def publish(self, candidate: ModelSelection, *, expected: ModelSelection) -> None: ...
+```
+
+`ModelSelection` has opaque construction: `prepare_model` returns the complete
+selection or raises, exposing no partially prepared value. Its public properties
+are read-only, and `model` is the exact original Domain Model, not a reconstructed
+description. Model Selection is the prepared execution form of that model; no
+additional `PreparedModel` wrapper or type is introduced.
+
+The selection's private `SelectedReadModel` and `SelectedWriteModel` projections
+carry the same edition and share the exact same `CatalogedModel`. The read
+projection carries optional Entity Graph Construction; the write projection
+carries the Entity Row Codec and Write Planner. A descriptor-backed model has no
+graph construction and continues to refuse Typed materialization while supporting
+the Wire interface. Per-verb entries receive only the capabilities they need,
+and the Unit of Work retains its adopted planner.
+
+Preparation completes fallible model-dependent construction before returning,
+including the entity layouts and codec and graph-construction facts otherwise
+derived on first use. Constructing empty lazy collaborators alone does not meet
+this contract. Requests retain and use the prepared products without rebuilding
+them. Preparation does not execute application queries, inspect or change a
+physical schema, or promise that arbitrary future queries, stored data, or
+database calls will succeed. Selections are process-local and contain no
+transaction, connection, Clock, or Execution Lifecycle Provider. Their
+construction belongs at the Snapshot composition scope that can assemble the
+execution capabilities; `DomainModel` remains in the common runtime and gains no
+dependency on the Snapshot write-planner composition.
+
+**Edition identity.** An edition is an opaque, nonempty string. Parallax compares
+editions only for equality, never parses or orders them, and infers no chronology
+from their spelling. Equal tokens must identify the same accepted model within a
+provider's publication history; an updater must not reuse a token for a changed
+model. Edition equality is not a write licence.
+
+**One concrete provider.** `PublishedModelProvider` always holds a prepared
+selection. `current()` returns that exact selection and invokes no
+application-supplied code, source I/O, or preparation. Publication atomically
+compares the current selection by identity with `expected` and either replaces
+it with the complete candidate or raises a publication-conflict refusal without
+changing it. The comparison and replacement are one operation for concurrent
+readers and publishers. Stale publication is not retried automatically, and
+opaque editions are never ordered to pick a winner.
+
+There is no public custom-model-provider Protocol, separate constant provider,
+or second current-selection cache in Database. A static model is the same
+provider with no later publication. Source access, refresh scheduling, competing
+edit ordering, durable rollout coordination, schema application, and update
+failure reporting belong to the application. It prepares the candidate, ensures
+the schema is ready, and then publishes it. Failed preparation leaves the
+previous selection serving. A local expected-selection comparison does not
+serialize cross-process DDL or undo already-applied statements. The library
+supplies an executable update example, not a generic updater callback interface.
+
+**Static initialization.** `Database.connect(adapter, model)` keeps its existing
+positional and keyword arguments. Its model argument accepts a Domain Model or
+the concrete publication provider. A Domain Model is prepared once with a
+generated opaque edition and put in a private instance of the same provider;
+the edition stays fixed for that connection's life. Independent static
+connections may have distinct generated editions for the same Domain Model.
+Explicit preparation and a shared provider give callers control of shared
+edition identity. Both forms enter the same execution paths.
+
+**Adoption and retention.** Each outer transaction attempt obtains and adopts
+one complete selection before opening the physical database transaction. It
+retains that selection through commit or rollback. A joining invocation inherits
+the active transaction and selection without a provider lookup; a retry obtains
+the then-published selection afresh. A standalone eager read adopts once for its
+whole execution. A standalone stream adopts at context entry and retains the
+selection through every page; construction validates model-independent arguments
+such as page size, while model-dependent refusals move to entry. A transactional
+stream inherits its transaction's selection. Publication during any of these
+scopes never changes the selection already retained there.
+
+Transactions and read-result envelopes expose read-only `edition`: Snapshot,
+Checked Snapshot, row results, Wire results through their existing envelopes, and
+entered streams. Stream pages preserve the same edition without introducing a
+new public page interface. A stream that has not entered has no Adopted Edition.
+The stamp is not a domain Entity member or a Wire Entity mapping entry; it does
+not expose a lifecycle record or consult a provider. Result envelopes retain the
+stamp for later access.
+
+**Sources across editions.** A keyed source read under another edition remains
+admissible when the writing transaction's adopted model can validate the
+operation and use the source's original evidence. Resolution, member validation,
+effective-change reduction, temporal checks, and evidence enforcement use that
+adopted selection. Locking still requires participation in the same transaction;
+Optimistic writes still require eligible retained observations. No edition
+inequality refusal, automatic source reread, evidence upgrade, or rebasing is
+introduced. This applies to both Typed and Wire keyed-write adapters under the
+shared ingress.
+
+**Failures.** An `ExecutionFailure` has read-only `edition: str` and
+`cause: Exception`; its edition is always an actual Adopted Edition, and the
+original cause remains available through native exception chaining. Ordinary
+failures escaping the owning adopted execution, including application callback
+exceptions, are contextualized after retry and rollback resolution. Joining
+invocations propagate internally without adding wrappers for the same
+transaction. Retry classification sees the underlying failures; terminal
+exhaustion reports the final attempt's edition. Begin failure is terminal and
+reports the selection adopted before opening. Rollback failure preserves both
+underlying errors and remains terminal. Control-flow and fatal exceptions retain
+their existing propagation rules. Failures before adoption, including initial
+preparation and lifecycle-provider opening, retain their own exception types;
+there is no `edition=None` variant.
+
+A delayed `InvalidDataError` from a result accessor remains that error type and
+carries the result's original edition. Access starts no execution, performs no
+provider lookup, and emits no lifecycle events. If a result from A is accessed
+inside a transaction under B and that error escapes, the outer
+`ExecutionFailure` reports B and its `InvalidDataError` cause reports A. Existing
+arity precedence and `.checked()` behavior are preserved. Stored-data validators
+need no edition argument: the result owner supplies its stamp when constructing
+the accessor error. Database failures preserve their neutral category, native
+diagnostics, and optional violated Physical Index Name; unique violations gain
+no automatic retry, and the application owns rollout correlation.
+
+**Lifecycle.** No first-publication event or previous/new-edition comparison is
+introduced. The Started event of each adoption-owning activity carries its
+edition: Transaction Attempt, standalone Read, or standalone Snapshot Stream.
+Participating reads, streams, writes, and joined invocations inherit through the
+existing parent correlation. One transaction invocation may span attempts under
+different editions, so its root does not assert one edition for the whole chain.
+
+A Transaction Attempt starts after adoption and before physical transaction
+opening. Its outcomes gain `begin_failed`: the callback has not run, the attempt
+finishes failed, and the invocation fails without retry. A successful begin
+continues within that same attempt. This replaces the existing convention of no
+attempt activity for a failed begin. With no lifecycle provider, or a declined
+root, reporting performs no event allocation or lifecycle work. Public preflight
+refusals still create no activity, and constructing an unentered stream emits
+nothing. Reporting no longer depends on whether another operation previously
+selected the same edition or won a cache-publication race.
+
+**Evolution.** Publication asserts schema readiness under ADR 0063. Only
+Unilateral Evolution follows the live publication path; its complete
+classification, Overlap-Visible Operations, and Behavioral Impacts remain owned
+by `m-model-evolution`. A failed preparation does not promise immunity from
+database outages or from the already-specified effects of Edition Overlap in
+other serving processes. Each process prepares its own selections, and an
+initial process must prepare a first selection before it can serve.
 
 ### Relational Document Layout
 
