@@ -158,10 +158,12 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot._inspection", "_declaration"): frozenset(
         {"declaration_of", "is_entity_class", "members_of"}
     ),
-    ("parallax.snapshot.handle._database", "_model"): frozenset({"cataloged_model", "class_index"}),
+    ("parallax.snapshot.handle._database", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot.handle._database", "_model"): frozenset({"class_index", "model_of"}),
     ("parallax.snapshot.handle._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._page", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"CatalogedModel"}),
+    ("parallax.snapshot.handle._publication", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._read_scope", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._stream", "_layout"): frozenset({"CatalogedModel"}),
@@ -261,12 +263,13 @@ def test_the_entity_reach_inventory_names_a_new_reach_and_passes_the_public_door
 # widening the descriptor's developer surface to serve a dev-only consumer —
 # would put the same contract in two places.
 #
-# `cataloged_model` is one of the second-frontend fixture's two additions, and it
-# subsumes `model_of` there: it drives the production find executor, which
-# converts every row against the connected model's own layouts, so it takes the
-# accepted model and the layout catalog paired with it through the one door
-# rather than reading either half separately or building a second catalog beside
-# it.
+# `read_projection` is one of the second-frontend fixture's two additions: it
+# drives the production find executor, which converts every row against the
+# prepared model's own layouts, so it takes the prepared selection's read
+# projection — the accepted model, the layout catalog paired with it, and the
+# graph construction derived over both — exactly as the source under test holds
+# them, rather than reading any half separately or deriving a second catalog
+# beside the selection's.
 #
 # That fixture is a SECOND managed value lifecycle, so it merges and constructs
 # for itself rather than driving the Snapshot materializer's own private drive.
@@ -295,8 +298,8 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.engine", "parallax.snapshot.handle._transaction"): frozenset(
         {"buffer_prepared_predicate_write", "buffer_prepared_wire_keyed_write"}
     ),
-    ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset(
-        {"cataloged_model"}
+    ("parallax.conformance.another_source", "parallax.snapshot.handle._publication"): frozenset(
+        {"read_projection"}
     ),
     ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
         {"ObjectQuery", "object_query_node"}

@@ -80,8 +80,9 @@ a Value Object record built during the walk. Rows are never rolled back.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, cast
 
 from pydantic import BaseModel
@@ -103,13 +104,7 @@ from parallax.core.entity._instance_state import (
 )
 from parallax.core.entity._instance_state import relationship as relationship_state
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog, ValueObjectLayout
-from parallax.core.entity._model import (
-    ClassIndex,
-    DomainModel,
-    cataloged_model,
-    class_index,
-    model_of,
-)
+from parallax.core.entity._model import ClassIndex
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -131,7 +126,6 @@ __all__ = [
     "EntityGraphConstruction",
     "EntityGraphWriter",
     "ResolutionView",
-    "graph_construction_of",
     "lifecycle_state_of",
     "relationship_value_of",
 ]
@@ -275,11 +269,12 @@ def _require_correspondence(layout: EntityLayout, facts: _EntityFacts) -> None:
     row of the right width cannot express one: width is a count.
 
     Compared once per (class, model) — this runs where the per-Entity facts are
-    derived, and those are memoized — so it fires on the actual pair a process
-    publishes rather than on whichever pair a fixture named, and no field read
-    ever pays for the question. What can genuinely diverge is which contributors
-    there are and what each declared, which is why factoring the shared tail into
-    one rule both sides call would protect the half that cannot diverge and
+    derived, which is the collaboration's construction — so it fires on the
+    actual pair a process publishes rather than on whichever pair a fixture
+    named, and no field read ever pays for the question. What can genuinely
+    diverge is which contributors there are and what each declared, which is why
+    factoring the shared tail into one rule both sides call would protect the
+    half that cannot diverge and
     leave this half unchecked.
     """
     plan = plan_of(facts.cls)
@@ -645,24 +640,39 @@ class ResolutionView:
 
 
 class EntityGraphConstruction:
-    """One Domain Model's graph-construction collaboration.
+    """One class-backed model's graph-construction collaboration.
 
-    Per Domain Model rather than per read: it is the home of the per-Entity facts
-    derived once from accepted metadata — the concrete class, the
-    identity-to-member-name mapping, and the declaration-ordered navigable
-    relationships — and models are few and long-lived where reads are many.
-    Because it is reached through :func:`graph_construction_of`,
-    ``construct(...)`` takes no model argument and cannot be handed a mismatched
-    one.
+    Per model rather than per read: it is the home of the per-Entity facts
+    derived once from accepted metadata and the class composed under each
+    identity — the concrete class, the identity-to-member-name mapping, and the
+    declaration-ordered navigable relationships — and models are few and
+    long-lived where reads are many. Every Entity's facts are derived when the
+    collaboration is constructed, so construction is the one fallible point and
+    a lookup afterwards can fail only by naming an Entity the model does not
+    declare. Bound to one model at construction, ``construct(...)`` takes no
+    model argument and cannot be handed a mismatched one.
+
+    It takes its collaborators rather than reaching for them: the accepted
+    Metamodel, the index of the classes composed under it, and the layout
+    catalog its rows are laid out against — so the catalog it reads is
+    structurally the one its caller reads, never a second catalog derived
+    beside it.
     """
 
-    __slots__ = ("_cache", "_classes", "_layouts", "_model")
+    __slots__ = ("_classes", "_facts", "_layouts", "_model")
 
-    def __init__(self, model: DomainModel) -> None:
-        self._model = model_of(model)
-        self._classes = class_index(model)
-        self._layouts = cataloged_model(model).layouts
-        self._cache: dict[EntityIdentity, _EntityFacts] = {}
+    def __init__(self, model: Metamodel, classes: ClassIndex, layouts: LayoutCatalog) -> None:
+        """Derive every Entity's construction facts, or raise
+        :class:`GraphConstructionError`."""
+        self._model = model
+        self._classes = classes
+        self._layouts = layouts
+        self._facts: Mapping[EntityIdentity, _EntityFacts] = MappingProxyType(
+            {
+                entity.identity: _entity_facts(model, classes, layouts, entity.identity)
+                for entity in model.entities
+            }
+        )
 
     def construct(
         self,
@@ -696,41 +706,18 @@ class EntityGraphConstruction:
         return tuple(scope.instances[index] for index in published)
 
     def facts_for(self, entity: EntityIdentity) -> _EntityFacts:
-        """``entity``'s derived construction facts, computed once per model."""
-        cached = self._cache.get(entity)
-        if cached is not None:
-            return cached
-        if self._classes is None:
+        """``entity``'s construction facts, refusing an Entity this model does
+        not declare."""
+        facts = self._facts.get(entity)
+        if facts is None:
             raise GraphConstructionError(
                 code="entity-graph-invalid-entity",
                 message=(
-                    "this Domain Model composed no Entity Class, so it can construct no "
-                    "Entity graph"
+                    f"{entity.canonical} is not an Entity this Domain Model composed a class for"
                 ),
                 identity=entity,
             )
-        facts = _entity_facts(self._model, self._classes, self._layouts, entity)
-        self._cache[entity] = facts
         return facts
-
-
-def graph_construction_of(model: DomainModel) -> EntityGraphConstruction:
-    """``model``'s construction collaboration — the reach seam for it.
-
-    One per Domain Model, created on first reach and retained by the model, so
-    every read of one model shares the per-Entity facts derived from it.
-
-    Created on first reach because this module sits above ``_model`` in §7's
-    import DAG: a :class:`DomainModel` cannot construct one without inverting an
-    edge the generated import contracts reject, so this function is the only
-    place that can build one. The guard is a dependency-direction consequence,
-    not a performance hedge.
-    """
-    construction = model._graph_construction  # pyright: ignore[reportPrivateUsage] - first-party seam
-    if not isinstance(construction, EntityGraphConstruction):
-        construction = EntityGraphConstruction(model)
-        model._graph_construction = construction  # pyright: ignore[reportPrivateUsage] - first-party seam
-    return construction
 
 
 def relationship_value_of(instance: object, relationship: RelationshipIdentity) -> object:

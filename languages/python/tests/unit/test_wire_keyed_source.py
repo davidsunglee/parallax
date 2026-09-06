@@ -23,10 +23,10 @@ from _transact_support import ACCOUNT, CONTACT, INFINITY_INSTANT, WHERE_POSITION
 
 from _support import mirrored_models as mm
 from _support.db_port import Read, ScriptedPort
+from _support.model_capabilities import cataloged_for
 from parallax.core import DomainModel
 from parallax.core.base import SQL_NULL
 from parallax.core.db_port import Row
-from parallax.core.entity._model import cataloged_model
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey, instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedTemporalBounds
@@ -81,7 +81,7 @@ def _account_node() -> WireEntity:
 
 
 def _meta(model: DomainModel) -> Metamodel:
-    return cataloged_model(model).meta
+    return cataloged_for(model).meta
 
 
 # --------------------------------------------------------------------------- #

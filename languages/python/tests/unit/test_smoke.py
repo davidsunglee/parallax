@@ -35,6 +35,10 @@ def test_top_package_public_surfaces() -> None:
     assert "meta" not in parallax.core.__all__
     assert set(parallax.snapshot.__all__) == {
         "connect",
+        "prepare_model",
+        "ModelSelection",
+        "ServingModel",
+        "PublicationConflictError",
         "Snapshot",
         "CheckedSnapshot",
         "SnapshotStream",

@@ -258,8 +258,12 @@ def test_a_handler_error_carries_no_event_statement_or_bind() -> None:
         "diagnostic",
     }
     # The failing event was the Database Call's Started, whose statement is
-    # borrowed for delivery alone; nothing about it survives the report.
-    assert "select" not in repr(reported).lower()
+    # borrowed for delivery alone; nothing about it survives the report. Matched
+    # on the statement's own spelling rather than the keyword alone, which a
+    # file path in the diagnostic's stack may happen to contain.
+    rendered = repr(reported).lower()
+    assert "select t0." not in rendered
+    assert "from account" not in rendered
 
 
 def test_a_failing_reporter_writes_one_correlation_only_line_and_stops(

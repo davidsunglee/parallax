@@ -24,7 +24,7 @@ from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
-from parallax.snapshot import connect
+from parallax.snapshot import connect, prepare_model
 from parallax.snapshot.handle import Transaction
 
 _CASES = write_value_runner.reachable_write_value_cases()
@@ -42,7 +42,9 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     # A `anotherSource` value is read through this second managed source, which
     # materializes and recognizes its own independently of the Snapshot lifecycle
     # the verbs under test write through.
-    another = AnotherSource(model, profile_run.port)
+    another = AnotherSource(
+        prepare_model(model, edition=engine.case_edition(case)), profile_run.port
+    )
     steps = write_value_runner.write_value_steps(case)
 
     def fn(tx: Transaction) -> list[str | None]:

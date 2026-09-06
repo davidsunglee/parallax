@@ -36,11 +36,10 @@ from _transact_support import ACCOUNT, BALANCE, NEW_ROW, balance_row
 
 from _support import mirrored_models as mm
 from _support.db_port import Read, ReadCall, RefusingPort, ScriptedPort
+from _support.model_capabilities import cataloged_for, graph_construction_for
 from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DbPort
-from parallax.core.entity import graph_construction_of
 from parallax.core.entity._layout import CatalogedModel
-from parallax.core.entity._model import cataloged_model
 from parallax.core.execution_lifecycle import ExecutionLifecycleReentryError, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -64,11 +63,8 @@ from parallax.snapshot.handle import _page as handle_page
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._page import At, PagePlan, StreamPage
-from parallax.snapshot.handle._read_scope import (
-    ReadInputs,
-    ReadScope,
-    SelectedReadModel,
-)
+from parallax.snapshot.handle._publication import SelectedReadModel
+from parallax.snapshot.handle._read_scope import ReadInputs, ReadScope
 from parallax.snapshot.handle._retention import ObservationLedger
 
 _ACCOUNT_ROWS: Final = (NEW_ROW,)
@@ -81,10 +77,11 @@ def _account_row(account_id: int) -> dict[str, object]:
 
 
 def _selection(model: Any = ACCOUNT, *, materializing: bool = True) -> SelectedReadModel:
-    cataloged: CatalogedModel = cataloged_model(model)
+    cataloged: CatalogedModel = cataloged_for(model)
     return SelectedReadModel(
+        edition="test",
         model=cataloged,
-        construction=graph_construction_of(model) if materializing else None,
+        construction=graph_construction_for(model) if materializing else None,
     )
 
 

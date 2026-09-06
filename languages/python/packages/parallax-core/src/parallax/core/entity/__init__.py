@@ -9,15 +9,16 @@ its closed error-code sets, and the Object Query surface it re-exports from
 behind these names are implementation detail rather than caller seams.
 
 It additionally exposes the **advanced Entity Graph Construction collaboration**
-— ``graph_construction_of``, ``EntityGraphConstruction``, its writer, the opaque
-``NodeHandle`` its positional rows name a node by, and the ``UNLOADED`` sentinel
-a relationship position spells, plus the two operations a lifecycle reads back
+— ``EntityGraphConstruction``, its writer, the opaque ``NodeHandle`` its
+positional rows name a node by, and the ``UNLOADED`` sentinel a relationship
+position spells, plus the two operations a lifecycle reads back
 (``relationship_value_of``, ``lifecycle_state_of``) — and the **Entity Row
-Codec** a write path derives rows through, reached by ``row_codec_of``. The two
-are this scope's named model-bound capability seams, and there is no composite
-value over them. Top-level ``parallax.core`` re-exports neither: a first-party
-lifecycle or persistence package reaches them here on purpose, and a developer
-never needs either.
+Codec** a write path derives rows through. Each is constructed over an accepted
+Metamodel by the runtime that composes it, derives every Entity's facts at
+construction, and is retained by that runtime rather than by the model; there
+is no composite value over them and no reach seam on the model. Top-level
+``parallax.core`` re-exports neither: a first-party lifecycle or persistence
+package reaches them here on purpose, and a developer never needs either.
 
 Entity Classes are their own formation input: the declaration engine builds each
 class's ``UnresolvedEntityDeclaration`` eagerly at class creation, so this scope
@@ -60,7 +61,6 @@ from parallax.core.entity._graph_construction import (
     EntityGraphConstruction,
     EntityGraphWriter,
     ResolutionView,
-    graph_construction_of,
     lifecycle_state_of,
     relationship_value_of,
 )
@@ -94,7 +94,7 @@ from parallax.core.entity._members import (
     rel,
 )
 from parallax.core.entity._model import DomainModel
-from parallax.core.entity._row_codec import EntityRowCodec, row_codec_of
+from parallax.core.entity._row_codec import EntityRowCodec
 from parallax.core.entity._value_object import ValueObject, to_document
 from parallax.core.object_query._fluent import ObjectQuery
 
@@ -160,12 +160,10 @@ __all__ = [
     "asc",
     "attr",
     "desc",
-    "graph_construction_of",
     "index",
     "lifecycle_state_of",
     "rel",
     "relationship_value_of",
-    "row_codec_of",
     "shape_of",
     "snake_to_camel",
     "to_document",

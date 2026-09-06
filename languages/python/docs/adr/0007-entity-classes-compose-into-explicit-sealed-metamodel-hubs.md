@@ -707,6 +707,13 @@ returning its own capability and each retained by the model on first reach. A
 composite value would have bought only the appearance of a guarantee, at the
 price of a name that has to be kept accurate as capabilities are added.
 
+*Superseded in part (2026-09, COR-123, [ADR 0062](../../../../docs/adr/0062-transactions-adopt-one-model-edition-at-open.md)):*
+the two reach seams and the model's capability slots are retired. The model
+holds nothing derived from itself; `prepare_model` constructs both
+capabilities whole, at Snapshot composition scope, and retains them on an
+opaque Model Selection. The reasoning above about the composite stands — the
+selection holds the two as separate projections rather than one value.
+
 Codec binding resolves rather than owns, which extends this amendment's
 predecessor to the write side. A value reaches the codec, the codec resolves the
 Entity Identity that value's class declares, and a model declaring no such

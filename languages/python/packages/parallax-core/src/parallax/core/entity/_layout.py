@@ -171,49 +171,53 @@ class EntityLayout:
 
 
 class LayoutCatalog:
-    """One accepted Metamodel's exact-Entity layouts.
+    """One accepted Metamodel's exact-Entity layouts, every one derived at
+    construction.
 
-    Entries are derived on first reach rather than eagerly over the whole model,
-    so a short-lived process pays only for the Entities it addresses; the shape
-    matches the per-Entity caches the graph-construction and row-derivation
-    collaborations already keep.
+    Constructing a catalog lays out every Entity the model declares, so the
+    constructor is the one fallible point: a model whose accepted metadata
+    fixes no row for some Entity refuses the whole catalog rather than
+    surfacing at the first read that happens to address that Entity. After
+    construction every entry is immutable and shared, so a lookup allocates
+    nothing and can fail only by naming an Entity this model does not declare.
 
-    Reaching an entry is an unsynchronized check-then-set, like the door that
-    hands out the catalog itself: concurrent first reaches of one Entity each
-    derive a layout and each are answered their own, and whichever landed last
-    is what every later reach is answered. That is why the entry count is a
-    bound on what a catalog retains rather than a count of the derivations it
-    ran. The duplicate is safe rather than free: it builds a second layout that
-    stays live with the reach it answered, but every entry is a pure function of
-    the accepted immutable metadata, so two catalogs over one model — or two
-    layouts for one Entity — are interchangeable, and nothing compares a layout
+    Every entry is a pure function of the accepted immutable metadata, so two
+    catalogs over one model are interchangeable and nothing compares a layout
     by identity.
     """
 
-    __slots__ = ("_cache", "_model")
+    __slots__ = ("_layouts", "_model")
 
     def __init__(self, model: Metamodel) -> None:
+        """Derive every Entity's layout, or raise.
+
+        Raises :class:`ValueError` when the accepted metadata cannot fix one row
+        for some Entity — two members claiming one position, or a family
+        primary key the row does not express.
+        """
         self._model = model
-        self._cache: dict[EntityIdentity, EntityLayout] = {}
+        self._layouts: Mapping[EntityIdentity, EntityLayout] = MappingProxyType(
+            {entity.identity: self._build(entity.identity) for entity in model.entities}
+        )
 
     def entity(self, identity: EntityIdentity) -> EntityLayout:
-        """``identity``'s layout, derived on its first reach here and answered
-        from the entry that reach retained thereafter.
+        """``identity``'s layout.
 
-        Raises :class:`ValueError` when this model declares no such Entity, or
-        when its accepted metadata cannot fix one row for it — two members
-        claiming one position, or a family primary key the row does not express.
+        Raises :class:`ValueError` when this model declares no such Entity.
         """
-        cached = self._cache.get(identity)
-        if cached is not None:
-            return cached
-        built = self._build(identity)
-        self._cache[identity] = built
-        return built
+        layout = self._layouts.get(identity)
+        if layout is None:
+            raise ValueError(
+                f"this model declares no Entity {identity.canonical!r}, "
+                "so it lays out no row for one"
+            )
+        return layout
 
     def _build(self, identity: EntityIdentity) -> EntityLayout:
         position = inheritance_view(self._model).entity(identity)
-        if position is None:
+        if (
+            position is None
+        ):  # pragma: no cover - an accepted model positions every Entity it declares
             raise ValueError(
                 f"this model declares no Entity {identity.canonical!r}, "
                 "so it lays out no row for one"
@@ -302,17 +306,17 @@ class CatalogedModel:
     the two apart and rejoin them wrongly, and a consumer reads its member
     layouts from the same value it reads its accepted metadata from.
 
-    Constructing one therefore derives a catalog. A runtime that must share one
-    model's layouts holds the record that model retains rather than forming a
-    second beside it.
+    Constructing one therefore derives the whole catalog, and is the complete,
+    fallible layout derivation for a model: it raises where the metadata fixes
+    no row for some Entity, and a record that exists lays out every Entity. A
+    runtime that must share one model's layouts holds one record rather than
+    forming a second beside it.
 
     ``layouts`` stays out of comparison: it is a function of ``meta``, so it
     distinguishes no two records that ``meta`` does not, while comparing it
     would compare a catalog by identity — which nothing may do — and so make
     two records over one model unequal for having each derived an
-    interchangeable catalog. A record is therefore the model it carries, which
-    is what lets a holder of one compare equal to a holder of the other after a
-    race published both.
+    interchangeable catalog. A record is therefore the model it carries.
     """
 
     meta: Metamodel

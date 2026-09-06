@@ -25,6 +25,7 @@ from pydantic import PrivateAttr, ValidationError
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
 from _support import value_object_models as vm
+from _support.model_capabilities import graph_construction_for
 from parallax.conformance.read_models import Dog
 from parallax.core import (
     AbstractRoot,
@@ -44,7 +45,6 @@ from parallax.core.entity import (
     EntityGraphWriter,
     NodeHandle,
     UnloadedRelationshipError,
-    graph_construction_of,
     lifecycle_state_of,
     relationship_value_of,
 )
@@ -529,7 +529,7 @@ def _materialized_order(state: object = "one lifecycle's own state") -> sm.SnapO
         writer.populate(item, _ITEM_MEMBERS, (order, UNLOADED))
         return (order,)
 
-    (root,) = graph_construction_of(sm.SNAP_ORDERS_MODEL).construct(
+    (root,) = graph_construction_for(sm.SNAP_ORDERS_MODEL).construct(
         build, state_factory=lambda _view, _handle: state
     )
     return cast("sm.SnapOrder", root)
@@ -544,7 +544,7 @@ def _materialized_status() -> sm.SnapOrderStatus:
         writer.populate(status, _STATUS_MEMBERS, ())
         return (status,)
 
-    (root,) = graph_construction_of(sm.SNAP_ORDERS_MODEL).construct(
+    (root,) = graph_construction_for(sm.SNAP_ORDERS_MODEL).construct(
         build, state_factory=lambda _view, _handle: "one lifecycle's own state"
     )
     return cast("sm.SnapOrderStatus", root)

@@ -496,10 +496,12 @@ _Avoid_: payload column, entity JSON column, document root column, JSON blob
 
 ### Model Evolution
 
-**Published Model Provider**:
+**Serving Model**:
 The holder of the current, fully prepared Model Selection available for adoption
-by new Parallax executions.
-_Avoid_: Metamodel Provider, model registry, model loader, schema registry, model reloader, ambient model
+by new Parallax executions. "Serving" is the same relationship a Database has
+to the model it serves; the holder is a separate object so that holding a
+Database confers no authority to change its model.
+_Avoid_: Published Model Provider, provider, Metamodel Provider, model registry, model loader, schema registry, model reloader, ambient model
 
 **Model Selection**:
 One accepted model paired with its Model Edition and fully prepared for adoption
@@ -508,8 +510,8 @@ physical schema readiness or the success of a particular operation.
 _Avoid_: Prepared Model, runtime model, model cache, compiled model bundle
 
 **Model Edition**:
-The opaque token identifying one model throughout a Published Model Provider's
-history. Model Editions have equality but no ordering.
+The opaque token identifying one model throughout a Serving Model's history.
+Model Editions have equality but no ordering.
 _Avoid_: model version, schema version, revision, model hash, generation
 
 **Adopted Edition**:
@@ -584,7 +586,7 @@ realized on one physical Table. `m-schema-delta` derives it deterministically
 with a readable base and a stable fingerprint of ordered components and
 uniqueness. Schema Delta provenance and structured database-error diagnostics
 retain the same value so a violation can be correlated with a rollout without
-consulting the Published Model Provider.
+consulting the Serving Model.
 _Avoid_: authored index name, constraint alias, generated key
 
 ### Expressions And Reads

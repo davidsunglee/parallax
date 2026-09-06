@@ -48,6 +48,7 @@ from _support.db_port import (
     Write,
     WriteCall,
 )
+from _support.model_capabilities import cataloged_for, graph_construction_for
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, Person
 from parallax.conformance.vo_models import CUSTOMER_MODEL, Customer
@@ -59,13 +60,7 @@ from parallax.core.entity import (
     EntityGraphWriter,
     EntityRowError,
     NodeHandle,
-    graph_construction_of,
 )
-
-# The accepted Metamodel a `Database` builds for itself, and the ingress's own
-# seam records: both reached directly so what a record owns is proved at the seam
-# rather than inferred from what a verb emitted.
-from parallax.core.entity._model import cataloged_model
 from parallax.core.unit_work import (
     FixedClock,
     ObjectKey,
@@ -1196,7 +1191,7 @@ def _foreign_lifecycle_account() -> mm.Account:
         writer.populate(handle, (1, "Ada", Decimal("100.00"), 1), ())
         return (handle,)
 
-    (node,) = graph_construction_of(ACCOUNT).construct(
+    (node,) = graph_construction_for(ACCOUNT).construct(
         build, state_factory=lambda view, handle: _OtherLifecycleState()
     )
     return cast("mm.Account", node)
@@ -1230,7 +1225,7 @@ def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
             instructions.KeyedWrite(
                 "update", mm.Account.identity.canonical, ({"id": 1, "owner": "Ada"},), None, None
             ),
-            cataloged_model(ACCOUNT).meta,
+            cataloged_for(ACCOUNT).meta,
         ),
     )
     nested: dict[str, object] = {"city": "Berlin"}

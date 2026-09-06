@@ -85,6 +85,7 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot import handle
 from parallax.snapshot.handle import Transaction, _planning
+from parallax.snapshot.handle._publication import write_projection
 
 type _CompileCase = Callable[[case_format.Case, str], tuple[list[engine.Emission], int]]
 
@@ -284,6 +285,20 @@ def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
     _assert_planned_only_through_the_factory(seen, plannings=2)
     assert len(seen.built) == 1, "one connected Metamodel, one planner"
     assert all(one.planner is seen.built[0].planner for one in seen.planned)
+
+
+def test_a_prepared_selection_carries_the_planner_the_factory_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Preparation is where the composition root builds a planner now, and the
+    # selection's write projection is the one place it is retained: the object
+    # every transaction over that selection plans through is, by identity, the
+    # one the factory handed back while preparing.
+    seen = _watch("prepare_model", monkeypatch)
+    selection = handle.prepare_model(mm.ACCOUNT_MODEL, edition="one")
+
+    assert len(seen.built) == 1, "one prepared selection, one planner"
+    assert write_projection(selection).planner is seen.built[0].planner
 
 
 def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy(

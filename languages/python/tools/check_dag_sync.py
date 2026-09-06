@@ -487,6 +487,20 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # this scope's files and refuses every import into `parallax.snapshot.handle`
     # no grant covers, so `_read`, `_write_inputs`, and every sibling but the
     # granted `_family` are rejected over the source rather than left to prose.
+    # A prepared Model Selection is process-local and holds no transaction,
+    # connection, Clock, or Execution Lifecycle Provider. Granting the scope the
+    # Entity frontend — for the Domain Model, the cataloged model, the row
+    # codec, and the graph construction a selection retains — and the unit of
+    # work — for the Write Planner — and nothing else is what makes the first
+    # three of those absences structural rather than asserted: no attempt, no
+    # port, and no activity is nameable here. Sealed, because the handle package
+    # beside it holds every one of them.
+    "parallax.snapshot.handle._publication": frozenset(
+        {
+            "parallax.core.entity",
+            "parallax.core.unit_work",
+        }
+    ),
     "parallax.snapshot.handle._retention": frozenset(
         {
             "parallax.core.metamodel",
@@ -542,6 +556,7 @@ CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.snapshot.handle._keyed_sql": "parallax.snapshot.handle",
     "parallax.snapshot.handle._write_lowering": "parallax.snapshot.handle",
     "parallax.snapshot.handle._retention": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._publication": "parallax.snapshot.handle",
 }
 
 # Child scopes a grant on the PARENT does not carry. A forbidden row is the
@@ -586,12 +601,20 @@ ISOLATED_CHILD_SCOPES: frozenset[str] = frozenset({"parallax.core.execution_life
 # import and the seal is where the rule is GRADED rather than merely stated —
 # and it holds the rest of the package out with it, which is what makes
 # retention's four grants its whole reach rather than its whole intent.
+#
+# Model publication is sealed for what a prepared selection must not hold: the
+# demarcation, the read composition, the keyed write ingress, and every other
+# module of the handle package carries a connection, an attempt, or an activity,
+# and a selection that could name one would no longer be process-local state a
+# Serving Model can hand to any execution. The seal is what grades that absence
+# over the package the selection lives in.
 SEALED_CHILD_SCOPES: frozenset[str] = frozenset(
     {
         "parallax.core.entity._construction_input",
         "parallax.core.entity._instance_state",
         "parallax.core.entity._layout",
         "parallax.core.entity._pydantic_storage",
+        "parallax.snapshot.handle._publication",
         "parallax.snapshot.handle._retention",
     }
 )

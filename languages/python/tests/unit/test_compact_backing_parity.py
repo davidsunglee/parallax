@@ -39,6 +39,7 @@ import pytest
 from _compact_support import carries_instance_storage, published, raw_row, real_storage
 from pydantic import PrivateAttr
 
+from _support.model_capabilities import row_codec_for
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -53,7 +54,7 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity import row_codec_of, to_document
+from parallax.core.entity import to_document
 from parallax.core.entity._entity import (
     CHANGE_RECORD_SLOT,
     ChangeRecord,
@@ -173,7 +174,7 @@ def build(request: pytest.FixtureRequest) -> Builder:
 
 
 def _codec() -> EntityRowCodec:
-    return row_codec_of(PARITY_MODEL)
+    return row_codec_for(PARITY_MODEL)
 
 
 def _site() -> Site:

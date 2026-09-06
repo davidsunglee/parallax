@@ -12,6 +12,10 @@ This module is the second source, supplied by the adapter rather than shipped:
 then materializes what that read returned ITSELF — its own merge over the
 the sealed graph a read answered, its own Entity Graph Construction drive, and
 per-node state, which the Snapshot never attached and therefore never claims.
+It is constructed over a prepared Model Selection and reads that selection's
+read projection, so the cataloged model it resolves against and the graph
+construction it drives are the products preparation derived whole, exactly as
+the source under test holds them.
 :meth:`AnotherSource.produced` is the definition's other half: a source
 recognizes its own. So a value arranged here is a value a managed read of a
 second source produced, which is the antecedent the ForeignLifecycle rule states
@@ -37,16 +41,15 @@ from typing import Any, cast
 from parallax.core.db_port import DbPort
 from parallax.core.entity import (
     UNLOADED,
-    DomainModel,
     EntityGraphWriter,
     NodeHandle,
-    graph_construction_of,
     lifecycle_state_of,
 )
-from parallax.core.entity._model import cataloged_model
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
+from parallax.snapshot.handle import ModelSelection
 from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._publication import read_projection
 from parallax.snapshot.materialize import (
     SnapshotGraph,
     merge_graph_input,
@@ -79,11 +82,17 @@ class AnotherSource:
     own.
     """
 
-    __slots__ = ("_domain", "_model", "_port")
+    __slots__ = ("_construction", "_model", "_port")
 
-    def __init__(self, model: DomainModel, port: DbPort) -> None:
-        self._domain = model
-        self._model = cataloged_model(model)
+    def __init__(self, selection: ModelSelection, port: DbPort) -> None:
+        selected = read_projection(selection)
+        if selected.construction is None:
+            raise ValueError(
+                "this source materializes Entity Class instances, so it takes a selection "
+                "prepared from a class-backed Domain Model"
+            )
+        self._model = selected.model
+        self._construction = selected.construction
         self._port = port
 
     def find[S](self, query: ObjectQuery[Any, S]) -> tuple[S, ...]:
@@ -144,6 +153,6 @@ class AnotherSource:
                 )
             return tuple(handles[index] for index in merge.roots if index is not None)
 
-        return graph_construction_of(self._domain).construct(
+        return self._construction.construct(
             build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
         )

@@ -58,7 +58,8 @@ from parallax.core import (
     attr,
     rel,
 )
-from parallax.core.entity._model import cataloged_model
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity, entity_by_name
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import GraphMerge, SnapshotGraph, merge_graph_input
@@ -227,7 +228,7 @@ class Owner(Entity, table="overhead_owner", namespace=NAMESPACE):
 
 
 MODEL: Final = DomainModel(Node, Special, Alpha, Beta, Owner)
-CATALOGED: Final = cataloged_model(MODEL)
+CATALOGED: Final = CatalogedModel(model_of(MODEL))
 PIN: Final = Pin()
 
 

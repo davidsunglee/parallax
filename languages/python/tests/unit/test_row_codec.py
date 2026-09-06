@@ -1,6 +1,6 @@
 """The Entity Row Codec: ``full_row`` / ``identity_row`` / ``edited_row`` /
-``authored_row``, the ``row_codec_of`` seam, and the five closed
-``EntityRowError`` codes (spec §5).
+``authored_row``, its construction over one accepted Metamodel, and the five
+closed ``EntityRowError`` codes (spec §5).
 
 The write path's consumption of the codec lives in ``test_transaction_writes.py``
 and ``tests/api/test_edited_row_no_drift.py``; what this suite pins is the codec
@@ -29,6 +29,7 @@ from pydantic import TypeAdapter
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
 from _support import value_object_models as vm
+from _support.model_capabilities import row_codec_for
 from parallax.conformance import read_models as rm
 from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.entity import (
@@ -37,8 +38,6 @@ from parallax.core.entity import (
     EntityDefinitionError,
     EntityRowCodec,
     EntityRowError,
-    graph_construction_of,
-    row_codec_of,
     to_document,
 )
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
@@ -185,31 +184,23 @@ def _fetched_account(balance: str = "100.00", version: int = 1) -> mm.Account:
 
 
 def _accounts() -> EntityRowCodec:
-    return row_codec_of(mm.ACCOUNT_MODEL)
+    return row_codec_for(mm.ACCOUNT_MODEL)
 
 
 # --------------------------------------------------------------------------- #
-# The seam: one codec per model, retained, and independent of its sibling.    #
+# Construction: every Entity's facts derived whole, over the metadata alone.   #
 # --------------------------------------------------------------------------- #
-def test_a_model_reaches_one_retained_codec() -> None:
-    assert row_codec_of(mm.ACCOUNT_MODEL) is row_codec_of(mm.ACCOUNT_MODEL)
-    assert row_codec_of(mm.ACCOUNT_MODEL) is not row_codec_of(mm.BALANCE_MODEL)
-
-
-def test_the_two_capability_seams_answer_independently() -> None:
-    # Each seam owns its own slot; neither is a projection of a composite value,
-    # and reaching one never builds the other.
-    model = DomainModel(Widget)
-    codec = row_codec_of(model)
-    assert graph_construction_of(model) is not codec
-    assert row_codec_of(model) is codec
+def test_a_codec_derives_every_declared_entity_at_construction() -> None:
+    codec = row_codec_for(sm.SNAP_ORDERS_MODEL)
+    derived = codec._facts_by_identity  # pyright: ignore[reportPrivateUsage] - the derivation is the claim
+    assert set(derived) == {entity.identity for entity in sm.SNAP_ORDERS_MODEL.entities}
 
 
 def test_a_model_composing_no_entity_class_still_derives_rows() -> None:
     # The codec resolves an Entity Identity against declared metadata and never
-    # consults the class index, so the seam is total where materialization is not.
+    # consults the class index, so it is total where materialization is not.
     descriptor_backed = DomainModel._from_unresolved(_ClasslessSource())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
-    assert row_codec_of(descriptor_backed).full_row(Widget(id=1, label="a")) == {
+    assert row_codec_for(descriptor_backed).full_row(Widget(id=1, label="a")) == {
         "id": 1,
         "label": "a",
     }
@@ -227,7 +218,7 @@ def test_full_row_projects_every_member_the_caller_set() -> None:
 
 
 def test_full_row_omits_a_member_the_caller_never_populated() -> None:
-    row = row_codec_of(mm.WRITABLE_SCALARS_MODEL).full_row(mm.WritableScalar(id=1, label="x"))
+    row = row_codec_for(mm.WRITABLE_SCALARS_MODEL).full_row(mm.WritableScalar(id=1, label="x"))
     assert row == {"id": 1, "label": "x"}
 
 
@@ -242,7 +233,7 @@ def test_full_row_carries_every_declarable_scalar_type() -> None:
         amount=Decimal("1.2345"),
         label="x",
     )
-    assert row_codec_of(mm.WRITABLE_SCALARS_MODEL).full_row(scalars) == {
+    assert row_codec_for(mm.WRITABLE_SCALARS_MODEL).full_row(scalars) == {
         "id": 1,
         "f32": 1.5,
         "f64": 2.5,
@@ -260,7 +251,7 @@ def test_full_row_renders_a_nullable_value_object_as_a_managed_document() -> Non
         name="Ada",
         address=vm.Address(street="Main St", city="Berlin", geo=None, phones=()),
     )
-    row = row_codec_of(vm.CUSTOMER_MODEL).full_row(customer)
+    row = row_codec_for(vm.CUSTOMER_MODEL).full_row(customer)
     assert row["address"] == {"street": "Main St", "city": "Berlin", "geo": None, "phones": []}
 
 
@@ -273,7 +264,7 @@ def test_full_row_serializes_a_many_value_object_to_a_list_of_documents() -> Non
         primary_tag=None,
         tags=(sm.Tag(label="a", detail=None, details=()),),
     )
-    assert row_codec_of(sm.SNAP_ORDERS_MODEL).full_row(status)["tags"] == [
+    assert row_codec_for(sm.SNAP_ORDERS_MODEL).full_row(status)["tags"] == [
         {"label": "a", "detail": None, "details": []}
     ]
 
@@ -299,7 +290,7 @@ def test_full_row_serializes_a_value_object_to_its_full_containment_depth() -> N
             entries=(mm.SampleEntry(kind="k", active=True, price=Decimal("2.00"), issued=None),),
         ),
     )
-    profile = row_codec_of(mm.DOCUMENT_CODEC_MODEL).full_row(sample)["profile"]
+    profile = row_codec_for(mm.DOCUMENT_CODEC_MODEL).full_row(sample)["profile"]
     assert isinstance(profile, dict)
     assert profile["amount"] == Decimal("1.25")
     assert profile["blob"] == b"\x02"
@@ -319,7 +310,7 @@ def test_a_row_emits_the_canonical_member_name_and_never_its_column() -> None:
     # `taxID` is authored by `name=` and stored in `tax_id`, whose mechanical
     # default would be `tax_i_d`: physical names are m-storage-layout's, so
     # neither spelling may appear in a row.
-    row = row_codec_of(mm.TAXPAYER_MODEL).full_row(mm.Taxpayer(id=1, tax_id="T-1", name="Ada"))
+    row = row_codec_for(mm.TAXPAYER_MODEL).full_row(mm.Taxpayer(id=1, tax_id="T-1", name="Ada"))
     assert row == {"id": 1, "taxID": "T-1", "name": "Ada"}
     assert "tax_id" not in row
     assert "tax_i_d" not in row
@@ -329,7 +320,7 @@ def test_a_row_is_ordered_by_the_models_family_effective_declaration_order() -> 
     # Base-first, so an inherited member precedes the concrete's own — and the
     # order is the model's, never the order the caller populated members in.
     card = rm.CardPayment(card_network="Visa", amount=Decimal("10.00"), id=1)
-    row = row_codec_of(mm.PAYMENT_MODEL).full_row(card)
+    row = row_codec_for(mm.PAYMENT_MODEL).full_row(card)
     assert list(row) == ["id", "amount", "cardNetwork"]
 
 
@@ -338,7 +329,7 @@ def test_a_row_orders_attributes_before_top_level_value_objects() -> None:
     # top-level Value Objects in theirs — so `tail` precedes the earlier-declared
     # `detail`. Ordering by the declaration's own interleaving would make a row's
     # keys depend on the value's class, which a row never does.
-    row = row_codec_of(INTERLEAVED_MODEL).full_row(
+    row = row_codec_for(INTERLEAVED_MODEL).full_row(
         Interleaved(id=1, detail=Detail(note="n"), tail="t")
     )
     assert list(row) == ["id", "tail", "detail"]
@@ -376,7 +367,7 @@ def test_full_row_omits_hydrated_temporal_axis_endpoints() -> None:
         tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
         tx_end=dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
     )
-    assert row_codec_of(mm.BALANCE_MODEL).full_row(hydrated) == {
+    assert row_codec_for(mm.BALANCE_MODEL).full_row(hydrated) == {
         "id": 1,
         "acctNum": "A",
         "value": Decimal("100.00"),
@@ -385,7 +376,7 @@ def test_full_row_omits_hydrated_temporal_axis_endpoints() -> None:
 
 def test_a_constructed_instance_needs_no_framework_owned_value_to_derive_a_row() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)
-    assert row_codec_of(mm.BRANCH_MODEL).full_row(branch) == {
+    assert row_codec_for(mm.BRANCH_MODEL).full_row(branch) == {
         "id": 1,
         "name": "Central",
         "address": None,
@@ -417,7 +408,7 @@ def test_serialization_is_the_identity_on_every_type_a_primary_key_can_hold(
     # identity — which is why uniform serialization moves no emitted bind: the
     # metamodel schema gives `primaryKey` to an Attribute alone, and never to a
     # Value Object occurrence.
-    codec = row_codec_of(KEYED_MODEL if isinstance(value, Keyed) else LABELLED_MODEL)
+    codec = row_codec_for(KEYED_MODEL if isinstance(value, Keyed) else LABELLED_MODEL)
     (emitted,) = codec.identity_row(value).values()
     assert emitted is expected or emitted == expected
 
@@ -476,7 +467,7 @@ def test_edited_row_serializes_a_changed_value_object_beside_a_raw_identity() ->
         tags=(),
     )
     edited = original.edit(address=mm.TravelerAddress(city="Bergen"))
-    row = row_codec_of(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited)
+    row = row_codec_for(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited)
     assert row is not None
     assert row["id"] == 1
     # The authored occurrence names `city` alone, and a document omits what the
@@ -496,7 +487,7 @@ def test_edited_row_compares_a_one_occurrence_as_a_whole() -> None:
         tags=(),
     )
     edited = original.edit(address=mm.TravelerAddress(city="Oslo"))
-    assert row_codec_of(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited) == {
+    assert row_codec_for(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited) == {
         "id": 1,
         "address": {"city": "Oslo"},
     }
@@ -514,7 +505,7 @@ def test_edited_row_answers_none_for_an_occurrence_restated_unchanged() -> None:
     edited = original.edit(
         address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway"))
     )
-    codec = row_codec_of(mm.DOCUMENT_LAYOUT_MODEL)
+    codec = row_codec_for(mm.DOCUMENT_LAYOUT_MODEL)
     assert codec.edited_row(edited) is None
     assert codec.restored_members(edited) == frozenset({"address"})
 
@@ -524,7 +515,7 @@ def test_edited_row_compares_a_many_occurrence_as_a_whole() -> None:
     # than a per-key mask.
     original = mm.Traveler(id=1, address=None, tags=(mm.TravelerTag(label="a"),))
     edited = original.edit(tags=(mm.TravelerTag(label="b"),))
-    row = row_codec_of(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited)
+    row = row_codec_for(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited)
     assert row is not None
     assert row["tags"] == [{"label": "b"}]
 
@@ -558,7 +549,7 @@ def test_edited_row_writes_an_authored_null_a_materialized_read_never_set() -> N
             street=address.street, city=address.city, geo=None, phones=address.phones
         )
     )
-    row = row_codec_of(vm.CUSTOMER_MODEL).edited_row(edited)
+    row = row_codec_for(vm.CUSTOMER_MODEL).edited_row(edited)
     assert row is not None
     assert row["address"] == {
         "street": "Main St",
@@ -624,7 +615,7 @@ def test_authored_row_serializes_an_occurrence_on_both_sides() -> None:
     edited = vm.Customer(id=1, name="Ada", address=original).edit(
         address=vm.Address(street="Main St", city="Bergen", geo=None, phones=())
     )
-    authored = row_codec_of(vm.CUSTOMER_MODEL).authored_row(edited)
+    authored = row_codec_for(vm.CUSTOMER_MODEL).authored_row(edited)
     assert authored is not None
     assert authored.row["address"] == {
         "street": "Main St",
@@ -645,7 +636,7 @@ def test_authored_row_refuses_the_selection_edited_row_refuses() -> None:
     # the two operations refuse the same value for the same reason.
     restored = WiderWidget(id=1, label="a", extra="x").edit(extra="y").edit(extra="x")
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).authored_row(restored)
+        row_codec_for(NARROW_MODEL).authored_row(restored)
     assert refusal.value.code == "entity-row-member-missing"
 
 
@@ -662,9 +653,9 @@ def test_a_value_that_is_no_entity_derives_no_row(value: object) -> None:
 def test_an_identity_this_model_does_not_declare_is_refused_by_every_operation() -> None:
     account = _account()
     for operation in (
-        row_codec_of(NARROW_MODEL).full_row,
-        row_codec_of(NARROW_MODEL).identity_row,
-        row_codec_of(NARROW_MODEL).edited_row,
+        row_codec_for(NARROW_MODEL).full_row,
+        row_codec_for(NARROW_MODEL).identity_row,
+        row_codec_for(NARROW_MODEL).edited_row,
     ):
         with pytest.raises(EntityRowError) as refusal:
             operation(account)
@@ -677,12 +668,12 @@ def test_a_value_from_another_model_declaring_the_same_identity_derives_a_row() 
     # of the RESOLVED identity's declared members, so a foreign class populating
     # only declared members is ordinary input.
     foreign = WiderWidget(id=1, label="a")
-    assert row_codec_of(NARROW_MODEL).full_row(foreign) == {"id": 1, "label": "a"}
+    assert row_codec_for(NARROW_MODEL).full_row(foreign) == {"id": 1, "label": "a"}
 
 
 def test_full_row_refuses_a_populated_member_the_resolved_identity_does_not_declare() -> None:
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).full_row(WiderWidget(id=1, label="a", extra="x"))
+        row_codec_for(NARROW_MODEL).full_row(WiderWidget(id=1, label="a", extra="x"))
     assert refusal.value.code == "entity-row-member-missing"
     assert "'extra'" in refusal.value.message
 
@@ -692,7 +683,7 @@ def test_the_same_value_emits_an_identity_row_and_an_untouched_edited_row() -> N
     # `edited_row` every member its Change Record does not name, so neither
     # loses anything by dropping one more.
     wider = WiderWidget(id=1, label="a", extra="x")
-    codec = row_codec_of(NARROW_MODEL)
+    codec = row_codec_for(NARROW_MODEL)
     assert codec.identity_row(wider) == {"id": 1}
     assert codec.edited_row(wider.edit(label="b")) == {"id": 1, "label": "b"}
 
@@ -700,7 +691,7 @@ def test_the_same_value_emits_an_identity_row_and_an_untouched_edited_row() -> N
 def test_edited_row_refuses_a_recorded_name_the_resolved_identity_does_not_declare() -> None:
     edited = WiderWidget(id=1, label="a", extra="x").edit(extra="y")
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).edited_row(edited)
+        row_codec_for(NARROW_MODEL).edited_row(edited)
     assert refusal.value.code == "entity-row-member-missing"
 
 
@@ -709,7 +700,7 @@ def test_a_restored_undeclared_member_is_still_refused_by_edited_row() -> None:
     # it: the row would have carried nothing for `extra`, and it still raises.
     restored = WiderWidget(id=1, label="a", extra="x").edit(extra="y").edit(extra="x")
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).edited_row(restored)
+        row_codec_for(NARROW_MODEL).edited_row(restored)
     assert refusal.value.code == "entity-row-member-missing"
 
 
@@ -718,7 +709,7 @@ def test_a_cross_model_value_keyed_by_another_member_derives_no_identity_row() -
     # Entity by `key` and carries no attribute to read `id` from. Dropping it
     # would hand a keyed write an unkeyed `{}` outside the closed vocabulary.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).identity_row(RekeyedWidget(key=1, label="a"))
+        row_codec_for(NARROW_MODEL).identity_row(RekeyedWidget(key=1, label="a"))
     assert refusal.value.code == "entity-row-member-missing"
     assert "'id'" in refusal.value.message
     assert refusal.value.identity == Widget.identity
@@ -728,7 +719,7 @@ def test_a_cross_model_value_keyed_by_another_member_derives_no_edited_row() -> 
     # `edited_row` selects the primary key too, so the identity half is judged by
     # the same rule rather than emitted short.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).edited_row(RekeyedWidget(key=1, label="a").edit(label="b"))
+        row_codec_for(NARROW_MODEL).edited_row(RekeyedWidget(key=1, label="a").edit(label="b"))
     assert refusal.value.code == "entity-row-member-missing"
     assert "'id'" in refusal.value.message
 
@@ -749,7 +740,7 @@ def test_a_net_zero_edit_of_a_rekeyed_value_is_refused_rather_than_answering_non
     # supplies no attribute for, or "nothing to write" would answer for a value
     # no write could have keyed.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).edited_row(net_zero)
+        row_codec_for(NARROW_MODEL).edited_row(net_zero)
     assert refusal.value.code == "entity-row-member-missing"
     assert "'id'" in refusal.value.message
 
@@ -764,7 +755,7 @@ def test_a_recorded_name_the_value_supplies_no_attribute_for_is_refused() -> Non
     narrow = Widget(id=1, label="a")
     object.__setattr__(narrow, CHANGE_RECORD_SLOT, ChangeRecord({"extra": "x"}))
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(WIDER_MODEL).edited_row(narrow)
+        row_codec_for(WIDER_MODEL).edited_row(narrow)
     assert refusal.value.code == "entity-row-member-missing"
     assert "'extra'" in refusal.value.message
     assert refusal.value.identity == Widget.identity
@@ -804,7 +795,7 @@ def test_a_class_body_denying_the_change_record_still_writes_the_edit() -> None:
     edited = FilteredWidget(id=1, label="a").edit(label="b")
     assert CHANGE_RECORD_SLOT not in edited.__dict__
 
-    assert row_codec_of(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
+    assert row_codec_for(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
 
 
 def test_a_class_body_inventing_a_change_record_earns_no_row() -> None:
@@ -814,7 +805,7 @@ def test_a_class_body_inventing_a_change_record_earns_no_row() -> None:
     plain = InventedWidget(id=1, label="a")
     assert plain.__dict__[CHANGE_RECORD_SLOT] == _FORGED_RECORD
 
-    assert row_codec_of(NARROW_MODEL).edited_row(plain) is None
+    assert row_codec_for(NARROW_MODEL).edited_row(plain) is None
 
 
 def test_a_change_record_forged_into_a_value_s_own_storage_earns_no_row() -> None:
@@ -829,7 +820,7 @@ def test_a_change_record_forged_into_a_value_s_own_storage_earns_no_row() -> Non
         forge_into_storage(plain, CHANGE_RECORD_SLOT, dict(_FORGED_RECORD))
         assert stored_state(plain)[CHANGE_RECORD_SLOT] == _FORGED_RECORD
         with pytest.raises(EntityRowError) as refusal:
-            row_codec_of(NARROW_MODEL).edited_row(plain)
+            row_codec_for(NARROW_MODEL).edited_row(plain)
         assert refusal.value.code == "entity-row-malformed-provenance"
 
 
@@ -856,7 +847,7 @@ def test_an_edit_of_such_a_value_still_records_the_original_it_touched() -> None
     forge_into_storage(original, CHANGE_RECORD_SLOT, dict(_FORGED_RECORD))
     edited = original.edit(label="b")
 
-    assert row_codec_of(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
+    assert row_codec_for(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
 
 
 # --------------------------------------------------------------------------- #
@@ -866,7 +857,7 @@ def test_an_unresolved_identity_outranks_every_later_refusal() -> None:
     # A plain value of an Entity this model does not declare reports the
     # identity rather than answering the no-change `None`.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).edited_row(_account())
+        row_codec_for(NARROW_MODEL).edited_row(_account())
     assert refusal.value.code == "entity-row-target-not-in-model"
 
 
@@ -876,7 +867,7 @@ def test_a_never_edited_value_still_judges_the_primary_key_selection() -> None:
     # carries no attribute for a key member the resolved identity declares is
     # refused rather than answered.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).edited_row(RekeyedWidget(key=1, label="a"))
+        row_codec_for(NARROW_MODEL).edited_row(RekeyedWidget(key=1, label="a"))
     assert refusal.value.code == "entity-row-member-missing"
     assert "'id'" in refusal.value.message
 
@@ -923,7 +914,6 @@ def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -
         "parallax.core.entity._errors",
         "parallax.core.entity._expressions",
         "parallax.core.entity._instance_state",
-        "parallax.core.entity._model",
         "parallax.core.inheritance",
         "parallax.core.metamodel",
     }
@@ -952,7 +942,7 @@ def test_the_codec_names_no_audit_planning_or_physical_dependency(forbidden: str
 
 
 def test_a_codec_states_itself_over_the_accepted_metamodel_alone() -> None:
-    # What `row_codec_of` retains is derivable from the accepted model with no
+    # What the codec retains is derivable from the accepted model with no
     # Domain Model in reach, which is what makes the bare-Metamodel connection
     # the conformance adapter builds a fully functional write path.
     standalone: Any = EntityRowCodec(model_of(mm.ACCOUNT_MODEL))

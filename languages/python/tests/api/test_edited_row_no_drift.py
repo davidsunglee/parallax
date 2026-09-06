@@ -18,7 +18,7 @@ the write shapes that actually pass through edited-copy lowering: a keyed
 non-temporal (versioned) update and a keyed temporal (audit-only) update. It
 builds a fixture instance, edits a copy through ``edit``, derives the
 row through the SAME codec operation ``Transaction.update`` calls
-(``row_codec_of(model).edited_row``), and
+(the prepared codec's ``edited_row``), and
 lowers it through the shipped seam with a SYNTHETIC observation — proving the
 lowered statement binds exactly that observation's value, and a companion
 assertion with a DIFFERENT observation proves the bound value tracks the
@@ -44,10 +44,11 @@ import pytest
 from _support import mirrored_models as mm
 from _support.clock_probes import instant_at
 from _support.lowering_probes import lower_instruction
+from _support.model_capabilities import row_codec_for
 from parallax.conformance import models
 from parallax.core.base import INFINITY
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import EditError, row_codec_of
+from parallax.core.entity import EditError
 from parallax.core.unit_work import (
     KeyedWrite,
     PredecessorRow,
@@ -66,7 +67,7 @@ def _edited_account_row(*, version: int = 1) -> dict[str, object]:
     fetched = mm.Account.model_construct(
         id=1, owner="Ada", balance=Decimal("100.00"), version=version
     )
-    row = row_codec_of(mm.ACCOUNT_MODEL).edited_row(fetched.edit(balance=Decimal("175.00")))
+    row = row_codec_for(mm.ACCOUNT_MODEL).edited_row(fetched.edit(balance=Decimal("175.00")))
     assert row is not None
     return row
 
@@ -131,7 +132,7 @@ def _edited_balance_row() -> dict[str, object]:
         tx_start=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
         tx_end=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
     )
-    row = row_codec_of(mm.BALANCE_MODEL).edited_row(fetched.edit(value=Decimal("150.00")))
+    row = row_codec_for(mm.BALANCE_MODEL).edited_row(fetched.edit(value=Decimal("150.00")))
     assert row is not None
     return row
 

@@ -12,7 +12,7 @@ execution owns retention.
 returns one opaque, fully prepared `ModelSelection`, or raises. Its read-only
 `model` is the original Domain Model and its read-only `edition` is an opaque,
 nonempty string. Editions are compared only for equality, never ordered; the
-same token must identify the same model throughout a provider's history.
+same token must identify the same model throughout a Serving Model's history.
 `ModelSelection` is the prepared artifact itself, with no additional
 `PreparedModel` wrapper.
 
@@ -28,14 +28,19 @@ and prepared composition. Preparation guarantees structural readiness, not
 physical schema readiness, valid stored data, or the success of a future query
 or database operation.
 
-The single concrete `PublishedModelProvider(initial)` owns the current
-selection. `current()` returns that exact ready selection without compilation,
-I/O, or application callbacks. `publish(candidate, expected=base)` replaces it
+The single concrete `ServingModel(initial)` owns the current selection.
+`current()` returns that exact ready selection without compilation, I/O, or
+application callbacks. `publish(candidate, expected=base)` replaces it
 atomically only when the current selection is the exact `base` object; a stale
-publication is refused and leaves the current selection unchanged. The
-comparison is selection identity, not edition equality or ordering. There is
-no custom provider protocol, separate constant adapter, or generic updater
-seam, and a Database keeps no additional current-selection cache.
+publication is refused with `PublicationConflictError`, which carries the
+expected and the actually held selection, and leaves the current selection
+unchanged. The comparison is selection identity, not edition equality or
+ordering. "Serving" is the vocabulary's own word for a Database's relationship
+to its model, and the holder is a separate object rather than a `Database`
+verb so that holding a handle confers no authority to change the model it
+serves. There is no custom Serving Model protocol, separate constant holder,
+or generic updater seam, and a Database keeps no additional current-selection
+cache.
 
 The application owns source refresh, schema migration, and durable coordination
 between processes. It prepares B before changing the schema and publishes B
@@ -44,13 +49,13 @@ serving. Conditional publication protects this process's selection, not a
 cross-process migration sequence. A new process needs an initial successfully
 prepared selection before it can serve. The static
 `Database.connect(adapter, model)` signature remains: it prepares once and
-holds a private provider with a generated edition stable for that provider's
+holds a private Serving Model with a generated edition stable for that holder's
 lifetime. Separate static Database instances may have different editions even
 when given the same Domain Model.
 
 Each Parallax Transaction attempt adopts once before physical database begin
 and retains that selection until completion. A joining nested transaction
-inherits it; a retry reads the provider's current ready selection afresh.
+inherits it; a retry reads the Serving Model's current ready selection afresh.
 `Transaction.edition` is read-only. A standalone eager read adopts once, while
 a standalone stream adopts on context entry and retains its selection for all
 pages. Model-independent stream arguments are checked when the stream is
@@ -82,7 +87,7 @@ their own types rather than acquiring an edition of `None`. If an
 The database seam preserves neutral failure facts, including the violated
 Physical Index Name when supplied by the database, and the execution failure
 preserves the database failure in its cause chain. The failure path does not
-consult the provider and a unique-index violation is not automatically
+consult the Serving Model and a unique-index violation is not automatically
 retriable. The host may correlate these facts with rollout state and decide
 whether replaying the whole use case is safe.
 
@@ -110,13 +115,15 @@ drain cannot eliminate the overlap window.
 
 Preparing on first adoption was rejected because a structurally accepted but
 unpreparable candidate would fail requests after publication. Falling back
-inside Database would instead give the provider and the handle competing
+inside Database would instead give the Serving Model and the handle competing
 notions of the current edition. Publishing opaque ready selections makes
 readiness a construction guarantee while keeping refresh and rollout policy
 with the application. Resolving per operation was rejected because one
 transaction could then mix models; rebuilding inside `current()` or a custom
-provider would move fallible preparation and dependency knowledge into the
-adoption path.
+holder would move fallible preparation and dependency knowledge into the
+adoption path. The holder was first spelled `PublishedModelProvider`; it is
+renamed `ServingModel` because "provider" implied a pluggable seam this
+decision forbids.
 
 [Reladomo prior art](../research/reladomo/31-runtime-model-replacement-and-schema-evolution.md)
 uses replaceable generated-Finder portal slots without an adoption guard for

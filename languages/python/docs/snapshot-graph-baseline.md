@@ -209,8 +209,8 @@ lean = 64,408 B   fat = 64,408 B   delta = +0 B (+0.00%)
 Exactly zero, on both sides of the cutover.
 
 **The shared exact-model catalog is excluded the same way.** The Domain Model,
-its accepted Metamodel, and its layout catalog are built before any window opens
-and the warm-up passes fill every first-reach memo underneath them. That the
+its accepted Metamodel, and its layout catalog — every Entity's layout derived
+with it — are built before any window opens. That the
 catalog does not grow with the graphs materialized against it is a separate,
 gated reading, in the retention suite.
 

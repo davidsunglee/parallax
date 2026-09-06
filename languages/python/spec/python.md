@@ -67,10 +67,18 @@ never something an application developer hand-writes.
   `--parallax-tags <m-slug>[,…]`. Filename prefixes are never a conformance
   target.
 
-Prepared model publication is a deferred extension with its adopted contract in
+Prepared model publication is partly active and partly deferred. Its
+preparation and publication interface — `prepare_model`, `ModelSelection`,
+`ServingModel`, and `PublicationConflictError` — is an active §2 contract, and
+every connection prepares its model through it. Per-execution adoption of a
+`ServingModel`'s current selection, the read-only `edition` on transactions,
+result envelopes, and streams, `ExecutionFailure`, the edition on lifecycle
+Started events with the `begin_failed` attempt outcome, and the executable
+update example remain a deferred extension with their adopted contract in
 [§9](#prepared-model-publication) and implementation tracked in
-[COR-123](https://linear.app/flimflam/issue/COR-123). It adds no completed
-developer-surface or lifecycle-oracle claim to the current contract above.
+[COR-123](https://linear.app/flimflam/issue/COR-123). The deferred half adds no
+completed developer-surface or lifecycle-oracle claim to the current contract
+above.
 
 ## 2. Shared developer API and model surface
 
@@ -1597,15 +1605,14 @@ not re-exported from `parallax.core`; there is no `DomainModel.model`
 property. Ordinary application code uses `models.meta(...)`, `models.entities`,
 or the public Descriptor Frontend export functions.
 
-Snapshot connection instead reads the model through the private first-party
-`cataloged_model(model) -> CatalogedModel` and
-`class_index(model) -> ClassIndex | None` pair. The cataloged model is the
-accepted Metamodel paired with the layout catalog derived from it, answered by
-the one door that derives and retains that pair, so a connection reaches both
-halves at once and neither separately. The class index is present exactly for a
-class-backed Domain Model and absent for a descriptor-backed one; it is a
-bidirectional Entity Identity/Entity Class map and carries no per-model identity
-of its own.
+Snapshot preparation instead reads the model through that seam and the private
+first-party `class_index(model) -> ClassIndex | None`. `prepare_model` derives
+the cataloged model — the accepted Metamodel paired with the layout catalog
+derived from it, as one value — over `model_of(model)`, so a selection carries
+both halves at once and never two references that could name two models. The
+class index is present exactly for a class-backed Domain Model and absent for a
+descriptor-backed one; it is a bidirectional Entity Identity/Entity Class map
+and carries no per-model identity of its own.
 `Database.connect(adapter, model)` has a static `model: DomainModel` input and
 accepts no bare-Metamodel overload. At runtime it narrows the same way: a value
 that is not a Domain Model at all is rejected before `adapter` is inspected,
@@ -1617,24 +1624,26 @@ exposes neither the selected read model nor a class index. It is not
 `DeferredFeatureError(execution-feature-deferred)`, which is reserved for a
 valid query whose execution feature is explicitly deferred.
 
-After that narrowing, Snapshot derives the per-connection state the Database
-owns, in two halves that carry no identity. The read half is one private
-selected-read-model record: the accepted Metamodel and the exact-model layout
-catalog every read converts its rows against as ONE composed value, so a read
-lane resolves and converts against one model rather than against two references
-that could name two, together with the Entity Graph Construction Snapshot
-materialization requires — absent exactly for a descriptor-backed model, which
-is what makes a modeled read refusable before any I/O. The write half is the
-Entity Row Codec every write derives its rows through, held beside that record
-rather than inside it: a read never derives a row, and neither half is derived
-from the other. Both are handle state rather than Core runtime values, and
+After that narrowing, Snapshot prepares the model once (§2 *Model preparation
+and the Serving Model*) and the Database keeps the two projections of that one
+selection, which carry no identity. The read projection is the private Selected
+Read Model: the accepted Metamodel and the exact-model layout catalog every read
+converts its rows against as ONE composed value, so a read lane resolves and
+converts against one model rather than against two references that could name
+two, together with the Entity Graph Construction Snapshot materialization
+requires — absent exactly for a descriptor-backed model, which is what makes a
+modeled read refusable before any I/O. The write projection is the private
+Selected Write Model: the same cataloged model with the Entity Row Codec every
+write derives its rows through and the Write Planner every flush plans through,
+held beside the read projection rather than inside it, because a read never
+derives a row. Both are selection state rather than Core runtime values, and
 neither is exported nor shared through the model.
 
 `Database(port, model)` takes the same `model: DomainModel` input and admits no
 bare accepted Metamodel. It refuses a value that is not a Domain Model with the
 same `SnapshotConnectionError(snapshot-class-backed-model-required)`, so every
-connection reaches its accepted Metamodel through a Domain Model and per-model
-derived state hangs on that model behind one lookup door. A descriptor-backed
+connection reaches its accepted Metamodel through a Domain Model and every
+product derived from it is prepared whole before the connection serves. A descriptor-backed
 model composes no Entity Class and can never materialize a Snapshot, so
 `Database.find` and `Transaction.find` refuse it with that same error — on both
 entry points before target resolution, and on the participating one before the
@@ -1702,36 +1711,31 @@ Conformance coverage, the active slice claim, the Python deferred list,
 `_DEFERRED_EXECUTION_FEATURES`, and any applicable ledger entry advance
 together.
 
-A Domain Model exposes its model-bound capabilities through two named seams and
-no composite value:
+A Domain Model holds none of its model-bound capabilities. The two the runtime
+needs are constructed over what the model answers and retained by the runtime
+that composed them:
 
 ```text
-graph_construction_of(model: DomainModel) -> EntityGraphConstruction   # §3
-row_codec_of(model: DomainModel)          -> EntityRowCodec            # §5
+EntityRowCodec(model: Metamodel)                                                    # §5
+EntityGraphConstruction(model: Metamodel, classes: ClassIndex, layouts: LayoutCatalog)  # §3
 ```
 
-Each seam answers one capability and is **total**: every accepted Domain Model
-reaches both and neither ever answers absence, because a capability derives from
-the accepted Metamodel and every model has one. A descriptor-backed model
-composes no Entity Class, so the graph construction it reaches can instantiate
-nothing and refuses each allocation as
-`GraphConstructionError(entity-graph-invalid-entity)` (§3), while the codec it
-reaches is fully functional — the codec resolves an Entity Identity against
-declared metadata and never consults the Entity Identity/Entity Class index
-(§5). Refusing a descriptor-backed model is therefore the job of the caller that
-needs classes — `Database.find` and `Transaction.find`, by name and before any
-I/O — and never of a seam answering absence.
-
-Each seam is retained by the model on first reach, so repeat calls for one model
-return the same value. Both are reached from
-`parallax.core.entity`, and neither is re-exported from top-level
-`parallax.core`. There is no `EntityRuntime`, no capability pair, tuple, or record, and no
-keyed capability bag: read materialization crosses graph construction alone,
-write preparation crosses the codec alone, and the one caller that holds both —
-Snapshot's private connected-model value — holds two references as cheaply as
-one. Atomicity across the pair would guarantee nothing, because each capability
-derives on demand from the same accepted model and no state exists in which one
-is present and the other cannot be built.
+Each constructor derives every Entity's facts whole and raises on the first
+refusal, so construction is the one fallible point and a lookup afterwards can
+fail only by naming an Entity the model does not declare. The codec is stated
+over the accepted Metamodel alone and never consults the Entity Identity/Entity
+Class index (§5), so a descriptor-backed model prepares a fully functional
+codec; the graph construction takes the class index, which a descriptor-backed
+model lacks, so preparation builds none for it, and refusing such a model is the
+job of the caller that needs classes — `Database.find` and `Transaction.find`,
+by name and before any I/O — never of a collaborator answering absence. Both
+classes are reached from `parallax.core.entity`, neither is re-exported from
+top-level `parallax.core`, and `prepare_model` (§2 *Model preparation and the
+Serving Model*) is the one production caller of either constructor. There is no
+`EntityRuntime`, no capability pair, tuple, or record, and no keyed capability
+bag at the model: read materialization crosses graph construction alone, write
+preparation crosses the codec alone, and the selection that holds both holds
+them as two projections.
 
 Both seams construct lazily, and the reason is dependency direction rather than
 cost. Each capability module sits **above** the Domain Model module in §7's
@@ -2074,6 +2078,108 @@ contract is graded directly instead, one case per sentinel.
 `StoredDataIssue.stored_value` (§4 *Invalid stored data*), so it is the one whose
 identity a caller may copy or pickle across a boundary of their own.
 
+### Model preparation and the Serving Model
+
+[ADR 0062](../../../docs/adr/0062-transactions-adopt-one-model-edition-at-open.md)
+records the decision: Parallax prepares, the application publishes, and each
+execution adopts. This section is the first two; adoption is the deferred half
+in [§9](#prepared-model-publication). The public interface is:
+
+```python
+prepare_model(model: DomainModel, *, edition: str) -> ModelSelection
+
+class ModelSelection:
+    @property
+    def model(self) -> DomainModel: ...
+    @property
+    def edition(self) -> str: ...
+
+class ServingModel:
+    def __init__(self, initial: ModelSelection) -> None: ...
+    def current(self) -> ModelSelection: ...
+    def publish(self, candidate: ModelSelection, *, expected: ModelSelection) -> None: ...
+
+class PublicationConflictError(RuntimeError):
+    expected: ModelSelection
+    held: ModelSelection
+```
+
+All four are exported from `parallax.snapshot` and `parallax.snapshot.handle`.
+
+**Opaque construction.** `prepare_model` returns the complete selection or
+raises, exposing no partially prepared value; `ModelSelection` admits no
+subclass and no other constructor a caller can name. Its public properties are
+read-only, and `model` is the exact original Domain Model, not a reconstructed
+description. Model Selection is the prepared execution form of that model; no
+additional `PreparedModel` wrapper or type is introduced. A value that is no
+Domain Model is refused with `TypeError`, and an empty edition with
+`ValueError`, before any derivation runs.
+
+**Projections.** The selection's private Selected Read Model and Selected Write
+Model carry the same edition and share the exact same `CatalogedModel`. The
+read projection carries optional Entity Graph Construction; the write projection
+carries the Entity Row Codec and Write Planner. A descriptor-backed model has no
+graph construction and continues to refuse Typed materialization while
+supporting the Wire interface. Per-verb entries receive only the capabilities
+they need, and the Unit of Work retains its adopted planner.
+
+**Completeness.** Preparation completes every finite, fallible model-only
+derivation before returning: the exact-model layouts of every Entity, the row
+codec's per-Entity facts, and the graph construction's. Each collaborator is
+constructed whole and raises on its first refusal; constructing empty lazy
+collaborators does not meet this contract, and no per-Entity derivation runs
+on a request path. Requests retain and use the prepared products without
+rebuilding them. Preparation does not execute application queries, inspect or
+change a physical schema, or promise that arbitrary future queries, stored
+data, or database calls will succeed.
+
+**Composition scope.** Selections are process-local and contain no transaction,
+connection, Clock, or Execution Lifecycle Provider. The selection, its two
+projections, the Serving Model, and the conflict refusal live in the sealed
+`parallax.snapshot.handle._publication` child scope (§7), whose grant row —
+the Entity frontend and `m-unit-work` — is what makes the first three of those
+absences structural. `prepare_model` itself lives in the composition root
+beside `connect`, because building a Write Planner reaches the SQL-lowering
+group the sealed scope may not; `DomainModel` remains in the common runtime and
+gains no dependency on the Snapshot write-planner composition.
+
+**Edition identity.** An edition is an opaque, nonempty string. Parallax
+compares editions only for equality, never parses or orders them, and infers no
+chronology from their spelling. Equal tokens must identify the same accepted
+model within a Serving Model's publication history; an updater must not reuse a
+token for a changed model. Edition equality is not a write licence.
+
+**One concrete Serving Model.** `ServingModel` always holds a prepared
+selection. `current()` returns that exact selection and invokes no
+application-supplied code, source I/O, or preparation. Publication atomically
+compares the current selection by identity with `expected` and either replaces
+it with the complete candidate or raises `PublicationConflictError` without
+changing it; the refusal carries `expected` and the selection actually `held`,
+so the loser of a race can rebase without a second `current()` that may already
+observe a third. The comparison and replacement are one operation for
+concurrent readers and publishers. Stale publication is not retried
+automatically, and opaque editions are never ordered to pick a winner.
+
+There is no public custom Serving Model Protocol, separate constant holder,
+`Database.publish` verb, or second current-selection cache in Database; a
+`ServingModel` is a separate object precisely so that holding a Database
+confers no authority to change the model it serves. A static model is the same
+holder with no later publication. Source access, refresh scheduling, competing
+edit ordering, durable rollout coordination, schema application, and update
+failure reporting belong to the application. It prepares the candidate, ensures
+the schema is ready, and then publishes it. Failed preparation leaves the
+previous selection serving. A local expected-selection comparison does not
+serialize cross-process DDL or undo already-applied statements.
+
+**Static shorthand.** `Database.connect(adapter, model)` keeps its existing
+positional and keyword arguments. A Domain Model is prepared once, at connect,
+under a generated opaque edition that stays fixed for that connection's life,
+and the connection keeps that one selection's projections for every read and
+write it serves. Independent static connections may have distinct generated
+editions for the same Domain Model; explicit preparation and a shared
+`ServingModel` give callers control of shared edition identity, and connecting
+over one is the deferred half in §9.
+
 ## 3. Object lifecycle profile
 
 ### Snapshot lifecycle
@@ -2380,22 +2486,15 @@ identity a caller may copy or pickle across a boundary of their own.
   it the one way, and neither declares an absence marker the other's rows do not
   hold.
 
-  A layout is owned by the exact model it was derived from, reached through one
-  door, and derived on first reach of the Entity it describes. The collaboration
-  has exactly two unsynchronized first reaches — a model's catalog slot, and a
-  catalog's entry for one key — so concurrent first reach may publish more than
-  one catalog for a model and more than one layout for a key; every catalog over
-  one model and every layout for one key is interchangeable, so no layout's
-  identity is load-bearing. Retained layout count and size are a function of the
-  models a process connects to and the Entities its reads address, and are
-  independent of the number of graphs materialized. Concurrency adds only what a
-  losing racer was answered and kept, at most one object per lost race and only
-  while that caller holds it: losing a model's catalog race retains a second
-  catalog, counted over that model exactly like the first because its holder
-  keeps deriving into it, and losing one Entity's entry race within a catalog
-  retains a second layout for that key. A racer is a connection, any other
-  source that holds a model's layouts, or any caller holding one layout for the
-  work it reached that layout for. No process-global cache, weak cache,
+  A layout catalog is derived whole when it is constructed — every Entity the
+  model declares, at once, refusing the whole catalog on the first defect — and
+  is owned by the selection that prepared it (§2 *Model preparation and the
+  Serving Model*). Every catalog over one model and every layout for one key is
+  interchangeable, so no layout's identity is load-bearing. Retained layout
+  count and size are a function of the models a process prepares and the
+  Entities those models declare, and are independent of the number of graphs
+  materialized and of the Entities its reads happen to address. No first-reach
+  derivation, unsynchronized publication, process-global cache, weak cache,
   data-keyed cache, or query-result cache participates.
 - **Deterministic graph order.** Merged logical nodes receive their zero-based
   allocation index by deterministic first-encounter preorder: roots in result
@@ -2413,7 +2512,7 @@ identity a caller may copy or pickle across a boundary of their own.
   `parallax.core`:
 
   ```text
-  graph_construction_of(model: DomainModel) -> EntityGraphConstruction
+  EntityGraphConstruction(model: Metamodel, classes: ClassIndex, layouts: LayoutCatalog)
   relationship_value_of(instance, relationship: RelationshipIdentity) -> object
   lifecycle_state_of(instance) -> object | None
 
@@ -2439,12 +2538,15 @@ identity a caller may copy or pickle across a boundary of their own.
   NodeHandle          # opaque, callback-scoped, no public attribute
   ```
 
-  `EntityGraphConstruction` is per Domain Model and is reached only through
-  `graph_construction_of(model)`, so `construct(...)` takes no model argument and
-  cannot be handed a mismatched one; the per-Entity facts it derives once from
-  accepted metadata — concrete class, identity-to-member-name mapping, and the
-  declaration-ordered navigable relationships — live there rather than being
-  recomputed per read. `build` is invoked exactly once with a writer that closes
+  `EntityGraphConstruction` is per model, constructed over the accepted
+  Metamodel, the class index, and the layout catalog by the preparation that
+  retains it (§2 *Model preparation and the Serving Model*), so `construct(...)`
+  takes no model argument and cannot be handed a mismatched one; the per-Entity
+  facts it derives from accepted metadata — concrete class,
+  identity-to-member-name mapping, and the declaration-ordered navigable
+  relationships — are derived for every Entity at construction, raising there
+  on the first refusal, rather than recomputed per read or derived on first
+  reach. `build` is invoked exactly once with a writer that closes
   when it returns, and `state_factory` exactly once per node in allocation order
   with a fresh single-use `ResolutionView` that closes when that invocation
   returns. `relationship_value_of` answers the raw slot value including the
@@ -3970,20 +4072,19 @@ These feature tests do not claim the deferred `benchmark` command or general
   be ambiguous on a Bitemporal Entity, whose one key may have several disjoint
   Valid-Time rectangles current on Transaction Time.
 - **The Entity Row Codec derives every row.** One model-bound `EntityRowCodec`,
-  reached through `row_codec_of(model)` (§2), is what turns an Entity value into
-  a canonical row. The framework asks it for a row and learns nothing about
+  constructed over the accepted Metamodel by `prepare_model` (§2) and carried
+  by the selection's write projection, is what turns an Entity value into a
+  canonical row. The framework asks it for a row and learns nothing about
   Pydantic, private provenance storage, physical column names, temporal
   planning, or Audit Provenance:
 
   ```text
-  EntityRowCodec                    # model-bound; per-Entity facts memoized
-                                    #   by EntityIdentity
+  EntityRowCodec(model: Metamodel)  # model-bound; every Entity's facts derived
+                                    #   at construction, or raised there
     full_row(value)     -> dict[str, object]
     identity_row(value) -> dict[str, object]
     edited_row(value)   -> dict[str, object] | None
     authored_row(value) -> AuthoredRow | None      # .row / .originals
-
-  row_codec_of(model: DomainModel) -> EntityRowCodec
 
   EntityRowError(RuntimeError)      # exported from parallax.core.entity
     entity-row-not-an-entity          entity-row-malformed-provenance
@@ -4998,10 +5099,9 @@ frontend deliberately does not export — `parallax.snapshot._inspection` and
 `parallax.core.entity._declaration` (`declaration_of`, `is_entity_class`,
 `members_of`), `parallax.snapshot.handle._write_inputs` reads the merged
 member-name correspondences from `parallax.core.entity._entity`
-(`wire_names_of`), and `parallax.snapshot.handle._database` reads the cataloged
-model — the accepted Metamodel and the exact-model layout catalog derived from it
-as one value — and the class index from `parallax.core.entity._model`
-(`cataloged_model`, `class_index`).
+(`wire_names_of`), and `parallax.snapshot.handle._database` reads the accepted
+Metamodel and the class index from `parallax.core.entity._model` (`model_of`,
+`class_index`), the two facts it prepares a selection over.
 Each is a seam between two first-party packages that a developer
 never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve one lifecycle package. None of the three modules
@@ -5143,6 +5243,15 @@ back. The executor is a module of the parent package, so no contract sourced at
 the child can reject that import, and the seal is where the one-way rule is
 graded rather than merely stated.
 
+`parallax.snapshot.handle._publication` is sealed for what a prepared Model
+Selection must not hold (§2 *Model preparation and the Serving Model*): every
+other module of the handle package carries a connection, an attempt, or an
+activity, and a selection that could name one would no longer be process-local
+state a Serving Model can hand to any execution. Its row — the Entity frontend
+and `m-unit-work` — is the whole of what the selection, its projections, and
+the Serving Model reach, and the seal is where that absence is graded over the
+package they live in rather than merely stated.
+
 Sealing generates nothing, so a scope losing that mark silently keeps every
 contract it had; isolation shapes the target set of nearly every generated
 contract, so losing it changes them all at once. Both marks are therefore
@@ -5200,6 +5309,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Snapshot handle write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | Snapshot write-observation retention (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts + `tools/check_scope_ownership.py` |
+| Snapshot model publication (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._publication` | `parallax.snapshot.handle._publication` | `parallax.core.entity`, `m-unit-work` | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
@@ -5394,6 +5504,8 @@ parallax.snapshot.handle._retention --> parallax.core.metamodel
 parallax.snapshot.handle._retention --> parallax.core.unit_work
 parallax.snapshot.handle._retention --> parallax.core.temporal_read
 parallax.snapshot.handle._retention --> parallax.snapshot.handle._family
+parallax.snapshot.handle._publication --> parallax.core.entity
+parallax.snapshot.handle._publication --> parallax.core.unit_work
 parallax.postgres --> parallax.core.base
 parallax.postgres --> parallax.core.wire
 parallax.postgres --> parallax.core.db_port
@@ -5455,10 +5567,10 @@ parallax.postgres --> parallax.core.dialect
   scope's private modules; what the exemption does not decide is *which* of them
   the adapter may read. The adapter drives production through supported entry
   points, and the residue is an enumerated set rather than a habit, one that
-  **reaches no shipped distribution but the common runtime**:
+  **reaches the common runtime and one prepared selection's projection**:
   `parallax.core.entity._model.model_of` in its corpus-model loader, and — in its
-  second-frontend fixture — `parallax.core.entity._model.cataloged_model` and
-  both names its one import of
+  second-frontend fixture — `parallax.snapshot.handle._publication.read_projection`
+  and both names its one import of
   `parallax.core.object_query._fluent` binds, `ObjectQuery` and
   `object_query_node`. All four are **rebutted rather than exempted**: `model_of`
   and the two typed-query names are already accepted private seams of
@@ -5468,11 +5580,12 @@ parallax.postgres --> parallax.core.dialect
   although §8 re-exports it. `model_of` exists precisely so a separately
   distributed frontend can read the accepted model out of a Domain Model
   (*Canonical descriptor input*), which is what the adapter is doing.
-  `cataloged_model` is accepted for the same composition root and for the same
-  reason the second frontend needs it: a source that drives the production find
-  executor takes the accepted model and the layout catalog paired with it through
-  the one door, rather than reading either half separately or building a second
-  catalog beside it. A second managed value lifecycle merges and constructs for
+  `read_projection` is accepted for the same reason the second frontend needs
+  it: a source that drives the production find executor takes the prepared
+  selection's read projection — the accepted model, the layout catalog paired
+  with it, and the graph construction derived over both — exactly as the source
+  under test holds them, rather than reading any half separately or deriving a
+  second catalog beside the selection's. A second managed value lifecycle merges and constructs for
   itself — that is what makes it second — but a node's member row is neither: it
   crosses `populate` as the merge laid it out, against the same model-owned
   member layout the writer reads it against, so the fixture hands a row over the
@@ -5638,7 +5751,7 @@ hatchling.
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `isolation_spelling` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
@@ -5697,7 +5810,8 @@ hatchling.
 ## 9. Conditional capability decisions
 
 `m-storage-layout` is claimed, so the Relational Document Layout decision below
-is recorded. Prepared model publication is an adopted extension deferred in §1.
+is recorded. Prepared model publication's adoption half is an adopted extension
+deferred in §1; its preparation and publication interface is active in §2.
 The other conditional subsections of the template are deleted: process caches,
 cross-process coherence, aggregation, additional dialects, and benchmarks are
 outside `slice-snapshot-1` and recorded as deferred in §1.
@@ -5705,93 +5819,31 @@ outside `slice-snapshot-1` and recorded as deferred in §1.
 ### Prepared model publication
 
 [ADR 0062](../../../docs/adr/0062-transactions-adopt-one-model-edition-at-open.md)
-records the decision and its alternatives. This section defines the extension
-contract; activation replaces the affected contracts in §§2–5 and updates the
-owning core specifications, lifecycle schemas, compatibility cases, API
-Conformance Suite, and generated topology together. Until that migration, the
-existing static connection and lifecycle oracle remain the current claim.
+records the decision and its alternatives. The preparation and publication
+interface — `prepare_model`, `ModelSelection`, `ServingModel`, and
+`PublicationConflictError` — is active in §2 *Model preparation and the
+Serving Model*. This section defines the remaining extension contract: how
+executions adopt a Serving Model's current selection, the edition every result
+retains, the failure and lifecycle contracts that follow, and the evolution
+constraints publication carries. Activation replaces the affected contracts in
+§§3–5 and updates the owning core specifications, lifecycle schemas,
+compatibility cases, API Conformance Suite, and generated topology together.
+Until that migration, the existing static connection and lifecycle oracle
+remain the current claim, and the library's executable update example is
+deferred with it: the deferred half supplies that example, not a generic
+updater callback interface.
 
-**Preparation and publication.** The public interface is:
-
-```python
-prepare_model(model: DomainModel, *, edition: str) -> ModelSelection
-
-class ModelSelection:
-    @property
-    def model(self) -> DomainModel: ...
-    @property
-    def edition(self) -> str: ...
-
-class PublishedModelProvider:
-    def __init__(self, initial: ModelSelection) -> None: ...
-    def current(self) -> ModelSelection: ...
-    def publish(self, candidate: ModelSelection, *, expected: ModelSelection) -> None: ...
-```
-
-`ModelSelection` has opaque construction: `prepare_model` returns the complete
-selection or raises, exposing no partially prepared value. Its public properties
-are read-only, and `model` is the exact original Domain Model, not a reconstructed
-description. Model Selection is the prepared execution form of that model; no
-additional `PreparedModel` wrapper or type is introduced.
-
-The selection's private `SelectedReadModel` and `SelectedWriteModel` projections
-carry the same edition and share the exact same `CatalogedModel`. The read
-projection carries optional Entity Graph Construction; the write projection
-carries the Entity Row Codec and Write Planner. A descriptor-backed model has no
-graph construction and continues to refuse Typed materialization while supporting
-the Wire interface. Per-verb entries receive only the capabilities they need,
-and the Unit of Work retains its adopted planner.
-
-Preparation completes fallible model-dependent construction before returning,
-including the entity layouts and codec and graph-construction facts otherwise
-derived on first use. Constructing empty lazy collaborators alone does not meet
-this contract. Requests retain and use the prepared products without rebuilding
-them. Preparation does not execute application queries, inspect or change a
-physical schema, or promise that arbitrary future queries, stored data, or
-database calls will succeed. Selections are process-local and contain no
-transaction, connection, Clock, or Execution Lifecycle Provider. Their
-construction belongs at the Snapshot composition scope that can assemble the
-execution capabilities; `DomainModel` remains in the common runtime and gains no
-dependency on the Snapshot write-planner composition.
-
-**Edition identity.** An edition is an opaque, nonempty string. Parallax compares
-editions only for equality, never parses or orders them, and infers no chronology
-from their spelling. Equal tokens must identify the same accepted model within a
-provider's publication history; an updater must not reuse a token for a changed
-model. Edition equality is not a write licence.
-
-**One concrete provider.** `PublishedModelProvider` always holds a prepared
-selection. `current()` returns that exact selection and invokes no
-application-supplied code, source I/O, or preparation. Publication atomically
-compares the current selection by identity with `expected` and either replaces
-it with the complete candidate or raises a publication-conflict refusal without
-changing it. The comparison and replacement are one operation for concurrent
-readers and publishers. Stale publication is not retried automatically, and
-opaque editions are never ordered to pick a winner.
-
-There is no public custom-model-provider Protocol, separate constant provider,
-or second current-selection cache in Database. A static model is the same
-provider with no later publication. Source access, refresh scheduling, competing
-edit ordering, durable rollout coordination, schema application, and update
-failure reporting belong to the application. It prepares the candidate, ensures
-the schema is ready, and then publishes it. Failed preparation leaves the
-previous selection serving. A local expected-selection comparison does not
-serialize cross-process DDL or undo already-applied statements. The library
-supplies an executable update example, not a generic updater callback interface.
-
-**Static initialization.** `Database.connect(adapter, model)` keeps its existing
-positional and keyword arguments. Its model argument accepts a Domain Model or
-the concrete publication provider. A Domain Model is prepared once with a
-generated opaque edition and put in a private instance of the same provider;
-the edition stays fixed for that connection's life. Independent static
-connections may have distinct generated editions for the same Domain Model.
-Explicit preparation and a shared provider give callers control of shared
-edition identity. Both forms enter the same execution paths.
+**Serving Model at connect.** `Database.connect(adapter, model)` keeps its
+existing positional and keyword arguments, and its model argument additionally
+accepts a `ServingModel`. The Domain Model shorthand of §2 prepares once into a
+private `ServingModel` of the same kind, so both forms enter the same execution
+paths, and a fresh process must prepare its initial selection before it can
+serve.
 
 **Adoption and retention.** Each outer transaction attempt obtains and adopts
 one complete selection before opening the physical database transaction. It
 retains that selection through commit or rollback. A joining invocation inherits
-the active transaction and selection without a provider lookup; a retry obtains
+the active transaction and selection without a Serving Model lookup; a retry obtains
 the then-published selection afresh. A standalone eager read adopts once for its
 whole execution. A standalone stream adopts at context entry and retains the
 selection through every page; construction validates model-independent arguments
@@ -5804,8 +5856,8 @@ Checked Snapshot, row results, Wire results through their existing envelopes, an
 entered streams. Stream pages preserve the same edition without introducing a
 new public page interface. A stream that has not entered has no Adopted Edition.
 The stamp is not a domain Entity member or a Wire Entity mapping entry; it does
-not expose a lifecycle record or consult a provider. Result envelopes retain the
-stamp for later access.
+not expose a lifecycle record or consult a Serving Model. Result envelopes
+retain the stamp for later access.
 
 **Sources across editions.** A keyed source read under another edition remains
 admissible when the writing transaction's adopted model can validate the
@@ -5833,7 +5885,7 @@ there is no `edition=None` variant.
 
 A delayed `InvalidDataError` from a result accessor remains that error type and
 carries the result's original edition. Access starts no execution, performs no
-provider lookup, and emits no lifecycle events. If a result from A is accessed
+Serving Model lookup, and emits no lifecycle events. If a result from A is accessed
 inside a transaction under B and that error escapes, the outer
 `ExecutionFailure` reports B and its `InvalidDataError` cause reports A. Existing
 arity precedence and `.checked()` behavior are preserved. Stored-data validators

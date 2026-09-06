@@ -30,11 +30,11 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from _support.db_port import Read, ScriptedPort
+from _support.model_capabilities import cataloged_for, row_codec_for
 from parallax.core import LATEST, Attr, DomainModel, attr
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import EntityRowCodec, EntityRowError, row_codec_of
-from parallax.core.entity._model import cataloged_model
+from parallax.core.entity import EntityRowCodec, EntityRowError
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey
 from parallax.core.unit_work.instructions import PreparedTemporalBounds
@@ -76,11 +76,11 @@ _TWIN: Final = DomainModel(_Twin)
 
 
 def _accounts() -> tuple[Metamodel, EntityRowCodec]:
-    return cataloged_model(ACCOUNT).meta, row_codec_of(ACCOUNT)
+    return cataloged_for(ACCOUNT).meta, row_codec_for(ACCOUNT)
 
 
 def _twins() -> tuple[Metamodel, EntityRowCodec]:
-    return cataloged_model(_TWIN).meta, row_codec_of(_TWIN)
+    return cataloged_for(_TWIN).meta, row_codec_for(_TWIN)
 
 
 def _published_account() -> mm.Account:
@@ -122,9 +122,9 @@ def test_a_pinned_view_answers_the_instant_it_stands_at() -> None:
     port = ScriptedPort(Read(rows=[dict(_POSITION_ROW)]))
     query = WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST, tx_time=_TX_PIN)
     node = db_for(WHERE_POSITION_META, port).find(query).result()
-    meta = cataloged_model(WHERE_POSITION_META).meta
+    meta = cataloged_for(WHERE_POSITION_META).meta
 
-    resolved = TypedKeyedWriteSource(node, row_codec_of(WHERE_POSITION_META)).resolve(
+    resolved = TypedKeyedWriteSource(node, row_codec_for(WHERE_POSITION_META)).resolve(
         meta, "update"
     )
 

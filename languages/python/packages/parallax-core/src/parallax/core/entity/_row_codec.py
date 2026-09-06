@@ -62,7 +62,6 @@ from parallax.core.entity._errors import (
 )
 from parallax.core.entity._expressions import serialize_member
 from parallax.core.entity._instance_state import is_present, named_state, plan_of
-from parallax.core.entity._model import DomainModel, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -72,7 +71,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 
-__all__ = ["AuthoredRow", "EntityRowCodec", "row_codec_of"]
+__all__ = ["AuthoredRow", "EntityRowCodec"]
 
 
 _NO_RECORD: Final = object()
@@ -122,13 +121,14 @@ class _RowFacts:
 
 
 class EntityRowCodec:
-    """One Domain Model's row-derivation collaboration.
+    """One accepted Metamodel's row-derivation collaboration.
 
     Per accepted Metamodel rather than per row: it is the home of the per-Entity
     facts derived once from that metadata — the family-effective candidate set,
-    its canonical order, the framework-owned designation, and the primary key.
-    Because it is reached through :func:`row_codec_of`, no operation takes a
-    model argument and none can be handed a mismatched one.
+    its canonical order, the framework-owned designation, and the primary key —
+    for every Entity the model declares, all derived when the codec is
+    constructed. Bound to one model at construction, no operation takes a model
+    argument and none can be handed a mismatched one.
 
     It is stated over the accepted Metamodel rather than over the
     :class:`~parallax.core.entity.DomainModel` that carries one, because that is
@@ -136,11 +136,14 @@ class EntityRowCodec:
     derives rows exactly as one composing every class does.
     """
 
-    __slots__ = ("_cache", "_model")
+    __slots__ = ("_facts_by_identity", "_model")
 
     def __init__(self, model: Metamodel) -> None:
+        """Derive every Entity's row facts, or raise :class:`EntityRowError`."""
         self._model = model
-        self._cache: dict[EntityIdentity, _RowFacts] = {}
+        self._facts_by_identity: Mapping[EntityIdentity, _RowFacts] = MappingProxyType(
+            {entity.identity: _row_facts(model, entity.identity) for entity in model.entities}
+        )
 
     def full_row(self, value: object) -> dict[str, object]:
         """Every member ``value`` populated, keyed by canonical name.
@@ -311,12 +314,9 @@ class EntityRowCodec:
         return self._facts(declaration_of(cls).identity), wire_names_of(cls)
 
     def _facts(self, identity: EntityIdentity) -> _RowFacts:
-        """``identity``'s derived row facts, computed once per model."""
-        cached = self._cache.get(identity)
-        if cached is not None:
-            return cached
-        metadata = self._model.entity(identity)
-        if metadata is None:
+        """``identity``'s row facts, refusing an Entity this model does not declare."""
+        facts = self._facts_by_identity.get(identity)
+        if facts is None:
             raise EntityRowError(
                 code=ENTITY_ROW_TARGET_NOT_IN_MODEL,
                 message=(
@@ -325,34 +325,6 @@ class EntityRowCodec:
                 ),
                 identity=identity,
             )
-        position = inheritance_view(self._model).entity(identity)
-        attributes = (
-            tuple(metadata.declared_attributes)
-            if position is None
-            else tuple(position.applicable_attributes)
-        )
-        occurrences = (
-            tuple(metadata.declared_value_objects)
-            if position is None
-            else tuple(position.applicable_value_objects)
-        )
-        members: dict[str, AttributeMetadata | ValueObjectMetadata] = {
-            attribute.identity.name: attribute for attribute in attributes
-        }
-        members.update({occurrence.identity.path[-1]: occurrence for occurrence in occurrences})
-        facts = _RowFacts(
-            identity=identity,
-            members=MappingProxyType(members),
-            framework_owned=frozenset(
-                attribute.identity.name for attribute in attributes if attribute.framework_owned
-            ),
-            primary_key=tuple(
-                attribute.identity.name
-                for attribute in attributes
-                if isinstance(attribute.primary_key, PrimaryKey)
-            ),
-        )
-        self._cache[identity] = facts
         return facts
 
     def _require_declared(self, facts: _RowFacts, selected: Iterable[str], operation: str) -> None:
@@ -444,23 +416,42 @@ class EntityRowCodec:
         )
 
 
-def row_codec_of(model: DomainModel) -> EntityRowCodec:
-    """``model``'s row codec — the reach seam for it.
-
-    One per Domain Model, created on first reach and retained by the model, so
-    every write against one model shares the per-Entity facts derived from it.
-
-    Created on first reach because this module sits above ``_model`` in §7's
-    import DAG: a :class:`~parallax.core.entity.DomainModel` cannot construct one
-    without inverting an edge the generated import contracts reject, so this
-    function is the only place that can build one. The guard is a
-    dependency-direction consequence, not a performance hedge.
-    """
-    codec = model._row_codec  # pyright: ignore[reportPrivateUsage] - first-party seam
-    if not isinstance(codec, EntityRowCodec):
-        codec = EntityRowCodec(model_of(model))
-        model._row_codec = codec  # pyright: ignore[reportPrivateUsage] - first-party seam
-    return codec
+def _row_facts(model: Metamodel, identity: EntityIdentity) -> _RowFacts:
+    """``identity``'s row facts, derived from the accepted metadata alone."""
+    metadata = model.entity(identity)
+    if metadata is None:  # pragma: no cover - derived only over the Entities the model declares
+        raise EntityRowError(
+            code=ENTITY_ROW_TARGET_NOT_IN_MODEL,
+            message=f"this model declares no Entity {identity.canonical!r}",
+            identity=identity,
+        )
+    position = inheritance_view(model).entity(identity)
+    attributes = (
+        tuple(metadata.declared_attributes)
+        if position is None
+        else tuple(position.applicable_attributes)
+    )
+    occurrences = (
+        tuple(metadata.declared_value_objects)
+        if position is None
+        else tuple(position.applicable_value_objects)
+    )
+    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {
+        attribute.identity.name: attribute for attribute in attributes
+    }
+    members.update({occurrence.identity.path[-1]: occurrence for occurrence in occurrences})
+    return _RowFacts(
+        identity=identity,
+        members=MappingProxyType(members),
+        framework_owned=frozenset(
+            attribute.identity.name for attribute in attributes if attribute.framework_owned
+        ),
+        primary_key=tuple(
+            attribute.identity.name
+            for attribute in attributes
+            if isinstance(attribute.primary_key, PrimaryKey)
+        ),
+    )
 
 
 def _change_record(facts: _RowFacts, value: object) -> Mapping[str, object]:

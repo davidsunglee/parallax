@@ -22,14 +22,23 @@ which no specification or public-surface check promises. Where the exported name
 live:
 
 - :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
-  :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
-  :class:`TransactionRollbackError`:
-  the composition root (which connects only to a class-backed Domain Model) and
+  :func:`prepare_model`, :class:`TransactionOptionConflictError`,
+  :class:`TransactionOwnershipError`, :class:`TransactionRollbackError`:
+  the composition root (which prepares a Domain Model of either provenance and
+  connects to it) and
   the spec §5 callback demarcation (sentinel-backed options, join through the
   exact originating ``Database`` with the option-conflict check, the
   ``m-auto-retry`` bounded retry loop, the injected flush executor, and the one
   refusal that substitutes an error of its own — a rollback that did not
   complete, whose two live errors neither alone reports).
+- :mod:`~parallax.snapshot.handle._publication` — :class:`ModelSelection`, the
+  opaque prepared form of one Domain Model under one Model Edition that
+  :func:`prepare_model` answers; :class:`ServingModel`, the single concrete
+  holder of the selection new executions adopt, publishing by identity
+  compare-and-replace; and :class:`PublicationConflictError`, its refusal of a
+  stale publication, carrying what was expected and what was held. The sealed
+  child scope also owns the selection's two private projections, which the
+  read composition and the transaction receive and nothing exports.
 - :mod:`~parallax.snapshot.handle._planning` — :func:`build_write_planner`, the
   one factory that wires ``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,
   and ``m-bitemp-write`` into a :class:`~parallax.core.unit_work.WritePlanner`'s
@@ -131,6 +140,7 @@ from parallax.snapshot.handle._database import (
     TransactionOwnershipError,
     TransactionRollbackError,
     connect,
+    prepare_model,
 )
 from parallax.snapshot.handle._errors import (
     QueryTargetError,
@@ -139,6 +149,11 @@ from parallax.snapshot.handle._errors import (
 )
 from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
+from parallax.snapshot.handle._publication import (
+    ModelSelection,
+    PublicationConflictError,
+    ServingModel,
+)
 from parallax.snapshot.handle._read import (
     CheckedSnapshot,
     FindResult,
@@ -194,11 +209,14 @@ __all__ = [
     "InvalidData",
     "InvalidDataError",
     "KeyedWriteValueError",
+    "ModelSelection",
     "NoResultFound",
     "ObjectKey",
+    "PublicationConflictError",
     "PublishedRow",
     "QueryTargetError",
     "RowsResult",
+    "ServingModel",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotMaterializationError",
@@ -228,6 +246,7 @@ __all__ = [
     "find",
     "find_history",
     "plan_temporal_close",
+    "prepare_model",
     "stream_lowered",
     "validate_source_pin",
 ]
