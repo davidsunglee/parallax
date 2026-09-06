@@ -2006,6 +2006,8 @@ forbidden_modules = [
     "parallax.core.pk_gen",
     "parallax.core.txtime_write",
     "parallax.descriptor",
+    "parallax.evolution.model_evolution",
+    "parallax.evolution.schema_delta",
     "parallax.postgres",
 ]
 
