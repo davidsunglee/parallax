@@ -241,7 +241,7 @@ def test_an_insert_source_authors_the_whole_create_payload() -> None:
 # --------------------------------------------------------------------------- #
 def test_construction_and_capture_refuse_nothing_a_verb_would() -> None:
     # A value every one of the three refusals is waiting for: it names no object,
-    # no source published it, and its class keys the Entity elsewhere. Constructing
+    # no read produced it, and its class keys the Entity elsewhere. Constructing
     # a source over it and capturing must still be silent, because the ingress
     # refuses re-entry before either runs.
     _, codec = _twins()
