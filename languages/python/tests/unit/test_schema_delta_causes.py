@@ -112,6 +112,44 @@ def _tph_siblings(*, sealed: bool, reparented: bool) -> AcceptedMetamodel:
     return formed(Metamodel(entities=(root, warded, casket, other)))
 
 
+def _tph_ancestor(*, sealed: bool, reparented: bool) -> AcceptedMetamodel:
+    """A table-per-hierarchy family whose new ancestor already reaches the Table.
+
+    `Warded` declares the members that arrive, and `Other` stands under it at
+    both endpoints, so the family's one Table already materializes `Warded`
+    wherever `Casket` hangs.
+    """
+    root = Entity(
+        name="Root",
+        table="vault",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    warded = Entity(
+        name="Warded",
+        inheritance=Inheritance(role="abstract-subtype", parent="Root"),
+        attributes=(
+            (Attribute(name="seal", type="string", column="seal", max_length=16, nullable=True),)
+            if sealed
+            else ()
+        ),
+        indices=(Index(name="seal_ix", attributes=("seal",)),) if sealed else (),
+    )
+    casket = Entity(
+        name="Casket",
+        inheritance=Inheritance(
+            role="concrete-subtype",
+            parent="Warded" if reparented else "Root",
+            tag_value="casket",
+        ),
+    )
+    other = Entity(
+        name="Other",
+        inheritance=Inheritance(role="concrete-subtype", parent="Warded", tag_value="other"),
+    )
+    return formed(Metamodel(entities=(root, warded, casket, other)))
+
+
 def _tph_position_role(*, note_concrete: bool, coupon_read_only: bool) -> AcceptedMetamodel:
     """A table-per-hierarchy family whose stored shapes and a write flag both vary.
 
@@ -220,9 +258,9 @@ def test_a_table_the_reparent_did_not_touch_names_the_addition_alone() -> None:
 
 
 def test_a_reparent_is_no_cause_of_a_column_the_reparented_entity_declares() -> None:
-    # An Entity always held its own declarations, so moving it in the ancestry
-    # is not why one of them materialized: `lid` lands in `casket` on the
-    # strength of its own addition however `Casket` is parented.
+    # `casket` already materialized `Casket`'s own position, so moving `Casket`
+    # in the ancestry is not why one of its declarations landed there: `lid`
+    # lands on the strength of its own addition however `Casket` is parented.
     operations = _operations(
         _tpcs(sealed=False, reparented=False),
         _tpcs(sealed=False, reparented=True, own_lid=True),
@@ -238,6 +276,20 @@ def test_a_reparent_is_no_cause_of_a_sibling_declaration_sharing_the_Table() -> 
     operations = _operations(
         _tph_siblings(sealed=False, reparented=False),
         _tph_siblings(sealed=True, reparented=True),
+    )
+    assert _causes(_added(operations, "vault")) == ["AttributeAdded"]
+    assert _causes(_created(operations, "vault")) == ["IndexAdded"]
+
+
+def test_a_reparent_under_an_ancestor_the_Table_already_holds_names_the_addition_alone() -> None:
+    # `Warded` gains `seal` while `Casket` moves under it, but `Other` stood
+    # under `Warded` in the same Table all along, so that Table materializes the
+    # arriving declarations whatever `Casket` does. Asking whether the
+    # REPARENTED Entity gained the declaring owner would name the alteration
+    # here; the question belongs to the Table.
+    operations = _operations(
+        _tph_ancestor(sealed=False, reparented=False),
+        _tph_ancestor(sealed=True, reparented=True),
     )
     assert _causes(_added(operations, "vault")) == ["AttributeAdded"]
     assert _causes(_created(operations, "vault")) == ["IndexAdded"]
