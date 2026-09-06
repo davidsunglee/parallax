@@ -211,10 +211,14 @@ def wire_insert(
     the payload. A framework-owned member is refused rather than stored: the
     interval bounds are stamped at flush from the Clock Strategy and the version
     is derived, exactly as the Typed Entity constructor refuses a caller-authored
-    A value this store already published is refused too, whether a read published
-    it or an earlier insert did — it names a row this store already holds, and
-    ``tx.wire.update`` is the verb for that — under the Identity the resolved
-    Entity spelling supplies.
+    one. A value this store already published is refused too, whether a read
+    published it or an earlier insert did — it names a row this store already
+    holds, and ``tx.wire.update`` is the verb for that — under the Identity the
+    resolved Entity spelling supplies. So is a fresh payload naming an object
+    this transaction already buffered an insert of, the same payload twice
+    included: the provenance rule has nothing to say about a document, and the
+    buffered-insert ledger refuses it once its row is prepared, under the same
+    code, advising the node the FIRST insert answered.
 
     The returned node is what closes the one Typed/Wire parity gap on the write
     surface: ``tx.insert(a)`` leaves the Typed caller holding ``a``, so a pure
@@ -594,7 +598,11 @@ class WireKeyedInsertSource:
     store published, by a read or by an insert this transaction already buffered,
     and anything else is a document a caller built. A value another
     framework-managed lifecycle produced carries no hint THIS lifecycle
-    recognizes, so it arrives as the plain document it is.
+    recognizes, so it arrives as the plain document it is. Whether a plain
+    document names an object this transaction already opened is not a provenance
+    answer at all — its key members are canonical only once :meth:`prepare` has
+    run — so the ingress asks the buffered-insert ledger after preparation, and a
+    payload repeated is refused there.
     """
 
     __slots__ = ("_data", "_entity_name", "_meta", "_mutation", "_payload")

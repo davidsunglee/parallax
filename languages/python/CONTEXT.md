@@ -304,8 +304,11 @@ a write that changes nothing; apply the same-transaction insert exemption;
 resolve write evidence; take the claim and buffer. Source rejection is a
 resolution phase and precedes every member judgement, not a check among them. An
 insert enters by its own door, over no source: it opens a row rather than
-revising one, so it keeps only the Pin and provenance judgements, the window, and
-preparation. Evidence resolution follows the source Entity's Effective
+revising one, so it keeps the Pin and provenance judgements, the window,
+preparation, and — last, over the prepared row — the buffered-insert refusal,
+which reads the ledger the exemption reads and refuses a second insert of an
+object this transaction already opened, whichever interface spells it. Evidence
+resolution follows the source Entity's Effective
 Concurrency Strategy — current-transaction read participation under Locking, or
 retained version or milestone evidence under Optimistic. A malformed request
 therefore raises `WriteInstructionError` before any possible write-evidence

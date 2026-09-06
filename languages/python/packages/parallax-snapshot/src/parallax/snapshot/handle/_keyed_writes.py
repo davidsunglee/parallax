@@ -11,7 +11,9 @@ and the write buffered. An insert enters by its own door, with no source, null
 or synthetic: it opens a row rather than revising one, so it resolves no source,
 reduces no change set, settles against no evidence, and takes no claim. What it
 keeps of the stages above is what a value alone can be wrong about — the pin its
-own view carries and the provenance it states, in that order.
+own view carries and the provenance it states, in that order — and, once its row
+is prepared, the buffered-insert REFUSAL: the ledger that exempts an update of a
+row this transaction opened refuses a second opening of it.
 
 What differs between one representation's keyed verbs and another's is not that
 order but where the facts it consumes come from — a Typed value carries its own
@@ -95,6 +97,7 @@ from parallax.snapshot.handle._write_inputs import (
     WriteRepresentation,
     admit_and_buffer,
     cancels_a_pending_assignment,
+    refuse_repeated_insert,
     reject_temporal_delete,
     resolve_write_evidence,
     validate_provenance,
@@ -392,9 +395,17 @@ def keyed_insert(
     two can never both be pending: a value the provenance rule refuses came from
     no read of this store at all, so it carries no view to be pinned.)
 
-    The row this opens is recorded in the one ledger both representations read,
-    which is what licenses the keyed write that follows it, and the answer names
-    that row so a caller holding no Entity Class can revise it.
+    One stage stands after preparation, the last before the buffer: a second
+    insert of an object this transaction already buffered an insert of is
+    refused, whichever value spells it and whichever representation opened the
+    row. It reads the same ledger the source-backed door's exemption reads, over
+    the object the PREPARED row names, because a Wire payload's key members are
+    canonical only once the row is — so pin, provenance, window, and preparation
+    are all heard ahead of it, on both lanes.
+
+    The row this opens is recorded in that ledger, which is what licenses the
+    keyed write that follows it, and the answer names the row so a caller holding
+    no Entity Class can revise it.
     """
     refuse_reentry(ctx.lifecycle)
     opening.capture(mutation)
@@ -413,8 +424,15 @@ def keyed_insert(
     )
     prepared = opening.prepare(resolved, PreparedTemporalBounds(valid_from_managed, until_managed))
     row = prepared.rows[0]
+    written = written_object_of_row(resolved.entity, meta, row)
+    refuse_repeated_insert(
+        resolved.entity.identity,
+        mutation,
+        inserted=ctx.inserts.holds(written),
+        representation=resolved.representation,
+    )
     admit_and_buffer(ctx.uow, meta, prepared, None)
-    ctx.inserts.record(written_object_of_row(resolved.entity, meta, row))
+    ctx.inserts.record(written)
     opened = object_key(prepared, meta)
     # A Create Payload is a complete document, so the row it buffers always names
     # its own object by the time validation has admitted it.

@@ -155,7 +155,10 @@ class WireTransactionView(WireDatabaseView):
         row it just opened without re-reading it — which it could not do anyway,
         since a participating read force-flushes and an insert-then-delete pair
         is required to emit no DML at all. The pair coalesces through the same
-        read-your-own-writes ledger a Typed insert records into.
+        read-your-own-writes ledger a Typed insert records into — and that ledger
+        refuses a repeated insert of the object, whether the payload is stated
+        again or the returned node is handed back, since revising the row is the
+        update verb's job.
 
         ``valid_from`` is the plain Bitemporal insert's own Valid-Time instant —
         the open rectangle ``[valid_from, infinity)`` — and mirrors ``tx.insert``

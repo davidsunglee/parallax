@@ -28,7 +28,7 @@ provenance rather than leaving it unstated.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Final, cast
 
@@ -67,7 +67,11 @@ from _keyed_write_drivers import (
 from parallax.core.entity import EditError
 from parallax.core.opt_lock import UnobservedVersionError
 from parallax.core.unit_work import WriteInstructionError, WritePlanningError
-from parallax.snapshot.handle import TransactionTimePinReadOnlyError, WriteEvidenceError
+from parallax.snapshot.handle import (
+    KeyedWriteValueError,
+    TransactionTimePinReadOnlyError,
+    WriteEvidenceError,
+)
 
 _SOURCE_VERBS: tuple[Verb, ...] = (
     "update",
@@ -76,6 +80,7 @@ _SOURCE_VERBS: tuple[Verb, ...] = (
     "terminate",
     "terminate_until",
 )
+_INSERT_VERBS: tuple[Verb, ...] = ("insert", "insert_until")
 _BOUNDED_VERBS: tuple[Verb, ...] = ("insert_until", "update_until", "terminate_until")
 _UPDATE_VERBS: frozenset[str] = frozenset({"update", "update_until"})
 _ALL_TARGETS: tuple[Target, ...] = TARGETS + DOCUMENT_TARGETS
@@ -217,16 +222,22 @@ def _applicability_refusal(scenario: Scenario, *, statements: int = 0) -> Answer
     return None
 
 
-def _answers(scenario: Scenario, expected: Answer) -> None:
+def _answers(scenario: Scenario, expected: Answer | Callable[[Representation], Answer]) -> None:
     """Assert both representations answer ``scenario`` with ``expected``.
 
     One expectation asserted twice rather than one lane measured against the
     other: a row that compared them would pass on two lanes that had drifted
     together, and the ingress is what makes their agreeing structural.
+
+    The one refusal whose closing advice clause is spelled per interface — the
+    update verb a repeated insert is redirected to — states its expectation as a
+    function of the representation; the class, code, landing point, and DML it
+    fixes are still one answer, stated once.
     """
     for representation in REPRESENTATIONS:
         if reachable(scenario, representation):
-            assert answer(scenario, representation) == expected, representation
+            stated = expected(representation) if callable(expected) else expected
+            assert answer(scenario, representation) == stated, representation
 
 
 def _grid(
@@ -443,6 +454,83 @@ def test_a_write_over_a_reread_insert_settles_bare_whoever_opened_it(
 
 
 # --------------------------------------------------------------------------- #
+# The insert family's half of the same ledger. The exemption above lets an     #
+# update follow this unit of work's own insert; the refusal here stops a       #
+# second insert of that object, whichever representation opened the row and   #
+# whichever spelled the repeat — a fresh payload needs no source, so every one #
+# of the four crossings is reachable, buffered or flushed. It stands after     #
+# preparation, so a target that admits no such verb answers that first.       #
+# --------------------------------------------------------------------------- #
+_REPEATED_INSERT_ADVICE: Final[Mapping[Representation, str]] = {
+    "typed": "change it with `value.edit(...)` and write it with `tx.update(...)`",
+    "wire": (
+        "write the change with `tx.wire.update(opened, {...})`, where `opened` is the node "
+        "the first insert answered"
+    ),
+}
+"""The update verb the refusal redirects to, in the interface the caller typed —
+the one clause of the message that is the representation's rather than the
+order's, because a payload is no keyed source and only the node the first insert
+answered names the buffered row to a Wire caller."""
+
+
+def _repeated_insert(
+    scenario: Scenario, *, statements: int = 0
+) -> Callable[[Representation], Answer]:
+    """What a second insert of an object this unit of work already opened answers."""
+
+    def stated(representation: Representation) -> Answer:
+        return _refused(
+            KeyedWriteValueError,
+            f"write-value-already-stored: {scenario.target.entity}: "
+            f"{_MUTATIONS[scenario.verb]!r} was handed a value naming an object this "
+            "transaction already buffered an insert of, so there is no row to open; "
+            f"{_REPEATED_INSERT_ADVICE[representation]}",
+            code="write-value-already-stored",
+            statements=statements,
+        )
+
+    return stated
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    tuple(
+        Scenario(target=target, verb=verb, opened_by=opener)
+        for target in _ALL_TARGETS
+        for verb in _INSERT_VERBS
+        for opener in REPRESENTATIONS
+    ),
+    ids=str,
+)
+def test_a_second_insert_of_an_object_this_unit_of_work_opened_is_refused_whoever_opened_it(
+    scenario: Scenario,
+) -> None:
+    _answers(scenario, _applicability_refusal(scenario) or _repeated_insert(scenario))
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    tuple(
+        Scenario(target=target, verb=verb, source="reread", opened_by=opener)
+        for target in TARGETS
+        for verb in _INSERT_VERBS
+        for opener in REPRESENTATIONS
+    ),
+    ids=str,
+)
+def test_a_flushed_insert_still_refuses_a_second_insert_of_its_object(scenario: Scenario) -> None:
+    # The ledger has no retirement operation, so the participating read that
+    # force-flushed the insert retires nothing: the row the store now holds is
+    # refused a second opening at the verb rather than reaching the database as
+    # a primary-key violation, and the insert's own statement is the only DML.
+    _answers(
+        scenario,
+        _applicability_refusal(scenario, statements=1) or _repeated_insert(scenario, statements=1),
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Two defects at once: which one the caller hears.                            #
 # --------------------------------------------------------------------------- #
 _PINNED_AND_REVERSED: Final = Scenario(
@@ -545,10 +633,21 @@ _INSERT_SOURCE_DEFECTS: Final[tuple[tuple[Scenario, Answer], ...]] = (
         ),
         _wrote(1),
     ),
+    (
+        Scenario(
+            target=POSITION_TARGET,
+            verb="insert_until",
+            window="reversed",
+            label="window-beats-the-repeated-insert-refusal",
+        ),
+        _wrote(0),
+    ),
 )
 """Each row's second half is the DML the transaction had already emitted when the
 window refusal landed: nothing at all while the insert is still buffered, and the
-insert's own statement once a participating read has force-flushed it."""
+insert's own statement once a participating read has force-flushed it. The last
+row is the insert door's: a reversed window on a second opening of an object is
+heard before the ledger is asked about that object."""
 
 
 @pytest.mark.parametrize(
@@ -600,7 +699,10 @@ def test_a_net_zero_write_of_an_inserted_row_leaves_the_insert_alone(
 # The Wire-only half of the dual-defect set: a document a Typed caller cannot  #
 # author, and a source only a Wire verb can be handed without provenance. Each #
 # row states the one expectation, and the Typed rows below state where that    #
-# same authoring is refused instead.                                          #
+# same authoring is refused instead. The insert row is the payload's: a member #
+# the Typed constructor refuses one layer earlier is preparation's refusal on  #
+# the Wire door, and preparation is heard before the ledger is asked whether   #
+# the object the payload names is already opening.                            #
 #                                                                             #
 # The last two rows fix where the authored document's own shape sits in the    #
 # order: whether a document was STATED at all needs neither the source nor the #
@@ -628,6 +730,16 @@ _MALFORMED: tuple[tuple[Scenario, str], ...] = (
             label="an-undeclared-member-beats-the-insert-exemption",
         ),
         "undeclared member(s) ['nope']",
+    ),
+    (
+        Scenario(
+            target=ACCOUNT_TARGET,
+            verb="insert",
+            opened_by="wire",
+            wire_changes={"version": 9},
+            label="a-framework-owned-member-beats-the-repeated-insert-refusal",
+        ),
+        "framework-owned fields may not be assigned",
     ),
     (
         Scenario(
@@ -807,6 +919,8 @@ def test_a_wire_verb_cannot_write_a_row_a_typed_insert_still_holds_buffered() ->
     assert reachable(scenario, "typed")
     assert not reachable(scenario, "wire")
     assert reachable(replace(scenario, source="reread"), "wire")
+    # An insert needs no source, so the same crossing is reachable for it.
+    assert reachable(replace(scenario, verb="insert"), "wire")
 
 
 def test_a_wire_read_of_a_typed_insert_flushes_it_before_the_write() -> None:

@@ -388,9 +388,9 @@ class Transaction:
         # each keyed verb by value. Its ledger of what THIS transaction buffered
         # an insert of is what a same-transaction insert leaves for a subsequent
         # keyed write to build on, so both read-your-own-writes exemptions — the
-        # value-provenance refusal and the write-evidence resolution — read one
-        # ledger, and so does the Wire ingress, whose inserts and updates pair
-        # with the Typed ones.
+        # value-provenance refusal and the write-evidence resolution — and the
+        # repeated-insert refusal read one ledger, and so does the Wire ingress,
+        # whose inserts and updates pair with the Typed ones.
         self._keyed = KeyedWriteContext(
             model=self._model,
             uow=uow,
@@ -405,6 +405,13 @@ class Transaction:
         bitemporal ``from_z``/``thru_z``) are stamped at flush from the Clock
         Strategy and the version is derived, so the Entity constructor refuses a
         caller-authored one and the row carries none.
+
+        An object this transaction already buffered an insert of is not opened
+        twice: a repeated insert of it — the same instance again, or another
+        instance of the same primary key, through either interface — is refused
+        at the verb (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
+        ``write-value-already-stored``) rather than left for the database to
+        refuse at commit, and the update verbs are what revise the row it opens.
 
         ``valid_from`` is the plain Bitemporal insert's Valid-Time instant — the
         open rectangle's lower bound ``[valid_from, infinity)`` (`m-bitemp-write` "insert /
@@ -430,7 +437,9 @@ class Transaction:
         ``update_until``'s own required ``valid_from`` / ``until``). A window
         that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
-        (:func:`validate_window`, `python.md` §5 "all validated at build").
+        (:func:`validate_window`, `python.md` §5 "all validated at build"), and
+        so does a repeated insert of an object this transaction already buffered
+        an insert of, exactly as :meth:`insert` refuses one.
         The window bounds come from THESE verb arguments, never from instance
         fields: an As-Of Axis endpoint is framework-owned and the temporal write
         path derives every interval bound itself (`python.md` §2), which is why
