@@ -335,7 +335,12 @@ def buffer_predicate_instruction(
 
     The refusals repeated here — an inheritance-family target, and that same
     milestone-verb quadrant — are this seam's OWN contract, not duplicates of
-    those rules. This entry point is reachable in-package without going through
+    those rules. Only the temporal-``delete`` half of that quadrant is reachable
+    through an instruction anything can currently produce, because the producer
+    above refuses the milestone pairing before a prepared product naming it
+    exists; the milestone half stands because what this seam judges is its INPUT
+    rather than its producer, and both halves are one judgement of one quadrant.
+    This entry point is reachable in-package without going through
     an ingress, so it takes nothing on faith: without its own refusal an
     unvalidated instruction reaches
     :func:`_materialize_predicate_write`'s resolving read — real SQL on the
