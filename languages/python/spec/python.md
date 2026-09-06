@@ -4285,13 +4285,15 @@ These feature tests do not claim the deferred `benchmark` command or general
   exactly as any other value no read produced is. Which object a value names is
   read off its own primary-key members rather than derived through the Entity Row
   Codec, because the refusal this exemption lifts is decided before any row
-  exists. That reading is therefore TOTAL over every value of the Entity: a value
-  stating no value for a declared key member names no object at all, so it
-  reaches `write-value-not-stored`, the honest complaint about it. Deriving an
-  identity row to ask the question with would answer that mistake with a row
-  defect instead, and the two ways a value can state no key member do not even
-  answer it alike: a value whose class keys the same Entity by other members
-  carries no attribute for the member and is refused
+  exists. That reading is therefore TOTAL over every value whose key members
+  Python can hash and compare without raising — every value a validating
+  constructor or a read of this store produces, and every carrier that merely
+  defines no hash. A value stating no value for a declared key member names no
+  object at all, so it reaches `write-value-not-stored`, the honest complaint
+  about it. Deriving an identity row to ask the question with would answer that
+  mistake with a row defect instead, and the two ways a value can state no key
+  member do not even answer it alike: a value whose class keys the same Entity
+  by other members carries no attribute for the member and is refused
   `entity-row-member-missing`, while a value whose class does carry the member
   and nothing ever populated it passes that check and fails on the attribute
   read itself. Totality is over the object the reading NAMES, not merely over
@@ -4300,6 +4302,21 @@ These feature tests do not claim the deferred `benchmark` command or general
   object either, and reaches the same refusal rather than failing the ledger's
   question. Which carriers those are is not enumerable, because a value
   constructed without validation carries whatever its author put there.
+  Where that totality stops is the same rule read from the other side, and it is
+  a boundary rather than a gap: a member DEFINING no hash names no object, while
+  a member whose own `__hash__` or `__eq__` RAISES is the caller's code failing,
+  and that exception surfaces unmasked with the caller's own traceback rather
+  than being read as an answer about naming. Masking it would report this store's
+  provenance rule for a defect in the caller's class, and would silently withdraw
+  the exemption from an object this transaction demonstrably inserted. No check
+  the seam could make would move that boundary: a key member satisfying every
+  declared type — an `int` subclass, say — can still raise from its own
+  `__hash__`, and a NON-key member's equality is compared later still, when the
+  effective change set is reduced, where no question about naming is being asked
+  at all. So what a keyed write guarantees over caller carriers is the pair it
+  can keep: no caller carrier is retained past the refusal it earns, and no step
+  fails except with a named refusal, or with the caller's own exception raised
+  unmasked from the caller's own `__hash__` or `__eq__`.
 - **A keyed temporal close requires a value that names a milestone.** The
   observation a temporal `update`/`terminate`/`*_until` settles against is
   resolved at the verb from the **value being written** — its own `Edge` —
