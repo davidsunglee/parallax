@@ -106,7 +106,10 @@ from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_scope import SelectedReadModel, participating_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._wire import WireTransactionView
-from parallax.snapshot.handle._wire_writes import WireWriteLane, buffer_prepared_keyed_write
+from parallax.snapshot.handle._wire_writes import (
+    PreparedWireKeyedWriteSource,
+    WireWriteLane,
+)
 from parallax.snapshot.handle._write_inputs import (
     UPDATE_MUTATIONS,
     BufferedInserts,
@@ -202,6 +205,7 @@ class TypedKeyedWriteSource:
             hint=source_hint_of(self._value),
             identity_row=source_identity_row(entity, model, self._value),
             provenance=provenance_of(self._value),
+            representation="typed",
         )
 
     def prepare(
@@ -286,6 +290,7 @@ class TypedKeyedInsertSource:
             entity=metadata_of_instance(model, self._instance),
             pin=source_pin(self._instance),
             provenance=provenance_of(self._instance),
+            representation="typed",
         )
 
     def prepare(
@@ -769,19 +774,6 @@ class Transaction:
             self._attempt,
         )
 
-    def _buffer_prepared_wire_keyed_write(
-        self,
-        instruction: PreparedKeyedWrite,
-        observed: object,
-        assigned_members: frozenset[str],
-    ) -> None:
-        buffer_prepared_keyed_write(
-            WireWriteLane(self._keyed, self._conn, self._attempt),
-            observed,
-            instruction,
-            assigned_members,
-        )
-
 
 def buffer_prepared_predicate_write(
     transaction: Transaction, instruction: PreparedPredicateWrite
@@ -804,9 +796,22 @@ def buffer_prepared_wire_keyed_write(
     observed: object,
     assigned_members: frozenset[str],
 ) -> None:
-    """Buffer an already-prepared keyed instruction against a Wire source."""
-    transaction._buffer_prepared_wire_keyed_write(  # pyright: ignore[reportPrivateUsage]
-        instruction,
-        observed,
-        assigned_members,
+    """Buffer an already-prepared keyed instruction against a Wire source.
+
+    A door into the one keyed write ingress rather than a second one of its own:
+    preparation is an INPUT capability here, and every other stage the order runs
+    — re-entry, the source and its pin, the window, the effective change set, the
+    buffered-insert exemption, evidence, the claim, and the buffer — runs exactly
+    as it does for a verb a developer called.
+
+    The window is measured against the bounds the instruction already carries,
+    because a product built elsewhere states its own: judging it against none
+    would answer a Bitemporal write by asking for the ``valid_from`` it is holding.
+    """
+    keyed_write(
+        transaction._keyed,  # pyright: ignore[reportPrivateUsage]
+        PreparedWireKeyedWriteSource(observed, instruction, assigned_members),
+        instruction.mutation,
+        valid_from=instruction.bounds.valid_from,
+        until=instruction.bounds.until,
     )

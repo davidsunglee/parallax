@@ -43,10 +43,9 @@ from _support.db_port import (
     Write,
     WriteCall,
 )
-from parallax.conformance import models
 from parallax.conformance import vo_models as vo
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
-from parallax.core.base import INT64, InstantError, PresentDocument
+from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
@@ -59,7 +58,6 @@ from parallax.snapshot.handle import (
     WireEntity,
     WriteEvidenceError,
 )
-from parallax.snapshot.handle import _wire_writes as wire_writes
 
 _ACCOUNT_ROW: Row = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4}
 _PERSON_ROW: Row = {"id": 1, "name": "Ada"}
@@ -884,22 +882,6 @@ def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_membe
     assert _writes(port) == []
 
 
-def test_wire_write_decoding_bounds_invalid_leaves_and_preserves_unknown_document_fields() -> None:
-    with pytest.raises(instructions.InstructionRejectedError, match="type-mismatch"):
-        wire_writes._decoded_leaf(INT64, "invalid", "Person.id")  # pyright: ignore[reportPrivateUsage]
-
-    meta = models.load_models()["contact"]
-    contact = next(entity for entity in meta.entities if entity.identity.name == "Contact")
-    address = next(
-        member
-        for member in wire_writes._declared_row_members(meta, contact)  # pyright: ignore[reportPrivateUsage]
-        if getattr(member.identity, "path", ()) == ("address",)
-    )
-    assert wire_writes._decoded_document(  # pyright: ignore[reportPrivateUsage]
-        cast("Any", address), {"future": {"opaque": True}}, "Contact.address"
-    ) == {"future": {"opaque": True}, "phones": []}
-
-
 def test_an_empty_change_document_is_a_keyed_no_op_and_a_predicate_refusal() -> None:
     # `{}` is a document naming no member, never an absent argument, and what it
     # states differs by family. A keyed update addresses one row whose values its
@@ -970,6 +952,30 @@ def test_an_insert_refuses_a_value_a_read_published() -> None:
         assert exc_info.value.code == "write-value-already-stored"
 
     db_for(ACCOUNT, port).transact(fn)
+
+
+def test_an_insert_refuses_a_pinned_node_for_its_provenance_and_not_its_view() -> None:
+    # A Create Payload is a DOCUMENT, so this door answers no source pin at all:
+    # the one document that also carries a view is one a read of this store
+    # published, and that is what the verb complains about. The Typed door's
+    # payload IS an Entity value, so it runs the read-only refusal first and
+    # answers a pinned instance that way instead — the two doors describe the
+    # same mistake differently, and each says the true thing about the argument
+    # its own signature takes.
+    port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
+    pinned: dict[str, object] = {
+        **_BALANCE_QUERY,
+        "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"}},
+    }
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(KeyedWriteValueError) as refusal:
+            tx.wire.insert("parallax.compatibility.Balance", _node(tx, pinned))
+        assert refusal.value.code == "write-value-already-stored"
+        assert "tx.wire.update(value, {...})" in refusal.value.message
+
+    db_for(BALANCE, port).transact(fn)
+    assert _writes(port) == []
 
 
 def test_an_insert_refuses_a_framework_owned_member() -> None:

@@ -212,7 +212,11 @@ class WireTransactionView(WireDatabaseView):
 
         A source pinned at a finite Transaction-Time instant is read-only and
         raises before any buffering, exactly as every other keyed verb's is.
-        """
+
+        ``delete`` physically removes the row and carries no temporal meaning, so
+        a target that milestones its rows refuses it at this call and names
+        :meth:`terminate`, which closes the row's history instead (`python.md`
+        §5 "Write verbs and temporal spellings")."""
         wire_keyed_write(self._writes, "delete", observed)
 
     def terminate(self, observed: WireEntity, *, valid_from: dt.datetime | None = None) -> None:

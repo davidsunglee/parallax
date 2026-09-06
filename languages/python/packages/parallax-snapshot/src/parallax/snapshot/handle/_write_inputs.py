@@ -117,6 +117,7 @@ __all__ = [
     "TransactionTimePinReadOnlyError",
     "WriteEvidenceError",
     "WriteEvidenceErrorCode",
+    "WriteRepresentation",
     "WrittenObject",
     "admit_and_buffer",
     "admit_write_claim",
@@ -788,12 +789,37 @@ Source Hint — so this is a fact a caller states rather than a value this modul
 inspects."""
 
 
+type WriteRepresentation = Literal["typed", "wire"]
+"""Which interface stated a keyed write — the other fact a source answers that
+only the representation knows.
+
+A provenance refusal names the verb that DOES accept the value, and a caller
+spells that verb in the interface they called: an already-stored value is
+re-authored through ``value.edit(...)`` and ``tx.update(...)`` where a Typed
+verb was handed it, and through ``tx.wire.update(value, {...})`` where a Wire
+one was. The rule, its class, and its code are one; only the spelling of the way
+out is the representation's."""
+
+_ALREADY_STORED_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
+    "typed": "change it with `value.edit(...)` and write it with `tx.update(...)`",
+    "wire": "write the change with `tx.wire.update(value, {...})`",
+}
+"""How each interface spells the verb that accepts a value already stored.
+
+Only this refusal is reachable from both representations. The other two — a
+value no read produced, and one another lifecycle produced — arise on the
+source-backed door alone, and a Wire keyed source answers neither: a hintless
+argument is refused as no source at all before provenance is asked, so every
+source that reaches the question was published by a read of this store."""
+
+
 def validate_provenance(
     identity: EntityIdentity,
     provenance: Provenance,
     mutation: KeyedMutation,
     *,
     inserted: bool,
+    representation: WriteRepresentation,
 ) -> None:
     """Refuse a value whose PROVENANCE ``mutation``'s verb does not accept
     (`m-unit-work` "Write value provenance"), before any row is derived from it.
@@ -802,7 +828,8 @@ def validate_provenance(
     a read — never whether an author has since changed it, which decides what a
     write CONTAINS rather than which verb accepts it. The three answers partition
     the values a verb can be handed, so a refused value earns exactly one code and
-    the message names the verb that does accept it.
+    the message names the verb that does accept it, spelled in the
+    ``representation`` the call arrived through (:data:`WriteRepresentation`).
 
     On the UPDATE side this overlaps :func:`resolve_write_evidence`: a value no
     managed read produced, and a value another source produced, both carry no
@@ -857,8 +884,8 @@ def validate_provenance(
             code="write-value-already-stored",
             message=(
                 f"{identity.canonical}: {mutation!r} was handed a value this store's own read "
-                "produced, so the row it names is already stored; change it with "
-                "`value.edit(...)` and write it with `tx.update(...)`"
+                "produced, so the row it names is already stored; "
+                f"{_ALREADY_STORED_ADVICE[representation]}"
             ),
             identity=identity,
         )
