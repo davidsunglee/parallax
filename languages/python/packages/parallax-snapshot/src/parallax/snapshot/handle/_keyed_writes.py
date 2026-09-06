@@ -211,14 +211,14 @@ class ResolvedKeyedInsert:
     restored by it, so there is no identity row to name to the ledger before the
     instruction exists and no hint to settle against. What remains is which
     Entity it is a row of, where the value itself came from — the one provenance
-    answer an insert can be refused for, since a value this store's own read
-    produced names a row it already holds — and the ``pin`` such a value carries,
+    answer an insert can be refused for, since a value this store published names
+    a row it already holds — and the ``pin`` such a value carries,
     because the Transaction-Time past is read-only whatever verb was aimed at it.
 
     ``representation`` is which interface stated the insert, for the same reason
-    its peer carries one: the value a read already stored is refused by naming
-    the update verb the caller reaches for, and each interface spells that verb
-    its own way.
+    its peer carries one: the value naming a row already held is refused by
+    naming the update verb the caller reaches for, and each interface spells that
+    verb its own way.
     """
 
     entity: EntityMetadata

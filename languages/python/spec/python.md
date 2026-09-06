@@ -4119,7 +4119,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   authored short of it is a no-op against a row already holding that zero. The
   Wire keyed verb applies that identical rule to its own effective-change set,
   and it weighs it against the same observed value: this comparison reads the
-  hydrated original's populated set and the Wire verb reads the node its read
+  hydrated original's populated set and the Wire verb reads the node its source
   published, which is that same materialization's own document (§4) — one
   document under two names. One authored value therefore earns one answer from
   both peer interfaces, including where the answer turns on presence: against a
@@ -4147,9 +4147,10 @@ These feature tests do not claim the deferred `benchmark` command or general
   developer called; the codec knows only that it received a value its operation
   does not accept.
 - **Keyed writes require authentic evidence; set-based writes materialize.**
-  Existing-object Typed and Wire keyed writes accept only a source produced by a
-  Parallax read; neither an ordinary mapping nor a caller-authored version is
-  evidence. The framework never issues an implicit resolving `SELECT` on behalf
+  Existing-object Typed and Wire keyed writes accept only a source Parallax
+  produced — a read's result, or the value the insert that opened the row
+  answered, whose write the buffered insert licenses instead; neither an
+  ordinary mapping nor a caller-authored version is evidence. The framework never issues an implicit resolving `SELECT` on behalf
   of a keyed verb. After ordinary no-op and assignment legality rules, the target
   Entity's Effective Concurrency Strategy decides what evidence that authentic
   source must supply. Under **Locking**, the source must have been read by this
@@ -4234,8 +4235,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   required parity surface and are not offered.
 - **A keyed write verb accepts a value by its provenance.** Which verbs accept
   a given value is decided by which framework-managed source, if any, produced
-  it from a read (`m-unit-work` *Write value provenance*), never by whether an
-  author has since changed it. The three answers partition the values a verb
+  it from a read (`m-unit-work` *Write value provenance*) — together with the
+  read-your-own-writes exemption an object this transaction already buffered an
+  insert for earns — never by whether an author has since changed it. The three answers partition the values a verb
   can be handed, so a refused value carries exactly one code of exported
   `KEYED_WRITE_VALUE_CODES` on exported `KeyedWriteValueError` — a `ValueError`
   for the reason `TransactionTimePinReadOnlyError` is one, since both refuse a
@@ -4245,7 +4247,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   names the codes from the module they caught it in. `update` / `update_until`
   handed a value **no** read of this store produced raise
   `write-value-not-stored`, whose message names `tx.insert(...)`; `insert` /
-  `insert_until` handed a value this store's own read produced raise
+  `insert_until` handed a value this store already published — from its own
+  read, or from an insert this transaction buffered — raise
   `write-value-already-stored`, whose message names the update verb in the
   interface the call arrived through — `value.edit(...)` and `tx.update(...)`
   where a Typed verb was handed it, `tx.wire.update(value, {...})` where a Wire
@@ -4476,7 +4479,7 @@ These feature tests do not claim the deferred `benchmark` command or general
 
   Only the representation differs. A Typed verb takes an Entity value whose
   Change Record already names its effective change; a Wire verb takes the frozen
-  mapping a Wire read published plus an explicit changes document. Everything
+  mapping Parallax published for the row plus an explicit changes document. Everything
   after that is the one pipeline: the same evidence resolver, the same claim
   algebra, the same instruction IR, the same buffer, the same planner, and the
   same transient lifecycle publisher. A Typed write and a Wire write of one object therefore merge,
@@ -4485,9 +4488,14 @@ These feature tests do not claim the deferred `benchmark` command or general
   consults is one ledger, so an insert through either verb exempts a later write
   through the other.
 
-  **A keyed source is a Parallax Wire read result, and nothing else.** The
-  concrete Entity, the object addressed, the as-of pin, the participation, and
-  the observed state all come from the value's own private Source Hint, so
+  **A keyed source is a hinted node Parallax published, and nothing else.** Two
+  doors publish one — a Wire read, and the Wire `insert` that opened the row,
+  whose returned node a pure Wire caller revises without re-reading — and they
+  differ only in the evidence the node carries: the read-published node carries
+  the observation of the state it saw, the insert-published node carries none,
+  and the buffered insert licenses the write that follows. The concrete Entity,
+  the object addressed, the as-of pin, the participation, and the observed state
+  all come from the value's own private Source Hint, so
   `insert` — which opens a row and has no source — is the one keyed verb that
   names an Entity, and it resolves that name by the reference-position rule
   every write target resolves through: the canonical `<namespace>.<name>`, or a
@@ -4557,8 +4565,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   quadrant.
 
   **An insert enters that ingress by its own door, with no source.** `insert` and
-  `insert_until` name a fresh value rather than one a read published, so there is
-  no source to resolve and none is invented: the door they enter runs reentry;
+  `insert_until` name a fresh value rather than one this store published, so
+  there is no source to resolve and none is invented: the door they enter runs reentry;
   representation-only shape; the pin the value's own view carries; the provenance
   the value itself states; window; member names, values, and preparation; then
   buffer, recording the row it opened in the one ledger the exemption above
@@ -4601,8 +4609,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   judged whether or not it turns out to be an effective change: legality may not
   depend on the stored state. An `insert` additionally refuses a framework-owned
   member, which the Typed Entity constructor refuses one layer earlier, and
-  refuses a published read result as its payload under the same
-  `write-value-already-stored` code the Typed provenance rule uses — and answers
+  refuses a value this store published as its payload — a read result, or a node
+  an earlier insert answered — under the same `write-value-already-stored` code
+  the Typed provenance rule uses — and answers
   that value's own view first, exactly as the Typed door does, so a payload a
   pinned read published hears the read-only refusal instead.
 

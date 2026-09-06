@@ -12,15 +12,19 @@ write does.
 
 What is representation-specific is only how a write's TARGET and its VALUES are
 stated: a Typed verb takes an Entity value whose Change Record already names the
-effective change, and a Wire verb takes the frozen mapping a Wire read published
-plus an explicit changes document. Everything after that — the evidence
+effective change, and a Wire verb takes the frozen mapping Parallax published
+for the row plus an explicit changes document. Everything after that — the evidence
 resolver, the claim, the instruction IR, the buffer, the planner, the observed
 lifecycle — is the one pipeline both share, which is why a Typed write and a
 Wire write of one object coalesce.
 
 Three rules give the Wire sources their shape.
 
-**A keyed source is a Parallax Wire read result, and nothing else.** There is no
+**A keyed source is a hinted node Parallax published, and nothing else.** Two
+doors publish one, and they differ in the evidence their node carries: a Wire
+read, whose node carries the observation of the state it saw, and a Wire insert,
+whose node carries none because the row it opened had observed nothing — the
+buffered insert licenses the write that follows instead. There is no
 explicit-Entity ordinary-mapping overload: the concrete Entity, the object, the
 participation, the as-of pin, and the observation all come from the source's own
 private Source Hint, so a mapping a caller built, converted with ``dict(...)``,
@@ -54,11 +58,14 @@ question.
 What a caller authored and what the source published under those same names are
 converted by the one Wire decode, so the ingress weighs effectiveness over one
 carrier per value and no source decides its own. Judgement is asked of the
-authored side alone: the published side is persisted state rather than caller
-input, it is under no obligation to satisfy the accepted model, and judging it
-would refuse a write for the very state it is addressed against — the correction
-of a row a read published as a hydratable classified record is that refusal's
-plainest victim. Caller-owned input is owned by preparation before
+authored side alone, because every rule preparation applies is a rule about what
+the caller states in THIS call, and the published side states nothing in it: it
+is the state the write is addressed against, admitted already at the door that
+published it. The two doors admit on different terms — a read owes the accepted
+model nothing, which is why the correction of a row it published as a hydratable
+classified record has to reach the buffer, while an insert judged its payload in
+full before answering the node it opened — and re-judging either here would
+refuse a write for the state that write revises. Caller-owned input is owned by preparation before
 the verb returns: shape is validated without copying, and preparation converts
 and freezes the retained product in one traversal. A keyed source is already
 deeply frozen; the write retains only its identity, resolved evidence, and
@@ -204,9 +211,10 @@ def wire_insert(
     the payload. A framework-owned member is refused rather than stored: the
     interval bounds are stamped at flush from the Clock Strategy and the version
     is derived, exactly as the Typed Entity constructor refuses a caller-authored
-    one. A value a Wire read published is refused too — it names a row this store
-    already holds, and ``tx.wire.update`` is the verb for that — under the
-    Identity the resolved Entity spelling supplies.
+    A value this store already published is refused too, whether a read published
+    it or an earlier insert did — it names a row this store already holds, and
+    ``tx.wire.update`` is the verb for that — under the Identity the resolved
+    Entity spelling supplies.
 
     The returned node is what closes the one Typed/Wire parity gap on the write
     surface: ``tx.insert(a)`` leaves the Typed caller holding ``a``, so a pure
@@ -241,10 +249,11 @@ def wire_keyed_write(
 ) -> None:
     """Buffer a Wire keyed write against the state ``observed`` came from.
 
-    ``observed`` is a frozen Entity mapping a Parallax Wire read published; its
-    private Source Hint supplies the concrete Entity, the object the write
-    addresses, the pin the read stood at, and the evidence the target Entity's
-    Effective Concurrency Strategy weighs. ``changes`` is the authored
+    ``observed`` is a frozen Entity mapping Parallax published for the row, from
+    a read or from the insert that opened it; its private Source Hint supplies
+    the concrete Entity, the object the write addresses, the pin the source
+    stands at, and the evidence the target Entity's Effective Concurrency
+    Strategy weighs. ``changes`` is the authored
     assignment document for the update family and absent for the destructive
     and close verbs, which key off the source alone.
 
@@ -357,9 +366,9 @@ def _resolved_wire_source(
 
     Provenance is ``"this"`` and can be nothing else: a hintless argument is
     refused as no source at all, before the question is asked, so every source
-    that reaches it was published by a read of this store. The two refusals a
-    Typed value can earn for its provenance have no Wire spelling for the same
-    reason.
+    that reaches it is a node this store published — by a read, or by the insert
+    that opened the row. The two refusals a Typed value can earn for its
+    provenance have no Wire spelling for the same reason.
     """
     node, hint = _keyed_source(mutation, observed)
     record = _concrete_entity(meta, hint)
@@ -432,11 +441,13 @@ def _published_originals(
     for, which is exactly the original a restoration of such a member is measured
     against — and is what the row would state back.
 
-    Decoded and judged by nothing. These are persisted values rather than caller
-    input, and they need not satisfy the accepted model: the row a read published
-    as a hydratable classified record is a keyed source, so judging them would
-    refuse the write that CORRECTS the member that classification names, which
-    has to reach the buffer.
+    Decoded and judged by nothing: these are the state the write is addressed
+    against rather than anything its caller stated in the call, and the door that
+    published them settled what admits them. A read owes the accepted model
+    nothing, so the row it published as a hydratable classified record is a keyed
+    source whose correction has to reach the buffer; an insert judged its payload
+    in full before answering the node it opened. Judging either here would refuse
+    the write that revises the member.
     """
     published = {
         **_published_identity(source),
@@ -576,10 +587,11 @@ class WireKeyedInsertSource:
     fact that makes the call wrong whatever else is true of the value, where the
     provenance answer names only which verb this particular one belongs to.
 
-    Provenance here has two answers rather than three: a hinted node is one a read
-    of this store published, and anything else is a document a caller built. A
-    value another framework-managed lifecycle produced carries no hint THIS
-    lifecycle recognizes, so it arrives as the plain document it is.
+    Provenance here has two answers rather than three: a hinted node is one this
+    store published, by a read or by an insert this transaction already buffered,
+    and anything else is a document a caller built. A value another
+    framework-managed lifecycle produced carries no hint THIS lifecycle
+    recognizes, so it arrives as the plain document it is.
     """
 
     __slots__ = ("_data", "_entity_name", "_meta", "_mutation", "_payload")
@@ -637,27 +649,28 @@ def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity
     hint = source_hint_of(observed) if isinstance(observed, WireEntity) else None
     if hint is None:
         raise instructions.WriteInstructionError(
-            f"a keyed `{mutation}` on `tx.wire` takes a frozen Entity mapping a Parallax Wire "
-            f"read published, and {type(observed).__name__} carries no such provenance — an "
-            "ordinary mapping, a `dict(...)` conversion, and a serialized round trip all lose "
-            "the identity and evidence a keyed write is addressed and licensed by; read the row "
-            "through `tx.wire.find` and write what it returned"
+            f"a keyed `{mutation}` on `tx.wire` takes a frozen Entity mapping Parallax "
+            f"published — a `tx.wire.find` result, or the node `tx.wire.insert` answered — and "
+            f"{type(observed).__name__} carries no such provenance: an ordinary mapping, a "
+            "`dict(...)` conversion, and a serialized round trip all lose the identity and "
+            "evidence a keyed write is addressed and licensed by; read the row through "
+            "`tx.wire.find` and write what it returned"
         )
     assert isinstance(observed, WireEntity)  # a hint rides an Entity node alone
     return observed, hint
 
 
 def _concrete_entity(meta: Metamodel, hint: SourceHint) -> EntityMetadata:
-    """The accepted Metadata for the concrete Entity the source's read resolved.
+    """The accepted Metadata for the concrete Entity the source's own hint names.
 
     A hint names the row's OWN Entity — the per-row answer under
     table-per-hierarchy — so a write off a polymorphic level's node addresses the
     concrete type that row is, never the position the query targeted.
     """
     record = meta.entity(hint.entity)
-    if record is None:  # pragma: no cover - a hint is filed by a read of THIS model
+    if record is None:  # pragma: no cover - a hint is filed under THIS model
         raise instructions.WriteInstructionError(
-            f"{hint.entity.canonical}: the source was published by a read of another model"
+            f"{hint.entity.canonical}: the source was published by another model"
         )
     return record
 

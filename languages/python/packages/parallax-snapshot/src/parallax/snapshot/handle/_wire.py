@@ -114,12 +114,12 @@ class WireTransactionView(WireDatabaseView):
     object merge, deduplicate, and conflict by the one claim algebra rather than
     by an interface-specific rule.
 
-    Every keyed verb but the insert family takes a frozen Entity mapping a
-    Parallax Wire read published, and infers the concrete Entity and the exact
-    observed state from it privately. There is no explicit-Entity
-    ordinary-mapping overload: a mapping a caller built carries no evidence, and
-    a verb that accepted one would be issuing a write nothing proves anything
-    about.
+    Every keyed verb but the insert family takes a frozen Entity mapping this
+    store published — a Wire read's result, or the node an insert answered for
+    the row it opened — and infers the concrete Entity and the exact observed
+    state from it privately. There is no explicit-Entity ordinary-mapping
+    overload: a mapping a caller built carries no evidence, and a verb that
+    accepted one would be issuing a write nothing proves anything about.
     """
 
     __slots__ = ("_writes",)

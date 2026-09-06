@@ -223,9 +223,12 @@ hinted value, while `dict(value)`, serialization, and reconstruction produce
 ordinary data that is not a keyed write source. Standard JSON serialization
 treats the private subclasses as ordinary objects and arrays and sees no Source
 Hint; decoding returns plain dictionaries and lists. A keyed Wire verb accepts
-only a frozen value returned by a Parallax Wire read; an ordinary mapping is
+only a frozen value Parallax published — a Wire read's result, or the node
+`tx.wire.insert` answered for the row it opened; an ordinary mapping is
 malformed source input and must be reread before writing. Every existing-object
-keyed write requires an authentic Parallax read source. Under the source Entity's effective Locking strategy that
+keyed write requires an authentic Parallax source, and one this transaction's
+own insert opened is licensed by that buffered insert rather than by an
+observation. Under the source Entity's effective Locking strategy that
 source must have participated in the current transaction, proving that it
 acquired and still holds the shared row lock. Under its effective Optimistic strategy an authentic
 versioned or temporal source from `db.wire.find` may instead contribute its
@@ -345,13 +348,17 @@ capture judges nothing, because a Typed value's shape is fixed by its class and
 _Avoid_: instance adapter, typed ingress, entity write facade
 
 **Wire Keyed Write Source**:
-The Keyed Write Source over a frozen value a Parallax Wire read published and an
-authored changes document: the concrete Entity, Pin, and Object Key from the
-value's own private Source Hint, and the authored and published values of every
-member the document names. Its capture judges the document's own shape, which
-needs neither a source nor the model. Its provenance answer is always "this
-store's own read produced it", because a value carrying no Source Hint is
-refused as no keyed source at all before provenance is asked.
+The Keyed Write Source over a frozen value Parallax published — a Wire read's
+result, or the node an insert answered for the row it opened — and an authored
+changes document: the concrete Entity, Pin, and Object Key from the value's own
+private Source Hint, and the authored and published values of every member the
+document names. Its capture judges the document's own shape, which needs neither
+a source nor the model. Its provenance answer is always "this store published
+it", because a value carrying no Source Hint is refused as no keyed source at
+all before provenance is asked. The two doors differ only in the evidence their
+node carries: a read-published source carries the observation of the state it
+saw, an insert-published one carries none, and the buffered insert licenses the
+write instead.
 _Avoid_: mapping adapter, wire ingress, document write facade
 
 **Keyed Insert Source**:
