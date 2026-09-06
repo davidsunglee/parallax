@@ -1017,12 +1017,13 @@ _Avoid_: observed state, object ID, row key, primary-key mapping, entity spellin
 
 **Source Hint**:
 The opaque, non-authoritative provenance associated with a frozen Wire Entity
-value returned by a Wire read, identifying its concrete Entity and original
-Object Key and, when write evidence is required, selecting its exact observed
-state so a transaction can validate its own retained evidence. It neither
+value a Wire verb published — a read, or an insert handing back the value it
+opened a row with — identifying its concrete Entity and original Object Key and,
+when write evidence is required, selecting its exact observed state so a
+transaction can validate its own retained evidence. It neither
 contains nor grants a Write Observation and is absent from serialized Wire data.
-Every existing-object keyed write requires proof that the source was read
-through Parallax. Under the effective Locking strategy it must have participated in the current Unit
+Every existing-object keyed write requires proof that the source was published
+by Parallax rather than authored by the caller. Under the effective Locking strategy it must have participated in the current Unit
 Work, proving that the read acquired the shared row lock that makes the otherwise
 ungated write safe. Under the effective Optimistic strategy, an authentic versioned or temporal
 source may instead contribute its retained version or milestone evidence even

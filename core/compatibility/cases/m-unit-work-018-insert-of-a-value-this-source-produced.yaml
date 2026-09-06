@@ -1,10 +1,13 @@
-# An `insert` verb handed a value produced by a read through THE VERY SOURCE it
-# writes through is refused (m-unit-work *Write value provenance*): that value
+# An `insert` verb handed a value THE VERY SOURCE it writes through published is
+# refused (m-unit-work *Write value provenance*): that value
 # already denotes a row this source stores, so the refusal is
 # `write-value-already-stored` and the verb names `update` as the one that
 # accepts it. The complement is the point of the pairing — the SAME value handed
 # to `update` is accepted, and when no author changed it the write buffers
-# nothing rather than refusing (m-unit-work-020).
+# nothing rather than refusing (m-unit-work-020). This case arranges the value
+# through a read, which is the one arrangement this shape admits; an
+# implementation whose `insert` hands the opened row's value back publishes a
+# value that earns the same refusal for the same reason.
 #
 # This is an api-conformance-lane case: its defining observable is a raised
 # application-lifecycle error over a VALUE a client holds, which the
@@ -21,6 +24,6 @@ when:
       value: thisSource
       roundTrips: 0
       expectError: write-value-already-stored
-      note: a read through this very source produced the value, so the row it names is already stored
+      note: this very source published the value, so the row it names is already stored
 then:
   roundTrips: 0

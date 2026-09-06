@@ -131,9 +131,9 @@ _EXPECT_ERRORS = {
 }
 
 _FOREIGN_LIFECYCLE_BULLET = (
-    "  - `write-value-foreign-lifecycle` — a write verb handed a value produced by a\n"
-    "    read through some other framework-managed source than the one it writes\n"
-    "    through, the same store or not (`m-unit-work`).\n"
+    "  - `write-value-foreign-lifecycle` — a write verb handed a value published by\n"
+    "    some other framework-managed source than the one it writes through, the same\n"
+    "    store or not (`m-unit-work`).\n"
 )
 
 

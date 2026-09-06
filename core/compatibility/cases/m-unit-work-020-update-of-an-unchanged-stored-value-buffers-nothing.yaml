@@ -1,4 +1,4 @@
-# A value this verb's own source produced that no author has changed is NOT a
+# A value this verb's own source published that no author has changed is NOT a
 # refusal for `update` (m-unit-work *Write value provenance*): it buffers
 # nothing, issues no statement, and raises nothing — the same outcome as an edit
 # whose net change is empty. Requiring an author to test each value before

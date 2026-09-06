@@ -924,7 +924,7 @@
                 ]
               },
               "value": {
-                "description": "insert / update action only (enforced by the sibling `allOf`, which also REQUIRES it there). The PROVENANCE of the value the step hands its keyed write verb, as m-unit-work *Write value provenance* partitions it: `unmanaged` — no managed read produced the value; `thisSource` — a read through the very source this verb writes through produced it; `anotherSource` — a read through some OTHER framework-managed source produced it, the same store or not. The case states the provenance and never how to obtain it: how an implementation retains which source produced a value is its own affair, so the adapter arranges a value of the stated provenance through its own managed reads — a read through the source under test for `thisSource`, a read through a second framework-managed source it supplies for `anotherSource`, and no read at all for `unmanaged`.",
+                "description": "insert / update action only (enforced by the sibling `allOf`, which also REQUIRES it there). The PROVENANCE of the value the step hands its keyed write verb, as m-unit-work *Write value provenance* partitions it: `unmanaged` — no managed source published the value; `thisSource` — the very source this verb writes through published it; `anotherSource` — some OTHER framework-managed source published it, the same store or not. The case states the provenance and never how to obtain it: how an implementation retains which source published a value is its own affair, so the adapter arranges a value of the stated provenance through its own managed reads — a read through the source under test for `thisSource`, a read through a second framework-managed source it supplies for `anotherSource`, and no read at all for `unmanaged`.",
                 "enum": ["unmanaged", "thisSource", "anotherSource"]
               },
               "set": {
@@ -942,7 +942,7 @@
                 "enum": ["in-memory", "persisted", "deleted", "detached", "detached-deleted"]
               },
               "expectError": {
-                "description": "A neutral application-lifecycle error this step's verb must raise: `detached-relationship-load`; `transaction-time-pin-read-only` for a mutation through a finite Transaction-Time-pinned view; or one of the three write-value provenance refusals (m-unit-work), which partition a value's provenance — `write-value-not-stored` for an update handed a value no managed read produced, `write-value-already-stored` for an insert handed a value produced by a read through the very source it writes through, and `write-value-foreign-lifecycle` for a value produced through some other framework-managed source, the same store or not.",
+                "description": "A neutral application-lifecycle error this step's verb must raise: `detached-relationship-load`; `transaction-time-pin-read-only` for a mutation through a finite Transaction-Time-pinned view; or one of the three write-value provenance refusals (m-unit-work), which partition a value's provenance — `write-value-not-stored` for an update handed a value no managed source published, `write-value-already-stored` for an insert handed a value the very source it writes through published, and `write-value-foreign-lifecycle` for a value some other framework-managed source published, the same store or not.",
                 "enum": [
                   "detached-relationship-load",
                   "transaction-time-pin-read-only",
