@@ -157,15 +157,17 @@ _TX_PIN_WIRE: Final = "2024-03-01T00:00:00.000000Z"
 class Refused:
     """The refusal a verb raised, as a caller observes it, and where it landed.
 
-    ``code`` is ``None`` for the refusal classes that carry no code — the whole
-    of the `m-core` window and instruction vocabulary — whose message is then the
-    only thing distinguishing two refusals of one class. ``phase`` distinguishes
-    two refusals that are otherwise identical but reach the caller at different
-    points, and ``calls`` carries everything the transaction had already done to
-    the database by then.
+    ``error`` is the raised class itself rather than its name, so a row states the
+    class it imported and a rename cannot leave two unrelated exceptions sharing
+    one spelling. ``code`` is ``None`` for the refusal classes that carry no code
+    — the whole of the `m-core` window and instruction vocabulary — whose message
+    is then the only thing distinguishing two refusals of one class. ``phase``
+    distinguishes two refusals that are otherwise identical but reach the caller
+    at different points, and ``calls`` carries everything the transaction had
+    already done to the database by then.
     """
 
-    error: str
+    error: type[Exception]
     code: str | None
     message: str
     phase: Phase
@@ -197,19 +199,18 @@ class Answer:
     that buffers nothing, and a same-transaction pair that coalesces into one
     statement from two writes that stay two.
 
-    ``message`` is stated for a refusal the VERB raised and is ``None`` otherwise.
-    The whole `m-core` window and instruction vocabulary carries no code, so the
-    message is the only thing distinguishing two of the order's own verdicts and
-    it belongs here; a refusal the FLUSH raised is the planner's verdict on a
-    write this order already admitted, and its wording belongs to the lowering
-    suite that owns it.
+    ``message`` is stated for every refusal, wherever it landed. Neither the
+    `m-core` window and instruction vocabulary nor the two planning refusals a
+    write this order admitted can earn carry a code, so the message is the only
+    thing distinguishing two refusals of one class — and a row that stated the
+    class alone would accept a different verdict about a different rule.
 
     Deliberately coarser than :class:`Completed`'s whole chronology: the SQL each
     verb lowers to belongs to the per-representation lowering goldens, and what
     this suite fixes is which answer the order gives, not how it is spelled.
     """
 
-    error: str | None
+    error: type[Exception] | None
     code: str | None
     message: str | None
     phase: Phase | None
@@ -432,8 +433,8 @@ BALANCE_TARGET: Final = Target(
 
 # Non-Temporal with a document-resident Value Object occurrence, whose own
 # members carry a nested occurrence and a nested many: the change axis's only
-# fixture where the Typed codec's serialized-document equality and the Wire
-# lane's frozen-decoded equality are compared over anything but one scalar.
+# fixture whose changed member is anything but one scalar, so each lane's
+# restoration rule is asked of a whole occurrence rather than of a leaf.
 CONTACT_TARGET: Final = Target(
     name="contact",
     profile="non_temporal",
@@ -534,6 +535,11 @@ class Scenario:
     opened_by: Representation | None = None
     opened_until: bool = False
     """Whether the same-transaction insert stated a bounded Valid-Time window."""
+    lost_provenance: bool = False
+    """Whether the Wire source reaches the verb as a copy carrying no Source Hint
+    — the one defect a keyed source can arrive with that no Typed value has a
+    spelling for, and the argument the shape of an authored document is judged
+    ahead of."""
     wire_changes: Mapping[str, object] | None = None
     """A Wire-only authored document, for shapes no Typed caller can express."""
     typed_changes: Mapping[str, object] | None = None
@@ -555,6 +561,8 @@ class Scenario:
             parts.append(f"opened-by-{self.opened_by}")
         if self.opened_until:
             parts.append("opened-until")
+        if self.lost_provenance:
+            parts.append("lost-provenance")
         return "-".join(parts)
 
 
@@ -585,8 +593,7 @@ def answer(scenario: Scenario, representation: Representation) -> Answer:
     result = outcome(scenario, representation)
     statements = sum(1 for call in result.calls if isinstance(call, WriteCall))
     if isinstance(result, Refused):
-        stated = result.message if result.phase == "verb" else None
-        return Answer(result.error, result.code, stated, result.phase, statements)
+        return Answer(result.error, result.code, result.message, result.phase, statements)
     return Answer(None, None, None, None, statements)
 
 
@@ -615,7 +622,7 @@ def outcome(scenario: Scenario, representation: Representation) -> Outcome:
         raise
     except Exception as raised:
         return Refused(
-            type(raised).__name__,
+            type(raised),
             cast("str | None", getattr(raised, "code", None)),
             str(raised),
             phase,
@@ -764,6 +771,8 @@ def _wire(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
         _call_wire(tx, scenario, target.payload, {})
         return
     source = _wire_source(tx, scenario, prior)
+    if scenario.lost_provenance:
+        source = dict(cast("Mapping[str, object]", source))
     _call_wire(tx, scenario, source, _wire_authored(scenario))
 
 

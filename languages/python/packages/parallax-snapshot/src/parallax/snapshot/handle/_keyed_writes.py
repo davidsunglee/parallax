@@ -115,6 +115,7 @@ __all__ = [
     "WriteRepresentation",
     "keyed_insert",
     "keyed_write",
+    "retained",
 ]
 
 
@@ -287,6 +288,19 @@ class KeyedInsertSource(Protocol):
     def prepare(
         self, resolved: ResolvedKeyedInsert, bounds: PreparedTemporalBounds, /
     ) -> PreparedKeyedWrite: ...
+
+
+def retained[T](filed: T | None) -> T:
+    """What a source's :meth:`resolve` filed for its :meth:`prepare`.
+
+    The ingress calls the three phases in order and nothing else calls any of
+    them, so what ``resolve`` filed is always there by ``prepare`` — which is a
+    fact about this protocol rather than about any one representation, and is why
+    an adapter states its retained facts as plain optional slots and reads them
+    back through here.
+    """
+    assert filed is not None
+    return filed
 
 
 def keyed_write(
