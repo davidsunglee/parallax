@@ -508,12 +508,9 @@ def test_a_milestone_verb_on_a_non_temporal_target_beats_unusable_evidence(
 # `delete` against a temporal target. `delete` physically removes rows and     #
 # carries no temporal meaning, so a target that milestones its rows spells its #
 # removal `terminate` and refuses `delete` at the verb, whichever              #
-# representation asked and whatever the source (`python.md` §5). The Typed lane #
-# refuses it there; the Wire one still reaches a window gate that answers about #
-# `valid_from`, or the flush's own refusal, or — over a row this unit of work   #
-# inserted — nothing at all, its insert cancelled and no DML emitted. The mark  #
-# is per lane, because each reaches the specified answer by its own change and  #
-# one mark over both would have outlived the first of them.                     #
+# representation asked and whatever the source (`python.md` §5) — including    #
+# over a row this unit of work itself inserted, where the pair would otherwise #
+# cancel and commit no DML at all rather than name the verb.                    #
 # --------------------------------------------------------------------------- #
 _TEMPORAL_DELETE_SOURCES: tuple[tuple[Source, Concurrency, Representation | None], ...] = (
     ("participating", "optimistic", None),
@@ -533,21 +530,8 @@ _TEMPORAL_DELETE_ROWS: tuple[Scenario, ...] = tuple(
     for opener in REPRESENTATIONS
 )
 
-_WIRE_DELETE_IS_NOT_MEASURED = pytest.mark.xfail(
-    reason=(
-        "the Wire `delete` verb measures the window rather than the verb, so this "
-        "row hears the window gate, the flush's refusal, or nothing at all until "
-        "the Wire verbs enter the shared keyed-write ingress"
-    )
-)
-
 _TEMPORAL_DELETE_CASES = tuple(
-    pytest.param(
-        scenario,
-        representation,
-        marks=() if representation == "typed" else _WIRE_DELETE_IS_NOT_MEASURED,
-        id=f"{scenario}-{representation}",
-    )
+    pytest.param(scenario, representation, id=f"{scenario}-{representation}")
     for scenario in _TEMPORAL_DELETE_ROWS
     for representation in REPRESENTATIONS
     if reachable(scenario, representation)

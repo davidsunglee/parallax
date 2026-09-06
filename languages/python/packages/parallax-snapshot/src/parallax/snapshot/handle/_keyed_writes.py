@@ -18,8 +18,9 @@ order but where the facts it consumes come from — a Typed value carries its ow
 Change Record and lifecycle, a Wire source carries a frozen published row and a
 Source Hint. A **Keyed Write Source** is that difference and nothing else: three phases,
 run once each in the order above, answering the concrete Entity, the source Pin,
-the Source Hint, the canonical identity row, the value's provenance, and the
-canonical authored and original values of every named member. A source exposes
+the Source Hint, the canonical identity row, the value's provenance, which
+interface stated the write, and the canonical authored and original values of
+every named member. A source exposes
 no codec, carrier, selected model, unit of work, mutation, prepared front door,
 or insert ledger, and it judges nothing: it answers facts, and the order judges
 them.
@@ -91,6 +92,7 @@ from parallax.snapshot.handle._write_inputs import (
     UPDATE_MUTATIONS,
     BufferedInserts,
     Provenance,
+    WriteRepresentation,
     admit_and_buffer,
     cancels_a_pending_assignment,
     reject_temporal_delete,
@@ -110,6 +112,7 @@ __all__ = [
     "Provenance",
     "ResolvedKeyedInsert",
     "ResolvedKeyedWriteSource",
+    "WriteRepresentation",
     "keyed_insert",
     "keyed_write",
 ]
@@ -157,6 +160,10 @@ class ResolvedKeyedWriteSource:
     of an object nothing named, so such a source reaches the provenance refusal
     that is the honest complaint about it; deriving a row to ask the question
     with would answer that mistake with a codec failure instead.
+
+    ``representation`` is which interface stated the write, and is here for the
+    one thing a refusal cannot state without it: the verb that DOES accept the
+    value, in the spelling the caller would type.
     """
 
     entity: EntityMetadata
@@ -164,6 +171,7 @@ class ResolvedKeyedWriteSource:
     hint: SourceHint | None
     identity_row: Mapping[str, object] | None
     provenance: Provenance
+    representation: WriteRepresentation
 
     def __post_init__(self) -> None:
         if self.identity_row is not None:
@@ -205,11 +213,17 @@ class ResolvedKeyedInsert:
     answer an insert can be refused for, since a value this store's own read
     produced names a row it already holds — and the ``pin`` such a value carries,
     because the Transaction-Time past is read-only whatever verb was aimed at it.
+
+    ``representation`` is which interface stated the insert, for the same reason
+    its peer carries one: the value a read already stored is refused by naming
+    the update verb the caller reaches for, and each interface spells that verb
+    its own way.
     """
 
     entity: EntityMetadata
     pin: Pin | None
     provenance: Provenance
+    representation: WriteRepresentation
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +326,7 @@ def keyed_write(
         resolved.provenance,
         mutation,
         inserted=ctx.inserts.holds(written),
+        representation=resolved.representation,
     )
     validate_source_pin(resolved.entity.identity, resolved.pin)
     declaring = declaring_of(meta, resolved.entity)
@@ -372,7 +387,13 @@ def keyed_insert(
     meta = ctx.model.meta
     resolved = opening.resolve(meta, mutation)
     validate_source_pin(resolved.entity.identity, resolved.pin)
-    validate_provenance(resolved.entity.identity, resolved.provenance, mutation, inserted=False)
+    validate_provenance(
+        resolved.entity.identity,
+        resolved.provenance,
+        mutation,
+        inserted=False,
+        representation=resolved.representation,
+    )
     valid_from_managed, until_managed = validate_window(
         declaring_of(meta, resolved.entity), mutation, valid_from, until
     )

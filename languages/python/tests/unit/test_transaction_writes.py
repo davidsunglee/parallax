@@ -1283,6 +1283,7 @@ def test_the_seam_records_own_the_mappings_an_adapter_hands_them() -> None:
         hint=None,
         identity_row=identity_row,
         provenance="this",
+        representation="typed",
     )
     prepared = PreparedSourceWrite(
         instruction=instruction,
