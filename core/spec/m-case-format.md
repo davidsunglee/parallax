@@ -1635,23 +1635,21 @@ Provenance is a property of that value rather than of a prior step's result, so
 the step names no `on`; it carries a **`value`** token instead, drawn from the
 closed partition `m-unit-work` *Write value provenance* fixes:
 
-- **`unmanaged`** — no managed source published the value.
-- **`thisSource`** — the **very source this verb writes through** published it.
-- **`anotherSource`** — some **other** framework-managed source published it, the
-  same store or not.
+- **`unmanaged`** — no managed read produced the value.
+- **`thisSource`** — a read through the **very source this verb writes through**
+  produced it.
+- **`anotherSource`** — a read through some **other** framework-managed source
+  produced it, the same store or not.
 
 A case states the provenance and never how to obtain it. How an implementation
-retains which source published a value is its own affair, so an adapter arranges
-a value of the stated provenance through its own managed reads — the same reason
-the vocabulary names sources rather than markers. A read is the arrangement every
-token has here because this shape admits no accepted `insert` (below), so a value
-an implementation's own `insert` published is unauthorable as a case even where
-its verbs publish one. `thisSource` is a read through
+retains which source produced a value is its own affair, so an adapter arranges a
+value of the stated provenance through its own managed reads — the same reason
+the vocabulary names sources rather than markers. `thisSource` is a read through
 the source under test, which every implementation has. `anotherSource` is a read
 through a **second** framework-managed source; an implementation whose runtime is
 one lifecycle **supplies** that second source for the arrangement — the source
-being machinery that materializes values and recognizes its own (`m-unit-work`),
-not a shipped product. `unmanaged` is the one token no read
+being machinery that materializes values from reads and recognizes its own
+(`m-unit-work`), not a shipped product. `unmanaged` is the one token no read
 arranges, being the absence of one.
 
 A value the named read did not produce witnesses nothing, however the
@@ -1698,7 +1696,7 @@ has an oracle, never in this shape.
 
 ```yaml
 - action: update
-  value: unmanaged                          # no managed source published it
+  value: unmanaged                          # no managed read produced it
   roundTrips: 0
   expectError: write-value-not-stored       # ... so `update` addresses no stored row
 ```
@@ -1796,14 +1794,14 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   - `transaction-time-pin-read-only` — a mutation through a finite
     Transaction-Time pinned view, which records what the system knew and is never rewritten
     (`m-identity-map`).
-  - `write-value-not-stored` — an `update` verb handed a value no managed source
-    published, which therefore addresses no stored row (`m-unit-work`).
-  - `write-value-already-stored` — an `insert` verb handed a value the very
-    source it writes through published, which therefore already denotes a row
-    that source stores (`m-unit-work`).
-  - `write-value-foreign-lifecycle` — a write verb handed a value published by
-    some other framework-managed source than the one it writes through, the same
-    store or not (`m-unit-work`).
+  - `write-value-not-stored` — an `update` verb handed a value no managed read
+    produced, which therefore addresses no stored row (`m-unit-work`).
+  - `write-value-already-stored` — an `insert` verb handed a value produced by a
+    read through the very source it writes through, which therefore already
+    denotes a row that source stores (`m-unit-work`).
+  - `write-value-foreign-lifecycle` — a write verb handed a value produced by a
+    read through some other framework-managed source than the one it writes
+    through, the same store or not (`m-unit-work`).
 
 ##### Relationship contents at a step (`expectGraph`)
 
