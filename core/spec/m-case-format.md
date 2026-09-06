@@ -1047,11 +1047,15 @@ table state shows which rows changed or were removed.
 
 #### Resolving reads a write owes
 
-A keyed write verb is **addressed and licensed by a value this unit of work
-produced** (`m-unit-work` *Write value provenance*) — a read of its own, or an
-insert it has itself buffered — so a choreography unit writing against **existing**
-state **reads that state first**, and `then.roundTrips` — which counts every call
-that reached the database — counts those reads beside the DML.
+A keyed write verb is **addressed and licensed by a value a framework-managed
+source published** (`m-unit-work` *Write value provenance*) — a read through that
+source, or an insert the writing unit of work has itself buffered. A source is
+**not** a transaction, so the licensing read need not run inside the unit that
+writes; *where* it runs is settled per shape below and never decides whether it
+is owed. What every shape shares is that a write against **existing** state owes
+a read at all, so a choreography unit writing against existing state **reads that
+state first**, and `then.roundTrips` — which counts every call that reached the
+database — counts those reads beside the DML.
 
 The count is structural, derivable from the case document and its model alone.
 For each choreography unit — one `writeSequence` entry, or one ungrouped scenario
