@@ -1397,12 +1397,12 @@ def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert(
     ]
 
 
-def test_an_insert_after_a_cancelled_insert_delete_pair_is_refused_as_a_repeat() -> None:
-    # The ledger has no retirement operation, so a `delete` that cancels the
-    # buffered pair to no DML leaves the object recorded, and a third verb
-    # opening it again is a repeat by the ledger's reading: refused at the verb,
-    # nothing emitted.
-    port = ScriptedPort(Transact())
+def test_an_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() -> None:
+    # A `delete` of an object this transaction buffered an insert of cancels the
+    # pair — the flush emits nothing for it — and retires the object from the
+    # ledger at the verb, so the third verb is a FIRST opening rather than a
+    # repeat: admitted, and the one INSERT the transaction commits.
+    port = ScriptedPort(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         fresh = mm.Person(id=9, name="Newton")
@@ -1410,10 +1410,46 @@ def test_an_insert_after_a_cancelled_insert_delete_pair_is_refused_as_a_repeat()
         tx.delete(fresh)
         tx.insert(fresh)
 
+    db_for(PERSON, port).transact(fn)
+    assert [op for op in port.calls if isinstance(op, WriteCall)] == [
+        WriteCall("insert into person(id, name) values (%s, %s)", (9, "Newton"))
+    ]
+
+
+def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row() -> None:
+    # The same retirement read from the exemption's side: with the pair
+    # cancelled the transaction holds no insert of the object, so an update of
+    # it is a write of a row nothing stores and is refused as one — rather than
+    # admitted as an UPDATE of a row the store will never hold.
+    port = ScriptedPort(Transact())
+
+    def fn(tx: Transaction) -> None:
+        fresh = mm.Person(id=9, name="Newton")
+        tx.insert(fresh)
+        tx.delete(fresh)
+        tx.update(fresh.edit(name="Grace"))
+
     with pytest.raises(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
-    assert refusal.value.code == "write-value-already-stored"
+    assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
+
+
+def test_an_insert_after_a_cancelled_insert_terminate_pair_opens_the_milestone_again() -> None:
+    # A temporal target spells its removal `terminate`, and the cancellation
+    # rule — and so the retirement — is the same one keyed by the object.
+    port = ScriptedPort(Transact(Write()))
+
+    def fn(tx: Transaction) -> None:
+        fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
+        tx.insert(fresh)
+        tx.terminate(fresh)
+        tx.insert(fresh)
+
+    db_for(BALANCE, port).transact(fn)
+    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
+    assert len(write_ops) == 1
+    assert write_ops[0].sql.startswith("insert into")
 
 
 @pytest.mark.parametrize("verb", ["insert", "update"], ids=["insert", "update"])

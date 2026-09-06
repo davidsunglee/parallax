@@ -91,6 +91,7 @@ from parallax.core.unit_work.instructions import (
 # per-name underscores.
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._write_inputs import (
+    DESTRUCTIVE_MUTATIONS,
     UPDATE_MUTATIONS,
     BufferedInserts,
     Provenance,
@@ -328,7 +329,15 @@ def keyed_write(
     stage 3: the provenance exemption, which is what lets an update follow this
     transaction's own insert, and the evidence exemption, which is why the write
     that follows settles bare — the row it revises is the one that insert opens,
-    so there is no prior row for a second intent to compete for.
+    so there is no prior row for a second intent to compete for. One step past
+    the buffer writes it: a destructive write of an object the ledger holds
+    retires that object, because the flush will annihilate the pair and emit
+    nothing for it, so from here on an insert of it is a first opening and an
+    update of it addresses nothing. Retirement follows the buffer rather than
+    preceding it for the guarantee the claim ledger already gives — a refused
+    write leaves every ledger as it found it. It runs on the reread route too:
+    the insert already flushed, the destructive write will remove the row, and
+    a later insert or update answers for a row the store will no longer hold.
     """
     refuse_reentry(ctx.lifecycle)
     source.capture(mutation)
@@ -373,6 +382,8 @@ def keyed_write(
         evidence,
         restorations=restorations,
     )
+    if mutation in DESTRUCTIVE_MUTATIONS:
+        ctx.inserts.retire(written)
 
 
 def keyed_insert(

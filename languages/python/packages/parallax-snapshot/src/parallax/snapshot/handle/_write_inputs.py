@@ -110,6 +110,7 @@ from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._family import family_primary_key, is_temporal
 
 __all__ = [
+    "DESTRUCTIVE_MUTATIONS",
     "KEYED_WRITE_VALUE_CODES",
     "UPDATE_MUTATIONS",
     "WRITE_EVIDENCE_CODES",
@@ -146,6 +147,15 @@ UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 effective changes — the family a value no managed source published is refused for.
 :data:`~parallax.core.unit_work.INSERT_MUTATIONS` is the complementary family;
 every other keyed mutation derives an identity row alone."""
+
+DESTRUCTIVE_MUTATIONS: Final[frozenset[str]] = frozenset({"delete", "terminate", "terminateUntil"})
+"""The keyed mutations that end a row's existence or its current milestone, and
+so cancel a buffered insert of the same object (`m-unit-work`
+"Insert-then-delete cancels"). The set the flush's own cancellation rule keys on,
+restated here because it is what retires an object from :class:`BufferedInserts`
+at the verb: the ledger must stop holding the object at the same moment the
+buffer stops holding a row for it, or the two halves of read-your-own-writes
+would answer for a row that will never exist."""
 
 KEYED_WRITE_VALUE_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -355,7 +365,7 @@ class ClaimLedger(Protocol):
 
 
 class BufferedInserts:
-    """The objects one transaction has buffered an insert of.
+    """The objects one transaction holds a buffered insert of.
 
     Shared by BOTH keyed doors rather than kept per representation: a Typed
     insert followed by a Wire update of the same object is one
@@ -368,6 +378,15 @@ class BufferedInserts:
     unstored (:func:`validate_provenance`). An insert reads it for the REFUSAL:
     that same row is already opening, so a second insert of its object names a
     row already held (:func:`refuse_repeated_insert`).
+
+    An object leaves it by one route, :meth:`retire`, taken when a destructive
+    keyed write of that object is buffered: the flush annihilates the pair and
+    emits nothing for the object (`m-unit-work` "Insert-then-delete cancels"),
+    so from that verb on the transaction holds no insert of it, a later insert
+    is a first opening, and a later update addresses nothing. A flush retires
+    nothing — the row it wrote is a row this transaction stores, and what a
+    write of it then owes is the question :func:`resolve_write_evidence` leaves
+    open.
 
     A member is the total reading :func:`written_object_of_row` answers for an
     identity row, never a row and never an
@@ -394,6 +413,17 @@ class BufferedInserts:
         transaction inserted.
         """
         return written is not None and written in self._objects
+
+    def retire(self, written: WrittenObject | None) -> None:
+        """Forget the object a just-buffered destructive write cancelled the
+        insert of.
+
+        Called once that write is in the buffer and never before: a refused
+        write leaves the ledger as it found it, exactly as it leaves the claim
+        ledger. Total over what :func:`written_object_of_row` answers — an
+        object the ledger does not hold, and ``None``, retire nothing.
+        """
+        self._objects.discard(written)
 
 
 def keyed_instruction(
@@ -958,7 +988,10 @@ def refuse_repeated_insert(
     rather than beside the provenance question: a Wire payload's key members are
     canonical only once its row is prepared. A Typed instance could answer
     earlier and does not, so both representations hear pin, provenance, window,
-    and preparation ahead of this.
+    and preparation ahead of this. The answer is about an insert that still
+    STANDS buffered: a destructive write that cancelled the pair retired the
+    object (:meth:`BufferedInserts.retire`), so an insert after it is a first
+    opening and is not refused.
     """
     if not inserted:
         return
