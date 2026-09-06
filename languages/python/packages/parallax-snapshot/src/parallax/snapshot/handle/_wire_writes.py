@@ -99,7 +99,6 @@ from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._keyed_writes import (
     KeyedWriteContext,
     PreparedSourceWrite,
-    Provenance,
     ResolvedKeyedInsert,
     ResolvedKeyedWriteSource,
     keyed_insert,
@@ -575,12 +574,16 @@ class WireKeyedInsertSource:
     and nothing else that could say which Entity a fresh document is a document
     OF.
 
-    ``pin`` is answered ``None`` rather than from a hint the payload may happen to
-    carry. A Create Payload is a DOCUMENT, and the one document that also carries
-    a view is the one this door refuses outright for its provenance — a value a
-    read of this store published names a row it already holds. Answering that
-    view's pin would report the payload read-only, which is a verdict about a verb
-    it was never handed to.
+    A payload that is itself a published node answers the view that node carries,
+    exactly as its Typed peer answers a pinned instance's. Such a payload has two
+    refusals coming at once, and the pin is the one the door states: it names the
+    fact that makes the call wrong whatever else is true of the value, where the
+    provenance answer names only which verb this particular one belongs to.
+
+    Provenance here has two answers rather than three: a hinted node is one a read
+    of this store published, and anything else is a document a caller built. A
+    value another framework-managed lifecycle produced carries no hint THIS
+    lifecycle recognizes, so it arrives as the plain document it is.
     """
 
     __slots__ = ("_data", "_entity_name", "_meta", "_mutation", "_payload")
@@ -598,10 +601,11 @@ class WireKeyedInsertSource:
     def resolve(self, model: Metamodel, mutation: KeyedMutation, /) -> ResolvedKeyedInsert:
         self._meta = model
         self._mutation = mutation
+        published = source_hint_of(self._data) if isinstance(self._data, WireEntity) else None
         return ResolvedKeyedInsert(
             entity=instructions.resolve_target(model, self._entity_name),
-            pin=None,
-            provenance=_payload_provenance(self._data),
+            pin=None if published is None else published.pin,
+            provenance="none" if published is None else "this",
             representation="wire",
         )
 
@@ -625,18 +629,6 @@ class WireKeyedInsertSource:
         assert self._meta is not None
         assert self._mutation is not None
         return self._meta, self._mutation
-
-
-def _payload_provenance(data: object) -> Provenance:
-    """Which framework-managed source produced an insert's payload.
-
-    A hinted Wire Entity is one a read of this store published; anything else is
-    a document a caller built, which no managed read produced. There is no third
-    answer on this side: a value another framework-managed lifecycle produced
-    carries no hint THIS lifecycle recognizes, so it arrives as the plain document
-    it is.
-    """
-    return "this" if isinstance(data, WireEntity) and source_hint_of(data) is not None else "none"
 
 
 def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity, SourceHint]:
