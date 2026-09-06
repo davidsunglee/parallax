@@ -1,17 +1,20 @@
 """The Wire write interface (`python.md` §5, `m-unit-work`).
 
 ``tx.wire``'s keyed and predicate verb families, driven through the real handles
-over a recording port. Two questions are asked here and nowhere else: what SQL
-each Wire verb lowers to, spelled out statement by statement, and how a Wire
-write and a Typed write of one object meet in one claim algebra rather than in
-two — the ledger they share, the intents they merge, and the source each licenses
-the other's write with.
+over a recording port. Two questions are asked here and nowhere else: what each
+Wire verb lowers to — the whole statement where a verb emits one, and the kinds in
+their order where a rectangle split emits several — and how a Wire write and a
+Typed write of one object meet in one claim algebra rather than in two: the ledger
+they share, the intents they merge, and the source each licenses the other's write
+with.
 
-What the two representations answer in COMMON is not asked here. One order stands
-behind both, so refusal precedence is `test_keyed_write_order.py`'s subject and
-the facts a Wire source answers into that order are
-`test_wire_keyed_source.py`'s. What a Wire READ publishes is
-`test_wire_reads.py`'s subject; the claim algebra itself is
+The refusal precedence the two representations share is not asked here. One order
+stands behind both, so that precedence is `test_keyed_write_order.py`'s subject
+and the facts a Wire source answers into that order are
+`test_wire_keyed_source.py`'s. The Typed lane is driven here only beside a Wire
+lowering it has to answer identically — an authored occurrence stating exactly
+what the row already holds, which both lanes answer with no DML at all. What a
+Wire READ publishes is `test_wire_reads.py`'s subject; the claim algebra itself is
 `test_write_claims.py`'s.
 """
 
@@ -54,7 +57,7 @@ from parallax.core.base import InstantError, PresentDocument
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
-from parallax.snapshot import connect
+from parallax.snapshot import InvalidData, connect
 from parallax.snapshot.handle import (
     Database,
     KeyedWriteValueError,
@@ -458,6 +461,40 @@ def test_a_copy_of_a_published_node_keeps_its_provenance() -> None:
 
     db_for(ACCOUNT, port).transact(fn)
     assert len(_writes(port)) == 1
+
+
+def test_a_hydratable_classified_row_is_a_source_its_own_correction_writes_through() -> None:
+    # The stored `address` omits the required `street`, so the read publishes the
+    # row as a classified record whose `data` still hydrates. That node is a
+    # keyed source — classification says what contradicted the model, never who
+    # may write — and the update supplying the missing member reaches the buffer.
+    # Nothing else could correct it: the write is addressed against exactly the
+    # state its own classification names.
+    stored: Row = {
+        "id": 1,
+        "name": "Ada",
+        "address": PresentDocument(
+            {"city": "C", "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}}, "phones": []}
+        ),
+    }
+    corrected: dict[str, object] = {
+        "street": "S",
+        "city": "C",
+        "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
+        "phones": [],
+    }
+    port = ScriptedPort(Transact(Read(rows=[stored]), Write()))
+
+    def fn(tx: Transaction) -> None:
+        published = tx.wire.find(_CONTACT_QUERY).checked().result()
+        assert isinstance(published, InvalidData)
+        record = cast("InvalidData[object]", published)
+        assert {issue.code for issue in record.issues} == {"stored-data-required-member-absent"}
+        tx.wire.update(cast("WireEntity", record.data), {"address": corrected})
+
+    db_for(CONTACT, port).transact(fn)
+
+    assert cast("JsonDocument", _writes(port)[0].binds[0]).value == corrected
 
 
 def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:

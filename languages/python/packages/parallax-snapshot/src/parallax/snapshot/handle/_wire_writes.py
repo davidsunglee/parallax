@@ -50,15 +50,18 @@ predicate node, and `m-core`'s :class:`~parallax.core.base.InstantError` for a
 bound that is no instant. All are ``ValueError``s raised before the evidence
 question.
 
-**Both sides of a restoration pass through one producer.** What a caller authored
-and what the source published under those same names are prepared by the same
-:func:`~parallax.core.unit_work.instructions.prepare_wire_write`, so the ingress
-weighs effectiveness over one carrier per value and no source decides its own.
-Caller-owned input is owned by that preparation before the verb returns: shape is
-validated without copying, and preparation converts and freezes the retained
-product in one traversal. A keyed source is already deeply frozen; the write
-retains only its identity, resolved evidence, and explicitly changed published
-values.
+**Both sides of a restoration pass through one decode, and only one is judged.**
+What a caller authored and what the source published under those same names are
+converted by the one Wire decode, so the ingress weighs effectiveness over one
+carrier per value and no source decides its own. Judgement is asked of the
+authored side alone: the published side is state this store already wrote, and
+re-judging it would refuse a write for the very state it is addressed against —
+the correction of a row a read published as a hydratable classified record is
+that refusal's plainest victim. Caller-owned input is owned by preparation before
+the verb returns: shape is validated without copying, and preparation converts
+and freezes the retained product in one traversal. A keyed source is already
+deeply frozen; the write retains only its identity, resolved evidence, and
+explicitly changed published values.
 """
 
 from __future__ import annotations
@@ -103,6 +106,7 @@ from parallax.snapshot.handle._keyed_writes import (
     ResolvedKeyedWriteSource,
     keyed_insert,
     keyed_write,
+    retained,
 )
 from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
 from parallax.snapshot.handle._write_inputs import (
@@ -384,9 +388,8 @@ def _prepared_wire_write(
     Work's sole Wire judgment.
 
     ``assigned`` names the members whose ASSIGNMENT is judged, and is absent for
-    a row that authors nothing — an opening payload, whose members are the row
-    itself, and a published row read back for its originals, whose values this
-    store wrote.
+    an opening payload, whose members are the row itself rather than assignments
+    against one this store already holds.
 
     The bounds ride the instruction's dimension-explicit fields in the canonical
     spelling the Wire decoder reads, never the row: an As-Of Axis
@@ -418,14 +421,28 @@ def _published_identity(source: _WireKeyedSource) -> dict[str, object]:
     return {name: source.node[name] for name, _value in source.hint.object_key.primary_key}
 
 
-def _published_subset(source: _WireKeyedSource, members: frozenset[str]) -> dict[str, object]:
-    """The identity the source names, plus what it published under ``members``.
+def _published_originals(
+    meta: Metamodel, entity: EntityMetadata, source: _WireKeyedSource, members: frozenset[str]
+) -> dict[str, object]:
+    """What the source published under ``members``, in the carriers a prepared
+    authored row states the same members in.
 
     A member the published row omits is stated as the null it published nothing
     for, which is exactly the original a restoration of such a member is measured
     against — and is what the row would state back.
+
+    Decoded and judged by nothing. This store wrote these values, and judging
+    them again would refuse a write for the state it is addressed against: the
+    row a read published as a hydratable classified record is a keyed source, so
+    the write that CORRECTS the member its classification names has to reach the
+    buffer.
     """
-    return {**_published_identity(source), **{name: source.node.get(name) for name in members}}
+    published = {
+        **_published_identity(source),
+        **{name: source.node.get(name) for name in members},
+    }
+    decoded = instructions.decode_wire_row(published, meta, entity)
+    return {name: decoded[name] for name in members}
 
 
 class WireKeyedWriteSource:
@@ -464,16 +481,14 @@ class WireKeyedWriteSource:
     ) -> PreparedSourceWrite:
         """The instruction this document authors, beside the source's own originals.
 
-        Both sides run through the SAME producer over the SAME member list — the
+        Both sides run through the SAME decode over the SAME member list — the
         values the caller authored, and the values the source published under
         those same names — so the ingress weighs effectiveness over one carrier
         per value rather than over a decoded document on one side and a managed
         one on the other.
 
-        Only the authored side names its assignments, because assignment legality
-        is a judgement about what the CALLER wrote. The published side is decoded
-        rather than re-judged: this store wrote those values, and judging them
-        again could refuse a write for the state it is addressed against.
+        Only the authored side is judged, because every rule preparation applies
+        is a rule about what the CALLER wrote.
         """
         meta, mutation, source = self._retained()
         assigned = frozenset(self._authored)
@@ -481,22 +496,14 @@ class WireKeyedWriteSource:
         instruction = _prepared_wire_write(
             meta, mutation, resolved.entity, authored, bounds, assigned
         )
-        published = _prepared_wire_write(
-            meta, mutation, resolved.entity, _published_subset(source, assigned), bounds, None
-        )
         return PreparedSourceWrite(
             instruction=instruction,
             object_key=source.hint.object_key,
-            originals={name: published.rows[0][name] for name in assigned},
+            originals=_published_originals(meta, resolved.entity, source, assigned),
         )
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation, _WireKeyedSource]:
-        # The ingress calls the three phases in order and nothing else calls any
-        # of them, so what `resolve` filed is always here by `prepare`.
-        assert self._meta is not None
-        assert self._mutation is not None
-        assert self._source is not None
-        return self._meta, self._mutation, self._source
+        return retained(self._meta), retained(self._mutation), retained(self._source)
 
 
 class PreparedWireKeyedWriteSource:
@@ -538,31 +545,19 @@ class PreparedWireKeyedWriteSource:
     ) -> PreparedSourceWrite:
         """The product this adapter holds, beside the source's own originals.
 
-        The originals go through the producer that built the product, over the
+        The originals go through the decode that built the product, over the
         members it names as assigned, so the effective change set is the same
         comparison of like with like a verb's own document reaches.
         """
         meta, source = self._retained()
-        published = _prepared_wire_write(
-            meta,
-            self._prepared.mutation,
-            resolved.entity,
-            _published_subset(source, self._assigned),
-            bounds,
-            None,
-        )
         return PreparedSourceWrite(
             instruction=self._prepared,
             object_key=source.hint.object_key,
-            originals={name: published.rows[0][name] for name in self._assigned},
+            originals=_published_originals(meta, resolved.entity, source, self._assigned),
         )
 
     def _retained(self) -> tuple[Metamodel, _WireKeyedSource]:
-        # The ingress calls the three phases in order and nothing else calls any
-        # of them, so what `resolve` filed is always here by `prepare`.
-        assert self._meta is not None
-        assert self._source is not None
-        return self._meta, self._source
+        return retained(self._meta), retained(self._source)
 
 
 class WireKeyedInsertSource:
@@ -624,11 +619,7 @@ class WireKeyedInsertSource:
         return _prepared_wire_write(meta, mutation, resolved.entity, self._payload, bounds, None)
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation]:
-        # The ingress calls the three phases in order and nothing else calls any
-        # of them, so what `resolve` filed is always here by `prepare`.
-        assert self._meta is not None
-        assert self._mutation is not None
-        return self._meta, self._mutation
+        return retained(self._meta), retained(self._mutation)
 
 
 def _keyed_source(mutation: KeyedMutation, observed: object) -> tuple[WireEntity, SourceHint]:

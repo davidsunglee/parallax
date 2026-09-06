@@ -97,6 +97,7 @@ from parallax.snapshot.handle._keyed_writes import (
     ResolvedKeyedWriteSource,
     keyed_insert,
     keyed_write,
+    retained,
 )
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
@@ -254,11 +255,7 @@ class TypedKeyedWriteSource:
         )
 
     def _retained(self) -> tuple[Metamodel, KeyedMutation]:
-        # The ingress calls the three phases in order and nothing else calls any
-        # of them, so what `resolve` filed is always here by `prepare`.
-        assert self._meta is not None
-        assert self._mutation is not None
-        return self._meta, self._mutation
+        return retained(self._meta), retained(self._mutation)
 
 
 class TypedKeyedInsertSource:
@@ -296,11 +293,9 @@ class TypedKeyedInsertSource:
     def prepare(
         self, resolved: ResolvedKeyedInsert, bounds: PreparedTemporalBounds, /
     ) -> PreparedKeyedWrite:
-        assert self._meta is not None  # the ingress resolves before it prepares
-        assert self._mutation is not None
         return prepared_typed_write(
-            self._meta,
-            self._mutation,
+            retained(self._meta),
+            retained(self._mutation),
             resolved.entity,
             self._codec.full_row(self._instance),
             bounds,

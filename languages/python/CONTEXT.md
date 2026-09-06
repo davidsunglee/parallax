@@ -327,8 +327,10 @@ state a keyed write revises, in three phases run once each: capture, resolve, an
 prepare. The answer set is the concrete Entity, the source Pin, the Source Hint,
 the canonical identity row, the value's provenance, which interface stated the
 write, and the canonical authored and original value of every named member. A
-source judges nothing and exposes no codec, carrier, selected model, unit of
-work, mutation, or insert ledger; the order judges what it answers. It is inert
+source judges only what its own interface can be wrong about — an authored
+document's shape, and whether the value it was handed is a source at all — and
+exposes no codec, carrier, selected model, unit of work, mutation, or insert
+ledger; every judgement about the write itself belongs to the order. It is inert
 when constructed and private to one verb call, so nothing it could refuse runs
 before re-entry is refused.
 _Avoid_: write adapter, ingress strategy, source facade, write context object
