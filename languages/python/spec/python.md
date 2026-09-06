@@ -4235,16 +4235,16 @@ These feature tests do not claim the deferred `benchmark` command or general
   MAY-tier administrative mutations that would widen the invariant
   (`insertForRecovery`, `purge`, `inactivateForArchiving`) sit outside the
   required parity surface and are not offered.
-- **A keyed write verb accepts a value by its provenance.** Which verbs accept
-  a given value is decided by which framework-managed source, if any, published
-  it — together with the
-  read-your-own-writes exemption an object this transaction already buffered an
-  insert for earns — never by whether an author has since changed it.
-  `m-unit-work` *Write value provenance* states its three answers over the values
-  a **read** produced; the answer this binding derives is over the values a
-  managed source **published**, which on the Wire door includes the node
-  `tx.wire.insert` opened a row with. The three answers partition the values a verb
-  can be handed, so a refused value carries exactly one code of exported
+- **A keyed write verb accepts a value by its provenance.** Which verbs accept a
+  given value is decided by which framework-managed source, if any, published it
+  — together with the read-your-own-writes exemption an object this transaction
+  already buffered an insert for earns — never by whether an author has since
+  changed it. `m-unit-work` *Write value provenance* states its three answers
+  over the values a managed source **published**, which on the Wire door includes
+  the node `tx.wire.insert` opened a row with and on the Typed door is a read's
+  result alone, `tx.insert` returning nothing for a caller to hand back. The
+  three answers partition the values a verb can be handed, so a refused value
+  carries exactly one code of exported
   `KEYED_WRITE_VALUE_CODES` on exported `KeyedWriteValueError` — a `ValueError`
   for the reason `TransactionTimePinReadOnlyError` is one, since both refuse a
   neutral application-lifecycle argument the caller supplied. Both names are
@@ -4292,9 +4292,13 @@ These feature tests do not claim the deferred `benchmark` command or general
   so `tx.update` of that object is accepted and the pair coalesces into the
   single final-value write the flush emits (`m-unit-work` *Insert-then-update
   coalesces in place*) — the same read-your-own-writes provenance the bullet
-  below grants a keyed temporal close. The exemption is keyed by the OBJECT,
-  so a value naming a primary key this transaction never inserted is refused
-  exactly as any other value no read produced is. Which object a value names is
+  below grants a keyed temporal close. The exemption carries the Typed door's
+  half of that rule alone: nothing publishes a Typed insert's value, so the
+  caller holds one no source published, while the node `tx.wire.insert` answered
+  reaches the same acceptance by provenance and needs no exemption to. The
+  exemption is keyed by the OBJECT, so a value naming a primary key this
+  transaction never inserted is refused exactly as any other value no source
+  published is. Which object a value names is
   read off its own primary-key members rather than derived through the Entity Row
   Codec, because the refusal this exemption lifts is decided before any row
   exists. That reading is therefore TOTAL over every value whose key members

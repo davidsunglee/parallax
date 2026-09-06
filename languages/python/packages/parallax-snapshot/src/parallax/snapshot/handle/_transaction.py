@@ -452,7 +452,7 @@ class Transaction:
         observation or locking concern), and a node this transaction's own read
         returned that no edit touched carries exactly that empty change set:
         writing every value a find returned and editing only some of them is
-        correct code. A value no read of this store produced is refused instead,
+        correct code. A value no source of this store published is refused instead,
         before any row is derived
         (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
         ``write-value-not-stored``) — unless THIS transaction already buffered

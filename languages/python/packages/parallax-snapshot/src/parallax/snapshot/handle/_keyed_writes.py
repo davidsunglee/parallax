@@ -152,7 +152,7 @@ class ResolvedKeyedWriteSource:
     object to the ledger before any instruction exists.
 
     ``pin`` and ``hint`` are the source's own, never derived: a hintless source
-    is one no read of this store published, and a source pinned at a finite
+    is one no source of this store published, and a source pinned at a finite
     Transaction-Time instant is read-only whatever else is true of it.
 
     ``identity_row`` is ``None`` for a source that names no object of this store
@@ -387,7 +387,7 @@ def keyed_insert(
     prior state was observed, and no claim is taken. What remains beside the
     window and preparation is the pin the value's own view carries and the
     provenance it states — in that order, because a pinned value is one this
-    store's read published, so both refusals stand over the one value and the
+    store published, so both refusals stand over the one value and the
     read-only view is the more specific complaint. (On the source-backed door the
     two can never both be pending: a value the provenance rule refuses came from
     no read of this store at all, so it carries no view to be pinned.)

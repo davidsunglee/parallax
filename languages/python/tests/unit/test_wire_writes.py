@@ -1197,7 +1197,7 @@ def test_a_typed_update_of_a_row_a_wire_insert_opened_coalesces_in_place() -> No
     # The buffered-insert ledger is ONE ledger: the Typed provenance refusal
     # exempts a value naming an object the WIRE verb inserted, so the pair
     # coalesces into a single INSERT carrying the final value rather than being
-    # refused as a write of a row no read produced.
+    # refused as a write of a row no source published.
     port = ScriptedPort(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
