@@ -289,16 +289,85 @@ copy cost is proportional to authored write input and does not duplicate a Wire
 read result.
 _Avoid_: retained caller mapping, shallow write copy, lazy changes, live payload
 
-**Wire Write Validation Order**:
-The fixed verb-time phase order: validate verb and target shape, source key and
-required version, temporal bounds, member names and values, and assignment
-legality; reject any keyed source that is not a frozen Parallax Wire read; then
-resolve the source Entity's Effective Concurrency Strategy and its evidence
-requirement—current-transaction read participation under Locking, or retained
-version/milestone evidence under Optimistic—then recursively snapshot and buffer. A malformed request
+**Keyed Write Validation Order**:
+The fixed verb-time phase order every keyed write runs, Typed or Wire: refuse
+re-entry; validate and capture whatever the calling interface alone can state
+wrongly; resolve the source and judge its provenance; judge its Pin; judge the
+verb's applicability to the target and the Valid-Time window it stated; judge
+member names, values, and assignment legality and prepare the instruction;
+reduce to the effective change set and its restorations, returning silently for
+a write that changes nothing; apply the same-transaction insert exemption;
+resolve write evidence; take the claim and buffer. Source rejection is a
+resolution phase and precedes every member judgement, not a check among them. An
+insert enters by its own door, over no source: it opens a row rather than
+revising one, so it keeps only the Pin and provenance judgements, the window, and
+preparation. Evidence resolution follows the source Entity's Effective
+Concurrency Strategy — current-transaction read participation under Locking, or
+retained version or milestone evidence under Optimistic. A malformed request
 therefore raises `WriteInstructionError` before any possible write-evidence
 failure.
-_Avoid_: best-effort validation, ledger-first refusal, flush validation
+_Avoid_: Wire Write Validation Order, best-effort validation, ledger-first
+refusal, flush validation
+
+**Verb Applicability**:
+Which of the seven keyed verbs a target admits, decided from the As-Of Axes it
+declares and refused at the verb in either interface. `delete` physically
+removes a row and carries no temporal meaning, so a target that milestones its
+rows spells its removal `terminate` and refuses `delete`; `terminate`,
+`terminate_until`, `insert_until`, and `update_until` state a history or a range
+a target declaring no such axis has none of, and are refused there. Each refusal
+names the verb that does apply, spelled as the method the caller typed and for
+the surface the call arrived on — the keyed verb for a keyed call, the `_where`
+verb for a predicate-selected one.
+_Avoid_: verb support matrix, mutation compatibility, unsupported operation
+
+**Keyed Write Source**:
+What one calling interface answers the Keyed Write Validation Order about the
+state a keyed write revises, in three phases run once each: capture, resolve, and
+prepare. The answer set is the concrete Entity, the source Pin, the Source Hint,
+the canonical identity row, the value's provenance, which interface stated the
+write, and the canonical authored and original value of every named member. A
+source judges nothing and exposes no codec, carrier, selected model, unit of
+work, mutation, or insert ledger; the order judges what it answers. It is inert
+when constructed and private to one verb call, so nothing it could refuse runs
+before re-entry is refused.
+_Avoid_: write adapter, ingress strategy, source facade, write context object
+
+**Typed Keyed Write Source**:
+The Keyed Write Source over an Entity Class instance: the concrete Entity from
+the instance's own declared Identity, the Pin and Source Hint its lifecycle
+state carries, the identity row read straight off its key members, and the
+authored and original values of every member its Change Record touched. Its
+capture judges nothing, because a Typed value's shape is fixed by its class and
+`edit` judged every assignment before a verb received the value.
+_Avoid_: instance adapter, typed ingress, entity write facade
+
+**Wire Keyed Write Source**:
+The Keyed Write Source over a frozen value a Parallax Wire read published and an
+authored changes document: the concrete Entity, Pin, and Object Key from the
+value's own private Source Hint, and the authored and published values of every
+member the document names. Its capture judges the document's own shape, which
+needs neither a source nor the model. Its provenance answer is always "this
+store's own read produced it", because a value carrying no Source Hint is
+refused as no keyed source at all before provenance is asked.
+_Avoid_: mapping adapter, wire ingress, document write facade
+
+**Keyed Insert Source**:
+The narrower seam an insert enters by, never a Keyed Write Source with its
+answers left empty: the same three phases over the facts an opening row has —
+the concrete Entity, the source Pin, the provenance, the stating interface, and
+the prepared Create Payload. There is no Source Hint, no identity row named ahead
+of the instruction, and no original to compare against, because an opening row
+revises no state.
+_Avoid_: null source, synthetic keyed source, insert strategy
+
+**Write Representation**:
+Which calling interface stated a write, Typed or Wire — a fact only the calling
+interface knows, answered by a source exactly as provenance is. One rule, one
+error class, and one code serve both; what the representation selects is the
+spelling of the verb a refusal advises instead, since a caller reaches for the
+verb in the interface they called.
+_Avoid_: write mode, ingress flavor, caller kind, surface flag
 
 **InvalidData**:
 The checked Snapshot element carrying a `frozenset` of unique StoredDataIssues

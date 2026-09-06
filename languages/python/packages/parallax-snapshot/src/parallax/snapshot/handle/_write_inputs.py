@@ -2,12 +2,13 @@
 
 Everything a keyed write needs from the moment a verb is called to the moment
 the buffer holds it, including the write evidence it resolves off the source
-value it was handed, and nothing a read needs. The keyed write ingress
-(:mod:`parallax.snapshot.handle._keyed_writes`) composes the whole of it in one
-order; the Wire ingress and the predicate-selected lane each reach the steps
-they share with that order. Owning those steps here rather than in any one
-caller is what puts one judgement of a given question, and one buffer, behind
-every representation:
+value it was handed, and nothing a read needs. There is one composition of it:
+the keyed write ingress (:mod:`parallax.snapshot.handle._keyed_writes`) runs the
+whole of it in one order. What else reaches in reaches for a step rather than a
+sequence — a Keyed Write Source for the readings it answers with, and the
+predicate-selected lane for the steps its own order shares with that one.
+Owning those steps here rather than in any one caller is what puts one judgement
+of a given question, and one buffer, behind every representation:
 
 * the bound-less destructive verb's applicability
   (:func:`reject_temporal_delete`) and build-time window validation
@@ -753,11 +754,10 @@ def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
     buffering, so no DML is ever emitted. An absent pin, a ``LATEST``
     Transaction-Time pin, and a finite Valid-Time pin all pass — the finite
     Valid-Time pin is the writable retroactive correction (`m-bitemp-write`).
-    Shared by every keyed developer verb (`_prepare_keyed_write` / ``delete``)
-    and the conformance engine's scenario ``mutate`` grading, so the two
-    callers can never drift. The predicate-selected ``_where`` family needs no
-    counterpart: a set-based write target must be a bare statement, so it can
-    never carry an as-of pin at all.
+    Shared by both keyed doors of the ingress and by the conformance engine's
+    scenario ``mutate`` grading, so the callers can never drift. The
+    predicate-selected ``_where`` family needs no counterpart: a set-based write
+    target must be a bare statement, so it can never carry an as-of pin at all.
 
     Takes the written Entity's structured ``identity`` rather than a spelling:
     no layer of the keyed-write path holds an Entity spelling, and the message

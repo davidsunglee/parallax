@@ -4246,8 +4246,11 @@ These feature tests do not claim the deferred `benchmark` command or general
   handed a value **no** read of this store produced raise
   `write-value-not-stored`, whose message names `tx.insert(...)`; `insert` /
   `insert_until` handed a value this store's own read produced raise
-  `write-value-already-stored`, whose message names `tx.update(...)`; and both
-  families refuse a value **another** framework-managed source produced with
+  `write-value-already-stored`, whose message names the update verb in the
+  interface the call arrived through — `value.edit(...)` and `tx.update(...)`
+  where a Typed verb was handed it, `tx.wire.update(value, {...})` where a Wire
+  one was, since a caller reaches for the verb in the interface they called; and
+  both families refuse a value **another** framework-managed source produced with
   `write-value-foreign-lifecycle`. The classifier's axis is which managed
   **lifecycle** attached the value's state, never which `Database` issued the
   read: every `Database` over one store shares this one lifecycle, so a value a
@@ -4532,9 +4535,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   evidence; claim and buffer. One private ingress owns that order; each
   representation answers only source facts through a private adapter, and a
   conformance call enters the same ingress once. Reentry is refused once, as the
-  ingress's first executable line. Typed prepares before it resolves evidence, so
-  `terminate` against a target with no as-of axis hears the milestone-verb
-  refusal even when its evidence is also unusable. Verb applicability belongs to
+  ingress's first executable line. Preparation precedes evidence resolution on
+  every lane, so `terminate` against a target with no as-of axis hears the
+  milestone-verb refusal even when its evidence is also unusable. Verb applicability belongs to
   that same stage, so BOTH halves of it are refused at the verb, in either
   representation and whatever the source: a target with no as-of axis refuses a
   milestone verb, and a temporal target refuses `delete`, which physically
@@ -4599,7 +4602,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   depend on the stored state. An `insert` additionally refuses a framework-owned
   member, which the Typed Entity constructor refuses one layer earlier, and
   refuses a published read result as its payload under the same
-  `write-value-already-stored` code the Typed provenance rule uses.
+  `write-value-already-stored` code the Typed provenance rule uses — and answers
+  that value's own view first, exactly as the Typed door does, so a payload a
+  pinned read published hears the read-only refusal instead.
 
   **Wire values are the accepted wire spellings of their declared types.** A
   changes document, an insert payload, and a predicate assignment all cross the
