@@ -943,25 +943,26 @@ def test_a_document_that_contains_itself_is_refused() -> None:
 
 
 def test_an_insert_refuses_a_value_a_read_published() -> None:
+    # The refusal names the verb that DOES accept the value, in the interface the
+    # caller typed: the Typed peer of this message advises `value.edit(...)` plus
+    # `tx.update(...)`, which is not a spelling a Wire caller has.
     port = ScriptedPort(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
-        with pytest.raises(KeyedWriteValueError) as exc_info:
+        with pytest.raises(KeyedWriteValueError) as refusal:
             tx.wire.insert("parallax.compatibility.Account", node)
-        assert exc_info.value.code == "write-value-already-stored"
+        assert refusal.value.code == "write-value-already-stored"
+        assert "tx.wire.update(value, {...})" in refusal.value.message
 
     db_for(ACCOUNT, port).transact(fn)
 
 
-def test_an_insert_refuses_a_pinned_node_for_its_provenance_and_not_its_view() -> None:
-    # A Create Payload is a DOCUMENT, so this door answers no source pin at all:
-    # the one document that also carries a view is one a read of this store
-    # published, and that is what the verb complains about. The Typed door's
-    # payload IS an Entity value, so it runs the read-only refusal first and
-    # answers a pinned instance that way instead — the two doors describe the
-    # same mistake differently, and each says the true thing about the argument
-    # its own signature takes.
+def test_an_insert_refuses_a_pinned_node_for_its_view_before_its_provenance() -> None:
+    # A payload that is a published node has both refusals coming, and both doors
+    # state the pin: the Transaction-Time past is read-only whatever verb was
+    # aimed at it, where the provenance answer names only which verb this
+    # particular value belongs to.
     port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
     pinned: dict[str, object] = {
         **_BALANCE_QUERY,
@@ -969,10 +970,9 @@ def test_an_insert_refuses_a_pinned_node_for_its_provenance_and_not_its_view() -
     }
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(KeyedWriteValueError) as refusal:
+        with pytest.raises(TransactionTimePinReadOnlyError) as refusal:
             tx.wire.insert("parallax.compatibility.Balance", _node(tx, pinned))
-        assert refusal.value.code == "write-value-already-stored"
-        assert "tx.wire.update(value, {...})" in refusal.value.message
+        assert refusal.value.code == "transaction-time-pin-read-only"
 
     db_for(BALANCE, port).transact(fn)
     assert _writes(port) == []
