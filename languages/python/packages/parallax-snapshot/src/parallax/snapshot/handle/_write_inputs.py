@@ -317,6 +317,12 @@ def _addresses_an_object(member: object) -> bool:
     than a list of carriers: which containers a caller can smuggle past
     validation is open-ended, and every one of them addresses no object for the
     same reason.
+
+    Only ``TypeError`` answers ``False``, because only ``TypeError`` is Python's
+    statement that the member defines no hash. A member whose own ``__hash__``
+    raises anything else is the caller's code failing, and that exception
+    belongs to the caller unmasked rather than being read as an answer about
+    naming.
     """
     try:
         hash(member)
