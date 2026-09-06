@@ -11,7 +11,7 @@ validation, and the §5 prior-observation license enforced at the developer verb
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, cast
 
@@ -1038,10 +1038,10 @@ def test_a_reread_after_settling_a_write_against_a_classified_row_still_classifi
 # --------------------------------------------------------------------------- #
 # The finite-Transaction-Time-pin refusal (`m-temporal-read`'s finite-pin      #
 # mutation row; `_write_inputs.validate_source_pin`): a view pinned at a       #
-# FINITE Transaction-Time instant is read-only — every keyed verb refuses it   #
-# at the call, before any buffering, with the neutral                          #
-# `transaction-time-pin-read-only` error. A LATEST Transaction-Time pin and a  #
-# finite Valid-Time pin stay writable (the Valid-Time case is the retroactive  #
+# FINITE Transaction-Time instant is read-only. That every keyed verb refuses  #
+# it, in either representation, is the order suite's; what is asked here is    #
+# which pins are NOT that one. A LATEST Transaction-Time pin and a finite      #
+# Valid-Time pin stay writable (the Valid-Time case is the retroactive         #
 # correction), and an EDITED COPY of a pinned node carries that node's pin, so #
 # it is refused exactly as the node itself is.                                 #
 # --------------------------------------------------------------------------- #
@@ -1054,43 +1054,6 @@ _CORRECTION_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 def _find_pinned_position(tx: Transaction, **as_of: Any) -> Any:
     as_of.setdefault("valid_time", LATEST)
     return tx.find(WherePosition.where(WherePosition.id == 1).as_of(**as_of)).result()
-
-
-# Every keyed mutation verb, driven with a pinned source node — the dict type
-# gives each lambda its contextual parameter typing.
-_PINNED_SOURCE_VERBS: dict[str, Callable[[Transaction, Any], None]] = {
-    "insert": lambda tx, node: tx.insert(node, valid_from=_CORRECTION_FROM),
-    "insert_until": lambda tx, node: tx.insert_until(
-        node, valid_from=_CORRECTION_FROM, until=_CORRECTION_UNTIL
-    ),
-    "update": lambda tx, node: tx.update(node, valid_from=_CORRECTION_FROM),
-    "delete": lambda tx, node: tx.delete(node),
-    "terminate": lambda tx, node: tx.terminate(node, valid_from=_CORRECTION_FROM),
-    "update_until": lambda tx, node: tx.update_until(
-        node, valid_from=_CORRECTION_FROM, until=_CORRECTION_UNTIL
-    ),
-    "terminate_until": lambda tx, node: tx.terminate_until(
-        node, valid_from=_CORRECTION_FROM, until=_CORRECTION_UNTIL
-    ),
-}
-
-
-@pytest.mark.parametrize("verb_name", sorted(_PINNED_SOURCE_VERBS))
-def test_every_keyed_verb_refuses_a_finite_transaction_time_pinned_source(
-    verb_name: str,
-) -> None:
-    verb = _PINNED_SOURCE_VERBS[verb_name]
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
-
-    def fn(tx: Transaction) -> None:
-        node = _find_pinned_position(tx, tx_time=_TX_PIN)
-        verb(tx, node)
-
-    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
-        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
-    assert not any(isinstance(op, WriteCall) for op in port.calls)  # refused before any buffering
 
 
 def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:

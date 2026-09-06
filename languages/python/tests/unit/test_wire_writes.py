@@ -1,13 +1,18 @@
 """The Wire write interface (`python.md` §5, `m-unit-work`).
 
 ``tx.wire``'s keyed and predicate verb families, driven through the real handles
-over a recording port. Three questions are asked here and nowhere else: that a
-Wire verb lowers through the SAME pipeline its Typed peer does, that its static
-judgements all precede any evidence question, and that a Wire write and a Typed
-write of one object meet in one claim algebra rather than in two.
+over a recording port. Two questions are asked here and nowhere else: what SQL
+each Wire verb lowers to, spelled out statement by statement, and how a Wire
+write and a Typed write of one object meet in one claim algebra rather than in
+two — the ledger they share, the intents they merge, and the source each licenses
+the other's write with.
 
-What a Wire READ publishes is `test_wire_reads.py`'s subject; the claim algebra
-itself is `test_write_claims.py`'s. What lives here is the ingress.
+What the two representations answer in COMMON is not asked here. One order stands
+behind both, so refusal precedence is `test_keyed_write_order.py`'s subject and
+the facts a Wire source answers into that order are
+`test_wire_keyed_source.py`'s. What a Wire READ publishes is
+`test_wire_reads.py`'s subject; the claim algebra itself is
+`test_write_claims.py`'s.
 """
 
 from __future__ import annotations
@@ -190,81 +195,9 @@ def _standalone(db: Database, query: dict[str, object]) -> WireEntity:
 
 
 # --------------------------------------------------------------------------- #
-# Canonical lowering: every verb reaches the shared pipeline, and a Wire write #
-# emits exactly what its Typed peer emits for the same intent.                #
+# Canonical lowering: what each verb emits, and what an authored occurrence    #
+# states about the row it replaces whole.                                     #
 # --------------------------------------------------------------------------- #
-def test_a_wire_update_emits_what_the_typed_update_emits() -> None:
-    wire_port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
-
-    def wire(tx: Transaction) -> None:
-        tx.wire.update(_node(tx, _ACCOUNT_QUERY), {"balance": "125.00"})
-
-    db_for(ACCOUNT, wire_port).transact(wire)
-
-    typed_port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
-
-    def typed(tx: Transaction) -> None:
-        node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(node.edit(balance=Decimal("125.00")))
-
-    db_for(ACCOUNT, typed_port).transact(typed)
-
-    assert _writes(wire_port) == _writes(typed_port)
-
-
-def test_a_wire_occurrence_assignment_emits_what_the_typed_one_emits() -> None:
-    # The authored occurrence restates `city` and omits the stored `geo`, so the
-    # write it emits REMOVES `geo` — an assignment replaces its subtree whole.
-    # The two interfaces reach that verdict through different machinery, the
-    # Wire lane against the source it read and the Typed lane against its Change
-    # Record, and one authored value must still get one answer from both.
-    wire_port = ScriptedPort(Transact(Read(rows=[dict(_TRAVELER_ROW)]), Write()))
-
-    def wire(tx: Transaction) -> None:
-        tx.wire.update(_node(tx, _TRAVELER_QUERY), {"address": {"city": "Oslo"}})
-
-    db_for(mm.DOCUMENT_LAYOUT_MODEL, wire_port).transact(wire)
-
-    typed_port = ScriptedPort(Transact(Read(rows=[dict(_TRAVELER_ROW)]), Write()))
-
-    def typed(tx: Transaction) -> None:
-        node = tx.find(mm.Traveler.where(mm.Traveler.id == 1)).result()
-        tx.update(node.edit(address=mm.TravelerAddress(city="Oslo")))
-
-    db_for(mm.DOCUMENT_LAYOUT_MODEL, typed_port).transact(typed)
-
-    assert len(_writes(wire_port)) == 1
-    assert _writes(wire_port) == _writes(typed_port)
-
-
-def test_authoring_a_null_over_a_member_the_document_omitted_emits_one_answer() -> None:
-    # The stored occurrence holds `city` and no `geo`, and both authored values
-    # spell `geo` as an explicit null — a change the write must make, because an
-    # omitted key and a stored null are two documents. It is one answer only
-    # because the two lanes weigh it against ONE observed value: the Wire node
-    # publishes the presence the document carried, exactly as the hydrated Typed
-    # value keeps it, so neither lane can read the absence as a null already
-    # there and eliminate the write.
-    stored: Row = {"id": 1, "payload": PresentDocument({"address": {"city": "Oslo"}, "tags": []})}
-    wire_port = ScriptedPort(Transact(Read(rows=[dict(stored)]), Write()))
-
-    def wire(tx: Transaction) -> None:
-        tx.wire.update(_node(tx, _TRAVELER_QUERY), {"address": {"city": "Oslo", "geo": None}})
-
-    db_for(mm.DOCUMENT_LAYOUT_MODEL, wire_port).transact(wire)
-
-    typed_port = ScriptedPort(Transact(Read(rows=[dict(stored)]), Write()))
-
-    def typed(tx: Transaction) -> None:
-        node = tx.find(mm.Traveler.where(mm.Traveler.id == 1)).result()
-        tx.update(node.edit(address=mm.TravelerAddress(city="Oslo", geo=None)))
-
-    db_for(mm.DOCUMENT_LAYOUT_MODEL, typed_port).transact(typed)
-
-    assert len(_writes(wire_port)) == 1
-    assert _writes(wire_port) == _writes(typed_port)
-
-
 def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> None:
     # The stored document omits `phones`, which a `many` has no absent state for:
     # the read publishes `[]` there and storing this authored occurrence would too.
@@ -380,35 +313,6 @@ def _bound_documents(port: ScriptedPort) -> list[object]:
 
 def _address(node: WireEntity) -> Mapping[str, Any]:
     return cast("Mapping[str, Any]", dict(node)["address"])
-
-
-def test_a_wire_delete_emits_what_the_typed_delete_emits() -> None:
-    wire_port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
-    db_for(ACCOUNT, wire_port).transact(lambda tx: tx.wire.delete(_node(tx, _ACCOUNT_QUERY)))
-
-    typed_port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
-    db_for(ACCOUNT, typed_port).transact(
-        lambda tx: tx.delete(tx.find(mm.Account.where(mm.Account.id == 1)).result())
-    )
-
-    assert _writes(wire_port) == _writes(typed_port)
-
-
-def test_a_wire_insert_emits_what_the_typed_insert_emits() -> None:
-    wire_port = ScriptedPort(Transact(Write()))
-    db_for(ACCOUNT, wire_port).transact(
-        lambda tx: tx.wire.insert(
-            "parallax.compatibility.Account",
-            {"id": 7, "owner": "Newton", "balance": "5.00"},
-        )
-    )
-
-    typed_port = ScriptedPort(Transact(Write()))
-    db_for(ACCOUNT, typed_port).transact(
-        lambda tx: tx.insert(mm.Account(id=7, owner="Newton", balance=Decimal("5.00")))
-    )
-
-    assert _writes(wire_port) == _writes(typed_port)
 
 
 def test_a_wire_terminate_closes_the_observed_milestone() -> None:
@@ -603,38 +507,6 @@ def test_a_temporal_axis_member_is_not_assignable() -> None:
     db_for(BALANCE, port).transact(fn)
 
 
-def test_an_illegal_assignment_beats_unusable_evidence() -> None:
-    # A standalone source of an effective-Locking target has no usable evidence
-    # AND the change names a member no write may assign: the static verdict is
-    # the one a caller sees, because nothing about concurrency has been asked yet.
-    port = ScriptedPort(Read(rows=[dict(_PERSON_ROW)]), Transact())
-    db = db_for(PERSON, port)
-    standalone = _standalone(db, _PERSON_QUERY)
-
-    def fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="primary-key"):
-            tx.wire.update(standalone, {"id": 2})
-
-    db.transact(fn)
-    assert _writes(port) == []
-
-
-def test_a_reversed_window_is_refused_before_any_member_is_measured() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()])))
-
-    def fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="valid_from < until"):
-            tx.wire.update_until(
-                _node(tx, _POSITION_QUERY),
-                {"value": "300.00"},
-                valid_from=_UNTIL,
-                until=_VALID_FROM,
-            )
-
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
-    assert _writes(port) == []
-
-
 def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
     # Half a window states nothing, and reading the absent bound as "unbounded"
     # would buffer a rectangle the caller never asked for. Which bound is missing
@@ -792,20 +664,6 @@ def test_every_update_verb_requires_the_change_document_its_signature_states() -
             )
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
-    assert _writes(port) == []
-
-
-def test_a_malformed_change_set_is_judged_before_the_source_is_required() -> None:
-    # Both arguments are wrong, and the one answered is the one no other input
-    # is needed to judge: whether a document was stated at all needs neither the
-    # source's provenance nor the Entity that source names.
-    port = ScriptedPort(Transact())
-
-    def fn(tx: Transaction) -> None:
-        with pytest.raises(instructions.WriteInstructionError, match="document of names"):
-            tx.wire.update(cast("WireEntity", {}), cast("dict[str, object]", []))
-
-    db_for(ACCOUNT, port).transact(fn)
     assert _writes(port) == []
 
 

@@ -1,23 +1,24 @@
-"""Typed and Wire drivers for the keyed-write order matrix.
+"""Typed and Wire drivers for the keyed-write order suite.
 
 One :class:`Scenario` states what a keyed write IS — the target Entity, the verb,
 the Concurrency Preference, how the source value was obtained, what the caller
 authored, and which window it stated — without stating which representation
-issues it. Each driver then obtains that source in its own representation, calls
-the one verb, and reports what the call produced: the whole port chronology the
-transaction ran, and — when it refused — the refusal's class, code, message, and
-the point in the transaction it was raised at. The two reports are directly
-comparable, which is what lets one row assert that both representations answer
-one scenario the same way rather than asserting a Typed shape and a Wire shape
-separately.
+issues it. Each driver then obtains that source in its own representation and
+calls the one verb, so a row states the scenario once and the expectation once,
+and asserts it of each representation in turn.
 
-The report is deliberately lossless where a lossy one could let two different
-behaviors compare equal. It carries every read, boundary, and statement rather
-than the DML alone, so a lane that reads differently or commits where the other
-rolls back cannot pass; it carries the phase, so a refusal at the verb and one at
-the flush are never the same answer; and a failure of the harness itself — an
-unscripted call, or a driver assertion — propagates as the assertion it is rather
-than being serialized as a product refusal two lanes could agree on.
+Two readings of what a call produced. :func:`answer` is the one a fixed
+expectation is stated against: the refusal's class, code, verb-phase message, and
+where it landed, plus how much DML the transaction emitted. :func:`outcome` is
+the whole port chronology behind it, for the rows whose claim is the ORDER of
+reads, boundaries, and statements rather than the verdict.
+
+Both are deliberately lossless where a lossy reading could let two different
+behaviors compare equal. The phase rides beside the class, so a refusal at the
+verb and one at the flush are never the same answer; and a failure of the harness
+itself — an unscripted call, or a driver assertion — propagates as the assertion
+it is rather than being serialized as a product refusal an expectation could be
+written around.
 
 A scenario is deliberately not a free-form callback. Every axis it carries is a
 value the matrix can name in a test id, so a disagreeing row reads as the
@@ -50,7 +51,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
-from _support.db_port import PortCall, Read, ReadCall, ScriptedPort, Transact, Write
+from _support.db_port import PortCall, Read, ReadCall, ScriptedPort, Transact, Write, WriteCall
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
 from parallax.core import LATEST, DomainModel
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
@@ -70,13 +71,18 @@ __all__ = [
     "POSITION_TARGET",
     "REPRESENTATIONS",
     "TARGETS",
+    "TX_PIN",
     "UNTIL",
     "VALID_FROM",
     "VERBS",
+    "Answer",
     "Change",
     "Completed",
+    "Concurrency",
+    "Gate",
     "Outcome",
     "Phase",
+    "Profile",
     "Refused",
     "Representation",
     "Scenario",
@@ -84,6 +90,7 @@ __all__ = [
     "Target",
     "Verb",
     "Window",
+    "answer",
     "outcome",
     "reachable",
 ]
@@ -113,6 +120,17 @@ type Window = Literal["stated", "reversed"]
 type Phase = Literal["source", "verb", "flush"]
 """Where a refusal was raised: obtaining the source, at the verb, or at the flush."""
 
+type Profile = Literal["non_temporal", "transaction_time", "bitemporal"]
+"""Which As-Of Axes a target declares — the fact every verb's applicability and
+window admissibility follows from, and the axis the fixed expectations are keyed
+by rather than by fixture name."""
+
+type Gate = Literal["version", "axis", "none"]
+"""What supplies a target's Optimistic Lock Facet key: a declared version
+column, a Transaction-Time axis, or nothing at all. A target with none has no
+gate for the Optimistic strategy to weigh, so its Effective Concurrency Strategy
+is Locking under either preference."""
+
 VERBS: Final[tuple[Verb, ...]] = (
     "insert",
     "insert_until",
@@ -130,7 +148,8 @@ _UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "update_until"})
 VALID_FROM: Final = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 UNTIL: Final = dt.datetime(2024, 11, 1, tzinfo=dt.UTC)
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-_TX_PIN: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+TX_PIN: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+"""The finite Transaction-Time instant a ``pinned`` source stands at."""
 _TX_PIN_WIRE: Final = "2024-03-01T00:00:00.000000Z"
 
 
@@ -169,6 +188,35 @@ type Outcome = Refused | Completed
 
 
 @dataclass(frozen=True, slots=True)
+class Answer:
+    """What one keyed write answered, at the grain the order fixes.
+
+    A refusal states its class, its code, and the point it landed at; a call that
+    completed states none of the three. ``statements`` is how much DML the
+    transaction emitted either way, which is what separates a write from the no-op
+    that buffers nothing, and a same-transaction pair that coalesces into one
+    statement from two writes that stay two.
+
+    ``message`` is stated for a refusal the VERB raised and is ``None`` otherwise.
+    The whole `m-core` window and instruction vocabulary carries no code, so the
+    message is the only thing distinguishing two of the order's own verdicts and
+    it belongs here; a refusal the FLUSH raised is the planner's verdict on a
+    write this order already admitted, and its wording belongs to the lowering
+    suite that owns it.
+
+    Deliberately coarser than :class:`Completed`'s whole chronology: the SQL each
+    verb lowers to belongs to the per-representation lowering goldens, and what
+    this suite fixes is which answer the order gives, not how it is spelled.
+    """
+
+    error: str | None
+    code: str | None
+    message: str | None
+    phase: Phase | None
+    statements: int
+
+
+@dataclass(frozen=True, slots=True)
 class Target:
     """One Entity fixture, addressable from both representations.
 
@@ -181,9 +229,15 @@ class Target:
     ``valid_from`` is the Valid-Time instant this target's PLAIN verbs state — an
     instant for a Bitemporal target, absent for every other, which is exactly
     what :func:`~parallax.snapshot.handle._write_inputs.validate_window` admits.
+
+    ``profile`` and ``gate`` are the two model facts a fixed expectation is keyed
+    by: which verbs the target admits and which window they may state, and what
+    the Optimistic strategy has to gate on.
     """
 
     name: str
+    profile: Profile
+    gate: Gate
     model: DomainModel
     entity: str
     row: Row
@@ -305,6 +359,8 @@ _POSITION = "parallax.compatibility.WherePosition"
 # Non-Temporal with an explicit version: the optimistic gate is the version column.
 ACCOUNT_TARGET: Final = Target(
     name="account",
+    profile="non_temporal",
+    gate="version",
     model=ACCOUNT,
     entity=_ACCOUNT,
     row={"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4},
@@ -326,6 +382,8 @@ ACCOUNT_TARGET: Final = Target(
 # back to Locking and a participating read's shared lock is the whole evidence.
 PERSON_TARGET: Final = Target(
     name="person",
+    profile="non_temporal",
+    gate="none",
     model=PERSON,
     entity=_PERSON,
     row={"id": 1, "name": "Ada"},
@@ -347,6 +405,8 @@ PERSON_TARGET: Final = Target(
 # from a version column, and no verb here states a Valid-Time bound.
 BALANCE_TARGET: Final = Target(
     name="balance",
+    profile="transaction_time",
+    gate="axis",
     model=BALANCE,
     entity=_BALANCE,
     row=balance_row(in_z=_TX_START),
@@ -376,14 +436,20 @@ BALANCE_TARGET: Final = Target(
 # lane's frozen-decoded equality are compared over anything but one scalar.
 CONTACT_TARGET: Final = Target(
     name="contact",
+    profile="non_temporal",
+    gate="none",
     model=CONTACT,
     entity=_CONTACT,
     row={"id": 1, "name": "Ada", "address": PresentDocument(dict(_STORED_DOCUMENT))},
     typed_query=_contact_query(),
     wire_query=_wire_query(_CONTACT, 1),
-    fresh=lambda: mm.Contact(id=4, name="Newton", address=_OTHER_ADDRESS),
-    payload={"id": 4, "name": "Newton", "address": dict(_OTHER_DOCUMENT)},
-    inserted_row={"id": 4, "name": "Newton", "address": PresentDocument(dict(_OTHER_DOCUMENT))},
+    # The row a fresh insert opens holds the value the STORED row holds, not the
+    # one an ordinary change authors: a target whose opened row already held the
+    # authored value would make every ordinary write over an insert source a
+    # no-op, which is what the net-zero rows beside it are for.
+    fresh=lambda: mm.Contact(id=4, name="Newton", address=_STORED_ADDRESS),
+    payload={"id": 4, "name": "Newton", "address": dict(_STORED_DOCUMENT)},
+    inserted_row={"id": 4, "name": "Newton", "address": PresentDocument(dict(_STORED_DOCUMENT))},
     inserted_typed_query=_contact_query(4),
     inserted_wire_query=_wire_query(_CONTACT, 4),
     change_typed={"address": _OTHER_ADDRESS},
@@ -397,6 +463,8 @@ CONTACT_TARGET: Final = Target(
 # member explicitly and states null, which an untouched copy never names at all.
 BLANK_CONTACT_TARGET: Final = Target(
     name="blank-contact",
+    profile="non_temporal",
+    gate="none",
     model=CONTACT,
     entity=_CONTACT,
     row={"id": 2, "name": "Ada", "address": SQL_NULL},
@@ -418,6 +486,8 @@ BLANK_CONTACT_TARGET: Final = Target(
 # source can carry a finite Transaction-Time pin.
 POSITION_TARGET: Final = Target(
     name="position",
+    profile="bitemporal",
+    gate="axis",
     model=WHERE_POSITION_META,
     entity=_POSITION,
     row=_position_row(1, "A", Decimal("100.00"), _TX_START),
@@ -433,7 +503,7 @@ POSITION_TARGET: Final = Target(
     stored_typed={"value": Decimal("100.00")},
     stored_wire={"value": "100.00"},
     valid_from=VALID_FROM,
-    pinned_typed_query=_position_query(tx_time=_TX_PIN),
+    pinned_typed_query=_position_query(tx_time=TX_PIN),
     pinned_wire_query=_wire_query(
         _POSITION,
         1,
@@ -504,6 +574,22 @@ def reachable(scenario: Scenario, representation: Representation) -> bool:
     )
 
 
+def answer(scenario: Scenario, representation: Representation) -> Answer:
+    """Run ``scenario`` through ``representation`` and report what it answered.
+
+    The reading a fixed expectation is stated against: :func:`outcome`'s report
+    with the SQL dropped and the DML counted, so a row states the answer the
+    Keyed Write Validation Order gives rather than the statements one
+    representation happens to lower it to.
+    """
+    result = outcome(scenario, representation)
+    statements = sum(1 for call in result.calls if isinstance(call, WriteCall))
+    if isinstance(result, Refused):
+        stated = result.message if result.phase == "verb" else None
+        return Answer(result.error, result.code, stated, result.phase, statements)
+    return Answer(None, None, None, None, statements)
+
+
 def outcome(scenario: Scenario, representation: Representation) -> Outcome:
     """Run ``scenario`` through ``representation`` and report what it produced.
 
@@ -540,8 +626,15 @@ def outcome(scenario: Scenario, representation: Representation) -> Outcome:
 
 
 def _reads_the_stored_row(scenario: Scenario) -> bool:
-    """Whether this scenario's source comes from a read of the target's own row."""
-    return scenario.verb not in _INSERT_VERBS and scenario.opened_by is None
+    """Whether this scenario's source comes from a read of the target's own row.
+
+    An insert ordinarily authors a fresh payload and reads nothing. The one
+    exception is the pinned source, which every verb including the two insert
+    ones is stated over: what the insert door is handed there is the published
+    node itself, which is exactly the argument the pin refusal is about.
+    """
+    reads = scenario.verb not in _INSERT_VERBS or scenario.source == "pinned"
+    return reads and scenario.opened_by is None
 
 
 def _assert_the_scripted_read_was_reached(port: ScriptedPort, scenario: Scenario) -> None:
@@ -574,6 +667,8 @@ def _port(scenario: Scenario) -> ScriptedPort:
     if scenario.source == "reread":
         reread = Read(rows=[dict(scenario.target.inserted_row)])
         return ScriptedPort(Transact(Write(), reread, writes))
+    if scenario.source == "pinned":
+        return ScriptedPort(Transact(read, writes))
     if scenario.verb in _INSERT_VERBS or scenario.opened_by is not None:
         return ScriptedPort(Transact(writes))
     if scenario.source == "standalone":
@@ -602,7 +697,7 @@ def _body(
 
 def _typed(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
     target = scenario.target
-    if scenario.verb in _INSERT_VERBS:
+    if scenario.verb in _INSERT_VERBS and scenario.source != "pinned":
         _call_typed(tx, scenario, target.fresh())
         return
     source = cast("EntityBase", _typed_source(tx, scenario, prior))
@@ -665,7 +760,7 @@ def _call_typed(tx: Transaction, scenario: Scenario, value: EntityBase) -> None:
 
 def _wire(tx: Transaction, scenario: Scenario, prior: object | None) -> None:
     target = scenario.target
-    if scenario.verb in _INSERT_VERBS:
+    if scenario.verb in _INSERT_VERBS and scenario.source != "pinned":
         _call_wire(tx, scenario, target.payload, {})
         return
     source = _wire_source(tx, scenario, prior)
@@ -706,15 +801,13 @@ def _call_wire(
     valid_from, until = _bounded_window(scenario)
     observed = cast("WireEntity", source)
     authored = dict(changes)
+    payload = _wire_payload(scenario, source)
     match scenario.verb:
         case "insert":
-            tx.wire.insert(scenario.target.entity, dict(scenario.target.payload), valid_from=plain)
+            tx.wire.insert(scenario.target.entity, payload, valid_from=plain)
         case "insert_until":
             tx.wire.insert_until(
-                scenario.target.entity,
-                dict(scenario.target.payload),
-                valid_from=valid_from,
-                until=until,
+                scenario.target.entity, payload, valid_from=valid_from, until=until
             )
         case "update":
             tx.wire.update(observed, authored, valid_from=plain)
@@ -730,6 +823,19 @@ def _call_wire(
             # Every `Verb` is spelled above; a verb added to one lane and not the
             # other would otherwise write nothing and read as an agreed no-op.
             raise AssertionError(f"no {scenario.verb} in this lane")
+
+
+def _wire_payload(scenario: Scenario, source: object) -> Mapping[str, object]:
+    """The Create Payload an insert states.
+
+    A fresh document copied off the fixture, or — where the scenario states a
+    pinned source — the published node itself, which is the argument the insert
+    door's own pin refusal is about and which a ``dict(...)`` copy would strip the
+    view off.
+    """
+    if scenario.source == "pinned":
+        return cast("Mapping[str, object]", source)
+    return dict(scenario.target.payload)
 
 
 def _bounded_window(scenario: Scenario) -> tuple[dt.datetime, dt.datetime]:
