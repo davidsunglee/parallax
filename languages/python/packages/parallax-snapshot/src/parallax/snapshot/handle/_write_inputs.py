@@ -140,7 +140,7 @@ __all__ = [
 
 UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 """The keyed mutations that write against an existing row from a value's own
-effective changes — the family a value no managed read produced is refused for.
+effective changes — the family a value no managed source published is refused for.
 :data:`~parallax.core.unit_work.INSERT_MUTATIONS` is the complementary family;
 every other keyed mutation derives an identity row alone."""
 
@@ -152,9 +152,9 @@ KEYED_WRITE_VALUE_CODES: Final[frozenset[str]] = frozenset(
     }
 )
 """The complete keyed-write value refusal vocabulary (`m-unit-work` "Write value
-provenance"). The three name the three answers provenance has for a verb — no
-managed read produced this value, this verb's own source produced it, another
-managed source did — so a refused value carries exactly one of them."""
+provenance"). The three answer to the three :data:`Provenance` answers — no
+managed source published this value, this verb's own source did, another managed
+source did — so a refused value carries exactly one of them."""
 
 
 class KeyedWriteValueError(ValueError):
@@ -167,7 +167,7 @@ class KeyedWriteValueError(ValueError):
 
     ``code`` is the neutral `m-unit-work` refusal and ``identity`` the Entity
     Identity the write addressed. The value itself is never retained: what the
-    refusal is about is which source produced it, and the message names the verb
+    refusal is about is which source published it, and the message names the verb
     that does accept it.
     """
 
@@ -777,16 +777,20 @@ def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
 
 
 type Provenance = Literal["none", "foreign", "this"]
-"""Which framework-managed source produced a written value: no managed read
-produced it at all, another managed source did, or this store's own did — by a
-read, or, on the Wire door, by the insert that opened the row.
+"""Which framework-managed source PUBLISHED a written value: none did, another
+managed source did, or this store's own did — by a read, or, on the Wire door,
+by the insert that opened the row.
 
-The three partition the values a keyed verb can be handed, which is what makes
-:func:`validate_provenance` total over them and lets each refusal name the verb
-that does accept the value. Deriving the answer is the REPRESENTATION's job — a
-Typed value carries a lifecycle to read it from and a Wire source carries a
-Source Hint — so this is a fact a caller states rather than a value this module
-inspects."""
+Publication rather than read origin is the axis, which is what lets the three
+answers partition the values a keyed verb can be handed, makes
+:func:`validate_provenance` total over them, and lets each refusal name the verb
+that does accept the value. `m-unit-work` "Write value provenance" states its
+answers over the values a READ produced, so this answer alone never settles
+whether a row exists for a write to address; the buffered-insert ledger does,
+and :func:`validate_provenance` takes it as its own argument. Deriving the answer
+is the REPRESENTATION's job — a Typed value carries a lifecycle to read it from
+and a Wire source carries a Source Hint — so this is a fact a caller states
+rather than a value this module inspects."""
 
 
 type WriteRepresentation = Literal["typed", "wire"]
@@ -807,7 +811,7 @@ _ALREADY_STORED_ADVICE: Final[Mapping[WriteRepresentation, str]] = {
 """How each interface spells the verb that accepts a value already stored.
 
 Only this refusal is reachable from both representations. The other two — a
-value no read produced, and one another lifecycle produced — arise on the
+value no managed source published, and one another lifecycle published — arise on the
 source-backed door alone, and a Wire keyed source answers neither: a hintless
 argument is refused as no source at all before provenance is asked, so every
 source that reaches the question is a node this store published."""
@@ -824,15 +828,15 @@ def validate_provenance(
     """Refuse a value whose PROVENANCE ``mutation``'s verb does not accept
     (`m-unit-work` "Write value provenance"), before any row is derived from it.
 
-    Provenance is which framework-managed source, if any, produced the value from
-    a read — never whether an author has since changed it, which decides what a
-    write CONTAINS rather than which verb accepts it. The three answers partition
+    Provenance is which framework-managed source, if any, published the value
+    (:data:`Provenance`) — never whether an author has since changed it, which
+    decides what a write CONTAINS rather than which verb accepts it. The three answers partition
     the values a verb can be handed, so a refused value earns exactly one code and
     the message names the verb that does accept it, spelled in the
     ``representation`` the call arrived through (:data:`WriteRepresentation`).
 
     On the UPDATE side this overlaps :func:`resolve_write_evidence`: a value no
-    managed read produced, and a value another source produced, both carry no
+    managed source published, and a value another source published, both carry no
     hint and so no usable evidence either. Provenance is asked first because it
     is the more specific diagnosis — it names the verb that DOES accept the
     value, where the evidence refusal could only report that there was none.

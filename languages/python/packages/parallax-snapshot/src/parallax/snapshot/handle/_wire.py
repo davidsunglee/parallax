@@ -116,10 +116,13 @@ class WireTransactionView(WireDatabaseView):
 
     Every keyed verb but the insert family takes a frozen Entity mapping this
     store published — a Wire read's result, or the node an insert answered for
-    the row it opened — and infers the concrete Entity and the exact observed
-    state from it privately. There is no explicit-Entity ordinary-mapping
-    overload: a mapping a caller built carries no evidence, and a verb that
-    accepted one would be issuing a write nothing proves anything about.
+    the row it opened — and infers the concrete Entity and the object the write
+    addresses from it privately, together with the exact state a read published
+    node observed. The node an insert answered observed nothing, and the write
+    off it resolves no evidence at all: the buffered insert licenses it. There is
+    no explicit-Entity ordinary-mapping overload: a mapping a caller built
+    carries neither, and a verb that accepted one would be issuing a write
+    nothing proves anything about.
     """
 
     __slots__ = ("_writes",)
