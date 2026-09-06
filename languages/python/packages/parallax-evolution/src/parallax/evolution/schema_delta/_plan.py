@@ -389,6 +389,7 @@ class _Causes:
     later_rows: Mapping[EntityIdentity, Table]
     earlier_rows: Mapping[EntityIdentity, Table]
     later_ancestry: Mapping[EntityIdentity, frozenset[EntityIdentity]]
+    earlier_ancestry: Mapping[EntityIdentity, frozenset[EntityIdentity]]
     later_materialized: Mapping[EntityIdentity, frozenset[Table]]
     earlier_held: Mapping[Table, frozenset[EntityIdentity]]
     declared_in: Mapping[Table, frozenset[EntityIdentity]]
@@ -402,6 +403,7 @@ class _Causes:
             later_rows=later.rows(),
             earlier_rows={} if earlier is None else earlier.rows(),
             later_ancestry=later.ancestry(),
+            earlier_ancestry={} if earlier is None else earlier.ancestry(),
             later_materialized=later.materialized(),
             earlier_held={} if earlier is None else earlier.holds(),
             declared_in={
@@ -417,15 +419,13 @@ class _Causes:
         Columns, so an abstract table-per-hierarchy root is a cause of its
         family's shared Table and an abstract table-per-concrete-subtype root is
         a cause of every concrete Table repeating its members. A created Table is
-        all of its Columns at once and answers to the same rule each of them
-        does, so an inheritance alteration that carried a declaring position here
-        is a cause of the Table exactly as it is of a Column added to a surviving
-        one.
+        all of its Columns at once, so an inheritance alteration that placed this
+        Table under a declaring position is a cause of it too.
         """
         return tuple(
             operation
             for operation in self.operations
-            if self._adds_to(operation, table) or self._carries_any_declaration(operation, table)
+            if self._adds_to(operation, table) or self._carries_any_position(operation, table)
         )
 
     def _adds_to(self, operation: EvolutionOperation, table: Table) -> bool:
@@ -435,11 +435,34 @@ class _Causes:
             or operation.entity in self.declared_in.get(table, frozenset())
         )
 
-    def _carries_any_declaration(self, operation: EvolutionOperation, table: Table) -> bool:
-        """Whether ``operation`` is why ``table`` materializes any declaring owner's position."""
+    def _carries_any_position(self, operation: EvolutionOperation, table: Table) -> bool:
+        """Whether ``operation`` is why a Table created here stands under a declaring owner."""
         return any(
-            self._carries_declarations(operation, table, owner)
+            self._carries_position(operation, table, owner)
             for owner in self.declared_in.get(table, frozenset())
+        )
+
+    def _carries_position(
+        self, operation: EvolutionOperation, table: Table, owner: EntityIdentity
+    ) -> bool:
+        """Whether ``operation`` is why a Table created here materializes ``owner``.
+
+        A Table that did not exist before materialized nothing before, so the
+        surviving Table's question — did this Table already hold that position? —
+        has no answer here, and asking it anyway names every reparent beneath
+        every owner the new Table happens to hold. What a reparent can have
+        changed is where the Entity it moved stands, so the baseline is that
+        Entity's own earlier ancestry: the move carried ``owner`` here only when
+        the Entity did not already stand under ``owner`` before moving. A move
+        within ``owner``'s subtree leaves the created Table under exactly the
+        declaring positions it would have held anyway.
+        """
+        return (
+            isinstance(operation, EntityAltered)
+            and _reparents(operation)
+            and table in self.later_materialized.get(operation.entity, frozenset())
+            and owner in self.later_ancestry.get(operation.entity, frozenset())
+            and owner not in self.earlier_ancestry.get(operation.entity, frozenset())
         )
 
     def column(self, table: Table, slot: ColumnSlot) -> tuple[EvolutionOperation, ...]:
@@ -496,7 +519,7 @@ class _Causes:
     def _carries_declarations(
         self, operation: EvolutionOperation, table: Table, owner: EntityIdentity
     ) -> bool:
-        """Whether ``operation`` is why ``table`` materializes ``owner``'s declarations.
+        """Whether ``operation`` is why a surviving ``table`` materializes ``owner``.
 
         The reparented Entity carries ``owner``'s position into ``table`` when it
         stands under ``owner`` after the move and ``table`` materializes its
@@ -505,6 +528,10 @@ class _Causes:
         ancestry the Entity already stood under, or the Entity's own position.
         Such a Table was going to hold this Column however the reparent went, so
         the question is asked of the Table and never of the Entity that moved.
+
+        The decisive clause reads what ``table`` held earlier, so it answers only
+        for a Table both endpoints hold; a Table created here is asked
+        `_carries_position` instead.
         """
         return (
             isinstance(operation, EntityAltered)
