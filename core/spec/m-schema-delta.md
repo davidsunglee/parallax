@@ -118,13 +118,17 @@ position composing no concrete subtype — was going to materialize the new Colu
 however the reparent went, so the reparent moved no fact that addition is made of.
 Which ancestry a reparent carried is read from the edge **it** changed and never
 from the two endpoints' ancestries, because one evolution moves as many positions
-as it likes: an Entity whose own ancestor moved stands under a declaring owner it
-did not stand under before, having carried nothing anywhere itself, and reading
-the endpoints would name both alterations for the one move. Each alteration
-answers for the position it left, measured against the **later** model — had the
-Entity stayed there, it would stand under whatever stands over that position now
-— so an alteration that left a position already under the declaring owner carried
-nothing, and the alteration that moved that position is named alone.
+as it likes and an ancestry carries every move beneath it: reading the endpoints
+names an Entity whose own ancestor moved for a position it carried nowhere
+itself, and clears an Entity that did carry one, because the position it left has
+since moved out from under the declaring owner. Each alteration answers instead
+for what its Entity would stand under had that alteration not happened — its own
+position, which no move takes from it, together with whatever stands over the
+position it left, measured against the **later** model, since staying there means
+being carried wherever that position went. So a reparent is never why a Table
+materializes the moved Entity's own declarations, an alteration that left a
+position still standing under the declaring owner carried nothing, and the
+alteration that moved that position is named alone.
 And an operation that moved only facts the database does not hold — a write flag,
 a declaration order, an optimistic-locking marker — is a cause of nothing, even
 where it alters the very declaration a widened Column materializes: a stored
@@ -144,11 +148,13 @@ Table that did not exist before materialized nothing before and so cannot be
 asked what it already held: what the alteration can have changed is where the
 Entity it moved stands. An inheritance alteration is therefore a cause of a
 created Table exactly when the Table materializes the moved Entity's declarations
-and the move placed that Entity under a declaring owner it did **not** already
-stand under and would **not** stand under had it stayed where it was. A move
-within that owner's subtree — between two abstract positions
-sharing it — leaves the created Table under every declaring position it would
-have held anyway, so the addition that brought the Table is its only cause.
+and the move placed that Entity under a declaring owner it would **not** stand
+under had it stayed where it was. A move within that owner's subtree — between
+two abstract positions that BOTH still hang under it in the later model — leaves
+the created Table under every declaring position it would have held anyway, so
+the addition that brought the Table is its only cause. Where the moved Entity
+stood earlier decides nothing here either: an Entity already beneath the owner
+still carried it, if the position it vacated is the one that left.
 
 A schema-neutral unilateral operation lowers to no physical operation at all.
 

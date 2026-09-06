@@ -242,6 +242,61 @@ def _tpcs_two_reparents(*, branch_warded: bool, twig_far: bool, child: bool) -> 
     return formed(Metamodel(entities=(root, warded, branch, near, far, twig, other, *arriving)))
 
 
+def _tpcs_vacated_owner(
+    *, sealed: bool, old_warded: bool, branch_new: bool, child: bool
+) -> AcceptedMetamodel:
+    """A table-per-concrete-subtype family whose vacated position leaves the declarer.
+
+    `Warded` declares `seal` and `seal_ix` once it is sealed, and `Old` and `New`
+    are declaration-free positions beneath it. `Old` moves out to the root in the
+    same evolution that moves `Branch` from `Old` to `New`, so `Branch` stands
+    under `Warded` at both endpoints and yet takes the concrete `Child` arriving
+    beneath it out of `Old`'s departure.
+    """
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    warded = Entity(
+        name="Warded",
+        inheritance=Inheritance(role="abstract-subtype", parent="Root"),
+        attributes=(
+            (Attribute(name="seal", type="string", column="seal", max_length=16, nullable=True),)
+            if sealed
+            else ()
+        ),
+        indices=(Index(name="seal_ix", attributes=("seal",)),) if sealed else (),
+    )
+    old = Entity(
+        name="Old",
+        inheritance=Inheritance(role="abstract-subtype", parent="Warded" if old_warded else "Root"),
+    )
+    new = Entity(name="New", inheritance=Inheritance(role="abstract-subtype", parent="Warded"))
+    branch = Entity(
+        name="Branch",
+        inheritance=Inheritance(role="abstract-subtype", parent="New" if branch_new else "Old"),
+    )
+    other = Entity(
+        name="Other",
+        table="other",
+        inheritance=Inheritance(role="concrete-subtype", parent="Warded"),
+        attributes=(Attribute(name="z", type="int32", column="z"),),
+    )
+    arriving = (
+        (
+            Entity(
+                name="Child",
+                table="child",
+                inheritance=Inheritance(role="concrete-subtype", parent="Branch"),
+            ),
+        )
+        if child
+        else ()
+    )
+    return formed(Metamodel(entities=(root, warded, old, new, branch, other, *arriving)))
+
+
 def _tph_siblings(*, sealed: bool, reparented: bool) -> AcceptedMetamodel:
     """A table-per-hierarchy family whose siblings share one Table.
 
@@ -537,8 +592,8 @@ def test_a_created_Table_names_no_reparent_that_stayed_under_the_same_declarer()
     # `Warded`, so `child` stands under `Warded` — the only declarer it holds a
     # Column from — however the move went. A created Table held nothing earlier,
     # so the surviving Table's "did it already materialize this position" clause
-    # is vacuous here and would name the move; the baseline is where `Branch`
-    # itself stood.
+    # is vacuous here and would name the move; the baseline is the position
+    # `Branch` left, which still hangs under `Warded` in the later model.
     operations = _operations(
         _tpcs_within_owner(moved=False, child=False),
         _tpcs_within_owner(moved=True, child=True),
@@ -558,6 +613,23 @@ def test_a_created_Table_names_only_the_reparent_that_carried_the_declarer() -> 
     operations = _operations(
         _tpcs_two_reparents(branch_warded=False, twig_far=False, child=False),
         _tpcs_two_reparents(branch_warded=True, twig_far=True, child=True),
+    )
+    expected = ["EntityAltered(Branch)", "ConcreteSubtypeAdded(Child)"]
+    assert _entity_causes(_creates(operations, "child")) == expected
+    assert _entity_causes(_created(operations, "child")) == expected
+
+
+def test_a_created_Table_names_the_reparent_whose_vacated_position_left_the_declarer() -> None:
+    # `Branch` stood under `Warded` before it moved and stands under `Warded`
+    # after, yet its move is why `child` repeats `Warded`'s members: `Old`, the
+    # position `Branch` left, moved out to the root in the same evolution, so
+    # staying there would have put `Child` outside `Warded` altogether. Where the
+    # Entity stood before therefore decides nothing — the counterfactual is the
+    # position it left, read from the LATER model — and `Old`'s own move, which
+    # left `Warded` itself, carried nothing anywhere.
+    operations = _operations(
+        _tpcs_vacated_owner(sealed=False, old_warded=True, branch_new=False, child=False),
+        _tpcs_vacated_owner(sealed=True, old_warded=False, branch_new=True, child=True),
     )
     expected = ["EntityAltered(Branch)", "ConcreteSubtypeAdded(Child)"]
     assert _entity_causes(_creates(operations, "child")) == expected
