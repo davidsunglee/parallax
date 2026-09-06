@@ -4302,12 +4302,18 @@ These feature tests do not claim the deferred `benchmark` command or general
   same Typed instance again, another instance of the same primary key, the same
   Wire payload again, or the node the first Wire insert answered, which the
   provenance answer already refuses under the same code. Its advice names the
-  carrier the FIRST insert produced — `tx.update(inserted.edit(...))` on the
-  Typed lane, `tx.wire.update(opened, {...})` on the Wire one — and never the
-  value just refused, because the two need not be one value: two instances of a
-  primary key open one row, and an edit of the refused instance would author its
-  change against a value nothing buffered, leaving the transaction to commit the
-  first insert unaltered. The rule is this
+  carrier the FIRST insert produced, in the interface that OPENED the row and
+  never the one being refused — `tx.update(inserted.edit(...))` where a Typed
+  verb opened it, `tx.wire.update(opened, {...})` where a Wire verb did, in all
+  four crossings. The carrier is never the value just refused, because the two
+  need not be one value: two instances of a primary key open one row, and an
+  edit of the refused instance would author its change against a value nothing
+  buffered, leaving the transaction to commit the first insert unaltered. And it
+  is the opener's spelling because only the opener has a carrier at all:
+  `tx.insert` answers nothing and leaves the caller holding the instance it
+  passed, while `tx.wire.insert` answers a frozen node and took a payload that is
+  no keyed source, so choosing by the refusing verb would name a Wire node after
+  a Typed insert answered none, and a Typed `.edit` on a mapping that has none. The rule is this
   binding's rather than core's: `m-unit-work` names insert-then-update and
   insert-then-delete and is silent on insert-then-insert, whose only other
   outcome is the database refusing the pair at commit as a primary-key
@@ -4317,21 +4323,34 @@ These feature tests do not claim the deferred `benchmark` command or general
   taxonomy, is what knows the row is already opening. The refusal stands after
   preparation: a Wire payload's key members are canonical only once its row is
   prepared, so pin, provenance, window, and preparation are all heard ahead of
-  it on both lanes. **An object leaves the ledger when a destructive keyed write
-  of it is buffered.** `delete`, `terminate`, and `terminate_until` over an
-  object the ledger holds retire it once the write is in the buffer — never
-  before, since a refused write leaves the ledger as it found it, the guarantee
-  the claim ledger already gives — mirroring at the verb the rule the flush
-  applies to the same pair (`m-unit-work` *Insert-then-delete cancels*: the two
-  writes annihilate and no DML is emitted for the object). From that verb on
-  the transaction holds no insert of the object, so an `insert` of it is a
-  first opening and is admitted, and an `update` of it is refused
-  `write-value-not-stored` rather than admitted as a write of a row the store
-  will never hold. A flush retires nothing: a participating read that
+  it on both lanes. **An object leaves the ledger when a destructive keyed
+  write CANCELS an insert of it that is still pending.** `delete`, `terminate`,
+  and `terminate_until` over an object whose insert the unit of work still holds
+  unflushed retire it once the write is in the buffer — never before, since a
+  refused write leaves the ledger as it found it, the guarantee the claim ledger
+  already gives — mirroring at the verb the rule the flush applies to that same
+  pair (`m-unit-work` *Insert-then-delete cancels*: the two writes annihilate and
+  no DML is emitted for the object). From that verb on the transaction holds no
+  insert of the object, so an `insert` of it is a first opening and is admitted,
+  and an `update` of it is refused `write-value-not-stored` rather than admitted
+  as a write of a row the store will never hold. Pending is the whole condition
+  and it is the unit of work's own answer, kept as writes arrive rather than
+  recomputed at the verb, so a verb asking what the flush will do with an insert
+  and the flush itself read one fact. Cancellation is window-blind for a pending
+  pair, exactly as the flush's rule is: `terminate_until` names a bounded
+  Valid-Time window, but there is no row for that window to be carved out of
+  until the insert flushes, so the pair annihilates whole. A flush retires
+  nothing, and a destructive write after one retires nothing either, because the
+  insert it would cancel is no longer pending: a participating read that
   force-flushed the insert leaves the object recorded, so the row the store now
-  holds is refused a second opening at the verb rather than at commit, and a
-  destructive write on that route retires it exactly as it does while the
-  insert is buffered — the row is gone either way. Which object a value names is
+  holds is refused a second opening at the verb rather than at commit, and it
+  stays refused after a `delete` or a `terminate_until` of it. That is not
+  symmetry for its own sake. The flush emits every surviving insert ahead of
+  every delete, so a second INSERT admitted after a post-flush `delete` would
+  reach the database ahead of the DELETE meant to clear the way and collide with
+  the row already there; and `terminate_until` removes only `[valid_from, until)`
+  and preserves head and tail (`m-bitemp-write`), so the flushed row it holes is
+  anything but absent. Which object a value names is
   read off its own primary-key members rather than derived through the Entity Row
   Codec, because the refusal this exemption lifts is decided before any row
   exists. That reading is therefore TOTAL over every value whose key members
@@ -4662,9 +4681,11 @@ These feature tests do not claim the deferred `benchmark` command or general
   naming an object this transaction already buffered an insert of — the same
   payload twice, or a Typed insert's object restated as a document — is refused
   under that code too, by the buffered-insert ledger once its row is prepared
-  rather than by provenance, since a document is no source; the advice names
-  `tx.wire.update(opened, {...})` over the node the first insert answered, the
-  only value a Wire caller can revise that row through.
+  rather than by provenance, since a document is no source. The advice is the
+  OPENER's: `tx.wire.update(opened, {...})` over the node the first insert
+  answered where a Wire verb opened the row, which is the only value a Wire
+  caller can revise it through, and `tx.update(inserted.edit(...))` where a Typed
+  verb opened it, because that insert answered no node to name.
 
   **Wire values are the accepted wire spellings of their declared types.** A
   changes document, an insert payload, and a predicate assignment all cross the
