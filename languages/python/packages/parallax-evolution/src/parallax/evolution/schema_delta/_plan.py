@@ -411,21 +411,35 @@ class _Causes:
         )
 
     def table(self, table: Table) -> tuple[EvolutionOperation, ...]:
-        """Every addition that brings ``table``.
+        """Why ``table`` exists now and did not before.
 
         An Entity brings a Table when it owns rows there or declares one of its
         Columns, so an abstract table-per-hierarchy root is a cause of its
         family's shared Table and an abstract table-per-concrete-subtype root is
-        a cause of every concrete Table repeating its members.
+        a cause of every concrete Table repeating its members. A created Table is
+        all of its Columns at once and answers to the same rule each of them
+        does, so an inheritance alteration that carried a declaring position here
+        is a cause of the Table exactly as it is of a Column added to a surviving
+        one.
         """
         return tuple(
             operation
             for operation in self.operations
-            if isinstance(operation, (EntityAdded, ConcreteSubtypeAdded))
-            and (
-                self.later_rows.get(operation.entity) == table
-                or operation.entity in self.declared_in.get(table, frozenset())
-            )
+            if self._adds_to(operation, table) or self._carries_any_declaration(operation, table)
+        )
+
+    def _adds_to(self, operation: EvolutionOperation, table: Table) -> bool:
+        """Whether ``operation`` adds an Entity owning rows in ``table`` or declaring a Column."""
+        return isinstance(operation, (EntityAdded, ConcreteSubtypeAdded)) and (
+            self.later_rows.get(operation.entity) == table
+            or operation.entity in self.declared_in.get(table, frozenset())
+        )
+
+    def _carries_any_declaration(self, operation: EvolutionOperation, table: Table) -> bool:
+        """Whether ``operation`` is why ``table`` materializes any declaring owner's position."""
+        return any(
+            self._carries_declarations(operation, table, owner)
+            for owner in self.declared_in.get(table, frozenset())
         )
 
     def column(self, table: Table, slot: ColumnSlot) -> tuple[EvolutionOperation, ...]:
