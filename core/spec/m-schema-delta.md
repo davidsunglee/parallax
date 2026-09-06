@@ -14,10 +14,11 @@ implementation states that in the accepted argument type rather than as a runtim
 refusal.
 
 It depends on `m-model-evolution` for the description it lowers, on `m-metamodel`
-for the declarations an operation names, on `m-storage-layout` for every physical
-fact, and on `m-dialect` for every spelling. It composes no key, no Column order,
-and no nullability of its own, and it branches on no Dialect Identity: the
-`Dialect` value passed in determines the whole output.
+for the declarations an operation names, on `m-inheritance` for the position each
+Table materializes, on `m-storage-layout` for every physical fact, and on
+`m-dialect` for every spelling. It composes no key, no Column order, and no
+nullability of its own, and it branches on no Dialect Identity: the `Dialect`
+value passed in determines the whole output.
 
 The decision record is
 [ADR 0063](../../docs/adr/0063-model-evolution-is-described-at-model-altitude-and-applied-by-the-application.md).
