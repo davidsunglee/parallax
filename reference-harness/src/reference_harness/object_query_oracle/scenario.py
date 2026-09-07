@@ -197,9 +197,11 @@ class ScenarioReads:
         pairs: list[tuple[str, list[Any]]],
         reader: ReadExecutor,
     ) -> retained.Observation:
-        """A ``load`` or an ``access``, which differ in whether they issue SQL.
+        """A row-observing action: ``mutate``, ``load``, or ``access``.
 
-        A `load` resolves a deferred fetch and lists one statement per lowered
+        A `mutate` derives a Wire mapping by laying its whole accepted assignments
+        over the one source row and publishes that copy without issuing SQL. A
+        `load` resolves a deferred fetch and lists one statement per lowered
         coordinate group or per level, whose rows are aggregated in listed order.
         So does the FIRST access of a query-backed list, which resolves the list
         the construction step built by following this step's own ``on`` index
@@ -209,6 +211,8 @@ class ScenarioReads:
         populated, so it answers the rows its source already published.
         """
         case = self._case
+        if step.get("action") == "mutate":
+            return self._mutate(step_index, step)
         _assert_coordinate_batching(case, step_index, step, pairs)
         entity = self._read_entity(step_index)
         if not pairs:
@@ -239,6 +243,28 @@ class ScenarioReads:
         )
         rows = [materialize.materialize_variant_owner_node(case, entity, row) for row in published]
         return retained.Observation(rows=rows, entity=entity, includes=None)
+
+    def _mutate(self, step_index: int, step: Mapping[str, Any]) -> retained.Observation:
+        """Publish the one Wire row a ``mutate`` derives from its source."""
+        source = step.get("on")
+        if not isinstance(source, int):
+            raise CaseFailure(
+                f"{self._case.path.name}: scenario[{step_index}] mutate names "
+                f"{source!r}; a row-observing mutate requires one source step"
+            )
+        observed = self._observation(step_index, source)
+        if len(observed.rows) != 1:
+            raise CaseFailure(
+                f"{self._case.path.name}: scenario[{step_index}] mutate names a step "
+                f"that published {len(observed.rows)} rows; an edit requires exactly one"
+            )
+        assignments = step.get("set", {})
+        if not isinstance(assignments, Mapping):
+            raise CaseFailure(
+                f"{self._case.path.name}: scenario[{step_index}] mutate set is not a mapping"
+            )
+        row = materialize.edited(observed.rows[0], assignments)
+        return retained.Observation(rows=[row], entity=observed.entity, includes=observed.includes)
 
     def _reused_rows(
         self, step_index: int, step: Mapping[str, Any]

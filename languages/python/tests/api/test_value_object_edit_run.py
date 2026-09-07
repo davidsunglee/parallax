@@ -8,11 +8,14 @@ member storage never held stays out of the stored document instead of arriving a
 an explicit null, and an assignment replaces its subtree whole instead of merging
 into it.
 
-What the corpus cannot reach is why this lane exists for the verb at all: the
-copy is an in-memory authoring door that issues no statement of its own, so no
-case shape observes it (`docs/architecture/supplemental-interface-obligations.md`,
-SIO-015 and SIO-021). `tests/unit/test_value_object_edit.py` holds the same
-verb's internal seams and every refusal it raises; nothing here restates those.
+The wire-lane `mutate` cases can observe a containing row after whole-occurrence
+replacement, while the `edit` case shape observes the copy verb itself and its
+portable state-carry witnesses through the native API. This database lane keeps
+the composed write and presence round trip explicit. The host-language refusal
+closure and absence of Value Object provenance remain supplemental obligations
+(`docs/architecture/supplemental-interface-obligations.md`, SIO-015 and
+SIO-021), graded by `tests/unit/test_value_object_edit.py`; nothing here
+restates those internal seams.
 """
 
 from __future__ import annotations

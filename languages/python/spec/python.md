@@ -4970,6 +4970,15 @@ remains observable rather than making Python its own oracle.
   `languages/python/docs/usage-guide.md`; CI runs `--check` and fails on
   drift. The guide and suite are additive to conformance-adapter proof, never
   substitutes.
+- **Edited-value derivation.** `parallax.conformance.edit_runner` reads every
+  `shape: edit` oracle from its case document and grades the native Entity or
+  Value Object result, shallow auxiliary identity with independent bindings,
+  hook-free carry, declared-cache recomputation, and source preservation. Its
+  constructed-source arms and directional grading tests run in `dbfree`; its
+  read-origin arms run in `db` through the shipped Postgres read path. The two
+  Wire `mutate` whole-occurrence cases remain compatibility-adapter proof: both
+  the reference harness and Python's compatibility sweep compare the derived
+  mapping against the step's `expectRows`.
 
 ## 7. Source-enforcement topology
 

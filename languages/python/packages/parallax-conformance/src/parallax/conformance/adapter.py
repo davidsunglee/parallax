@@ -322,9 +322,10 @@ def _run(
     verb raised its declared application-lifecycle error, one ``stepGraphs``
     entry per step declaring `expectGraph` in either placement — an `access`
     step's retained view, or an include-bearing read step's own materialized
-    graph — and one ``stepRows`` entry per read step it drove, carrying the values
-    that step published, which is what the run sweep grades against each step's
-    ``expectRows``). A rejected run touches no database and no port: it reports
+    graph — and one ``stepRows`` entry per read step it drove plus each
+    row-observing `mutate`, carrying the values that step published, which is what
+    the run sweep grades against each step's ``expectRows``). A rejected run
+    touches no database and no port: it reports
     the classified ``rejectedRule`` with ``roundTrips: 0`` (m-conformance-
     adapter), and an evolution run reports the complete described ``evolution``
     the same way, for the same reason — describing the difference between two

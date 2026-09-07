@@ -1729,6 +1729,11 @@ relationship contents still names the **read** that materialized them (see
 *Relationship contents at a step*, below): a copy carries a view it never
 fetched, so what a case observes of a copy's own view is the reference-identity
 assertion each language's API Conformance Suite runs, not an `expectGraph`.
+A `mutate` MAY declare `expectRows`; when it does, those rows are the Wire value
+the step's derived copy publishes, not a re-read. This is the portable result
+oracle for whole-occurrence replacement: assigning a `one` document or a
+`many` list replaces that binding whole, so an omitted child is absent and no
+source element is merged into the result.
 
 **What a `set` may state.** Every key must name an **assignable member** of the
 Entity the edited node is — an **applicable** Attribute or Value Object
@@ -1797,6 +1802,8 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   identical** (two finite coordinates in one milestone, `m-identity-map`), which
   value equality alone cannot distinguish, so it is graded as reference identity
   only. A single step declares at most one of the two.
+- **`expectRows`** — the flat values a read publishes, or the derived Wire value
+  a `mutate` declaring this oracle publishes without a re-read.
 - **`expectGraph`** — the relationship contents a step observes, in `then.graph`'s
   own shape (see *Relationship contents at a step*, below).
 - **`expectError`** — a neutral **application-lifecycle** error the step's verb

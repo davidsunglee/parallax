@@ -33,8 +33,9 @@ from ..case import Case, entry_pairs, entry_statements, names_earlier_step
 from ..case_assertions import CaseFailure
 
 # The m-case-format lifecycle verbs that READ: a `load` triggers a deferred fetch
-# and an `access` reads an already-loaded set. Every other verb either commits
-# buffered DML or acts in memory, and is a boundary this package executes.
+# and an `access` reads an already-loaded set. A `mutate` that declares
+# `expectRows` also publishes its derived Wire value for the row oracle. Every
+# other verb either commits buffered DML or acts in memory without an observable.
 _ACTION_READ_VERBS = frozenset({"load", "access"})
 
 
@@ -226,7 +227,12 @@ def _boundary_verb(step: Mapping[str, Any]) -> str | None:
     DML rather than a verb acting on an earlier step's object.
     """
     action = step.get("action")
-    if "write" in step or action is None or action in _ACTION_READ_VERBS:
+    if (
+        "write" in step
+        or action is None
+        or action in _ACTION_READ_VERBS
+        or (action == "mutate" and "expectRows" in step)
+    ):
         return None
     return action
 
@@ -323,7 +329,12 @@ def _assert_no_action_observables(case: Case, index: int, step: Mapping[str, Any
     to the read oracle, so a case authoring one is stating an observable this lane
     cannot answer and must fail loudly rather than pass vacuously.
     """
-    declared = [key for key in ("expectRows", "expectGraph", "sameObjectAs") if key in step]
+    allowed = {"expectRows"} if step.get("action") == "mutate" else set()
+    declared = [
+        key
+        for key in ("expectRows", "expectGraph", "sameObjectAs")
+        if key in step and key not in allowed
+    ]
     if declared:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] is a {step['action']!r} action step "

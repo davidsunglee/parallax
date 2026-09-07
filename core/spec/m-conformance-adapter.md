@@ -580,13 +580,14 @@ omits it, so an existing `run` output (`roundTrips` plus
 
 ### Per-step row observations (`stepRows`)
 
-A scenario has no single whole-read result, so a read step's rows cannot ride the
+A scenario has no single whole-read result, so a step's rows cannot ride the
 `rows` key: they are one observation **per step**. `stepRows` is the optional
 `observations` array carrying them — one `{ at, rows }` entry per scenario read
-step, `at` the JSON Pointer naming the step and `rows` the values that step
-published, in the same physically-keyed shape a whole-read `rows` observation
-carries and a step's `expectRows` is authored in (`m-case-format` *Row and
-table-state style*). Entries appear in step order.
+step, plus one per `mutate` step declaring `expectRows`; `at` is the JSON Pointer
+naming the step and `rows` are the values that step published, in the same
+physically-keyed shape a whole-read `rows` observation carries and a step's
+`expectRows` is authored in (`m-case-format` *Row and table-state style*).
+Entries appear in step order.
 
 What is reported is what the step **published** — the roots the read handed over
 — never the result sets its statements returned. The two differ wherever a read
@@ -599,6 +600,8 @@ result, the child levels its Include Paths populated being graded by `stepGraphs
 instead. An adapter answering this from a re-read, or from the rows its driver
 returned, reports that the database is right where the case asks what the caller
 was handed — the same distinction the `access` placement of `stepGraphs` draws.
+For a `mutate`, what is reported is the derived Wire mapping after its authored
+assignments replace their bindings whole, never a re-read of the unchanged row.
 
 One read step reports no entry: the resolving read of a **materializing predicate
 write** (`m-case-format` *Materializing cases*). That read is the write's own
@@ -608,8 +611,9 @@ would resolve twice and report a round trip the case does not count. What holds 
 implementation to that step is what the case already states about it: its golden
 read statement, which fixes the projection the resolve carries, and the per-row
 binds the write then emits, which the planner derived from those very rows. Every
-other read step owns an entry, and a step that owns one and is missing it is an
-unanswered oracle rather than a pass.
+other read step owns an entry. A `mutate` owns one exactly when it declares
+`expectRows`, and any step that owns an entry and is missing it is an unanswered
+oracle rather than a pass.
 
 It is additive and optional in the same sense as `errors` /
 `stepGraphs`: a run reporting no such step omits it, and every existing `run`

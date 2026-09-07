@@ -6745,7 +6745,10 @@ _ORDER_ROW: dict[str, object] = {
 
 def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -> None:
     port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
-    run = engine.run_scenario_case(_case("m-snapshot-read-010"), port)
+    original = _case("m-snapshot-read-010")
+    document = copy.deepcopy(cast("dict[str, Any]", original.document))
+    document["when"]["scenario"][1]["expectRows"] = [{**_ORDER_ROW, "name": "Mutant"}]
+    run = engine.run_scenario_case(dataclasses.replace(original, document=document), port)
     assert run.round_trips == 2
     assert [e.case_pointer for e in run.emissions] == [
         "/scenario/0/objectQuery",
@@ -6754,6 +6757,22 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
     assert len(port.reads) == 2
     assert len(port.writes) == 0
     assert run.errors == []  # an unpinned mutate is accepted: no error observation
+    assert [entry["at"] for entry in run.step_rows] == [
+        "/scenario/0",
+        "/scenario/1",
+        "/scenario/2",
+    ]
+    assert run.step_rows[1]["rows"] == [
+        {
+            "id": 1,
+            "name": "Mutant",
+            "sku": "A-100",
+            "qty": 5,
+            "price": decimal.Decimal("10.50"),
+            "active": True,
+            "orderedOn": dt.date(2024, 1, 5),
+        }
+    ]
 
 
 def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() -> None:

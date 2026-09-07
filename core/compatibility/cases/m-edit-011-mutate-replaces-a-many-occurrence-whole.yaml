@@ -1,0 +1,44 @@
+# A Wire mutation replaces a many-occurrence as one whole ordered document: the
+# source Note's two marks are not addressed or merged, and the derived row carries
+# exactly the single authored mark. The find contributes the scenario's only
+# statement; mutation is an in-memory mapping derivation with zero round trips,
+# and its expectRows grades the value it publishes.
+model: models/note.yaml
+tags: [m-edit, m-value-object, mutation, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Note
+        predicate:
+          eq:
+            attr: parallax.compatibility.Note.id
+            value: 1
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.title, t0.body, not t0.tag is null, t0.tag, t0.marks from note t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - id: 1
+          title: alpha
+          body: first
+          tag: { label: a, weight: 3 }
+          marks:
+            - { kind: pin, weight: 2 }
+            - { kind: flag, weight: null }
+    - action: mutate
+      "on": 0
+      set:
+        marks:
+          - { kind: y, weight: 2 }
+      roundTrips: 0
+      expectRows:
+        - id: 1
+          title: alpha
+          body: first
+          tag: { label: a, weight: 3 }
+          marks:
+            - { kind: y, weight: 2 }
+then:
+  roundTrips: 1
