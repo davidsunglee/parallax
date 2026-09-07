@@ -46,10 +46,17 @@ def _corpus_paths() -> list[Path]:
     return sorted(root.glob("*.yaml"))
 
 
+def _entity_list(entities: object) -> list[dict[str, object]]:
+    # Export promises ordinary lists, and every comparison here normalizes the
+    # entity sequence into a mapping, so nothing else would fail a tuple.
+    assert isinstance(entities, list)
+    return cast("list[dict[str, object]]", entities)
+
+
 def _entities(document: dict[str, object]) -> list[dict[str, object]]:
     if "entity" in document:
         return [cast("dict[str, object]", document["entity"])]
-    return cast("list[dict[str, object]]", document["entities"])
+    return _entity_list(document["entities"])
 
 
 def _identity(entity: dict[str, object]) -> tuple[object, object]:
@@ -57,7 +64,6 @@ def _identity(entity: dict[str, object]) -> tuple[object, object]:
 
 
 def _by_identity(document: dict[str, object]) -> dict[tuple[object, object], dict[str, object]]:
-    """A document's entities keyed by ``(namespace, name)``."""
     return {_identity(entity): entity for entity in _entities(document)}
 
 
@@ -72,7 +78,7 @@ def _order_free(document: dict[str, object]) -> dict[str, object]:
     entities = document.get("entities")
     if entities is None:
         return dict(document)
-    keyed = {_identity(entity): entity for entity in cast("list[dict[str, object]]", entities)}
+    keyed = {_identity(entity): entity for entity in _entity_list(entities)}
     return dict(document) | {"entities": keyed}
 
 
