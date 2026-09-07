@@ -3499,8 +3499,6 @@ def run_case(case: Case, db: DatabaseProvider | None) -> None:
         _assert_write_step_count(case, dialect)  # layer 5 (count)
         _assert_write_input_columns(case, dialect)  # layer 5c (① ↔ ② column/value)
         provision_empty(case, db)
-        # Apply any out-of-band setup after provisioning and before the authored
-        # write sequence.
         apply_given(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
         _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)
