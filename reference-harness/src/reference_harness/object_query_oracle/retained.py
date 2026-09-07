@@ -14,7 +14,7 @@ walks a path through it. A snapshot issues no SQL after materialization
 nothing at all.
 
 Nothing here reaches the package's public seam: a retained observation is built,
-held, and read entirely inside one ``ScenarioReads``, whether a read
+held, and read entirely inside one ``ScenarioRowObservations``, whether a read
 materialized it or a ``mutate`` derived it.
 """
 

@@ -206,7 +206,7 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     "m-edit-005": lambda: Note.where(Note.id == 1),
     "m-edit-006": lambda: Note.where(Note.id == 1),
     "m-edit-007": lambda: Note.where(Note.id == 2),
-    "m-edit-008": lambda: Note.where(Note.id == 2),
+    "m-edit-008": lambda: Note.where(Note.id == 1),
     "m-edit-009": lambda: Note.where(Note.id == 1),
 }
 

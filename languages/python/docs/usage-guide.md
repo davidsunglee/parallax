@@ -156,7 +156,7 @@ note.edit()
 Corpus case: `m-edit-003`
 
 ```python
-note.tag.edit(weight=1)
+note.tag.edit(label="z")
 ```
 
 ## Value Object change-free edit from a constructed source

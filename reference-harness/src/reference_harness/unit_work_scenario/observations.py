@@ -1,6 +1,6 @@
 """The Scenario's accepted row observations and the one import that reaches them.
 
-This package decides WHEN an accepted read executes and WHICH reader it receives;
+This package decides WHEN a row-publishing step executes and WHICH reader it receives;
 what the step then observes is the Object Query oracle's, unchanged. Exactly two
 things cross: a step index and a reader. Nothing comes back — the rows, Include
 buckets, graph state, mutation copies, and reuse a step publishes are retained
@@ -15,6 +15,6 @@ here rather than reaching past it.
 
 from __future__ import annotations
 
-from ..object_query_oracle.scenario import ScenarioReads
+from ..object_query_oracle.scenario import ScenarioRowObservations
 
-__all__ = ["ScenarioReads"]
+__all__ = ["ScenarioRowObservations"]

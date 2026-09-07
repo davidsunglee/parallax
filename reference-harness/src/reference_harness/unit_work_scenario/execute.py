@@ -1,10 +1,10 @@
 """Running a compiled Scenario's steps against a provisioned database, in order.
 
-The loop owns the Scenario, not its reads. Each step executes on the reader or
+The loop owns the Scenario, not its row observations. Each step executes on the reader or
 connection its own lifecycle selected — a grouped step on its group's held
 session, an ungrouped one on the provider's autocommit connection — and a group
 closes at its own declared last step. What a row-publishing step then observes is
-:mod:`.reads`'.
+:mod:`.observations`'.
 
 Every session a step holds opens at the case's declared `when.uow.isolation`,
 the provider mapping that portable level to its own engine; an ungrouped step on
@@ -33,12 +33,12 @@ from .compile import (
     CompiledScenario,
     _BoundaryAction,
     _GroupedWrite,
-    _Read,
+    _RowPublishingStep,
     _UngroupedWrite,
     _UnresolvedList,
 )
 from .groups import UowGroupState, assert_conflict_abort, finish_group, group_states
-from .reads import ScenarioReads
+from .observations import ScenarioRowObservations
 from .report import reported_against
 
 __all__ = ["execute_scenario"]
@@ -50,7 +50,7 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
     execution = CaseExecution(case, db)
     dialect = execution.dialect
     states = group_states(scenario)
-    observations = ScenarioReads(case)
+    row_observations = ScenarioRowObservations(case)
 
     # One stack for the whole Scenario, so every session opened during it is
     # CLOSED on return or on raise. Whether each one committed or rolled back was
@@ -73,8 +73,8 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
                         _apply_ungrouped_write(scenario, step, execution, dialect)
                     case _BoundaryAction():
                         _apply_boundary_action(step, execution, dialect)
-                    case _Read():
-                        observations.assert_step(
+                    case _RowPublishingStep():
+                        row_observations.assert_step(
                             step.index, session if session is not None else execution
                         )
                     case _UnresolvedList():

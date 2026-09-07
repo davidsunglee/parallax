@@ -3,7 +3,7 @@
 Every refusal here is asserted against a provider that raises on any call at all,
 so each test proves two things at once: the case is refused, and the refusal cost
 zero database access. Those are the two claims a document-settled rule makes, and
-there is nothing else to inspect — a rule the read oracle owns is refused during
+there is nothing else to inspect — a rule the row observation oracle owns is refused during
 execution instead, and is graded there, while a rule about what the document says
 of itself is asked of the whole corpus before any executor runs, and is graded in
 `tests/test_scenario_document.py`.
@@ -237,7 +237,7 @@ def test_a_reuse_naming_a_step_that_is_not_earlier_is_refused(damaged_case) -> N
     # names its source with `sameObjectAs`, and an empty reuse would let the
     # step's own identity and `expectRows` assertions pass against nothing.
     # Whether the step it names PUBLISHED anything only a run can answer, and the
-    # read oracle answers it there.
+    # row observation oracle answers it there.
     case = damaged_case("m-op-list-002-deep-fetch-population-stable.yaml")
     case.when["scenario"][2]["sameObjectAs"] = 2
     with pytest.raises(CaseFailure, match=r"sameObjectAs=2 is not a real EARLIER step"):
@@ -252,21 +252,23 @@ def test_a_coordinate_grouped_on_names_each_source_once(damaged_case) -> None:
         assert_unit_work_scenario(case, RefusingProvider())
 
 
-def test_a_non_read_action_step_declaring_a_row_observable_is_refused(damaged_case) -> None:
+def test_an_action_that_publishes_no_rows_cannot_declare_a_row_observable(
+    damaged_case,
+) -> None:
     """A verb that publishes nothing has nothing to compare, so a claim about its
     rows is refused rather than skipped.
 
     Grading one would mean reading what an earlier read retained without a verb
     that publishes a derived value. Refusing it keeps that boundary from being
     reintroduced by a future case. A `mutate` is the exception: when it declares
-    `expectRows`, the row oracle derives and publishes its Wire copy.
+    `expectRows`, the row observation oracle derives and publishes its Wire copy.
     """
     case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
     source = case.scenario[0]
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
     mutate["action"] = "flush"
     mutate["expectRows"] = list(source["expectRows"])
-    with pytest.raises(CaseFailure, match="only the read verbs"):
+    with pytest.raises(CaseFailure, match="only the row-publishing actions"):
         assert_unit_work_scenario(case, RefusingProvider())
 
 
@@ -283,5 +285,5 @@ def test_an_observable_a_verb_may_not_declare_is_refused_before_its_anchor_is_bo
     case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
     mutate["sameObjectAs"] = len(case.scenario)
-    with pytest.raises(CaseFailure, match="only the read verbs"):
+    with pytest.raises(CaseFailure, match="only the row-publishing actions"):
         assert_unit_work_scenario(case, RefusingProvider())

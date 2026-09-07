@@ -40,7 +40,7 @@ from . import execute, graph, includes, materialize, retained, row, stream
 from .executor import ReadExecutor
 
 
-class ScenarioReads:
+class ScenarioRowObservations:
     """Every accepted row observation of one Unit Work Scenario and what it retains.
 
     Requires
@@ -103,7 +103,7 @@ class ScenarioReads:
             # naming an unobserved step rather than answered with rows nobody graded.
             self._retained[step_index] = observation
 
-    # --- row-observation workflows -------------------------------------------
+    # --- row-publication workflows -------------------------------------------
 
     def _deliver(
         self, step_index: int, step: Mapping[str, Any], reader: ReadExecutor

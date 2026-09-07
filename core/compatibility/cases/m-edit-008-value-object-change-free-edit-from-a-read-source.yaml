@@ -1,6 +1,6 @@
 # A change-free Value Object edit reached through a read-produced containing Entity
-# preserves absent optional weight while deriving a distinct value, preserves
-# application-owned auxiliary state behind a read-only property with independent
+# leaves the unassigned optional weight present with its value while deriving a
+# distinct value, preserves application-owned auxiliary state with independent
 # bindings, invokes no hook, drops a warm cache, and leaves source and occurrence unchanged.
 model: models/note.yaml
 tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
@@ -15,12 +15,12 @@ when:
         predicate:
           eq:
             attr: parallax.compatibility.Note.id
-            value: 2
+            value: 1
       path: parallax.compatibility.Note.tag
 then:
   result:
-    members: { label: b }
+    members: { label: a, weight: 3 }
   carry:
     auxiliary: { identity: shared, binding: independent, hooks: none }
-    derivedCache: { value: B, evaluations: 1 }
+    derivedCache: { value: A, evaluations: 1 }
   source: { unchanged: true }
