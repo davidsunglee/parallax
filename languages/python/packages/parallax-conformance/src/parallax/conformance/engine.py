@@ -1355,12 +1355,17 @@ def _underlying[T](execution: Callable[[], T]) -> T:
     its cause. Re-raising the cause with its own chain intact is what lets each
     lane keep catching the failure it classifies; the edition the wrapper named
     is the case's own literal, which the lifecycle oracle grades instead.
+
+    The re-raise happens after the handler is left, because raising inside it
+    would install the wrapper as the cause's ``__context__`` — overwriting
+    whatever the cause was already chained to, and pointing the two at each
+    other.
     """
     try:
         return execution()
     except handle.ExecutionFailure as failure:
         cause = failure.cause
-        raise cause from cause.__cause__
+    raise cause
 
 
 def _transact[T](

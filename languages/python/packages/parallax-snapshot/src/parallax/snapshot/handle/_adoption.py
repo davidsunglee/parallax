@@ -41,12 +41,29 @@ class ExecutionFailure(Exception):
     ``__cause__`` so native chaining reads the same object. A transaction
     invocation reports its final attempt's edition; a rollback that did not
     complete arrives with both of its live errors inside the cause.
+
+    The constructor settles both, and each is read-only from then on: what a
+    failure reports is what it was raised with, so no handler can restate the
+    edition an execution ran under or the error that escaped it. The state the
+    interpreter owns — chaining, traceback, and notes — stays writable, which
+    is why the two facts are held privately rather than by a frozen
+    ``__setattr__``.
     """
 
     def __init__(self, edition: str, cause: Exception) -> None:
         super().__init__(f"execution under model edition {edition!r} failed: {cause!r}")
-        self.edition = edition
-        self.cause = cause
+        self._edition = edition
+        self._cause = cause
+
+    @property
+    def edition(self) -> str:
+        """The Model Edition the failing execution had adopted."""
+        return self._edition
+
+    @property
+    def cause(self) -> Exception:
+        """The exception that escaped the execution."""
+        return self._cause
 
 
 class AdoptedExecution:

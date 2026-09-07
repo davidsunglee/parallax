@@ -9,8 +9,10 @@ Domain Model under one Model Edition into an opaque, complete
 :class:`ModelSelection`; :class:`ServingModel`, the single concrete holder of a
 current selection; and :class:`PublicationConflictError`, its
 refusal of a stale publication; :class:`ExecutionFailure`, the form every
-ordinary failure escaping a transaction takes, naming the Model Edition the
-failing attempt adopted and carrying the error itself as its cause —
+ordinary failure escaping an execution that adopted an edition of its own
+takes, naming that edition and carrying the error itself as its cause: a
+transaction invocation reports the edition its failing attempt adopted, and a
+standalone read or entered stream the one it adopted for itself —
 :class:`Snapshot`
 (``Snapshot[T]``) with :class:`CheckedSnapshot` (``CheckedSnapshot[T]``), its
 checked view, the in-band invalid-result vocabulary a classified root publishes

@@ -123,9 +123,29 @@ def test_a_control_flow_or_fatal_exception_passes_through_untouched(
     assert escaped.value.__cause__ is None
 
 
-def test_an_execution_failure_exposes_its_two_facts_read_only_in_spirit() -> None:
+def test_an_execution_failure_exposes_its_two_facts_read_only() -> None:
     cause = RuntimeError("why")
     failure = ExecutionFailure("edition-x", cause)
     assert (failure.edition, failure.cause) == ("edition-x", cause)
     assert isinstance(failure, Exception)
     assert not isinstance(failure, RuntimeError)
+    # What the failure reports is what it was raised with: a handler holding it
+    # can neither restate the edition the execution ran under nor swap the
+    # error that escaped it.
+    for name in ("edition", "cause"):
+        with pytest.raises(AttributeError):
+            setattr(failure, name, ValueError("substituted"))
+        with pytest.raises(AttributeError):
+            delattr(failure, name)
+    assert (failure.edition, failure.cause) == ("edition-x", cause)
+
+
+def test_an_execution_failure_leaves_interpreter_owned_state_writable() -> None:
+    # Read-only is about the two facts this failure reports, not about the
+    # machinery every exception carries: chaining and notes still work.
+    failure = ExecutionFailure("edition-x", RuntimeError("why"))
+    replacement = ValueError("chaining stays interpreter-owned")
+    failure.__cause__ = replacement
+    failure.add_note("annotated")
+    assert failure.__cause__ is replacement
+    assert failure.__notes__ == ["annotated"]
