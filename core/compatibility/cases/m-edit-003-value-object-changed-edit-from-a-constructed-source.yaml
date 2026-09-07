@@ -1,0 +1,24 @@
+# A changed Value Object edit preserves application-owned auxiliary state behind a read-only property by shallow identity with independent bindings, invokes no assignment hook, drops a warm declared cache after an unrelated weight assignment, and leaves the containing constructed source and targeted occurrence unchanged.
+model: models/note.yaml
+tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
+shape: edit
+lane: api-conformance
+when:
+  edit:
+    source:
+      origin: constructed
+      value:
+        id: 1
+        title: alpha
+        body: first
+        tag: { label: a, weight: 3 }
+        marks: []
+      path: parallax.compatibility.Note.tag
+    set: { weight: 1 }
+then:
+  result:
+    members: { label: a, weight: 1 }
+  carry:
+    auxiliary: { identity: shared, binding: independent, hooks: none }
+    derivedCache: { value: A, evaluations: 1 }
+  source: { unchanged: true }

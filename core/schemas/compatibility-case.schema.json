@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `evolution`, `schema`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of ten shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL); or an `evolution` case (m-model-evolution — the complete difference between the two accepted models `when.evolve` names, asserted in `then.evolution` and, for a unilateral expectation, in `then.schema` keyed by Dialect Identity, carrying no top-level `model` and no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `corrupt`, `fault`, `sessionDefault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `edit` | `attempts` | `write`, plus context `uow` / `stream` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, edit `result` / `carry` / `source`, `rejectedRule`, `evolution`, `schema`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of eleven shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); an `edit` case (m-edit — one native edited value derived from `when.edit.source`, asserting `then.result`, `then.carry`, and `then.source`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL); or an `evolution` case (m-model-evolution — the complete difference between the two accepted models `when.evolve` names, asserted in `then.evolution` and, for a unilateral expectation, in `then.schema` keyed by Dialect Identity, carrying no top-level `model` and no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary and edit case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["tags", "shape"],
@@ -194,6 +194,23 @@
       }
     },
     {
+      "description": "An edit case (m-edit): one edited value derived from an application-constructed or read-produced source. It carries `lane: api-conformance` and is satisfied by each language's API Conformance Suite; the harness schema-validates it but does not execute it. `source.path` optionally targets a Value Object occurrence under the source Entity, `set` carries authored assignments and is omitted for a change-free edit, and `then` states result members, native carry witnesses, and source preservation. It carries no golden SQL.",
+      "required": ["shape", "lane", "when", "then"],
+      "properties": {
+        "shape": { "const": "edit" },
+        "lane": { "const": "api-conformance" },
+        "when": {
+          "required": ["edit"],
+          "propertyNames": { "enum": ["edit"] }
+        },
+        "then": {
+          "required": ["result", "carry", "source"],
+          "propertyNames": { "enum": ["result", "carry", "source"] },
+          "not": { "required": ["statements"] }
+        }
+      }
+    },
+    {
       "description": "A rejected case (m-value-object / m-predicate / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `objectQuery` (a SCHEMA-VALID m-object-query document, predicate included, that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid, a predicate-selected instruction, or a whole KEYED instruction whose shape a model-aware validator refuses), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `objectQuery`/`write`/`model`. A rejected read names its own queried position inside its `objectQuery`, so no lane falls back to a default root. All three `write` forms are OBJECTS, which this branch requires: the shared `when.write` vocabulary also carries the multi-key ARRAY form, and that form is the conflict lane's alone — it states one collapsed statement's aggregate affected-row count, which a rejection asserted pre-SQL has nothing to say about. Admitting it here would leave the graders reading one input two ways, since a rejected case's dispatch asks which MEMBER a write carries and an array carries none. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
       "required": ["shape", "when", "then"],
       "properties": {
@@ -252,7 +269,7 @@
   ],
   "allOf": [
     {
-      "description": "Every case but an `evolution` case names one model at the top level. An evolution case names TWO endpoints instead, under `when.evolve`, and its own branch refuses a top-level `model` beside them — so the requirement is stated here rather than in the envelope's own `required`, where it could only be stated for all ten shapes or for none.",
+      "description": "Every case but an `evolution` case names one model at the top level. An evolution case names TWO endpoints instead, under `when.evolve`, and its own branch refuses a top-level `model` beside them — so the requirement is stated here rather than in the envelope's own `required`, where it could only be stated for all eleven shapes or for none.",
       "if": {"required": ["shape"], "properties": {"shape": {"not": {"const": "evolution"}}}},
       "then": {"required": ["model"]}
     },
@@ -450,6 +467,30 @@
       "then": {
         "properties": { "shape": { "const": "boundary" } }
       }
+    },
+    {
+      "description": "`when.edit` belongs to the `edit` shape alone.",
+      "if": {
+        "required": ["when"],
+        "properties": { "when": { "required": ["edit"] } }
+      },
+      "then": { "properties": { "shape": { "const": "edit" } } }
+    },
+    {
+      "description": "`then.result`, `then.carry`, and `then.source` belong to the `edit` shape alone.",
+      "if": {
+        "required": ["then"],
+        "properties": {
+          "then": {
+            "anyOf": [
+              { "required": ["result"] },
+              { "required": ["carry"] },
+              { "required": ["source"] }
+            ]
+          }
+        }
+      },
+      "then": { "properties": { "shape": { "const": "edit" } } }
     }
   ],
   "properties": {
@@ -465,7 +506,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "lane": {
-      "description": "Which executor satisfies this case (m-case-format lane routing). `harness` (the default) — the m-case-format compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a runtime-loop or read-lock-matrix branch a single-connection harness cannot provoke: the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it. Every `boundary`-shape case is `api-conformance` by construction; the read-lock matrix reads (`m-read-lock-002`, `m-read-lock-004`, and `m-read-lock-005`) are `read`-shape `api-conformance` cases.",
+      "description": "Which executor satisfies this case (m-case-format lane routing). `harness` (the default) — the m-case-format compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a native-runtime or read-lock-matrix branch the wire harness cannot observe: the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it. Every `boundary`-shape and `edit`-shape case is `api-conformance` by construction; the read-lock matrix reads (`m-read-lock-002`, `m-read-lock-004`, and `m-read-lock-005`) are `read`-shape `api-conformance` cases.",
       "enum": ["harness", "api-conformance"],
       "default": "harness"
     },
@@ -480,6 +521,7 @@
         "error",
         "concurrencySuccess",
         "boundary",
+        "edit",
         "rejected",
         "evolution"
       ]
@@ -565,7 +607,7 @@
       }
     },
     "when": {
-      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `stream`, `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the unit-of-work mode, the streamed delivery, transaction instant, observed milestone coordinate, and alternate surface encodings.",
+      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `edit` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `stream`, `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the unit-of-work mode, the streamed delivery, transaction instant, observed milestone coordinate, and alternate surface encodings.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1070,6 +1112,38 @@
             ]
           }
         },
+        "edit": {
+          "description": "edit cases only (m-edit). One derivation from a constructed or read-produced source. The optional `path` targets a Value Object occurrence under the source Entity; omitting it targets the Entity. The optional `set` is omitted for a change-free edit.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source"],
+          "properties": {
+            "source": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["origin"],
+              "properties": {
+                "origin": { "enum": ["constructed", "read"] },
+                "value": { "type": "object" },
+                "objectQuery": { "$ref": "object-query.schema.json#" },
+                "path": { "type": "string", "minLength": 1 }
+              },
+              "oneOf": [
+                {
+                  "properties": { "origin": { "const": "constructed" } },
+                  "required": ["value"],
+                  "not": { "required": ["objectQuery"] }
+                },
+                {
+                  "properties": { "origin": { "const": "read" } },
+                  "required": ["objectQuery"],
+                  "not": { "required": ["value"] }
+                }
+              ]
+            },
+            "set": { "type": "object", "minProperties": 1 }
+          }
+        },
         "attempts": {
           "description": "conflict cases (m-opt-lock), retry form. An ordered list of optimistic-lock UPDATE attempts applied (after any `given.apply`) in sequence, each asserting its own affected-row count — proving the m-opt-lock retry contract end-to-end: the first (stale-version) attempt affects 0 rows, then a retry that re-reads the now-fresh version and re-applies affects 1. When present, the single-attempt `then.statements` / `then.affectedRows` are absent and `then.tableState` (when authored) asserts the retried write landed.",
           "type": "array",
@@ -1335,6 +1409,51 @@
               "minProperties": 1
             }
           ]
+        },
+        "result": {
+          "description": "edit cases only. The edited value's declared members; omission records Value Object absence rather than an implicit null.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["members"],
+          "properties": {
+            "members": { "type": "object" }
+          }
+        },
+        "carry": {
+          "description": "edit cases only. Language-neutral observations of shallow auxiliary carry, independent bindings, hook-free installation, and declared-cache recomputation.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["auxiliary", "derivedCache"],
+          "properties": {
+            "auxiliary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["identity", "binding", "hooks"],
+              "properties": {
+                "identity": { "const": "shared" },
+                "binding": { "const": "independent" },
+                "hooks": { "const": "none" }
+              }
+            },
+            "derivedCache": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["value", "evaluations"],
+              "properties": {
+                "value": {},
+                "evaluations": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "source": {
+          "description": "edit cases only. Whether every source member and witnessed state remains unchanged after derivation and result observation.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["unchanged"],
+          "properties": {
+            "unchanged": { "const": true }
+          }
         },
         "rejectedRule": {
           "description": "The stable pre-SQL validation rule violated by a rejected case. The closed enum below is authoritative. Resolved serialized scalar leaves use the carrier-neutral m-wire taxonomy uniformly across depth-0, nested, predicate, and write ingress; structural document and model rules retain separate identifiers.",

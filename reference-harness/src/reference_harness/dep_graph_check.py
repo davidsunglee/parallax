@@ -65,7 +65,7 @@ _CATALOG_HEADING = "the module catalog"
 _CATALOG_STATUSES = frozenset({"active", "deferred"})
 _CATALOG_COVERAGES = frozenset({"cases", "contract"})
 
-# The ten case shapes the schema `oneOf` keys on, read directly from each case's
+# The eleven case shapes the schema `oneOf` keys on, read directly from each case's
 # explicit top-level `shape` field (cases are self-describing; no key-sniffing).
 _CASE_SHAPES = frozenset(
     {
@@ -77,6 +77,7 @@ _CASE_SHAPES = frozenset(
         "error",
         "concurrencySuccess",
         "boundary",
+        "edit",
         "rejected",
         "evolution",
     }
@@ -649,11 +650,10 @@ def parse_profile_claims(claim_markdown: str) -> dict[str, dict]:
 def _case_shape(doc: dict) -> str | None:
     """Read the explicit ``shape`` discriminator, validated against the enum.
 
-    Cases are self-describing: the top-level ``shape`` field names one of the eight
-    shapes the schema ``oneOf`` keys on (``read`` / ``writeSequence`` / ``scenario`` /
-    ``conflict`` / ``coherence`` / ``error`` / ``concurrencySuccess`` / ``boundary``).
-    This reads it directly instead of sniffing which keys happen to be present, and
-    returns ``None`` if the field is missing or names no known shape.
+    Cases are self-describing: the top-level ``shape`` field names one of the eleven
+    shapes the schema ``oneOf`` keys on. This reads it directly instead of sniffing
+    which keys happen to be present, and returns ``None`` if the field is missing or
+    names no known shape.
     """
     shape = doc.get("shape")
     return shape if shape in _CASE_SHAPES else None
@@ -775,8 +775,8 @@ def _claim_errors(slice_tag: str, capabilities: dict, cases: list[tuple[Path, di
             if _MODULE_RE.match(tag) and tag not in claim_modules:
                 errors.append(f"{name}: carries module tag {tag!r} not in the slice claim")
 
-        # An api-conformance-lane case (every boundary case, plus the read-lock
-        # matrix reads) is NOT executed by the harness, so it need not carry a
+        # An api-conformance-lane case (every boundary and edit case, plus the
+        # read-lock matrix reads) is NOT executed by the harness, so it need not carry a
         # Postgres golden — its observable is proven by the language's API
         # Conformance Suite. A `rejected` case asserts a pre-SQL refusal (it never
         # reaches SQL), and an `evolution` case asserts a pure description of two

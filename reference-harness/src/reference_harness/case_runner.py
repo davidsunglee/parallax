@@ -267,6 +267,9 @@ def _assert_schema(case: Case) -> None:
             raise CaseFailure(f"{case.path.name}: boundary case has no actions")
         if not case.outcome:
             raise CaseFailure(f"{case.path.name}: boundary case missing outcome")
+    elif case.is_edit:
+        if not case.edit_source:
+            raise CaseFailure(f"{case.path.name}: edit case has no source")
     elif case.is_rejected:
         if case.rejected_rule not in ALL_REJECTED_RULES:
             raise CaseFailure(
@@ -366,7 +369,11 @@ def _assert_serde(case: Case) -> None:
     # scenario or coherence case has one per read step; a write-sequence case and a
     # conflict case (m-opt-lock) have none. Layer 4b: metamodel (descriptor)
     # serde — always.
-    if case.is_scenario:
+    if case.is_edit:
+        query = case.edit_source.get("objectQuery")
+        if isinstance(query, dict):
+            serde.assert_roundtrip(query)
+    elif case.is_scenario:
         for step in case.scenario:
             # Read steps carry an `objectQuery`; write steps carry none.
             if "objectQuery" in step:
@@ -3370,11 +3377,11 @@ def run_case(case: Case, db: DatabaseProvider | None) -> None:
         # execution — so this lane runs even with no provider bound).
         _assert_schema(case)
         if not case.is_boundary:
-            # A read-shape api-conformance case (the read-lock matrix
-            # `m-read-lock-002`, `m-read-lock-004`, and `m-read-lock-005`) still
-            # round-trips its query + descriptor through the serde seam.
+            # A read-shape api-conformance case and a read-origin edit case still
+            # round-trip their query plus descriptor through the serde seam.
             _assert_serde(case)
-            _assert_equivalent_encodings(case)
+            if not case.is_edit:
+                _assert_equivalent_encodings(case)
         return
 
     if case.is_evolution:

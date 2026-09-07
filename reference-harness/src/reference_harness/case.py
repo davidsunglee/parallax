@@ -677,8 +677,8 @@ class Case:
         """The action group: the action under test and how the client performs it.
 
         Holds exactly one action member per shape (``objectQuery`` | ``writeSequence``
-        | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``attempts``
-        | ``write``) plus the context members ``uow`` / ``stream`` / ``at`` /
+        | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``edit`` |
+        ``attempts`` | ``write``) plus the context members ``uow`` / ``stream`` / ``at`` /
         ``observedTxStart`` / ``observedValidStart`` / ``equivalentEncodings``.
         """
         return self.raw.get("when", {})
@@ -712,7 +712,7 @@ class Case:
         """Which executor satisfies this case (``harness`` default | ``api-conformance``).
 
         A ``harness``-lane case executes as today; an ``api-conformance``-lane case
-        (every boundary case, plus the read-lock matrix reads
+        (every boundary and edit case, plus the read-lock matrix reads
         ``m-read-lock-002``, ``m-read-lock-004``, and ``m-read-lock-005``) is
         schema-validated by the
         m-case-format harness but NOT executed — each language's API Conformance
@@ -933,6 +933,27 @@ class Case:
     @property
     def boundary(self) -> list[dict[str, Any]]:
         return self.when.get("boundary", [])
+
+    @property
+    def is_edit(self) -> bool:
+        """True for an m-edit native edited-value derivation case.
+
+        An edit case carries one ``when.edit`` instruction and native result,
+        carry, and source observations. It is always ``lane: api-conformance``:
+        the wire harness can validate its source and assignments but cannot
+        execute a language's typed edit verb or native state witnesses.
+        """
+        return self.shape == "edit"
+
+    @property
+    def edit_source(self) -> dict[str, Any]:
+        """The constructed or read-produced source declaration of an edit case."""
+        return self.when.get("edit", {}).get("source", {})
+
+    @property
+    def edit_set(self) -> dict[str, Any]:
+        """The authored assignments of an edit case, empty for change-free."""
+        return self.when.get("edit", {}).get("set", {})
 
     @property
     def fault(self) -> str | None:
@@ -1341,8 +1362,8 @@ def dialect_executed_cases(compatibility_root: Path) -> list[Case]:
 
     Two exclusions, for unrelated reasons.
 
-    An ``api-conformance``-lane case (boundary retry cases, read-lock matrix
-    reads) is schema-validated by the harness but satisfied by each language's
+    An ``api-conformance``-lane case (boundary retry cases, native edit cases,
+    and read-lock matrix reads) is schema-validated by the harness but satisfied by each language's
     API Conformance Suite, so no harness runner executes it —
     :func:`case_runner.run_case` early-returns for that lane.
 

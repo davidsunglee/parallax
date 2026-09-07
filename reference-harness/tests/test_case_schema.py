@@ -1,7 +1,7 @@
 """DB-free fidelity tests for the grouped compatibility-case schema.
 
 Pinned fixture documents against the new ``compatibility-case.schema.json``: a
-minimal well-formed document for each of the eight shapes is ACCEPTED, and a
+minimal well-formed document for each of the eleven shapes is ACCEPTED, and a
 curated set of malformed documents — the legacy flat layout, a mislabeled
 ``shape``, a plain-string ``sql`` at a golden location, an empty ``sql`` map, an
 extra key inside a closed group, and ``binds`` authored outside a statement
@@ -558,6 +558,43 @@ def _boundary_case() -> dict[str, Any]:
     }
 
 
+def _edit_case() -> dict[str, Any]:
+    return {
+        "model": "models/note.yaml",
+        "tags": ["m-edit", "m-value-object"],
+        "shape": "edit",
+        "lane": "api-conformance",
+        "when": {
+            "edit": {
+                "source": {
+                    "origin": "constructed",
+                    "value": {
+                        "id": 1,
+                        "title": "alpha",
+                        "body": "first",
+                        "tag": {"label": "a", "weight": 3},
+                        "marks": [],
+                    },
+                    "path": "parallax.compatibility.Note.tag",
+                },
+                "set": {"weight": 1},
+            }
+        },
+        "then": {
+            "result": {"members": {"label": "a", "weight": 1}},
+            "carry": {
+                "auxiliary": {
+                    "identity": "shared",
+                    "binding": "independent",
+                    "hooks": "none",
+                },
+                "derivedCache": {"value": "A", "evaluations": 1},
+            },
+            "source": {"unchanged": True},
+        },
+    }
+
+
 def _rejected_query_case() -> dict[str, Any]:
     """A rejected case carrying an invalid QUERY and the violated rule."""
     return {
@@ -790,6 +827,7 @@ VALID_CASES = {
     "error-concurrency": _error_concurrency_case,
     "concurrencySuccess": _concurrency_success_case,
     "boundary": _boundary_case,
+    "edit": _edit_case,
     "read-graphs": _graphs_read_case,
     "read-streamed-graphs": _streamed_milestone_graphs_case,
     "read-stored-data-issues": _stored_data_issues_read_case,

@@ -127,8 +127,8 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   model's default fixtures and injects nothing omits `given` entirely.
 - **`when`** — the action under test and how the client performs it. Exactly one
   **action** member per shape (`objectQuery` | `writeSequence` | `scenario` |
-  `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt
-  conflict's `write`); the **context** members (`uow`, `stream`, `mutation`,
+  `coherence` | `concurrency` | `boundary` | `edit` | `attempts`, plus the
+  single-attempt conflict's `write`); the **context** members (`uow`, `stream`, `mutation`,
   `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe
   the unit-of-work mode, the streamed delivery, the written verb, transaction
   instant, observed milestone coordinate, and alternate surface encodings.
@@ -136,15 +136,16 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
   `roundTrips`), the classified `storedDataIssues`, the portable boundary
-  `outcome`, the described `evolution` and its per-dialect `schema`, the
-  execution-provenance `execution`, and the numeric-comparison `tolerance`.
+  `outcome`, the edit `result` / `carry` / preserved `source`, the described
+  `evolution` and its per-dialect `schema`, the execution-provenance `execution`,
+  and the numeric-comparison `tolerance`.
 
 `model` / `tags` / `lane` stay top-level because they are routing/discovery fields
 read by the coverage gate and the language gate; grouping them buys no readability.
 
 #### Case shapes
 
-A case is one of **ten shapes**, named by the required top-level `shape`:
+A case is one of **eleven shapes**, named by the required top-level `shape`:
 
 - **`read`** — a queryable `when.objectQuery` naming its own `target`,
   asserting `then.rows` or a deep-fetch `then.graph`; a `when.stream` context
@@ -174,6 +175,11 @@ A case is one of **ten shapes**, named by the required top-level `shape`:
 - **`boundary`** — `when.boundary` ordered actions + `then.outcome`
   (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
   does not execute, carrying no golden SQL).
+- **`edit`** — one native edited value derived from the constructed or read-produced
+  `when.edit.source`, with optional assignments under `when.edit.set`; asserts
+  `then.result`, the native carry witnesses in `then.carry`, and source preservation
+  in `then.source` (`m-edit` — an `api-conformance`-lane case the harness
+  schema-validates but does not execute, carrying no golden SQL).
 - **`rejected`** — a schema-valid `when.objectQuery`, a `when.write`, **or** an
   inline `when.model` a model-aware validator MUST refuse **before any SQL**,
   naming the violated normative rule in `then.rejectedRule` (`m-value-object` /
@@ -346,7 +352,7 @@ values.
 | `model` | top-level | every shape but `evolution` | path (relative to `core/compatibility/`) to the model descriptor. An `evolution` case names two endpoints under `when.evolve` instead, and carries no top-level `model` beside them; its LATER endpoint is the model every per-case check reads |
 | `tags` | top-level | yes | module/feature tags (e.g. `["m-predicate", "eq"]`); drive coverage + test selection |
 | `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
-| `shape` | top-level | yes | the explicit shape discriminator — one of the ten shapes above; the schema `oneOf` keys on this `const` |
+| `shape` | top-level | yes | the explicit shape discriminator — one of the eleven shapes above; the schema `oneOf` keys on this `const` |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.corrupt` | `given` | no | an ordered list of stored-state corruptions applied after the model's conforming fixtures load and before the action, admitted on `read` cases; each entry addresses one occurrence by `entity` + primary `key` + logical `member` path and states the raw stored `value` that replaces it (see *Corrupting stored state*, below) |
@@ -358,6 +364,7 @@ values.
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming the `isolation` THAT joining call requests) |
+| `when.edit` | `when` | edit | the native edit under test: `source.origin` is `constructed` or `read`; a constructed source carries its whole authored `value`, while a read source carries the canonical `objectQuery` that produces its containing Entity; optional `source.path` names the Value Object occurrence to edit instead of that Entity. Optional `set` maps canonical member names to complete assigned values; omitting it spells a change-free edit |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
@@ -369,7 +376,7 @@ values.
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
 | `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
 | `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
-| `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on a boundary case |
+| `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on boundary and edit cases |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
 | `then.graph` | `then` | read | the assembled object graph a deep fetch must produce (one of `then.rows` / `then.graph` / `then.graphs` is REQUIRED for a read case) |
@@ -380,6 +387,9 @@ values.
 | `then.errorClass` | `then` | error | the neutral `m-db-error` category a triggered error must classify to (`uniqueViolation` / `deadlock` / `lockWaitTimeout`) |
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind / a refused boundary option — `option-conflict`, `boundary-failed`, `connection-refused`), stated directly or as a dialect-keyed map whose omitted dialect the case makes no claim about |
+| `then.result` | `then` | edit | `members` is the complete expected declared-member observation of the edited value. Omission is meaningful for presence-aware Value Objects: a member absent from this map must remain unpopulated rather than becoming present with `null` |
+| `then.carry` | `then` | edit | native witnesses for `m-edit`'s complement contract: `auxiliary` requires a shared payload identity, independent source/result bindings, and no hook dispatch; `derivedCache` requires the expected recomputed `value` and exact evaluation count after the source cache was warmed |
+| `then.source` | `then` | edit | source preservation after derivation; `unchanged: true` requires all declared source members and warmed native witness state to remain unchanged |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
 | `then.evolution` | `then` | evolution | the COMPLETE Evolution `evolve` returns for the two endpoints — its `kind`, `operations`, `behavioralImpacts`, `overlapVisibleOperations`, and `coordinationRequirements`, every member authored even when empty (see *Evolution cases*, below) |
 | `then.schema` | `then` | unilateral evolution | the Schema Delta expectation for every supported Dialect, keyed by Dialect Identity; each cell is exactly one of `delta` (that dialect's ordered `statements` and `createdIndices`) or `unsupported` (the complete ordered physical operations it cannot render). REQUIRED of a UNILATERAL `evolution` expectation, which is exactly what schema generation accepts, and FORBIDDEN on a coordinated one: a Coordinated Evolution is not an accepted input, so a coordinated expectation is dialect-independent |
@@ -1999,6 +2009,38 @@ above the wire (`m-db-port` *Mapping obligations*), and all four are portable:
   where it holds without asserting anything about an engine that meets it another
   way.
 
+### Edit cases (`m-edit`)
+
+An **edit** case proves `m-edit` through a language's native value and copy API,
+which the serialized compatibility harness cannot construct or observe. It is
+therefore always `lane: api-conformance`, carries no golden SQL, and is satisfied
+by each language's API Conformance Suite. The harness still validates the complete
+case, including model-aware path resolution and the assignability of every member
+named by `when.edit.set`.
+
+`when.edit.source.origin` names how the containing Entity is obtained. A
+`constructed` source carries its complete application-authored value inline under
+`source.value`. A `read` source carries the canonical `source.objectQuery` whose
+single result supplies the Entity. Omitting `source.path` edits that Entity;
+supplying it names one Value Object occurrence under the Entity by canonical path.
+`when.edit.set` is the complete assignment map passed to the edit operation and is
+omitted, rather than authored empty, for a change-free edit.
+
+The three required result oracles divide the observation by ownership:
+
+- `then.result.members` states the edited value's declared members. Key omission
+  observes presence for a Value Object and is distinct from a present `null`.
+- `then.carry.auxiliary` states that the source and result initially bind the same
+  reference-valued auxiliary payload, that rebinding the result leaves the source
+  binding independent, and that carry dispatches no hooks.
+- `then.carry.derivedCache` states the value and exact evaluation count observed
+  after warming the source cache and reading the result. The changed witnesses
+  assign a member the cached computation does not read, so recomputation proves
+  unconditional cache dropping rather than dependency tracking.
+- `then.source.unchanged` states that derivation leaves the source's declared
+  members, auxiliary binding, and warmed cache unchanged. The result is also a
+  distinct value; payload identity does not permit result identity.
+
 ### The execution lifecycle oracle (`m-execution-lifecycle`)
 
 `then.executionLifecycle` states the transient lifecycle events a run produces.
@@ -2539,16 +2581,18 @@ satisfies it:
 - **`harness`** — the harness executes the case as today: it runs the golden
   SQL / data observables against a provisioned database.
 - **`api-conformance`** — the harness **schema-validates** the case (layer 1) but
-  does **not** execute it: its observable is a runtime-loop or read-lock-matrix
-  branch (an injected transient, retry counting, error surfacing, the emitted
-  read-lock proof) that a single-connection harness cannot provoke. **Each
+  does **not** execute it: its observable requires a native runtime value, a
+  runtime loop, or a read-lock-matrix branch (an edited value and its carried
+  state, an injected transient, retry counting, error surfacing, or the emitted
+  read-lock proof) that the serialized or single-connection harness cannot
+  provoke. **Each
   language's API Conformance Suite MUST satisfy every `api-conformance`-lane
   case**, with coverage enforced by the suite's own partition assertion. This
   keeps every clarified branch specified in
   core and executably covered, even the ones the harness itself cannot run. Every
-  `boundary`-shape case is `api-conformance`; the read-lock matrix reads (locking
-  object find, locking deep fetch, optimistic object find) are `read`-shape
-  `api-conformance` cases.
+  `boundary`-shape and `edit`-shape case is `api-conformance`; the read-lock
+  matrix reads (locking object find, locking deep fetch, optimistic object find)
+  are `read`-shape `api-conformance` cases.
 
 Two shapes reach no database on the `harness` lane at all — a `rejected` case,
 refused pre-SQL, and an `evolution` case, which describes two accepted models —

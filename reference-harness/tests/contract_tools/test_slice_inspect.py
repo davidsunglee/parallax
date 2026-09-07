@@ -155,6 +155,7 @@ _BASE_CASE_SHAPES = [
     "scenario",
     "conflict",
     "boundary",
+    "edit",
     "error",
     "concurrencySuccess",
     "rejected",

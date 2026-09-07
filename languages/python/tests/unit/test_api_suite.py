@@ -108,6 +108,7 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 # never a generic module-wide reason — m-unit-work, m-navigate/m-deep-fetch/
 # m-snapshot-read/m-value-object/m-inheritance (each a reasoned, case-scoped
 # entry rather than a blanket module bucket),
+# m-edit (every currently active case is a native runner-backed example),
 # m-read-lock (its runtime object-find pair -002/-005 are real idiomatic
 # read-story examples; its harness-lane and two-session proofs
 # -001/-006/-007/-010/-011 are case-scoped — no case needs a generic
@@ -118,6 +119,7 @@ def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
 _BUCKET_FREE_MODULES: frozenset[str] = frozenset(
     {
         "m-execution-lifecycle",
+        "m-edit",
         "m-unit-work",
         "m-navigate",
         "m-deep-fetch",
