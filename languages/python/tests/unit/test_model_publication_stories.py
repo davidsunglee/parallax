@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -31,9 +32,10 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
 from parallax.core.entity import GraphConstructionError, model_of
 from parallax.core.entity import _graph_construction as graph_construction_module
-from parallax.core.metamodel import EntityIdentity, IndexIdentity, Table
+from parallax.core.metamodel import EntityIdentity, IndexIdentity, Metamodel, Table
 from parallax.evolution import CreatedIndex, SchemaDelta, evolve
-from parallax.snapshot import ServingModel, connect, prepare_model
+from parallax.snapshot import ModelSelection, ServingModel, connect
+from parallax.snapshot.handle import Database
 
 _ALTER = "alter table account add column nickname varchar(64)"
 _ORDERED = ("alter table t add column a int", "create index i on t (a)", "analyze t")
@@ -153,28 +155,42 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
 ) -> None:
     # Preparation is the recipe's FIRST step, which is what makes this failure
     # cost nothing: every fallible model-only derivation runs there, before any
-    # statement of a delta is generated, let alone applied. So the database is
-    # untouched, the held selection is unmoved, and the next execution of the
-    # handle connected before the attempt still adopts A.
+    # statement of a delta is generated, let alone applied. The failure is
+    # driven through the recipe itself, so what is graded is the recipe's order
+    # rather than the surface's — the database is untouched, the holder is
+    # unmoved, and the next execution of the handle the recipe connected before
+    # the attempt still adopts A.
     #
     # The candidate is the story's own later model and the derivation that fails
-    # is a real one — its graph construction, made to refuse here because a
-    # Domain Model that composes at all is one every derivation accepts.
+    # is a real one — its graph construction, refusing for that model alone
+    # because a Domain Model that composes at all is one every derivation
+    # accepts, and A's preparation must reach the recipe unharmed.
     port = _AccountPort()
-    a = prepare_model(ACCOUNT_MODEL, edition="2026-09-a")
-    serving = ServingModel(a)
-    db = connect(port, serving)
+    connected: list[tuple[ServingModel, ModelSelection, Database]] = []
 
-    def refuse(*_args: object, **_kwargs: object) -> object:
-        raise GraphConstructionError(
-            code="entity-graph-layout-mismatch",
-            message="the candidate's per-Entity facts could not be derived",
-        )
+    def connect_and_hold(adapter: DbPort, serving: ServingModel) -> Database:
+        db = connect(adapter, serving)
+        connected.append((serving, serving.current(), db))
+        return db
 
-    monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse)
+    candidate = model_of(NICKNAMED_ACCOUNT_MODEL)
+    derive_entity_facts = graph_construction_module._entity_facts  # pyright: ignore[reportPrivateUsage] - the real derivation this refusal stands in front of
+
+    def refuse_the_candidate(model: Metamodel, *derivation: Any) -> Any:
+        if model is candidate:
+            raise GraphConstructionError(
+                code="entity-graph-layout-mismatch",
+                message="the candidate's per-Entity facts could not be derived",
+            )
+        return derive_entity_facts(model, *derivation)
+
+    monkeypatch.setattr(stories, "connect", connect_and_hold)
+    monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse_the_candidate)
+
     with pytest.raises(GraphConstructionError):
-        prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
+        stories.a_running_service_publishes_an_evolved_model_without_restarting(port)
 
+    ((serving, a, db),) = connected
     assert port.writes == []
     assert serving.current() is a
     assert db.transact(lambda tx: tx.edition) == "2026-09-a"
