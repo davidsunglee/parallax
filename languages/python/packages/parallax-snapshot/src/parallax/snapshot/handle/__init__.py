@@ -22,15 +22,21 @@ which no specification or public-surface check promises. Where the exported name
 live:
 
 - :mod:`~parallax.snapshot.handle._database` — :class:`Database`, :func:`connect`,
-  :func:`prepare_model`, :class:`TransactionOptionConflictError`,
-  :class:`TransactionOwnershipError`, :class:`TransactionRollbackError`:
-  the composition root (which prepares a Domain Model of either provenance and
-  connects to it) and
-  the spec §5 callback demarcation (sentinel-backed options, join through the
-  exact originating ``Database`` with the option-conflict check, the
-  ``m-auto-retry`` bounded retry loop, the injected flush executor, and the one
-  refusal that substitutes an error of its own — a rollback that did not
-  complete, whose two live errors neither alone reports).
+  :func:`prepare_model`: the composition root, which prepares a Domain Model of
+  either provenance or takes a Serving Model as handed, and connects to it.
+- :mod:`~parallax.snapshot.handle._demarcation` —
+  :class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
+  :class:`TransactionRollbackError`: the refusals of the spec §5 callback
+  demarcation (sentinel-backed options, join through the exact originating
+  ``Database`` with the option-conflict check, the ``m-auto-retry`` bounded
+  retry loop with one adoption per attempt, the injected flush executor, and
+  the one refusal that substitutes an error of its own — a rollback that did
+  not complete, whose two live errors neither alone reports).
+- :mod:`~parallax.snapshot.handle._adoption` — :class:`ExecutionFailure`, the
+  contextualized form every ordinary failure escaping an adopted execution
+  takes: the edition that execution adopted, and the error itself as its
+  cause. The module also owns the adoption an execution makes and the
+  contextualization around it, which nothing exports.
 - :mod:`~parallax.snapshot.handle._publication` — :class:`ModelSelection`, the
   opaque prepared form of one Domain Model under one Model Edition that
   :func:`prepare_model` answers; :class:`ServingModel`, the single concrete
@@ -135,13 +141,12 @@ gate reaches no port.
 from __future__ import annotations
 
 from parallax.core.unit_work import ObjectKey, WriteInstructionError
-from parallax.snapshot.handle._database import (
-    Database,
+from parallax.snapshot.handle._adoption import ExecutionFailure
+from parallax.snapshot.handle._database import Database, connect, prepare_model
+from parallax.snapshot.handle._demarcation import (
     TransactionOptionConflictError,
     TransactionOwnershipError,
     TransactionRollbackError,
-    connect,
-    prepare_model,
 )
 from parallax.snapshot.handle._errors import (
     QueryTargetError,
@@ -205,6 +210,7 @@ __all__ = [
     "CheckedSnapshot",
     "Database",
     "DeferredFeatureError",
+    "ExecutionFailure",
     "FindResult",
     "HistoryFindResult",
     "InvalidData",

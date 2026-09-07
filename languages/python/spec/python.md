@@ -69,12 +69,17 @@ never something an application developer hand-writes.
 
 Prepared model publication is partly active and partly deferred. Its
 preparation and publication interface — `prepare_model`, `ModelSelection`,
-`ServingModel`, and `PublicationConflictError` — is an active §2 contract, and
-every connection prepares its model through it. Per-execution adoption of a
-`ServingModel`'s current selection, the read-only `edition` on transactions,
-result envelopes, and streams, `ExecutionFailure`, the edition on lifecycle
-Started events with the `begin_failed` attempt outcome, and the executable
-update example remain a deferred extension with their adopted contract in
+`ServingModel`, and `PublicationConflictError` — is an active §2 contract,
+every connection adopts from a `ServingModel`, and the transaction shape is
+migrated: each attempt adopts the current selection before its boundary opens,
+`Transaction.edition` reports it, an ordinary failure escaping `db.transact`
+surfaces as `ExecutionFailure`, and the Transaction Attempt's Started event
+carries its edition with `begin_failed` as a terminal attempt outcome (§§3, 5).
+Per-execution adoption by standalone reads and streams, the read-only
+`edition` on result envelopes and entered streams, `ExecutionFailure` on those
+executions, the edition on the Read and Snapshot Stream Started events, the
+edition a delayed `InvalidDataError` carries, and the executable update example
+remain a deferred extension with their adopted contract in
 [§9](#prepared-model-publication) and implementation tracked in
 [COR-123](https://linear.app/flimflam/issue/COR-123). The deferred half adds no
 completed developer-surface or lifecycle-oracle claim to the current contract
@@ -1624,11 +1629,13 @@ exposes neither the selected read model nor a class index. It is not
 `DeferredFeatureError(execution-feature-deferred)`, which is reserved for a
 valid query whose execution feature is explicitly deferred.
 
-After that narrowing, Snapshot prepares the model once (§2 *Model preparation
-and the Serving Model*) and the Database keeps that one selection's read
-projection together with the codec and planner out of its write projection;
-none of them carries an identity. The read projection is the private Selected
-Read Model: the accepted Metamodel and the exact-model layout catalog every read
+After that narrowing, Snapshot prepares a Domain Model once (§2 *Model
+preparation and the Serving Model*) into a private `ServingModel`, or holds the
+`ServingModel` it was handed, and retains nothing model-derived of its own:
+every transaction attempt and every standalone read adopts the selection that
+Serving Model holds when it begins. What an execution adopts are that
+selection's two projections, and none of them carries an identity. The read
+projection is the private Selected Read Model: the accepted Metamodel and the exact-model layout catalog every read
 converts its rows against as ONE composed value, so a read lane resolves and
 converts against one model rather than against two references that could name
 two, together with the Entity Graph Construction Snapshot materialization
@@ -1640,17 +1647,48 @@ held beside the read projection rather than inside it, because a read never
 derives a row. Both are selection state rather than Core runtime values, and
 neither is exported nor shared through the model.
 
-`Database(port, model)` takes the same `model: DomainModel` input and admits no
-bare accepted Metamodel. It refuses a value that is not a Domain Model with the
-same `SnapshotConnectionError(snapshot-class-backed-model-required)`, so every
-connection reaches its accepted Metamodel through a Domain Model and every
-product derived from it is prepared whole before the connection serves. A descriptor-backed
-model composes no Entity Class and can never materialize a Snapshot, so
-`Database.find` and `Transaction.find` refuse it with that same error — on both
-entry points before target resolution, and on the participating one before the
-unit of work's force-flush, so a refused read flushes no pending write. The
-write lanes and the Wire read that connection does serve are unaffected: they
-name Entities rather than classes.
+`Database(port, model)` takes the same `model: DomainModel | ServingModel`
+input and admits no bare accepted Metamodel. It refuses a value that is neither
+with the same `SnapshotConnectionError(snapshot-class-backed-model-required)`,
+so every connection reaches its accepted Metamodel through a prepared
+selection and every product derived from it is prepared whole before the
+connection serves. A descriptor-backed model composes no Entity Class and can
+never materialize a Snapshot, so `Database.find` and `Transaction.find` refuse
+it with that same error — on both entry points before target resolution, and on
+the participating one before the unit of work's force-flush, so a refused read
+flushes no pending write. The write lanes and the Wire read that connection does
+serve are unaffected: they name Entities rather than classes.
+
+**Transactions adopt per attempt.** Each outer `db.transact` attempt obtains
+and adopts the Serving Model's current selection before the physical database
+transaction is asked to begin, and retains it through commit or rollback: the
+`Transaction` handed to the callback is built over that selection's two
+projections, the unit of work retains that selection's Write Planner, and
+`Transaction.edition` is the read-only edition it adopted. A joining invocation
+inherits the active transaction and its selection without a Serving Model
+lookup; a retry obtains the then-published selection afresh, so one invocation
+may run attempts under two editions. A standalone read is served under the
+selection current at its call, and a transactional read or stream inherits its
+transaction's. Publication during an attempt never changes the selection that
+attempt retains. The lifecycle-provider root opens before any attempt adopts,
+so a Provider that fails to open keeps its own type.
+
+**Transaction failures carry the edition.** `ExecutionFailure` has read-only
+`edition: str` and `cause: Exception`; its edition is always an actual Adopted
+Edition, and the cause is also its `__cause__`. Every ordinary failure escaping
+the outer invocation — the callback's own exception, a read's, a write's, a
+boundary that never opened, a rollback that did not complete, or retry
+exhaustion — is contextualized once, after retry and rollback have resolved:
+the retry classifier sees the underlying failure, a joining invocation
+propagates internally without a wrapper of its own, and terminal exhaustion
+reports the final attempt's edition. A begin failure is terminal and reports
+the selection the attempt adopted before its boundary was asked to open. A
+rollback failure keeps both live errors inside the cause as
+`TransactionRollbackError`. Control-flow and fatal exceptions keep their
+existing propagation rules and are never contextualized, and neither are the
+deterministic refusals `db.transact` makes before adopting — the isolation
+vocabulary, the retry bound, ownership, option conflict, and re-entry — nor a
+lifecycle Provider that fails to open: there is no `edition=None` variant.
 
 Snapshot owns `_DEFERRED_EXECUTION_FEATURES: frozenset[str]`, the private
 immutable set of canonical Feature tags whose query shapes are valid but
@@ -2175,15 +2213,19 @@ the schema is ready, and then publishes it. Failed preparation leaves the
 previous selection serving. A local expected-selection comparison does not
 serialize cross-process DDL or undo already-applied statements.
 
-**Static shorthand.** `Database.connect(adapter, model)` keeps its existing
-positional and keyword arguments. A Domain Model is prepared once, at connect,
-under a generated opaque edition that stays fixed for that connection's life,
-and the connection keeps that one selection's read projection together with the
-codec and planner out of its write projection, for every read and write it
-serves. Independent static connections may have distinct generated
-editions for the same Domain Model; explicit preparation and a shared
-`ServingModel` give callers control of shared edition identity, and connecting
-over one is the deferred half in §9.
+**Static shorthand and the Serving Model at connect.**
+`Database.connect(adapter, model)` keeps its existing positional and keyword
+arguments, and its model argument accepts a Domain Model or a `ServingModel`.
+A Domain Model is prepared once, at connect, under a generated opaque edition
+that stays fixed for that connection's life, into a private `ServingModel` of
+the same kind that nothing else can publish to; a `ServingModel` handed in is
+held as itself, so two connections over one adopt the same current selection
+and flip together when it publishes. Both forms enter the same execution
+paths, the connection retains no selection of its own (§3), and a fresh
+process must prepare its initial selection before it can serve. Independent
+static connections may have distinct generated editions for the same Domain
+Model; explicit preparation and a shared `ServingModel` give callers control
+of shared edition identity.
 
 ## 3. Object lifecycle profile
 
@@ -3529,12 +3571,21 @@ over one is the deferred half in §9.
   failures retriable by default, bound default 10, `retries=0` disables the
   loop, exhaustion surfaces diagnosably with the attempt count;
   optimistic-lock conflicts join the retriable set only via
-  `retry_optimistic_conflicts=True`.
+  `retry_optimistic_conflicts=True`. Each attempt adopts the Serving Model's
+  current selection before its boundary opens and `tx.edition` names it; an
+  ordinary failure escaping the call surfaces as `ExecutionFailure` under the
+  edition of the attempt that failed last, with the underlying error as its
+  cause (§3 *Transaction failures carry the edition*).
 - **Transient execution lifecycle.** `Database`, `Transaction`, `Snapshot`, and
   stream values expose no lifecycle accessors. An installed Provider receives
   one transaction-invocation Root Execution spanning every physical retry and
   joined invocation; a joined call emits a child Transaction Invocation under
-  the current attempt and creates no additional root or attempt.
+  the current attempt and creates no additional root or attempt. Each
+  Transaction Attempt starts after it has adopted its edition and before the
+  boundary is asked to begin, its Started event carries that edition, and a
+  boundary that never opens finishes the attempt `begin_failed` — terminal,
+  with no callback run — and the invocation failed, caused by that attempt
+  (`m-execution-lifecycle`).
 
 ### Private read composition
 
@@ -5756,7 +5807,7 @@ hatchling.
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `isolation_spelling` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
@@ -5827,39 +5878,32 @@ outside `slice-snapshot-1` and recorded as deferred in §1.
 records the decision and its alternatives. The preparation and publication
 interface — `prepare_model`, `ModelSelection`, `ServingModel`, and
 `PublicationConflictError` — is active in §2 *Model preparation and the
-Serving Model*. This section defines the remaining extension contract: how
-executions adopt a Serving Model's current selection, the edition every result
-retains, the failure and lifecycle contracts that follow, and the evolution
-constraints publication carries. Activation replaces the affected contracts in
-§§3–5 and updates the owning core specifications, lifecycle schemas,
-compatibility cases, API Conformance Suite, and generated topology together.
-Until that migration, the existing static connection and lifecycle oracle
-remain the current claim, and the library's executable update example is
-deferred with it: the deferred half supplies that example, not a generic
-updater callback interface.
+Serving Model*, and the transaction shape has migrated: adoption per
+attempt, `Transaction.edition`, `ExecutionFailure` on a transaction, and the
+attempt's lifecycle events are the active §§3 and 5 contracts. This section
+defines the remaining extension contract: how standalone reads and streams
+adopt a Serving Model's current selection, the edition every result retains,
+the failure and lifecycle contracts that follow for those executions, and the
+evolution constraints publication carries. Activation replaces the affected
+contracts in §§2–4 and updates the owning core specifications, lifecycle
+schemas, compatibility cases, API Conformance Suite, and generated topology
+together. Until that migration, a standalone read is served under the selection
+current at its call and stamps nothing, the read and stream lifecycle oracle
+stands as it is, and the library's executable update example is deferred with
+it: the deferred half supplies that example, not a generic updater callback
+interface.
 
-**Serving Model at connect.** `Database.connect(adapter, model)` keeps its
-existing positional and keyword arguments, and its model argument additionally
-accepts a `ServingModel`. The Domain Model shorthand of §2 prepares once into a
-private `ServingModel` of the same kind, so both forms enter the same execution
-paths, and a fresh process must prepare its initial selection before it can
-serve.
-
-**Adoption and retention.** Each outer transaction attempt obtains and adopts
-one complete selection before opening the physical database transaction. It
-retains that selection through commit or rollback. A joining invocation inherits
-the active transaction and selection without a Serving Model lookup; a retry obtains
-the then-published selection afresh. A standalone eager read adopts once for its
-whole execution. A standalone stream adopts at context entry and retains the
+**Adoption and retention.** A standalone eager read adopts once for its whole
+execution. A standalone stream adopts at context entry and retains the
 selection through every page; construction validates model-independent arguments
 such as page size, while model-dependent refusals move to entry. A transactional
-stream inherits its transaction's selection. Publication during any of these
-scopes never changes the selection already retained there.
+stream inherits its transaction's selection. Publication during either scope
+never changes the selection already retained there.
 
-Transactions and read-result envelopes expose read-only `edition`: Snapshot,
-Checked Snapshot, row results, Wire results through their existing envelopes, and
-entered streams. Stream pages preserve the same edition without introducing a
-new public page interface. A stream that has not entered has no Adopted Edition.
+Read-result envelopes expose read-only `edition`: Snapshot, Checked Snapshot,
+row results, Wire results through their existing envelopes, and entered
+streams. Stream pages preserve the same edition without introducing a new
+public page interface. A stream that has not entered has no Adopted Edition.
 The stamp is not a domain Entity member or a Wire Entity mapping entry; it does
 not expose a lifecycle record or consult a Serving Model. Result envelopes
 retain the stamp for later access.
@@ -5874,19 +5918,12 @@ inequality refusal, automatic source reread, evidence upgrade, or rebasing is
 introduced. This applies to both Typed and Wire keyed-write adapters under the
 shared ingress.
 
-**Failures.** An `ExecutionFailure` has read-only `edition: str` and
-`cause: Exception`; its edition is always an actual Adopted Edition, and the
-original cause remains available through native exception chaining. Ordinary
-failures escaping the owning adopted execution, including application callback
-exceptions, are contextualized after retry and rollback resolution. Joining
-invocations propagate internally without adding wrappers for the same
-transaction. Retry classification sees the underlying failures; terminal
-exhaustion reports the final attempt's edition. Begin failure is terminal and
-reports the selection adopted before opening. Rollback failure preserves both
-underlying errors and remains terminal. Control-flow and fatal exceptions retain
-their existing propagation rules. Failures before adoption, including initial
-preparation and lifecycle-provider opening, retain their own exception types;
-there is no `edition=None` variant.
+**Failures.** The `ExecutionFailure` of §3 contextualizes an ordinary failure
+escaping a standalone read or an entered stream on the same terms it
+contextualizes one escaping a transaction: after the root activity has opened,
+under the edition that execution adopted, with the cause chained natively.
+Failures before adoption, including initial preparation and lifecycle-provider
+opening, retain their own exception types; there is no `edition=None` variant.
 
 A delayed `InvalidDataError` from a result accessor remains that error type and
 carries the result's original edition. Access starts no execution, performs no
@@ -5900,18 +5937,11 @@ diagnostics, and optional violated Physical Index Name; unique violations gain
 no automatic retry, and the application owns rollout correlation.
 
 **Lifecycle.** No first-publication event or previous/new-edition comparison is
-introduced. The Started event of each adoption-owning activity carries its
-edition: Transaction Attempt, standalone Read, or standalone Snapshot Stream.
+introduced. The Started event of a standalone Read and of a standalone Snapshot
+Stream carries its edition, as the Transaction Attempt's already does (§5).
 Participating reads, streams, writes, and joined invocations inherit through the
-existing parent correlation. One transaction invocation may span attempts under
-different editions, so its root does not assert one edition for the whole chain.
-
-A Transaction Attempt starts after adoption and before physical transaction
-opening. Its outcomes gain `begin_failed`: the callback has not run, the attempt
-finishes failed, and the invocation fails without retry. A successful begin
-continues within that same attempt. This replaces the existing convention of no
-attempt activity for a failed begin. With no lifecycle provider, or a declined
-root, reporting performs no event allocation or lifecycle work. Public preflight
+existing parent correlation. With no lifecycle provider, or a declined root,
+reporting performs no event allocation or lifecycle work. Public preflight
 refusals still create no activity, and constructing an unentered stream emits
 nothing. Reporting no longer depends on whether another operation previously
 selected the same edition or won a cache-publication race.

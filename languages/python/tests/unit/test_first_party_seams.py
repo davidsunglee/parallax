@@ -29,6 +29,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -277,7 +278,7 @@ def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do(
     # Wire verb runs `validate_write` for it, so it is refused with the same
     # classified rule the Typed keyed verbs and the rejected run lane report.
     port = ScriptedPort(Transact())
-    with pytest.raises(WriteRejectedError) as raised:
+    with raises_contextualized(WriteRejectedError) as raised:
         _run(
             port,
             lambda tx: tx.wire.insert(
@@ -318,7 +319,7 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
         tx.wire.insert("parallax.compatibility.Account", {"id": 7, "owner": "N", "balance": "5.00"})
         tx.read_rows(query)
 
-    with pytest.raises(QueryTargetError):
+    with raises_contextualized(QueryTargetError):
         _run(port, fn)
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 
@@ -361,7 +362,7 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
         _insert_policy(tx)
         tx.wire.find(query)
 
-    with pytest.raises(DeferredFeatureError) as raised:
+    with raises_contextualized(DeferredFeatureError) as raised:
         _policy_db(port).transact(fn)
     assert raised.value.features == ("snapshot-history-includes",)
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
@@ -398,7 +399,7 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
         tx.wire.insert("parallax.compatibility.Order", _ORDER_PAYLOAD)
         tx.read_rows(query)
 
-    with pytest.raises(ValueError, match="row-form read materializes no relationships"):
+    with raises_contextualized(ValueError, match="row-form read materializes no relationships"):
         _run_on(db_for(MODELS["orders"], port), fn)
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
 

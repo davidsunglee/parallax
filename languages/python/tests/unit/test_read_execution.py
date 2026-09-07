@@ -51,8 +51,8 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
 from parallax.snapshot.handle import _read_scope as read_scope_module
-from parallax.snapshot.handle import build_write_planner
-from parallax.snapshot.handle._publication import SelectedReadModel
+from parallax.snapshot.handle import build_write_planner, prepare_model
+from parallax.snapshot.handle._publication import SelectedReadModel, ServingModel, read_projection
 from parallax.snapshot.handle._read_scope import ReadInputs
 
 # The two production adapters are what this suite grades, and module privacy is
@@ -65,6 +65,7 @@ _META: Final = cataloged_for(ACCOUNT).meta
 _SELECTED: Final = SelectedReadModel(
     edition="test", model=cataloged_for(ACCOUNT), construction=graph_construction_for(ACCOUNT)
 )
+_SERVING: Final = ServingModel(prepare_model(ACCOUNT, edition="test"))
 
 
 class _Target:
@@ -186,8 +187,7 @@ def _participating[T](
         isolation=None,
         extra_retriable=None,
     )
-    with root as invocation, invocation.attempt() as attempt:
-        attempt.begun()
+    with root as invocation, invocation.attempt("test") as attempt:
 
         def in_a_unit_of_work(uow: UnitOfWork) -> T:
             execution = _Participating(
@@ -213,13 +213,15 @@ def _participating[T](
 # begin: the selection each policy serves                                      #
 # --------------------------------------------------------------------------- #
 def test_each_policy_answers_the_selection_it_was_built_with() -> None:
-    # Neither adapter selects per operation in this shape, and the scope above
-    # assumes neither does: what both promise is that the record arrives through
-    # `begin` rather than off the handle.
+    # A standalone execution adopts from its Serving Model at each `begin`, and
+    # a participating one answers the transaction's fixed record: what both
+    # promise is that the record arrives through `begin` rather than off the
+    # handle.
     port = RefusingPort()
-    standalone = _Standalone(None, _SELECTED, ReadInputs(port, None, None))
-    assert standalone.begin() is _SELECTED
-    assert standalone.begin() is _SELECTED
+    standalone = _Standalone(None, _SERVING, ReadInputs(port, None, None))
+    current = read_projection(_SERVING.current())
+    assert standalone.begin() is current
+    assert standalone.begin() is current
 
     def run(execution: Any, _uow: UnitOfWork) -> None:
         assert execution.begin() is _SELECTED
@@ -234,7 +236,7 @@ def test_each_policy_answers_the_selection_it_was_built_with() -> None:
 def test_a_standalone_eager_read_runs_inside_a_read_root_of_its_own() -> None:
     provider = RecordingLifecycleProvider()
     port = RefusingPort()
-    execution = _Standalone(installed_lifecycle(provider), _SELECTED, ReadInputs(port, None, None))
+    execution = _Standalone(installed_lifecycle(provider), _SERVING, ReadInputs(port, None, None))
     body = _Body(provider)
 
     assert execution.eager(_TARGET, "TYPED", body) is _ANSWER
@@ -251,7 +253,7 @@ def test_a_standalone_body_is_handed_the_port_and_neither_a_preference_nor_a_led
     # Non-transactional in the three ways that reach the executor, stated where
     # the three values are actually chosen.
     port = RefusingPort()
-    execution = _Standalone(None, _SELECTED, ReadInputs(port, None, None))
+    execution = _Standalone(None, _SERVING, ReadInputs(port, None, None))
     body = _Body()
 
     execution.eager(_TARGET, "TYPED", body)
@@ -334,7 +336,7 @@ def test_a_participating_body_is_handed_the_connection_the_preference_and_the_un
 def test_a_standalone_stream_opens_a_root_execution_of_its_own() -> None:
     provider = RecordingLifecycleProvider()
     execution = _Standalone(
-        installed_lifecycle(provider), _SELECTED, ReadInputs(RefusingPort(), None, None)
+        installed_lifecycle(provider), _SERVING, ReadInputs(RefusingPort(), None, None)
     )
 
     activity: SnapshotStreamActivity = execution.open_stream(_TARGET, "TYPED", 5)
@@ -376,7 +378,7 @@ def test_a_participating_stream_is_a_child_of_the_current_attempt() -> None:
 def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing() -> None:
     provider = RecordingLifecycleProvider()
     port = RefusingPort()
-    execution = _Standalone(installed_lifecycle(provider), _SELECTED, ReadInputs(port, None, None))
+    execution = _Standalone(installed_lifecycle(provider), _SERVING, ReadInputs(port, None, None))
     body = _Body(provider)
 
     with execution.open_stream(_TARGET, "TYPED", 5) as stream:

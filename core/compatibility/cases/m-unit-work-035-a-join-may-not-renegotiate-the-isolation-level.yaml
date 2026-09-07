@@ -76,7 +76,7 @@ then:
           - sequence: 2
             activity: 2
             parent: 1
-            transactionAttemptStarted: {}
+            transactionAttemptStarted: {edition: account}
           - sequence: 3
             activity: 3
             parent: 2

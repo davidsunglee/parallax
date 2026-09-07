@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from _transact_support import FIXED
 
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ReadCall,
@@ -199,7 +200,7 @@ def test_an_unrecognized_provenance_token_is_loud() -> None:
     def fn(tx: Transaction) -> Account:
         return write_value_runner.value_of("invented", tx, another)
 
-    with pytest.raises(ValueError, match="unrecognized value provenance"):
+    with raises_contextualized(ValueError, match="unrecognized value provenance"):
         _db(port).transact(fn)
 
 
@@ -226,7 +227,7 @@ def test_a_graded_mismatch_is_loud_in_either_direction(
     def fn(tx: Transaction) -> str | None:
         return write_value_runner.grade_step(tx, step, another)
 
-    with pytest.raises(AssertionError, match=message):
+    with raises_contextualized(AssertionError, match=message):
         _db(port).transact(fn)
 
 

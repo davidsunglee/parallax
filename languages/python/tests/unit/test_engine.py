@@ -4162,8 +4162,9 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
     # calling this function, so the guard is unreachable through the public
     # entry point — a genuine caller-contract defense, pinned here by
     # calling the function directly with a manufactured mismatch.
-    domain = engine.load_case_domain_model(_case("m-unit-work-001"))
-    meta = models.accepted_model_of(domain)
+    case = _case("m-unit-work-001")
+    serving = engine.case_serving_model(case)
+    meta = models.accepted_model_of(serving.current().model)
     steps: list[Mapping[str, object]] = [
         {
             "objectQuery": {
@@ -4181,15 +4182,15 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
             }
         },
     ]
+    context = engine._CaseContext(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        serving, meta, "locking", TemporalShadow(), None
+    )
     with pytest.raises(engine.EngineError, match="not preceded by"):
         engine._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             FakeWritePort(),
-            domain,
-            meta,
-            "locking",
+            context,
             steps,
             0,
-            TemporalShadow(),
             LifecycleRun(),
         )
 

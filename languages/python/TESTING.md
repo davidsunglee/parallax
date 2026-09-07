@@ -39,6 +39,7 @@ no test command of its own.
 | `_support/sweep_goldens.py` | The corpus cases the compile and run sweeps grade against authored goldens, and the golden readers both use |
 | `_support/distributions.py` | The distribution name tuples and the `Wheelhouse` the `wheelhouse` fixture builds |
 | `_support/fake_metamodel.py` | An alternate accepted-Metamodel implementation and the parity model it pins |
+| `_support/adoption.py` | `raises_contextualized`, the assertion every suite makes about an ordinary failure escaping `db.transact`: an `ExecutionFailure` whose `cause` is the error the block graded, answered as `value` so the assertion reads as it would against a bare raise |
 | `_support/model_capabilities.py` | The three model-bound collaborators — cataloged model, row codec, graph construction — built directly over a Domain Model, exactly as `prepare_model` builds them, for a suite grading one of them alone |
 | `_support/frontend_probes.py`, `_support/frontend_probes_stringized.py` | Declaration probes on the live-annotation and stringized-annotation paths |
 | `_support/inheritance_models.py`, `_support/mirrored_models.py`, `_support/snapshot_models.py`, `_support/value_object_models.py` | Idiomatic Entity and Value Object classes mirroring the corpus models |

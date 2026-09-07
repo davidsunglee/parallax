@@ -106,7 +106,7 @@ from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
-from parallax.snapshot.handle._publication import SelectedReadModel
+from parallax.snapshot.handle._publication import SelectedReadModel, SelectedWriteModel
 from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_scope import participating_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
@@ -346,6 +346,7 @@ class Transaction:
         "_attempt",
         "_codec",
         "_conn",
+        "_edition",
         "_keyed",
         "_lifecycle",
         "_model",
@@ -357,18 +358,21 @@ class Transaction:
         self,
         uow: UnitOfWork,
         conn: DbPort,
-        selected: SelectedReadModel,
-        codec: EntityRowCodec,
+        read: SelectedReadModel,
+        write: SelectedWriteModel,
         attempt: TransactionAttemptActivity,
         lifecycle: InstalledLifecycle | None,
     ) -> None:
         self._uow = uow
         self._conn = conn
-        # The write verbs' own metadata, which is the read selection's cataloged
-        # half: a write names Entities and derives rows, so it needs the catalog
-        # without the materialization capability beside it.
-        self._model = selected.model
-        self._codec = codec
+        # The two projections of the one selection this attempt adopted: the
+        # read projection serves every participating read, and the write
+        # projection's cataloged model and codec serve every keyed verb — a
+        # write names Entities and derives rows, so it needs the catalog without
+        # the materialization capability beside it. Both carry the edition.
+        self._edition = write.edition
+        self._model = write.model
+        self._codec: EntityRowCodec = write.codec
         # The physical attempt every activity this transaction opens hangs
         # under: a read, the dependency batch that precedes it, and the
         # resolving read a materializing predicate write runs are all its
@@ -384,7 +388,7 @@ class Transaction:
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
         # read composition").
         self._reads = participating_read_scope(
-            lifecycle=lifecycle, selected=selected, uow=uow, conn=conn, attempt=attempt
+            lifecycle=lifecycle, selected=read, uow=uow, conn=conn, attempt=attempt
         )
         # The transaction state every keyed write of this transaction reads,
         # built once because all four facts are fixed for its life and handed to
@@ -400,6 +404,16 @@ class Transaction:
             inserts=BufferedInserts(),
             lifecycle=lifecycle,
         )
+
+    @property
+    def edition(self) -> str:
+        """The Model Edition this attempt adopted before its boundary opened.
+
+        Retained for the attempt's life: a publication landing while the
+        callback runs changes nothing here, and a retried callback receives a
+        new transaction that may report another edition.
+        """
+        return self._edition
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,

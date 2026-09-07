@@ -77,7 +77,11 @@ from parallax.core.unit_work import Concurrency, UnitOfWork
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._preflight import preflight
-from parallax.snapshot.handle._publication import SelectedReadModel
+from parallax.snapshot.handle._publication import (
+    SelectedReadModel,
+    ServingModel,
+    read_projection,
+)
 from parallax.snapshot.handle._read import (
     ResultPublication,
     RowsResult,
@@ -403,15 +407,17 @@ class _StandaloneExecution:
 
     Non-transactional in the three ways that reach the executor: no read lock,
     no Concurrency Preference, and no ledger — which is what leaves the evidence
-    a standalone read retains unstamped by any participation.
+    a standalone read retains unstamped by any participation. It holds the
+    Serving Model rather than a selection, so each operation it begins is served
+    under whatever selection is current at that call.
     """
 
     lifecycle: InstalledLifecycle | None
-    selected: SelectedReadModel
+    serving: ServingModel
     inputs: ReadInputs
 
     def begin(self) -> SelectedReadModel:
-        return self.selected
+        return read_projection(self.serving.current())
 
     def eager[T](
         self,
@@ -504,11 +510,11 @@ class _ParticipatingExecution:
 def standalone_read_scope(
     *,
     lifecycle: InstalledLifecycle | None,
-    selected: SelectedReadModel,
+    serving: ServingModel,
     port: DbPort,
 ) -> ReadScope:
     return ReadScope(
-        lifecycle, _StandaloneExecution(lifecycle, selected, ReadInputs(port, None, None))
+        lifecycle, _StandaloneExecution(lifecycle, serving, ReadInputs(port, None, None))
     )
 
 

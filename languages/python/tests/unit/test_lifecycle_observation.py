@@ -27,6 +27,7 @@ from parallax.conformance._lifecycle_observation import (
     lifecycle_run,
 )
 from parallax.core.execution_lifecycle import (
+    AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
@@ -267,8 +268,8 @@ def test_an_invocation_outcome_tells_the_boundary_from_the_nested_callback() -> 
 
 
 def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
-    assert _transition(TransactionAttemptStarted(_EXECUTION, 1, 1, None)) == {
-        "transactionAttemptStarted": {}
+    assert _transition(TransactionAttemptStarted(_EXECUTION, 1, 1, None, "account")) == {
+        "transactionAttemptStarted": {"edition": "account"}
     }
     assert _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, AttemptCommitted())) == {
         "transactionAttemptFinished": {"outcome": "committed"}
@@ -305,6 +306,16 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
     )
     finished = _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, commit_phase))
     assert finished["transactionAttemptFinished"]["phase"] == "commit"
+    # A boundary that never opened: no phase to locate and no verdict to
+    # report, and the attribution is direct because no child ever ran.
+    begin_failed = AttemptBeginFailed(_diagnostic("setup-refused"))
+    assert _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, begin_failed)) == {
+        "transactionAttemptFinished": {
+            "outcome": "beginFailed",
+            "attribution": "direct",
+            "code": "setup-refused",
+        }
+    }
 
 
 def test_a_stream_states_the_page_size_that_makes_its_batches_countable() -> None:

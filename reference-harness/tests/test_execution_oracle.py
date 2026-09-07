@@ -73,7 +73,7 @@ def _write_root(**attempt_finish: Any) -> dict[str, Any]:
                     "retryOptimisticConflicts": False,
                 },
             ),
-            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, writeBatchStarted={"trigger": "pre-commit"}),
             _event(
                 4,
@@ -441,7 +441,7 @@ def test_a_root_left_with_an_open_activity_is_flagged() -> None:
 
 def test_a_root_ending_on_something_other_than_its_root_activity_is_flagged() -> None:
     root = _write_root()
-    root["events"].append(_event(9, 5, 1, transactionAttemptStarted={}))
+    root["events"].append(_event(9, 5, 1, transactionAttemptStarted={"edition": "account"}))
     root["events"].append(_event(10, 5, 1, transactionAttemptFinished={"outcome": "committed"}))
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("last event delivered" in problem for problem in problems)
@@ -451,7 +451,7 @@ def test_a_root_that_opens_no_root_activity_is_flagged() -> None:
     root = _root(
         "transaction-invocation",
         [
-            _event(1, 1, 2, transactionAttemptStarted={}),
+            _event(1, 1, 2, transactionAttemptStarted={"edition": "account"}),
             _event(2, 1, 2, transactionAttemptFinished={"outcome": "committed"}),
         ],
     )
@@ -503,9 +503,9 @@ def test_an_attempt_under_a_joined_invocation_is_flagged() -> None:
                     "retryOptimisticConflicts": False,
                 },
             ),
-            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, transactionInvocationStarted={"invocation": "joined"}),
-            _event(4, 4, 3, transactionAttemptStarted={}),
+            _event(4, 4, 3, transactionAttemptStarted={"edition": "account"}),
             _event(5, 4, 3, transactionAttemptFinished={"outcome": "committed"}),
             _event(6, 3, 2, transactionInvocationFinished={"outcome": "returned"}),
             _event(7, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
@@ -580,7 +580,7 @@ def test_a_joined_invocation_finishing_in_the_outer_vocabulary_is_flagged() -> N
                     "retryOptimisticConflicts": False,
                 },
             ),
-            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, transactionInvocationStarted={"invocation": "joined"}),
             _event(4, 3, 2, transactionInvocationFinished={"outcome": "committed"}),
             _event(5, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
@@ -658,7 +658,7 @@ def test_a_cause_naming_a_child_that_had_not_finished_is_flagged() -> None:
                     "retryOptimisticConflicts": False,
                 },
             ),
-            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(
                 3,
                 1,
@@ -756,7 +756,7 @@ def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
                     "retryOptimisticConflicts": False,
                 },
             ),
-            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, readStarted={"target": "Account", "interface": "wire"}),
             _event(4, 4, 3, databaseCallStarted=started),
             _event(5, 4, 3, databaseCallFinished={"outcome": "readCompleted", "returnedRows": 1}),
@@ -866,7 +866,7 @@ def _two_write_root(second_statement: int) -> dict[str, Any]:
                     "retryOptimisticConflicts": False,
                 },
             ),
-            _event(2, 2, 1, transactionAttemptStarted={}),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
             _event(3, 3, 2, writeBatchStarted={"trigger": "pre-commit"}),
             _event(
                 4,
@@ -961,7 +961,9 @@ def _retry_root(outcomes: list[dict[str, Any]], retries: int) -> dict[str, Any]:
     ]
     for index, outcome in enumerate(outcomes):
         activity = index + 2
-        events.append(_event(len(events) + 1, activity, 1, transactionAttemptStarted={}))
+        events.append(
+            _event(len(events) + 1, activity, 1, transactionAttemptStarted={"edition": "account"})
+        )
         events.append(_event(len(events) + 1, activity, 1, transactionAttemptFinished=outcome))
     committed = outcomes[-1].get("outcome") == "committed"
     events.append(
@@ -1080,18 +1082,69 @@ def _beginless_root(outcome: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def test_an_invocation_that_ran_no_attempt_and_still_committed_is_flagged() -> None:
-    """The only invocation holding no attempt is the one whose begin failed.
+def _begin_failed_root() -> dict[str, Any]:
+    """One invocation whose only attempt never opened its boundary."""
+    return _root(
+        "transaction-invocation",
+        [
+            _event(
+                1,
+                1,
+                None,
+                transactionInvocationStarted={
+                    "invocation": "outer",
+                    "concurrency": "locking",
+                    "retries": 10,
+                    "retryOptimisticConflicts": False,
+                },
+            ),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
+            _event(
+                3,
+                2,
+                1,
+                transactionAttemptFinished={"outcome": "beginFailed", "attribution": "direct"},
+            ),
+            _event(
+                4,
+                1,
+                None,
+                transactionInvocationFinished={
+                    "outcome": "failed",
+                    "attribution": "caused",
+                    "cause": 2,
+                },
+            ),
+        ],
+    )
 
-    Nothing else can catch this: the terminal-attempt rule compares the
-    invocation with its last attempt, and a stream holding none has nothing to
-    disagree with. A committed invocation that opened no attempt claims a
-    physical transaction that never began.
+
+def test_an_invocation_that_ran_no_attempt_is_flagged_whatever_it_reports() -> None:
+    """Every finished outer invocation holds at least one attempt.
+
+    An attempt adopts and starts before the boundary is asked to begin, so a
+    begin failure is an attempt that finished `beginFailed` rather than the
+    absence of one. Nothing else can catch an attemptless stream: the
+    terminal-attempt rule compares the invocation with its last attempt, and a
+    stream holding none has nothing to disagree with.
     """
-    begin_failed = _beginless_root({"outcome": "failed", "attribution": "direct"})
-    assert validate_execution(_retry_case(begin_failed)) == []
-    problems = validate_execution(_retry_case(_beginless_root({"outcome": "committed"})))
-    assert any("begin failure" in problem for problem in problems)
+    assert validate_execution(_retry_case(_begin_failed_root())) == []
+    for outcome in ({"outcome": "failed", "attribution": "direct"}, {"outcome": "committed"}):
+        problems = validate_execution(_retry_case(_beginless_root(outcome)))
+        assert any("begin failure" in problem for problem in problems), outcome
+
+
+def test_a_begin_failed_attempt_is_never_followed_by_another() -> None:
+    """A boundary that never opened is terminal by rule, however retriable the
+    error's own category: no callback ran that a re-execution could repeat."""
+    root = _begin_failed_root()
+    root["events"][3:3] = [
+        _event(4, 3, 1, transactionAttemptStarted={"edition": "account"}),
+        _event(5, 3, 1, transactionAttemptFinished={"outcome": "committed"}),
+    ]
+    root["events"][-1] = _event(6, 1, None, transactionInvocationFinished={"outcome": "committed"})
+    problems = validate_execution(_retry_case(root))
+    assert any("never opened its boundary" in problem for problem in problems)
 
 
 # --- the same relations over the adapter's observation ------------------------
@@ -1151,7 +1204,7 @@ def test_every_authored_oracle_in_the_corpus_is_internally_consistent() -> None:
         "m-execution-lifecycle-005-retry-exhaustion.yaml",
         "m-execution-lifecycle-006-joined-invocation.yaml",
         "m-execution-lifecycle-007-streamed-delivery.yaml",
-        "m-execution-lifecycle-008-isolation-setup-failure-opens-no-boundary.yaml",
+        "m-execution-lifecycle-008-isolation-setup-failure-fails-the-attempt.yaml",
         "m-opt-lock-006-success.yaml",
         "m-unit-work-035-a-join-may-not-renegotiate-the-isolation-level.yaml",
     ]

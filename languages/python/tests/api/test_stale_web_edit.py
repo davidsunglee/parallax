@@ -35,6 +35,7 @@ from typing import Any
 
 import pytest
 
+from _support.adoption import raises_contextualized
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ScriptedClock
@@ -130,7 +131,7 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
 
     peer_db.transact(concurrent_write)
 
-    with pytest.raises(StaleMilestoneError, match="superseded"):
+    with raises_contextualized(StaleMilestoneError, match="superseded"):
         submit_balance_edit(
             db, id=1, edge=edge, fields={"value": Decimal("150.00")}, concurrency=concurrency
         )
@@ -157,7 +158,9 @@ def test_a_submit_that_pins_the_transported_edge_is_read_only(
         current = tx.find(Balance.where(Balance.id == 1).as_of(tx_time=edge.tx_time)).result()
         tx.update(current.edit(value=Decimal("150.00")))
 
-    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+    with raises_contextualized(
+        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
+    ):
         db.transact(fn, concurrency=concurrency)
     current = db.find(Balance.where(Balance.id == 1)).result()
     assert current.value == Decimal("100.00")  # nothing was written
@@ -219,7 +222,7 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
 
     peer_db.transact(concurrent_write)
 
-    with pytest.raises(StaleMilestoneError, match="superseded"):
+    with raises_contextualized(StaleMilestoneError, match="superseded"):
         # SUBMIT time — nothing is ever applied, so the correction's own
         # `valid_from` is immaterial; any instant distinct from the rectangle's
         # own start.

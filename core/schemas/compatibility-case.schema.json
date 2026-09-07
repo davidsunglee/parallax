@@ -549,7 +549,7 @@
           }
         },
         "fault": {
-          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). `isolation-setup-failure` is the one kind that is not a failure of the WORK: the session setup opening the boundary at the requested Isolation Level fails, so the boundary never opens, no attempt runs, and the callback is never called (m-db-port *Mapping obligations*). Absent when the case exercises only loop configuration (`retries: 0`, the callback-withheld-on-abort case).",
+          "description": "boundary cases only. A portable fault kind injected at the database-port seam to drive the retry loop (aligned with the m-db-error `errorClass` vocabulary): a `serialization-failure` or `deadlock` transient (always retriable), a `lock-wait-timeout` (never retriable), or an `optimistic-lock-conflict` (retriable only under `when.uow.retryOptimisticConflicts`). `isolation-setup-failure` is the one kind that is not a failure of the WORK: the session setup opening the boundary at the requested Isolation Level fails, so the boundary never opens, the one attempt that had adopted and started finishes `beginFailed`, and the callback is never called (m-db-port *Mapping obligations*). Absent when the case exercises only loop configuration (`retries: 0`, the callback-withheld-on-abort case).",
           "enum": [
             "serialization-failure",
             "deadlock",
@@ -1941,7 +1941,7 @@
         "databaseCallFinished": {"$ref": "#/$defs/lifecycleDatabaseCallFinished"},
         "transactionInvocationStarted": {"$ref": "#/$defs/lifecycleInvocationStarted"},
         "transactionInvocationFinished": {"$ref": "#/$defs/lifecycleInvocationFinished"},
-        "transactionAttemptStarted": {"$ref": "#/$defs/lifecycleNoFields"},
+        "transactionAttemptStarted": {"$ref": "#/$defs/lifecycleAttemptStarted"},
         "transactionAttemptFinished": {"$ref": "#/$defs/lifecycleAttemptFinished"},
         "snapshotStreamStarted": {"$ref": "#/$defs/lifecycleStreamStarted"},
         "snapshotStreamFinished": {"$ref": "#/$defs/lifecycleStreamFinished"},
@@ -1966,10 +1966,17 @@
       ]
     },
     "lifecycleNoFields": {
-      "description": "A transition whose payload is its correlation alone. A Transaction Attempt names no attempt-specific field, because which attempt of the invocation it is reads off the envelope and everything about the policy it runs under was stated by the invocation that opened it; a Stream Batch names none for the same reason about the stream that opened it.",
+      "description": "A transition whose payload is its correlation alone. A Stream Batch names no batch-specific field, because which page of the stream it is reads off the envelope and the size it was requested at was stated by the stream that opened it.",
       "type": "object",
       "additionalProperties": false,
       "properties": {}
+    },
+    "lifecycleAttemptStarted": {
+      "description": "One physical attempt started, under the Model Edition it adopted. `edition` is the nonempty opaque token the adapter prepared the case's model under — the model descriptor's file stem, `account` for `models/account.yaml` (m-conformance-adapter) — asserted literally because adoption happens per attempt and precedes the boundary: an attempt that goes on to finish `beginFailed` still states the edition it had adopted. Which attempt of the invocation it is reads off the envelope, and the policy it runs under was stated by the invocation that opened it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edition"],
+      "properties": {"edition": {"type": "string", "minLength": 1}}
     },
     "lifecycleReadStarted": {
       "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Write Batch. `interface` is the public read interface that publishes the result — `typed`, `wire`, or the internal `rows` values lane — which is what distinguishes two reads of one Entity differing only in what they materialize.",
@@ -2113,12 +2120,12 @@
       "allOf": [{"$ref": "#/$defs/lifecycleFailure"}]
     },
     "lifecycleAttemptFinished": {
-      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency batches included), `pre-commit` (the boundary-owned final batch), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event.",
+      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency batches included), `pre-commit` (the boundary-owned final batch), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event. `beginFailed` is the boundary that never opened: the attempt had adopted its edition and started, no callback ran, and the failure is terminal by rule — so it carries no `phase` (nothing inside the attempt ran) and no `retryEligible` (no classifier verdict is consulted), and its attribution is always `direct`, because an attempt with no callback has no child to name; the invocation above finishes `failed` caused by it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],
       "properties": {
-        "outcome": {"enum": ["committed", "rolledBack", "rollbackFailed"]},
+        "outcome": {"enum": ["committed", "rolledBack", "rollbackFailed", "beginFailed"]},
         "phase": {"enum": ["callback", "pre-commit", "commit"]},
         "retryEligible": {"type": "boolean"},
         "attribution": {"enum": ["direct", "caused"]},
@@ -2129,10 +2136,15 @@
       "allOf": [
         {"$ref": "#/$defs/lifecycleFailure"},
         {
-          "description": "A committed attempt carries no failure: stating one beside `committed` states two outcomes for one attempt.",
-          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "committed"}}},
+          "description": "A committed attempt carries no failure: stating one beside `committed` states two outcomes for one attempt. A `beginFailed` attempt carries a failure but no Attempt Failure: no phase, because no work ran inside it, and no classifier verdict, because it is terminal by rule. Every other failing outcome states both.",
+          "if": {"required": ["outcome"], "properties": {"outcome": {"enum": ["committed", "beginFailed"]}}},
           "then": {"allOf": [{"not": {"required": ["phase"]}}, {"not": {"required": ["retryEligible"]}}]},
           "else": {"required": ["phase", "retryEligible"]}
+        },
+        {
+          "description": "A `beginFailed` attempt names no cause: its callback never ran, so there is no child activity beneath it.",
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "beginFailed"}}},
+          "then": {"properties": {"attribution": {"const": "direct"}}}
         },
         {
           "description": "Only a FAILED rollback names a second failure's code: an attempt whose rollback completed has one live failure and reports one.",
@@ -2176,7 +2188,7 @@
         {
           "if": {
             "required": ["outcome"],
-            "properties": {"outcome": {"enum": ["failed", "raised", "rolledBack", "rollbackFailed"]}}
+            "properties": {"outcome": {"enum": ["failed", "raised", "rolledBack", "rollbackFailed", "beginFailed"]}}
           },
           "then": {"required": ["attribution"]},
           "else": {

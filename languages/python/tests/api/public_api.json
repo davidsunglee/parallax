@@ -52,6 +52,7 @@
     "ActivityFailure",
     "ActivityFinished",
     "ActivityStarted",
+    "AttemptBeginFailed",
     "AttemptCommitted",
     "AttemptFailure",
     "AttemptPhase",
@@ -430,6 +431,7 @@
   "parallax.snapshot": [
     "CheckedSnapshot",
     "DeferredFeatureError",
+    "ExecutionFailure",
     "InvalidData",
     "InvalidDataError",
     "KEYED_WRITE_VALUE_CODES",
@@ -502,6 +504,7 @@
     "CheckedSnapshot",
     "Database",
     "DeferredFeatureError",
+    "ExecutionFailure",
     "FindResult",
     "HistoryFindResult",
     "InvalidData",

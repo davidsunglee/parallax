@@ -32,6 +32,7 @@ from _transact_support import (
 from pydantic import BaseModel
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -547,7 +548,7 @@ def test_a_pickle_written_before_the_refusal_existed_still_loads() -> None:
     assert restored == node
     assert snapshot_state_of(restored) is None
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         db.transact(lambda tx: tx.update(restored.edit(balance=Decimal("125.00"))))
     assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -647,7 +648,7 @@ def test_reusing_a_consumed_source_after_the_flush_is_refused() -> None:
     def second(tx: Transaction) -> None:
         tx.update(stale.edit(balance=Decimal("150.00")))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         db.transact(second)
     assert refusal.value.code == "write-evidence-consumed"
     assert [type(op) for op in port.calls].count(WriteCall) == 1
@@ -669,7 +670,7 @@ def test_a_locking_source_consumed_by_a_flush_cannot_drive_a_second_write() -> N
         tx.find(mm.Account.where(mm.Account.id == 1))
         tx.update(node.edit(balance=Decimal("150.00")))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn, concurrency="locking")
     assert refusal.value.code == "write-evidence-consumed"
     assert [type(op) for op in port.calls].count(WriteCall) == 1
@@ -706,7 +707,7 @@ def test_an_aborted_flush_spends_no_evidence() -> None:
         tx.update(node.edit(balance=Decimal("125.00")))
         raise RuntimeError("abort")
 
-    with pytest.raises(RuntimeError, match="abort"):
+    with raises_contextualized(RuntimeError, match="abort"):
         db.transact(doomed)
     assert cast("Any", _typed_hint(escaped[0])).observation.consumed is False
 
@@ -775,7 +776,7 @@ def test_a_standalone_versioned_source_meeting_an_intervening_writer_conflicts()
     db = account_db(port)
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
 
-    with pytest.raises(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError):
         db.transact(lambda tx: tx.update(node.edit(balance=Decimal("125.00"))))
 
 
@@ -803,7 +804,7 @@ def test_a_standalone_versioned_source_is_refused_under_an_explicit_locking_pref
     db = account_db(port)
     node = db.find(mm.Account.where(mm.Account.id == 1)).result()
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         db.transact(
             lambda tx: tx.update(node.edit(balance=Decimal("125.00"))), concurrency="locking"
         )
@@ -821,7 +822,7 @@ def test_a_standalone_unversioned_source_is_refused_under_the_default_preference
     db = db_for(PERSON, port)
     node = db.find(Person.where(Person.id == 1)).result()
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         db.transact(lambda tx: tx.update(node.edit(name="Grace")))
     assert refusal.value.code == "write-evidence-unavailable"
     assert not any(isinstance(op, WriteCall) for op in port.calls)

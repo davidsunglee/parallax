@@ -85,7 +85,7 @@ then:
           - sequence: 2
             activity: 2
             parent: 1
-            transactionAttemptStarted: {}
+            transactionAttemptStarted: {edition: account}
           - sequence: 3
             activity: 3
             parent: 2
@@ -130,7 +130,7 @@ then:
           - sequence: 12
             activity: 7
             parent: 1
-            transactionAttemptStarted: {}
+            transactionAttemptStarted: {edition: account}
           - sequence: 13
             activity: 8
             parent: 7

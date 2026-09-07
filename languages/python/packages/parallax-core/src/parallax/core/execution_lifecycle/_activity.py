@@ -52,6 +52,7 @@ from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleReentryError,
 )
 from parallax.core.execution_lifecycle._events import (
+    AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptPhase,
@@ -430,12 +431,12 @@ class SnapshotStreamActivity(Protocol):
 class TransactionAttemptActivity(Protocol):
     """One physical attempt's scope: what runs inside it, and how it ended.
 
-    The scope brackets the whole ``m-db-port`` transaction call, but the attempt
-    itself begins only once the boundary has begun — which only the port body
-    knows — so :meth:`begun` is what opens it and a boundary that never began
-    runs no attempt at all. Its terminal outcome is likewise a value the port
-    reports rather than an exception passing through, which is why an outcome is
-    announced here instead of being read off the way the scope was left.
+    Entering the scope is what starts the attempt, and it is entered before the
+    ``m-db-port`` transaction call it brackets: the attempt adopted its Model
+    Edition already, and whether the boundary then opens is the first thing it
+    can report. Its terminal outcome is a value the port reports rather than an
+    exception passing through, which is why an outcome is announced here
+    instead of being read off the way the scope was left.
     """
 
     def __enter__(self) -> TransactionAttemptActivity: ...
@@ -448,8 +449,9 @@ class TransactionAttemptActivity(Protocol):
         /,
     ) -> None: ...
 
-    def begun(self) -> None:
-        """The boundary began, so this attempt is running."""
+    def begin_failed(self, error: Exception, /) -> None:
+        """The boundary never opened, so the callback never ran and this
+        attempt is over; terminal, whatever ``error``'s own category says."""
         ...
 
     def committed(self) -> None:
@@ -524,8 +526,9 @@ class TransactionInvocationActivity(Protocol):
         /,
     ) -> None: ...
 
-    def attempt(self) -> TransactionAttemptActivity:
-        """The scope this invocation's next physical attempt runs inside."""
+    def attempt(self, edition: str, /) -> TransactionAttemptActivity:
+        """The scope this invocation's next physical attempt runs inside,
+        under the Model Edition that attempt adopted."""
         ...
 
 
@@ -612,14 +615,14 @@ class _InertActivity:
     def joined_invocation(self) -> _InertActivity:
         return self
 
-    def attempt(self) -> _InertActivity:
+    def attempt(self, edition: str, /) -> _InertActivity:
         return self
 
     def read_completed(self, returned_rows: Sized, /) -> None: ...
 
     def write_completed(self, affected_rows: int, /) -> None: ...
 
-    def begun(self) -> None: ...
+    def begin_failed(self, error: Exception, /) -> None: ...
 
     def committed(self) -> None: ...
 
@@ -794,10 +797,11 @@ class _LiveActivity:
     def _open(self) -> None:
         """Take this activity's ID, which its own Started transition assigns.
 
-        Taken here rather than at construction because an attempt is built
-        before the boundary that decides whether it runs at all: a transaction
-        that never began must consume no ID, or every activity after it in that
-        root would be numbered past a gap nothing explains.
+        Taken here rather than at construction because a scope is built before
+        the preparation that decides whether it is entered at all: a page whose
+        preparation raised before its batch opened ran no batch, and every
+        activity numbered after it in that root would otherwise sit past a gap
+        nothing explains.
         """
         self._activity_id = self._publisher.open_activity()
 
@@ -1296,29 +1300,45 @@ class _LiveSnapshotStream(_LiveActivity):
 
 
 class _LiveTransactionAttempt(_LiveActivity):
-    """One observed physical attempt.
+    """One observed physical attempt, under the edition it adopted.
 
-    The scope brackets the whole port transaction call, so an attempt that began
-    is finished however that call leaves — but the attempt starts only when the
-    port body says the boundary began, and ends with the outcome the port
-    reported rather than with whatever exception happens to be passing through.
+    The scope is entered before the port transaction call it brackets and
+    finished however that call leaves — with the outcome the port reported
+    rather than with whatever exception happens to be passing through. The
+    edition is fixed at construction because adoption precedes the attempt:
+    nothing between construction and entry can fail, so entry is what starts
+    it and consumes its ID.
     """
 
-    __slots__ = ("_extra_retriable", "_outcome", "_pre_commit_failure", "_started")
+    __slots__ = ("_edition", "_extra_retriable", "_outcome", "_pre_commit_failure")
 
     def __init__(
         self,
         publisher: _Publisher,
         parent: _LiveActivity,
         extra_retriable: Callable[[BaseException], bool] | None,
+        edition: str,
     ) -> None:
         super().__init__(publisher, parent)
         self._extra_retriable = extra_retriable
-        self._started = False
+        self._edition = edition
         self._outcome: TransactionAttemptOutcome | None = None
         self._pre_commit_failure: BaseException | None = None
 
     def __enter__(self) -> _LiveTransactionAttempt:
+        publisher = self._publisher
+        if not publisher.active:
+            return self
+        self._open()
+        publisher.deliver(
+            TransactionAttemptStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                self._edition,
+            )
+        )
         return self
 
     def __exit__(
@@ -1329,7 +1349,7 @@ class _LiveTransactionAttempt(_LiveActivity):
         /,
     ) -> None:
         publisher = self._publisher
-        if not self._started or not publisher.active:
+        if not publisher.active:
             return
         outcome = self._outcome
         if outcome is None:
@@ -1350,20 +1370,22 @@ class _LiveTransactionAttempt(_LiveActivity):
             )
         )
 
-    def begun(self) -> None:
-        publisher = self._publisher
-        if not publisher.active:
+    def begin_failed(self, error: Exception, /) -> None:
+        """Finish with the boundary's own refusal, told to the invocation as
+        the invocation's cause.
+
+        Rendered here rather than through :meth:`_attempt_failure` because
+        there is no phase to locate and no classifier verdict to report: an
+        attempt that never opened its boundary is terminal by rule, and what
+        the invocation above names is this attempt.
+        """
+        if not self._publisher.active:
             return
-        self._started = True
-        self._open()
-        publisher.deliver(
-            TransactionAttemptStarted(
-                publisher.execution_id,
-                publisher.take_sequence(),
-                self._activity_id,
-                self._parent_activity_id,
-            )
-        )
+        diagnostic = diagnostic_for(error)
+        self._outcome = AttemptBeginFailed(diagnostic)
+        parent = self._parent
+        if parent is not None:
+            parent.attribute(error, self._activity_id, diagnostic)
 
     def committed(self) -> None:
         self._outcome = AttemptCommitted()
@@ -1538,8 +1560,8 @@ class _LiveOuterInvocation(_LiveActivity):
             )
         )
 
-    def attempt(self) -> _LiveTransactionAttempt:
-        return _LiveTransactionAttempt(self._publisher, self, self._extra_retriable)
+    def attempt(self, edition: str, /) -> _LiveTransactionAttempt:
+        return _LiveTransactionAttempt(self._publisher, self, self._extra_retriable, edition)
 
 
 def _opened(
@@ -1633,9 +1655,9 @@ def open_transaction_root(
     call, or :data:`INERT`.
 
     Called after the deterministic refusals a joining call is measured by —
-    ownership and option conflict — and before the boundary is asked to begin,
-    because a begin failure is an OUTCOME of this invocation rather than a
-    refusal of it. With no Provider installed nothing at all is allocated here,
+    ownership and option conflict — and before any attempt adopts an edition,
+    because a begin failure is an OUTCOME of an attempt of this invocation
+    rather than a refusal of it. With no Provider installed nothing at all is allocated here,
     not even the resolved policy the Started transition would carry.
 
     ``extra_retriable`` is the caller's classification extension, the same one

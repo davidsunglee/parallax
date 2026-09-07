@@ -39,6 +39,7 @@ def test_top_package_public_surfaces() -> None:
         "ModelSelection",
         "ServingModel",
         "PublicationConflictError",
+        "ExecutionFailure",
         "Snapshot",
         "CheckedSnapshot",
         "SnapshotStream",

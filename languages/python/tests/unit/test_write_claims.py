@@ -30,6 +30,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -338,7 +339,7 @@ def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
         tx.delete(node)
         tx.update(node.edit(balance=Decimal("125.00")))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn)
     assert refusal.value.code == "write-evidence-already-claimed"
     assert refusal.value.object_key.primary_key == (("id", 1),)
@@ -370,7 +371,7 @@ def test_temporal_updates_over_different_regions_are_refused() -> None:
         tx.update_until(node.edit(value=Decimal("9.00")), valid_from=_VALID_FROM, until=_UNTIL)
         tx.update_until(node.edit(value=Decimal("8.00")), valid_from=_OTHER_FROM, until=_UNTIL)
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-evidence-already-claimed"
 
@@ -557,7 +558,7 @@ def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> No
         tx.delete(node)
         tx.update(node.edit(name="Grace"))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-evidence-already-claimed"
     assert refusal.value.object_key.primary_key == (("id", 1),)
@@ -662,7 +663,7 @@ def test_a_predicate_group_claims_every_state_it_selected() -> None:
         tx.update_where(mm.Account.where(mm.Account.id == 1), mm.Account.owner.set("Grace"))
         tx.update(node.edit(balance=Decimal("125.00")))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn)
     assert refusal.value.code == "write-evidence-already-claimed"
 

@@ -43,6 +43,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ReadCall,
@@ -1209,7 +1210,7 @@ def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.insert("parallax.compatibility.Person", opened)
 
-    with pytest.raises(KeyedWriteValueError, match="write-value-already-stored"):
+    with raises_contextualized(KeyedWriteValueError, match="write-value-already-stored"):
         db_for(PERSON, port).transact(fn)
     assert _writes(port) == []
 
@@ -1226,7 +1227,7 @@ def test_an_insert_refuses_the_payload_a_previous_insert_opened_a_row_with() -> 
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
     assert "already buffered an insert of" in refusal.value.message

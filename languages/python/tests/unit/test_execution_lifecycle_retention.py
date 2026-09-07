@@ -727,8 +727,7 @@ def _begun_attempt(
             extra_retriable=None,
         )
     )
-    attempt = stack.enter_context(invocation.attempt())
-    attempt.begun()
+    attempt = stack.enter_context(invocation.attempt("edition"))
     stack.callback(attempt.committed)
     return invocation, attempt
 

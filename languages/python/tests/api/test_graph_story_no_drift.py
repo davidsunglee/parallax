@@ -39,6 +39,7 @@ from typing import Any, cast
 
 import pytest
 
+from _support.adoption import raises_contextualized
 from _support.corpus import case_document, compare_binds
 from _support.db_port import body_outcome
 from _support.document_reads import fold_mapping_rows
@@ -710,7 +711,9 @@ def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
     # port's `execute_write` refuses outright, so reaching the raise at all is
     # also the proof that the verb rejects the value before buffering any DML.
     db = Database.connect(_TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), MODELS["balance"])
-    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+    with raises_contextualized(
+        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
+    ):
         graph_stories.a_finite_transaction_time_pinned_view_is_read_only(db)
 
 

@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from _support.adoption import raises_contextualized
 from _support.db_port import body_outcome
 from parallax.conformance import boundary_runner, case_format
 from parallax.conformance.boundary_runner import FaultInjectingPort
@@ -243,7 +244,7 @@ def test_a_join_naming_a_second_level_is_refused_by_production() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, steps, database=db)
 
-    with pytest.raises(TransactionOptionConflictError):
+    with raises_contextualized(TransactionOptionConflictError):
         db.transact(fn, isolation="repeatable_read")
 
 
@@ -293,7 +294,7 @@ def test_a_join_without_the_owning_database_is_refused() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("join"))
 
-    with pytest.raises(AssertionError, match="needs the Database that opened the boundary"):
+    with raises_contextualized(AssertionError, match="needs the Database that opened the boundary"):
         _db(port).transact(fn)
 
 
@@ -326,7 +327,7 @@ def test_run_boundary_actions_terminate_refuses() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("terminate"))
 
-    with pytest.raises(AssertionError, match="no legal target"):
+    with raises_contextualized(AssertionError, match="no legal target"):
         _db(port).transact(fn)
 
 
@@ -336,7 +337,7 @@ def test_run_boundary_actions_update_without_a_prior_read_raises() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("update"))
 
-    with pytest.raises(AssertionError, match="prior `read`"):
+    with raises_contextualized(AssertionError, match="prior `read`"):
         _db(port).transact(fn)
 
 
@@ -346,7 +347,7 @@ def test_run_boundary_actions_delete_without_a_prior_read_raises() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("delete"))
 
-    with pytest.raises(AssertionError, match="prior `read`"):
+    with raises_contextualized(AssertionError, match="prior `read`"):
         _db(port).transact(fn)
 
 
@@ -411,16 +412,17 @@ def test_a_setup_failure_leaves_the_write_seam_alone() -> None:
     assert port.execute_write("update x set y = 1", []) == 1
 
 
-def test_a_setup_failure_surfaces_terminally_with_no_attempt() -> None:
-    # A boundary that never opened ran no attempt, so `db.transact` surfaces the
-    # port's own error rather than retrying it, however the loop is configured.
+def test_a_setup_failure_surfaces_terminally_after_one_attempt() -> None:
+    # A boundary that never opened ran no callback, so `db.transact` surfaces
+    # the port's own error rather than retrying it, however the loop is
+    # configured.
     inner = _FakePort(rows=[])
     port = FaultInjectingPort(inner, fault="isolation-setup-failure", persistent=False)
 
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read"))
 
-    with pytest.raises(DatabaseError) as unopened:
+    with raises_contextualized(DatabaseError) as unopened:
         _db(port).transact(fn, isolation="serializable")
     assert unopened.value.category is None
     assert inner.boundaries == 0
@@ -500,10 +502,11 @@ _ATTEMPTS_CASES: list[_AttemptsCase] = [
     _AttemptsCase(None, "aborted", None, False, 1),
     # lock-wait-timeout is never retriable, opt-in or not.
     _AttemptsCase("lock-wait-timeout", "lock-wait-timeout", None, True, 1),
-    # m-execution-lifecycle-008: a boundary that never opened ran NO attempt —
-    # zero, which is a different count from an attempt that ran and failed.
-    _AttemptsCase("isolation-setup-failure", "boundary-failed", None, False, 0),
-    _AttemptsCase("isolation-setup-failure", "boundary-failed", 5, True, 0),
+    # m-execution-lifecycle-008: a boundary that never opened is ONE attempt —
+    # the one that adopted and started before the boundary was asked to begin —
+    # and it is terminal however the loop is configured.
+    _AttemptsCase("isolation-setup-failure", "boundary-failed", None, False, 1),
+    _AttemptsCase("isolation-setup-failure", "boundary-failed", 5, True, 1),
 ]
 
 

@@ -27,6 +27,7 @@ from typing import Any, Final, cast
 import pytest
 from pydantic import ValidationError
 
+from _support.adoption import raises_contextualized
 from _support.corpus import case_document, compare_binds
 from _support.db_port import (
     BeginCall,
@@ -476,7 +477,7 @@ def test_boundary_story_withholds_the_callback_value() -> None:
     # port rolls back) and `transact` raises instead of returning the value.
     story = _STORIES["m-unit-work-004"]
     port = _port_for(story)
-    with pytest.raises(RuntimeError, match="abort"):
+    with raises_contextualized(RuntimeError, match="abort"):
         story.run(_db(port, story))
     assert [type(call) for call in port.calls] == [
         BeginCall,
@@ -618,7 +619,7 @@ def test_idiomatic_write_build_rejects_the_corpus_rule(case_id: str) -> None:
     expected_rule = case_document(case)["then"]["rejectedRule"]
     port = _KeyedSeedPort()
     db = Database.connect(port, MODELS[REJECTED_WRITE_MODELS[case_id]])
-    with pytest.raises(WriteRejectedError) as exc_info:
+    with raises_contextualized(WriteRejectedError) as exc_info:
         db.transact(REJECTED_WRITE_BUILDERS[case_id])
     assert exc_info.value.rule == expected_rule
     assert not port.wrote

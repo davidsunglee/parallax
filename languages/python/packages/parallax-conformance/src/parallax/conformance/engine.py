@@ -79,6 +79,7 @@ from parallax.core.db_port import (
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import DIALECT_CATALOG, Dialect, dialect_for
 from parallax.core.entity import DomainModel
+from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -112,6 +113,7 @@ from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     CardinalityCorruptionError,
     ClaimedKeyedWrite,
+    Clock,
     Concurrency,
     FixedClock,
     KeyedWrite,
@@ -152,8 +154,10 @@ from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evol
 from parallax.evolution.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
 from parallax.snapshot import handle
 from parallax.snapshot.handle import (
+    ServingModel,
     TransactionTimePinReadOnlyError,
     build_write_planner,
+    prepare_model,
     stream_lowered,
     validate_source_pin,
 )
@@ -169,7 +173,9 @@ __all__ = [
     "EngineError",
     "RunOnly",
     "ScenarioRun",
+    "case_database",
     "case_edition",
+    "case_serving_model",
     "compile_read_case",
     "compile_scenario_case",
     "compile_write_sequence_case",
@@ -355,6 +361,30 @@ def case_edition(case: case_format.Case) -> str:
     from the same fact about the case.
     """
     return _case_model_path(case).stem
+
+
+def case_serving_model(case: case_format.Case) -> ServingModel:
+    """The Serving Model a case's Handles adopt from: its Domain Model prepared
+    explicitly under :func:`case_edition`, and never published to again.
+
+    The one place a case's model is prepared, so every Handle a lane builds
+    over one case serves the same literal edition, which is what the case's
+    lifecycle oracle asserts (`m-conformance-adapter`).
+    """
+    return ServingModel(prepare_model(load_case_domain_model(case), edition=case_edition(case)))
+
+
+def case_database(
+    case: case_format.Case,
+    port: DbPort,
+    lifecycle: ExecutionLifecycleProvider,
+    *,
+    clock: Clock | None = None,
+) -> handle.Database:
+    """A Handle over ``port`` serving ``case``'s model under the case's edition."""
+    return handle.Database(
+        port, case_serving_model(case), clock=clock, lifecycle_provider=lifecycle
+    )
 
 
 def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
@@ -751,18 +781,17 @@ def run_read_case(
     first would hand the wire that member's document spelling instead, making one
     logical value observably different under the two layouts.
     """
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    model = load_case_metamodel(case)
     query = _read_query(case, model)
     observed = lifecycle_run(lifecycle).observation()
     _apply_given_corrupt(case, model, port)
-    db = handle.Database(port, domain, lifecycle_provider=observed.provider)
+    db = case_database(case, port, observed.provider)
     concurrency = _read_case_concurrency(case)
     try:
         result = (
             db.read_rows(query)
             if concurrency is None
-            else db.transact(lambda tx: tx.read_rows(query), concurrency=concurrency)
+            else _transact(db, lambda tx: tx.read_rows(query), concurrency=concurrency)
         )
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -807,7 +836,7 @@ def _driver_binds(binds: Sequence[object]) -> list[object]:
 def _wire_read(
     case: case_format.Case,
     query: ObjectQueryNode,
-    domain: DomainModel,
+    model: AcceptedMetamodel,
     port: DbPort,
     lifecycle: LifecycleRun,
 ) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
@@ -822,8 +851,8 @@ def _wire_read(
     retains nothing about the execution that produced it.
     """
     observed = lifecycle.observation()
-    _apply_given_corrupt(case, models.accepted_model_of(domain), port)
-    db = handle.Database(port, domain, lifecycle_provider=observed.provider)
+    _apply_given_corrupt(case, model, port)
+    db = case_database(case, port, observed.provider)
     try:
         return db.wire.find(query), observed
     except _READ_ERRORS as exc:
@@ -840,10 +869,9 @@ def run_graph_case(
     for a root whose stored state contradicted the model, the record it published
     in place of itself.
     """
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    model = load_case_metamodel(case)
     query = _read_query(case, model)
-    snapshot, observed = _wire_read(case, query, domain, port, lifecycle_run(lifecycle))
+    snapshot, observed = _wire_read(case, query, model, port, lifecycle_run(lifecycle))
     if not _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a `then.graph` case read a milestone SET — "
@@ -924,15 +952,14 @@ def run_stream_case(
     canonical Lowered Statement it borrowed. Nothing here observes at the
     database port, which carries the driver's own text.
     """
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    model = load_case_metamodel(case)
     query = _read_query(case, model)
     if not _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a streamed `then.graph` case read a milestone SET — "
             "a milestone-set delivery asserts `then.graphs`"
         )
-    roots, observed = _wire_delivery(case, query, domain, port, lifecycle)
+    roots, observed = _wire_delivery(case, query, model, port, lifecycle)
     return (
         _read_emissions(observed),
         {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
@@ -956,15 +983,14 @@ def run_streamed_graphs_case(
     `{pin, graph}` entries are recovered from those pins rather than from a second
     read per milestone.
     """
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    model = load_case_metamodel(case)
     query = _read_query(case, model)
     if _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a streamed `then.graphs` case read a single instant — "
             "a single-instant delivery asserts `then.graph`"
         )
-    roots, observed = _wire_delivery(case, query, domain, port, lifecycle)
+    roots, observed = _wire_delivery(case, query, model, port, lifecycle)
     root_key = _graph_root_key(query.target.canonical, model)
     entity = _declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
@@ -977,7 +1003,7 @@ def run_streamed_graphs_case(
 def _wire_delivery(
     case: case_format.Case,
     query: ObjectQueryNode,
-    domain: DomainModel,
+    model: AcceptedMetamodel,
     port: DbPort,
     lifecycle: LifecycleRun | None,
 ) -> tuple[list[object], LifecycleObservation]:
@@ -988,8 +1014,8 @@ def _wire_delivery(
     delivery published, and that needs the whole delivery in hand.
     """
     observed = lifecycle_run(lifecycle).observation()
-    _apply_given_corrupt(case, models.accepted_model_of(domain), port)
-    db = handle.Database(port, domain, lifecycle_provider=observed.provider)
+    _apply_given_corrupt(case, model, port)
+    db = case_database(case, port, observed.provider)
     roots: list[object] = []
     try:
         with db.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
@@ -1014,10 +1040,9 @@ def run_graphs_case(
     recovered from each root's own edge — the coordinate the pin states — rather
     than from a second read per milestone.
     """
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    model = load_case_metamodel(case)
     query = _read_query(case, model)
-    snapshot, observed = _wire_read(case, query, domain, port, lifecycle_run(lifecycle))
+    snapshot, observed = _wire_read(case, query, model, port, lifecycle_run(lifecycle))
     if _is_single_graph(query):
         raise EngineError(
             f"{case.path.name}: a `then.graphs` case read a single instant — "
@@ -1312,6 +1337,31 @@ def _pinned_instant(tx_instant: str) -> TransactionInstant:
 
 class _RollbackStep(Exception):
     """Sentinel raised inside a transaction body to abort a ``rollback: true`` step."""
+
+
+def _transact[T](
+    database: handle.Database,
+    body: Callable[[handle.Transaction], T],
+    *,
+    concurrency: Concurrency | None = None,
+    isolation: IsolationLevel | None = None,
+) -> T:
+    """``db.transact`` as every lane here drives it, answering the underlying
+    failure rather than its contextualized form.
+
+    What the engine grades is what the callback, the write, or the boundary
+    raised — a rollback sentinel, a Write Effect Error, an optimistic-lock
+    conflict, a lowering refusal — and an
+    :class:`~parallax.snapshot.handle.ExecutionFailure` carries exactly that as
+    its cause. Re-raising the cause with its own chain intact is what lets each
+    lane keep catching the failure it classifies; the edition the wrapper named
+    is the case's own literal, which the lifecycle oracle grades instead.
+    """
+    try:
+        return database.transact(body, concurrency=concurrency, isolation=isolation)
+    except handle.ExecutionFailure as failure:
+        cause = failure.cause
+        raise cause from cause.__cause__
 
 
 class _AbortingPort:
@@ -2490,8 +2540,7 @@ def _step_query(step: Mapping[str, object], model: AcceptedMetamodel) -> ObjectQ
 
 def _run_standalone_find(
     port: DbPort,
-    domain: DomainModel,
-    concurrency: Concurrency,
+    context: _CaseContext,
     step: Mapping[str, object],
     lifecycle: LifecycleRun,
 ) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
@@ -2504,11 +2553,13 @@ def _run_standalone_find(
     Strategy, never a property of the preference alone or of what the scenario
     goes on to write.
     """
-    model = models.accepted_model_of(domain)
-    query = _step_query(step, model)
+    query = _step_query(step, context.model)
     observed = lifecycle.observation()
-    db = handle.Database(port, domain, lifecycle_provider=observed.provider)
-    return db.transact(lambda tx: tx.wire.find(query), concurrency=concurrency), observed
+    db = handle.Database(port, context.serving, lifecycle_provider=observed.provider)
+    return (
+        _transact(db, lambda tx: tx.wire.find(query), concurrency=context.concurrency),
+        observed,
+    )
 
 
 def _names_one_entity(model: AcceptedMetamodel, left: str, right: str) -> bool:
@@ -2770,12 +2821,12 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     after itself. Both lanes must reach the same DML for the same case, and a
     step after an abort takes its milestone from the write the database kept.
     """
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    serving = case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
     concurrency = _concurrency(case)
     dialect = dialect_for(dialect_name)
     context = _CaseContext(
-        domain, model, concurrency, TemporalShadow(), case_format.uow_isolation(case)
+        serving, model, concurrency, TemporalShadow(), case_format.uow_isolation(case)
     )
     _seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
@@ -3087,10 +3138,10 @@ def _run_snapshot_scenario(
 
     Reports its observations as a :class:`ScenarioRun`; this lane opens no `uow`
     group."""
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    serving = case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
     context = _CaseContext(
-        domain, model, _concurrency(case), TemporalShadow(), case_format.uow_isolation(case)
+        serving, model, _concurrency(case), TemporalShadow(), case_format.uow_isolation(case)
     )
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or
@@ -3099,7 +3150,7 @@ def _run_snapshot_scenario(
     _seed_shadow_from_fixtures(case, model, context.shadow)
     _apply_given_apply(case, port, context.shadow)
     observation = lifecycle.observation()
-    db = handle.Database(port, domain, lifecycle_provider=observation.provider)
+    db = handle.Database(port, serving, lifecycle_provider=observation.provider)
     emissions: list[Emission] = []
     round_trips = 0
     results: list[_ScenarioStepResult] = []
@@ -3935,7 +3986,7 @@ def _unit_source_reads(
 
 def _execute_write_unit(
     port: DbPort,
-    domain: DomainModel,
+    serving: ServingModel,
     model: AcceptedMetamodel,
     concurrency: Concurrency,
     resolved: Sequence[_ResolvedWrite],
@@ -4002,7 +4053,7 @@ def _execute_write_unit(
     observed = lifecycle.observation()
     database = handle.Database(
         _write_port(port, rollback=rollback),
-        domain,
+        serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -4016,7 +4067,7 @@ def _execute_write_unit(
             _buffer_wire_write(tx, model, state, write, None)
 
     with contextlib.suppress(_RollbackStep):
-        database.transact(body, concurrency=concurrency)
+        _transact(database, body, concurrency=concurrency)
     return _delivered(statements, observed.writes, "a keyed write unit"), observed.round_trips
 
 
@@ -4063,7 +4114,7 @@ def _execute_keyed_unit(
         )
         ran, unit_trips = _execute_write_unit(
             port,
-            context.domain,
+            context.serving,
             context.model,
             context.concurrency,
             resolved,
@@ -4077,8 +4128,7 @@ def _execute_keyed_unit(
 
 def _run_readless_predicate_write(
     port: DbPort,
-    domain: DomainModel,
-    concurrency: Concurrency,
+    context: _CaseContext,
     instruction: PreparedPredicateWrite,
     statement: LoweredStatement,
     tx_instant: str,
@@ -4103,7 +4153,7 @@ def _run_readless_predicate_write(
     observed = lifecycle.observation()
     database = handle.Database(
         _write_port(port, rollback=rollback),
-        domain,
+        context.serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -4112,7 +4162,7 @@ def _run_readless_predicate_write(
         buffer_prepared_predicate_write(tx, instruction)
 
     with contextlib.suppress(_RollbackStep):
-        database.transact(body, concurrency=concurrency)
+        _transact(database, body, concurrency=context.concurrency)
     return (
         _delivered((statement,), observed.writes, "a readless predicate write"),
         observed.round_trips,
@@ -4156,12 +4206,9 @@ def _is_materializing_write_step(
 
 def _run_materializing_pair(
     port: DbPort,
-    domain: DomainModel,
-    model: AcceptedMetamodel,
-    concurrency: Concurrency,
+    context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
     index: int,
-    shadow: TemporalShadow,
     lifecycle: LifecycleRun,
 ) -> tuple[list[_LoweredStep], int]:
     """Execute a MATERIALIZING predicate-write step (``index + 1``) whose
@@ -4195,6 +4242,8 @@ def _run_materializing_pair(
     transaction's own outcome, exactly as every other unit's advances are — an
     aborted pair moved nothing.
     """
+    model = context.model
+    shadow = context.shadow
     find_step = steps[index]
     write_step = steps[index + 1]
     instruction = _is_materializing_write_step(write_step, model)
@@ -4241,7 +4290,7 @@ def _run_materializing_pair(
     observed = lifecycle.observation()
     database = handle.Database(
         _write_port(port, rollback=rollback),
-        domain,
+        context.serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -4251,7 +4300,7 @@ def _run_materializing_pair(
 
     with shadow.staged(doomed=rollback):
         with contextlib.suppress(_RollbackStep):
-            database.transact(body, concurrency=concurrency)
+            _transact(database, body, concurrency=context.concurrency)
         shadow.note_materialized_write(case_entity(model, write_target))
     # The split is the port method each statement ran through rather than a
     # position in one flat list, so a resolve that issued more than one call, or
@@ -4357,9 +4406,10 @@ class _CaseContext:
     write step on either scenario lane (:func:`_execute_keyed_unit`), and the
     compile lane's pure lowering (:func:`_lower_scenario_step`) alike.
 
-    The model is the case's own, in both forms one formation answers: the Domain
-    Model a Snapshot connection takes, and the accepted Metamodel every neutral
-    lowering surface is stated over. The tracker is the ONE case-spanning
+    The model is the case's own, in both forms one formation answers: the
+    Serving Model a Snapshot connection adopts from — the case's Domain Model
+    prepared once under the case's edition — and the accepted Metamodel every
+    neutral lowering surface is stated over. The tracker is the ONE case-spanning
     :class:`TemporalShadow` every unit shares rather than a per-unit copy — a
     later unit's temporal close observes the milestone an earlier one's write
     opened. The record is frozen because none of the four is ever REBOUND inside
@@ -4380,7 +4430,7 @@ class _CaseContext:
     construction states it — ``None`` for a case declaring none.
     """
 
-    domain: DomainModel
+    serving: ServingModel
     model: AcceptedMetamodel
     concurrency: Concurrency
     shadow: TemporalShadow
@@ -4743,7 +4793,7 @@ class _GroupSession:
             "database",
             handle.Database(
                 port,
-                context.domain,
+                context.serving,
                 clock=FixedClock(instant),
                 lifecycle_provider=observation.provider,
             ),
@@ -4907,8 +4957,8 @@ def _run_uow_group(
                 step_graphs.append(observed)
 
     with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
-        session.database.transact(
-            body, concurrency=context.concurrency, isolation=context.isolation
+        _transact(
+            session.database, body, concurrency=context.concurrency, isolation=context.isolation
         )
     # The group's writes reach the wire in ONE flush at its boundary, so a step's
     # own plan is reconciled against the group's whole delivery rather than
@@ -5108,8 +5158,8 @@ def _run_interleaved_group(
 
     committed = False
     try:
-        session.database.transact(
-            body, concurrency=context.concurrency, isolation=context.isolation
+        _transact(
+            session.database, body, concurrency=context.concurrency, isolation=context.isolation
         )
         committed = True
     except OptimisticLockConflictError as exc:
@@ -5633,8 +5683,8 @@ def run_interleaved_scenario_case(
     post-ladder join.
     """
     steps = _scenario_steps(case)
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    serving = case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
     concurrency = _concurrency(case)
     if any("expectGraph" in step for step in steps):
         raise EngineError(
@@ -5661,7 +5711,7 @@ def run_interleaved_scenario_case(
     lifecycle = LifecycleRun()
     observed_a = lifecycle.observation()
     observed_b = lifecycle.observation()
-    context = _CaseContext(domain, model, concurrency, shadow, case_format.uow_isolation(case))
+    context = _CaseContext(serving, model, concurrency, shadow, case_format.uow_isolation(case))
     session_a = _GroupSession(port, context, instant, observed_a)
     peer_connection = peer_factory()
     try:
@@ -5739,7 +5789,7 @@ def run_interleaved_scenario_case(
                 "interleaved uow race is unsupported — every witnessed case's own "
                 "ungrouped step is a trailing verify find only"
             )
-        read, read_observed = _run_standalone_find(port, domain, concurrency, step, lifecycle)
+        read, read_observed = _run_standalone_find(port, context, step, lifecycle)
         rows_by_index[index] = _graph_rows(
             model, _step_query(step, model), read.checked().results()
         )
@@ -5791,8 +5841,8 @@ def run_scenario_case(
     lifecycle = lifecycle_run(lifecycle)
     if _has_action_step(steps):
         return _run_snapshot_scenario(case, port, steps, lifecycle)
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    serving = case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
     dialect = port.dialect
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
@@ -5806,7 +5856,7 @@ def run_scenario_case(
             "run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
-    context = _CaseContext(domain, model, concurrency, shadow, case_format.uow_isolation(case))
+    context = _CaseContext(serving, model, concurrency, shadow, case_format.uow_isolation(case))
     lowered: list[_LoweredStep] = []
     round_trips = 0
     try:
@@ -5842,15 +5892,13 @@ def run_scenario_case(
                     pairing.selection.target.identity.canonical,
                 ):
                     pair_lowered, pair_trips = _run_materializing_pair(
-                        port, domain, model, concurrency, steps, index, shadow, lifecycle
+                        port, context, steps, index, lifecycle
                     )
                     lowered.extend(pair_lowered)
                     round_trips += pair_trips
                     index += 2
                     continue
-                read, read_observed = _run_standalone_find(
-                    port, domain, concurrency, step, lifecycle
-                )
+                read, read_observed = _run_standalone_find(port, context, step, lifecycle)
                 round_trips += read_observed.round_trips
                 lowered.append(
                     _LoweredStep(
@@ -5879,8 +5927,7 @@ def run_scenario_case(
                 statement = _lower_predicate_write_step(instruction, model, dialect, concurrency)
                 ran, predicate_trips = _run_readless_predicate_write(
                     port,
-                    domain,
-                    concurrency,
+                    context,
                     instruction,
                     statement,
                     tx_instant,
@@ -5923,11 +5970,11 @@ def run_write_sequence_case(
     already writes against, so applying it later than that would grade the
     sequence against a table the case never described.
     """
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    serving = case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
     lifecycle = lifecycle_run(lifecycle)
     context = _CaseContext(
-        domain, model, _concurrency(case), TemporalShadow(), case_format.uow_isolation(case)
+        serving, model, _concurrency(case), TemporalShadow(), case_format.uow_isolation(case)
     )
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
@@ -6252,7 +6299,7 @@ def _conflict_attempt_affected(
     that arm.
     """
     try:
-        return database.transact(body, concurrency=concurrency)
+        return _transact(database, body, concurrency=concurrency)
     except WriteEffectError as exc:
         admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
         if type(exc) is not admitted:
@@ -6303,7 +6350,7 @@ def _conflict_key_predicate(
 
 def _conflict_source_nodes(
     port: DbPort,
-    domain: DomainModel,
+    serving: ServingModel,
     model: AcceptedMetamodel,
     target: str,
     resolved: Sequence[_ConflictWrite],
@@ -6339,7 +6386,7 @@ def _conflict_source_nodes(
     observed = lifecycle.observation()
     database = handle.Database(
         port,
-        domain,
+        serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -6403,7 +6450,7 @@ def _refuse_unobserved_conflict_version(
 
 def _run_conflict_write(
     port: DbPort,
-    domain: DomainModel,
+    serving: ServingModel,
     model: AcceptedMetamodel,
     target: str,
     concurrency: Concurrency,
@@ -6440,7 +6487,7 @@ def _run_conflict_write(
     observed = lifecycle.observation()
     database = handle.Database(
         port,
-        domain,
+        serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
     )
@@ -7001,8 +7048,8 @@ def run_conflict_case(
     `m-conformance-adapter` — and the resulting table state when the case
     authors `then.tableState`.
     """
-    domain = load_case_domain_model(case)
-    model = models.accepted_model_of(domain)
+    serving = case_serving_model(case)
+    model = models.accepted_model_of(serving.current().model)
     lifecycle = lifecycle_run(lifecycle)
     when = _when(case)
     concurrency = _concurrency(case)
@@ -7035,7 +7082,7 @@ def run_conflict_case(
             nonlocal round_trips
             nodes, source_trips = _conflict_source_nodes(
                 port,
-                domain,
+                serving,
                 model,
                 target,
                 _resolve_conflict_writes(model, target, mutation, _conflict_write_rows(attempt)),
@@ -7064,7 +7111,7 @@ def run_conflict_case(
             else:
                 statements, affected, attempt_trips = _run_conflict_write(
                     port,
-                    domain,
+                    serving,
                     model,
                     target,
                     concurrency,

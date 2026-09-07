@@ -280,8 +280,9 @@ class _Fault:
 
     ``seam`` is where the kind is simulated, and it settles the attempt count
     too: a ``work`` fault is a failure the work meets at the write seam, inside
-    an attempt that ran, while a ``boundary`` fault stops the boundary from
-    opening, so no attempt runs at all. ``retriable`` is `m-auto-retry` /
+    an attempt whose callback ran, while a ``boundary`` fault stops the boundary
+    from opening, so the one attempt that adopted and started finishes
+    begin-failed before any callback and is never retried. ``retriable`` is `m-auto-retry` /
     `m-opt-lock`'s verdict on the kind, ``opt-in`` where
     `retryOptimisticConflicts` decides it. ``error`` builds the translated
     :class:`DatabaseError` the real adapter's own classification would produce,
@@ -433,9 +434,10 @@ class FaultInjectingPort:
     ) -> TransactionOutcome[T]:
         # A boundary-seam fault is a boundary that never opened, so this ANSWERS
         # `BeginFailed` instead of raising and never reaches the inner port: the
-        # callback does not run, no attempt begins, and the handle's own rule
-        # surfaces the error terminally (`m-db-port` "Mapping obligations"). A
-        # fault the WORK meets fires at the write seam above instead.
+        # callback does not run, the attempt that had already started finishes
+        # begin-failed, and the handle's own rule surfaces the error terminally
+        # (`m-db-port` "Mapping obligations"). A fault the WORK meets fires at
+        # the write seam above instead.
         armed = self._armed_at("boundary")
         if armed is not None and armed.error is not None:
             self._state.fired = True
@@ -477,10 +479,11 @@ def expected_attempts(
     a retriable fault that PERSISTS to a failure-kind outcome exhausts the
     bound (`retries` re-executions, so ``bound + 1`` total attempts).
 
-    A BOUNDARY-seam fault answers ZERO: a boundary that never opened ran no
-    attempt at all, which is a different count from an attempt that ran and
-    failed, and it is the count that separates "the callback never ran" from
-    "the callback ran and was undone".
+    A BOUNDARY-seam fault answers ONE: the attempt adopts and starts before the
+    boundary is asked to open, so a boundary that never opened is one attempt
+    that finished begin-failed — terminal however the loop is configured, and
+    distinguished from an attempt that ran and was undone by its outcome rather
+    than by its absence.
 
     Which seam a kind belongs to and whether it is retriable are read off
     :data:`_FAULTS` rather than tested here, so one kind's declaration answers
@@ -495,7 +498,7 @@ def expected_attempts(
         return 1
     kind = _fault(fault)
     if kind.seam == "boundary":
-        return 0
+        return 1
     retriable = (
         bool(retry_optimistic_conflicts)
         if kind.retriable == "opt-in"

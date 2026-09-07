@@ -486,11 +486,10 @@ def test_two_publishers_racing_one_expectation_leave_exactly_one_holding(
 
 
 def test_a_static_connection_prepares_once_under_a_generated_edition() -> None:
-    first = connect(ScriptedPort(), _ACCOUNT, clock=FixedClock(FIXED))
-    second = connect(ScriptedPort(), _ACCOUNT, clock=FixedClock(FIXED))
-    editions = {
-        db._selected.edition  # pyright: ignore[reportPrivateUsage] - the generated edition is the claim
-        for db in (first, second)
-    }
+    first = connect(ScriptedPort(Transact(), Transact()), _ACCOUNT, clock=FixedClock(FIXED))
+    second = connect(ScriptedPort(Transact()), _ACCOUNT, clock=FixedClock(FIXED))
+    editions = {db.transact(lambda tx: tx.edition) for db in (first, second)}
     assert len(editions) == 2
     assert all(edition.startswith("static-") for edition in editions)
+    # Fixed for the connection's life: a second invocation adopts the same one.
+    assert first.transact(lambda tx: tx.edition) in editions

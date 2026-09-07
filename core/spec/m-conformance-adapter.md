@@ -549,7 +549,13 @@ compare the two structurally without making portable assertions about UUIDs,
 durations, runtime type names, or diagnostic text.
 
 The observation reports events the implementation's own installed recording
-Handler received, never a re-derivation from the case. A Database Call names its
+Handler received, never a re-derivation from the case. The adapter prepares a
+case's model explicitly under one Model Edition, the model descriptor's file
+stem — `account` for `models/account.yaml` — and hands its Handles that
+prepared selection, so every Started transition that carries an `edition` states
+that literal and a case can assert it. A case runs one edition end to end; a
+publication landing mid-run is a language-level scenario the API Conformance
+Suite owns. A Database Call names its
 statement by index into this envelope's own `emissions` array, just as the oracle
 uses the case's flattened authored statements. A call the envelope emits no
 statement for — the resolving read a keyed write owes (`m-case-format`) — names

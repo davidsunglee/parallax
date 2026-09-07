@@ -268,15 +268,29 @@ JoinedInvocationRaised(failure)
 Returning and raising describe the nested callback only. They never claim that
 the physical transaction committed or rolled back.
 
-A **Transaction Attempt** begins only after the database boundary has begun
-successfully. Its Started transition carries no attempt-specific fields and its
-Finished transition is exactly one of:
+A **Transaction Attempt** begins after it has adopted the Model Edition it runs
+under and before the database boundary is asked to begin. Its Started
+transition carries exactly one attempt-specific field, `edition`: the nonempty
+opaque token of the selection this attempt adopted, stated per attempt because
+a retry adopts afresh and the attempts of one invocation may therefore carry
+different editions. The invocation's own transitions carry none. Its Finished
+transition is exactly one of:
 
 ```text
 AttemptCommitted()
 AttemptRolledBack(failure)
 AttemptRollbackFailed(triggeringFailure, rollbackFailure)
+AttemptBeginFailed(diagnostic)
 ```
+
+`AttemptBeginFailed` is the boundary that never opened: the callback did not
+run, no child activity exists, and the outcome is terminal without retry
+however retriable the error's own category is. It carries a Failure Diagnostic
+rather than an Attempt Failure, because there is no phase inside the attempt
+to locate and no classifier verdict to report; the attempt's failure is always
+direct, and the invocation above finishes failed caused by that attempt under
+the ordinary chaining rule. A successful begin continues within the same
+attempt with no second Started transition.
 
 `failure` and `triggeringFailure` are **Attempt Failures** containing:
 
@@ -293,12 +307,13 @@ Batch after the callback returns. `commit` is the durability call.
 The transaction topology is:
 
 1. Outer Invocation starts.
-2. A begin failure finishes the invocation with a direct, non-retryable failure;
-   no Transaction Attempt exists and the callback never runs.
-3. Successful begin starts one Transaction Attempt.
-4. Callback and pre-commit work run inside that attempt.
+2. One Transaction Attempt adopts an edition and starts.
+3. A begin failure finishes that attempt `beginFailed` and the invocation
+   failed, caused by the attempt, without retry; the callback never runs.
+4. Successful begin continues the same attempt: callback and pre-commit work
+   run inside it.
 5. Commit or rollback finishes the attempt.
-6. A retry starts another attempt under the same invocation.
+6. A retry starts another attempt under the same invocation, adopting afresh.
 7. Commit or terminal failure finishes the invocation.
 
 Rollback failure preserves both diagnostics. An ordinary triggering error plus
@@ -437,7 +452,7 @@ write. The adapter observation uses the identical shape and indexes its own
 emissions. The shape is a case assertion format, not a public serialization
 contract.
 
-This module owns seven cases:
+This module owns eight cases:
 
 | Case | Observable distinction |
 |---|---|
@@ -448,6 +463,11 @@ This module owns seven cases:
 | retry exhaustion | every failed call, batch, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
 | joined invocation | the joined activity has no attempt and its buffered write reaches the outer attempt's pre-commit batch |
 | streamed delivery | a Snapshot Stream root brackets one Stream Batch per page, each page's Database Calls are that batch's own, and the delivery finishes exhausted |
+| isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin and finishes `beginFailed` with no callback, no child, and no retry; the invocation finishes failed caused by it |
+
+Every Transaction Attempt Started transition in those cases asserts the
+literal edition the conformance adapter prepared the case's model under
+(`m-conformance-adapter`).
 
 The compatibility harness validates oracle shape and correlation but observes no
 execution of its own. Each language grades the oracle through its conformance

@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 import pytest
 from _transact_support import ACCOUNT, FIXED, deadlock, new_account
 
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     ScriptedPort,
     Transact,
@@ -32,6 +33,7 @@ from _support.db_port import (
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort
 from parallax.core.execution_lifecycle import (
+    AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
@@ -327,6 +329,37 @@ def test_only_a_retry_eligible_rollback_is_a_warning(
     assert (committed.level, committed.fields["outcome"]) == (logging.DEBUG, "committed")
 
 
+def test_an_attempt_started_names_the_edition_it_adopted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (record,) = _records(
+        caplog,
+        [TransactionAttemptStarted(TRANSACTION.id, 1, 2, 1, "2026-09-a")],
+        execution=TRANSACTION,
+    )
+    assert record.level == logging.DEBUG
+    assert record.fields["edition"] == "2026-09-a"
+
+
+def test_a_begin_failure_is_a_debug_record_carrying_the_boundarys_own_diagnostic(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Terminal, and reported by the failed root above it at ERROR; the attempt's
+    # own record states the outcome and the diagnostic of the boundary that
+    # never opened, with no phase and no classifier verdict to state.
+    outcome = AttemptBeginFailed(_DATABASE_FAILURE.failure)
+    (record,) = _records(
+        caplog,
+        [TransactionAttemptFinished(TRANSACTION.id, 1, 2, 1, outcome)],
+        execution=TRANSACTION,
+    )
+    assert record.level == logging.DEBUG
+    assert record.fields["outcome"] == "beginFailed"
+    assert str(record.fields["error_type"]).endswith(".DatabaseError")
+    assert "phase" not in record.fields
+    assert "retry_eligible" not in record.fields
+
+
 def test_a_failed_rollback_is_an_error_carrying_both_live_failures(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -429,7 +462,7 @@ def test_every_invocation_and_batch_outcome_has_its_own_spelling(
             WriteBatchStarted(TRANSACTION.id, 5, 4, 2, "pre_commit"),
             WriteBatchFinished(TRANSACTION.id, 6, 4, 2, WriteBatchCompleted()),
             WriteBatchFinished(TRANSACTION.id, 7, 5, 2, WriteBatchFailed(_failure())),
-            TransactionAttemptStarted(TRANSACTION.id, 8, 6, 1),
+            TransactionAttemptStarted(TRANSACTION.id, 8, 6, 1, "account"),
         ],
         execution=TRANSACTION,
     )
@@ -527,7 +560,7 @@ def test_the_logger_answers_every_transition_the_algebra_admits(
         DatabaseCallFinished(EXECUTION.id, 6, 3, 2, STATEMENT, 9, DatabaseWriteCompleted(1)),
         TransactionInvocationStarted(EXECUTION.id, 7, 4, 1, JoinedInvocation()),
         TransactionInvocationFinished(EXECUTION.id, 8, 4, 1, JoinedInvocationReturned()),
-        TransactionAttemptStarted(EXECUTION.id, 9, 5, 1),
+        TransactionAttemptStarted(EXECUTION.id, 9, 5, 1, "account"),
         TransactionAttemptFinished(EXECUTION.id, 10, 5, 1, AttemptCommitted()),
         SnapshotStreamStarted(EXECUTION.id, 11, 6, 1, "Account", "ROWS", 100),
         SnapshotStreamFinished(EXECUTION.id, 12, 6, 1, StreamExhausted()),
@@ -629,7 +662,7 @@ def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
             ),
             TransactionInvocationFinished(EXECUTION.id, 6, 1, None, OuterInvocationFailed(root)),
             TransactionInvocationFinished(EXECUTION.id, 7, 5, 1, JoinedInvocationRaised(root)),
-            TransactionAttemptStarted(EXECUTION.id, 8, 6, 1),
+            TransactionAttemptStarted(EXECUTION.id, 8, 6, 1, "account"),
             TransactionAttemptFinished(
                 EXECUTION.id, 9, 6, 1, AttemptRolledBack(_attempt_failure(retry_eligible=True))
             ),
@@ -667,7 +700,7 @@ def test_a_level_between_the_rules_keeps_exactly_the_records_worth_it() -> None:
     handler = LoggingLifecycleProvider(logger).open(TRANSACTION)
     assert handler is not None
     for event in [
-        TransactionAttemptStarted(TRANSACTION.id, 1, 2, 1),
+        TransactionAttemptStarted(TRANSACTION.id, 1, 2, 1, "account"),
         TransactionAttemptFinished(
             TRANSACTION.id, 2, 2, 1, AttemptRolledBack(_attempt_failure(retry_eligible=True))
         ),
@@ -741,7 +774,7 @@ def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record
         )
         db = _db(port, LoggingLifecycleProvider(logger))
         try:
-            with pytest.raises(DatabaseError):
+            with raises_contextualized(DatabaseError):
                 db.transact(lambda tx: tx.insert(new_account()), retries=1)
         finally:
             logger.removeHandler(collected)

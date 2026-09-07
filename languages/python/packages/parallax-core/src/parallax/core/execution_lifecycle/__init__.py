@@ -68,6 +68,7 @@ from parallax.core.execution_lifecycle._errors import (
 from parallax.core.execution_lifecycle._events import (
     ActivityFinished,
     ActivityStarted,
+    AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptPhase,
@@ -132,6 +133,7 @@ __all__ = [
     "ActivityFailure",
     "ActivityFinished",
     "ActivityStarted",
+    "AttemptBeginFailed",
     "AttemptCommitted",
     "AttemptFailure",
     "AttemptPhase",
