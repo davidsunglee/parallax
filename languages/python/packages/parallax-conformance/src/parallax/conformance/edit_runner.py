@@ -14,6 +14,7 @@ from parallax.conformance.edit_models import LEDGER, Note, NoteMark, NoteTag, Wi
 __all__ = [
     "AuxiliaryReading",
     "DerivedCacheReading",
+    "EditSource",
     "Observation",
     "Probe",
     "changes",
@@ -44,8 +45,16 @@ def _source(case: case_format.Case) -> Mapping[str, object]:
     return cast("Mapping[str, object]", _instruction(case)["source"])
 
 
-def constructed_source(case: case_format.Case) -> Editable:
-    """Build a case's application-constructed source and follow its target path."""
+@dataclass(frozen=True, slots=True)
+class EditSource:
+    """The containing Entity source and the value targeted by one edit case."""
+
+    root: Note
+    target: Editable
+
+
+def constructed_source(case: case_format.Case) -> EditSource:
+    """Build a case's application-constructed root and retain its edit target."""
     source = _source(case)
     if source.get("origin") != "constructed":
         raise ValueError(f"{case.case_id}: source is not constructed")
@@ -61,11 +70,11 @@ def constructed_source(case: case_format.Case) -> Editable:
     return follow_path(root, case)
 
 
-def follow_path(root: Note, case: case_format.Case) -> Editable:
-    """Return the Entity itself or the Value Object occurrence named by the case."""
+def follow_path(root: Note, case: case_format.Case) -> EditSource:
+    """Retain *root* beside the Entity or Value Object occurrence the case targets."""
     path = _source(case).get("path")
     if path is None:
-        return root
+        return EditSource(root=root, target=root)
     if not isinstance(path, str):
         raise ValueError(f"{case.case_id}: source path is not a string")
     segments = path.split(".")
@@ -80,7 +89,7 @@ def follow_path(root: Note, case: case_format.Case) -> Editable:
         current = getattr(current, segment)
     if not isinstance(current, (Note, NoteTag)):
         raise ValueError(f"{case.case_id}: source path {path!r} does not end at an editable value")
-    return current
+    return EditSource(root=root, target=current)
 
 
 def changes(case: case_format.Case) -> Mapping[str, object]:
@@ -99,19 +108,26 @@ def _members(value: BaseModel) -> dict[str, object]:
 
 @dataclass(frozen=True, slots=True)
 class Probe:
-    members: Mapping[str, object]
+    root_members: Mapping[str, object]
+    target_members: Mapping[str, object]
+    root_memo: list[str]
+    root_memo_contents: tuple[str, ...]
     memo: list[str]
     memo_contents: tuple[str, ...]
     derived_cache: str
     ledger: WitnessReading
 
 
-def probe(source: Editable) -> Probe:
-    """Snapshot source members and witnesses, warming its declared cache."""
-    derived_cache = source.shouted
-    memo = source.memo
+def probe(source: EditSource) -> Probe:
+    """Snapshot the root and target state, warming the target's declared cache."""
+    target = source.target
+    derived_cache = target.shouted
+    memo = target.memo
     return Probe(
-        members=_members(source),
+        root_members=_members(source.root),
+        target_members=_members(target),
+        root_memo=source.root.memo,
+        root_memo_contents=tuple(source.root.memo),
         memo=memo,
         memo_contents=tuple(memo),
         derived_cache=derived_cache,
@@ -141,23 +157,27 @@ class Observation:
     distinct: bool
 
 
-def observe(source: Editable, result: Editable, before: Probe) -> Observation:
-    """Observe carry, cache recomputation, binding independence, and source state."""
-    shared = result.memo is source.memo
+def observe(source: EditSource, result: Editable, before: Probe) -> Observation:
+    """Observe carry, cache, and source state, rebinding the result memo as a witness."""
+    target = source.target
+    shared = result.memo is target.memo
     result.remember(["result-only"])
     independent = (
-        result.memo is not source.memo
-        and source.memo is before.memo
-        and tuple(source.memo) == before.memo_contents
+        result.memo is not target.memo
+        and target.memo is before.memo
+        and tuple(target.memo) == before.memo_contents
     )
     cache_value = result.shouted
     after_result_cache = LEDGER.snapshot()
-    source_cache = source.shouted
+    source_cache = target.shouted
     after_source_cache = LEDGER.snapshot()
     source_unchanged = (
-        _members(source) == before.members
-        and source.memo is before.memo
-        and tuple(source.memo) == before.memo_contents
+        _members(source.root) == before.root_members
+        and _members(target) == before.target_members
+        and source.root.memo is before.root_memo
+        and tuple(source.root.memo) == before.root_memo_contents
+        and target.memo is before.memo
+        and tuple(target.memo) == before.memo_contents
         and source_cache == before.derived_cache
         and after_source_cache == after_result_cache
     )

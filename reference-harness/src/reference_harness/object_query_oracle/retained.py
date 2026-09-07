@@ -1,4 +1,4 @@
-"""What a Scenario read step published, and what a later step reads back from it.
+"""What a Scenario row-observing step published and what a later step reads back.
 
 A retained observation is the whole of what one step handed over: the rows it
 published, the entity those rows decode against, and — where its Object Query
@@ -14,7 +14,8 @@ walks a path through it. A snapshot issues no SQL after materialization
 nothing at all.
 
 Nothing here reaches the package's public seam: a retained observation is built,
-held, and read entirely inside one ``ScenarioReads``.
+held, and read entirely inside one ``ScenarioReads``, whether a read
+materialized it or a ``mutate`` derived it.
 """
 
 from __future__ import annotations
@@ -46,8 +47,9 @@ class Observation:
     """Everything one asserted step published, keyed later by that step's index.
 
     ``entity`` is what the rows decode against — a read step's own query target,
-    an `access`'s navigated terminal — and is ``None`` only where a step observed
-    no rows. ``includes`` is ``None`` where the step's query declared no Include
+    an `access`'s navigated terminal, or a `mutate` source's Entity — and is
+    ``None`` only where a step observed no rows. ``includes`` is ``None``
+    where the step's query declared no Include
     Paths, so there is no materialized view for a later access to navigate.
 
     ``rows`` are what the step PUBLISHED, so they come from the materialization
@@ -65,9 +67,9 @@ class Observation:
         if not all(isinstance(row, materialize.PublishedRow) for row in self.rows):
             raise TypeError(
                 "a retained observation holds the rows its step published; these did not "
-                "come through the materialization seam (materialize_read / "
-                "materialize_navigated), so they may still carry storage the read never "
-                "asked for."
+                "come through the publication seam (materialize_read / "
+                "materialize_navigated / edited), so they may still carry storage the "
+                "step never asked for."
             )
 
 

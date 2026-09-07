@@ -9,5 +9,5 @@ parallax.compatibility.Note:
   - id: 2
     title: beta
     body: null
-    tag: null
+    tag: { label: b }
     marks: []

@@ -2,7 +2,8 @@
 # source Note's two marks are not addressed or merged, and the derived row carries
 # exactly the single authored mark. The find contributes the scenario's only
 # statement; mutation is an in-memory mapping derivation with zero round trips,
-# and its expectRows grades the value it publishes.
+# its expectRows grades the value it publishes, and a later change-free mutation
+# of the original source proves that source stayed intact.
 model: models/note.yaml
 tags: [m-edit, m-value-object, mutation, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario
@@ -40,5 +41,16 @@ when:
           tag: { label: a, weight: 3 }
           marks:
             - { kind: y, weight: 2 }
+    - action: mutate
+      "on": 0
+      roundTrips: 0
+      expectRows:
+        - id: 1
+          title: alpha
+          body: first
+          tag: { label: a, weight: 3 }
+          marks:
+            - { kind: pin, weight: 2 }
+            - { kind: flag, weight: null }
 then:
   roundTrips: 1

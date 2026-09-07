@@ -5779,10 +5779,11 @@ def run_scenario_case(
     here a find step's own materialized graph (:func:`_read_step_graph`) —
     grouped, the contents that read observed inside the group's transaction.
     `stepRows` is filled on both lanes too, by every read step this run drives —
-    ungrouped, grouped, and streamed alike. A MATERIALIZING pair's resolving find
-    drives none: production performs that read internally while planning the
-    write and hands its rows to no caller, so the step reports no entry
-    (`m-conformance-adapter` *Per-step row observations*)."""
+    ungrouped, grouped, and streamed alike — and by every accepted `mutate`
+    declaring `expectRows`. A MATERIALIZING pair's resolving find drives none:
+    production performs that read internally while planning the write and hands
+    its rows to no caller, so the step reports no entry (`m-conformance-adapter`
+    *Per-step row observations*)."""
     steps = _scenario_steps(case)
     lifecycle = lifecycle_run(lifecycle)
     if _has_action_step(steps):

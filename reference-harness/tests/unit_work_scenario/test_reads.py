@@ -1,7 +1,7 @@
-"""What a Scenario's accepted reads observe, driven through the one export.
+"""What a Scenario's row-publishing steps observe, driven through one export.
 
-The read oracle is this package's collaborator rather than an interface of its
-own, so its four workflows are exercised where a caller reaches them: one Scenario
+The observation oracle is this package's collaborator rather than an interface
+of its own, so its workflows are exercised where a caller reaches them: one Scenario
 graded whole against a scripted provider. What each test asserts is what a caller
 can see — whether the run returned or raised, and which statements reached which
 connection — and the rows a script hands back are PHYSICAL, so every passing test
@@ -9,8 +9,8 @@ is also a test that the logical result the step's own ``expectRows`` states was
 derived from them.
 
 A query and a resolving load issue exactly the statements their step lists; a
-reuse and an already-materialized access issue none at all, which is asserted by
-the run's chronology carrying nothing for those steps.
+reuse, an already-materialized access, and a row-observing mutation issue none at
+all, which is asserted by the run's chronology carrying nothing for those steps.
 """
 
 from __future__ import annotations
@@ -213,6 +213,9 @@ def test_a_find_whose_rows_disagree_with_expectRows_is_refused(damaged_case: Cas
 
     with pytest.raises(CaseFailure, match=r"scenario\[0\] rows != expectRows"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
+
+
+# --- a row-observing mutation -------------------------------------------------
 
 
 @pytest.mark.parametrize("case_name", [_EDIT_ONE_OCCURRENCE, _EDIT_MANY_OCCURRENCE])
@@ -1377,5 +1380,5 @@ def test_a_step_publishing_rows_that_skipped_the_seam_is_refused(
     )
     case = corpus_case(_POPULATED_LIST)
 
-    with pytest.raises(TypeError, match="did not come through the materialization seam"):
+    with pytest.raises(TypeError, match="did not come through the publication seam"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))

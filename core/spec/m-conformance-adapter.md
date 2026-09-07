@@ -429,7 +429,8 @@ assert different things:
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`, plus `stepRows` for the
-  values their read steps published and `errors` for any step declaring
+  values their read steps and row-observing `mutate` steps published, and
+  `errors` for any step declaring
   `expectError`
 - coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
 - error cases with a single-connection trigger (top-level `then.statements`)

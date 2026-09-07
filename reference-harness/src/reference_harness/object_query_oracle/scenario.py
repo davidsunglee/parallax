@@ -1,26 +1,27 @@
-"""Observing the reads of one Unit Work Scenario, one authored step at a time.
+"""Observing the row-publishing steps of one Unit Work Scenario, one at a time.
 
-A Scenario states its reads as steps, and every fact a step's observation needs —
+A Scenario states its observations as steps, and every fact one needs —
 which operation it is, which earlier steps it names, which relationship it walks,
 which identity it claims — is already written in the step. So the operation here
 takes an index and a reader and nothing else: repeating that intent as interface
 parameters would put a second authority on what a step means beside the case that
 authored it.
 
-Four workflows stay behaviorally distinct behind the one operation, because their
-database behavior differs and a smaller interface must not collapse it. A query
+The workflows stay behaviorally distinct behind the one operation. A query
 runs its own golden statement and then its own Include levels. A relationship
 `load` resolves a deferred fetch, one statement per coordinate group or level. A
 named reuse returns the very rows an earlier step published, issuing nothing. And
 an `access` navigates the view an earlier read materialized, issuing nothing —
 unless it is the first access of a query-backed list, which resolves the list once
 by following the step's own ``on`` index back to the constructor's Object Query.
+A row-observing `mutate` instead derives and publishes one Wire copy of the
+source it names, issuing no SQL.
 
 What is NOT here is Scenario orchestration: which kind each step is, step order,
-reader selection, transaction lifecycle, writes, boundary actions, unresolved list
+reader selection, transaction lifecycle, writes, non-observing boundary actions, unresolved list
 construction, and accounting across the whole Scenario all belong to
 :mod:`..unit_work_scenario`, whose execution phase calls this once per
-read-bearing step with the reader that step's lifecycle selected. This module is
+row-publishing step with the reader that step's lifecycle selected. This module is
 that package's collaborator rather than an offering of the oracle's own
 interface, and it holds no second opinion about what it is handed.
 """
@@ -40,15 +41,16 @@ from .executor import ReadExecutor
 
 
 class ScenarioReads:
-    """Every accepted read of one Unit Work Scenario, and what those reads retain.
+    """Every accepted row observation of one Unit Work Scenario and what it retains.
 
     Requires
         one instance per Compatibility Case; :mod:`..unit_work_scenario` compiles
-        the Scenario once and then calls every read step of it, in Scenario order,
-        exactly once, with the reader Scenario lifecycle selected for that step.
-        The steps that compilation keeps are never passed: a write, an action whose
-        verb neither loads nor accesses, and the zero-round-trip construction of a
-        query-backed list that has not resolved. That every reference resolved
+        the Scenario once and then calls every row-publishing step, in Scenario
+        order, exactly once, with the reader its lifecycle selected. The steps
+        that compilation keeps are never passed: a write, an action other than
+        `load`, `access`, or a `mutate` declaring `expectRows`, and the
+        zero-round-trip construction of a query-backed list that has not resolved.
+        That every reference resolved
         here — a step's ``on`` and its ``sameObjectAs`` anchor — names an earlier
         step is settled there too, so what one resolves to is only ever a step
         this Scenario authored.
@@ -68,13 +70,14 @@ class ScenarioReads:
         self._retained: dict[int, retained.Observation] = {}
 
     def assert_step(self, step_index: int, reader: ReadExecutor) -> None:
-        """Assert the observables of the Scenario read step at *step_index*.
+        """Assert the observables of the row-publishing step at *step_index*.
 
-        Which of the four read workflows runs is read off the step: a ``stream``
+        Which workflow runs is read off the step: a ``stream``
         member makes it a delivery, listed ``statements`` make it a query or a
         resolving load, a read-verb ``action`` over an already-materialized view
         makes it an access, and a step that lists nothing and names an earlier one
-        is a reuse.
+        is a reuse. A ``mutate`` declaring ``expectRows`` derives a Wire copy
+        from the earlier observation it names.
         """
         with reported_against(self._case, step_index):
             step = self._case.scenario[step_index]
@@ -100,7 +103,7 @@ class ScenarioReads:
             # naming an unobserved step rather than answered with rows nobody graded.
             self._retained[step_index] = observation
 
-    # --- the four read workflows ---------------------------------------------
+    # --- row-observation workflows -------------------------------------------
 
     def _deliver(
         self, step_index: int, step: Mapping[str, Any], reader: ReadExecutor
@@ -290,7 +293,7 @@ class ScenarioReads:
             )
         return self._observation(step_index, source).rows
 
-    # --- what a read retains --------------------------------------------------
+    # --- what an observation retains -----------------------------------------
 
     def _run_step_includes(
         self,
