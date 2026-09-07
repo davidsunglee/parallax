@@ -193,8 +193,9 @@ def model_of(model: DomainModel) -> Metamodel:
     """The accepted Metamodel ``model`` sealed.
 
     A free function rather than a property: reading the accepted model out of a
-    Domain Model is a first-party runtime seam, not part of the developer
-    surface, which is ``meta(...)`` and ``entities`` alone.
+    Domain Model is the advanced ``parallax.core.entity`` collaboration seam a
+    schema-owning or separately distributed frontend reaches for, not the
+    ordinary developer surface, which is ``meta(...)`` and ``entities`` alone.
     """
     return model._model  # pyright: ignore[reportPrivateUsage] - first-party seam reads the model's own sealed metamodel
 
@@ -204,8 +205,8 @@ def class_index(model: DomainModel) -> ClassIndex | None:
 
     The companion of :func:`model_of` for the one capability that needs classes:
     a runtime that instantiates result rows. Reachable only through this private
-    module — ``parallax.core.entity`` exports neither function — so the pair is
-    first-party support rather than developer surface. Together they are the
+    module — ``parallax.core.entity`` exports :func:`model_of` alone — so a
+    class index is first-party support rather than any caller's. Together they are the
     whole of what a preparing runtime reads out of a model: it derives every
     model-bound capability from the accepted Metamodel and this index itself,
     and the model retains none of what it derives.

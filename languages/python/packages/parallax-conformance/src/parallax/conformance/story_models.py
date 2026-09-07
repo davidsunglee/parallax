@@ -81,10 +81,14 @@ class NicknamedAccount(
     table="account",
     name="Account",
     namespace=_NS,
-    indices=(index("account_owner", "owner"),),
+    indices=(
+        index("account_owner", "owner"),
+        index("account_nickname", "nickname", unique=True),
+    ),
 ):
     """``Account`` one Unilateral Evolution later: the same Entity with one
-    added nullable ``nickname`` — the model the publication story publishes.
+    added nullable ``nickname`` and the unique Index that enforces it — the
+    model the publication story publishes.
 
     The ``name="Account"`` header is what makes this the SAME Entity as the
     class above rather than a second one, which is what makes the difference
@@ -93,6 +97,11 @@ class NicknamedAccount(
     earlier edition selects every column it knows and admits every row the later
     one can write, so both editions operate against one schema during Edition
     Overlap.
+
+    The Index makes the evolution two ordered operations rather than one: the
+    Column has to exist before an Index over it can be created, and the unique
+    one it creates is what a later uniqueness violation is correlated back to a
+    rollout by.
     """
 
     id: Attr[int] = attr(primary_key=True)

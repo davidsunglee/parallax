@@ -20,14 +20,22 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 
-from parallax.conformance.models import accepted_model_of
 from parallax.conformance.story_models import (
     ACCOUNT_MODEL,
     NICKNAMED_ACCOUNT_MODEL,
+    Account,
     NicknamedAccount,
 )
-from parallax.core.db_port import BeginFailed, Committed, DbPort
+from parallax.core.db_port import (
+    BeginFailed,
+    Committed,
+    DbPort,
+    RollbackFailed,
+    RolledBack,
+)
+from parallax.core.entity import model_of
 from parallax.evolution import (
+    CreatedIndex,
     Evolution,
     SchemaDelta,
     UnilateralEvolution,
@@ -58,8 +66,9 @@ class UnpublishableUpdateError(Exception):
     to apply live, and what it makes of a schema statement that did not commit.
     Parallax refuses nothing here — it never inspects a schema and never applies
     one — so an update that must not proceed has to say so in the host's own
-    vocabulary. Whenever it is raised, the earlier selection is still serving and
-    nothing has adopted the candidate.
+    vocabulary. Raised at either step this recipe puts BEFORE its publication,
+    so under this order the earlier selection is still serving and nothing has
+    adopted the candidate.
     """
 
 
@@ -80,7 +89,7 @@ def unilateral(evolution: Evolution, /) -> UnilateralEvolution:
     )
 
 
-def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> None:
+def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> tuple[CreatedIndex, ...]:
     """Apply every statement of ``delta``, in order, in the host's OWN boundary.
 
     Parallax applies no schema change: these statements are the application's to
@@ -89,24 +98,42 @@ def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> None:
     stops partway leaves a database the earlier edition still operates against —
     which is exactly why a failure here has to prevent the publication rather
     than be reported beside it.
+
+    What comes back is the delta's own ``created_indices`` provenance, which the
+    host keeps as its rollout ledger: it is what a later uniqueness violation is
+    matched against, by the violated Physical Index Name the database error
+    already carries, without parsing a driver message.
     """
     outcome = port.transaction(
         lambda schema: [schema.execute_write(statement, ()) for statement in delta.statements]
     )
-    if isinstance(outcome, Committed):
-        return
-    failed = outcome.error if isinstance(outcome, BeginFailed) else outcome.trigger.error
-    raise UnpublishableUpdateError("the schema delta did not apply in full") from failed
+    match outcome:
+        case Committed():
+            return delta.created_indices
+        case BeginFailed(error):
+            raise UnpublishableUpdateError("the schema delta never began") from error
+        case RolledBack(trigger):
+            raise UnpublishableUpdateError(
+                "the schema delta did not apply in full"
+            ) from trigger.error
+        case RollbackFailed(trigger, rollback_error):
+            # Both failures are live and either alone misreports what happened:
+            # the statements that had already succeeded could not be undone, so
+            # WHICH prefix the database now holds is unknown and the connection
+            # is no longer trustworthy. Retrying the delta is exactly what must
+            # not happen — a prefix-safe statement is not an idempotent one.
+            raise UnpublishableUpdateError(
+                f"the schema delta could not be undone after {trigger.error!r}, so how much "
+                f"of it the database holds is unknown"
+            ) from rollback_error
 
 
 @dataclass(frozen=True, slots=True)
 class PublishedUpdate:
-    """What one live update did: the editions either side of it, the statements
-    the host applied between them, and the added member's first written value."""
-
-    before: str
+    before_edition: str
     statements: tuple[str, ...]
-    after: str
+    created_indices: tuple[CreatedIndex, ...]
+    after_edition: str
     nickname: str | None
 
 
@@ -132,11 +159,14 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     b = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
 
     # An Evolution is described between two ACCEPTED models, which is what a
-    # prepared selection carries its own of: `accepted_model_of` is the durable
-    # first-party seam a schema-owning host reads one through (`python.md` §2).
-    evolution = unilateral(evolve(accepted_model_of(a.model), accepted_model_of(b.model)))
+    # prepared selection carries its own of: `model_of` is the durable first-party
+    # seam a schema-owning host reads one through (`python.md` §2).
+    evolution = unilateral(evolve(model_of(a.model), model_of(b.model)))
+    # The statements are ordered and the order is load-bearing — the added
+    # Column exists before the Index over it is created — so they are applied as
+    # given, never reordered, deduplicated, or made idempotent.
     delta = schema_delta(evolution, port.dialect)
-    apply_schema_delta(port, delta)
+    created_indices = apply_schema_delta(port, delta)
 
     # Only now. Publication ASSERTS that the physical schema already satisfies
     # what is being published, so every execution that adopts B afterwards finds
@@ -154,21 +184,26 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
 
     after, nickname = db.transact(name_the_account)
     return PublishedUpdate(
-        before=before, statements=delta.statements, after=after, nickname=nickname
+        before_edition=before,
+        statements=delta.statements,
+        created_indices=created_indices,
+        after_edition=after,
+        nickname=nickname,
     )
 
 
 def publication_snippet() -> str:
     """The story's own source — the Usage Guide snippet that cannot drift.
 
-    The later model, the application's own refusal, what one update answers,
-    and the update itself: a snippet showing the three calls alone would
-    document the surface without the order that is the only thing an
+    Both model endpoints, the application's own refusal, what one update
+    answers, and the update itself: a snippet showing the three calls alone
+    would document the surface without the order that is the only thing an
     application has to get right.
     """
     return "\n\n\n".join(
         inspect.getsource(part).rstrip("\n")
         for part in (
+            Account,
             NicknamedAccount,
             UnpublishableUpdateError,
             unilateral,
