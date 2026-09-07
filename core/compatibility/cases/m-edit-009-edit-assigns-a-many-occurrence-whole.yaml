@@ -1,0 +1,31 @@
+# A changed Entity edit replaces a read-produced many Value Object occurrence as one whole ordered value, carrying none of the source elements into the result while preserving unrelated auxiliary state and cache invalidation semantics and leaving the source occurrence unchanged.
+model: models/note.yaml
+tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
+shape: edit
+lane: api-conformance
+when:
+  edit:
+    source:
+      origin: read
+      objectQuery:
+        target: parallax.compatibility.Note
+        predicate:
+          eq:
+            attr: parallax.compatibility.Note.id
+            value: 1
+    set:
+      marks:
+        - { kind: x, weight: 1 }
+then:
+  result:
+    members:
+      id: 1
+      title: alpha
+      body: first
+      tag: { label: a, weight: 3 }
+      marks:
+        - { kind: x, weight: 1 }
+  carry:
+    auxiliary: { identity: shared, binding: independent, hooks: none }
+    derivedCache: { value: ALPHA, evaluations: 1 }
+  source: { unchanged: true }

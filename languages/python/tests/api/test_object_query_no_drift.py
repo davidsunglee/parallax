@@ -6,9 +6,11 @@ surface cannot drift from the graded protocol. The builders here are the source 
 truth for the ``api_suite.EXAMPLES`` snippets; the guard compares each query's
 canonical lowering to the case's ``when.objectQuery``.
 
-Two case shapes carry no single top-level ``when.objectQuery`` to compare a built
-``ObjectQuery`` against, so they get their OWN comparison instead of a ``BUILDERS``
-entry: a ``rejected`` case (the invalid input is authored under ``when.objectQuery``,
+Two case shapes carry queries outside a single top-level ``when.objectQuery``.
+An ``edit`` case's source query is still one ordinary ``ObjectQuery``, so its
+read-origin cases have ``BUILDERS`` entries and the comparison reads
+``when.edit.source.objectQuery``. A ``rejected`` case gets its OWN comparison
+instead of a ``BUILDERS`` entry (the invalid input is authored under ``when.objectQuery``,
 but building it through the idiomatic surface never returns a ``ObjectQuery`` at all
 — the model-aware validator raises immediately, exactly as it does for the corpus's
 own query-input path) proves no-drift by comparing
@@ -55,6 +57,7 @@ from _support.query_probes import canonical_document
 from parallax.conformance import case_format
 from parallax.conformance.animal_owner import ANIMAL_MODEL as ANIMAL_OWNER_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
+from parallax.conformance.edit_models import Note
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.read_models import Animal as AnimalRoot
 from parallax.conformance.read_models import (
@@ -198,6 +201,13 @@ BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
         | AnimalRoot.narrow(Cat, where=Cat.indoor.is_(True))
     ),
     "m-inheritance-109": lambda: Document.where(Document.all).narrow(FinancialDocument),
+    # Read-produced edit sources: the same public query `test_edit_run.py`
+    # executes before targeting either the Entity or its `tag` occurrence.
+    "m-edit-005": lambda: Note.where(Note.id == 1),
+    "m-edit-006": lambda: Note.where(Note.id == 1),
+    "m-edit-007": lambda: Note.where(Note.id == 1),
+    "m-edit-008": lambda: Note.where(Note.id == 1),
+    "m-edit-009": lambda: Note.where(Note.id == 1),
 }
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
@@ -205,7 +215,13 @@ _CASES = {c.case_id: c for c in case_format.load_cases()}
 
 @pytest.mark.parametrize("case_id", sorted(BUILDERS), ids=sorted(BUILDERS))
 def test_the_idiomatic_query_builds_the_corpus_object_query(case_id: str) -> None:
-    expected = case_document(_CASES[case_id])["when"]["objectQuery"]
+    document = case_document(_CASES[case_id])
+    when = document["when"]
+    expected = (
+        when["edit"]["source"]["objectQuery"]
+        if _CASES[case_id].shape == "edit"
+        else when["objectQuery"]
+    )
     assert canonical_document(BUILDERS[case_id]()) == expected
 
 

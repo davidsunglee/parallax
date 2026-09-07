@@ -85,7 +85,12 @@ def follow_path(root: Note, case: case_format.Case) -> Editable:
 
 def changes(case: case_format.Case) -> Mapping[str, object]:
     """The authored assignments, empty for a change-free edit."""
-    return cast("Mapping[str, object]", _instruction(case).get("set") or {})
+    authored = dict(cast("Mapping[str, object]", _instruction(case).get("set") or {}))
+    marks = authored.get("marks")
+    if isinstance(marks, list):
+        mark_values = cast("list[object]", marks)
+        authored["marks"] = tuple(NoteMark.model_validate(mark) for mark in mark_values)
+    return authored
 
 
 def _members(value: BaseModel) -> dict[str, object]:
@@ -225,8 +230,18 @@ def _target_expression(case: case_format.Case) -> str:
 
 def snippet(case: case_format.Case) -> str:
     """Render the one-line idiomatic edit expression stated by the case."""
-    arguments = ", ".join(f"{name}={value!r}" for name, value in changes(case).items())
+    arguments = ", ".join(_argument(name, value) for name, value in changes(case).items())
     return f"{_target_expression(case)}.edit({arguments})"
+
+
+def _argument(name: str, value: object) -> str:
+    if name == "marks":
+        marks = cast("tuple[NoteMark, ...]", value)
+        elements = ", ".join(
+            f'NoteMark(kind="{mark.kind}", weight={mark.weight!r})' for mark in marks
+        )
+        return f"marks=({elements},)"
+    return f"{name}={value!r}"
 
 
 def title(case: case_format.Case) -> str:

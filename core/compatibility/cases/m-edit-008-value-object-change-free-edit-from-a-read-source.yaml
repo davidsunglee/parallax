@@ -1,0 +1,23 @@
+# A change-free Value Object edit reached through a containing read-produced Entity still derives a distinct value, preserves application-owned auxiliary state behind a read-only property by shallow identity with independent bindings, invokes no assignment hook, drops a warm declared cache, and leaves the containing source and targeted occurrence unchanged.
+model: models/note.yaml
+tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
+shape: edit
+lane: api-conformance
+when:
+  edit:
+    source:
+      origin: read
+      objectQuery:
+        target: parallax.compatibility.Note
+        predicate:
+          eq:
+            attr: parallax.compatibility.Note.id
+            value: 1
+      path: parallax.compatibility.Note.tag
+then:
+  result:
+    members: { label: a, weight: 3 }
+  carry:
+    auxiliary: { identity: shared, binding: independent, hooks: none }
+    derivedCache: { value: A, evaluations: 1 }
+  source: { unchanged: true }

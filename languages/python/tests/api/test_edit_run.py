@@ -5,12 +5,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import case_format, edit_runner
-from parallax.conformance.edit_models import LEDGER, Note
+from _support.corpus import case_fixtures
+from parallax.conformance import case_format, edit_runner, engine
+from parallax.conformance.edit_models import LEDGER, NOTE_MODEL, Note, NoteMark
+from parallax.snapshot import SnapshotInspectionError, connect, pin_of
 
 
 def _origin(case: case_format.Case) -> object:
@@ -20,7 +22,9 @@ def _origin(case: case_format.Case) -> object:
     return source["origin"]
 
 
-_CASES = [case for case in edit_runner.reachable_edit_cases() if _origin(case) == "constructed"]
+_CASES = edit_runner.reachable_edit_cases()
+_CONSTRUCTED_CASES = [case for case in _CASES if _origin(case) == "constructed"]
+_READ_CASES = [case for case in _CASES if _origin(case) == "read"]
 
 
 def _run(case: case_format.Case) -> edit_runner.Observation:
@@ -31,7 +35,7 @@ def _run(case: case_format.Case) -> edit_runner.Observation:
     return edit_runner.observe(source, result, before)
 
 
-@pytest.mark.parametrize("case", _CASES, ids=lambda case: case.case_id)
+@pytest.mark.parametrize("case", _CONSTRUCTED_CASES, ids=lambda case: case.case_id)
 def test_constructed_edit_case(case: case_format.Case) -> None:
     observation = _run(case)
 
@@ -49,6 +53,49 @@ def _with_source(case: case_format.Case, **updates: object) -> case_format.Case:
     source = cast("dict[str, object]", edit["source"])
     source.update(updates)
     return replace(case, document=document)
+
+
+def _read_id(case: case_format.Case) -> int:
+    when = cast("Mapping[str, object]", case.document["when"])
+    edit = cast("Mapping[str, object]", when["edit"])
+    source = cast("Mapping[str, object]", edit["source"])
+    query = cast("Mapping[str, object]", source["objectQuery"])
+    predicate = cast("Mapping[str, object]", query["predicate"])
+    equality = cast("Mapping[str, object]", predicate["eq"])
+    return cast("int", equality["value"])
+
+
+def _pin_refusal(value: object) -> SnapshotInspectionError:
+    with pytest.raises(SnapshotInspectionError) as caught:
+        pin_of(value)
+    return caught.value
+
+
+@pytest.mark.parametrize("case", _READ_CASES, ids=lambda case: case.case_id)
+def test_read_edit_case(case: case_format.Case, profile_run: Any) -> None:
+    profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
+    db = connect(profile_run.port, NOTE_MODEL)
+    root = db.find(Note.where(Note.id == _read_id(case))).result()
+    source = edit_runner.follow_path(root, case)
+    memo_value = source.title if isinstance(source, Note) else source.label
+    LEDGER.reset()
+    source.remember([memo_value])
+    before = edit_runner.probe(source)
+
+    result = source.edit(**edit_runner.changes(case))
+    observation = edit_runner.observe(source, result, before)
+
+    assert edit_runner.grade(case, observation) == ()
+    expected_pin_code = (
+        "snapshot-pin-unavailable" if isinstance(source, Note) else "snapshot-node-required"
+    )
+    source_refusal = _pin_refusal(source)
+    result_refusal = _pin_refusal(result)
+    assert (source_refusal.code, source_refusal.entity) == (
+        result_refusal.code,
+        result_refusal.entity,
+    )
+    assert result_refusal.code == expected_pin_code
 
 
 def _with_value(case: case_format.Case, **updates: object) -> case_format.Case:
@@ -75,6 +122,16 @@ def test_constructed_source_accepts_native_optional_and_many_occurrences() -> No
 
     assert source.tag is None
     assert source.marks == ()
+
+
+def test_changes_builds_a_native_many_occurrence_assignment() -> None:
+    case = _case("m-edit-009")
+
+    authored = edit_runner.changes(case)
+    marks = cast("tuple[NoteMark, ...]", authored["marks"])
+
+    assert tuple(mark.model_dump() for mark in marks) == ({"kind": "x", "weight": 1},)
+    assert edit_runner.snippet(case) == 'note.edit(marks=(NoteMark(kind="x", weight=1),))'
 
 
 @pytest.mark.parametrize(
