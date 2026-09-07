@@ -268,7 +268,7 @@ def test_an_action_that_publishes_no_rows_cannot_declare_a_row_observable(
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
     mutate["action"] = "flush"
     mutate["expectRows"] = list(source["expectRows"])
-    with pytest.raises(CaseFailure, match="only the row-publishing actions"):
+    with pytest.raises(CaseFailure, match="only the actions that always publish rows"):
         assert_unit_work_scenario(case, RefusingProvider())
 
 
@@ -285,5 +285,5 @@ def test_an_observable_a_verb_may_not_declare_is_refused_before_its_anchor_is_bo
     case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
     mutate["sameObjectAs"] = len(case.scenario)
-    with pytest.raises(CaseFailure, match="only the row-publishing actions"):
+    with pytest.raises(CaseFailure, match="only the actions that always publish rows"):
         assert_unit_work_scenario(case, RefusingProvider())

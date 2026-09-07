@@ -32,11 +32,8 @@ from typing import Any
 from ..case import Case, entry_pairs, entry_statements, names_earlier_step
 from ..case_assertions import CaseFailure
 
-# The m-case-format lifecycle actions whose ordinary effect publishes rows: a load
-# triggers a deferred fetch and an access reads an already-loaded set. A mutate
-# publishes only when it declares expectRows; every other action either commits
-# buffered DML or acts in memory without a row observation.
-_ROW_PUBLISHING_ACTIONS = frozenset({"load", "access"})
+# A mutate publishes rows conditionally, only when it declares expectRows.
+_ALWAYS_ROW_PUBLISHING_ACTIONS = frozenset({"load", "access"})
 
 
 @dataclass(frozen=True)
@@ -236,7 +233,7 @@ def _boundary_verb(step: Mapping[str, Any]) -> str | None:
     if (
         "write" in step
         or action is None
-        or action in _ROW_PUBLISHING_ACTIONS
+        or action in _ALWAYS_ROW_PUBLISHING_ACTIONS
         or (action == "mutate" and "expectRows" in step)
     ):
         return None
@@ -344,8 +341,8 @@ def _assert_no_action_observables(case: Case, index: int, step: Mapping[str, Any
     if declared:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] is a {step['action']!r} action step "
-            f"declaring {declared}; only the row-publishing actions "
-            f"{sorted(_ROW_PUBLISHING_ACTIONS)} "
+            f"declaring {declared}; only the actions that always publish rows "
+            f"{sorted(_ALWAYS_ROW_PUBLISHING_ACTIONS)} "
             "and a `mutate` declaring `expectRows` observe rows, so what such a "
             "step publishes is nothing to compare."
         )
