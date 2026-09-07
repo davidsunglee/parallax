@@ -275,8 +275,16 @@ def _argument(name: str, value: object) -> str:
 
 
 def title(case: case_format.Case) -> str:
-    """Render a title from target kind, branch, and source origin."""
+    """Render a title from target kind, branch, source origin, and presence witness."""
     kind = "Value Object" if _source(case).get("path") else "Entity"
     branch = "changed" if changes(case) else "change-free"
     origin = str(_source(case)["origin"])
-    return f"{kind} {branch} edit from a {origin} source"
+    then = cast("Mapping[str, object]", case.document["then"])
+    result = cast("Mapping[str, object]", then["result"])
+    members = cast("Mapping[str, object]", result["members"])
+    presence = (
+        " preserving explicit-null weight"
+        if "weight" in members and members["weight"] is None
+        else ""
+    )
+    return f"{kind} {branch} edit from a {origin} source{presence}"

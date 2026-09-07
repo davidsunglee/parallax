@@ -1,8 +1,8 @@
-# A changed Value Object edit replaces an explicit-null optional weight while
-# leaving the cache-dependent label unchanged, preserves application-owned auxiliary state
-# behind a read-only property by shallow identity with independent bindings, invokes
-# no assignment hook, drops a warm declared cache without dependency tracking, and leaves
-# source and occurrence unchanged.
+# A change-free Value Object edit leaves an unassigned optional weight present as
+# explicit null while deriving a distinct value, preserves application-owned auxiliary
+# state behind a read-only property by shallow identity with independent bindings,
+# invokes no assignment hook, drops a warm declared cache, and leaves source and
+# occurrence unchanged.
 model: models/note.yaml
 tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
 shape: edit
@@ -18,10 +18,9 @@ when:
         tag: { label: a, weight: null }
         marks: []
       path: parallax.compatibility.Note.tag
-    set: { weight: 1 }
 then:
   result:
-    members: { label: a, weight: 1 }
+    members: { label: a, weight: null }
   carry:
     auxiliary: { identity: shared, binding: independent, hooks: none }
     derivedCache: { value: A, evaluations: 1 }
