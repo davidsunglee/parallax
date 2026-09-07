@@ -80,11 +80,11 @@ satisfies each is language-local.
    round-trip counts, and identity/cache expectations as applicable), using the
    same comparison rules the conformance grade uses. For a case carrying the
    per-step **lifecycle observables** (`sameObjectAs` / `differentObjectFrom`,
-   `expectState`, `expectError`), the suite MUST return and verify the
+   `expectError`), the suite MUST return and verify the
    corresponding adapter observations (`identityChecks` — as **reference** identity
-   for managed objects — `stateChecks`, and `errors`; see
+   for managed objects — and `errors`; see
    [`m-conformance-adapter`](m-conformance-adapter.md)), so an assertion that two
-   objects are identical / distinct / detached, or that a verb raised a defined
+   objects are identical / distinct, or that a verb raised a defined
    error, is **graded, not narrated** — including on `harness`-lane cases whose
    reference-identity half the wire grade only skips.
 5. **No-drift guard.** For cases whose behavior is a query, the suite MUST assert

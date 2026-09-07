@@ -95,14 +95,11 @@ coordinates*, not a copy of one row:
 
 ## Interning timing
 
-- A **persisted** object interns when it **materializes** from a read.
-- An **in-memory** object (`m-detach` lifecycle) interns when its identity key
-  first **exists**: an application-assigned key interns on insert-buffering; a
+- An object interns when it **materializes** from a read.
+- An application-created object interns when its identity key first **exists**:
+  an application-assigned key interns on insert-buffering; a
   **generated** key (`m-pk-gen`) interns at key generation/flush, since there is
   no key to intern under before then.
-- A **detached copy** lives *outside* the map by construction (`m-detach`); at
-  the owning scope's end every managed object leaves the map by transitioning to
-  detached.
 
 ## Scope, lifetime, and abort
 

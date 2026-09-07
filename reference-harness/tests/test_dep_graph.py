@@ -508,14 +508,14 @@ def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -
 def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     _write_case(cases, "m-predicate-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
-    # m-detach is on a tagged case but not in the claim's modules.
+    # m-identity-map is on a tagged case but not in the claim's modules.
     _write_case(
         cases,
         "m-predicate-002.yaml",
-        _clean_read_case(["m-predicate", "m-detach", "slice-example-1"]),
+        _clean_read_case(["m-predicate", "m-identity-map", "slice-example-1"]),
     )
     errors = profile_errors(_synthetic_slices(), tmp_path)
-    assert any("m-predicate-002.yaml" in e and "'m-detach'" in e for e in errors)
+    assert any("m-predicate-002.yaml" in e and "'m-identity-map'" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None:
@@ -627,8 +627,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
 # fails the count. The two object-lifecycle slices share the non-lifecycle base
 # (dual-tagged cases, including the inheritance read AND write cases);
 # slice-snapshot-1 excludes the m-op-list-tagged cases and adds the
-# m-snapshot-read cases, slice-managed-1 adds the m-detach lifecycle cases, the
-# detached merge-back conflict, and the m-identity-map cases.
+# m-snapshot-read cases; slice-managed-1 adds the m-identity-map cases.
 
 
 def _slice_tag_count(slice_tag: str) -> list[str]:
@@ -659,7 +658,7 @@ def test_real_corpus_declares_the_two_lifecycle_slices() -> None:
     ("slice_tag", "expected"),
     [
         ("slice-snapshot-1", 599),
-        ("slice-managed-1", 493),
+        ("slice-managed-1", 478),
     ],
 )
 def test_profile_slice_tag_counts(slice_tag: str, expected: int) -> None:

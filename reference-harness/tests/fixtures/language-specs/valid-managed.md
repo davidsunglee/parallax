@@ -15,7 +15,7 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
     "version": "1.0.0"
   },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-detach", "m-dialect", "m-document-codec", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-op-list", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-op-list", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-managed-1"] },
@@ -34,7 +34,7 @@ the relevant capability tags.
 ### Managed-object lifecycle
 
 Reads return managed objects interned by a transaction-scoped identity map;
-lists, mutation buffering, commit/abort, detach, and merge-back are explicit.
+lists, mutation buffering, and commit/abort are explicit.
 
 ## 4. Result collections and materialization
 
@@ -59,7 +59,6 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-db-port` | src/db-port | db-port | `m-core`, `m-dialect` | depcheck.toml |
 | `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | depcheck.toml |
 | `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel`, `m-inheritance` | depcheck.toml |
-| `m-detach` | src/detach | detach | `m-unit-work`, `m-identity-map` | depcheck.toml |
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
 | `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel`, `m-wire` | depcheck.toml |
 | `m-identity-map` | src/identity-map | identity-map | `m-unit-work`, `m-temporal-read` | depcheck.toml |
@@ -87,7 +86,7 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
 | example common runtime | production | shared scopes | yaml | none | runtime API |
-| example managed lifecycle extension | production | identity-map, detach, lists | none | common runtime | managed API |
+| example managed lifecycle extension | production | identity-map, lists | none | common runtime | managed API |
 | example postgres adapter | production | db-port adapter | postgres-driver | common runtime | adapter API |
 | example conformance tools | development-only | api-proof, conformance | pytest | common runtime, postgres adapter | conformance CLI |
 

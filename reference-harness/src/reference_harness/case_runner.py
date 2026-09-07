@@ -1350,8 +1350,8 @@ def _assert_versioned_update_input(
     The golden SET clause is the domain set columns + the framework-owned ``version``
     column (advanced ``observedVersion + 1``, DERIVED — never authored in ①). The
     binds are ``[…set values…, newVersion, pk]`` under the Locking strategy a
-    declared ``locking`` preference imposes (``m-opt-lock-002`` / ``m-detach-002``
-    — the m-read-lock shared read lock makes the write correct, so no
+    declared ``locking`` preference imposes (``m-opt-lock-002`` — the m-read-lock
+    shared read lock makes the write correct, so no
     ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` under
     the Optimistic strategy a versioned target takes by default. One golden
     statement per ① row.
@@ -2673,7 +2673,7 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
     fixtures are loaded (the versioned row exists), an OPTIONAL out-of-band
     ``given.apply`` simulates a concurrent writer that advanced the version, then
     each attempt's golden ``UPDATE`` is applied in order. The first attempt gates
-    on the STALE version the caller read before detaching/reading, so it affects
+    on the STALE version the caller read before writing, so it affects
     ZERO rows (the ``updatedRows != 1`` conflict signal); the retry re-reads the
     now-fresh version and re-applies, affecting exactly ONE row. The harness
     asserts every attempt's affected-row count and (when authored) the final table
@@ -3499,9 +3499,8 @@ def run_case(case: Case, db: DatabaseProvider | None) -> None:
         _assert_write_step_count(case, dialect)  # layer 5 (count)
         _assert_write_input_columns(case, dialect)  # layer 5c (① ↔ ② column/value)
         provision_empty(case, db)
-        # Here the out-of-band setup is what the m-detach merge-back-reinserts case
-        # needs: DELETE the original persisted row, so the merge-back finds no
-        # original and INSERTs the copy as a new row.
+        # Apply any out-of-band setup after provisioning and before the authored
+        # write sequence.
         apply_given(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
         _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)

@@ -159,23 +159,14 @@ Retain exactly one of the following subsections in the completed language spec.
 - **(decide and record — Managed-object lifecycle)** Eager and deferred
   relationship loading: explicit and any transparent load spellings, batching
   for ad-hoc object sets and coordinate groups, loaded/unloaded state, ordering,
-  narrowed views, read-your-own-writes, and the defined Parallax Error raised
-  when a detached object attempts a deferred load.
+  narrowed views, and read-your-own-writes. A deferred load resolves only through
+  the live unit of work that owns the object and never opens one implicitly.
 - **(decide and record — Managed-object lifecycle)** Mutation buffering for
   in-memory and persisted objects, implicit or explicit flush, write ordering,
   dependent-read flushing, generated-key transition timing, and deletion state.
-- **(decide and record — Managed-object lifecycle)** Commit and abort transitions
-  for the `in-memory`, `persisted`, `deleted`, `detached`, and
-  `detached-deleted` states. On scope end, held managed objects detach in place;
-  abort restores as-materialized values before detaching, discards buffered and
-  flushed transactional work, and does not return a callback value as durable.
-- **(decide and record — Managed-object lifecycle)** Deliberate detach: deep-copy
-  boundaries, relationship state, identity-map separation, offline mutation,
-  deletion marking, and `isModifiedSinceDetachment` semantics.
-- **(decide and record — Managed-object lifecycle)** Merge-back spelling and the
-  inside-unit-of-work rules for update-existing, insert-new, delete-existing,
-  unmodified no-op, optimistic conflict, and the returned/re-associated managed
-  object.
+- **(decide and record — Managed-object lifecycle)** Commit and abort behavior,
+  including identity-map disposal, buffered and flushed transactional work, and
+  whether a callback value may be returned as durable after abort.
 
 ## 4. Result collections and materialization
 

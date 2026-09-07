@@ -6665,11 +6665,11 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
 
 
 def test_check_action_step_rejects_a_managed_lifecycle_verb() -> None:
-    # `detachCopy` is a managed-object surfacing this lane holds no state for; the
+    # `load` is a managed-object surfacing this lane holds no state for; the
     # two verbs it does grade over a snapshot graph (`mutate`, `access`) pass.
     with pytest.raises(engine.EngineError, match="graded by the API"):
         engine._check_action_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-010"), {"action": "detachCopy"}
+            _case("m-snapshot-read-010"), {"action": "load"}
         )
     engine._check_action_step(_case("m-snapshot-read-010"), {"action": "mutate"})  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     engine._check_action_step(_case("m-snapshot-read-010"), {"action": "access"})  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly

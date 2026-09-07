@@ -144,24 +144,21 @@ def test_run_rejects_milestone_set_graph_entry_without_graph() -> None:
     assert list(_validator().iter_errors(_valid_run(observations)))
 
 
-# --- lifecycle observations: stateChecks + errors -----------------------------
+# --- application lifecycle errors ---------------------------------------------
 
 
-def test_run_accepts_lifecycle_observations() -> None:
+def test_run_accepts_application_lifecycle_errors() -> None:
     observations = {
         "roundTrips": 1,
         "identityChecks": [{"left": "/scenario/1", "right": "/scenario/0", "same": False}],
-        "stateChecks": [
-            {"at": "/scenario/1", "expected": "detached", "observed": "detached", "pass": True}
-        ],
-        "errors": [{"at": "/scenario/2", "errorClass": "detached-relationship-load"}],
+        "errors": [{"at": "/scenario/2", "errorClass": "transaction-time-pin-read-only"}],
     }
     assert list(_validator().iter_errors(_valid_run(observations))) == []
 
 
 def test_run_still_valid_without_lifecycle_observations() -> None:
-    # The two new keys are optional/additive: an existing run output (roundTrips
-    # plus rows / identityChecks) stays valid unchanged.
+    # The errors key is optional/additive: an existing run output (roundTrips plus
+    # rows / identityChecks) stays valid unchanged.
     observations = {
         "roundTrips": 1,
         "rows": [{"id": 1}],
@@ -170,20 +167,9 @@ def test_run_still_valid_without_lifecycle_observations() -> None:
     assert list(_validator().iter_errors(_valid_run(observations))) == []
 
 
-def test_run_rejects_unknown_expected_state() -> None:
-    observations = {
-        "roundTrips": 1,
-        "stateChecks": [
-            {"at": "/scenario/1", "expected": "zombie", "observed": "x", "pass": False}
-        ],
-    }
-    assert list(_validator().iter_errors(_valid_run(observations)))
-
-
 @pytest.mark.parametrize(
     "error_class",
     [
-        "detached-relationship-load",
         "transaction-time-pin-read-only",
         "write-value-not-stored",
         "write-value-already-stored",
@@ -192,7 +178,7 @@ def test_run_rejects_unknown_expected_state() -> None:
 )
 def test_run_accepts_every_application_lifecycle_error_class(error_class: str) -> None:
     # The `errors` observation's vocabulary is the case format's whole closed
-    # `expectError` set: the m-detach / m-identity-map pair plus m-unit-work's
+    # `expectError` set: m-identity-map's finite-pin refusal plus m-unit-work's
     # three write-value provenance refusals.
     observations = {
         "roundTrips": 1,
@@ -205,14 +191,6 @@ def test_run_rejects_unknown_error_class() -> None:
     observations = {
         "roundTrips": 1,
         "errors": [{"at": "/scenario/2", "errorClass": "not-a-real-error"}],
-    }
-    assert list(_validator().iter_errors(_valid_run(observations)))
-
-
-def test_run_rejects_state_check_missing_pass() -> None:
-    observations = {
-        "roundTrips": 1,
-        "stateChecks": [{"at": "/scenario/1", "expected": "detached", "observed": "detached"}],
     }
     assert list(_validator().iter_errors(_valid_run(observations)))
 
@@ -234,7 +212,7 @@ def test_run_rejects_application_lifecycle_class_in_error_classification() -> No
     # lifecycle vocabulary lives in the `errors` observation, not here.
     observations = {
         "roundTrips": 1,
-        "errorClass": "detached-relationship-load",
+        "errorClass": "transaction-time-pin-read-only",
         "nativeCode": "23505",
     }
     assert list(_validator().iter_errors(_valid_run(observations)))

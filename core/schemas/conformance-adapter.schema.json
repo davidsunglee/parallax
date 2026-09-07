@@ -227,29 +227,8 @@
         "identity": {}
       }
     },
-    "stateCheck": {
-      "description": "A lifecycle-state observation (m-conformance-adapter): the object at case position `at` was observed in a given lifecycle state, and `pass` records whether that matched the case's `expectState`. `at` is a JSON Pointer into the case (a scenario step index). Mirrors `identityCheck`'s explicit-verdict shape so the runner grades an assertion the wire golden SQL cannot see.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["at", "expected", "observed", "pass"],
-      "properties": {
-        "at": {
-          "$ref": "#/$defs/jsonPointer"
-        },
-        "expected": {
-          "type": "string",
-          "enum": ["in-memory", "persisted", "deleted", "detached", "detached-deleted"]
-        },
-        "observed": {
-          "type": "string"
-        },
-        "pass": {
-          "type": "boolean"
-        }
-      }
-    },
     "errorObservation": {
-      "description": "A raised-application-error observation (m-conformance-adapter): the verb at case position `at` raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-detach / m-identity-map / m-unit-work). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
+      "description": "A raised-application-error observation (m-conformance-adapter): the verb at case position `at` raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-identity-map / m-unit-work). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
       "type": "object",
       "additionalProperties": false,
       "required": ["at", "errorClass"],
@@ -260,7 +239,6 @@
         "errorClass": {
           "type": "string",
           "enum": [
-            "detached-relationship-load",
             "transaction-time-pin-read-only",
             "write-value-not-stored",
             "write-value-already-stored",
@@ -1117,11 +1095,6 @@
           "type": "array",
           "items": { "$ref": "#/$defs/storedDataRecord" }
         },
-        "stateChecks": {
-          "description": "Lifecycle-state checks (m-detach five-state machine) an adapter reports for scenario steps declaring `expectState`. Optional and additive — an adapter that reports no lifecycle state omits it, and existing run outputs stay valid.",
-          "type": "array",
-          "items": { "$ref": "#/$defs/stateCheck" }
-        },
         "stepRows": {
           "description": "The values each scenario read step published (m-conformance-adapter), in step order, compared against each step's `expectRows`. A scenario has no single whole-read result, so these ride their own per-step key rather than the whole-read `rows` member. Optional and additive — a run reporting no such step omits it, and existing run outputs stay valid.",
           "type": "array",
@@ -1133,7 +1106,7 @@
           "items": { "$ref": "#/$defs/stepGraphObservation" }
         },
         "errors": {
-          "description": "Neutral application-lifecycle errors (m-detach / m-identity-map / m-unit-work) an adapter reports for scenario steps declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",
+          "description": "Neutral application-lifecycle errors (m-identity-map / m-unit-work) an adapter reports for scenario steps declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",
           "type": "array",
           "items": { "$ref": "#/$defs/errorObservation" }
         },

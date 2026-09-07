@@ -2946,8 +2946,8 @@ _GRADED_ACTION_VERBS: Final[frozenset[str]] = frozenset({"mutate", "access"})
 
 `mutate` is the authored edit and `access` a relationship read over a view a
 find step already materialized — both are things this lane holds the state for.
-Every other verb (`detachCopy`, `load`, `flush`, `mergeBack`, `commit`,
-`abort`) is a managed-object lifecycle surfacing only the API Conformance Suite
+Every other verb (`load`, `flush`, `commit`, `abort`) is a managed-object
+lifecycle surfacing only the API Conformance Suite
 can verify, and a case built on one is dispatched to the api-conformance lane
 before reaching here at all."""
 

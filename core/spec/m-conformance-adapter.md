@@ -429,8 +429,8 @@ assert different things:
 - write-sequence cases report `tableState`
 - conflict cases report `affectedRows` and MAY report `tableState`
 - scenario cases report `identityChecks` and `roundTrips`, plus `stepRows` for the
-  values their read steps published, `stateChecks` for any step declaring
-  `expectState`, and `errors` for any step declaring `expectError`
+  values their read steps published and `errors` for any step declaring
+  `expectError`
 - coherence cases report the final observed `rows`, and `identityChecks` for any step that declares `sameObjectAs`
 - error cases with a single-connection trigger (top-level `then.statements`)
   report `errorClass` — the neutral `m-db-error` category the final trigger
@@ -569,26 +569,19 @@ The key is optional and additive, but an adapter claiming
 `m-execution-lifecycle` MUST report it for every case authoring the oracle. It
 MUST NOT synthesize the observation from authored goldens.
 
-### Lifecycle observations (`stateChecks`, `errors`)
+### Application lifecycle errors (`errors`)
 
-Two optional `observations` keys carry the object-lifecycle assertions a wire
-golden SQL cannot see, mirroring the explicit-verdict shape of `identityCheck`:
-
-- **`stateChecks`** — one entry per scenario step declaring `expectState`, each
-  `{ at, expected, observed, pass }`: `at` is a JSON Pointer into the case (the
-  step), `expected` the case's `expectState` (the `m-detach` five-state machine),
-  `observed` the state the implementation saw, and `pass` the verdict.
-- **`errors`** — one entry per scenario step declaring `expectError`, each
+The optional **`errors`** observation carries one entry per scenario step
+declaring `expectError`, each
   `{ at, errorClass, native? }`: `at` the step pointer, `errorClass` the neutral
-  application-lifecycle error the verb raised (`detached-relationship-load` /
-  `transaction-time-pin-read-only` / `write-value-not-stored` /
-  `write-value-already-stored` / `write-value-foreign-lifecycle` — `m-detach` /
-  `m-identity-map` / `m-unit-work`, **distinct** from the
+  application-lifecycle error the verb raised (`transaction-time-pin-read-only` /
+  `write-value-not-stored` / `write-value-already-stored` /
+  `write-value-foreign-lifecycle` — `m-identity-map` / `m-unit-work`, **distinct** from the
   `m-db-error` taxonomy), and an optional `native` witness carrying the raw
   implementation error.
 
-Both are additive and optional: an adapter that observes no lifecycle state or
-raised error simply omits them, so an existing `run` output (`roundTrips` plus
+It is additive and optional: an adapter that observes no raised error simply
+omits it, so an existing `run` output (`roundTrips` plus
 `rows` / `graph` / `identityChecks` / `storedDataIssues`) stays valid unchanged.
 
 ### Per-step row observations (`stepRows`)
@@ -624,7 +617,7 @@ binds the write then emits, which the planner derived from those very rows. Ever
 other read step owns an entry, and a step that owns one and is missing it is an
 unanswered oracle rather than a pass.
 
-It is additive and optional in the same sense as `stateChecks` / `errors` /
+It is additive and optional in the same sense as `errors` /
 `stepGraphs`: a run reporting no such step omits it, and every existing `run`
 output stays valid unchanged.
 
@@ -657,7 +650,7 @@ reached no row. That rule belongs to the observable rather than to any one
 language's traversal API, so every adapter reports the contents the case states
 instead of the shape its own inspection surface happens to answer.
 
-It is additive and optional in the same sense as `stateChecks` / `errors`: a run
+It is additive and optional in the same sense as `errors`: a run
 whose case declares no `expectGraph` omits it, and every existing `run` output
 stays valid unchanged.
 

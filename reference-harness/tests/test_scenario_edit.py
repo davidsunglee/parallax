@@ -313,20 +313,6 @@ def test_a_chained_edit_is_judged_against_the_find_its_chain_started_from() -> N
     ]
 
 
-def test_a_chain_through_a_same_entity_derivation_reaches_the_find() -> None:
-    # A detached deep copy and a merged-back object are the object their source step
-    # held, so an edit of one is judged against the find that materialized the chain.
-    for verb in ("detachCopy", "mergeBack"):
-        steps: list[Any] = [
-            {"objectQuery": {"target": _ORDER}},
-            {"action": verb, "on": 0},
-            {"action": "mutate", "on": 1, "set": {"id": 2}},
-        ]
-        assert _judged("models/orders.yaml", steps, 2) == [
-            "probe: `mutate` set Order.id: primary-key fields may not be assigned"
-        ]
-
-
 def test_an_edit_after_a_relationship_step_is_judged_at_the_relationship_target() -> None:
     # A `load` / `access` result is the relationship TARGET, so an edit of one states
     # a member of the ITEM. Judging it against the find's own Entity would be wrong,
@@ -393,23 +379,18 @@ def test_a_path_less_access_stands_where_its_source_does() -> None:
 
 
 def test_a_derivation_rooted_at_a_relationship_result_keeps_that_position() -> None:
-    # The shape `m-detach-011` authors: a copy taken of (or merged back from) a
-    # relationship result is still an item, so the position survives the derivation
-    # instead of the chain falling back to the find or to nothing.
-    for verb in ("mutate", "detachCopy", "mergeBack"):
-        derivation: dict[str, Any] = {"action": verb, "on": 1}
-        if verb == "mutate":
-            derivation["set"] = {"sku": "COPY-ONLY"}
-        steps: list[Any] = [
-            {"objectQuery": {"target": _ORDER}},
-            {"action": "access", "on": 0, "path": "items"},
-            derivation,
-            {"action": "mutate", "on": 2, "set": {"quantity": "five"}},
-        ]
-        assert _judged("models/orders.yaml", steps, 3) == [
-            "probe: `mutate` set OrderItem.quantity: literal 'five' is type-mismatch for "
-            "declared type 'int32'"
-        ]
+    # A copy taken of a relationship result is still an item, so the position
+    # survives the derivation instead of falling back to the find or to nothing.
+    steps: list[Any] = [
+        {"objectQuery": {"target": _ORDER}},
+        {"action": "access", "on": 0, "path": "items"},
+        {"action": "mutate", "on": 1, "set": {"sku": "COPY-ONLY"}},
+        {"action": "mutate", "on": 2, "set": {"quantity": "five"}},
+    ]
+    assert _judged("models/orders.yaml", steps, 3) == [
+        "probe: `mutate` set OrderItem.quantity: literal 'five' is type-mismatch for "
+        "declared type 'int32'"
+    ]
 
 
 def test_a_grouped_load_stands_where_its_sources_do() -> None:
@@ -500,19 +481,15 @@ def test_an_inherited_hop_survives_a_later_hop_and_a_later_derivation() -> None:
     assert _judged("models/animal.yaml", later_hop, 2) == [
         "probe: `mutate` set Person.nope: names no assignable attribute or value object"
     ]
-    for verb in ("mutate", "detachCopy", "mergeBack"):
-        derivation: dict[str, Any] = {"action": verb, "on": 1}
-        if verb == "mutate":
-            derivation["set"] = {"name": "Ann"}
-        steps: list[Any] = [
-            {"objectQuery": {"target": _DOG}},
-            {"action": "access", "on": 0, "path": "owner"},
-            derivation,
-            {"action": "mutate", "on": 2, "set": {"id": 2}},
-        ]
-        assert _judged("models/animal.yaml", steps, 3) == [
-            "probe: `mutate` set Person.id: primary-key fields may not be assigned"
-        ]
+    steps: list[Any] = [
+        {"objectQuery": {"target": _DOG}},
+        {"action": "access", "on": 0, "path": "owner"},
+        {"action": "mutate", "on": 1, "set": {"name": "Ann"}},
+        {"action": "mutate", "on": 2, "set": {"id": 2}},
+    ]
+    assert _judged("models/animal.yaml", steps, 3) == [
+        "probe: `mutate` set Person.id: primary-key fields may not be assigned"
+    ]
 
 
 def test_a_hop_only_some_concrete_of_the_position_has_reaches_no_position() -> None:
@@ -561,7 +538,7 @@ def test_a_chain_reaching_itself_resolves_to_no_position() -> None:
     self_naming: list[Any] = [{"action": "mutate", "on": 0, "set": {"nickname": "Nick"}}]
     assert _judged("models/orders.yaml", self_naming, 0) == []
     mutual: list[Any] = [
-        {"action": "detachCopy", "on": 1},
+        {"action": "mutate", "on": 1},
         {"action": "mutate", "on": 0, "set": {"nickname": "Nick"}},
     ]
     assert _judged("models/orders.yaml", mutual, 1) == []

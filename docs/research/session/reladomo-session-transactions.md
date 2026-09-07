@@ -101,7 +101,7 @@ For a Parallax slice scoped to **session caching** rather than Reladomo-style pr
 
 5. Keep transaction scope and cache scope aligned. Reladomo separates a transaction-local query cache from process identity caches; Parallax can choose a simpler rule where the session cache is owned by the explicit session/unit-of-work boundary and is cleared or invalidated on rollback/close. The unit-of-work contract already requires buffered writes, ordered flush, dependent-read flush, and abort erasure. [S-tx-query-cache] [P-unit-work]
 
-6. Treat detached copies as outside the session cache. Reladomo's detached copies are independent objects made from copied data; merge-back resolves the live original and drives normal buffered writes. The Parallax session-cache slice should preserve that boundary: detached objects are snapshots, not alternate identity-map entries. [S-detach-copy] [S-detach-merge] [P-detach]
+6. Treat detached copies as outside the session cache. Reladomo's detached copies are independent objects made from copied data; merge-back resolves the live original and drives normal buffered writes. [S-detach-copy] [S-detach-merge]
 
 7. Carry observed versions through the cache boundary. Reladomo optimistic mode relies on the version observed by the read and marks stale cache entries dirty on `updatedRows != 1`. Parallax's optimistic-lock spec similarly requires the observed version to be framework-owned and stale cached state to be invalidated before retry. [S-check-updated-rows] [P-opt-lock]
 
@@ -122,7 +122,6 @@ Existing Parallax research and spec sources:
 - [P-unit-work] [core/spec/m-unit-work.md](../../../core/spec/m-unit-work.md)
 - [P-process-cache] [core/spec/m-process-cache.md](../../../core/spec/m-process-cache.md)
 - [P-coherence] [core/spec/m-coherence.md](../../../core/spec/m-coherence.md)
-- [P-detach] [core/spec/m-detach.md](../../../core/spec/m-detach.md)
 - [P-opt-lock] [core/spec/m-opt-lock.md](../../../core/spec/m-opt-lock.md)
 
 Reladomo source checkout: local `../reladomo`, commit `9b87d9e7cab32d4e9662b1d049a7d516e86f6bd4`. GitHub permalinks below point to that commit.

@@ -35,8 +35,8 @@ Entity cannot use this strategy and falls back to Locking even under the
 `optimistic` preference (`m-unit-work`). The metamodel names the capability
 (`optimisticLocking: true` or the Transaction-Time start); the preference and
 Facet together decide whether a particular Entity uses it.
-The Optimistic strategy suits read-mostly workloads and detached edits (`m-detach`), where
-holding a lock across the edit is undesirable or impossible.
+The Optimistic strategy suits read-mostly workloads where holding a lock across
+application work is undesirable or impossible.
 
 ## The Optimistic Lock Facet
 
@@ -95,8 +95,7 @@ integer an implementation **MUST**:
 - **gate** under the **Optimistic strategy only** — include `and <version> = ?` in the
   `where` clause binding the version the unit of work *observed* for that row. In
   the Locking strategy the shared read lock makes the write correct, so no gate is
-  emitted (the `UPDATE` still advances the version — the `m-detach-002` /
-  locking-mode shape).
+  emitted (the `UPDATE` still advances the version — the locking-mode shape).
 
 ### Effective Concurrency Strategy determines the gate uniformly
 
@@ -184,9 +183,8 @@ authentically observed for that row. Under the Locking strategy it must come fro
 a current-transaction participating read, because that read is what acquired the
 shared lock. Under the Optimistic strategy it may instead be retained by an
 authentic Typed or Wire source produced by a standalone Parallax read; the
-database gate remains the concurrency authority. A detached copy carries the
-authentic observation made at detachment (`m-detach`). An implementation **MUST
-NOT** accept a caller-authored or reconstructed version value as the gate or as
+database gate remains the concurrency authority. An implementation **MUST NOT**
+accept a caller-authored or reconstructed version value as the gate or as
 the new version; the new version is always runtime-computed (`observed + 1`).
 "Caller-driven" refers to conflict *handling* only, never to the version *value*.
 A keyed `UPDATE` or `DELETE` with no authentic observation is a
@@ -346,11 +344,6 @@ single-connection harness cannot provoke (a conflict surfacing without the opt-i
 an injected transient auto-retried, `retries: 0`, bound exhaustion) are authored as
 **boundary** cases on the `api-conformance` lane and satisfied by each language's
 API Conformance Suite (`m-api-conformance`).
-
-Optimistic locking composes with **detached merge-back** (`m-detach`): the version
-a detached copy carries is the one read at detachment, so a merge-back `UPDATE`
-gates on that version and detects a conflict if the original changed in the
-interim — exactly the same `updatedRows != 1` rule.
 
 Optimistic locking composes with **inheritance** (`m-inheritance` × `m-sql`)
 without disturbing the gate-last invariant. A concrete-subtype `UPDATE` under

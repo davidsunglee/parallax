@@ -152,7 +152,7 @@ A case is one of **ten shapes**, named by the required top-level `shape`:
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
   resulting `then.tableState` (the temporal writes `m-txtime-write` /
   `m-bitemp-write`, the set-based `m-batch-write`,
-  `m-cascade-delete`, and `m-detach` merge-backs).
+  and `m-cascade-delete`).
 - **`scenario`** — a `when.scenario` of ordered read, committed-write, *and*
   lifecycle-**action** steps, golden SQL per step (`m-unit-work` and the
   object-lifecycle modules — see *Lifecycle action steps*).
@@ -354,7 +354,7 @@ values.
 | `given.sessionDefault` | `given` | boundary | the Isolation Level the connection ALREADY defaults to when the adapter takes it (`read-uncommitted`), established before intake — the seam `m-db-port` puts the once-per-connection floor check at |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectError` / `differentObjectFrom`, plus `expectGraph` in either of its two placements — an `access` step or an include-bearing read step), each carrying its own per-step golden `statements`; a `uow`-grouped read step MAY carry `stream`, making its own statements the pages of a streamed delivery (see *Streamed read steps*, below), and a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements`, except a `kind: commit` step, which carries none because what it performs is that node's own commit |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary, optionally naming the `isolation` THAT joining call requests) |
@@ -1040,10 +1040,9 @@ like a marker; the two are disambiguated by the field's declared metamodel role
 
 A writeSequence case MAY set **`given.fixtures: true`** to load the model's
 fixtures **before** the ordered DML (instead of starting empty) — so a sequence
-can mutate a *pre-existing* persisted row. This is the `m-detach` detached-update
-or detached-delete merge-back case, and the minimal dependent cascade-delete
-witness: the original rows exist, the ordered DML mutates them, and the asserted
-table state shows which rows changed or were removed.
+can mutate a *pre-existing* persisted row. This is used by the minimal dependent
+cascade-delete witness: the original rows exist, the ordered DML mutates them,
+and the asserted table state shows which rows changed or were removed.
 
 #### Resolving reads a write owes
 
@@ -1605,7 +1604,7 @@ adapter's, and the harness provider's, own work.
 Beyond read and write steps, a scenario carries a third step kind — the **action
 step** — that names a managed-object lifecycle verb the client performs against
 an earlier step's result. This is the vocabulary the object-lifecycle modules
-(`m-identity-map`, `m-detach`, `m-deep-fetch`, `m-op-list`) need but the
+(`m-identity-map`, `m-deep-fetch`, `m-op-list`) need but the
 SQL-oriented read/write steps cannot express. An action step carries an
 **`action`** verb, an **`on`** source (the earlier step's index, or an array of
 indices when the verb spans sources at different lowered coordinates), its own
@@ -1616,17 +1615,15 @@ prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
 
 | Verb | Meaning | Targets | Module |
 |---|---|---|---|
-| `mutate` | assign the attributes in `set` in memory (no SQL for a snapshot / detached object) | prior object (`on` required) | `m-snapshot-read` / `m-detach` |
-| `detachCopy` | take a detached deep copy of the target | prior object (`on` required) | `m-detach` |
+| `mutate` | assign the attributes in `set` in memory (no SQL for a snapshot object) | prior object (`on` required) | `m-snapshot-read` |
 | `load` | explicitly trigger a deferred relationship load (the portable, mandatory load trigger) | prior object(s) (`on` required) | `m-deep-fetch` |
 | `access` | read an already-loaded relationship / query-backed list (no SQL when already populated) | prior object (`on` required) | `m-op-list` |
 | `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
-| `mergeBack` | reconcile a detached copy with the store | prior object (`on` required) | `m-detach` |
-| `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` / `m-detach` |
+| `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` |
 | `insert` / `update` | hand the keyed write verb of that name a value of stated provenance (`value`) | a value, not a prior object (`on` inapplicable) | `m-unit-work` |
 
-**`on` is REQUIRED for the object-targeting verbs** (`mutate`, `detachCopy`,
-`load`, `access`, `mergeBack`) — each acts on the object(s) a prior step
+**`on` is REQUIRED for the object-targeting verbs** (`mutate`, `load`,
+`access`) — each acts on the object(s) a prior step
 resolved, so it MUST name that source, and the store enforces this per-verb in
 the schema (an object-targeting action missing `on` is rejected). The
 **boundary / unit-of-work verbs** (`flush`, `commit`, `abort`) operate on the
@@ -1739,8 +1736,8 @@ A language whose edit verb validates will reach the same verdict at run
 time, and MAY refuse there, but no case may depend on it — an executor that
 models `mutate` as its authored golden DML alone reaches no verdict at all, and
 two executors must agree on every case the corpus admits. The node an edit is
-about is the one its `on` chain reaches: a `mutate` / `detachCopy` / `mergeBack`
-result stands where the step it names stands, while a `load` / `access` stands at
+about is the one its `on` chain reaches: a `mutate` result stands where the step
+it names stands, while a `load` / `access` stands at
 the **terminal** position of the `path` it navigated — so a `set` on an edit
 reached through an access on `items` states a member of an ITEM, and none of the
 object that access started from. Where that position is **polymorphic** — an
@@ -1763,7 +1760,7 @@ payload may carry no sibling field (`m-inheritance`).
 `items` or `items.statuses`) is legal only on `load` / `access`. Because golden SQL
 still lives per step, a scenario with action steps carries no top-level
 `then.statements`, and the harness executes a load / access as a relationship
-query, a flush / mergeBack / commit as committed DML, and counts each step's round
+query, a flush / commit as committed DML, and counts each step's round
 trips against its listed statements exactly as for read / write steps. A deferred
 `load` over several source objects emits **one child statement per non-empty level**
 (never one per object), and one statement **per lowered coordinate group** when the
@@ -1792,15 +1789,10 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   only. A single step declares at most one of the two.
 - **`expectGraph`** — the relationship contents a step observes, in `then.graph`'s
   own shape (see *Relationship contents at a step*, below).
-- **`expectState`** — the lifecycle state the target object is in after the step,
-  from the `m-detach` five-state machine (`in-memory` / `persisted` / `deleted` /
-  `detached` / `detached-deleted`).
 - **`expectError`** — a neutral **application-lifecycle** error the step's verb
   raises. It is a closed vocabulary, defined normatively where each error is
   defined and **distinct from the `m-db-error` DB-error taxonomy** (which pairs
   `errorClass` with a `nativeCode` an application error has no analogue for):
-  - `detached-relationship-load` — a deferred relationship load on a **detached**
-    object, which has no live unit of work to resolve through (`m-detach`).
   - `transaction-time-pin-read-only` — a mutation through a finite
     Transaction-Time pinned view, which records what the system knew and is never rewritten
     (`m-identity-map`).

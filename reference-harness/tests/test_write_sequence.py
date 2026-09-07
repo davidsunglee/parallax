@@ -33,19 +33,7 @@ from reference_harness.ddl_builder import ddl_for, declared_contributors
 from reference_harness.providers.mariadb import _statement_binds as mariadb_statement_binds
 from reference_harness.providers.postgres import _statement_binds as postgres_statement_binds
 from reference_harness.storage_layout import derived_primary_key_index
-from reference_harness.unit_work_scenario import assert_unit_work_scenario
 from reference_harness.write_plan import classify_write_row, tag, unit_resolving_reads
-
-
-class _NoDatabase:
-    """A provider that refuses to be one: reaching it means the case was graded
-    green on its own document, which is all this lane asks of a Scenario."""
-
-    dialect = "postgres"
-
-    def reset(self) -> None:
-        raise RuntimeError("graded on the document alone")
-
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -623,27 +611,6 @@ def test_non_dependent_relationship_is_not_cascaded() -> None:
     assert "order_tag" not in tables
     # The surviving order_tag rows (order 1's tags) are asserted unchanged.
     assert "order_tag" in case.expected_table_state
-
-
-# --- detached merge-back no-op skip (m-detach) -------------------------------
-
-
-def test_detach_noop_merge_back_issues_no_dml() -> None:
-    # m-detach-004: the unmodified merge-back is a scenario NO-OP write step —
-    # roundTrips 0 with NO golden SQL (the schema's zero-DML write), witnessing the
-    # isModifiedSinceDetachment-false MUST. A writeSequence cannot express zero DML
-    # (its schema requires >= 1 golden statement and roundTrips >= 1), so the no-op
-    # skip lives in the scenario shape the schema provides for it.
-    case = _write_case_by_id("m-detach-004")
-    assert case.is_scenario
-    (merge_back,) = [step for step in case.scenario if "write" in step]
-    assert merge_back["roundTrips"] == 0
-    assert "statements" not in merge_back
-    # The Scenario's own accounting accepts the zero-round-trip write step: graded
-    # through the one Scenario operation, which refuses the case before it asks for
-    # a database if the counts disagree.
-    with pytest.raises(RuntimeError, match="graded on the document alone"):
-        assert_unit_work_scenario(case, _NoDatabase())
 
 
 # --- role-aware DB-computed marker interpretation -----------------------------

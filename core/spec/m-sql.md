@@ -1038,7 +1038,7 @@ success exactly **one** row is affected and its version advances.
 
 **Locking mode** issues the same statement **without** the version gate — the
 shared read lock (`m-read-lock`), not the version, makes it correct — but still
-advances the version (the `m-detach-002` / detached-merge-back shape):
+advances the version (the `m-opt-lock-002` locking-mode shape):
 
 ```yaml
 - sql:

@@ -61,7 +61,6 @@ _EXPECTED_MODULE_UNIONS = {
         "m-db-error",
         "m-deep-fetch",
         "m-descriptor",
-        "m-detach",
         "m-dialect",
         "m-document-codec",
         "m-identity-map",

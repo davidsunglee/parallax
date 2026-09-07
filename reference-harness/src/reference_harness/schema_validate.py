@@ -580,12 +580,11 @@ def _validate_identity_anchor(
             )
 
 
-_SAME_ENTITY_DERIVATIONS: frozenset[str] = frozenset({"mutate", "detachCopy", "mergeBack"})
+_SAME_ENTITY_DERIVATIONS: frozenset[str] = frozenset({"mutate"})
 """The action verbs whose result stands exactly where the step they name stands.
 
-An edited copy, a detached deep copy and a merged-back object are all the object
-their source step held, so a chain of them stands at the position the step the
-chain started from answered at.
+An edited copy is the object its source step held, so a chain of edits stands at
+the position the step the chain started from answered at.
 """
 
 _RELATIONSHIP_NAVIGATIONS: frozenset[str] = frozenset({"load", "access"})
@@ -721,9 +720,9 @@ def _step_position(
     """Where the result of the scenario step at *index* stands, or ``None``.
 
     A read step stands at its own query's result position (:func:`_query_position`).
-    An action step stands wherever its ``on`` chain leads: the same position for a
-    same-Entity derivation (:data:`_SAME_ENTITY_DERIVATIONS`), the navigated one
-    for a relationship read (:data:`_RELATIONSHIP_NAVIGATIONS`).
+    An action step stands wherever its ``on`` chain leads: the same position for an
+    edit (:data:`_SAME_ENTITY_DERIVATIONS`), the navigated one for a relationship
+    read (:data:`_RELATIONSHIP_NAVIGATIONS`).
 
     ``None`` means the position is undecidable here rather than absent. A write
     step or a boundary verb holds no queried node; an out-of-range or missing
