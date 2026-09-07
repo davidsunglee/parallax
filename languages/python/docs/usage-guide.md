@@ -425,7 +425,7 @@ Corpus case: `m-inheritance-088`
 
 ```python
 db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
-# raises WriteRejectedError(rule="abstract-write-target")
+# raises ExecutionFailure caused by WriteRejectedError(rule="abstract-write-target")
 ```
 
 ## Table-per-concrete-subtype concrete-target read pinning an inherited root-owned axis
@@ -1138,7 +1138,7 @@ def aborted_update_is_discarded(db: Database) -> list[Entity]:
         tx.update(edited)
         raise RuntimeError("changed my mind")  # abort: the buffered update is discarded
 
-    with contextlib.suppress(RuntimeError):
+    with contextlib.suppress(ExecutionFailure):
         db.transact(doomed)
     # The same find re-resolves and observes the ORIGINAL balance, not 999.00.
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).results())
@@ -1265,7 +1265,7 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         raise RuntimeError("abort")
 
-    with contextlib.suppress(RuntimeError):
+    with contextlib.suppress(ExecutionFailure):
         db.transact(doomed)
     # The aborted insert was discarded: the find observes NO rows for account 7.
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).results())
@@ -1283,7 +1283,7 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
         tx.find(Account.where(Account.id == 3))  # forces the flush of the buffered delete
         raise RuntimeError("abort")  # even the force-flushed delete is rolled back
 
-    with contextlib.suppress(RuntimeError):
+    with contextlib.suppress(ExecutionFailure):
         db.transact(doomed)
     # The aborted delete was discarded: account 3 still stands.
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).results())
@@ -1733,7 +1733,7 @@ db.transact(
         )
     )
 )
-# raises WriteRejectedError(rule="write-required-attribute-missing")
+# raises ExecutionFailure caused by WriteRejectedError(rule="write-required-attribute-missing")
 ```
 
 ## A write missing a required value-object attribute at depth 2
@@ -1754,7 +1754,7 @@ db.transact(
         )
     )
 )
-# raises WriteRejectedError(rule="write-required-attribute-missing")
+# raises ExecutionFailure caused by WriteRejectedError(rule="write-required-attribute-missing")
 ```
 
 ## A write missing a required value-object attribute at depth 3
@@ -1775,7 +1775,7 @@ db.transact(
         )
     )
 )
-# raises WriteRejectedError(rule="write-required-attribute-missing")
+# raises ExecutionFailure caused by WriteRejectedError(rule="write-required-attribute-missing")
 ```
 
 ## A write missing a required NESTED value object entirely
@@ -1792,7 +1792,7 @@ db.transact(
         )
     )
 )
-# raises WriteRejectedError(rule="write-required-value-object-missing")
+# raises ExecutionFailure caused by WriteRejectedError(rule="write-required-value-object-missing")
 ```
 
 ## A write missing a required TOP-LEVEL value object entirely
@@ -1801,7 +1801,7 @@ Corpus case: `m-value-object-044`
 
 ```python
 db.transact(lambda tx: tx.insert(Shipment(id=5, name="Express")))
-# raises WriteRejectedError(rule="write-required-value-object-missing")
+# raises ExecutionFailure caused by WriteRejectedError(rule="write-required-value-object-missing")
 ```
 
 ## Recipes

@@ -357,18 +357,39 @@ class AttemptRollbackFailed:
     rollback_failure: FailureDiagnostic
 
 
-type TransactionAttemptOutcome = AttemptCommitted | AttemptRolledBack | AttemptRollbackFailed
+@dataclass(frozen=True, slots=True)
+class AttemptBeginFailed:
+    """The database boundary never opened, so the callback never ran.
+
+    Terminal without retry however retriable the error's own category is: no
+    work ran that a re-execution could repeat. It carries a diagnostic rather
+    than an Attempt Failure because the failure is the attempt's own — there is
+    no phase inside it to locate and no child activity to name — so the
+    invocation above finishes caused by this attempt.
+    """
+
+    diagnostic: FailureDiagnostic
+
+
+type TransactionAttemptOutcome = (
+    AttemptCommitted | AttemptRolledBack | AttemptRollbackFailed | AttemptBeginFailed
+)
 """How a Transaction Attempt ended, a closed union of exactly one member."""
 
 
 @dataclass(frozen=True, slots=True)
 class TransactionAttemptStarted(_Event):
-    """The database boundary began, so one physical attempt is running.
+    """One physical attempt is running under the Model Edition it adopted.
 
-    It carries no attempt-specific fields: which attempt of the invocation this
-    is reads off the correlation envelope, and everything about the policy it
-    runs under was stated by the invocation that opened it.
+    It starts after adoption and before the database boundary is asked to
+    begin, so a begin failure is an outcome of this attempt rather than the
+    absence of one. ``edition`` is the whole of what is attempt-specific: which
+    attempt of the invocation this is reads off the correlation envelope, and
+    the policy it runs under was stated by the invocation that opened it, but
+    the edition may differ from one attempt to the next.
     """
+
+    edition: str
 
 
 @dataclass(frozen=True, slots=True)

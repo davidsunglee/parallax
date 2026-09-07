@@ -8,7 +8,10 @@ publication surface beside it — :func:`prepare_model`, which prepares one
 Domain Model under one Model Edition into an opaque, complete
 :class:`ModelSelection`; :class:`ServingModel`, the single concrete holder of a
 current selection; and :class:`PublicationConflictError`, its
-refusal of a stale publication — :class:`Snapshot`
+refusal of a stale publication; :class:`ExecutionFailure`, the form every
+ordinary failure escaping a transaction takes, naming the Model Edition the
+failing attempt adopted and carrying the error itself as its cause —
+:class:`Snapshot`
 (``Snapshot[T]``) with :class:`CheckedSnapshot` (``CheckedSnapshot[T]``), its
 checked view, the in-band invalid-result vocabulary a classified root publishes
 — :class:`InvalidData`, :class:`StoredDataIssue`, :class:`ObjectKey` (the
@@ -85,6 +88,7 @@ from parallax.snapshot.handle import (
     WRITE_EVIDENCE_CODES,
     CheckedSnapshot,
     DeferredFeatureError,
+    ExecutionFailure,
     InvalidData,
     InvalidDataError,
     KeyedWriteValueError,
@@ -119,6 +123,7 @@ __all__ = [
     "WRITE_EVIDENCE_CODES",
     "CheckedSnapshot",
     "DeferredFeatureError",
+    "ExecutionFailure",
     "InvalidData",
     "InvalidDataError",
     "KeyedWriteValueError",

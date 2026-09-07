@@ -625,34 +625,34 @@ def _check_history(
 
 
 def _check_attemptless(invocation: _Activity, label: str, problems: list[str]) -> None:
-    """The one outcome an invocation running NO attempt may report.
+    """An outer invocation that finished holds at least one attempt.
 
-    A Transaction Attempt starts only once the boundary has begun successfully,
-    so an invocation holding none is one whose begin failed — and a begin
-    failure finishes the invocation with a direct, non-retryable failure. An
-    invocation reporting a commit without an attempt claims a physical
-    transaction that never opened, and the terminal-attempt rule cannot catch it
-    because there is no attempt to disagree with.
+    A Transaction Attempt adopts its Model Edition and starts BEFORE the
+    boundary is asked to begin, so even a begin failure is an attempt that ran
+    and finished `beginFailed`. An invocation that finished with none beneath
+    it therefore describes a transaction whose first attempt was never
+    reported, and the terminal-attempt rule cannot catch it because there is no
+    attempt to disagree with.
     """
     if invocation.kind != _OUTER or invocation.open:
         return
-    outcome = invocation.finished_payload.get("outcome")
-    if outcome != "failed":
-        problems.append(
-            f"{label} opens no Transaction Attempt but its invocation reports {outcome!r}; an "
-            f"attempt starts only after the boundary has begun, so the one invocation that "
-            f"runs none is a begin failure and finishes failed"
-        )
+    problems.append(
+        f"{label} opens no Transaction Attempt but its invocation reports "
+        f"{invocation.finished_payload.get('outcome')!r}; an attempt starts before its "
+        f"boundary is asked to begin, so every finished invocation ran at least one — a "
+        f"begin failure included, which finishes its attempt beginFailed"
+    )
 
 
 def _check_retried(attempt: _Activity, successor: _Activity, problems: list[str]) -> None:
     """What an attempt that is NOT the last one may have reported.
 
-    Three things end a history: a commit, a failure the classifier refused, and a
-    rollback that itself failed. The third is the one a retry budget cannot
-    override — the connection's state is unknown, so re-executing the closure on
-    it is exactly what must not happen, however retriable the failure that
-    triggered the rollback was.
+    Four things end a history: a commit, a failure the classifier refused, a
+    rollback that itself failed, and a boundary that never opened. The third is
+    the one a retry budget cannot override — the connection's state is unknown,
+    so re-executing the closure on it is exactly what must not happen, however
+    retriable the failure that triggered the rollback was — and the fourth is
+    terminal by rule, because no callback ran that a re-execution could repeat.
     """
     finished = attempt.finished_payload
     outcome = finished.get("outcome")
@@ -673,6 +673,12 @@ def _check_retried(attempt: _Activity, successor: _Activity, problems: list[str]
             f"{attempt.label} failed to roll back but attempt {successor.activity} follows it; "
             f"a rollback failure leaves the connection uncertain and never retries, even when "
             f"the failure that triggered it was retry-eligible"
+        )
+    elif outcome == "beginFailed":
+        problems.append(
+            f"{attempt.label} never opened its boundary but attempt {successor.activity} "
+            f"follows it; a begin failure is terminal by rule, whatever category the error "
+            f"carries, because no callback ran that a re-execution could repeat"
         )
     elif finished.get("retryEligible") is not True:
         problems.append(

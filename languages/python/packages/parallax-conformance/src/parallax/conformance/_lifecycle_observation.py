@@ -29,6 +29,7 @@ from typing import Final, Literal, assert_never
 
 from parallax.conformance.case_format import serialized_isolation
 from parallax.core.execution_lifecycle import (
+    AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
@@ -449,8 +450,8 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
             return {"transactionInvocationStarted": _invocation(invocation)}
         case TransactionInvocationFinished(outcome=outcome):
             return {"transactionInvocationFinished": _invocation_outcome(outcome)}
-        case TransactionAttemptStarted():
-            return {"transactionAttemptStarted": {}}
+        case TransactionAttemptStarted(edition=edition):
+            return {"transactionAttemptStarted": {"edition": edition}}
         case TransactionAttemptFinished(outcome=outcome):
             return {"transactionAttemptFinished": _attempt_outcome(outcome)}
         case SnapshotStreamStarted(target=target, interface=interface, batch_size=batch_size):
@@ -585,11 +586,20 @@ def _attempt_failure(failure: AttemptFailure) -> dict[str, object]:
 
 
 def _attempt_outcome(
-    outcome: AttemptCommitted | AttemptRolledBack | AttemptRollbackFailed,
+    outcome: AttemptCommitted | AttemptRolledBack | AttemptRollbackFailed | AttemptBeginFailed,
 ) -> dict[str, object]:
+    """An attempt's own terminal outcome.
+
+    A boundary that never opened carries no phase and no classifier verdict —
+    there is nothing inside the attempt to locate and the failure is terminal
+    by rule — so it states its attribution alone, which is always direct: the
+    attempt has no child to name.
+    """
     match outcome:
         case AttemptCommitted():
             return {"outcome": "committed"}
+        case AttemptBeginFailed(diagnostic):
+            return {"outcome": "beginFailed", **_activity_failure(DirectFailure(diagnostic))}
         case AttemptRolledBack(failure):
             return {"outcome": "rolledBack", **_attempt_failure(failure)}
         case AttemptRollbackFailed(triggering, rollback):

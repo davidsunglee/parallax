@@ -39,6 +39,7 @@ from _transact_support import (
 
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -444,7 +445,9 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
         ).result()
         tx.update(fetched.edit(value=Decimal("9.00")))
 
-    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+    with raises_contextualized(
+        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
+    ):
         db.transact(fn, concurrency=concurrency)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -668,7 +671,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
         assert [_retained_evidence(root) for root in milestones] == [None, None]
         tx.update(milestones[-1].edit(value=Decimal("9.00")))
 
-    with pytest.raises(TransactionTimePinReadOnlyError):
+    with raises_contextualized(TransactionTimePinReadOnlyError):
         db.transact(fn)
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -725,7 +728,7 @@ def test_stale_web_edit_balance_submit_refuses_a_milestone_superseded_before_the
     _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
     assert edge.tx_time == rendered_in_z
 
-    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
+    with raises_contextualized(stale_web_edit.StaleMilestoneError, match="superseded"):
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -745,7 +748,7 @@ def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict(
     db = db_for(BALANCE, port)
     _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
 
-    with pytest.raises(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError):
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
 
 
@@ -817,7 +820,7 @@ def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_
     _node, edge = stale_web_edit.render_branch_milestone(db, id=1)
     assert edge.tx_time == rendered_in_z
 
-    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
+    with raises_contextualized(stale_web_edit.StaleMilestoneError, match="superseded"):
         stale_web_edit.submit_branch_edit(
             db,
             id=1,
@@ -839,7 +842,7 @@ def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
     def fn(tx: Transaction) -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
-    with pytest.raises(QueryTargetError) as caught:
+    with raises_contextualized(QueryTargetError) as caught:
         Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
@@ -856,7 +859,7 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
             .include(Policy.coverages)
         )
 
-    with pytest.raises(DeferredFeatureError) as caught:
+    with raises_contextualized(DeferredFeatureError) as caught:
         Database.connect(ScriptedPort(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)).transact(
             fn
         )

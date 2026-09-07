@@ -33,6 +33,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -56,6 +57,7 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
+    AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
@@ -90,7 +92,7 @@ from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
 )
-from parallax.snapshot import connect
+from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Database, Transaction, TransactionRollbackError
 
 
@@ -339,7 +341,7 @@ def test_exhaustion_still_reports_the_classifier_truth_on_the_last_attempt() -> 
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(*(Transact(commit=deadlock()) for _ in range(3)))
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         _db(port, recorder).transact(lambda _tx: None, retries=2)
 
     root = _only(recorder)
@@ -381,7 +383,7 @@ def test_without_the_opt_in_the_same_conflict_is_reported_non_eligible() -> None
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
-    with pytest.raises(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError):
         _db(port, recorder).transact(_increase_balance)
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
@@ -392,24 +394,36 @@ def test_without_the_opt_in_the_same_conflict_is_reported_non_eligible() -> None
 # --------------------------------------------------------------------------- #
 # The boundary phases the port outcome separates.                              #
 # --------------------------------------------------------------------------- #
-def test_a_begin_failure_runs_no_attempt_and_fails_the_invocation_directly() -> None:
+def test_a_begin_failure_finishes_the_attempt_that_adopted_and_fails_the_invocation() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Transact(begin=deadlock()))
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError) as failed_under:
         _db(port, recorder).transact(lambda _tx: pytest.fail("the callback must never run"))
 
     root = _only(recorder)
-    assert _transitions(root.events) == [
-        "TransactionInvocationStarted",
-        "TransactionInvocationFinished",
+    # The attempt adopted its edition and started BEFORE the boundary was asked
+    # to begin, so a boundary that never opened is an attempt that finished —
+    # and the edition the failure names is the one that attempt carried.
+    assert _tree(root.events) == [
+        ("TransactionInvocationStarted", 1, None),
+        ("TransactionAttemptStarted", 2, 1),
+        ("TransactionAttemptFinished", 2, 1),
+        ("TransactionInvocationFinished", 1, None),
     ]
+    started = root.events[1]
+    assert isinstance(started, TransactionAttemptStarted)
+    assert started.edition == failed_under.edition
+    (begin_failed,) = _attempt_outcomes(root)
+    assert isinstance(begin_failed, AttemptBeginFailed)
+    assert begin_failed.diagnostic.qualified_type == "parallax.core.db_error.DatabaseError"
     failed = _finished(root)
     assert isinstance(failed, OuterInvocationFailed)
-    # Direct rather than caused: there is no attempt activity for it to name, and
-    # a retriable CATEGORY does not make an unattempted boundary retriable.
-    assert isinstance(failed.failure, DirectFailure)
-    assert failed.failure.diagnostic.qualified_type == "parallax.core.db_error.DatabaseError"
+    # Caused by the attempt, under the ordinary chaining rule: the attempt
+    # reported the boundary's refusal up under its own Activity ID, and the
+    # diagnostic is that one object rendered once. A retriable CATEGORY does not
+    # make a boundary that never opened retriable.
+    assert failed.failure == CausedFailure(begin_failed.diagnostic, 2)
     assert port.calls.count(BeginCall()) == 1
 
 
@@ -419,7 +433,7 @@ def test_a_commit_failure_is_the_commit_phase() -> None:
         Transact(commit=DatabaseError(category="uniqueViolation", native_code="23505", message="d"))
     )
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         _db(port, recorder).transact(lambda _tx: None)
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
@@ -434,7 +448,7 @@ def test_a_callback_failure_is_the_callback_phase() -> None:
     def body(_tx: Transaction) -> None:
         raise ValueError("boom")
 
-    with pytest.raises(ValueError, match="boom"):
+    with raises_contextualized(ValueError, match="boom"):
         _db(ScriptedPort(Transact()), recorder).transact(body)
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
@@ -450,7 +464,7 @@ def test_a_failure_in_the_final_batch_is_the_pre_commit_phase() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
-    with pytest.raises(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError):
         _db(port, recorder).transact(_increase_balance)
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
@@ -469,7 +483,7 @@ def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
         _increase_balance(tx)
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
-    with pytest.raises(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError):
         _db(port, recorder).transact(body)
 
     root = _only(recorder)
@@ -491,7 +505,7 @@ def test_a_rollback_failure_reports_both_live_failures() -> None:
     def body(_tx: Transaction) -> None:
         raise ValueError("boom")
 
-    with pytest.raises(TransactionRollbackError):
+    with raises_contextualized(TransactionRollbackError):
         _db(port, recorder).transact(body)
 
     root = _only(recorder)
@@ -576,7 +590,7 @@ def test_a_joined_callback_that_raises_is_reported_as_raising_and_nothing_more()
     def inner(_tx: Transaction) -> None:
         raise ValueError("nested")
 
-    with pytest.raises(ValueError, match="nested"):
+    with raises_contextualized(ValueError, match="nested"):
         db.transact(lambda _outer: db.transact(inner))
 
     root = _only(recorder)
@@ -603,7 +617,7 @@ def test_a_zero_row_write_names_the_call_that_completed_as_the_cause() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Transact(Read(rows=[NEW_ROW]), Write(affected=0)))
 
-    with pytest.raises(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError):
         _db(port, recorder).transact(_increase_balance)
 
     root = _only(recorder)
@@ -620,7 +634,7 @@ def test_a_read_that_failed_is_what_its_attempt_names() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Transact(Read(raises=deadlock())))
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         _db(port, recorder).transact(
             lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result(), retries=0
         )
@@ -654,7 +668,7 @@ def test_the_higher_numbered_read_reporting_one_value_is_what_the_attempt_names(
             tx.find(mm.Account.where(mm.Account.id == 7)).result()
         tx.find(mm.Account.where(mm.Account.id == 8)).result()
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         _db(port, recorder).transact(body, retries=0)
 
     root = _only(recorder)
@@ -682,7 +696,7 @@ def test_a_join_reporting_a_value_after_the_read_it_encloses_does_not_displace_i
     def inner(tx: Transaction) -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         db.transact(lambda _outer: db.transact(inner), retries=0)
 
     root = _only(recorder)
@@ -732,7 +746,7 @@ def test_neither_of_two_nested_joins_outranks_the_read_they_enclose() -> None:
     def innermost(tx: Transaction) -> None:
         tx.find(mm.Account.where(mm.Account.id == 7)).result()
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         db.transact(lambda _outer: db.transact(lambda _middle: db.transact(innermost)), retries=0)
 
     root = _only(recorder)
@@ -769,7 +783,7 @@ def test_a_failure_caught_and_re_raised_still_names_the_read_it_came_from() -> N
         tx.find(mm.Account.where(mm.Account.id == 8)).result()
         raise caught.value
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         _db(port, recorder).transact(body, retries=0)
 
     root = _only(recorder)
@@ -815,7 +829,7 @@ def test_a_value_two_reads_produced_names_the_later_read_when_the_callback_re_ra
             tx.find(mm.Account.where(mm.Account.id == 8)).result()
         raise shared
 
-    with pytest.raises(ValueError, match="raised three times"):
+    with raises_contextualized(ValueError, match="raised three times"):
         connect(
             port,
             ACCOUNT,
@@ -863,7 +877,7 @@ def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
             tx.find(mm.Account.where(mm.Account.id == 8)).result()
         raise stashed.value
 
-    with pytest.raises(DatabaseError, match="the stashed failure"):
+    with raises_contextualized(DatabaseError, match="the stashed failure"):
         _db(port, recorder).transact(body, retries=0)
 
     root = _only(recorder)
@@ -912,7 +926,7 @@ def test_a_join_re_raising_an_evicted_value_names_itself_rather_than_the_read() 
             tx.find(mm.Account.where(mm.Account.id == 8)).result()
         raise first.value
 
-    with pytest.raises(DatabaseError, match="the re-raised failure"):
+    with raises_contextualized(DatabaseError, match="the re-raised failure"):
         db.transact(lambda _outer: db.transact(inner), retries=0)
 
     root = _only(recorder)
@@ -1086,7 +1100,7 @@ class _AbandoningPort:
 def test_an_attempt_is_finished_even_when_the_port_reports_no_outcome() -> None:
     recorder = RecordingLifecycleProvider()
 
-    with pytest.raises(RuntimeError, match="the port gave up"):
+    with raises_contextualized(RuntimeError, match="the port gave up"):
         _db(_AbandoningPort(), recorder).transact(lambda _tx: None)
 
     root = _only(recorder)
@@ -1141,16 +1155,17 @@ def test_a_declined_transaction_root_delivers_no_event() -> None:
 
 
 def test_the_attempt_started_transition_is_what_assigns_the_next_activity_id() -> None:
-    # A boundary that never began consumes no activity ID, so the invocation's
-    # own retry does not leave a gap nothing explains.
+    # A boundary that never began still ran the attempt that adopted before it,
+    # so that attempt takes the next ID and the invocation's own Finished sits
+    # after it with no gap nothing explains.
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Transact(begin=deadlock()))
 
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         _db(port, recorder).transact(lambda _tx: None)
 
     root = _only(recorder)
-    assert [event.activity_id for event in root.events] == [1, 1]
+    assert [event.activity_id for event in root.events] == [1, 2, 2, 1]
 
 
 def test_the_first_transition_a_joined_activity_makes_is_its_own_started() -> None:
@@ -1169,7 +1184,7 @@ def test_a_refused_join_opens_no_activity_at_all() -> None:
     recorder = RecordingLifecycleProvider()
     db = _db(ScriptedPort(Transact()), recorder)
 
-    with pytest.raises(Exception, match="cannot join the active transaction"):
+    with raises_contextualized(Exception, match="cannot join the active transaction"):
         db.transact(lambda _outer: db.transact(lambda _inner: None, retries=99))
 
     root = _only(recorder)
@@ -1197,13 +1212,44 @@ def test_an_invalid_retry_bound_creates_no_root_and_reaches_no_provider() -> Non
     assert port.calls == []
 
 
-def test_the_attempt_started_transition_carries_only_its_correlation() -> None:
+def test_the_attempt_started_transition_carries_its_correlation_and_its_edition() -> None:
     recorder = RecordingLifecycleProvider()
-    _db(ScriptedPort(Transact()), recorder).transact(lambda _tx: None)
+    edition = _db(ScriptedPort(Transact()), recorder).transact(lambda tx: tx.edition)
 
     started = _only(recorder).events[1]
     assert isinstance(started, TransactionAttemptStarted)
     assert (started.activity_id, started.parent_activity_id) == (2, 1)
+    # The edition is the whole of what is attempt-specific: it is the one the
+    # callback's transaction reported, adopted before the boundary opened.
+    assert started.edition == edition
+
+
+def test_a_retry_reports_each_attempts_own_edition_and_the_failure_names_the_last() -> None:
+    # One invocation, two attempts, and a publication landing between them: the
+    # first attempt's Started carries A, the retried attempt adopts B, and the
+    # exhaustion failure names B — the edition of the attempt that failed last.
+    recorder = RecordingLifecycleProvider()
+    port = ScriptedPort(Transact(commit=deadlock()), Transact(commit=deadlock()))
+    a = prepare_model(ACCOUNT, edition="a")
+    b = prepare_model(ACCOUNT, edition="b")
+    serving = ServingModel(a)
+    db = _db(port, recorder, serving)
+    seen: list[str] = []
+
+    def body(tx: Transaction) -> None:
+        seen.append(tx.edition)
+        if len(seen) == 1:
+            serving.publish(b, expected=a)
+
+    with raises_contextualized(DatabaseError) as exhausted:
+        db.transact(body, retries=1)
+
+    assert seen == ["a", "b"]
+    assert exhausted.edition == "b"
+    root = _only(recorder)
+    assert [
+        event.edition for event in root.events if isinstance(event, TransactionAttemptStarted)
+    ] == ["a", "b"]
 
 
 # --------------------------------------------------------------------------- #

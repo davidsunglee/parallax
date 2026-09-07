@@ -1,13 +1,15 @@
-"""`Database` demarcation unit tests (spec §5, Docker-free fake ports).
+"""`Database` demarcation unit tests (spec §§3, 5, Docker-free fake ports).
 
-The observable behavior of `parallax.snapshot.handle._database`, driven entirely
-through the public `Database` surface: `Database.transact` composes the
-unit-of-work shell, write lowering, and the `m-auto-retry` bounded
-loop over an injected `m-db-port` — commit and abort wiring, join semantics (same
+The observable behavior of `parallax.snapshot.handle._demarcation`, driven
+entirely through the public `Database` surface: `Database.transact` composes
+the unit-of-work shell, write lowering, and the `m-auto-retry` bounded loop
+over an injected `m-db-port` — commit and abort wiring, join semantics (same
 Transaction, option conflicts, rollback-only foreclosure), withheld values on
-abort, escaped transaction references, and the retry classification matrix,
+abort, escaped transaction references, the retry classification matrix,
 including the spec §5 requirement that a rollback-only commit refusal keeps its
-original cause's retriability.
+original cause's retriability, and the adoption every attempt makes from the
+Serving Model: which edition a transaction, a join, a retry, and a failure
+report, and what stays on its own type because it happened before adoption.
 
 Everything a `Transaction` itself does is elsewhere: keyed verbs in
 `test_transaction_writes.py`, the `*_where` family in
@@ -36,6 +38,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -74,6 +77,7 @@ from parallax.core.unit_work import (
     WritePlan,
     run_unit_of_work,
 )
+from parallax.snapshot import ExecutionFailure, ServingModel, prepare_model
 from parallax.snapshot.handle import (
     Database,
     Transaction,
@@ -91,7 +95,7 @@ def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
         tx.insert(new_account())
         raise RuntimeError("boom")
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with raises_contextualized(RuntimeError, match="boom"):
         account_db(port).transact(fn)
     # Nothing flushed: the buffered write never reached the port.
     assert port.calls == [BeginCall(), RollbackCall()]
@@ -278,7 +282,7 @@ def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() ->
 
     # The outer callback caught everything and returned normally, but the inner
     # failure doomed the transaction: commit is refused and the value withheld.
-    with pytest.raises(RollbackOnlyError) as excinfo:
+    with raises_contextualized(RollbackOnlyError) as excinfo:
         db.transact(outer)
     assert isinstance(excinfo.value.__cause__, RuntimeError)
     assert ran == []
@@ -440,7 +444,7 @@ def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> Non
             owner.transact(_must_not_run)
         return "unreachable value"
 
-    with pytest.raises(RollbackOnlyError):
+    with raises_contextualized(RollbackOnlyError):
         owner.transact(outer)
     assert port.calls == [BeginCall(), RollbackCall()]
 
@@ -456,7 +460,7 @@ def test_a_deadlock_is_retried_and_the_reexecution_succeeds() -> None:
 
 def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
     port = ScriptedPort(*(Transact(commit=deadlock()) for _ in range(3)))
-    with pytest.raises(DatabaseError) as excinfo:
+    with raises_contextualized(DatabaseError) as excinfo:
         account_db(port).transact(lambda _tx: "ok", retries=2)
     assert port.calls.count(BeginCall()) == 3
     assert excinfo.value.is_retriable  # the surfaced error is the failure itself
@@ -465,7 +469,7 @@ def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
 
 def test_the_default_bound_is_ten_reexecutions() -> None:
     port = ScriptedPort(*(Transact(commit=deadlock()) for _ in range(11)))
-    with pytest.raises(DatabaseError) as excinfo:
+    with raises_contextualized(DatabaseError) as excinfo:
         account_db(port).transact(lambda _tx: "ok")
     assert port.calls.count(BeginCall()) == 11
     assert "11 attempts (retries=10)" in "".join(excinfo.value.__notes__)
@@ -481,14 +485,14 @@ def test_non_retriable_categories_surface_after_one_attempt(category: str, nativ
             commit=DatabaseError(category=category, native_code=native, message=category)  # type: ignore[arg-type] - parametrized str widens the DatabaseError category Literal
         )
     )
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         account_db(port).transact(lambda _tx: "ok")
     assert port.calls.count(BeginCall()) == 1
 
 
 def test_retries_zero_disables_the_loop() -> None:
     port = ScriptedPort(Transact(commit=deadlock()))
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         account_db(port).transact(lambda _tx: "ok", retries=0)
     assert port.calls.count(BeginCall()) == 1
 
@@ -553,14 +557,18 @@ class _RollbackFailingPort(ScriptedPort):
 
 
 def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> None:
-    # No attempt ran, so there is nothing to re-execute — even though this error
-    # would be retried on any attempt that had (m-execution-lifecycle: a begin
-    # failure finishes the invocation with a direct, non-retryable failure).
+    # No callback ran, so there is nothing to re-execute — even though this
+    # error would be retried on an attempt whose callback had run
+    # (m-execution-lifecycle: a begin failure finishes the attempt `beginFailed`
+    # and the invocation failed, without retry). The attempt had adopted before
+    # it asked the boundary to begin, so the failure names that edition.
     never_began = deadlock()
     port = ScriptedPort(Transact(begin=never_began))
-    with pytest.raises(DatabaseError) as excinfo:
-        account_db(port).transact(_must_not_run_callback)
+    serving = ServingModel(prepare_model(ACCOUNT, edition="adopted-before-begin"))
+    with raises_contextualized(DatabaseError) as excinfo:
+        Database.connect(port, serving, clock=FixedClock(FIXED)).transact(_must_not_run_callback)
     assert excinfo.value is never_began
+    assert excinfo.edition == "adopted-before-begin"
     assert port.calls.count(BeginCall()) == 1
     # The private carrier that made it terminal is not part of what a caller reads.
     assert excinfo.value.__suppress_context__
@@ -575,7 +583,7 @@ def test_a_failed_rollback_reports_both_live_errors_and_is_never_retried() -> No
         raise triggering
 
     port = _RollbackFailingPort()
-    with pytest.raises(TransactionRollbackError) as excinfo:
+    with raises_contextualized(TransactionRollbackError) as excinfo:
         account_db(port).transact(failing)
     assert excinfo.value.triggering_error is triggering
     assert excinfo.value.rollback_error is port.rollback_error
@@ -598,6 +606,177 @@ def test_a_failed_rollback_leaves_a_control_flow_trigger_primary() -> None:
     assert excinfo.value.__cause__ is port.rollback_error
 
 
+def test_a_control_flow_exception_inside_the_callback_surfaces_as_itself() -> None:
+    # Contextualization is for ordinary failures: an interrupt leaving the
+    # callback is never an `ExecutionFailure`, with or without a rollback
+    # failure beside it, and the rollback still completes.
+    interrupt = KeyboardInterrupt()
+
+    def interrupted(_tx: Transaction) -> str:
+        raise interrupt
+
+    port = ScriptedPort(Transact())
+    with pytest.raises(KeyboardInterrupt) as excinfo:
+        account_db(port).transact(interrupted)
+    assert excinfo.value is interrupt
+    assert not isinstance(excinfo.value.__context__, ExecutionFailure)
+    assert port.calls == [BeginCall(), RollbackCall()]
+
+
+# --------------------------------------------------------------------------- #
+# Adoption (spec §3): every outer attempt adopts the Serving Model's current    #
+# selection before its boundary opens, a join inherits it, a retry adopts       #
+# afresh, and a failure names the edition of the attempt that failed last.      #
+# --------------------------------------------------------------------------- #
+_A = prepare_model(ACCOUNT, edition="a")
+_B = prepare_model(ACCOUNT, edition="b")
+
+
+def _serving_db(port: DbPort, serving: ServingModel) -> Database:
+    return Database.connect(port, serving, clock=FixedClock(FIXED))
+
+
+def test_a_static_connection_reports_one_edition_across_attempts_and_invocations() -> None:
+    port = ScriptedPort(Transact(commit=deadlock()), Transact(), Transact())
+    db = account_db(port)
+    seen: list[str] = []
+
+    def body(tx: Transaction) -> str:
+        seen.append(tx.edition)
+        return tx.edition
+
+    first = db.transact(body)
+    second = db.transact(body)
+    assert first == second
+    assert seen == [first] * 3
+    assert first.startswith("static-")
+
+
+def test_a_transaction_retains_the_selection_it_adopted_across_a_publication() -> None:
+    serving = ServingModel(_A)
+    port = ScriptedPort(Transact(), Transact())
+    db = _serving_db(port, serving)
+
+    def body(tx: Transaction) -> tuple[str, str]:
+        before = tx.edition
+        serving.publish(_B, expected=_A)
+        return before, tx.edition
+
+    assert db.transact(body) == ("a", "a")
+    # The next invocation adopts what is serving by then.
+    assert db.transact(lambda tx: tx.edition) == "b"
+
+
+def test_a_join_inherits_the_outer_attempts_selection_without_adopting() -> None:
+    serving = ServingModel(_A)
+    port = ScriptedPort(Transact())
+    db = _serving_db(port, serving)
+
+    def outer(tx: Transaction) -> tuple[str, bool]:
+        serving.publish(_B, expected=_A)
+        # Serving already holds B, and the join still reports A on the very
+        # same Transaction object: it adopted nothing.
+        return db.transact(lambda inner: (inner.edition, inner is tx))
+
+    assert db.transact(outer) == ("a", True)
+    assert serving.current() is _B
+
+
+def test_a_retry_adopts_the_selection_published_since_the_failed_attempt() -> None:
+    serving = ServingModel(_A)
+    port = ScriptedPort(Transact(commit=deadlock()), Transact())
+    db = _serving_db(port, serving)
+    seen: list[str] = []
+
+    def body(tx: Transaction) -> str:
+        seen.append(tx.edition)
+        if len(seen) == 1:
+            serving.publish(_B, expected=_A)
+        return tx.edition
+
+    assert db.transact(body) == "b"
+    assert seen == ["a", "b"]
+    assert port.calls.count(BeginCall()) == 2
+
+
+def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
+    serving = ServingModel(_A)
+    port = ScriptedPort(Transact(commit=deadlock()), Transact(commit=deadlock()))
+    db = _serving_db(port, serving)
+
+    def body(tx: Transaction) -> None:
+        if tx.edition == "a":
+            serving.publish(_B, expected=_A)
+
+    with raises_contextualized(DatabaseError) as exhausted:
+        db.transact(body, retries=1)
+    assert exhausted.edition == "b"
+    assert exhausted.value.is_retriable
+
+
+def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
+    serving = ServingModel(_A)
+    port = ScriptedPort(Transact())
+    db = _serving_db(port, serving)
+
+    def body(_tx: Transaction) -> None:
+        raise RuntimeError("the callback's own")
+
+    with raises_contextualized(RuntimeError, match="the callback's own") as failed:
+        db.transact(body)
+    assert failed.edition == "a"
+
+
+def test_a_failed_rollback_keeps_both_errors_inside_the_contextualized_cause() -> None:
+    triggering = deadlock()
+
+    def failing(_tx: Transaction) -> str:
+        raise triggering
+
+    port = _RollbackFailingPort()
+    with raises_contextualized(TransactionRollbackError) as failed:
+        _serving_db(port, ServingModel(_A)).transact(failing)
+    assert failed.edition == "a"
+    assert failed.value.triggering_error is triggering
+    assert failed.value.rollback_error is port.rollback_error
+
+
+def test_two_databases_over_one_serving_model_flip_together() -> None:
+    serving = ServingModel(_A)
+    first = _serving_db(ScriptedPort(Transact(), Transact()), serving)
+    second = _serving_db(ScriptedPort(Transact(), Transact()), serving)
+    assert (first.transact(lambda tx: tx.edition), second.transact(lambda tx: tx.edition)) == (
+        "a",
+        "a",
+    )
+    serving.publish(_B, expected=_A)
+    assert (first.transact(lambda tx: tx.edition), second.transact(lambda tx: tx.edition)) == (
+        "b",
+        "b",
+    )
+
+
+def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_types() -> None:
+    # Everything `db.transact` refuses before adopting is raised as itself:
+    # nothing has been adopted that a failure could be reported under.
+    serving = ServingModel(_A)
+    db = _serving_db(ScriptedPort(Transact()), serving)
+    with pytest.raises(ValueError, match="retries must be >= 0"):
+        db.transact(_must_not_run, retries=-1)
+    with pytest.raises(ValueError, match="isolation must be one of"):
+        db.transact(_must_not_run, isolation=cast("Any", "read uncommitted"))
+    foreign = _serving_db(ScriptedPort(), serving)
+
+    def outer(_tx: Transaction) -> str:
+        with pytest.raises(TransactionOwnershipError):
+            foreign.transact(_must_not_run)
+        with pytest.raises(TransactionOptionConflictError):
+            db.transact(_must_not_run, retries=3)
+        return "survived"
+
+    assert db.transact(outer) == "survived"
+
+
 # --------------------------------------------------------------------------- #
 # Optimistic-lock conflict opt-in (m-opt-lock "Retry contract";               #
 # m-auto-retry): `retry_optimistic_conflicts` joins                           #
@@ -618,7 +797,7 @@ def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> 
             Write(affected=0),
         )
     )
-    with pytest.raises(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError):
         account_db(port).transact(_observe_and_update, concurrency="optimistic")
     assert port.calls.count(BeginCall()) == 1
 
@@ -643,7 +822,7 @@ def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
             Transact(Read(rows=grace), Write(affected=0)) for _ in range(3)
         )  # every attempt conflicts
     )
-    with pytest.raises(OptimisticLockConflictError) as excinfo:
+    with raises_contextualized(OptimisticLockConflictError) as excinfo:
         account_db(port).transact(
             _observe_and_update,
             concurrency="optimistic",
@@ -679,7 +858,7 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_non_retriable_database_error(
             commit=DatabaseError(category="uniqueViolation", native_code="23505", message="dup")
         )
     )
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         account_db(port).transact(lambda _tx: "ok", retry_optimistic_conflicts=True)
     assert port.calls.count(BeginCall()) == 1
 
@@ -714,7 +893,7 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
             Write(affected=0),
         )
     )
-    with pytest.raises(StaleWriteError):
+    with raises_contextualized(StaleWriteError):
         account_db(port).transact(
             _observe_and_update, concurrency="locking", retry_optimistic_conflicts=True
         )
@@ -733,7 +912,7 @@ def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
     # read — an unversioned target needs no observation to WRITE, but every
     # keyed update needs a value some read of this store produced.
     port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write(affected=0)))
-    with pytest.raises(MissingTargetError):
+    with raises_contextualized(MissingTargetError):
         db_for(PERSON, port).transact(_rename_person, retry_optimistic_conflicts=True)
     assert port.calls.count(BeginCall()) == 1
 
@@ -748,7 +927,7 @@ def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
             Write(affected=2),
         )
     )
-    with pytest.raises(CardinalityCorruptionError):
+    with raises_contextualized(CardinalityCorruptionError):
         account_db(port).transact(
             _observe_and_update, concurrency="optimistic", retry_optimistic_conflicts=True
         )

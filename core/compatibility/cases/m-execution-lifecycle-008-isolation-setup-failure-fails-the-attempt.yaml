@@ -1,19 +1,28 @@
 # Boundary case (m-execution-lifecycle x m-db-port): session setup that fails
-# opens NO boundary — the callback never runs, no Transaction Attempt begins, and
-# the failure is terminal — `api-conformance` lane.
+# opens NO boundary — the attempt that had already adopted its Model Edition
+# finishes `beginFailed`, the callback never runs, and the failure is terminal —
+# `api-conformance` lane.
 #
 # The body asks for `serializable` and the session setup that would open the
 # boundary at it fails. An adapter that cannot open a boundary at the requested
 # level reports a boundary failure rather than opening one at a different level,
 # because a request silently downgraded is indistinguishable from one honored.
 #
-# The stream states three things at once, and it is the only place all three are
+# The stream states four things at once, and it is the only place all four are
 # visible together. The outer invocation carries `isolation: serializable` — the
-# level was REQUESTED, whatever became of it. No `transactionAttemptStarted`
-# follows it: an attempt begins only once the boundary has begun, so a boundary
-# that never opened ran no attempt, which is a different fact from an attempt that
-# ran and was undone. And the invocation finishes `failed` with `attribution:
-# direct`, naming no cause, because there is no child activity beneath it to name.
+# level was REQUESTED, whatever became of it. A `transactionAttemptStarted`
+# follows it carrying `edition: account`: an attempt adopts the Serving Model's
+# current selection and starts BEFORE the boundary is asked to begin, so a
+# boundary that never opened is an attempt that ran and finished rather than no
+# attempt at all. That attempt finishes `beginFailed` with `attribution: direct`,
+# naming no cause, because there is no child activity beneath it to name — no
+# callback ran, so no read, batch, or call could have. And the invocation
+# finishes `failed` with `attribution: caused`, naming the attempt, under the
+# ordinary chaining rule: the attempt reported its failure up under its own
+# Activity ID, so the invocation names it rather than claiming the failure as
+# its own. A `beginFailed` attempt is a different fact from an attempt that ran
+# and was undone: it carries no phase, because nothing inside it ran, and no
+# classifier verdict, because it is terminal by rule.
 #
 # `roundTrips: 0` is the same fact counted. Setting the level is boundary
 # mechanics like begin, commit, and rollback and constructs no Database Call, so
@@ -23,8 +32,8 @@
 # The error the setup fails with carries NO `m-db-error` category: a request the
 # engine would not honor is not a contention, so nothing above the port may read
 # it as retriable. The stream shows the bound going unspent on it — `retries`
-# stands at its default of 10, and one invocation with no attempt beneath it is
-# the whole of it. Whether a begin failure carrying a retriable category would be
+# stands at its default of 10, and one attempt beneath the invocation is the
+# whole of it. Whether a begin failure carrying a retriable category would be
 # terminal too is `m-execution-lifecycle`'s own rule; no observable here
 # distinguishes it, because this failure carries no category to be judged by.
 #
@@ -65,6 +74,14 @@ then:
               retryOptimisticConflicts: false
               isolation: serializable
           - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: { edition: account }
+          - sequence: 3
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: beginFailed, attribution: direct }
+          - sequence: 4
             activity: 1
             parent: null
-            transactionInvocationFinished: { outcome: failed, attribution: direct }
+            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 }

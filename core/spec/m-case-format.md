@@ -350,7 +350,7 @@ values.
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.corrupt` | `given` | no | an ordered list of stored-state corruptions applied after the model's conforming fixtures load and before the action, admitted on `read` cases; each entry addresses one occurrence by `entity` + primary `key` + logical `member` path and states the raw stored `value` that replaces it (see *Corrupting stored state*, below) |
-| `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop, or `isolation-setup-failure` — the session setup opening the boundary at its requested level failing, so the boundary never opens |
+| `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop, or `isolation-setup-failure` — the session setup opening the boundary at its requested level failing, so the boundary never opens and the one attempt that adopted before it finishes `beginFailed` |
 | `given.sessionDefault` | `given` | boundary | the Isolation Level the connection ALREADY defaults to when the adapter takes it (`read-uncommitted`), established before intake — the seam `m-db-port` puts the once-per-connection floor check at |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
@@ -1994,8 +1994,9 @@ above the wire (`m-db-port` *Mapping obligations*), and all four are portable:
   vocabulary: it is the default an adapter must refuse rather than silently
   upgrade, on an engine that honors it.
 - `given.fault: isolation-setup-failure` is the session setup that opens a
-  boundary at a level failing, so the boundary **never opens**: no attempt runs
-  and the callback is never called.
+  boundary at a level failing, so the boundary **never opens**: the one attempt
+  that adopted its edition and started before it finishes `beginFailed`, and
+  the callback is never called.
 - `then.outcome` adds `option-conflict` (a joining call named an option the
   boundary it joined was not opened with, refused before the joined callback
   runs), `boundary-failed` (the boundary never opened), and `connection-refused`

@@ -42,6 +42,7 @@ from _transact_support import (
 
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -310,7 +311,7 @@ def test_readless_document_many_assignment_is_refused_before_write_sql() -> None
             mm.Traveler.tags.set((mm.TravelerTag(label="founder"),)),
         )
 
-    with pytest.raises(WriteRejectedError) as raised:
+    with raises_contextualized(WriteRejectedError) as raised:
         Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED)).transact(fn)
     assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
@@ -330,7 +331,7 @@ def test_readless_nested_document_many_assignment_is_refused_before_write_sql() 
             ),
         )
 
-    with pytest.raises(WriteRejectedError) as raised:
+    with raises_contextualized(WriteRejectedError) as raised:
         Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED)).transact(fn)
     assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
     assert "route.segment.stops" in str(raised.value)
@@ -426,7 +427,7 @@ def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_contextualized(QueryDefinitionError) as caught:
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -444,7 +445,9 @@ def test_where_verb_rejects_an_inheritance_family_target() -> None:
             im.CardPayment.where(im.CardPayment.id == 1), im.CardPayment.card_network.set("visa")
         )
 
-    with pytest.raises(inheritance.InheritanceError, match="subtype-write-set-based-unsupported"):
+    with raises_contextualized(
+        inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
+    ):
         Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).transact(fn)
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
 
@@ -464,7 +467,7 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
             im.CardPayment.where(im.CardPayment.id == 1), im.Payment.amount.set(Decimal("1.00"))
         )
 
-    with pytest.raises(QueryDefinitionError, match=r"Payment\.amount") as caught:
+    with raises_contextualized(QueryDefinitionError, match=r"Payment\.amount") as caught:
         Database.connect(port, PAYMENT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
@@ -476,7 +479,7 @@ def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1))
 
-    with pytest.raises(QueryDefinitionError, match="at least one assignment") as caught:
+    with raises_contextualized(QueryDefinitionError, match="at least one assignment") as caught:
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
@@ -492,7 +495,7 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
             mm.Person.name.set("Grace"),
         )
 
-    with pytest.raises(QueryDefinitionError, match="assigned twice") as caught:
+    with raises_contextualized(QueryDefinitionError, match="assigned twice") as caught:
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
     assert not any(isinstance(op, (ReadCall, WriteCall)) for op in port.calls)
@@ -506,7 +509,7 @@ def test_bitemporal_where_verb_requires_valid_from() -> None:
             WherePosition.where(WherePosition.id == 1), WherePosition.value.set(Decimal("1.00"))
         )
 
-    with pytest.raises(ValueError, match="requires valid_from"):
+    with raises_contextualized(ValueError, match="requires valid_from"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -516,7 +519,7 @@ def test_audit_only_where_verb_forbids_valid_from() -> None:
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.id == 1), valid_from=FIXED)
 
-    with pytest.raises(ValueError, match="takes no valid_from"):
+    with raises_contextualized(ValueError, match="takes no valid_from"):
         Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -528,7 +531,7 @@ def test_non_temporal_where_verb_forbids_valid_from() -> None:
             mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"), valid_from=FIXED
         )
 
-    with pytest.raises(ValueError, match="takes no valid_from"):
+    with raises_contextualized(ValueError, match="takes no valid_from"):
         Database.connect(port, PERSON, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -620,7 +623,7 @@ def test_a_failed_resolving_read_propagates_as_the_call_it_made() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Account.where(mm.Account.balance < 0))
 
-    with pytest.raises(DatabaseError) as refusal:
+    with raises_contextualized(DatabaseError) as refusal:
         account_db(port).transact(fn, retries=0)
     # The resolving read is what reached the port, so the failure that escapes
     # is that read's own: a materializing predicate write issues its resolve
@@ -748,7 +751,7 @@ def test_delete_where_over_a_temporal_target_is_refused_at_the_verb(
         assert port.calls == [BeginCall()]
         raise _Abandon
 
-    with pytest.raises(_Abandon):
+    with raises_contextualized(_Abandon):
         Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -787,7 +790,7 @@ def test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it() ->
         assert port.calls == [BeginCall()]
         raise _Abandon
 
-    with pytest.raises(_Abandon):
+    with raises_contextualized(_Abandon):
         Database.connect(port, BALANCE, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -1488,7 +1491,7 @@ def test_materializing_predicate_write_refuses_an_invalid_direct_version() -> No
             WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
         )
 
-    with pytest.raises(SnapshotDecodingError):
+    with raises_contextualized(SnapshotDecodingError):
         Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -1536,7 +1539,7 @@ def test_materializing_update_until_where_rejects_an_equal_window_bound() -> Non
             until=valid_from,
         )
 
-    with pytest.raises(ValueError, match="requires valid_from < until"):
+    with raises_contextualized(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -1555,7 +1558,7 @@ def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -
             WherePosition.where(WherePosition.id == 1), valid_from=valid_from, until=until
         )
 
-    with pytest.raises(ValueError, match="requires valid_from < until"):
+    with raises_contextualized(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -1578,7 +1581,7 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
             until=cast("dt.datetime", "2024-09-01"),
         )
 
-    with pytest.raises(InstantError, match="no `timestamp`"):
+    with raises_contextualized(InstantError, match="no `timestamp`"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -1609,9 +1612,9 @@ def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
             until=cast("dt.datetime", None),
         )
 
-    with pytest.raises(instructions.WriteInstructionError, match="valid_from is absent"):
+    with raises_contextualized(instructions.WriteInstructionError, match="valid_from is absent"):
         account_db(account).transact(absent_valid_from)
-    with pytest.raises(instructions.WriteInstructionError, match="until is absent"):
+    with raises_contextualized(instructions.WriteInstructionError, match="until is absent"):
         Database.connect(position, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             absent_until, concurrency="optimistic"
         )
@@ -1633,7 +1636,7 @@ def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
     def fn(tx: Transaction) -> None:
         tx.update_where(query, mm.Person.name.set("Ada"))
 
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_contextualized(QueryDefinitionError) as caught:
         Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
@@ -1644,7 +1647,7 @@ def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete_where(query)
 
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_contextualized(QueryDefinitionError) as caught:
         Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
@@ -1660,7 +1663,7 @@ def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete_where(query)
 
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_contextualized(QueryDefinitionError) as caught:
         Database.connect(ScriptedPort(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)).transact(
             fn
         )
@@ -1674,7 +1677,7 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
-    with pytest.raises(QueryTargetError) as caught:
+    with raises_contextualized(QueryTargetError) as caught:
         Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
@@ -1691,7 +1694,7 @@ def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> Non
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
 
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_contextualized(ModelRejectedError) as caught:
         Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "between-bounds-inverted"
 
@@ -1702,7 +1705,7 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Passport.number == "X"))  # pyright: ignore[reportArgumentType]
 
-    with pytest.raises(ModelRejectedError) as caught:
+    with raises_contextualized(ModelRejectedError) as caught:
         Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "attribute-outside-active-position"
 
@@ -1769,7 +1772,7 @@ def test_a_temporal_bound_is_judged_before_an_invalid_predicate(
     def fn(tx: Transaction) -> None:
         _bounded_write(tx, WherePosition.where(WherePosition.id.between(10, 1)), valid_from, until)
 
-    with pytest.raises(expected) as caught:
+    with raises_contextualized(expected) as caught:
         Database.connect(
             ScriptedPort(Transact()), WHERE_POSITION_META, clock=FixedClock(FIXED)
         ).transact(fn)
@@ -1804,7 +1807,7 @@ def test_an_unrenderable_bound_is_refused_before_any_buffering(
     def fn(tx: Transaction) -> None:
         _bounded_write(tx, WherePosition.where(WherePosition.id == 1), valid_from, until)
 
-    with pytest.raises(expected):
+    with raises_contextualized(expected):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
     assert port.calls == [BeginCall(), RollbackCall()]
 
@@ -1868,7 +1871,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
             until=_NON_UTC_UNTIL,
         )
 
-    with pytest.raises(InstantError):
+    with raises_contextualized(InstantError):
         Database.connect(idle, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(unrenderable)
     assert idle.calls == [BeginCall(), RollbackCall()]
 
@@ -2041,7 +2044,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
         assert port.calls == [BeginCall()]
         raise _Abandon
 
-    with pytest.raises(_Abandon):
+    with raises_contextualized(_Abandon):
         Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -2092,7 +2095,7 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
         assert port.calls == [BeginCall()]
         raise _Abandon
 
-    with pytest.raises(_Abandon):
+    with raises_contextualized(_Abandon):
         Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -2138,7 +2141,7 @@ def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
         assert port.calls == [BeginCall()]
         raise _Abandon
 
-    with pytest.raises(_Abandon):
+    with raises_contextualized(_Abandon):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -2158,7 +2161,7 @@ def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_contextualized(QueryDefinitionError) as caught:
         Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
@@ -2169,7 +2172,7 @@ def test_query_assignment_target_mismatch_precedes_every_adapter_call() -> None:
             im.CardPayment.where(im.CardPayment.id == 1), im.Payment.amount.set(Decimal("1.00"))
         )
 
-    with pytest.raises(QueryDefinitionError) as caught:
+    with raises_contextualized(QueryDefinitionError) as caught:
         Database.connect(ScriptedPort(Transact()), PAYMENT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
 
@@ -2200,7 +2203,7 @@ def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> Non
         )
     )
 
-    with pytest.raises(StaleWriteError, match="Account"):
+    with raises_contextualized(StaleWriteError, match="Account"):
         account_db(port).transact(_update_balance_where, concurrency="locking")
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, RollbackCall]
 
@@ -2213,7 +2216,7 @@ def test_materializing_where_shortfall_in_optimistic_mode_is_a_lock_conflict() -
         )
     )
 
-    with pytest.raises(OptimisticLockConflictError):
+    with raises_contextualized(OptimisticLockConflictError):
         account_db(port).transact(_update_balance_where, concurrency="optimistic")
     assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, RollbackCall]
 
@@ -2273,7 +2276,7 @@ def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
         )
         tx.update(node.edit(balance=Decimal("125.00")))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn)
     assert refusal.value.code == "write-evidence-already-claimed"
     assert refusal.value.object_key.primary_key == (("id", 3),)

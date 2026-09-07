@@ -37,6 +37,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -198,7 +199,7 @@ def test_delete_of_a_versioned_row_no_read_produced_raises() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete(grace())
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         account_db(port).transact(fn)
     assert refusal.value.code == "write-evidence-unavailable"
     assert refusal.value.object_key == ObjectKey(mm.Account.identity, (("id", 3),))
@@ -223,7 +224,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.update(fetched.edit(balance=Decimal("175.00")))
 
-    with pytest.raises(StaleWriteError, match="Account"):
+    with raises_contextualized(StaleWriteError, match="Account"):
         account_db(port).transact(fn, concurrency="locking")
     assert RollbackCall() in port.calls
     write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -246,7 +247,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx.update(fetched.edit(balance=Decimal("175.00")))
 
-    with pytest.raises(OptimisticLockConflictError, match="Account"):
+    with raises_contextualized(OptimisticLockConflictError, match="Account"):
         account_db(port).transact(fn, concurrency="optimistic")
     assert RollbackCall() in port.calls
 
@@ -395,7 +396,7 @@ def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
     port = ScriptedPort(Transact())
     db = db_for(MODELS["branch"], port)
     same_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    with pytest.raises(ValueError, match="valid_from < until"):
+    with raises_contextualized(ValueError, match="valid_from < until"):
         db.transact(lambda tx: tx.insert_until(branch, valid_from=same_instant, until=same_instant))
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
@@ -597,7 +598,7 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
             fetched.edit(value=Decimal("100.00")), valid_from=valid_from, until=valid_from
         )
 
-    with pytest.raises(ValueError, match="requires valid_from < until"):
+    with raises_contextualized(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -627,7 +628,7 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
     # `pytest.raises(ValueError, ...)` itself is the pin against a
     # `TypeError` leak: `TypeError` is not a `ValueError`, so an un-normalized comparison
     # would escape uncaught here rather than silently satisfy this block.
-    with pytest.raises(ValueError, match="naive datetime"):
+    with raises_contextualized(ValueError, match="naive datetime"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -739,7 +740,7 @@ def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None
         ).result()
         tx.update(fetched.edit(value=Decimal("200.00")))
 
-    with pytest.raises(ValueError, match="requires valid_from"):
+    with raises_contextualized(ValueError, match="requires valid_from"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -756,7 +757,7 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
         tx.terminate(fetched, valid_from=FIXED)
 
-    with pytest.raises(ValueError, match="takes no valid_from"):
+    with raises_contextualized(ValueError, match="takes no valid_from"):
         account_db(port).transact(fn)
 
 
@@ -784,7 +785,7 @@ def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
             until=valid_from,
         )
 
-    with pytest.raises(ValueError, match="requires valid_from < until"):
+    with raises_contextualized(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -801,7 +802,7 @@ def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
         ).result()
         tx.terminate_until(fetched, valid_from=valid_from, until=until)
 
-    with pytest.raises(ValueError, match="requires valid_from < until"):
+    with raises_contextualized(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -827,7 +828,7 @@ def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
     def fn(tx: Transaction) -> None:
         tx.terminate(mm.Balance(id=1, acct_num="A-1", value=Decimal("5.00")))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         db.transact(fn, concurrency=cast("Any", concurrency))
     assert refusal.value.code == "write-evidence-unavailable"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -876,7 +877,7 @@ def test_a_standalone_temporal_source_is_refused_under_an_explicit_locking_prefe
     def fn(tx: Transaction) -> None:
         tx.update(node.edit(value=Decimal("9.00")))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         db.transact(fn, concurrency="locking")
     assert refusal.value.code == "write-evidence-unavailable"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -912,7 +913,7 @@ def test_an_update_of_a_value_a_different_object_was_inserted_under_is_refused()
             mm.Balance(id=10, acct_num="Z", value=Decimal("1.00")).edit(value=Decimal("2.00"))
         )
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         Database.connect(ScriptedPort(Transact()), BALANCE, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
 
@@ -1092,7 +1093,9 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
         node = _find_pinned_position(tx, tx_time=_TX_PIN)
         tx.update(node.edit(value=Decimal("200.00")), valid_from=_CORRECTION_FROM)
 
-    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+    with raises_contextualized(
+        TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"
+    ):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
@@ -1114,7 +1117,7 @@ def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
     def fn(tx: Transaction) -> None:
         tx.delete(_Elsewhere(id=1))
 
-    with pytest.raises(TypeError, match="_Elsewhere is not an Entity Class of this model"):
+    with raises_contextualized(TypeError, match="_Elsewhere is not an Entity Class of this model"):
         Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
 
 
@@ -1148,7 +1151,7 @@ def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
     # declares no `leftOnly`, so the substitution is named where it happened —
     # rather than reported downstream as the ABSENCE of the `rightOnly` this
     # model does declare.
-    with pytest.raises(EntityRowError) as refusal:
+    with raises_contextualized(EntityRowError) as refusal:
         db_for(_TWIN_RIGHT, port).transact(fn)
     assert refusal.value.code == "entity-row-member-missing"
     assert "'leftOnly'" in refusal.value.message
@@ -1206,7 +1209,7 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
     def fn(tx: Transaction) -> None:
         tx.update(new_account().edit(balance=Decimal("9.00")))
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
     assert refusal.value.identity == mm.Account.identity
@@ -1292,7 +1295,7 @@ def test_a_key_member_naming_no_object_reaches_the_provenance_refusal(key: objec
             mm.Account.model_construct(id=key, owner="Ada", balance=Decimal("100.00"), version=1)
         )
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         account_db(ScriptedPort(Transact())).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
 
@@ -1309,7 +1312,7 @@ def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
     def fn(tx: Transaction) -> None:
         tx.insert(tx.find(mm.Account.where(mm.Account.id == 1)).result())
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         account_db(port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
     assert "tx.update(...)" in refusal.value.message
@@ -1329,7 +1332,7 @@ def test_a_second_insert_of_the_same_instance_is_refused_before_any_dml() -> Non
         tx.insert(fresh)
         tx.insert(fresh)
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         account_db(port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
     assert refusal.value.identity == mm.Account.identity
@@ -1348,7 +1351,7 @@ def test_a_second_insert_of_the_same_object_is_refused_whatever_instance_spells_
         tx.insert(mm.Person(id=9, name="Newton"))
         tx.insert(mm.Person(id=9, name="Grace"))
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
     assert "tx.update(inserted.edit(...))" in refusal.value.message
@@ -1424,7 +1427,7 @@ def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row(
         tx.delete(fresh)
         tx.update(fresh.edit(name="Grace"))
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
@@ -1447,7 +1450,7 @@ def test_an_insert_after_a_delete_of_a_flushed_insert_is_still_refused_as_a_repe
         tx.delete(fresh)
         tx.insert(fresh)
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         db_for(PERSON, port).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
     assert [op for op in port.calls if isinstance(op, WriteCall)] == [
@@ -1495,7 +1498,7 @@ def test_an_insert_after_a_terminate_until_of_a_flushed_insert_is_still_refused(
         tx.terminate_until(fresh, valid_from=valid_from, until=until)
         tx.insert(fresh, valid_from=opened_from)
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-already-stored"
     writes = [op for op in port.calls if isinstance(op, WriteCall)]
@@ -1533,7 +1536,7 @@ def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb
         else:
             tx.update(foreign.edit(balance=Decimal("175.00")))
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-foreign-lifecycle"
 
@@ -1556,7 +1559,7 @@ def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
         tx.insert(_TwinRight(id=1, right_only="x"))
         tx.update(_RekeyedTwin(id_elsewhere=1, right_only="y").edit(right_only="z"))
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         db_for(_TWIN_RIGHT, port).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
     assert [type(op) for op in port.calls] == [BeginCall, RollbackCall]
@@ -1575,7 +1578,7 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
     def fn(tx: Transaction) -> None:
         tx.update(unkeyed)
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
 
@@ -1607,7 +1610,7 @@ def test_a_read_outside_the_writing_transaction_is_still_this_source(second_hand
     port = ScriptedPort(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 
-    with pytest.raises(KeyedWriteValueError) as refusal:
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         writer.transact(lambda tx: tx.insert(node))
     assert refusal.value.code == "write-value-already-stored"
 
@@ -1624,7 +1627,7 @@ def test_an_unversioned_update_of_such_a_value_is_refused_for_its_evidence(
     port = ScriptedPort(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         writer.transact(lambda tx: tx.update(node.edit(name="Grace")))
     assert refusal.value.code == "write-evidence-unavailable"
     assert refusal.value.object_key.primary_key == (("id", 1),)
@@ -1673,7 +1676,7 @@ def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:
     def fn(tx: Transaction) -> None:
         tx.terminate(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
 
-    with pytest.raises(WriteEvidenceError) as refusal:
+    with raises_contextualized(WriteEvidenceError) as refusal:
         db_for(BALANCE, port).transact(fn)
     assert refusal.value.code == "write-evidence-unavailable"
 

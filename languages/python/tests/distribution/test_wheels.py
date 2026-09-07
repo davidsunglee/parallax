@@ -120,14 +120,16 @@ def test_evolution_wheel_ships_both_of_its_scopes(wheelhouse: Wheelhouse) -> Non
 def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # The checks above see `parallax/snapshot` only at the top-package prefix, so
     # they cannot tell a handle.py from a handle/ directory. This is the complete
-    # package — the twenty-one private modules plus the re-exporting interface — and
+    # package — the twenty-three private modules plus the re-exporting interface — and
     # the set is compared whole so it stays that claim: a module shipped here
     # that nobody named fails as loudly as a missing one. The absent old path is
     # the half no set over the directory reaches: `handle.py` sits beside the
     # package, and a wheel carrying it is a stale build or a half-applied split.
     assert _modules_directly_in(wheelhouse, "parallax-snapshot", "parallax/snapshot/handle/") == {
         "parallax/snapshot/handle/__init__.py",
+        "parallax/snapshot/handle/_adoption.py",
         "parallax/snapshot/handle/_database.py",
+        "parallax/snapshot/handle/_demarcation.py",
         "parallax/snapshot/handle/_errors.py",
         "parallax/snapshot/handle/_family.py",
         "parallax/snapshot/handle/_features.py",

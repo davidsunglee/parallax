@@ -128,9 +128,8 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
             isolation=None,
             extra_retriable=None,
         ) as invocation,
-        invocation.attempt() as attempt,
+        invocation.attempt("edition") as attempt,
     ):
-        attempt.begun()
         with attempt.write_batch("pre_commit") as batch:
             with batch.database_call(STATEMENT, "WRITE", TARGET) as call:
                 call.write_completed(AFFECTED)

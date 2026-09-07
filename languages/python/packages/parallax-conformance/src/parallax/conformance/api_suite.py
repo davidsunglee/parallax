@@ -356,7 +356,8 @@ EXAMPLES: Final[list[Example]] = [
         "m-inheritance-088",
         "A keyed write aimed at an abstract inheritance position",
         'db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))\n'
-        '# raises WriteRejectedError(rule="abstract-write-target")',
+        "# raises ExecutionFailure"
+        ' caused by WriteRejectedError(rule="abstract-write-target")',
     ),
     Example(
         "m-value-object-039",
@@ -373,7 +374,8 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        '# raises WriteRejectedError(rule="write-required-attribute-missing")',
+        "# raises ExecutionFailure"
+        ' caused by WriteRejectedError(rule="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-040",
@@ -391,7 +393,8 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        '# raises WriteRejectedError(rule="write-required-attribute-missing")',
+        "# raises ExecutionFailure"
+        ' caused by WriteRejectedError(rule="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-041",
@@ -409,7 +412,8 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        '# raises WriteRejectedError(rule="write-required-attribute-missing")',
+        "# raises ExecutionFailure"
+        ' caused by WriteRejectedError(rule="write-required-attribute-missing")',
     ),
     Example(
         "m-value-object-042",
@@ -423,13 +427,15 @@ EXAMPLES: Final[list[Example]] = [
         "        )\n"
         "    )\n"
         ")\n"
-        '# raises WriteRejectedError(rule="write-required-value-object-missing")',
+        "# raises ExecutionFailure"
+        ' caused by WriteRejectedError(rule="write-required-value-object-missing")',
     ),
     Example(
         "m-value-object-044",
         "A write missing a required TOP-LEVEL value object entirely",
         'db.transact(lambda tx: tx.insert(Shipment(id=5, name="Express")))\n'
-        '# raises WriteRejectedError(rule="write-required-value-object-missing")',
+        "# raises ExecutionFailure"
+        ' caused by WriteRejectedError(rule="write-required-value-object-missing")',
     ),
     # Snapshot/graph semantics (m-snapshot-read, m-navigate x m-temporal-read):
     # each example IS an executable graph story

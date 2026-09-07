@@ -30,6 +30,7 @@ from parallax.core.execution_lifecycle._diagnostics import (
 from parallax.core.execution_lifecycle._errors import ExecutionLifecycleHandlerError
 from parallax.core.execution_lifecycle._events import (
     ActivityFinished,
+    AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
@@ -221,7 +222,7 @@ def _attempt_failure_fields(
     return fields
 
 
-type _NoPayload = TransactionAttemptStarted | StreamBatchStarted
+type _NoPayload = StreamBatchStarted
 type _Completed = ReadCompleted | WriteBatchCompleted | StreamBatchCompleted
 type _Committed = OuterInvocationCommitted | AttemptCommitted
 type _ActivityFailed = (
@@ -274,6 +275,12 @@ def _invocation_started_fields(
             return {"invocation": "joined"}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
+
+
+def _attempt_started_fields(
+    event: TransactionAttemptStarted, _detail: LifecycleLogDetail
+) -> dict[str, object]:
+    return {"edition": event.edition}
 
 
 def _stream_started_fields(
@@ -357,6 +364,12 @@ def _rolled_back_fields(
     outcome: AttemptRolledBack, detail: LifecycleLogDetail
 ) -> dict[str, object]:
     return {"outcome": "rolledBack", **_attempt_failure_fields(outcome.failure, detail)}
+
+
+def _begin_failed_fields(
+    outcome: AttemptBeginFailed, detail: LifecycleLogDetail
+) -> dict[str, object]:
+    return {"outcome": "beginFailed", **_diagnostic_fields(outcome.diagnostic, detail)}
 
 
 def _rollback_failed_fields(
@@ -475,7 +488,8 @@ def _attempt_projection(event: TransactionAttemptFinished, transition: str) -> _
     the transaction left behind is then unknown. A rollback that succeeded is a
     warning exactly when the classifier says the failure is retry-eligible: that
     is the one the invocation may go on to survive, so it is worth seeing while
-    a terminal one is already reported by the failed root above it.
+    a terminal one is already reported by the failed root above it. A boundary
+    that never opened is terminal too, and the failed root above reports it.
     """
     match event.outcome:
         case AttemptCommitted() as outcome:
@@ -489,6 +503,9 @@ def _attempt_projection(event: TransactionAttemptFinished, transition: str) -> _
             projected = _Projected(
                 logging.ERROR, transition, True, outcome, _rollback_failed_fields
             )
+            return projected
+        case AttemptBeginFailed() as outcome:
+            projected = _Projected(logging.DEBUG, transition, True, outcome, _begin_failed_fields)
             return projected
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
@@ -579,7 +596,7 @@ def _projected(event: ExecutionEvent) -> _Projected[Any]:
             return _invocation_projection(event, "transactionInvocationFinished")
         case TransactionAttemptStarted():
             projected = _Projected(
-                logging.DEBUG, "transactionAttemptStarted", False, event, _no_fields
+                logging.DEBUG, "transactionAttemptStarted", False, event, _attempt_started_fields
             )
             return projected
         case TransactionAttemptFinished():

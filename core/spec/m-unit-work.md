@@ -345,6 +345,13 @@ The operation is **pure** with respect to its inputs — it performs no database
 I/O, consults no clock directly, and emits no SQL, dialect object, physical
 column, or driver value.
 
+A unit of work is handed its planner when it opens and **retains it for its
+life**: every flush of that unit plans through the one planner it was opened
+with, and a joining invocation plans through the planner of the unit it
+joined rather than resolving one of its own. A re-executed attempt opens a
+fresh unit of work and may be handed a different planner — the one belonging
+to whatever accepted Metamodel that attempt adopted.
+
 The term **step** is reserved for one logical Planned Write; the term **stage**
 describes one private transformation inside the pipeline below.
 

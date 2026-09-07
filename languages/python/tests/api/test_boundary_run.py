@@ -17,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 
+from _support.adoption import raises_contextualized
 from _support.corpus import case_document, case_fixtures
 from parallax.conformance import boundary_runner, case_format, engine
 from parallax.conformance._lifecycle_observation import (
@@ -29,7 +30,7 @@ from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.unit_work import OptimisticLockConflictError
-from parallax.snapshot import connect
+from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Transaction, TransactionOptionConflictError
 
 _CASES = boundary_runner.reachable_boundary_cases()
@@ -90,7 +91,11 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # the wire, how many attempts ran, and the event stream the case authors —
     # because all three are projections of one delivery.
     observed = LifecycleObservation()
-    db = connect(port, meta, lifecycle_provider=observed.provider)
+    # Prepared explicitly under the case's own edition — the model descriptor's
+    # stem — so the attempt events the case authors carry the literal it names
+    # (`m-conformance-adapter`).
+    serving = ServingModel(prepare_model(meta, edition=engine.case_edition(case)))
+    db = connect(port, serving, lifecycle_provider=observed.provider)
     # The post-transaction verify read runs through a SEPARATE, un-instrumented
     # `Database` (the real adapter directly, no `FaultInjectingPort`): it is
     # out-of-band housekeeping, not part of the boundary mechanism under test,
@@ -117,7 +122,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
         )
         assert verify.balance == Decimal("251.00"), "the committed write must persist"
     elif outcome == "aborted":
-        with pytest.raises(BoundaryAbort):
+        with raises_contextualized(BoundaryAbort):
             run()
         verify = verify_db.transact(
             lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
@@ -126,10 +131,10 @@ def test_boundary_case_runs_through_the_shipped_surface(
             "the withheld, force-flushed write must never persist"
         )
     elif outcome == "optimistic-lock-conflict":
-        with pytest.raises(OptimisticLockConflictError):
+        with raises_contextualized(OptimisticLockConflictError):
             run()
     elif outcome == "option-conflict":
-        with pytest.raises(TransactionOptionConflictError):
+        with raises_contextualized(TransactionOptionConflictError):
             run()
         verify = verify_db.transact(
             lambda tx: tx.find(Account.where(Account.id == boundary_runner.TARGET_ID)).result()
@@ -140,21 +145,24 @@ def test_boundary_case_runs_through_the_shipped_surface(
     elif outcome == "boundary-failed":
         # The boundary never opened, so what surfaces is the error the port made
         # rather than a classified failure of the work: nothing above may read a
-        # refused session setup as a contention worth retrying.
-        with pytest.raises(DatabaseError) as unopened:
+        # refused session setup as a contention worth retrying. The attempt had
+        # adopted before it asked the boundary to begin, so the failure still
+        # names the edition it ran under.
+        with raises_contextualized(DatabaseError) as unopened:
             run()
         assert unopened.value.category is None, (case.case_id, unopened.value)
+        assert unopened.edition == engine.case_edition(case)
     else:
         category = _FAILURE_CATEGORY[outcome]
-        with pytest.raises(DatabaseError) as excinfo:
+        with raises_contextualized(DatabaseError) as excinfo:
             run()
         assert excinfo.value.category == category, (case.case_id, excinfo.value)
 
     # How many attempts ran is what the boundary itself did — one Transaction
     # Attempt activity is one physical attempt — never a count the fault
     # decorator kept beside it: a second tally could agree with the oracle while
-    # the loop did something else. An attempt begins only after a successful
-    # begin, so this counts attempts rather than demarcations that never ran one.
+    # the loop did something else. An attempt starts before its boundary is
+    # asked to begin, so a boundary that never opened is one attempt too.
     attempts = sum(
         1
         for root in observed.roots

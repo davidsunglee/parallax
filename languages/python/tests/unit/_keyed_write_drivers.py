@@ -58,7 +58,7 @@ from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.snapshot.handle import Database, Transaction, WireEntity
+from parallax.snapshot.handle import Database, ExecutionFailure, Transaction, WireEntity
 
 __all__ = [
     "ACCOUNT_TARGET",
@@ -606,6 +606,22 @@ def answer(scenario: Scenario, representation: Representation) -> Answer:
     return Answer(None, None, None, None, statements)
 
 
+def _refused(raised: Exception, phase: Phase, port: ScriptedPort) -> Refused:
+    """The refusal ``raised`` states, in the four facts a row is graded on.
+
+    A refusal escaping the transaction arrives as the cause of an
+    ``ExecutionFailure``; what the order judged is that cause, so it is
+    reported unwrapped, exactly as a refusal the standalone source raised is.
+    """
+    return Refused(
+        type(raised),
+        cast("str | None", getattr(raised, "code", None)),
+        str(raised),
+        phase,
+        tuple(port.calls),
+    )
+
+
 def outcome(scenario: Scenario, representation: Representation) -> Outcome:
     """Run ``scenario`` through ``representation`` and report what it produced.
 
@@ -629,14 +645,12 @@ def outcome(scenario: Scenario, representation: Representation) -> Outcome:
         db.transact(body, concurrency=scenario.concurrency)
     except AssertionError:
         raise
+    except ExecutionFailure as failed:
+        if isinstance(failed.cause, AssertionError):
+            raise failed.cause from None
+        return _refused(failed.cause, phase, port)
     except Exception as raised:
-        return Refused(
-            type(raised),
-            cast("str | None", getattr(raised, "code", None)),
-            str(raised),
-            phase,
-            tuple(port.calls),
-        )
+        return _refused(raised, phase, port)
     _assert_the_scripted_read_was_reached(port, scenario)
     return Completed(tuple(port.calls))
 

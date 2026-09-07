@@ -17,6 +17,7 @@ from decimal import Decimal
 
 import pytest
 
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ScriptedPort,
@@ -95,7 +96,7 @@ def test_each_flushing_temporal_transact_consumes_one_scripted_instant() -> None
 
     # The two-instant script is now exhausted — a THIRD flushing transaction
     # asks the clock for an instant it never scripted.
-    with pytest.raises(ClockExhaustedError):
+    with raises_contextualized(ClockExhaustedError):
         db.transact(lambda tx: tx.insert(_balance(3)))
 
 
@@ -112,7 +113,7 @@ def test_force_flush_and_commit_flush_share_one_instant_in_one_transaction() -> 
     assert _writes(port) == 2
 
     db.transact(lambda tx: tx.insert(_balance(9)))  # the SECOND (and last) scripted instant
-    with pytest.raises(ClockExhaustedError):
+    with raises_contextualized(ClockExhaustedError):
         db.transact(lambda tx: tx.insert(_balance(10)))
 
 
@@ -178,7 +179,7 @@ def test_a_coalesced_away_buffer_consumes_no_scripted_instant() -> None:
 
     # The single scripted instant survives for a transaction that does reach work.
     db.transact(lambda tx: tx.insert(_balance(2)))
-    with pytest.raises(ClockExhaustedError):
+    with raises_contextualized(ClockExhaustedError):
         db.transact(lambda tx: tx.insert(_balance(3)))
 
 
@@ -192,7 +193,7 @@ def test_a_retry_attempt_captures_a_fresh_instant() -> None:
     assert _writes(port) == 2  # attempt 0's write failed, the retry's succeeded
 
     # Both scripted instants are gone — one per attempt that reached temporal work.
-    with pytest.raises(ClockExhaustedError):
+    with raises_contextualized(ClockExhaustedError):
         db.transact(lambda tx: tx.insert(_balance(2)))
 
 

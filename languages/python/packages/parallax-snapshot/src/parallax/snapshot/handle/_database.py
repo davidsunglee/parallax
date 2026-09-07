@@ -1,26 +1,18 @@
-"""``parallax.snapshot.handle._database`` — preparation, demarcation, and the flush edge.
+"""``parallax.snapshot.handle._database`` — preparation and the composition root.
 
-The composition root's own module: :func:`prepare_model` runs every finite,
-fallible model-only derivation into one complete
-:class:`~parallax.snapshot.handle._publication.ModelSelection`,
-:meth:`Database.connect` wires a concrete
-``m-db-port`` adapter to a metamodel, :meth:`Database.find`,
-:meth:`Database.stream`, and :meth:`Database.read_rows` delegate to the one
-:class:`~parallax.snapshot.handle._read_scope.ReadScope` this connection owns —
-the same scope its Wire view retains, and the same scope every stream it opens is
-delivered through, so no read composition is written here at all — and
-:meth:`Database.transact` is the
-callback demarcation — sentinel-backed options, join with the option-conflict
-check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
-into the unit of work.
-
-That injected executor is where the package's two halves meet: it lowers the
-Write Plan the injected :class:`~parallax.core.unit_work.WritePlanner` produces
-through :func:`~parallax.snapshot.handle._write_lowering.stream_lowered` and runs
-each statement on the transaction's own connection, so an abort rolls back
-force-flushed writes with everything else. ``parallax.core.auto_retry`` may not
-import ``parallax.core.opt_lock``, so the ``retry_optimistic_conflicts`` opt-in's
-classification branch (``_optimistic_conflict_retriable``) is composed here too.
+:func:`prepare_model` runs every finite, fallible model-only derivation into
+one complete :class:`~parallax.snapshot.handle._publication.ModelSelection`,
+and :meth:`Database.connect` wires a concrete ``m-db-port`` adapter to the
+Serving Model it will serve. The handle itself retains nothing model-derived:
+:meth:`Database.find`, :meth:`Database.stream`, and :meth:`Database.read_rows`
+delegate to the one :class:`~parallax.snapshot.handle._read_scope.ReadScope`
+this connection owns — the same scope its Wire view retains, and the same scope
+every stream it opens is delivered through — and :meth:`Database.transact`
+refuses re-entry and delegates to the one
+:class:`~parallax.snapshot.handle._demarcation.Demarcation` it built at connect.
+Both hold the Serving Model and adopt its current selection per execution, so
+a publication reaches every later execution of this handle without the handle
+caching, rebuilding, or comparing anything.
 
 Preparation lives here rather than beside the selection it builds because a
 Write Planner's strategy adapters reach the SQL-lowering group, which the sealed
@@ -28,44 +20,29 @@ Write Planner's strategy adapters reach the SQL-lowering group, which the sealed
 :func:`~parallax.snapshot.handle._publication.select_model`, the one builder of
 a :class:`~parallax.snapshot.handle._publication.ModelSelection`, and this
 module is its one caller. A ``Database`` connected to a bare Domain Model
-prepares it once under a generated edition and keeps, for its life, that
-selection's read projection together with the codec and planner out of its
-write projection.
+prepares it once under a generated edition into a private Serving Model of its
+own, so the static shorthand and an explicitly shared Serving Model enter the
+same execution paths.
 
 This is the TOP of the package's internal graph: it imports
-:mod:`parallax.snapshot.handle._read`, :mod:`~parallax.snapshot.handle._transaction`,
-:mod:`~parallax.snapshot.handle._read_scope` for the read composition it owns one of,
-:mod:`~parallax.snapshot.handle._publication` for the selection it prepares,
-:mod:`~parallax.snapshot.handle._write_lowering` and
+:mod:`~parallax.snapshot.handle._demarcation` for the transaction demarcation,
+:mod:`~parallax.snapshot.handle._read_scope` for the read composition it owns
+one of, :mod:`~parallax.snapshot.handle._publication` for the selection it
+prepares and the Serving Model it holds, and
 :mod:`~parallax.snapshot.handle._planning` for the one Write Planner each
 selection carries, and nothing in the package imports it except
-``handle/__init__.py``, which re-exports its six public names
-(:class:`Database`, :func:`connect`, :func:`prepare_model`,
-:class:`TransactionOptionConflictError`, :class:`TransactionOwnershipError`,
-:class:`TransactionRollbackError`) through the frozen ``__all__``. Because only
-those six cross the boundary, every helper here keeps its leading underscore —
-the cross-module bare-name convention the sibling modules follow has nothing to
-bite on.
+``handle/__init__.py``, which re-exports its three public names
+(:class:`Database`, :func:`connect`, :func:`prepare_model`) through the frozen
+``__all__``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any
 from uuid import uuid4
 
-from parallax.core.auto_retry import check_retry_bound, run_with_retry
-from parallax.core.db_port import (
-    BeginFailed,
-    Committed,
-    DbPort,
-    IsolationLevel,
-    RollbackFailed,
-    RolledBack,
-    TransactionOutcome,
-    isolation_level,
-)
+from parallax.core.db_port import DbPort, IsolationLevel
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -80,189 +57,33 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.execution_lifecycle._activity import (
-    INERT,
     InstalledLifecycle,
-    TransactionAttemptActivity,
-    WriteBatchActivity,
     installed_lifecycle,
-    open_transaction_root,
     refuse_reentry,
 )
-from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery
-from parallax.core.unit_work import (
-    Clock,
-    Concurrency,
-    OptimisticLockConflictError,
-    RollbackOnlyError,
-    SubjectIdentity,
-    SystemClock,
-    TransactionSettings,
-    UnitOfWork,
-    UnitOfWorkError,
-    WriteBatchTrigger,
-    WritePlan,
-    WritePlanner,
-    active_unit_of_work,
-    capture_subject_identity,
-    enforce_affected_rows,
-    run_unit_of_work,
-)
+from parallax.core.unit_work import Clock, Concurrency, SystemClock
+from parallax.snapshot.handle._demarcation import Demarcation
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._publication import (
     ModelSelection,
+    ServingModel,
     check_edition,
-    read_projection,
     select_model,
-    write_projection,
 )
 from parallax.snapshot.handle._read import RowsResult, Snapshot
 from parallax.snapshot.handle._read_scope import standalone_read_scope
 from parallax.snapshot.handle._stream import SnapshotStream
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._wire import WireDatabaseView
-from parallax.snapshot.handle._write_lowering import stream_lowered
 
 __all__ = [
     "Database",
-    "TransactionOptionConflictError",
-    "TransactionOwnershipError",
-    "TransactionRollbackError",
     "connect",
     "prepare_model",
 ]
-
-# The audit-neutral Subject Identity every production planning request carries
-# while no Principal attributes one: private, module-local, and captured through
-# the boundary's own nonempty check (`capture_subject_identity`) — never a
-# Principal implementation, a default identity, or a public caller option.
-# Attributed capture belongs to the outer database-operation boundary a Principal
-# is read at, which is the only place that can name a subject.
-_UNATTRIBUTED_SUBJECT_IDENTITY: Final[SubjectIdentity] = capture_subject_identity("unattributed")
-
-
-class TransactionOptionConflictError(ValueError):
-    """A joining ``db.transact`` call tried to re-negotiate the boundary.
-
-    A joining call may not change the active transaction's settings: an explicit
-    (non-``None``) option whose value conflicts with the outermost boundary's
-    resolved setting raises; an explicit equal value and an omitted option are
-    accepted (spec §5).
-    """
-
-
-class TransactionOwnershipError(RuntimeError):
-    """A nested ``db.transact`` call was made through a foreign ``Database``.
-
-    The active demarcation records the exact ``Database`` object that opened it,
-    and a nested call joins only through that same object. An alias of the owner
-    joins and receives the identical :class:`Transaction`; every different handle
-    is refused even when it carries the same model, adapter, clock, or
-    otherwise equivalent configuration, because the owner is scoped state rather
-    than a registry keyed by any of those.
-
-    The refusal precedes rollback-only joining, the option-conflict check,
-    closure execution, Unit of Work mutation, SQL, and adapter access, and
-    retains neither handle — :data:`code` and the message are its whole public
-    state.
-    """
-
-    code: Final[str] = "transaction-owner-mismatch"
-
-
-class TransactionRollbackError(RuntimeError):
-    """The transaction could not be undone after something ended it.
-
-    Two failures are live at once and reporting either alone misreports what
-    happened: :attr:`triggering_error` ended the transaction, and
-    :attr:`rollback_error` is why undoing it did not complete. The rollback error
-    is the ``__cause__`` as well, so a reader of the traceback sees why the
-    trigger is no longer the whole story.
-
-    What the transaction left behind is therefore unknown, which is why this is
-    never retried however retriable the trigger was, and why the port discards
-    the connection it happened on. A control-flow or fatal trigger — a
-    ``KeyboardInterrupt``, a cancellation — is never wrapped in this: it stays
-    primary and carries the rollback failure as its own cause instead, so a
-    shutdown in progress is not downgraded to an ordinary error.
-    """
-
-    def __init__(self, triggering_error: BaseException, rollback_error: Exception) -> None:
-        super().__init__(
-            f"the transaction could not be rolled back after {triggering_error!r}; "
-            f"the rollback failed with {rollback_error!r}, so what it left behind is unknown"
-        )
-        self.triggering_error = triggering_error
-        self.rollback_error = rollback_error
-
-
-class _UnattemptedBoundary(Exception):
-    """A begin failure in transit past the bounded retry loop.
-
-    A transaction that never began ran no attempt, so `m-execution-lifecycle`
-    makes its failure terminal however retriable the error's own category is —
-    but ``m-auto-retry`` classifies by the exception it catches, and a begin
-    failure is an ordinary :class:`~parallax.core.db_error.DatabaseError` like
-    any other. Travelling as a type the loop does not catch is what makes it
-    terminal; :meth:`Database.transact` unwraps it immediately outside the loop,
-    so nothing above ever sees this class.
-    """
-
-    def __init__(self, error: Exception) -> None:
-        super().__init__(error)
-        self.error = error
-
-
-@dataclass(frozen=True, slots=True)
-class _ResolvedOptions:
-    """The outermost boundary's resolved ``db.transact`` options.
-
-    ``concurrency`` also lives on the core :class:`TransactionSettings`;
-    ``retries`` and ``retry_optimistic_conflicts`` are demarcation-level only
-    (the core unit of work never sees them). ``retry_optimistic_conflicts``
-    is stored for the join/conflict contract AND gates
-    :func:`_optimistic_conflict_retriable` — the opt-in-only classification
-    branch :meth:`Database.transact` injects into
-    :func:`~parallax.core.auto_retry.run_with_retry` (`m-opt-lock`
-    "Retry contract").
-
-    ``isolation`` is the one option with no resolved default of its own: it
-    stays whatever the call named, because ``None`` here is a request for
-    nothing rather than a stand-in for a value Parallax would supply. It is the
-    vocabulary's own spelling of that request rather than the caller's object,
-    so what a joining call is compared against, and what every adapter keys its
-    per-level mapping by, is a plain level. Every physical attempt of this
-    boundary asks the port for the same one, so a retry re-opens at the
-    isolation the invocation asked for rather than at the database's default.
-    """
-
-    retries: int
-    concurrency: Concurrency
-    retry_optimistic_conflicts: bool
-    isolation: IsolationLevel | None
-
-
-@dataclass(frozen=True, slots=True)
-class _Demarcation:
-    """What the outermost boundary publishes on the unit of work's ``companion``.
-
-    A joining ``db.transact`` call needs the same :class:`Transaction` to hand
-    its closure, the boundary's resolved options for the conflict check, the
-    exact :class:`Database` that opened the boundary so ownership can be settled
-    before either, and the physical attempt currently running — which is what a
-    joined invocation is a child activity OF; all four ride core's single
-    per-thread active binding, so their visibility ends exactly when it does (no
-    handle-owned thread-local, nothing to clean up). ``owner`` is a strong
-    reference deliberately: it is scoped state whose lifetime is the
-    demarcation's, not a registry entry.
-    """
-
-    tx: Transaction
-    options: _ResolvedOptions
-    owner: Database
-    attempt: TransactionAttemptActivity
 
 
 def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
@@ -306,53 +127,53 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
 
 
 class Database:
-    """A connected Parallax database handle: one adapter, one metamodel (spec §5)."""
+    """A connected Parallax database handle: one adapter, one Serving Model (spec §5)."""
 
     __slots__ = (
         "_clock",
-        "_codec",
+        "_demarcation",
         "_lifecycle",
-        "_planner",
         "_port",
         "_reads",
-        "_selected",
     )
 
     def __init__(
         self,
         port: DbPort,
-        model: DomainModel,
+        model: DomainModel | ServingModel,
         *,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> None:
-        """Connect to ``model``, a Domain Model of either provenance.
+        """Connect to ``model``: a Serving Model, or a Domain Model of either
+        provenance.
 
-        The model is prepared once, here, under a generated opaque edition that
-        stays fixed for this connection's life, and the connection keeps that
-        selection's read projection together with the codec and planner out of
-        its write projection: every read and every write it serves runs against
-        products derived whole at connect. Provenance decides capability
-        rather than which constructor ran: a descriptor-backed model composes no
-        Entity Class, so it serves Wire and the write lanes — which name
-        Entities rather than classes — and refuses every modeled read at the
-        read call.
+        A Domain Model is prepared once, here, under a generated opaque edition
+        that stays fixed for this connection's life, and held in a private
+        Serving Model nothing else can publish to; a Serving Model handed in is
+        held as itself, so two connections over one flip together when it
+        publishes. Either way the connection retains no selection: every
+        transaction attempt and every standalone read adopts whatever the
+        Serving Model holds when it begins, and runs against products derived
+        whole at preparation. Provenance decides capability rather than which
+        constructor ran: a descriptor-backed model composes no Entity Class, so
+        it serves Wire and the write lanes — which name Entities rather than
+        classes — and refuses every modeled read at the read call.
         """
-        if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, so an untyped caller is named rather than failing on a missing attribute
+        if isinstance(model, ServingModel):
+            serving = model
+        elif isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, so an untyped caller is named rather than failing on a missing attribute
+            # One static selection, prepared whole before this handle can
+            # serve. Two independent connections over one model carry two
+            # generated editions; sharing one is explicit preparation's job.
+            serving = ServingModel(prepare_model(model, edition=f"static-{uuid4().hex}"))
+        else:
             raise SnapshotConnectionError(
                 "a Database connects to a Domain Model — one composed from Entity Classes, or "
-                "one a descriptor produced; a bare accepted Metamodel names no model a "
-                "connection can serve (snapshot-class-backed-model-required)"
+                "one a descriptor produced — or to a ServingModel holding a prepared one; a "
+                "bare accepted Metamodel names no model a connection can serve "
+                "(snapshot-class-backed-model-required)"
             )
-        # One static selection, prepared whole before this handle can serve: the
-        # read projection is what every read runs under, and the write
-        # projection's codec and planner are what every transaction writes
-        # through. Two independent connections over one model carry two
-        # generated editions; sharing one is explicit preparation's job.
-        selection = prepare_model(model, edition=f"static-{uuid4().hex}")
-        write = write_projection(selection)
-        self._selected = read_projection(selection)
-        self._codec: EntityRowCodec = write.codec
         self._port = port
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
@@ -366,25 +187,21 @@ class Database:
         self._lifecycle: InstalledLifecycle | None = installed_lifecycle(lifecycle_provider)
         # The one Read Scope this connection's eager reads run through — its
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
-        # read composition").
-        self._reads = standalone_read_scope(
-            lifecycle=self._lifecycle, selected=self._selected, port=port
-        )
-        # One Write Planner per prepared selection, reused across every
-        # `transact()` attempt (`m-unit-work`: the planner is constructed once
-        # per accepted Metamodel with its strategy adapters already wired).
-        self._planner: WritePlanner = write.planner
+        # read composition") — and the one demarcation its transactions run
+        # through. Both adopt from the same Serving Model.
+        self._reads = standalone_read_scope(lifecycle=self._lifecycle, serving=serving, port=port)
+        self._demarcation = Demarcation(port, self._clock, self._lifecycle, serving)
 
     @classmethod
     def connect(
         cls,
         adapter: DbPort,
-        model: DomainModel,
+        model: DomainModel | ServingModel,
         *,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> Database:
-        """Wire a concrete ``m-db-port`` adapter to the Domain Model it will serve.
+        """Wire a concrete ``m-db-port`` adapter to the model it will serve.
 
         The composition-root entry point (spec §8): only the root names a
         concrete adapter; everything above works against the port, and the
@@ -395,21 +212,25 @@ class Database:
         its own error reporter, so there is no second argument, and omitting it
         is what makes this connection's operations do no lifecycle work at all.
 
-        ``model`` is a Domain Model of either provenance, and WHICH provenance
-        decides capability rather than which constructor ran: a class-backed
-        model supports both public read interfaces, and a descriptor-backed one
-        supports Wire and refuses Typed materialization at the read call, before
-        any I/O. A value that is no Domain Model at all is refused here with
+        ``model`` is a :class:`ServingModel`, whose current selection every
+        execution of this handle adopts, or a Domain Model of either
+        provenance — the static shorthand, prepared once into a private Serving
+        Model. WHICH provenance decides capability rather than which
+        constructor ran: a class-backed model supports both public read
+        interfaces, and a descriptor-backed one supports Wire and refuses Typed
+        materialization at the read call, before any I/O. A value that is
+        neither is refused here with
         :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError`,
         before the adapter is inspected, and :meth:`__init__` refuses the same
         shape one level down. One model connects to any number of Databases, and
         one Entity Class participates in any number of models.
         """
-        if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, kept here so the developer entry point diagnoses in its own words
+        if not isinstance(model, DomainModel | ServingModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, kept here so the developer entry point diagnoses in its own words
             raise SnapshotConnectionError(
                 "connect() takes a Domain Model — one composed from Entity Classes, or one "
-                "a descriptor produced (snapshot-class-backed-model-required); a bare "
-                "accepted Metamodel is a form no application holds"
+                "a descriptor produced — or a ServingModel holding a prepared one "
+                "(snapshot-class-backed-model-required); a bare accepted Metamodel is a "
+                "form no application holds"
             )
         return cls(adapter, model, clock=clock, lifecycle_provider=lifecycle_provider)
 
@@ -535,329 +356,39 @@ class Database:
         withholds the callback value, and an inner failure dooms the whole
         transaction (rollback-only) even if caught.
 
-        A failure that ends the transaction reaches the caller as itself once the
-        rollback has completed — the callback's own exception, or the database's.
-        The exception is a rollback that did NOT complete: both live errors then
-        matter, so the caller sees :class:`TransactionRollbackError` carrying
-        each, and that outcome is never retried. A boundary that never began is
-        terminal for the same reason inverted: no attempt ran, so there is
-        nothing to re-execute.
+        Each outer attempt adopts the Serving Model's current selection before
+        its boundary is asked to begin and retains it through commit or
+        rollback; ``tx.edition`` names it. A retry adopts afresh, so one
+        invocation may run attempts under two editions, and a joining call
+        inherits the active attempt's selection without adopting.
+
+        An ordinary failure that ends the invocation reaches the caller as
+        :class:`~parallax.snapshot.handle.ExecutionFailure`, carrying the
+        edition of the attempt that failed last and, as its cause, the error
+        itself once the rollback has completed — the callback's own exception,
+        or the database's. A rollback that did NOT complete leaves both live
+        errors mattering, so the cause is then
+        :class:`~parallax.snapshot.handle.TransactionRollbackError` carrying
+        each, and that outcome is never retried. A boundary that never opened is
+        terminal for the same reason inverted: no callback ran, so there is
+        nothing to re-execute. The deterministic refusals above, a lifecycle
+        Provider that fails to open, and a control-flow or fatal exception keep
+        their own types and are never contextualized.
 
         The callback's value is what this answers, directly: an invocation
         retains no record of what it did, and what a Provider observed about it
         was delivered while it ran (`m-execution-lifecycle`).
         """
         refuse_reentry(self._lifecycle)
-        # Ahead of the join comparison below, because a level outside the
-        # vocabulary is the CALL's own defect: comparing it first would report a
-        # nonsense level as a disagreement with the active boundary, which reads
-        # as though naming it correctly would have been accepted.
-        requested = None if isolation is None else isolation_level(isolation)
-        active = active_unit_of_work()
-        if active is not None:
-            demarcation = active.companion
-            if not isinstance(demarcation, _Demarcation):
-                raise UnitOfWorkError(
-                    "a bare unit of work is active on this thread; db.transact can "
-                    "only join a transaction it opened"
-                )
-            if demarcation.owner is not self:
-                raise TransactionOwnershipError(
-                    "this Database did not open the active transaction, so it cannot "
-                    "join it (transaction-owner-mismatch); only the exact Database "
-                    "object that opened the boundary joins, however equivalent "
-                    "another handle's model, adapter, or clock may be"
-                )
-            _check_join_options(
-                demarcation.options,
-                retries=retries,
-                concurrency=concurrency,
-                retry_optimistic_conflicts=retry_optimistic_conflicts,
-                isolation=requested,
-            )
-            # The join path returns immediately and ignores these arguments in
-            # favor of the active transaction's own (m-unit-work); rollback-only
-            # foreclosure happens before the closure runs. The joined activity is
-            # a child of the attempt currently running rather than a root of its
-            # own, and it opens after the deterministic refusals above precisely
-            # because those refusals reach no transaction at all.
-            with demarcation.attempt.joined_invocation():
-                return run_unit_of_work(
-                    lambda _: fn(demarcation.tx),
-                    settings=active.settings,
-                    clock=active.clock,
-                    meta=active.meta,
-                    flush_executor=active.flush_executor,
-                    write_batch_opening=active.write_batch_opening,
-                    planner=self._planner,
-                    subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
-                )
-        options = _ResolvedOptions(
-            retries=retries if retries is not None else 10,
-            concurrency=concurrency if concurrency is not None else "optimistic",
-            retry_optimistic_conflicts=(
-                retry_optimistic_conflicts if retry_optimistic_conflicts is not None else False
-            ),
-            isolation=requested,
+        return self._demarcation.transact(
+            fn,
+            owner=self,
+            retries=retries,
+            concurrency=concurrency,
+            retry_optimistic_conflicts=retry_optimistic_conflicts,
+            isolation=isolation,
         )
-        # The last deterministic refusal, and it belongs here rather than at the
-        # retry loop's own entry: the loop runs inside the root opened below, so
-        # a bound rejected only there would have called the Provider and emitted
-        # this invocation's Started and Finished first (`m-execution-lifecycle`).
-        check_retry_bound(options.retries)
-
-        # The unit of work plans against the accepted model the ``Database`` already
-        # holds; a joining call inherits the active unit of work's own.
-        meta = self._selected.model.meta
-
-        extra_retriable = (
-            _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
-        )
-        # The Root Execution opens after the deterministic refusals above and
-        # spans every physical attempt below: a begin failure is an OUTCOME of
-        # this invocation rather than a refusal of it.
-        root = open_transaction_root(
-            self._lifecycle,
-            concurrency=options.concurrency,
-            retries=options.retries,
-            retry_optimistic_conflicts=options.retry_optimistic_conflicts,
-            isolation=options.isolation,
-            extra_retriable=extra_retriable,
-        )
-
-        with root as invocation:
-
-            def attempt() -> T:
-                # The scope brackets the port call rather than the callback: the
-                # attempt begins where the boundary did, inside `in_txn`, and
-                # ends with the outcome only the port can report.
-                with invocation.attempt() as physical:
-
-                    def in_txn(conn: DbPort) -> T:
-                        physical.begun()
-                        edge = _FlushEdge(conn, meta, physical)
-
-                        def body(uow: UnitOfWork) -> T:
-                            tx = Transaction(
-                                uow,
-                                conn,
-                                self._selected,
-                                self._codec,
-                                physical,
-                                self._lifecycle,
-                            )
-                            # Published for joining calls; visible only while
-                            # core's active-transaction binding is, so it needs
-                            # no cleanup.
-                            uow.companion = _Demarcation(
-                                tx=tx, options=options, owner=self, attempt=physical
-                            )
-                            return fn(tx)
-
-                        return run_unit_of_work(
-                            body,
-                            settings=TransactionSettings(concurrency=options.concurrency),
-                            clock=self._clock,
-                            meta=meta,
-                            flush_executor=edge.execute,
-                            write_batch_opening=edge.opening,
-                            # The injected Write Planner — `parallax.snapshot.handle`
-                            # is the sole module cleared to import both `batch_write`
-                            # and `m-unit-work`, so it alone builds the strategy
-                            # adapters `build_write_planner` wires. The conformance
-                            # compile lane calls the SAME factory, so the two lanes
-                            # plan through one deterministic computation.
-                            planner=self._planner,
-                            subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
-                        )
-
-                    return _attempted(
-                        self._port.transaction(in_txn, isolation=options.isolation), physical
-                    )
-
-            try:
-                return run_with_retry(
-                    attempt, retries=options.retries, extra_retriable=extra_retriable
-                )
-            except _UnattemptedBoundary as unattempted:
-                # Re-raised here rather than at the port, so the loop sees a type
-                # it does not retry. `from` its own cause keeps the carrier out
-                # of the chain the caller reads, leaving exactly the error the
-                # port made.
-                raise unattempted.error from unattempted.error.__cause__
-
-
-def _attempted[T](outcome: TransactionOutcome[T], attempt: TransactionAttemptActivity) -> T:
-    """What one physical attempt answers, from the boundary outcome the port reported.
-
-    The port reports what happened; this decides what a caller sees, which is the
-    only place the two can be reconciled — the port cannot know that a rollback
-    failure must never be retried while a rolled-back deadlock must be, and the
-    retry loop cannot know which phase failed.
-
-    A rolled-back transaction propagates its triggering error unchanged, so what
-    a caller catches is what their own callback or the database raised. Only a
-    failed rollback substitutes an error of its own, because then neither live
-    error tells the whole story.
-
-    It is also where the attempt activity learns its outcome, for the same
-    reason: the port's report is the only account of what the boundary did, and
-    a begin failure is the one outcome that finishes no attempt because none ran.
-    """
-    match outcome:
-        case Committed(value):
-            attempt.committed()
-            return value
-        case BeginFailed(error):
-            raise _UnattemptedBoundary(error) from error
-        case RolledBack(trigger):
-            attempt.rolled_back(trigger)
-            raise trigger.error
-        case RollbackFailed(trigger, rollback_error):
-            attempt.rollback_failed(trigger, rollback_error)
-            triggering_error = trigger.error
-            if isinstance(triggering_error, Exception):
-                raise TransactionRollbackError(triggering_error, rollback_error) from rollback_error
-            # A control-flow or fatal trigger stays primary: an interrupt or a
-            # cancellation is not an ordinary failure to be wrapped in one.
-            raise triggering_error from rollback_error
-
-
-def _optimistic_conflict_retriable(exc: BaseException) -> bool:
-    """The ``retry_optimistic_conflicts`` opt-in's own retriability verdict
-    (`m-opt-lock` "Retry contract"; `m-auto-retry.md` "Which failures are
-    retriable"; ADR 0008 / `python.md` §5 L622-624) — injected into
-    :func:`~parallax.core.auto_retry.run_with_retry` as its
-    ``extra_retriable`` extension ONLY when the resolved option is set
-    (:meth:`Database.transact`, above).
-
-    The retry loop already recognizes the canonical conflict; what stays
-    caller policy is whether a recognized conflict is RETRIED, which is what
-    this predicate answers. It covers the SAME two raise shapes
-    :func:`~parallax.core.auto_retry.retriable_failure` already distinguishes
-    for a transient database failure: the conflict itself, or the rollback-only
-    refusal whose ``__cause__`` preserves it (the JOIN case — an inner joined
-    scope's own conflict marks the root rollback-only, and the outermost retry
-    loop still applies per the original failure's category, spec §5). The
-    remaining Write Effect Errors are never named here: a Stale Write, a Missing
-    Target, and a Cardinality Corruption stay outside the retriable set
-    unconditionally, opt-in or not.
-    """
-    if isinstance(exc, OptimisticLockConflictError):
-        return True
-    if isinstance(exc, RollbackOnlyError):
-        return isinstance(exc.__cause__, OptimisticLockConflictError)
-    return False
 
 
 # The spec §8 module-level spelling of the composition-root entry point.
 connect = Database.connect
-
-
-def _check_join_options(
-    active: _ResolvedOptions,
-    *,
-    retries: int | None,
-    concurrency: Concurrency | None,
-    retry_optimistic_conflicts: bool | None,
-    isolation: IsolationLevel | None,
-) -> None:
-    """Refuse a joining call's explicit option that conflicts with the boundary.
-
-    ``isolation`` joins on the same terms as the other three, and the sentinel
-    carries one more meaning there: a boundary opened without one is active at
-    ``None``, so a joining call NAMING a level conflicts with it. That is the
-    honest answer rather than a strict one — the transaction is already open, and
-    an isolation is only a property of a boundary at the moment it opens.
-    """
-    _refuse_conflict("retries", retries, active.retries)
-    _refuse_conflict("concurrency", concurrency, active.concurrency)
-    _refuse_conflict(
-        "retry_optimistic_conflicts", retry_optimistic_conflicts, active.retry_optimistic_conflicts
-    )
-    _refuse_conflict("isolation", isolation, active.isolation)
-
-
-def _refuse_conflict(name: str, explicit: object | None, active_value: object) -> None:
-    if explicit is not None and explicit != active_value:
-        raise TransactionOptionConflictError(
-            f"cannot join the active transaction with {name}={explicit!r}: the boundary "
-            f"was opened with {name}={active_value!r} (a joining call may not "
-            "re-negotiate; omit the option to inherit)"
-        )
-
-
-class _FlushEdge:
-    """One attempt's flush edge: the Write Batch each flush runs inside, and the
-    statements that flush's plan lowers to.
-
-    The two are one object because they are one batch. The unit of work
-    announces a flush before planning it and hands the finished plan over
-    afterwards, so nothing passed through either call alone could carry the
-    activity from the first to the second — and one flush is ONE Write Batch
-    (`m-execution-lifecycle`) however many statements the plan lowers to, with
-    each statement one Database Call child of it. A flush never nests: the
-    executor reaches the port and nothing else, so the batch a call runs under is
-    always the one most recently opened.
-    """
-
-    __slots__ = ("_attempt", "_batch", "_conn", "_model")
-
-    def __init__(
-        self,
-        conn: DbPort,
-        model: Metamodel,
-        attempt: TransactionAttemptActivity,
-    ) -> None:
-        self._conn = conn
-        self._model = model
-        self._attempt = attempt
-        self._batch: WriteBatchActivity = INERT
-
-    def opening(self, trigger: WriteBatchTrigger) -> WriteBatchActivity:
-        """The scope one flush of this attempt's buffer runs inside.
-
-        The unit of work enters it before planning and leaves it when the flush
-        is over, so a planning refusal is a failed batch rather than work outside
-        every batch, and a batch planning reduces to no DML at all still
-        completes.
-        """
-        batch = self._attempt.write_batch(trigger)
-        self._batch = batch
-        return batch
-
-    def execute(self, plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
-        """Lower each planned step, execute every statement in order, and hand
-        each result back to the unit of work to interpret.
-
-        The single write-lowering seam (:func:`stream_lowered`) run on the
-        transaction's own connection, inside the still-open ``port.transaction``
-        scope — so an abort rolls back force-flushed writes with everything else.
-        Every step lowers to exactly one statement, and a temporal mutation's
-        close precedes the rows it chains, so a failure on the close aborts
-        BEFORE those rows ever execute.
-
-        This performs NO classification of its own: the injected Write Planner
-        already spent the concurrency mode while settling each step, and this
-        reports only the driver's count to
-        :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
-        authoritative reading of the step's Affected Rows Policy (ADR 0048).
-        That enforcement runs inside its own attribution bracket, because a
-        shortfall is judged AFTER the call it judges has already completed: the
-        bracket is what lets the batch's failure name that completed call
-        instead of the enforcement being read as a failure of the batch itself.
-        """
-        # The trigger is the batch's, and the batch this runs inside already
-        # carries it; taking it again here would be a second spelling of one
-        # fact.
-        del trigger
-        dialect = self._conn.dialect
-        batch = self._batch
-        for step, statement in stream_lowered(plan, self._model, dialect):
-            with batch.database_call(statement, "WRITE", step.entity) as call:
-                affected = self._conn.execute_write(
-                    dialect.to_driver_sql(statement.sql), list(statement.binds)
-                )
-                call.write_completed(affected)
-            with batch.enforcing(call):
-                enforce_affected_rows(step, affected)
