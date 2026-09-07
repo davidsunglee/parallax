@@ -1625,8 +1625,9 @@ exposes neither the selected read model nor a class index. It is not
 valid query whose execution feature is explicitly deferred.
 
 After that narrowing, Snapshot prepares the model once (§2 *Model preparation
-and the Serving Model*) and the Database keeps the two projections of that one
-selection, which carry no identity. The read projection is the private Selected
+and the Serving Model*) and the Database keeps that one selection's read
+projection together with the codec and planner out of its write projection;
+none of them carries an identity. The read projection is the private Selected
 Read Model: the accepted Metamodel and the exact-model layout catalog every read
 converts its rows against as ONE composed value, so a read lane resolves and
 converts against one model rather than against two references that could name
@@ -1737,12 +1738,12 @@ bag at the model: read materialization crosses graph construction alone, write
 preparation crosses the codec alone, and the selection that holds both holds
 them as two projections.
 
-Both seams construct lazily, and the reason is dependency direction rather than
-cost. Each capability module sits **above** the Domain Model module in §7's
-import DAG, so `DomainModel.__init__` cannot construct either without inverting
-an edge the generated import contracts reject; the seam function is therefore
-the only place that can build one. The guard is not a performance hedge and
-removing it is not an optimization.
+Neither is constructed by the Domain Model, and the reason is dependency
+direction rather than cost. Each capability module sits **above** the Domain
+Model module in §7's import DAG, so `DomainModel.__init__` cannot construct
+either without inverting an edge the generated import contracts reject;
+`prepare_model`, which sits above both, is where each is built. The constraint
+is structural rather than a performance hedge.
 
 `parallax.descriptor` publicly exports the ingestion base
 `DescriptorError(ValueError)` and its `DescriptorSyntaxError`,
@@ -2174,8 +2175,9 @@ serialize cross-process DDL or undo already-applied statements.
 **Static shorthand.** `Database.connect(adapter, model)` keeps its existing
 positional and keyword arguments. A Domain Model is prepared once, at connect,
 under a generated opaque edition that stays fixed for that connection's life,
-and the connection keeps that one selection's projections for every read and
-write it serves. Independent static connections may have distinct generated
+and the connection keeps that one selection's read projection together with the
+codec and planner out of its write projection, for every read and write it
+serves. Independent static connections may have distinct generated
 editions for the same Domain Model; explicit preparation and a shared
 `ServingModel` give callers control of shared edition identity, and connecting
 over one is the deferred half in §9.

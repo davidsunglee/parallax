@@ -22,11 +22,12 @@ by construction rather than by check.
 
 Preparation itself — :func:`~parallax.snapshot.handle._database.prepare_model`
 — lives in the composition root, because building a Write Planner reaches the
-SQL-lowering group this scope may not; this module owns the one constructor it
-calls. A :class:`ServingModel` then holds the current selection for executions
-to adopt and replaces it by identity compare-and-replace under one lock, so a
-reader observes a complete selection or another complete one and never a
-partial state, and a stale publisher is refused rather than reordered.
+SQL-lowering group this scope may not; this module owns :func:`select_model`,
+the one builder that root calls and the only way a selection comes into being.
+A :class:`ServingModel` then holds the current selection and replaces it by
+identity compare-and-replace under one lock, so a reader observes a complete
+selection or another complete one and never a partial state, and a stale
+publisher is refused rather than reordered.
 
 Names crossing a module boundary are spelled bare; privacy is carried by this
 MODULE's leading underscore and by the package's frozen ``__all__``.
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
+from typing import NoReturn
 
 from parallax.core.entity import DomainModel, EntityGraphConstruction, EntityRowCodec
 from parallax.core.entity._layout import CatalogedModel
@@ -49,6 +51,7 @@ __all__ = [
     "ServingModel",
     "check_edition",
     "read_projection",
+    "select_model",
     "write_projection",
 ]
 
@@ -109,8 +112,10 @@ class SelectedWriteModel:
 class ModelSelection:
     """One Domain Model prepared under one Model Edition, complete.
 
-    Opaque by construction: ``prepare_model`` answers a complete selection or
-    raises, and no partially prepared value exists. ``model`` is the exact
+    Opaque by construction: :func:`select_model` is the only builder there is,
+    and it runs behind ``prepare_model``, which answers a complete selection or
+    raises. Calling the class refuses, so no caller can name a constructor and
+    no partially prepared or mismatched value exists. ``model`` is the exact
     original Domain Model and ``edition`` the token it was prepared under; the
     projections behind them are reached through :func:`read_projection` and
     :func:`write_projection`. Equality is identity, which is what a Serving
@@ -119,17 +124,10 @@ class ModelSelection:
 
     __slots__ = ("_edition", "_model", "_read", "_write")
 
-    def __init__(
-        self,
-        edition: str,
-        model: DomainModel,
-        read: SelectedReadModel,
-        write: SelectedWriteModel,
-    ) -> None:
-        self._edition = check_edition(edition)
-        self._model = model
-        self._read = read
-        self._write = write
+    def __new__(cls, *_args: object, **_kwargs: object) -> NoReturn:
+        raise TypeError(
+            "a ModelSelection is prepared rather than constructed: prepare_model answers one"
+        )
 
     def __init_subclass__(cls) -> None:
         raise TypeError("ModelSelection is the prepared form itself and admits no subclass")
@@ -146,6 +144,37 @@ class ModelSelection:
 
     def __repr__(self) -> str:
         return f"ModelSelection(edition={self._edition!r})"
+
+
+def select_model(
+    model: DomainModel,
+    /,
+    *,
+    edition: str,
+    catalog: CatalogedModel,
+    construction: EntityGraphConstruction | None,
+    codec: EntityRowCodec,
+    planner: WritePlanner,
+) -> ModelSelection:
+    """The complete selection ``model`` prepares into under ``edition``.
+
+    The one builder of a Model Selection, and the reason the class refuses to
+    be called: a caller cannot assemble a selection from parts, so every
+    selection in existence carries products derived from the ONE ``catalog``
+    handed here. That is what makes both projections carry the same edition and
+    share the exact same cataloged model by construction rather than by check.
+    """
+    checked = check_edition(edition)
+    selection = object.__new__(ModelSelection)
+    selection._edition = checked  # pyright: ignore[reportPrivateUsage] - the module's own builder filling the value it just allocated
+    selection._model = model  # pyright: ignore[reportPrivateUsage] - the module's own builder filling the value it just allocated
+    selection._read = SelectedReadModel(  # pyright: ignore[reportPrivateUsage] - the module's own builder filling the value it just allocated
+        edition=checked, model=catalog, construction=construction
+    )
+    selection._write = SelectedWriteModel(  # pyright: ignore[reportPrivateUsage] - the module's own builder filling the value it just allocated
+        edition=checked, model=catalog, codec=codec, planner=planner
+    )
+    return selection
 
 
 def read_projection(selection: ModelSelection, /) -> SelectedReadModel:
@@ -178,19 +207,18 @@ class PublicationConflictError(RuntimeError):
 
 
 class ServingModel:
-    """The one holder of the Model Selection new executions adopt.
+    """The one holder of a current Model Selection.
 
     Always holds a complete selection, from the initial one on. ``current()``
     is one reference read — no lock, no callback, no I/O, no preparation — so
-    an adopting execution never waits on a publisher. ``publish`` compares the
-    held selection with ``expected`` by identity and replaces it, as one step
-    under one lock, so two publishers cannot both succeed against the same
+    a reader never waits on a publisher. ``publish`` compares the held
+    selection with ``expected`` by identity and replaces it, as one step under
+    one lock, so two publishers cannot both succeed against the same
     expectation and a reader observes either selection whole.
 
     A static model is this same holder with no later publication. It is a
     separate object rather than a verb on a Database so that holding a handle
-    confers no authority to change the model it serves; two handles connected
-    over one Serving Model flip together.
+    confers no authority to change the model it serves.
     """
 
     __slots__ = ("_lock", "_selection")

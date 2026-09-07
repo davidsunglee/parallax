@@ -6,8 +6,8 @@ composition-root entry point — application code constructs a concrete adapter
 and calls ``parallax.snapshot.connect(adapter, model)``), the preparation and
 publication surface beside it — :func:`prepare_model`, which prepares one
 Domain Model under one Model Edition into an opaque, complete
-:class:`ModelSelection`; :class:`ServingModel`, the single concrete holder of
-the selection executions adopt; and :class:`PublicationConflictError`, its
+:class:`ModelSelection`; :class:`ServingModel`, the single concrete holder of a
+current selection; and :class:`PublicationConflictError`, its
 refusal of a stale publication — :class:`Snapshot`
 (``Snapshot[T]``) with :class:`CheckedSnapshot` (``CheckedSnapshot[T]``), its
 checked view, the in-band invalid-result vocabulary a classified root publishes

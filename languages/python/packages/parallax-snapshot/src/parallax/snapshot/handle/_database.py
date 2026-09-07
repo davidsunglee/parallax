@@ -24,11 +24,13 @@ classification branch (``_optimistic_conflict_retriable``) is composed here too.
 
 Preparation lives here rather than beside the selection it builds because a
 Write Planner's strategy adapters reach the SQL-lowering group, which the sealed
-:mod:`~parallax.snapshot.handle._publication` scope may not; that scope owns the
-one :class:`~parallax.snapshot.handle._publication.ModelSelection` constructor,
-and this module is its one caller. A ``Database`` connected to a bare Domain
-Model prepares it once under a generated edition and keeps the projections of
-that one selection for its life.
+:mod:`~parallax.snapshot.handle._publication` scope may not; that scope owns
+:func:`~parallax.snapshot.handle._publication.select_model`, the one builder of
+a :class:`~parallax.snapshot.handle._publication.ModelSelection`, and this
+module is its one caller. A ``Database`` connected to a bare Domain Model
+prepares it once under a generated edition and keeps, for its life, that
+selection's read projection together with the codec and planner out of its
+write projection.
 
 This is the TOP of the package's internal graph: it imports
 :mod:`parallax.snapshot.handle._read`, :mod:`~parallax.snapshot.handle._transaction`,
@@ -111,10 +113,9 @@ from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._publication import (
     ModelSelection,
-    SelectedReadModel,
-    SelectedWriteModel,
     check_edition,
     read_projection,
+    select_model,
     write_projection,
 )
 from parallax.snapshot.handle._read import RowsResult, Snapshot
@@ -289,21 +290,18 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
             f"descriptor produced — not {model!r}"
         )
     catalog = CatalogedModel(model_of(model))
-    codec = EntityRowCodec(catalog.meta)
     classes = class_index(model)
-    construction = (
-        None if classes is None else EntityGraphConstruction(catalog.meta, classes, catalog.layouts)
-    )
-    return ModelSelection(
-        edition,
+    return select_model(
         model,
-        SelectedReadModel(edition=edition, model=catalog, construction=construction),
-        SelectedWriteModel(
-            edition=edition,
-            model=catalog,
-            codec=codec,
-            planner=build_write_planner(catalog.meta),
+        edition=edition,
+        catalog=catalog,
+        construction=(
+            None
+            if classes is None
+            else EntityGraphConstruction(catalog.meta, classes, catalog.layouts)
         ),
+        codec=EntityRowCodec(catalog.meta),
+        planner=build_write_planner(catalog.meta),
     )
 
 
@@ -332,8 +330,9 @@ class Database:
 
         The model is prepared once, here, under a generated opaque edition that
         stays fixed for this connection's life, and the connection keeps that
-        one selection's projections: every read and every write it serves runs
-        against products derived whole at connect. Provenance decides capability
+        selection's read projection together with the codec and planner out of
+        its write projection: every read and every write it serves runs against
+        products derived whole at connect. Provenance decides capability
         rather than which constructor ran: a descriptor-backed model composes no
         Entity Class, so it serves Wire and the write lanes — which name
         Entities rather than classes — and refuses every modeled read at the
