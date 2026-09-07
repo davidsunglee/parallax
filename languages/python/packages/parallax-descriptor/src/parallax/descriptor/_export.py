@@ -2,12 +2,12 @@
 
 The inverse of ingestion: an accepted :class:`~parallax.core.metamodel.Metamodel`
 becomes the canonical minimal descriptor document — authored facts only, with
-every re-derivable default omitted, so re-importing it forms the model it came
-from. Export reads only the representation-independent Metadata (identities,
-closed value vocabularies, storage locations) and renews no validation: an
-accepted model is exportable by contract, so the only way export fails is an
-implementation defect, which surfaces as :class:`DescriptorExportError` rather
-than a :class:`DescriptorError`.
+every re-derivable default omitted, so re-importing it and exporting again
+yields that same document. Export reads only the representation-independent
+Metadata (identities, closed value vocabularies, storage locations) and renews
+no validation: an accepted model is exportable by contract, so the only way
+export fails is an implementation defect, which surfaces as
+:class:`DescriptorExportError` rather than a :class:`DescriptorError`.
 
 Every optional key whose value equals the fact ingestion re-derives is dropped —
 a column that matches its member's portable derived default, a Read Write
@@ -92,8 +92,8 @@ def export_document(metamodel: Metamodel) -> dict[str, object]:
     """The canonical minimal descriptor document for an accepted ``metamodel``.
 
     Authored facts only, in the accepted model's enumeration order: every
-    re-derivable default is omitted, so a canonical document re-imports to the
-    model that produced it. Deterministic: repeated exports of one accepted
+    re-derivable default is omitted, so a canonical document re-imports and
+    re-exports to itself. Deterministic: repeated exports of one accepted
     Metamodel are equal. Returns the complete document or, on an implementation
     defect, raises :class:`DescriptorExportError` with no partial output.
     """

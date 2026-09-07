@@ -52,18 +52,32 @@ def _entities(document: dict[str, object]) -> list[dict[str, object]]:
     return cast("list[dict[str, object]]", document["entities"])
 
 
+def _identity(entity: dict[str, object]) -> tuple[object, object]:
+    return (entity.get("namespace"), entity["name"])
+
+
 def _by_identity(document: dict[str, object]) -> dict[tuple[object, object], dict[str, object]]:
-    """A document's entities keyed by ``(namespace, name)``.
+    """A document's entities keyed by ``(namespace, name)``."""
+    return {_identity(entity): entity for entity in _entities(document)}
+
+
+def _order_free(document: dict[str, object]) -> dict[str, object]:
+    """The whole document with only its entity sequence made orderless.
 
     An accepted Metamodel enumerates in canonical identity order while a corpus
-    document preserves its authored order, so entities are compared as an
-    identity-keyed mapping rather than positionally.
+    document preserves its authored order, so entity order is left to the test
+    that owns it. Everything else — the root key set, and each entity's own
+    contents — compares exactly as written.
     """
-    return {(entity.get("namespace"), entity["name"]): entity for entity in _entities(document)}
+    entities = document.get("entities")
+    if entities is None:
+        return dict(document)
+    keyed = {_identity(entity): entity for entity in cast("list[dict[str, object]]", entities)}
+    return dict(document) | {"entities": keyed}
 
 
-def _entity_names(document: dict[str, object]) -> list[object]:
-    return [entity["name"] for entity in _entities(document)]
+def _entity_identities(document: dict[str, object]) -> list[tuple[object, object]]:
+    return [_identity(entity) for entity in _entities(document)]
 
 
 @pytest.mark.parametrize("path", _corpus_paths(), ids=lambda path: path.stem)
@@ -72,18 +86,18 @@ def test_export_reproduces_the_authored_corpus_document(path: Path) -> None:
     assert isinstance(raw, dict)
     document = cast("dict[str, object]", raw)
     exported = export_document(models.accepted_model(document))
-    assert ("entity" in exported) == ("entity" in document)
-    assert _by_identity(exported) == _by_identity(document)
+    assert _order_free(exported) == _order_free(document)
 
 
 @pytest.mark.parametrize("path", _corpus_paths(), ids=lambda path: path.stem)
 def test_export_enumerates_entities_in_the_accepted_models_order(path: Path) -> None:
     # The order the corpus file cannot answer for: it keeps its authoring order,
     # while the accepted model enumerates canonically. The model is the oracle
-    # here, and it is not the exporter's to choose.
+    # here, and it is not the exporter's to choose. Entities carry namespace-
+    # qualified identities, so two namespaces' same local name are two positions.
     model = models.load_model(path)
-    assert _entity_names(export_document(model)) == [
-        entity.identity.name for entity in model.entities
+    assert _entity_identities(export_document(model)) == [
+        (entity.identity.namespace, entity.identity.name) for entity in model.entities
     ]
 
 
