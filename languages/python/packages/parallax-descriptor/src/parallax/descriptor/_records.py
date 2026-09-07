@@ -7,12 +7,9 @@ effective ``temporal`` classification, are computed accessors, never re-authored
 fields. Physical table shape is not among them: these records stay the frontend
 input a model forms from, and ``m-storage-layout`` composes the physical answer.
 Within ``m-descriptor``, they are the substrate for descriptor operations; no
-other behavioural scope reads them directly. The entity frontend's own adapter
-and the conformance engine's
-raw-descriptor seams answer structural family questions here — through
-:func:`declaring_entity`, :func:`family_root_name`, and
-:func:`concrete_descendant_names` — for a document that has not formed, or
-never will.
+other behavioural scope reads them directly. The raw-descriptor family walk
+answers structural family questions here — through :func:`declaring_entity` and
+:func:`family_root_name` — for a document that has not formed, or never will.
 """
 
 from __future__ import annotations
@@ -55,7 +52,6 @@ __all__ = [
     "Unset",
     "ValueObject",
     "ValueObjectAttribute",
-    "concrete_descendant_names",
     "declaring_entity",
     "effective_as_of_axes",
     "effective_temporal",
@@ -445,45 +441,6 @@ def family_root_name(metamodel: Metamodel, entity: Entity) -> str | None:
     if resolved.inheritance is None or resolved.inheritance.role != "root":
         return None
     return resolved.canonical_name
-
-
-def _role_of(entity: Entity) -> InheritanceRole | None:
-    """``entity``'s inheritance role, or ``None`` if it does not participate."""
-    return None if entity.inheritance is None else entity.inheritance.role
-
-
-def concrete_descendant_names(metamodel: Metamodel, position: str) -> frozenset[str]:
-    """Every concrete-subtype name at or below the family position ``position``.
-
-    The record-level spelling of a position's effective concrete-subtype set
-    (`m-inheritance` "every concrete node at or below the position"), so a
-    concrete node that is itself a parent contributes both itself and its
-    concrete descendants. Walks the ``parent`` links a descriptor already
-    carries and terminates on a malformed (cyclic) family rather than raising —
-    rejecting one is the raw-descriptor validator's authority, not this walk's.
-    """
-    by_name: dict[str, Entity] = {}
-    children: dict[str, list[str]] = {}
-    for candidate in metamodel.entities:
-        inheritance = candidate.inheritance
-        if inheritance is None:
-            continue
-        by_name[candidate.name] = candidate
-        if inheritance.parent is not None:
-            children.setdefault(inheritance.parent, []).append(candidate.name)
-    found: set[str] = set()
-    seen: set[str] = set()
-    pending = [position]
-    while pending:
-        current = pending.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        candidate = by_name.get(current)
-        if candidate is not None and _role_of(candidate) == "concrete-subtype":
-            found.add(current)
-        pending.extend(children.get(current, ()))
-    return frozenset(found)
 
 
 def effective_as_of_axes(metamodel: Metamodel, entity: Entity) -> tuple[AsOfAxisMetadata, ...]:

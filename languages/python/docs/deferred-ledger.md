@@ -30,24 +30,22 @@ Entry numbering is continuous and never reused. The next new number is **D-94**.
 
 ## Entries
 
-### D-53 — Three off-path bare-name reductions remain, each with a reproduced defect and a non-determinate repair
+### D-53 — One off-path bare-name reduction remains, with a reproduced defect and a non-determinate repair
 
 *Low — off every production path, recorded so the sweep is not re-run from
-scratch.* Relates to `parallax.descriptor._records.concrete_descendant_names`,
-`parallax.conformance.engine`.
+scratch.* Relates to `parallax.conformance.engine`.
 
 **What.** One defect class — an exact `EntityIdentity` reduced to a bare local
 name — was chased through five call sites and fixed at all five. Two further
-sites of the same class were found, verified off-path, and left:
+sites of the same class were found and verified off-path; one of them remains:
 
-- `_records.concrete_descendant_names` keys `by_name` on `candidate.name` and
-  indexes children by the raw authored `parent` string, so two same-local-name
-  entities overwrite each other and a model mixing qualified and relative parent
-  spellings splits the child index. It has **no production caller at all** — only
-  its own `__all__`, the module docstring, and a unit suite.
 - The conformance engine's default-target convention returns bare names
   (`_rejected_target`, `_conflict_target`), which feed `meta.entity(...)` and
   would raise `KeyError` on a duplicated local name.
+
+The other site, `parallax.descriptor._records.concrete_descendant_names`, was an
+unused export with no production caller and has been deleted rather than
+repaired.
 
 The pre-formation family walk carried a third instance of the same defect and no
 longer does: `parallax.descriptor._family` keys every walk on
@@ -55,11 +53,9 @@ longer does: `parallax.descriptor._family` keys every walk on
 `_records.parent_identity`, with the two namespace shapes pinned by
 `tests/unit/test_descriptor_family.py`.
 
-**Why it is deferred rather than fixed.** Each repair changes an exported
-contract with no caller to validate it against. `concrete_descendant_names`'s fix
-makes both `position` and the returned names canonical, and the prior question is
-whether an unused export should exist at all. Both are unwitnessed: no `rejected`
-corpus model declares a namespace.
+**Why it is deferred rather than fixed.** The repair changes an exported
+contract with no caller to validate it against, and it is unwitnessed: no
+`rejected` corpus model declares a namespace.
 
 ### D-56 — A table-per-concrete-subtype union-all read cannot run inside a transaction whose target resolves to the Locking strategy
 
