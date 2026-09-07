@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -140,6 +141,197 @@ def test_parse_rejects_an_empty_or_ambiguous_source() -> None:
         parse_document({})
     with pytest.raises(DescriptorError, match="exactly one"):
         parse_document({"entity": {}, "entities": []})
+
+
+_KEY: dict[str, object] = {"name": "id", "type": "int64", "primaryKey": True}
+
+
+def _entity_with(**properties: object) -> dict[str, Any]:
+    return {"entity": {"name": "Bad", "table": "bad", "attributes": [_KEY], **properties}}
+
+
+def _attributed(attribute: dict[str, object]) -> dict[str, Any]:
+    return {"entity": {"name": "Bad", "table": "bad", "attributes": [attribute]}}
+
+
+def _layout(layout: object) -> dict[str, Any]:
+    return _entity_with(layout=layout)
+
+
+def _ordered(term: dict[str, object]) -> dict[str, Any]:
+    return {
+        "entities": [
+            {
+                "name": "A",
+                "attributes": [_KEY],
+                "relationships": [
+                    {
+                        "name": "rs",
+                        "cardinality": "one-to-many",
+                        "join": {"source": "id", "target": {"entity": "B", "attribute": "aId"}},
+                        "orderBy": [term],
+                    }
+                ],
+            },
+            {
+                "name": "B",
+                "attributes": [{"name": "id", "type": "int64"}, {"name": "aId", "type": "int64"}],
+            },
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        ({"entity": "not a mapping"}, "entity: expected a mapping, got str"),
+        ({"entities": "not a list"}, "entities: expected a list, got str"),
+        (_entity_with(namespace=123), "entity Bad: `namespace` must be a string"),
+        (_entity_with(persistence=True), "entity Bad: `persistence` must be a string"),
+        (_entity_with(temporality=True), "entity Bad: `temporality` must be a string"),
+        (
+            _entity_with(temporality="wallClock"),
+            "entity Bad: `temporality` must be one of "
+            "['bitemporal', 'nontemporal', 'transaction-time'], got 'wallClock'",
+        ),
+        (_entity_with(temporal="bitemporal"), "entity: unknown properties: `temporal`"),
+        (
+            _entity_with(
+                asOfAxes=[
+                    {
+                        "dimension": "transaction-time",
+                        "startAttribute": "txStart",
+                        "endAttribute": "txEnd",
+                    }
+                ]
+            ),
+            "entity: unknown properties: `asOfAxes`",
+        ),
+        (_layout({"columns": {}}), "entity Bad.layout: unknown properties: `columns`"),
+        (_layout({}), "entity Bad.layout: `document` is required"),
+        (
+            _layout({"document": {"column": 1}}),
+            "entity Bad.layout.document: `column` must be a string",
+        ),
+        (
+            _layout({"document": {"column": "payload", "format": "bson"}}),
+            "entity Bad.layout.document: unknown properties: `format`",
+        ),
+        (
+            _attributed({"name": "id", "type": "int64", "column": 7}),
+            "entity Bad.attributes.id: `column` must be a string",
+        ),
+        (
+            _attributed({"name": "id", "type": "int64", "nullable": "yes"}),
+            "entity Bad.attributes.id: `nullable` must be a boolean",
+        ),
+        (
+            _attributed({"name": "id", "type": "int64", "maxLength": "x"}),
+            "entity Bad.attributes.id: `maxLength` must be an integer",
+        ),
+        (
+            _attributed({"name": "id", "type": "int64", "pkGenerator": "none"}),
+            "entity Bad.attributes: unknown properties: `pkGenerator`",
+        ),
+        (
+            _attributed({"name": "id", "type": "int64", "primaryKey": True, "default": 1}),
+            "entity Bad.attributes: unknown properties: `default`",
+        ),
+        (
+            _attributed({"name": "value", "type": "int64", "pkGeneration": "max"}),
+            "entity Bad.attributes.value: `pkGeneration` requires `primaryKey: true`",
+        ),
+        (
+            _attributed(
+                {"name": "id", "type": "int64", "primaryKey": True, "pkGeneration": "wild"}
+            ),
+            "entity Bad.attributes.id: `pkGeneration` must be one of "
+            "['application-assigned', 'max', 'sequence'], got 'wild'",
+        ),
+        (
+            _attributed(
+                {
+                    "name": "id",
+                    "type": "int64",
+                    "primaryKey": True,
+                    "pkGeneration": {"strategy": "max"},
+                }
+            ),
+            "entity Bad.attributes.id: object pkGeneration requires `strategy: sequence`",
+        ),
+        (
+            _entity_with(indices=[{"name": "i", "attributes": "id"}]),
+            "entity Bad.indices.i: expected a list, got str",
+        ),
+        (
+            _entity_with(valueObjects=[{"name": "tags", "multiplicity": 2}]),
+            "entity Bad.valueObjects.tags: `multiplicity` must be a string",
+        ),
+        (
+            _entity_with(valueObjects=[{"name": "vo", "column": "vo", "mapping": "xml"}]),
+            "entity Bad.valueObjects: unknown properties: `mapping`",
+        ),
+        (
+            _entity_with(
+                relationships=[
+                    {"name": "peer", "reverseOf": "B.other", "cardinality": "one-to-one"}
+                ]
+            ),
+            "entity Bad.relationships.peer: reverse relationship repeats defining "
+            "properties: `cardinality`",
+        ),
+        (
+            _entity_with(relationships=[{"name": "peer", "reverseOf": "other"}]),
+            "entity Bad.relationships.peer: `reverseOf` must name Entity.relationship",
+        ),
+        (
+            _ordered({"attribute": "id", "direction": "sideways"}),
+            "entity A.relationships.rs.orderBy: `direction` must be 'asc' or 'desc'",
+        ),
+        (
+            _ordered({"attribute": "id", "nulls": "middle"}),
+            "entity A.relationships.rs.orderBy: `nulls` must be 'first' or 'last'",
+        ),
+    ],
+    ids=[
+        "entity-not-a-mapping",
+        "entities-not-a-list",
+        "namespace-not-a-string",
+        "persistence-not-a-string",
+        "temporality-not-a-string",
+        "temporality-outside-its-vocabulary",
+        "retired-temporal-spelling",
+        "derived-as-of-axes-authored",
+        "layout-columns-has-no-spelling",
+        "layout-document-required",
+        "layout-column-not-a-string",
+        "layout-document-is-closed",
+        "attribute-column-not-a-string",
+        "attribute-nullable-not-a-boolean",
+        "attribute-max-length-not-an-integer",
+        "attribute-retired-pk-generator-key",
+        "attribute-authored-default",
+        "pk-generation-without-a-primary-key",
+        "pk-generation-outside-its-vocabulary",
+        "pk-generation-object-without-sequence",
+        "index-attributes-not-a-list",
+        "value-object-multiplicity-not-a-string",
+        "retired-value-object-mapping",
+        "reverse-repeats-defining-properties",
+        "reverse-of-is-unqualified",
+        "order-by-direction-outside-its-vocabulary",
+        "order-by-nulls-outside-its-vocabulary",
+    ],
+)
+def test_parse_rejects_a_shape_defect_naming_where_it_sits(
+    document: dict[str, Any], message: str
+) -> None:
+    # These branches are shipped behavior at the parse seam, not only behind the
+    # doors: `validate_inheritance_families` parses shape alone, with no schema
+    # phase in front of it, so a malformed document reaching that door is refused
+    # here and nowhere earlier.
+    with pytest.raises(DescriptorError, match=re.escape(message)):
+        parse_document(document)
 
 
 def test_the_adapter_rejects_an_empty_record_model() -> None:

@@ -44,7 +44,6 @@ __all__ = [
     "Persistence",
     "PkGenerator",
     "PkStrategy",
-    "Relationship",
     "RelationshipCardinality",
     "RelationshipDeclaration",
     "RelationshipJoin",
@@ -201,23 +200,6 @@ class ReverseRelationship:
 
 
 type RelationshipDeclaration = DefiningRelationship | ReverseRelationship
-
-
-@dataclass(frozen=True, slots=True)
-class Relationship:
-    """One directional value from the compiled symmetric relationship facet.
-
-    The target is ``join.target.entity``. ``reverse`` is the peer's local
-    relationship name when the association is bidirectional. No descriptor-only
-    target, foreign-key hint, reverse-pair map, or string join is retained.
-    """
-
-    name: str
-    cardinality: RelationshipCardinality
-    join: RelationshipJoin
-    reverse: str | None = None
-    dependent: bool = False
-    order_by: tuple[OrderByTerm, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -540,17 +522,3 @@ class Metamodel:
     def entity(self, name: str) -> Entity:
         """The entity named ``name`` (raises ``KeyError`` when absent)."""
         return self.by_name[name]
-
-    def relationships_for(self, entity: str | Entity) -> tuple[Relationship, ...]:
-        """The compiled directional relationship values for one Entity."""
-        from parallax.descriptor._relationship import relationships_for
-
-        return relationships_for(self, entity)
-
-    def relationship(self, entity: str | Entity, name: str) -> Relationship:
-        """Resolve one compiled directional relationship value by local name."""
-        for relationship in self.relationships_for(entity):
-            if relationship.name == name:
-                return relationship
-        owner = self.entity(entity) if isinstance(entity, str) else entity
-        raise KeyError(f"{owner.canonical_name}.{name}")
