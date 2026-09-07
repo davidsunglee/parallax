@@ -8,7 +8,7 @@
 # proof is the two round trips (the mutate contributes none) plus the unchanged
 # re-read rows; harness lane.
 model: models/orders.yaml
-tags: [m-snapshot-read, no-writeback, mutation, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-edit, no-writeback, mutation, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

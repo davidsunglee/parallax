@@ -38,6 +38,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-value-object",
         "m-wire",
         "m-document-codec",
+        "m-edit",
         "m-relationship",
         "m-object-query",
         "m-predicate",

@@ -22,7 +22,7 @@
 # is graded by each language's API Conformance Suite (api-conformance lane); the wire
 # assertion is only that neither the derivation nor the access fires any SQL.
 model: models/orders.yaml
-tags: [m-snapshot-read, closed-world, relationship, mutation, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-edit, closed-world, relationship, mutation, scenario, slice-snapshot-1]
 shape: scenario
 lane: api-conformance
 when:

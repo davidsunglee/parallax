@@ -4,9 +4,10 @@
 finalizes, and flushes** writes, and the automatic read-correctness rules that
 make in-transaction reads safe. It is expressed entirely in terms of **operations
 and object state** (`m-predicate`): it depends on `m-predicate`, on `m-wire` for
-serialized write-literal conversion, on the
-execution port `m-db-port`, and on `m-temporal-read` — whose Edge is the
-coordinate a Write Observation is filed under — but **not** on `m-sql`. The
+serialized write-literal conversion, on the execution port `m-db-port`, on
+`m-temporal-read` — whose Edge is the coordinate a Write Observation is filed
+under — and on `m-edit`, which distinguishes authored assignments from state
+carried by derivation, but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
 set-based forms) is produced by
 `m-sql` and run through the `m-db-port` execution seam at the composition root,
@@ -677,10 +678,11 @@ Observation retains: every applicable scalar Attribute value, every complete
 Value Object occurrence, the complete primary key, every temporal bound, and
 every audit value, with no generated-value expression. Completeness is required
 because temporal expansion carries members the authored mutation never mentioned,
-and because a decorator must distinguish carried from changed state without a
-second read (ADR 0042). Successors retain or view that state rather than copying
-it, and bulk materialization MAY expose a logical Predecessor Row view over
-columnar storage instead of allocating one row object per observation.
+and because a decorator must distinguish `m-edit`'s carried state from its
+authored assignments without a second read (ADR 0042). Successors retain or view
+that state rather than copying it, and bulk materialization MAY expose a logical
+Predecessor Row view over columnar storage instead of allocating one row object
+per observation.
 
 Under Relational Document Layout a Predecessor Row additionally retains the
 **raw Structured Column document**, as a distinct named field beside its member
@@ -702,16 +704,17 @@ anyway, and this rule says only that the observation path carries the value
 forward instead of discarding it once known members are decoded.
 
 The successor is then built by patching that retained document
-(`m-document-codec`) **at the assigned paths alone** rather than by re-encoding
-decoded members. That is what preserves keys a newer application version wrote:
-an application that predates a key it never declares still carries that key
-across a close-and-insert, and so does every member the mutation left alone.
+(`m-document-codec`) **at `m-edit`'s assigned paths alone** rather than by
+re-encoding decoded members. That is what preserves keys a newer application
+version wrote: an application that predates a key it never declares still
+carries that key across a close-and-insert, and so does every member the mutation
+left alone.
 
-An assigned occurrence is where the carry-forward stops. Assigning one replaces
-the subtree stored at its path, whole and at either cardinality, so an omitted
-declared member is absent in the successor and a key no member declares does not
-survive inside it — the author stated a complete value, and no stored member is
-merged back into it. An explicitly null occurrence stores JSON null. Everything
+An assigned occurrence is where `m-edit`'s carry-forward stops. Assigning one
+replaces the subtree stored at its path, whole and at either cardinality, so an
+omitted declared member is absent in the successor and a key no member declares
+does not survive inside it — the author stated a complete value, and no stored
+member is merged back into it. An explicitly null occurrence stores JSON null. Everything
 outside an assigned occurrence — every unassigned occurrence, every unassigned
 document-resident Attribute, and every undeclared key at any position the
 mutation did not name — rides forward exactly as stored.

@@ -19,7 +19,7 @@ never something an application developer hand-writes.
 |---|---|
 | Conformance Slice | `slice-snapshot-1` — tag `slice-snapshot-1`, plain-value **snapshot** lifecycle profile, defined in [`core/spec/slices.md`](../../../core/spec/slices.md). |
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
-| Claimed capability coverage | Copied verbatim from the canonical claim: the 32 `modules` below, `dialects: ["postgres"]`, the nine `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
+| Claimed capability coverage | Copied verbatim from the canonical claim: the 33 `modules` below, `dialects: ["postgres"]`, the nine `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
 | Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
@@ -29,7 +29,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-evolution", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-schema-delta", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-edit", "m-execution-lifecycle", "m-inheritance", "m-metamodel", "m-model-evolution", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-schema-delta", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected", "evolution"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -2909,10 +2909,10 @@ of shared edition identity.
   removed: its detached copy carries the milestone's `IN_Z` offline and the
   merge-back gate binds that carried coordinate — transport, never
   reconstruction. The idiom requires no detached objects.
-- **An edit preserves everything it neither replaces nor invalidates.**
-  `edit(**changes)` replaces the declared member state the caller authored and
-  carries every other kind of instance state forward unchanged, apart from the
-  single derived kind it invalidates below. An Edited Copy
+- **An edit preserves everything it neither replaces nor invalidates.** Python
+  binds `m-edit` to `edit(**changes)`, which replaces the declared member state
+  the caller authored and carries every other kind of instance state forward
+  unchanged, apart from the single derived kind it invalidates below. An Edited Copy
   of a materialized node therefore answers relationships exactly as that node
   does — a loaded to-one or to-many is the *same* already-materialized objects
   rather than a re-read, an unloaded one raises `UnloadedRelationshipError`
@@ -2940,7 +2940,14 @@ of shared edition identity.
   Python attribute assignment, so a read-only `property` cannot refuse it and a
   property setter cannot intercept or alter it.
 
-  Exactly one kind is invalidated rather than carried. A
+  Python maps `m-edit`'s neutral witness roles directly: **`auxiliary`** is
+  application-owned state held outside declared member assignments, including a
+  manually seeded memo in Pydantic instance storage; **`derivedCache`** is a
+  `functools.cached_property`; and **`hooks`** are Python data-descriptor
+  assignment hooks, witnessed by `property` without and with a setter. All three
+  roles have native mechanisms and are applicable to this target.
+
+  Exactly one kind is invalidated rather than carried. The `derivedCache` role, a
   slot naming a `functools.cached_property` on the value's class holds an answer
   computed from declared state the edit may have replaced, so the edit drops it
   and the next access recomputes it: a derived cache is recomputed, never
@@ -5422,6 +5429,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | `m-core` | `parallax.core.base` | `parallax.core.base` | (none) | generated forbidden contracts, `languages/python/pyproject.toml` |
 | `m-wire` | `parallax.core.wire` | `parallax.core.wire` | `m-core` | generated forbidden contracts |
 | `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
+| `m-edit` | `parallax.core.entity._edit` | `parallax.core.entity._edit` | `m-metamodel` | generated forbidden contracts |
 | `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
 | Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts |
 | `m-descriptor` | `parallax.descriptor` | `parallax.descriptor` | `m-core`, `m-metamodel`, `m-inheritance` | generated forbidden contracts + cross-package contract |
@@ -5440,7 +5448,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core`, `m-dialect` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
-| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read` | generated forbidden contracts |
+| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read`, `m-edit` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
 | `m-execution-lifecycle` | `parallax.core.execution_lifecycle` | `parallax.core.execution_lifecycle` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
@@ -5451,7 +5459,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance`, `m-predicate`, `m-unit-work`, `m-wire` | generated forbidden contracts |
-| `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire` | generated forbidden contracts + cross-package contract |
+| `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-lifecycle`, `m-wire`, `m-edit` | generated forbidden contracts + cross-package contract |
 | Streamed-read page plan (support) | `parallax.core.continuation` | `parallax.core.continuation` | `m-metamodel`, `m-inheritance`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-wire` | generated forbidden contracts |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts + `tools/check_scope_ownership.py` |
@@ -5800,8 +5808,11 @@ parallax.postgres --> parallax.core.dialect
   narrowing case within one package: query authoring reaches no model, so the
   values a developer composes must reach no model formation and no whole-model
   semantic view, and the row is what proves it rather than the module docstring
-  alone. All are generated as ordinary contract
-  sources, and none is a new supported import path. Because
+  alone. `parallax.core.entity._edit` is declared beside it as a child of the
+  Entity frontend, but its behavioral `m-edit` row and module-DAG edge supply its
+  grants, so it has no support row or `support-scope-graph` edge. All are
+  generated as ordinary contract sources, and none is a new supported import
+  path. Because
   import-linter's `forbidden` contracts are package-scoped on both sides, a
   child is emitted as a contract **source**, and as a forbidden target only in
   a *sibling's* zero-grant row: naming it as a forbidden target of its own

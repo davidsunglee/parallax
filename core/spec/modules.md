@@ -96,6 +96,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-core` | Neutral types, managed value membership, developer coercion, UTC / timezone, temporal infinity | active | cases |
 | `m-wire` | Strict JSON loading and the sole serialized typed-literal codec per Neutral Type | active | cases |
 | `m-metamodel` | Representation-independent declarations, identity, lookup, and compiled metadata | active | cases |
+| `m-edit` | Edited-value derivation and state preservation by complement | active | cases |
 | `m-model-formation` | Explicit deterministic composition of model rules and facet compilers | active | cases |
 | `m-descriptor` | Canonical descriptor interchange & serde | active | cases |
 | `m-pk-gen` | Primary-key generation (`max`, `sequence`) | active | cases |
@@ -156,6 +157,7 @@ deployable artifact.
 ```dependency-graph
 m-metamodel --> m-core
 m-wire --> m-core
+m-edit --> m-metamodel
 m-model-formation --> m-metamodel
 m-descriptor --> m-core
 m-descriptor --> m-metamodel
@@ -204,6 +206,7 @@ m-unit-work --> m-predicate
 m-unit-work --> m-wire
 m-unit-work --> m-db-port
 m-unit-work --> m-temporal-read
+m-unit-work --> m-edit
 m-read-lock --> m-unit-work
 m-read-lock --> m-dialect
 m-auto-retry --> m-unit-work
@@ -242,6 +245,7 @@ m-snapshot-read --> m-relationship
 m-snapshot-read --> m-temporal-read
 m-snapshot-read --> m-execution-lifecycle
 m-snapshot-read --> m-wire
+m-snapshot-read --> m-edit
 m-temporal-read --> m-predicate
 m-temporal-read --> m-object-query
 m-temporal-read --> m-metamodel
@@ -416,6 +420,13 @@ construction it may reference any behavioral module it harnesses.
   inventing an opaque parallel one. The edge is to the read *model* only: nothing here
   reaches as-of lowering, and the direction stays one-way, since
   `m-temporal-read` names no unit-of-work construct.
+- **`m-snapshot-read --> m-edit`; `m-unit-work --> m-edit`.** Edited-value
+  derivation owns the distinction between state an assignment replaces and state
+  carried by complement. Snapshot materialization relies on it when a derived
+  node preserves the views and pin its read produced; Unit Work relies on it
+  when a write distinguishes authored assignments from the source state they
+  carry forward. The direction stays one-way: `m-edit` names neither lifecycle,
+  transactions, reads, nor persistence.
 - **`m-unit-work --> m-wire`.** Serialized keyed rows, assignments, and
   predicate-selected writes decode resolved scalar leaves once before they become
   buffered prepared-write products. Managed-object mutation remains developer

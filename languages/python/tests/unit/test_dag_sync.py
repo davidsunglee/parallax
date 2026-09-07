@@ -621,14 +621,15 @@ def test_the_read_composition_row_inherits_retry_rather_than_forbidding_it() -> 
 
 
 # --------------------------------------------------------------------------
-# Child scopes: contract sources, and forbidden targets in a sibling's
-# zero-grant row.
+# Child scopes: behavioral or support contract sources, and forbidden targets
+# in a sibling's zero-grant row.
 # --------------------------------------------------------------------------
 def test_child_scopes_are_declared_under_their_parent() -> None:
     dag.check_child_scopes()
+    declared_scopes = set(dag.SUPPORT_SCOPE_DEPS) | set(dag.MODULE_SCOPE.values())
     for child, parent in dag.CHILD_SCOPE_PARENT.items():
         assert child.startswith(f"{parent}.")
-        assert child in dag.SUPPORT_SCOPE_DEPS
+        assert child in declared_scopes
 
 
 def test_check_child_scopes_rejects_an_undeclared_parent(monkeypatch: pytest.MonkeyPatch) -> None:

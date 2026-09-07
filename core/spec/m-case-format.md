@@ -1615,7 +1615,7 @@ prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
 
 | Verb | Meaning | Targets | Module |
 |---|---|---|---|
-| `mutate` | assign the attributes in `set` in memory (no SQL for a snapshot object) | prior object (`on` required) | `m-snapshot-read` |
+| `mutate` | derive an edited copy by assigning the members in `set` (no SQL for a snapshot object) | prior object (`on` required) | `m-edit` |
 | `load` | explicitly trigger a deferred relationship load (the portable, mandatory load trigger) | prior object(s) (`on` required) | `m-deep-fetch` |
 | `access` | read an already-loaded relationship / query-backed list (no SQL when already populated) | prior object (`on` required) | `m-op-list` |
 | `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
@@ -1711,7 +1711,7 @@ has an oracle, never in this shape.
 `set` is legal **only** on a `mutate` action, and a `mutate` carrying none is the
 **change-free** derivation: an edit that assigns nothing is legal and produces a
 copy of the value's own state, so the two forms are the two kinds of edit a case
-may compose (`m-snapshot-read` *Closed world*). Because a `mutate` derives a copy
+may compose (`m-edit`). Because a `mutate` derives a copy
 rather than rewriting the object it names, its own step is a source a later
 **`mutate`** may name in turn — a chain of edits is a chain of copies, and the
 step the chain starts from still answers what it held. An `access` stating
