@@ -72,9 +72,7 @@ def validate_inheritance_families(document: Mapping[str, object]) -> None:
 @dataclass(frozen=True, slots=True)
 class Family:
     """The inheritance participants of one descriptor, and its root if it has
-    exactly one. Structural traversal below a position belongs to the descriptor
-    scope (:func:`~parallax.descriptor._records.concrete_descendant_names`), not
-    here."""
+    exactly one."""
 
     participants: tuple[Entity, ...]
     root: Entity | None
