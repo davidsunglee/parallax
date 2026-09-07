@@ -47,8 +47,9 @@ def _corpus_paths() -> list[Path]:
 
 
 def _entity_list(entities: object) -> list[dict[str, object]]:
-    # Export promises ordinary lists, and every comparison here normalizes the
-    # entity sequence into a mapping, so nothing else would fail a tuple.
+    # The corpus content and ordering oracles rebuild the entity sequence into a
+    # container of their own, so only this check holds export to the ordinary
+    # list it promises.
     assert isinstance(entities, list)
     return cast("list[dict[str, object]]", entities)
 
