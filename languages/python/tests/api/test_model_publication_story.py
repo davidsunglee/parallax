@@ -1,7 +1,7 @@
 """The host-owned model update against real Postgres (python.md §2,
 m-api-conformance).
 
-The Docker-free half runs the same story over a fake port, where the schema
+The Docker-free half runs the same story over a fake port, where a schema
 statement is a string a double accepted. What only a real database can show is
 that the three steps are one working order: the delta the generator wrote
 actually carries the schema, the edition published over it actually serves, and
@@ -21,13 +21,13 @@ import pytest
 
 from parallax.conformance import model_publication_stories as stories
 from parallax.conformance import provision
-from parallax.conformance.models import accepted_model_of
 from parallax.conformance.story_models import (
     ACCOUNT_MODEL,
     NICKNAMED_ACCOUNT_MODEL,
     Account,
     NicknamedAccount,
 )
+from parallax.core.entity import model_of
 from parallax.evolution import evolve, schema_delta
 from parallax.snapshot import (
     PublicationConflictError,
@@ -41,10 +41,7 @@ _ALTER = "alter table account add column nickname varchar(64)"
 
 
 def _seeded(profile_run: Any) -> Any:
-    """The story database at the EARLIER edition: A's own schema and its rows."""
-    profile_run.reset(
-        accepted_model_of(ACCOUNT_MODEL), provision.load_fixtures("models/account.yaml")
-    )
+    profile_run.reset(model_of(ACCOUNT_MODEL), provision.load_fixtures("models/account.yaml"))
     return profile_run.port
 
 
@@ -52,12 +49,20 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
     update = stories.a_running_service_publishes_an_evolved_model_without_restarting(
         _seeded(profile_run)
     )
-    assert update.statements == (_ALTER,)
+    # Two operations, in the only order a database accepts them: the column the
+    # index is over has to exist before the index is created.
+    assert update.statements[0] == _ALTER
+    assert len(update.statements) == 2
+    # The rollout ledger the host keeps: the index this rollout created, named
+    # by the same Physical Index Name a later uniqueness violation reports.
+    (created,) = update.created_indices
+    assert created.unique and created.logical_index_identity.name == "account_nickname"
+    assert created.physical_index_name.value in update.statements[1]
     # One handle across the whole update: the transaction before it adopted the
     # earlier selection and the one after it adopted the published one, with no
     # reconnection between them.
-    assert update.before == "2026-09-a"
-    assert update.after == "2026-09-b"
+    assert update.before_edition == "2026-09-a"
+    assert update.after_edition == "2026-09-b"
     assert update.nickname == "rainy-day"
 
     later = connect(profile_run.port, NICKNAMED_ACCOUNT_MODEL)
@@ -82,9 +87,7 @@ def test_a_stale_publisher_is_refused_and_rebases_onto_what_is_held(profile_run:
     db = connect(port, serving)
 
     first = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
-    evolution = stories.unilateral(
-        evolve(accepted_model_of(a.model), accepted_model_of(first.model))
-    )
+    evolution = stories.unilateral(evolve(model_of(a.model), model_of(first.model)))
     stories.apply_schema_delta(port, schema_delta(evolution, port.dialect))
     serving.publish(first, expected=a)
 

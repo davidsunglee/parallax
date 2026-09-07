@@ -183,6 +183,7 @@
     "desc",
     "index",
     "lifecycle_state_of",
+    "model_of",
     "rel",
     "relationship_value_of",
     "shape_of",

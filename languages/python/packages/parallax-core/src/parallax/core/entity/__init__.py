@@ -8,7 +8,9 @@ its closed error-code sets, and the Object Query surface it re-exports from
 ``m-object-query``. The underscored modules
 behind these names are implementation detail rather than caller seams.
 
-It additionally exposes the **advanced Entity Graph Construction collaboration**
+It additionally exposes ``model_of``, the durable first-party collaboration
+seam a schema-owning or separately distributed frontend reads a model's accepted
+Metamodel through; the **advanced Entity Graph Construction collaboration**
 — ``EntityGraphConstruction``, its writer, the opaque ``NodeHandle`` its
 positional rows name a node by, and the ``UNLOADED`` sentinel a relationship
 position spells, plus the two operations a lifecycle reads back
@@ -93,7 +95,7 @@ from parallax.core.entity._members import (
     index,
     rel,
 )
-from parallax.core.entity._model import DomainModel
+from parallax.core.entity._model import DomainModel, model_of
 from parallax.core.entity._row_codec import EntityRowCodec
 from parallax.core.entity._value_object import ValueObject, to_document
 from parallax.core.object_query._fluent import ObjectQuery
@@ -162,6 +164,7 @@ __all__ = [
     "desc",
     "index",
     "lifecycle_state_of",
+    "model_of",
     "rel",
     "relationship_value_of",
     "shape_of",

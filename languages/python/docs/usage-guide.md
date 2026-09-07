@@ -2118,20 +2118,38 @@ class StaleMilestoneError(RuntimeError):
 
 ### Publishing an evolved model to a running service
 
-Spec: `python.md` §2 (*Model preparation and the Serving Model*, and the evolution constraints publication carries), §3 (a transaction adopts per attempt) and `m-schema-delta` (the ordered, prefix-safe statements the application applies itself). Graded by `tests/api/test_model_publication_story.py` (real Postgres: the story runs end to end, the added column is written and read back under the later edition, an earlier-edition read is unaffected by it, and a stale publisher is refused with `PublicationConflictError` and rebases onto the selection it names as held) and `tests/unit/test_model_publication_stories.py`'s Docker-free halves (the two application refusals, and the snippet being the source that ran).
+Spec: `python.md` §2 (*Model preparation and the Serving Model*, and the evolution constraints publication carries), §3 (a transaction adopts per attempt) and `m-schema-delta` (the ordered, prefix-safe statements the application applies itself). Graded by `tests/api/test_model_publication_story.py` (real Postgres: the story runs end to end, the added column is written and read back under the later edition, an earlier-edition read is unaffected by it, and a stale publisher is refused with `PublicationConflictError` and rebases onto the selection it names as held) and `tests/unit/test_model_publication_stories.py`'s Docker-free halves (a candidate that cannot be prepared, a Coordinated Evolution, a boundary that never opened, a delta that stopped at its second statement, an undo that did not complete, and the snippet being the source that ran).
 
-The order is the whole recipe. **Prepare the candidate first**: that is where every fallible model-only derivation runs, so a candidate that cannot be prepared raises with the database untouched and the earlier selection still serving — which is the guarantee that makes a live update safe to attempt at all. **Apply the schema next**, in the application's own transaction: Parallax applies nothing, and the statements are prefix-safe rather than idempotent, so a run that stops partway leaves a database the earlier edition still operates against. **Publish last**, because publication ASSERTS the physical schema already satisfies what it publishes. `UnpublishableUpdateError` is **application**-owned for the same reason `StaleMilestoneError` is: which evolutions a host will apply live, and what it makes of a statement that did not commit, are its decisions and no framework's. Nothing here drains, barriers, or retries a rollout: transactions already adopted keep the edition they adopted, other processes publish independently, and an earlier-edition read still reports rows its own model cannot admit as invalid stored data at the result root.
+The order is the whole recipe. **Prepare the candidate first**: that is where every fallible model-only derivation runs, so a candidate that cannot be prepared raises with the database untouched and the earlier selection still serving — which is the guarantee that makes a live update safe to attempt at all. **Apply the schema next**, in the application's own transaction: Parallax applies nothing, and the statements are prefix-safe rather than idempotent, so a run that stops partway leaves a database the earlier edition still operates against, and a run whose undo also failed leaves one whose contents are unknown. **Publish last**, because publication ASSERTS the physical schema already satisfies what it publishes. `UnpublishableUpdateError` is **application**-owned for the same reason `StaleMilestoneError` is: which evolutions a host will apply live, and what it makes of a statement that did not commit, are its decisions and no framework's. The delta's `created_indices` is the host's own rollout ledger, kept past the update because a later uniqueness violation names the Physical Index Name an entry carries — the correlation `tests/provider_contract/test_provider_contract.py` grades against a real duplicate. Nothing here drains, barriers, or retries a rollout: transactions already adopted keep the edition they adopted, other processes publish independently, and an earlier-edition read still reports rows its own model cannot admit as invalid stored data at the result root. `ACCOUNT_MODEL` and `NICKNAMED_ACCOUNT_MODEL` are `DomainModel(Account)` and `DomainModel(NicknamedAccount)` over the two classes below, the earlier and later endpoints of the one Evolution this publishes.
 
 ```python
+class Account(
+    Entity,
+    table="account",
+    namespace=_NS,
+    indices=(index("account_owner", "owner"),),
+):
+    """Mirror of ``models/account.yaml``."""
+
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str] = attr(max_length=64)
+    balance: Attr[Decimal] = attr(precision=18, scale=2)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+
+
 class NicknamedAccount(
     Entity,
     table="account",
     name="Account",
     namespace=_NS,
-    indices=(index("account_owner", "owner"),),
+    indices=(
+        index("account_owner", "owner"),
+        index("account_nickname", "nickname", unique=True),
+    ),
 ):
     """``Account`` one Unilateral Evolution later: the same Entity with one
-    added nullable ``nickname`` — the model the publication story publishes.
+    added nullable ``nickname`` and the unique Index that enforces it — the
+    model the publication story publishes.
 
     The ``name="Account"`` header is what makes this the SAME Entity as the
     class above rather than a second one, which is what makes the difference
@@ -2140,6 +2158,11 @@ class NicknamedAccount(
     earlier edition selects every column it knows and admits every row the later
     one can write, so both editions operate against one schema during Edition
     Overlap.
+
+    The Index makes the evolution two ordered operations rather than one: the
+    Column has to exist before an Index over it can be created, and the unique
+    one it creates is what a later uniqueness violation is correlated back to a
+    rollout by.
     """
 
     id: Attr[int] = attr(primary_key=True)
@@ -2157,8 +2180,9 @@ class UnpublishableUpdateError(Exception):
     to apply live, and what it makes of a schema statement that did not commit.
     Parallax refuses nothing here — it never inspects a schema and never applies
     one — so an update that must not proceed has to say so in the host's own
-    vocabulary. Whenever it is raised, the earlier selection is still serving and
-    nothing has adopted the candidate.
+    vocabulary. Raised at either step this recipe puts BEFORE its publication,
+    so under this order the earlier selection is still serving and nothing has
+    adopted the candidate.
     """
 
 
@@ -2179,7 +2203,7 @@ def unilateral(evolution: Evolution, /) -> UnilateralEvolution:
     )
 
 
-def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> None:
+def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> tuple[CreatedIndex, ...]:
     """Apply every statement of ``delta``, in order, in the host's OWN boundary.
 
     Parallax applies no schema change: these statements are the application's to
@@ -2188,24 +2212,42 @@ def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> None:
     stops partway leaves a database the earlier edition still operates against —
     which is exactly why a failure here has to prevent the publication rather
     than be reported beside it.
+
+    What comes back is the delta's own ``created_indices`` provenance, which the
+    host keeps as its rollout ledger: it is what a later uniqueness violation is
+    matched against, by the violated Physical Index Name the database error
+    already carries, without parsing a driver message.
     """
     outcome = port.transaction(
         lambda schema: [schema.execute_write(statement, ()) for statement in delta.statements]
     )
-    if isinstance(outcome, Committed):
-        return
-    failed = outcome.error if isinstance(outcome, BeginFailed) else outcome.trigger.error
-    raise UnpublishableUpdateError("the schema delta did not apply in full") from failed
+    match outcome:
+        case Committed():
+            return delta.created_indices
+        case BeginFailed(error):
+            raise UnpublishableUpdateError("the schema delta never began") from error
+        case RolledBack(trigger):
+            raise UnpublishableUpdateError(
+                "the schema delta did not apply in full"
+            ) from trigger.error
+        case RollbackFailed(trigger, rollback_error):
+            # Both failures are live and either alone misreports what happened:
+            # the statements that had already succeeded could not be undone, so
+            # WHICH prefix the database now holds is unknown and the connection
+            # is no longer trustworthy. Retrying the delta is exactly what must
+            # not happen — a prefix-safe statement is not an idempotent one.
+            raise UnpublishableUpdateError(
+                f"the schema delta could not be undone after {trigger.error!r}, so how much "
+                f"of it the database holds is unknown"
+            ) from rollback_error
 
 
 @dataclass(frozen=True, slots=True)
 class PublishedUpdate:
-    """What one live update did: the editions either side of it, the statements
-    the host applied between them, and the added member's first written value."""
-
-    before: str
+    before_edition: str
     statements: tuple[str, ...]
-    after: str
+    created_indices: tuple[CreatedIndex, ...]
+    after_edition: str
     nickname: str | None
 
 
@@ -2231,11 +2273,14 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     b = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
 
     # An Evolution is described between two ACCEPTED models, which is what a
-    # prepared selection carries its own of: `accepted_model_of` is the durable
-    # first-party seam a schema-owning host reads one through (`python.md` §2).
-    evolution = unilateral(evolve(accepted_model_of(a.model), accepted_model_of(b.model)))
+    # prepared selection carries its own of: `model_of` is the durable first-party
+    # seam a schema-owning host reads one through (`python.md` §2).
+    evolution = unilateral(evolve(model_of(a.model), model_of(b.model)))
+    # The statements are ordered and the order is load-bearing — the added
+    # Column exists before the Index over it is created — so they are applied as
+    # given, never reordered, deduplicated, or made idempotent.
     delta = schema_delta(evolution, port.dialect)
-    apply_schema_delta(port, delta)
+    created_indices = apply_schema_delta(port, delta)
 
     # Only now. Publication ASSERTS that the physical schema already satisfies
     # what is being published, so every execution that adopts B afterwards finds
@@ -2253,6 +2298,10 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
 
     after, nickname = db.transact(name_the_account)
     return PublishedUpdate(
-        before=before, statements=delta.statements, after=after, nickname=nickname
+        before_edition=before,
+        statements=delta.statements,
+        created_indices=created_indices,
+        after_edition=after,
+        nickname=nickname,
     )
 ```
