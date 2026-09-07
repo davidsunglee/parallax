@@ -74,6 +74,7 @@ def test_edit_carries_application_state_without_hooks_and_drops_derived_cache(
 ) -> None:
     LEDGER.reset()
     source, memo = _source(backing, cls, members)
+    source_values = {name: getattr(source, name) for name in cls.model_fields}
     changes = authored_changes if branch == "changed" else {}
     expected_cache = cast("str", members[cache_member]).upper()
     assert source.shouted == expected_cache
@@ -91,7 +92,7 @@ def test_edit_carries_application_state_without_hooks_and_drops_derived_cache(
     assert after_result_cache.hook_calls == before.hook_calls
     assert source.shouted == expected_cache
     assert LEDGER.snapshot() == after_result_cache
-    assert all(getattr(source, name) == value for name, value in members.items())
+    assert {name: getattr(source, name) for name in cls.model_fields} == source_values
     assert all(getattr(result, name) == value for name, value in changes.items())
 
     memo.append("shared")
