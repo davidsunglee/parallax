@@ -1,27 +1,33 @@
 """``parallax.snapshot.handle._read_scope`` — the Read Scope both Handles share.
 
 A ``Database``'s reads and a ``Transaction``'s run one ladder: re-entry is
-refused, the operation's selected read model is obtained, this call's own
-arguments are judged — for a read publishing Entity Class instances, a selection
-that can materialize none at all first, then the query lowered to the canonical
-node — the shared gate runs, the activity opens, the executor runs, and the
-result is published. A streamed read is that ladder deferred rather than a
-second one: the verb lowers what it was handed and judges the page size it was
-named with, and answers an inert delivery, which crosses the gate and opens its
-own activity when its scope is entered and reaches back here for each page. Only
-the bracket around execution differs between a standalone read and one
-participating in a transaction, so the ladder belongs here once and the
-difference belongs below it, behind a private execution policy the two factories
-construct.
+refused, the read is begun — which is where a standalone operation adopts the
+Serving Model's current selection — this call's own arguments are judged: for a
+read publishing Entity Class instances, a selection that can materialize none at
+all first, then the query lowered to the canonical node; the shared gate runs,
+the activity opens, the executor runs, and the result is published stamped with
+the edition it was read under. A streamed read is that ladder deferred rather
+than a second one: the verb lowers what it was handed and judges the page size
+it was named with, and answers an inert delivery that begins its read, crosses
+the gate, and opens its own activity when its scope is entered, and reaches back
+here for each page. Only the bracket around execution differs between a
+standalone read and one participating in a transaction, so the ladder belongs
+here once and the difference belongs below it, behind a private execution policy
+the two factories construct.
 
-The four capabilities that policy answers are the whole of what varies: which
-selected read model serves the operation, what an eager read runs inside, what a
-stream's own activity is, and what one page runs inside. A participating read's
+What that policy answers is a begun read: the selection one operation is served
+under, and the four brackets everything done under it runs inside — what an
+eager read runs inside, what a stream's own activity is, what one page runs
+inside, and what one advance of a delivery runs inside. A participating read's
 force-flush, its connection, its Concurrency Preference, its observation ledger,
-and the parentage of every activity it opens are all reached through those four
-and through nothing else — which is what makes "the gate precedes the flush" and
+and the parentage of every activity it opens are all reached through those and
+through nothing else — which is what makes "the gate precedes the flush" and
 "the activity opens inside the flush" the order of calls in this module rather
-than a rule two Handles each restate.
+than a rule two Handles each restate. A standalone begun read is also where an
+ordinary failure escaping the execution is named under the edition it adopted:
+the root activity is opened before that bracket, so a Provider that fails to
+open, like every refusal the ladder makes before the bracket, keeps its own
+type.
 
 This module is an implementation boundary rather than an extension point.
 :data:`WireQuery` alone is re-exported from ``parallax.snapshot.handle``, because
@@ -38,9 +44,9 @@ declares an edge to it.
 Every name this module publishes is spelled bare: privacy from the package
 outwards is carried by this MODULE's leading underscore and by the package's
 frozen ``__all__``, not by per-name underscores. A leading underscore here marks
-the narrower thing: what stays inside this module even so — the execution policy
-and its two adapters, which only the factories below construct, and each class's
-own internals.
+the narrower thing: what stays inside this module even so — the execution policy,
+the begun read it answers, and its two adapters, which only the factories below
+construct, and each class's own internals.
 """
 
 from __future__ import annotations
@@ -51,7 +57,6 @@ from typing import Any, Protocol
 
 from parallax.core.db_port import DbPort
 from parallax.core.entity import EntityGraphConstruction
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
@@ -74,6 +79,7 @@ from parallax.core.unit_work import Concurrency, UnitOfWork
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
+from parallax.snapshot.handle._adoption import AdoptedExecution
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._preflight import preflight
@@ -93,7 +99,7 @@ from parallax.snapshot.handle._read import (
     wire_publication,
 )
 from parallax.snapshot.handle._retention import ObservationLedger
-from parallax.snapshot.handle._stream import SnapshotStream, check_batch_size
+from parallax.snapshot.handle._stream import SnapshotStream, StreamRead, check_batch_size
 
 __all__ = [
     "ReadInputs",
@@ -101,6 +107,7 @@ __all__ = [
     "WireQuery",
     "materializing",
     "participating_read_scope",
+    "publication_for",
     "standalone_read_scope",
     "wire_query_node",
 ]
@@ -151,6 +158,22 @@ def materializing(selected: SelectedReadModel, /) -> EntityGraphConstruction:
     return selected.construction
 
 
+def publication_for(selected: SelectedReadModel, interface: ReadInterface, /) -> ResultPublication:
+    """The publication one read through ``interface`` publishes under ``selected``.
+
+    A Typed publication needs the graph construction, so this is where a
+    selection that can materialize no Snapshot at all refuses a Typed read —
+    before the query is judged and before any I/O — while a Wire publication
+    crosses no such rung. Either carries the selection's edition, so every
+    envelope it publishes is stamped with what the read was served under.
+    """
+    if interface == "TYPED":
+        return typed_publication(selected.model.meta, materializing(selected), selected.edition)
+    if interface == "WIRE":
+        return wire_publication(selected.model.meta, selected.edition)
+    raise ValueError(f"the values lane publishes no graph, so {interface!r} names no publication")
+
+
 @dataclass(frozen=True, slots=True)
 class ReadInputs:
     """What the executor triad takes that varies by lane, as one value.
@@ -167,19 +190,22 @@ class ReadInputs:
     ledger: ObservationLedger | None
 
 
-class _ReadExecution(Protocol):
-    """What a read's lane decides, and the whole of it.
+class _BegunRead(StreamRead, Protocol):
+    """One operation's read, begun: the selection it is served under, and the
+    bracket everything done under that selection runs inside.
 
     Each capability that executes is handed the scope's body for one operation
     and runs it inside its own bracket, which is where the force-flush, the
-    activity opening, and the activity's parentage live. Nothing above needs to
-    know which lane it is composed with, and nothing here decides anything about
-    the query.
+    activity opening, the activity's parentage, and — for a standalone read —
+    the edition an escaping failure is named under live. Nothing above needs
+    to know which lane it is composed with, and nothing here decides anything
+    about the query. Every call of one begun read runs under the one selection
+    it began with, by construction rather than by threading a parameter.
     """
 
-    def begin(self) -> SelectedReadModel:
-        """The model this operation is served under, chosen inside the read
-        boundary and after re-entry has been refused."""
+    @property
+    def selected(self) -> SelectedReadModel:
+        """The model this operation is served under."""
         ...
 
     def eager[T](
@@ -205,6 +231,26 @@ class _ReadExecution(Protocol):
         ``batch``, which this opens rather than the loop above."""
         ...
 
+    def advance[T](self, body: Callable[[], T], /) -> T:
+        """Run one advance of a delivery's view inside this lane's failure
+        bracket, after the delivery has settled what the advance did."""
+        ...
+
+
+class _ReadExecution(Protocol):
+    """What a read's lane decides, and the whole of it: how one operation's
+    read is begun.
+
+    A standalone execution is one shared object per Handle and begins each
+    operation as a read of its own, adopting afresh; a participating one is
+    its transaction's and begins every operation as the same fixed read.
+    """
+
+    def begin(self) -> _BegunRead:
+        """This operation's read, begun inside the read boundary and after
+        re-entry has been refused."""
+        ...
+
 
 class ReadScope:
     """One Handle's read composition: the whole-result, streamed, and row-form
@@ -218,11 +264,12 @@ class ReadScope:
     state.
 
     A stream retains this object for its whole delivery, which is what
-    :meth:`open_stream` and :meth:`page` are for: they are the scope from the
-    delivery's side, and they answer it from the same execution policy every
-    eager read runs under. The scope itself holds no model and no page, so a
-    delivery hands back the ONE selection it was opened under for each of its
-    pages, and no page and no root reaches a second scope or a second policy.
+    :meth:`begin`, :meth:`publication`, and :meth:`page` are for: they are the
+    scope from the delivery's side, and they answer it from the same execution
+    policy every eager read runs under. The scope itself holds no model and no
+    page, so a delivery hands back the ONE read it was begun as for each of
+    its pages, and no page and no root reaches a second scope or a second
+    policy.
     """
 
     __slots__ = ("_execution", "_lifecycle")
@@ -238,31 +285,20 @@ class ReadScope:
         # would be served under, this query's shape, or anything downstream of
         # them is even consulted (`m-execution-lifecycle`).
         refuse_reentry(self._lifecycle)
-        selected = self._execution.begin()
-        construction = materializing(selected)
-        return self._graph(
-            selected,
-            object_query_node(query),
-            typed_publication(selected.model.meta, construction),
-        )
+        read = self._execution.begin()
+        publication = publication_for(read.selected, "TYPED")
+        return self._graph(read, object_query_node(query), publication)
 
     def stream(self, query: ObjectQuery[Any, Any], batch_size: int) -> SnapshotStream[Any]:
         """One Typed streamed read, delivered as Entity Class instances.
 
-        The refusal order is :meth:`find`'s, with this call's own page size
-        judged among its arguments: re-entry, then a selection that can
-        materialize no Snapshot at all, then the query and the size it was
-        named with.
+        Re-entry is refused, then this call's own arguments are judged — the
+        query lowered, then the page size it was named with — and nothing
+        model-dependent is: the delivery begins its read at entry, which is
+        where a selection that can materialize no Snapshot at all refuses it.
         """
         refuse_reentry(self._lifecycle)
-        selected = self._execution.begin()
-        construction = materializing(selected)
-        return self._streamed(
-            selected,
-            object_query_node(query),
-            typed_publication(selected.model.meta, construction),
-            batch_size,
-        )
+        return self._streamed(object_query_node(query), "TYPED", batch_size)
 
     def read_rows(self, node: ObjectQueryNode) -> RowsResult:
         """One row-form read, published as transformed rows and no graph.
@@ -272,65 +308,72 @@ class ReadScope:
         no ledger in either lane.
         """
         refuse_reentry(self._lifecycle)
-        selected = self._execution.begin()
+        read = self._execution.begin()
+        selected = read.selected
         # The gate precedes the bracket, and therefore precedes a participating
         # read's force-flush: a refused read flushes nothing.
         validated = preflight(node, model=selected.model.meta, form="rows")
 
-        def published(read: ReadActivity, inputs: ReadInputs) -> RowsResult:
+        def published(activity: ReadActivity, inputs: ReadInputs) -> RowsResult:
             return find_rows(
                 validated,
                 selected.model,
                 inputs.port,
+                edition=selected.edition,
                 preference=inputs.preference,
-                read=read,
+                read=activity,
             )
 
-        return self._execution.eager(node.target, "ROWS", published)
+        return read.eager(node.target, "ROWS", published)
 
     def wire_find(self, query: WireQuery) -> Snapshot[Any]:
         """One Wire whole-result read, published as frozen Wire nodes.
 
         The refusal order is :meth:`find`'s without its classless rung — no Wire
         node is an Entity Class instance, so none needs a materializer: re-entry,
-        then the selection, then this call's own argument, which for a Wire entry
-        is the spelling it was handed lowered to the canonical node.
+        then the read begun, then this call's own argument, which for a Wire
+        entry is the spelling it was handed lowered to the canonical node.
         """
         refuse_reentry(self._lifecycle)
-        selected = self._execution.begin()
-        return self._graph(selected, wire_query_node(query), wire_publication(selected.model.meta))
+        read = self._execution.begin()
+        publication = publication_for(read.selected, "WIRE")
+        return self._graph(read, wire_query_node(query), publication)
 
     def wire_stream(self, query: WireQuery, batch_size: int) -> SnapshotStream[Any]:
         """One Wire streamed read, delivered as frozen Wire nodes.
 
-        :meth:`wire_find`'s ladder with the page size judged among this call's
-        own arguments, after the query it was named beside.
+        :meth:`stream`'s ladder over a Wire spelling: re-entry, then the query
+        lowered, then the page size judged, and the read begun at entry.
         """
         refuse_reentry(self._lifecycle)
-        selected = self._execution.begin()
-        return self._streamed(
-            selected, wire_query_node(query), wire_publication(selected.model.meta), batch_size
-        )
+        return self._streamed(wire_query_node(query), "WIRE", batch_size)
 
-    def open_stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int
-    ) -> SnapshotStreamActivity:
-        """The activity one delivery observes itself through, opened when its
-        scope is entered and after everything that scope can refuse."""
-        return self._execution.open_stream(target, interface, batch_size)
+    def begin(self) -> _BegunRead:
+        """The read one delivery is begun as, when its scope is entered and
+        before anything that scope can refuse."""
+        return self._execution.begin()
+
+    def publication(
+        self, selected: SelectedReadModel, interface: ReadInterface, /
+    ) -> ResultPublication:
+        """How one delivery publishes its roots under the read it was begun
+        as, chosen at entry exactly as an eager read chooses it at the call."""
+        return publication_for(selected, interface)
 
     def page(
-        self, page_plan: PagePlan, at: At, model: CatalogedModel, batch: StreamBatchActivity
+        self, read: _BegunRead, page_plan: PagePlan, at: At, batch: StreamBatchActivity
     ) -> StreamPage:
-        """One page of a delivery, read inside this lane's own bracket.
+        """One page of a delivery, read inside its begun read's own bracket.
 
         A page IS an eager read of a bounded root query, so it threads the same
         port, Concurrency Preference, and observation ledger an eager graph read
-        here does — and takes its model from the delivery, which holds the one
-        selection it was opened under rather than asking for a second.
+        here does — and takes its model from the read the delivery was begun
+        as, which holds the one selection it was opened under rather than
+        asking for a second.
         """
+        model = read.selected.model
 
-        def read(calls: DatabaseCallScope, inputs: ReadInputs) -> StreamPage:
+        def body(calls: DatabaseCallScope, inputs: ReadInputs) -> StreamPage:
             return read_stream_page(
                 page_plan,
                 at,
@@ -341,30 +384,26 @@ class ReadScope:
                 calls=calls,
             )
 
-        return self._execution.page(batch, read)
+        return read.page(batch, body)
 
     def _streamed(
-        self,
-        selected: SelectedReadModel,
-        node: ObjectQueryNode,
-        publication: ResultPublication,
-        batch_size: int,
+        self, node: ObjectQueryNode, interface: ReadInterface, batch_size: int
     ) -> SnapshotStream[Any]:
         """The stream-construction tail both read interfaces run.
 
-        Constructing a delivery opens no activity and reaches no executor: the
-        gate, the page plan, and every statement belong to the entered scope, so
-        a stream nobody enters observes nothing and reads nothing. What is
-        settled here is what this call named — the page size, refused before any
-        plan and any I/O — and the selection the delivery will keep through all
-        of its pages.
+        Constructing a delivery begins no read, opens no activity, and reaches
+        no executor: the selection, the gate, the page plan, and every statement
+        belong to the entered scope, so a stream nobody enters adopts nothing,
+        observes nothing, and reads nothing. What is settled here is what this
+        call named — the lowered query, the interface, and the page size, the
+        last refused before any plan and any I/O.
         """
         check_batch_size(batch_size)
-        return SnapshotStream(node, selected.model, publication, self, batch_size=batch_size)
+        return SnapshotStream(node, interface, self, batch_size=batch_size)
 
     def _graph(
         self,
-        selected: SelectedReadModel,
+        read: _BegunRead,
         node: ObjectQueryNode,
         publication: ResultPublication,
     ) -> Snapshot[Any]:
@@ -375,16 +414,17 @@ class ReadScope:
         milestone-set read runs :func:`find_history`, which retains no evidence
         at all, so its roots stand at coordinates no keyed write may address.
         """
+        selected = read.selected
         validated = preflight(node, model=selected.model.meta, form="graph")
 
-        def published(read: ReadActivity, inputs: ReadInputs) -> Snapshot[Any]:
+        def published(activity: ReadActivity, inputs: ReadInputs) -> Snapshot[Any]:
             if scans_validated_axis(validated.temporal):
                 return publication.from_history(
                     find_history(
                         validated,
                         selected.model,
                         inputs.port,
-                        read=read,
+                        read=activity,
                     )
                 )
             return publication.from_find(
@@ -394,30 +434,30 @@ class ReadScope:
                     inputs.port,
                     preference=inputs.preference,
                     ledger=inputs.ledger,
-                    calls=read,
+                    calls=activity,
                 )
             )
 
-        return self._execution.eager(node.target, publication.interface, published)
+        return read.eager(node.target, publication.interface, published)
 
 
 @dataclass(frozen=True, slots=True)
-class _StandaloneExecution:
-    """A read outside any transaction: its own Root Execution, and no flush.
+class _StandaloneRead:
+    """One standalone operation's read: its own Root Execution, no flush, and
+    the edition it adopted named on whatever ordinary failure escapes it.
 
     Non-transactional in the three ways that reach the executor: no read lock,
     no Concurrency Preference, and no ledger — which is what leaves the evidence
-    a standalone read retains unstamped by any participation. It holds the
-    Serving Model rather than a selection, so each operation it begins is served
-    under whatever selection is current at that call.
+    a standalone read retains unstamped by any participation. Built per
+    operation by :class:`_StandaloneExecution`, over the selection that
+    operation adopted, so everything done through it runs under that one
+    selection however long a delivery through it takes.
     """
 
     lifecycle: InstalledLifecycle | None
-    serving: ServingModel
+    adopted: AdoptedExecution
+    selected: SelectedReadModel
     inputs: ReadInputs
-
-    def begin(self) -> SelectedReadModel:
-        return read_projection(self.serving.current())
 
     def eager[T](
         self,
@@ -429,29 +469,75 @@ class _StandaloneExecution:
         # The Root Execution opens AFTER the gate and spans through publication:
         # the gate is deterministic and reaches no port, so a refused read
         # creates no root and calls no Provider, while planning, lowering, every
-        # Database Call, conversion, and materialization are all inside it.
-        with open_read_root(self.lifecycle, target=target, interface=interface) as read:
-            return body(read, self.inputs)
+        # Database Call, conversion, and materialization are all inside it. It
+        # is opened OUTSIDE the failure bracket and entered inside it: a
+        # Provider that fails to open keeps its own type, and the root's own
+        # Finished event sees the underlying failure before the caller sees it
+        # named under this read's edition.
+        root = open_read_root(
+            self.lifecycle, target=target, interface=interface, edition=self.selected.edition
+        )
+
+        def inside() -> T:
+            with root as read:
+                return body(read, self.inputs)
+
+        return self.adopted.contextualized(inside)
 
     def open_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
     ) -> SnapshotStreamActivity:
         return open_snapshot_stream_root(
-            self.lifecycle, target=target, interface=interface, batch_size=batch_size
+            self.lifecycle,
+            target=target,
+            interface=interface,
+            batch_size=batch_size,
+            edition=self.selected.edition,
         )
 
     def page[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
     ) -> T:
         # Nothing precedes the batch here — a standalone stream flushes nothing
-        # — so it opens where the page begins.
+        # — so it opens where the page begins. The page is not bracketed on its
+        # own: the batch and the stream above it report the underlying failure,
+        # and the advance that reached this page names the edition once.
         with batch as calls:
             return body(calls, self.inputs)
+
+    def advance[T](self, body: Callable[[], T], /) -> T:
+        return self.adopted.contextualized(body)
+
+
+@dataclass(frozen=True, slots=True)
+class _StandaloneExecution:
+    """A Handle's reads outside any transaction: one begun read per operation.
+
+    It holds the Serving Model rather than a selection, so each operation it
+    begins adopts whatever selection is current at that call, through an
+    adoption of its own, and is served under that selection for its whole
+    execution — a publication landing afterwards reaches the next operation and
+    never this one.
+    """
+
+    lifecycle: InstalledLifecycle | None
+    serving: ServingModel
+    inputs: ReadInputs
+
+    def begin(self) -> _StandaloneRead:
+        adopted = AdoptedExecution(self.serving)
+        selected = read_projection(adopted.adopt())
+        return _StandaloneRead(self.lifecycle, adopted, selected, self.inputs)
 
 
 @dataclass(frozen=True, slots=True)
 class _ParticipatingExecution:
     """A read inside a transaction: the force-flush, and the attempt's children.
+
+    It is its own begun read, because its selection is the transaction's,
+    fixed when the attempt adopted, and nothing it does is bracketed on its
+    own: a failure inside it propagates to the invocation, which names the
+    attempt's edition once.
 
     ``uow.read`` flushes pending writes before it runs what it was handed, so
     read-your-own-writes holds at every read and at every page. The activity
@@ -469,8 +555,11 @@ class _ParticipatingExecution:
     attempt: TransactionAttemptActivity
     inputs: ReadInputs
 
-    def begin(self) -> SelectedReadModel:
-        return self.selected
+    def begin(self) -> _ParticipatingExecution:
+        return self
+
+    def advance[T](self, body: Callable[[], T], /) -> T:
+        return body()
 
     def eager[T](
         self,

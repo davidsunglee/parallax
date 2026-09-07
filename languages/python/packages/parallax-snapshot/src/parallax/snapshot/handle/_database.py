@@ -255,6 +255,14 @@ class Database:
         The Snapshot's parameter is the query's RESULT — what ``narrow`` moved
         it to, or the queried Entity itself — so a narrowed find yields the
         narrowed rows' type without a caller-side annotation.
+
+        The read adopts the Serving Model's current selection once, for its
+        whole execution, and the Snapshot retains that edition as
+        ``snapshot.edition``. An ordinary failure escaping the execution — a
+        statement, conversion, materialization — surfaces as
+        :class:`~parallax.snapshot.handle.ExecutionFailure` under that edition;
+        the deterministic refusals before it, re-entry and the read gate, keep
+        their own types, and so does a lifecycle Provider that fails to open.
         """
         return self._reads.find(query)
 
@@ -275,8 +283,14 @@ class Database:
         value that falls outside that. It is validated exactly as ``limit`` is,
         at this call and before any I/O.
 
-        The refusal order is :meth:`find`'s: re-entry first, then a connection
-        that can materialize no Snapshot at all, then this call's own arguments.
+        This call judges what it was handed — re-entry first, then the query
+        and the page size — and adopts nothing. The stream adopts the Serving
+        Model's current selection when its scope is entered, which is where a
+        connection that can materialize no Snapshot at all refuses it, and
+        retains that selection through every page; ``stream.edition`` names
+        it inside the scope. An ordinary failure escaping the delivery
+        surfaces as :class:`~parallax.snapshot.handle.ExecutionFailure` under
+        that edition.
         """
         return self._reads.stream(query, batch_size)
 

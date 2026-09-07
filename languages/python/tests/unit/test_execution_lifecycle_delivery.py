@@ -23,6 +23,7 @@ import pytest
 from _transact_support import ACCOUNT, FIXED, NEW_ROW, read_account
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ReadCall,
@@ -382,7 +383,7 @@ def test_a_quarantined_root_renders_no_diagnostic_for_a_failed_call(
             )
         )
     )
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         _read(_db(port, provider))
     assert rendered == []
     (reported,) = provider.reported
@@ -399,7 +400,7 @@ def test_a_deactivated_publisher_drops_an_event_it_is_still_handed() -> None:
     publisher = _activity._Publisher(  # pyright: ignore[reportPrivateUsage] - the unit test drives the per-root publisher directly
         execution.id, _installed(provider), handler
     )
-    event = ReadStarted(execution.id, 1, 1, None, "Account", "TYPED")
+    event = ReadStarted(execution.id, 1, 1, None, "Account", "TYPED", "edition")
     with pytest.raises(KeyboardInterrupt):
         publisher.deliver(event)
     assert not publisher.active
@@ -442,7 +443,9 @@ def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() 
     # count its body knows, and which count that is decides the outcome.
     recorder = RecordingLifecycleProvider()
     account = EntityIdentity(None, "Account")
-    root = open_read_root(_installed(recorder), target=account, interface="TYPED")
+    root = open_read_root(
+        _installed(recorder), target=account, interface="TYPED", edition="edition"
+    )
     statement = LoweredStatement("update account set balance = ?", (5,))
     with root as read, read.database_call(statement, "WRITE", account) as call:
         call.write_completed(3)

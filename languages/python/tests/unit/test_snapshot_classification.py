@@ -530,7 +530,7 @@ def test_classification_shares_the_one_frozen_evidence_rather_than_copying_it() 
     record = invalid_record(fixture.materialize(node)[0])
     (published,) = record.issues
     assert published.stored_value is converted.stored_value
-    refusal = InvalidDataError((record,))
+    refusal = InvalidDataError((record,), edition="edition")
     (reported,) = next(iter(refusal.invalid_data)).issues
     assert reported.stored_value is converted.stored_value
 
@@ -594,4 +594,4 @@ def test_evidence_is_reachable_only_by_asking_for_it() -> None:
     assert "MISSING_STORED_VALUE" not in repr(issue)
     assert "stored_value" not in repr(issue)
     assert "MISSING_STORED_VALUE" not in repr(record)
-    assert "MISSING_STORED_VALUE" not in str(InvalidDataError((record,)))
+    assert "MISSING_STORED_VALUE" not in str(InvalidDataError((record,), edition="edition"))

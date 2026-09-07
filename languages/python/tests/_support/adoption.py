@@ -1,11 +1,12 @@
-"""The assertion every suite makes about a failure escaping ``db.transact``.
+"""The assertion every suite makes about a failure escaping an adopted execution.
 
 An ordinary failure leaves an adopted execution as ``ExecutionFailure``: the
-edition the failing attempt adopted, and the error itself as its cause. Every
-suite that grades what a callback, a write, a boundary, or the retry loop
-raised therefore asserts the same two-layer shape, and states it once here
-rather than once per site. ``value`` answers the cause, so an assertion written
-against the underlying error reads exactly as it would against a bare raise.
+edition that execution adopted, and the error itself as its cause. Every suite
+that grades what a callback, a write, a boundary, the retry loop, a standalone
+read, or one advance of a standalone delivery raised therefore asserts the same
+two-layer shape, and states it once here rather than once per site. ``value``
+answers the cause, so an assertion written against the underlying error reads
+exactly as it would against a bare raise.
 """
 
 from __future__ import annotations

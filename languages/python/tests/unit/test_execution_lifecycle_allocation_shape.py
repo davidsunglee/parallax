@@ -57,6 +57,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 
 ROWS: Final = rows(1_000)
+EDITION: Final = "edition"
 
 
 class _DecliningProvider:
@@ -87,7 +88,7 @@ def _nothing(sample: Callable[[], None]) -> None:
 
 def _unobserved_read(sample: Callable[[], None]) -> None:
     with (
-        open_read_root(None, target=TARGET, interface="TYPED") as read,
+        open_read_root(None, target=TARGET, interface="TYPED", edition=EDITION) as read,
         read.database_call(STATEMENT, "READ", TARGET) as call,
     ):
         call.read_completed(ROWS)
@@ -96,7 +97,7 @@ def _unobserved_read(sample: Callable[[], None]) -> None:
 
 def _declined_read(sample: Callable[[], None]) -> None:
     with (
-        open_read_root(DECLINED, target=TARGET, interface="TYPED") as read,
+        open_read_root(DECLINED, target=TARGET, interface="TYPED", edition=EDITION) as read,
         read.database_call(STATEMENT, "READ", TARGET) as call,
     ):
         call.read_completed(ROWS)
@@ -264,8 +265,8 @@ def test_after_a_decline_the_scopes_cost_what_the_default_path_costs() -> None:
     # "After decline it has the same event-, counter-, diagnostic-, and
     # clock-free path": the opening is the whole difference, so what a declined
     # root opens is costed exactly as the default path's scopes are.
-    declined = open_read_root(DECLINED, target=TARGET, interface="TYPED")
-    default = open_read_root(None, target=TARGET, interface="TYPED")
+    declined = open_read_root(DECLINED, target=TARGET, interface="TYPED", edition=EDITION)
+    default = open_read_root(None, target=TARGET, interface="TYPED", edition=EDITION)
     tracemalloc.start()
     try:
         default_kept, default_transient = allocation(_scopes_under(default))

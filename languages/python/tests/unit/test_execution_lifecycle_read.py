@@ -23,6 +23,7 @@ import pytest
 from _transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ReadCall,
@@ -60,7 +61,7 @@ from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.unit_work import FixedClock
-from parallax.snapshot import connect
+from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Database, QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle import _read as read_module
 from parallax.snapshot.handle import _read_scope as read_scope_module
@@ -242,7 +243,7 @@ def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
     recorder = RecordingLifecycleProvider()
     failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
     port = ScriptedPort(Read(raises=failure))
-    with pytest.raises(DatabaseError):
+    with raises_contextualized(DatabaseError):
         _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots
@@ -274,7 +275,7 @@ def test_a_failure_after_the_call_completed_is_the_reads_own() -> None:
     # DIRECTLY: proximity to a completed call attributes nothing.
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Read(rows=[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]))
-    with pytest.raises(SnapshotMaterializationError):
+    with raises_contextualized(SnapshotMaterializationError):
         _db(port, recorder, read_models.BALANCE_MODEL).find(
             read_models.Balance.where(read_models.Balance.id == 1)
         )
@@ -382,7 +383,7 @@ def test_the_default_path_never_spells_the_target_it_is_handed() -> None:
     probe = _Probe()
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=probe, interface="TYPED") as read,
+        open_read_root(None, target=probe, interface="TYPED", edition="edition") as read,
         read.database_call(statement, "READ", probe) as call,
     ):
         call.read_completed(())
@@ -404,7 +405,7 @@ def test_the_default_path_never_sizes_the_rows_it_is_handed() -> None:
     rows = _Rows()
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=ACCOUNT_TARGET, interface="TYPED") as read,
+        open_read_root(None, target=ACCOUNT_TARGET, interface="TYPED", edition="edition") as read,
         read.database_call(statement, "READ", ACCOUNT_TARGET) as call,
     ):
         call.read_completed(rows)
@@ -419,7 +420,7 @@ def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
     # methods answer the function itself, so no scope entry binds anything.
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=ACCOUNT_TARGET, interface="TYPED") as read,
+        open_read_root(None, target=ACCOUNT_TARGET, interface="TYPED", edition="edition") as read,
         read.database_call(statement, "READ", ACCOUNT_TARGET) as call,
     ):
         bound = [
@@ -498,9 +499,10 @@ def _recorded_openings(
         *,
         target: ActivityTarget,
         interface: ReadInterface,
+        edition: str,
     ) -> ReadActivity:
         recorded.append((target, interface))
-        return open_read_root(installed, target=target, interface=interface)
+        return open_read_root(installed, target=target, interface=interface, edition=edition)
 
     monkeypatch.setattr(read_scope_module, "open_read_root", recording)
     return recorded
@@ -555,3 +557,36 @@ def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     # compilation produced: the two together leave a re-lowered spelling nowhere.
     (executed,) = (call for call in port.calls if isinstance(call, ReadCall))
     assert POSTGRES_DRIVER_SQL(statement.sql) == executed.sql
+
+
+def test_a_standalone_reads_started_event_carries_the_edition_it_adopted() -> None:
+    # Adoption precedes the root: the read takes the Serving Model's current
+    # selection, and the Started event delivered when its root opens states
+    # that edition — the same one the result it publishes retains.
+    recorder = RecordingLifecycleProvider()
+    serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
+    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    snapshot = connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder).find(
+        mm.Account.where(mm.Account.id == 7)
+    )
+
+    (root,) = recorder.roots
+    started = root.events[0]
+    assert isinstance(started, ReadStarted)
+    assert started.edition == "ledger-a" == snapshot.edition
+
+
+def test_a_participating_reads_started_event_carries_no_edition_of_its_own() -> None:
+    # A read under an attempt inherits the attempt's edition through the parent
+    # correlation, and its own Started event states none.
+    recorder = RecordingLifecycleProvider()
+    serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
+    port = ScriptedPort(Transact(Read(rows=[NEW_ROW])))
+    db = connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder)
+
+    db.transact(lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result())
+
+    (root,) = recorder.roots
+    (started,) = [event for event in root.events if isinstance(event, ReadStarted)]
+    assert started.parent_activity_id is not None
+    assert started.edition is None

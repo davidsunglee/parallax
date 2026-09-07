@@ -27,9 +27,10 @@ from typing import Any, cast
 import _mixed_strategy_model as mx
 import pytest
 from _stream_page_support import paged_reads
-from _transact_support import account_db, db_for, deadlock, new_account
+from _transact_support import ACCOUNT, FIXED, account_db, db_for, deadlock, new_account
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -44,13 +45,14 @@ from _support.db_port import (
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import POSITION_MODEL, Position
 from parallax.core import LATEST
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import TX_TIME, VALID_TIME
-from parallax.core.unit_work import ObservedStateKey, RetainedObservation, instructions
-from parallax.snapshot import SnapshotStream, SnapshotStreamStateError
+from parallax.core.unit_work import FixedClock, ObservedStateKey, RetainedObservation, instructions
+from parallax.snapshot import ServingModel, SnapshotStream, SnapshotStreamStateError, prepare_model
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Transaction, TransactionTimePinReadOnlyError
+from parallax.snapshot.handle import Database, Transaction, TransactionTimePinReadOnlyError
 from parallax.snapshot.materialize import source_hint_of
 
 _UPDATE_SQL = POSTGRES.to_driver_sql(
@@ -414,3 +416,46 @@ def test_a_streamed_milestone_root_is_read_only_in_both_namespaces() -> None:
 
     db_for(POSITION_MODEL, typed_port).transact(typed)
     db_for(POSITION_MODEL, wire_port).transact(wire)
+
+
+# --------------------------------------------------------------------------- #
+# Adoption: a participating stream inherits its attempt's selection and wraps  #
+# nothing of its own.                                                          #
+# --------------------------------------------------------------------------- #
+def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failure() -> None:
+    # The stream is served under the selection the attempt adopted, so its
+    # edition is the transaction's and a publication mid-delivery moves
+    # neither. A page failure propagates BARE inside the callback — the
+    # transaction's own reads are bracketed by nothing — and the invocation
+    # names the attempt's edition once on the way out.
+    a = prepare_model(ACCOUNT, edition="ledger-a")
+    b = prepare_model(ACCOUNT, edition="ledger-b")
+    serving = ServingModel(a)
+    failure = DatabaseError(
+        category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
+    )
+    port = ScriptedPort(
+        Transact(Read(rows=[_account_row(1), _account_row(2)]), Read(raises=failure))
+    )
+    db = Database.connect(port, serving, clock=FixedClock(FIXED))
+    seen: list[int] = []
+
+    def body(tx: Transaction) -> None:
+        with tx.stream(_accounts(), batch_size=1) as stream:
+            assert stream.edition == tx.edition == "ledger-a"
+            try:
+                for account in stream:
+                    seen.append(account.id)
+                    serving.publish(b, expected=a)
+                    assert stream.edition == "ledger-a"
+            except DatabaseError as raised:
+                assert raised is failure
+                raise
+
+    with raises_contextualized(DatabaseError) as failed:
+        db.transact(body, retries=0)
+
+    assert seen == [1]
+    assert failed.value is failure
+    assert failed.edition == "ledger-a"
+    assert serving.current() is b

@@ -118,7 +118,7 @@ _ENVELOPE = frozenset({"sequence", "activity", "parent"})
 
 
 def test_every_event_states_its_correlation_and_names_its_transition() -> None:
-    started = ReadStarted(_EXECUTION, 1, 1, None, "Account", "TYPED")
+    started = ReadStarted(_EXECUTION, 1, 1, None, "Account", "TYPED", "account")
     call = DatabaseCallStarted(_EXECUTION, 2, 2, 1, "Account", "READ", _STATEMENT)
     events = _portable(started, call)
     assert events[0]["sequence"] == 1
@@ -131,13 +131,14 @@ def test_every_event_states_its_correlation_and_names_its_transition() -> None:
 
 
 def test_a_root_states_its_kind_and_its_first_observation_index() -> None:
-    read = _root("READ", ReadStarted(_EXECUTION, 1, 1, None, "Account", "ROWS"))
+    read = _root("READ", ReadStarted(_EXECUTION, 1, 1, None, "Account", "ROWS", "account"))
     invocation = _root(
         "TRANSACTION_INVOCATION",
         TransactionInvocationStarted(_EXECUTION, 1, 1, None, JoinedInvocation()),
     )
     stream = _root(
-        "SNAPSHOT_STREAM", SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "WIRE", 100)
+        "SNAPSHOT_STREAM",
+        SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "WIRE", 100, "account"),
     )
     roots = _roots(execution_lifecycle_observation([read, invocation, stream], []))
     assert [root["execution"] for root in roots] == [1, 2, 3]
@@ -152,11 +153,11 @@ def test_a_root_states_its_kind_and_its_first_observation_index() -> None:
 
 
 def test_a_read_states_its_target_and_the_interface_that_publishes_it() -> None:
-    assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "TYPED")) == {
-        "readStarted": {"target": "Account", "interface": "typed"}
+    assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "TYPED", "account")) == {
+        "readStarted": {"target": "Account", "interface": "typed", "edition": "account"}
     }
-    assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "WIRE")) == {
-        "readStarted": {"target": "Account", "interface": "wire"}
+    assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "WIRE", "account")) == {
+        "readStarted": {"target": "Account", "interface": "wire", "edition": "account"}
     }
     assert _transition(ReadFinished(_EXECUTION, 2, 1, None, ReadCompleted())) == {
         "readFinished": {"outcome": "completed"}
@@ -319,9 +320,14 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
 
 
 def test_a_stream_states_the_page_size_that_makes_its_batches_countable() -> None:
-    started = SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "ROWS", 500)
+    started = SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "ROWS", 500, "account")
     assert _transition(started) == {
-        "snapshotStreamStarted": {"target": "Account", "interface": "rows", "batchSize": 500}
+        "snapshotStreamStarted": {
+            "target": "Account",
+            "interface": "rows",
+            "batchSize": 500,
+            "edition": "account",
+        }
     }
     for outcome, expected in (
         (StreamExhausted(), {"outcome": "exhausted"}),

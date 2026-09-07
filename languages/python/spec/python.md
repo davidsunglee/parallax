@@ -67,23 +67,21 @@ never something an application developer hand-writes.
   `--parallax-tags <m-slug>[,…]`. Filename prefixes are never a conformance
   target.
 
-Prepared model publication is partly active and partly deferred. Its
-preparation and publication interface — `prepare_model`, `ModelSelection`,
+Prepared model publication is active but for its executable update example.
+Its preparation and publication interface — `prepare_model`, `ModelSelection`,
 `ServingModel`, and `PublicationConflictError` — is an active §2 contract,
-every connection adopts from a `ServingModel`, and the transaction shape is
-migrated: each attempt adopts the current selection before its boundary opens,
-`Transaction.edition` reports it, an ordinary failure escaping `db.transact`
-surfaces as `ExecutionFailure`, and the Transaction Attempt's Started event
-carries its edition with `begin_failed` as a terminal attempt outcome (§§3, 5).
-Per-execution adoption by standalone reads and streams, the read-only
-`edition` on result envelopes and entered streams, `ExecutionFailure` on those
-executions, the edition on the Read and Snapshot Stream Started events, the
-edition a delayed `InvalidDataError` carries, and the executable update example
-remain a deferred extension with their adopted contract in
+every connection adopts from a `ServingModel`, and all three execution shapes
+are migrated: each transaction attempt, standalone read, and entered standalone
+stream adopts the current selection and retains it, `Transaction.edition` and
+the read-only `edition` on every result envelope and entered stream report it,
+an ordinary failure escaping any of them surfaces as `ExecutionFailure`, a
+delayed `InvalidDataError` carries its result's edition, and the Started event
+of every adoption-owning activity carries its edition with `begin_failed` as a
+terminal attempt outcome (§§3–5). The library's executable host-owned update
+example remains a deferred extension with its adopted contract in
 [§9](#prepared-model-publication) and implementation tracked in
-[COR-123](https://linear.app/flimflam/issue/COR-123). The deferred half adds no
-completed developer-surface or lifecycle-oracle claim to the current contract
-above.
+[COR-123](https://linear.app/flimflam/issue/COR-123); it adds no
+developer-surface or lifecycle-oracle claim to the current contract above.
 
 ## 2. Shared developer API and model surface
 
@@ -1667,11 +1665,13 @@ projections, the unit of work retains that selection's Write Planner, and
 `Transaction.edition` is the read-only edition it adopted. A joining invocation
 inherits the active transaction and its selection without a Serving Model
 lookup; a retry obtains the then-published selection afresh, so one invocation
-may run attempts under two editions. A standalone read is served under the
-selection current at its call, and a transactional read or stream inherits its
-transaction's. Publication during an attempt never changes the selection that
-attempt retains. The lifecycle-provider root opens before any attempt adopts,
-so a Provider that fails to open keeps its own type.
+may run attempts under two editions. A standalone read adopts the selection
+current at its call, once for its whole execution, and a standalone stream
+adopts at context entry (§4 *Streamed results*); a transactional read or
+stream inherits its transaction's. Publication during any adopted execution
+never changes the selection it retains. The lifecycle-provider root opens
+before any attempt adopts, so a Provider that fails to open keeps its own
+type.
 
 **Transaction failures carry the edition.** `ExecutionFailure` has read-only
 `edition: str` and `cause: Exception`; its edition is always an actual Adopted
@@ -2190,6 +2190,16 @@ compares editions only for equality, never parses or orders them, and infers no
 chronology from their spelling. Equal tokens must identify the same accepted
 model within a Serving Model's publication history; an updater must not reuse a
 token for a changed model. Edition equality is not a write licence.
+
+**Sources across editions.** A keyed source read under another edition remains
+admissible when the writing transaction's adopted model can validate the
+operation and use the source's original evidence. Resolution, member validation,
+effective-change reduction, temporal checks, and evidence enforcement use that
+adopted selection; Locking still requires participation in the same
+transaction, and Optimistic writes still require eligible retained observations
+(§5). No edition inequality refusal, automatic source reread, evidence upgrade,
+or rebasing is introduced, and this applies to the Typed and Wire keyed-write
+adapters alike under the shared ingress.
 
 **One concrete Serving Model.** `ServingModel` always holds a prepared
 selection. `current()` returns that exact selection and invokes no
@@ -3224,6 +3234,28 @@ of shared edition identity.
   relationships are `tuple` fields on frozen nodes (§3). Nothing is an
   `m-op-list` query-backed lazy list; iteration, indexing, and bulk
   operations are ordinary Python on ordinary lists and tuples.
+- **Every result retains the edition it was read under.** A standalone
+  `db.find` adopts the Serving Model's current selection once, for its whole
+  execution, and `db.read_rows` and the Wire reads do the same; a
+  transactional read is served under its transaction's. The result envelope is
+  stamped where it is built and exposes read-only `edition`: `Snapshot`,
+  `CheckedSnapshot` (forwarded unchanged, as `pin` is), `RowsResult`, and Wire
+  results through the same `Snapshot` envelope. The stamp is retained for
+  later access, consults no Serving Model when read, is no domain Entity member
+  and no Wire Entity mapping entry, and exposes no lifecycle record; a
+  publication landing after the read changes nothing a result already reports.
+- **A standalone read's ordinary failures carry the edition.** An ordinary
+  failure escaping the execution a standalone read adopted for — a statement,
+  conversion, materialization — surfaces as `ExecutionFailure` under that
+  edition with the underlying error as its `cause`, on exactly the terms §3
+  states for a transaction: contextualized once, after the Read root activity
+  has opened, so the lifecycle reports the underlying failure. Re-entry, the
+  read gate, the deferred-Feature refusal, the classless refusal, and a
+  lifecycle Provider that fails to open all precede adoption's bracket and keep
+  their own types, and a control-flow or fatal exception is never
+  contextualized. A participating read is bracketed by nothing of its own: its
+  failure propagates inside the callback and the invocation names the
+  attempt's edition once.
 - **Result-shape appearances.** Root-empty: `results() == []`, `result()`
   raises `NoResultFound`, `result_or_none()` is `None`. Relationship-empty:
   `()`. Relationship-null (to-one): `None`. Unloaded: raising access as in §3.
@@ -3249,14 +3281,32 @@ of shared edition identity.
   accepts exactly the query spellings its `find` peer accepts and crosses the
   same read gate, at context entry rather than at the call.
 - **`SnapshotStream[T]` is deliberately not a `Snapshot[T]`.** Its whole
-  surface is `__enter__` / `__exit__`, `__iter__`, `checked()`, `pin`, and
-  `__repr__`. There is no `results()`, no arity accessor, and no way to re-read
-  what already went past — a caller holding one holds a position in a delivery
-  rather than a value. Iterating is the default view and raises
-  `InvalidDataError` at a root whose stored state contradicted the model;
-  `checked()` is the same delivery with that root arriving as its `InvalidData`
-  record, and the two views are the exact peers `Snapshot` and
+  surface is `__enter__` / `__exit__`, `__iter__`, `checked()`, `pin`,
+  `edition`, and `__repr__`. There is no `results()`, no arity accessor, and no
+  way to re-read what already went past — a caller holding one holds a
+  position in a delivery rather than a value. Iterating is the default view
+  and raises `InvalidDataError` at a root whose stored state contradicted the
+  model; `checked()` is the same delivery with that root arriving as its
+  `InvalidData` record, and the two views are the exact peers `Snapshot` and
   `CheckedSnapshot` are.
+- **A standalone stream adopts at entry and retains through every page.**
+  Constructing a stream validates the model-independent arguments the call
+  named — the query lowered and the page size — and adopts nothing; entering
+  it adopts the Serving Model's current selection, which is where the
+  model-dependent refusals land, and every page is read and every root
+  published under that one selection without a new public page interface. An
+  unentered stream has no Adopted Edition. `edition` answers exactly where
+  `pin` does — inside the scope, and never before entry, where it raises
+  `SnapshotStreamStateError` — and a transactional stream inherits its
+  transaction's selection. Every advance of a view inside an entered
+  standalone stream runs under the delivery's own bracket: an ordinary failure
+  escaping one — a page's statement, a root's publication, the default view's
+  `InvalidDataError`, a `SnapshotStreamContinuationError` — surfaces as
+  `ExecutionFailure` under the stream's edition with the underlying error as
+  its `cause`, after the Stream Batch and the stream have reported it, while
+  the stream's own state refusals are judged before the bracket and keep their
+  type, and a transactional stream's failures propagate bare inside the
+  callback for the invocation to name once.
 - **Scope binding is one state field checked at every entry point**, in the
   discipline `UnitOfWork` already uses rather than by relying on
   `__enter__`/`__exit__`. Constructing a stream reaches nothing: the gate, the
@@ -3303,12 +3353,17 @@ of shared edition identity.
   declared `limit` does not cap.
 - **Refusal order matches `find`'s, and one order covers every read entry.**
   Typed `find` and `stream`, Wire `find` and `stream`, and `read_rows` refuse in
-  the same sequence: re-entry first, then a connection over a model that
-  composes no Entity Class (Typed only), then this call's own arguments —
-  including, on a Wire entry, lowering its three accepted spellings to the
-  canonical Object Query, which is an argument of the call and not a step above
-  the refusal. The read gate and the deferred-Feature refusal follow, at context
-  entry for a stream and at the call for every other entry, before any I/O.
+  the same sequence: re-entry first, then the read begun — a standalone entry
+  adopting, a participating one answering its transaction's selection — then a
+  selection over a model that composes no Entity Class (Typed only), then this
+  call's own arguments — including, on a Wire entry, lowering its three
+  accepted spellings to the canonical Object Query, which is an argument of the
+  call and not a step above the refusal. The read gate and the deferred-Feature
+  refusal follow, before any I/O. A stream runs that order across its two
+  moments: the call refuses re-entry and judges its own arguments, and context
+  entry begins the read and runs everything model-dependent — the classless
+  refusal, the gate, and the deferred-Feature refusal — so a stream nobody
+  enters adopts nothing and refuses nothing about the model.
 - **Stability is per page, and a `tx.stream` loop that writes can be its own
   concurrent writer.** `m-snapshot-read` states the whole rule; what it means
   for this surface is that a loop mutating the member its query ordered by moves
@@ -3439,6 +3494,14 @@ of shared edition identity.
   facts only — they expose no observation address and grant no write authority.
   `InvalidDataError.invalid_data` is nonempty and is the exception's sole
   machine-readable report; its message derives a count and an issue-code summary.
+  `InvalidDataError.edition` is the edition of the result that raised it,
+  settled read-only in the constructor beside the report: the result owner
+  supplies its own stamp when it constructs the refusal, so the stored-data
+  validators take no edition argument. A delayed refusal from a result accessor
+  stays this type, starts no execution, performs no Serving Model lookup, and
+  emits no lifecycle event; when a result read under edition A is accessed
+  inside a transaction under B and the refusal escapes, the outer
+  `ExecutionFailure` reports B and its `InvalidDataError` cause reports A.
 - **The evidence an issue carries.** `stored_value` is the provider-normalized
   logical value that was judged and rejected and `path` is the entity-relative
   logical path of that occurrence, both as `m-snapshot-read` *Evidence a public
@@ -3548,7 +3611,8 @@ of shared edition identity.
 - **The same verdicts.** Both public materializers consume one root
   classification, so a Wire element is `WireEntity | InvalidData[WireEntity]`
   under exactly the rules §4 states for the Typed one, with the same default and
-  checked accessors.
+  checked accessors, and the same `edition` on the `Snapshot` envelope that
+  carries it: the stamp is the envelope's, never a key of any `WireEntity`.
 
 ## 5. Transactions and writes
 
@@ -3585,7 +3649,13 @@ of shared edition identity.
   boundary is asked to begin, its Started event carries that edition, and a
   boundary that never opens finishes the attempt `begin_failed` — terminal,
   with no callback run — and the invocation failed, caused by that attempt
-  (`m-execution-lifecycle`).
+  (`m-execution-lifecycle`). A standalone Read's and a standalone Snapshot
+  Stream's Started events carry the edition each adopted for itself; a
+  participating read, stream, write batch, or joined invocation carries none
+  and inherits through the parent correlation. No first-publication event or
+  previous/new-edition comparison exists, an unentered stream and a public
+  preflight refusal still emit nothing, and with no Provider or a declined root
+  nothing about an edition is allocated or delivered.
 
 ### Private read composition
 
@@ -5866,8 +5936,9 @@ hatchling.
 ## 9. Conditional capability decisions
 
 `m-storage-layout` is claimed, so the Relational Document Layout decision below
-is recorded. Prepared model publication's adoption half is an adopted extension
-deferred in §1; its preparation and publication interface is active in §2.
+is recorded. Prepared model publication's executable update example is an
+adopted extension deferred in §1; its preparation, publication, adoption,
+stamp, failure, and lifecycle contracts are active in §§2–5.
 The other conditional subsections of the template are deleted: process caches,
 cross-process coherence, aggregation, additional dialects, and benchmarks are
 outside `slice-snapshot-1` and recorded as deferred in §1.
@@ -5878,73 +5949,19 @@ outside `slice-snapshot-1` and recorded as deferred in §1.
 records the decision and its alternatives. The preparation and publication
 interface — `prepare_model`, `ModelSelection`, `ServingModel`, and
 `PublicationConflictError` — is active in §2 *Model preparation and the
-Serving Model*, and the transaction shape has migrated: adoption per
-attempt, `Transaction.edition`, `ExecutionFailure` on a transaction, and the
-attempt's lifecycle events are the active §§3 and 5 contracts. This section
-defines the remaining extension contract: how standalone reads and streams
-adopt a Serving Model's current selection, the edition every result retains,
-the failure and lifecycle contracts that follow for those executions, and the
-evolution constraints publication carries. Activation replaces the affected
-contracts in §§2–4 and updates the owning core specifications, lifecycle
-schemas, compatibility cases, API Conformance Suite, and generated topology
-together. Until that migration, a standalone read is served under the selection
-current at its call and stamps nothing, the read and stream lifecycle oracle
-stands as it is, and the library's executable update example is deferred with
-it: the deferred half supplies that example, not a generic updater callback
-interface.
-
-**Adoption and retention.** A standalone eager read adopts once for its whole
-execution. A standalone stream adopts at context entry and retains the
-selection through every page; construction validates model-independent arguments
-such as page size, while model-dependent refusals move to entry. A transactional
-stream inherits its transaction's selection. Publication during either scope
-never changes the selection already retained there.
-
-Read-result envelopes expose read-only `edition`: Snapshot, Checked Snapshot,
-row results, Wire results through their existing envelopes, and entered
-streams. Stream pages preserve the same edition without introducing a new
-public page interface. A stream that has not entered has no Adopted Edition.
-The stamp is not a domain Entity member or a Wire Entity mapping entry; it does
-not expose a lifecycle record or consult a Serving Model. Result envelopes
-retain the stamp for later access.
-
-**Sources across editions.** A keyed source read under another edition remains
-admissible when the writing transaction's adopted model can validate the
-operation and use the source's original evidence. Resolution, member validation,
-effective-change reduction, temporal checks, and evidence enforcement use that
-adopted selection. Locking still requires participation in the same transaction;
-Optimistic writes still require eligible retained observations. No edition
-inequality refusal, automatic source reread, evidence upgrade, or rebasing is
-introduced. This applies to both Typed and Wire keyed-write adapters under the
-shared ingress.
-
-**Failures.** The `ExecutionFailure` of §3 contextualizes an ordinary failure
-escaping a standalone read or an entered stream on the same terms it
-contextualizes one escaping a transaction: after the root activity has opened,
-under the edition that execution adopted, with the cause chained natively.
-Failures before adoption, including initial preparation and lifecycle-provider
-opening, retain their own exception types; there is no `edition=None` variant.
-
-A delayed `InvalidDataError` from a result accessor remains that error type and
-carries the result's original edition. Access starts no execution, performs no
-Serving Model lookup, and emits no lifecycle events. If a result from A is accessed
-inside a transaction under B and that error escapes, the outer
-`ExecutionFailure` reports B and its `InvalidDataError` cause reports A. Existing
-arity precedence and `.checked()` behavior are preserved. Stored-data validators
-need no edition argument: the result owner supplies its stamp when constructing
-the accessor error. Database failures preserve their neutral category, native
-diagnostics, and optional violated Physical Index Name; unique violations gain
-no automatic retry, and the application owns rollout correlation.
-
-**Lifecycle.** No first-publication event or previous/new-edition comparison is
-introduced. The Started event of a standalone Read and of a standalone Snapshot
-Stream carries its edition, as the Transaction Attempt's already does (§5).
-Participating reads, streams, writes, and joined invocations inherit through the
-existing parent correlation. With no lifecycle provider, or a declined root,
-reporting performs no event allocation or lifecycle work. Public preflight
-refusals still create no activity, and constructing an unentered stream emits
-nothing. Reporting no longer depends on whether another operation previously
-selected the same edition or won a cache-publication race.
+Serving Model*, cross-edition sources are §2 *Sources across editions*, and
+every execution shape has migrated: adoption per attempt, `Transaction.edition`,
+and `ExecutionFailure` on a transaction are §3's; adoption by standalone reads
+and entered streams, the `edition` every result envelope and entered stream
+retains, the delayed `InvalidDataError`'s edition, and `ExecutionFailure` on
+those executions are §4's; and the edition every adoption-owning activity's
+Started event carries is §5's. What this section still defers is the library's
+executable host-owned update example, and the evolution constraints publication
+carries are recorded here beside it: the deferred half supplies that example,
+not a generic updater callback interface. Database failures under every shape
+preserve their neutral category, native diagnostics, and optional violated
+Physical Index Name; unique violations gain no automatic retry, and the
+application owns rollout correlation.
 
 **Evolution.** Publication asserts schema readiness under ADR 0063. Only
 Unilateral Evolution follows the live publication path; its complete

@@ -260,7 +260,11 @@ Json value.
   does not: a declared member a Wire Snapshot has no key for has no Wire Value
   here either, and inventing one — a null for a member the stored document never
   held — would be reading a value out of this table for a position it was never
-  given.
+  given. The Model Edition a Wire result was read under (`m-snapshot-read`) is
+  likewise no Wire Entity mapping entry and no key of any node: it rides the
+  same result envelope the language surface builds over a Typed result, so a
+  Wire Snapshot spells exactly the stored document's declared members and
+  nothing about the execution that read them.
 - **Comparison.** Which types SQL compares as extracted text and which it casts
   is a `m-dialect` / `m-sql` decision, stated where the comparison is
   (`m-document-codec` "Portable leaf encodings"). It is a *consequence* of the

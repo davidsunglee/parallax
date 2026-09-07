@@ -42,8 +42,8 @@ from parallax.snapshot import connect
 from parallax.snapshot.handle import Database
 
 READ = RootExecution(uuid4(), "READ")
-STARTED = ReadStarted(READ.id, 1, 1, None, "Account", "TYPED")
-NEXT = ReadStarted(READ.id, 2, 2, 1, "Account", "TYPED")
+STARTED = ReadStarted(READ.id, 1, 1, None, "Account", "TYPED", "edition")
+NEXT = ReadStarted(READ.id, 2, 2, 1, "Account", "TYPED", None)
 
 
 class _Child:

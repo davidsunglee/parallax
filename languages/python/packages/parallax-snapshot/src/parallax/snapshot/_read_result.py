@@ -91,6 +91,9 @@ class RowsResult:
     ``rows`` is every result position in result order, already eager, detached,
     and immutable, keyed as the read PROJECTED it — physical columns plus the
     synthetic ``familyVariant`` where the compiled read materializes one.
+    ``edition`` is the Model Edition the read was served under, retained for
+    later access exactly as the graph-form envelopes retain theirs.
     """
 
     rows: tuple[PublishedRow, ...]
+    edition: str

@@ -225,7 +225,7 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
         standalone.find(query)
     doors.append(eager.value)
     with pytest.raises(SnapshotConnectionError) as streamed:
-        standalone.stream(query)
+        standalone.stream(query).__enter__()
     doors.append(streamed.value)
 
     def read_inside(tx: Transaction) -> None:
@@ -233,7 +233,7 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
             tx.find(query)
         doors.append(participating_eager.value)
         with pytest.raises(SnapshotConnectionError) as participating_stream:
-            tx.stream(query)
+            tx.stream(query).__enter__()
         doors.append(participating_stream.value)
 
     port = ScriptedPort(Transact())

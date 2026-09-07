@@ -36,6 +36,7 @@ import pytest
 from _stream_page_support import paged_reads
 from _transact_support import ACCOUNT, db_for
 
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ReadCall,
@@ -60,11 +61,13 @@ from parallax.snapshot import (
     InvalidData,
     InvalidDataError,
     QueryTargetError,
+    ServingModel,
     SnapshotStreamContinuationError,
     SnapshotStreamStateError,
     WireEntity,
     edge_of,
     pin_of,
+    prepare_model,
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import Database, Transaction
@@ -273,6 +276,7 @@ def test_the_pin_answers_before_the_first_page_and_matches_the_eager_read() -> N
     eager = _orders(ScriptedPort(Read(rows=[_order_row(1)]))).find(_all_orders())
     with _orders(port).stream(_all_orders(), batch_size=2) as stream:
         assert stream.pin == eager.pin
+        assert stream.edition
         assert _reads(port) == []
         roots = iter(stream)
         next(roots)
@@ -613,7 +617,7 @@ def test_the_default_view_still_stops_at_the_first_invalid_root(position: int, s
         _orders(_corrupt_pages(_undecodable_qty_row, position, size=size)).stream(
             _by_qty(), batch_size=size
         ) as stream,
-        pytest.raises(InvalidDataError),
+        raises_contextualized(InvalidDataError),
     ):
         for root in stream:
             delivered.append(root)
@@ -633,10 +637,15 @@ def test_a_throwing_delivery_refuses_with_the_record_the_eager_read_refuses_with
         _orders(ScriptedPort(*paged_reads(rows, size=2))).stream(
             _all_orders(), batch_size=2
         ) as stream,
-        pytest.raises(InvalidDataError) as streamed,
+        raises_contextualized(InvalidDataError) as streamed,
     ):
         list(stream)
     assert streamed.value.invalid_data == eager.value.invalid_data
+    # Both refusals carry the edition their own read was served under: the
+    # eager one arrives bare from a delayed accessor, the streamed one as the
+    # cause of the delivery's own contextualized failure, under one edition.
+    assert eager.value.edition
+    assert streamed.value.edition == streamed.edition
     (record,) = streamed.value.invalid_data
     (issue,) = record.issues
     assert (record.ordinal, issue.code, issue.path, issue.stored_value) == (
@@ -663,7 +672,7 @@ def test_a_root_whose_primary_key_did_not_decode_is_delivered_and_placed_last() 
 def test_a_stream_that_failed_answers_nothing_further() -> None:
     port = _corrupt_pages(_undecodable_qty_row, 0, size=2)
     with _orders(port).stream(_by_qty(), batch_size=2) as stream:
-        with pytest.raises(InvalidDataError):
+        with raises_contextualized(InvalidDataError):
             list(stream)
         with pytest.raises(SnapshotStreamStateError, match="single-pass"):
             iter(stream)
@@ -905,7 +914,7 @@ def test_a_tie_publishes_the_prefix_before_it_and_then_refuses() -> None:
     delivered: list[object] = []
     with (
         _orders(port).stream(_all_orders(), batch_size=2) as stream,
-        pytest.raises(SnapshotStreamContinuationError) as refusal,
+        raises_contextualized(SnapshotStreamContinuationError) as refusal,
     ):
         delivered.extend(stream.checked())
     assert _ids(iter(delivered)) == [1]
@@ -922,7 +931,7 @@ def test_a_tie_ends_the_throwing_view_the_same_way() -> None:
     # converted, or classified by either.
     with (
         _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
-        pytest.raises(SnapshotStreamContinuationError, match="not total"),
+        raises_contextualized(SnapshotStreamContinuationError, match="not total"),
     ):
         assert _ids(iter(stream)) == [1]
 
@@ -934,7 +943,7 @@ def test_an_invalid_root_in_the_prefix_refuses_before_the_tie_does() -> None:
     rows = [{**_order_row(1), "qty": "many"}, _order_row(2), _order_row(2)]
     with (
         _orders(ScriptedPort(Read(rows=rows))).stream(_all_orders(), batch_size=2) as stream,
-        pytest.raises(InvalidDataError),
+        raises_contextualized(InvalidDataError),
     ):
         list(stream)
 
@@ -946,7 +955,7 @@ def test_the_checked_view_publishes_an_invalid_prefix_root_and_then_refuses() ->
     delivered: list[object] = []
     with (
         _orders(ScriptedPort(Read(rows=rows))).stream(_all_orders(), batch_size=2) as stream,
-        pytest.raises(SnapshotStreamContinuationError),
+        raises_contextualized(SnapshotStreamContinuationError),
     ):
         delivered.extend(stream.checked())
     assert [isinstance(root, InvalidData) for root in delivered] == [True]
@@ -962,7 +971,7 @@ def test_a_tie_found_on_a_later_page_keeps_every_root_before_it() -> None:
     delivered: list[object] = []
     with (
         _orders(port).stream(_all_orders(), batch_size=2) as stream,
-        pytest.raises(SnapshotStreamContinuationError) as refusal,
+        raises_contextualized(SnapshotStreamContinuationError) as refusal,
     ):
         delivered.extend(stream)
     assert _ids(iter(delivered)) == [1, 2, 3]
@@ -972,7 +981,7 @@ def test_a_tie_found_on_a_later_page_keeps_every_root_before_it() -> None:
 
 def test_a_stream_that_ended_at_a_tie_answers_nothing_further() -> None:
     with _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream:
-        with pytest.raises(SnapshotStreamContinuationError):
+        with raises_contextualized(SnapshotStreamContinuationError):
             list(stream)
         with pytest.raises(SnapshotStreamStateError, match="single-pass"):
             stream.checked()
@@ -984,7 +993,7 @@ def test_the_refusal_is_frozen_and_keeps_its_coordinate_out_of_what_it_reports()
     # and on a refusal nothing may rewrite.
     with (
         _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
-        pytest.raises(SnapshotStreamContinuationError) as raised,
+        raises_contextualized(SnapshotStreamContinuationError) as raised,
     ):
         list(stream)
     refusal = raised.value
@@ -1010,7 +1019,7 @@ def test_every_name_the_refusal_carries_refuses_assignment_and_deletion() -> Non
     # they reach past `dataclass(frozen=True)`, and are outside the contract.
     with (
         _orders(_tied_pages()).stream(_all_orders(), batch_size=2) as stream,
-        pytest.raises(SnapshotStreamContinuationError) as raised,
+        raises_contextualized(SnapshotStreamContinuationError) as raised,
     ):
         list(stream)
     refusal = raised.value
@@ -1065,3 +1074,60 @@ def test_the_lookahead_root_is_never_paired_with_the_page_that_read_it() -> None
     reads = _reads(port)
     assert reads[1].binds == (1, 2)
     assert reads[3].binds == (3,)
+
+
+# --------------------------------------------------------------------------- #
+# Adoption: at entry, not at construction, and retained through every page.    #
+# --------------------------------------------------------------------------- #
+def _editions() -> tuple[Any, Any, ServingModel]:
+    a = prepare_model(ORDERS_MODEL, edition="orders-a")
+    b = prepare_model(ORDERS_MODEL, edition="orders-b")
+    return a, b, ServingModel(a)
+
+
+def test_an_entered_stream_reports_its_edition_and_an_unentered_one_has_none() -> None:
+    # `edition` answers exactly where `pin` does: inside the scope, and never
+    # before entry, because a stream that has not entered has adopted nothing.
+    a, _b, serving = _editions()
+    stream = Database(ScriptedPort(Read(rows=[_order_row(1)])), serving).stream(_all_orders())
+    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+        _ = stream.edition
+    with stream:
+        assert stream.edition == "orders-a" == a.edition
+        assert _ids(iter(stream)) == [1]
+        with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+            _ = stream.edition
+    with pytest.raises(SnapshotStreamStateError, match="inside its own scope"):
+        _ = stream.edition
+
+
+def test_a_stream_adopts_at_entry_rather_than_at_construction() -> None:
+    # A publication landing between the call and the scope is what separates
+    # the two moments: the delivery is served under what is current when its
+    # scope is entered, and the call itself took nothing.
+    a, b, serving = _editions()
+    stream = Database(ScriptedPort(Read(rows=[_order_row(1)])), serving).stream(_all_orders())
+    serving.publish(b, expected=a)
+    with stream:
+        assert stream.edition == "orders-b"
+
+
+def test_a_publication_mid_delivery_leaves_every_later_page_on_the_entered_edition() -> None:
+    # Retention is per delivery: pages read after the publication are still
+    # read under the selection the scope entered with, and the stamp does not
+    # move. The next operation on the same handle adopts what is serving then.
+    a, b, serving = _editions()
+    port = ScriptedPort(
+        *paged_reads([_order_row(index) for index in (1, 2, 3)], size=1),
+        Read(rows=[_order_row(1)]),
+    )
+    db = Database(port, serving)
+    delivered: list[int] = []
+    with db.stream(_all_orders(), batch_size=1) as stream:
+        for root in stream:
+            delivered.append(root.id)
+            if len(delivered) == 1:
+                serving.publish(b, expected=a)
+            assert stream.edition == "orders-a"
+    assert delivered == [1, 2, 3]
+    assert db.find(_all_orders()).edition == "orders-b"

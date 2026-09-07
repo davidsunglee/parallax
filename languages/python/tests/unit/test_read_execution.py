@@ -1,16 +1,21 @@
-"""The two production execution policies, each through all four capabilities.
+"""The two production execution policies, each through the read it begins and
+every capability of that read.
 
-A policy is a bracket around a body the Read Scope hands it, so what it is can
-only be stated by what the body sees when it runs: which activity is open, what
-has already happened to the unit of work, and which port, Concurrency
-Preference, and observation ledger arrived with it. Every case here therefore
-passes a recording body and grades the moment that body ran.
+A policy answers a begun read, and a begun read is a bracket around a body the
+Read Scope hands it, so what it is can only be stated by what the body sees
+when it runs: which activity is open, what has already happened to the unit of
+work, and which port, Concurrency Preference, and observation ledger arrived
+with it. Every case here therefore passes a recording body and grades the
+moment that body ran.
 
 That is where the two orderings the handles used to each restate now live. A
 participating eager read force-flushes and then opens its Read INSIDE that
 flush, so the dependency Write Batch is the Read's ordered sibling under one
 attempt; a participating page does the same around its Stream Batch. A
-standalone read and a standalone page flush nothing and own their roots.
+standalone read and a standalone page flush nothing and own their roots, and a
+standalone read is begun by adopting the Serving Model's current selection —
+once per operation, retained for everything done through that read, and named
+on whatever ordinary failure escapes it.
 
 What the ladder ABOVE these does is `test_read_scope.py`'s subject, and what a
 whole read answers stays the public-surface suites'.
@@ -28,7 +33,11 @@ from _support.db_port import RefusingPort
 from _support.model_capabilities import cataloged_for, graph_construction_for
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.db_port import DbPort
-from parallax.core.execution_lifecycle import ExecutionEvent
+from parallax.core.execution_lifecycle import (
+    ExecutionEvent,
+    ReadStarted,
+    SnapshotStreamStarted,
+)
 from parallax.core.execution_lifecycle._activity import (
     ActivityTarget,
     SnapshotStreamActivity,
@@ -50,8 +59,8 @@ from parallax.core.unit_work import (
     run_unit_of_work,
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, prepare_typed_write
+from parallax.snapshot.handle import ExecutionFailure, build_write_planner, prepare_model
 from parallax.snapshot.handle import _read_scope as read_scope_module
-from parallax.snapshot.handle import build_write_planner, prepare_model
 from parallax.snapshot.handle._publication import SelectedReadModel, ServingModel, read_projection
 from parallax.snapshot.handle._read_scope import ReadInputs
 
@@ -210,24 +219,44 @@ def _participating[T](
 
 
 # --------------------------------------------------------------------------- #
-# begin: the selection each policy serves                                      #
+# begin: the read each policy answers                                          #
 # --------------------------------------------------------------------------- #
 def test_each_policy_answers_the_selection_it_was_built_with() -> None:
     # A standalone execution adopts from its Serving Model at each `begin`, and
-    # a participating one answers the transaction's fixed record: what both
-    # promise is that the record arrives through `begin` rather than off the
-    # handle.
+    # a participating one answers itself, over the transaction's fixed record:
+    # what both promise is that the record arrives through the begun read
+    # rather than off the handle.
     port = RefusingPort()
     standalone = _Standalone(None, _SERVING, ReadInputs(port, None, None))
     current = read_projection(_SERVING.current())
-    assert standalone.begin() is current
-    assert standalone.begin() is current
+    assert standalone.begin().selected is current
+    assert standalone.begin().selected is current
 
     def run(execution: Any, _uow: UnitOfWork) -> None:
-        assert execution.begin() is _SELECTED
-        assert execution.begin() is _SELECTED
+        assert execution.begin() is execution
+        assert execution.begin().selected is _SELECTED
 
     _participating(run)
+
+
+def test_a_standalone_begin_adopts_once_per_operation_and_retains_it() -> None:
+    # Adoption is per operation: two begun reads over one Serving Model may
+    # differ once a publication lands between them, and the earlier one keeps
+    # what it adopted however long it lives — a publication reaches the next
+    # operation and never an existing read.
+    a = prepare_model(ACCOUNT, edition="a")
+    b = prepare_model(ACCOUNT, edition="b")
+    serving = ServingModel(a)
+    execution = _Standalone(None, serving, ReadInputs(RefusingPort(), None, None))
+
+    first = execution.begin()
+    serving.publish(b, expected=a)
+    second = execution.begin()
+
+    assert first.selected is read_projection(a)
+    assert second.selected is read_projection(b)
+    assert (first.selected.edition, second.selected.edition) == ("a", "b")
+    assert first.selected is read_projection(a)
 
 
 # --------------------------------------------------------------------------- #
@@ -239,7 +268,7 @@ def test_a_standalone_eager_read_runs_inside_a_read_root_of_its_own() -> None:
     execution = _Standalone(installed_lifecycle(provider), _SERVING, ReadInputs(port, None, None))
     body = _Body(provider)
 
-    assert execution.eager(_TARGET, "TYPED", body) is _ANSWER
+    assert execution.begin().eager(_TARGET, "TYPED", body) is _ANSWER
 
     (root,) = provider.roots
     assert root.execution.kind == "READ"
@@ -247,6 +276,9 @@ def test_a_standalone_eager_read_runs_inside_a_read_root_of_its_own() -> None:
     # batch, and no second activity.
     assert body.only.transitions == ("ReadStarted",)
     assert _events(root) == ["ReadStarted", "ReadFinished"]
+    started = root.events[0]
+    assert isinstance(started, ReadStarted)
+    assert started.edition == "test"
 
 
 def test_a_standalone_body_is_handed_the_port_and_neither_a_preference_nor_a_ledger() -> None:
@@ -256,10 +288,60 @@ def test_a_standalone_body_is_handed_the_port_and_neither_a_preference_nor_a_led
     execution = _Standalone(None, _SERVING, ReadInputs(port, None, None))
     body = _Body()
 
-    execution.eager(_TARGET, "TYPED", body)
+    execution.begin().eager(_TARGET, "TYPED", body)
 
     handed = body.only.inputs
     assert (handed.port, handed.preference, handed.ledger) == (port, None, None)
+
+
+def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_cause() -> None:
+    # The failure bracket sits OUTSIDE the root activity: the root's own
+    # Finished event reports the underlying failure, and only then does the
+    # caller receive it named under the edition this read adopted. A
+    # participating read brackets nothing, because the invocation above it
+    # names the attempt's edition once.
+    provider = RecordingLifecycleProvider()
+    execution = _Standalone(
+        installed_lifecycle(provider), _SERVING, ReadInputs(RefusingPort(), None, None)
+    )
+    boom = RuntimeError("the executor failed")
+
+    def failing(_activity: object, _inputs: ReadInputs) -> object:
+        raise boom
+
+    try:
+        execution.begin().eager(_TARGET, "TYPED", failing)
+    except ExecutionFailure as failure:
+        assert (failure.edition, failure.cause) == ("test", boom)
+        assert failure.__cause__ is boom
+    else:  # pragma: no cover - the assertion is the except arm
+        raise AssertionError("a standalone read's failure was not contextualized")
+    (root,) = provider.roots
+    assert _events(root) == ["ReadStarted", "ReadFinished"]
+
+    def run(execution: Any, _uow: UnitOfWork) -> None:
+        try:
+            execution.begin().eager(_TARGET, "TYPED", failing)
+        except RuntimeError as raised:
+            assert raised is boom
+        else:  # pragma: no cover - the assertion is the except arm
+            raise AssertionError("a participating read wrapped its failure")
+
+    _participating(run)
+
+
+def test_a_standalone_read_lets_a_control_flow_exception_pass_untouched() -> None:
+    execution = _Standalone(None, _SERVING, ReadInputs(RefusingPort(), None, None))
+
+    def interrupting(_activity: object, _inputs: ReadInputs) -> object:
+        raise KeyboardInterrupt
+
+    try:
+        execution.begin().eager(_TARGET, "TYPED", interrupting)
+    except KeyboardInterrupt:
+        pass
+    else:  # pragma: no cover - the assertion is the except arm
+        raise AssertionError("a control-flow exception was contextualized")
 
 
 # --------------------------------------------------------------------------- #
@@ -339,7 +421,7 @@ def test_a_standalone_stream_opens_a_root_execution_of_its_own() -> None:
         installed_lifecycle(provider), _SERVING, ReadInputs(RefusingPort(), None, None)
     )
 
-    activity: SnapshotStreamActivity = execution.open_stream(_TARGET, "TYPED", 5)
+    activity: SnapshotStreamActivity = execution.begin().open_stream(_TARGET, "TYPED", 5)
     with activity:
         pass
 
@@ -349,6 +431,9 @@ def test_a_standalone_stream_opens_a_root_execution_of_its_own() -> None:
         ("SnapshotStreamStarted", 1, None),
         ("SnapshotStreamFinished", 1, None),
     ]
+    started = root.events[0]
+    assert isinstance(started, SnapshotStreamStarted)
+    assert started.edition == "test"
 
 
 def test_a_participating_stream_is_a_child_of_the_current_attempt() -> None:
@@ -381,8 +466,9 @@ def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing(
     execution = _Standalone(installed_lifecycle(provider), _SERVING, ReadInputs(port, None, None))
     body = _Body(provider)
 
-    with execution.open_stream(_TARGET, "TYPED", 5) as stream:
-        assert execution.page(stream.batch(), body) is _ANSWER
+    read = execution.begin()
+    with read.open_stream(_TARGET, "TYPED", 5) as stream:
+        assert read.page(stream.batch(), body) is _ANSWER
 
     (root,) = provider.roots
     # Nothing precedes the batch: it opens where the page begins, and the body
@@ -441,3 +527,38 @@ def test_a_participating_page_hands_its_body_the_same_inputs_every_read_gets() -
         assert (handed.port, handed.preference, handed.ledger) == (port, "locking", uow)
 
     _participating(run, conn=port, concurrency="locking")
+
+
+# --------------------------------------------------------------------------- #
+# advance: one advance of a delivery, under the read's failure bracket         #
+# --------------------------------------------------------------------------- #
+def test_a_standalone_advance_names_the_edition_and_a_participating_one_does_not() -> None:
+    # The page bracket reports the underlying failure to the batch and the
+    # stream above it; the ADVANCE is where a standalone delivery names its
+    # edition, once, on the way out to the caller. A participating advance is
+    # the body itself.
+    execution = _Standalone(None, _SERVING, ReadInputs(RefusingPort(), None, None))
+    boom = RuntimeError("the page failed")
+
+    def failing() -> object:
+        raise boom
+
+    read = execution.begin()
+    assert read.advance(lambda: _ANSWER) is _ANSWER
+    try:
+        read.advance(failing)
+    except ExecutionFailure as failure:
+        assert (failure.edition, failure.cause) == ("test", boom)
+    else:  # pragma: no cover - the assertion is the except arm
+        raise AssertionError("a standalone advance's failure was not contextualized")
+
+    def run(execution: Any, _uow: UnitOfWork) -> None:
+        assert execution.begin().advance(lambda: _ANSWER) is _ANSWER
+        try:
+            execution.begin().advance(failing)
+        except RuntimeError as raised:
+            assert raised is boom
+        else:  # pragma: no cover - the assertion is the except arm
+            raise AssertionError("a participating advance wrapped its failure")
+
+    _participating(run)

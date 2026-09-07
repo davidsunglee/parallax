@@ -96,11 +96,14 @@ class ReadStarted(_Event):
 
     It starts after public preflight and any read-dependency Write Batch, and
     spans planning, lowering, all of its Database Calls, conversion,
-    materialization, and publication.
+    materialization, and publication. ``edition`` is the Model Edition a
+    standalone Read adopted for itself, and ``None`` for a participating Read,
+    whose attempt already stated the edition it inherits.
     """
 
     target: str
     interface: ReadInterface
+    edition: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,12 +442,15 @@ class SnapshotStreamStarted(_Event):
     Constructing a stream emits nothing: this is delivered only once context
     entry has succeeded. ``batch_size`` is the positive page size the stream
     requests, which is what makes its Stream Batch children countable against a
-    result the events never size.
+    result the events never size. ``edition`` is the Model Edition a
+    standalone stream adopted at entry, and ``None`` for a participating
+    stream, whose attempt already stated the edition it inherits.
     """
 
     target: str
     interface: ReadInterface
     batch_size: int
+    edition: str | None
 
 
 @dataclass(frozen=True, slots=True)

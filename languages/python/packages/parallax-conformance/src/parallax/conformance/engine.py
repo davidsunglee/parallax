@@ -22,6 +22,7 @@ import socket
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
 
@@ -789,7 +790,7 @@ def run_read_case(
     concurrency = _read_case_concurrency(case)
     try:
         result = (
-            db.read_rows(query)
+            _underlying(lambda: db.read_rows(query))
             if concurrency is None
             else _transact(db, lambda tx: tx.read_rows(query), concurrency=concurrency)
         )
@@ -854,7 +855,7 @@ def _wire_read(
     _apply_given_corrupt(case, model, port)
     db = case_database(case, port, observed.provider)
     try:
-        return db.wire.find(query), observed
+        return _underlying(lambda: db.wire.find(query)), observed
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
@@ -1017,9 +1018,13 @@ def _wire_delivery(
     _apply_given_corrupt(case, model, port)
     db = case_database(case, port, observed.provider)
     roots: list[object] = []
-    try:
+
+    def drained() -> None:
         with db.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
             roots.extend(delivery.checked())
+
+    try:
+        _underlying(drained)
     except _STREAM_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return roots, observed
@@ -1339,6 +1344,25 @@ class _RollbackStep(Exception):
     """Sentinel raised inside a transaction body to abort a ``rollback: true`` step."""
 
 
+def _underlying[T](execution: Callable[[], T]) -> T:
+    """Run one adopted ``execution`` and answer the underlying failure rather
+    than its contextualized form.
+
+    What the engine grades is what the callback, the write, the boundary, or
+    the read raised — a rollback sentinel, a Write Effect Error, an
+    optimistic-lock conflict, a lowering refusal, a Database Error — and an
+    :class:`~parallax.snapshot.handle.ExecutionFailure` carries exactly that as
+    its cause. Re-raising the cause with its own chain intact is what lets each
+    lane keep catching the failure it classifies; the edition the wrapper named
+    is the case's own literal, which the lifecycle oracle grades instead.
+    """
+    try:
+        return execution()
+    except handle.ExecutionFailure as failure:
+        cause = failure.cause
+        raise cause from cause.__cause__
+
+
 def _transact[T](
     database: handle.Database,
     body: Callable[[handle.Transaction], T],
@@ -1346,22 +1370,10 @@ def _transact[T](
     concurrency: Concurrency | None = None,
     isolation: IsolationLevel | None = None,
 ) -> T:
-    """``db.transact`` as every lane here drives it, answering the underlying
-    failure rather than its contextualized form.
-
-    What the engine grades is what the callback, the write, or the boundary
-    raised — a rollback sentinel, a Write Effect Error, an optimistic-lock
-    conflict, a lowering refusal — and an
-    :class:`~parallax.snapshot.handle.ExecutionFailure` carries exactly that as
-    its cause. Re-raising the cause with its own chain intact is what lets each
-    lane keep catching the failure it classifies; the edition the wrapper named
-    is the case's own literal, which the lifecycle oracle grades instead.
-    """
-    try:
-        return database.transact(body, concurrency=concurrency, isolation=isolation)
-    except handle.ExecutionFailure as failure:
-        cause = failure.cause
-        raise cause from cause.__cause__
+    """``db.transact`` as every lane here drives it, through :func:`_underlying`."""
+    return _underlying(
+        lambda: database.transact(body, concurrency=concurrency, isolation=isolation)
+    )
 
 
 class _AbortingPort:
@@ -3188,7 +3200,7 @@ def _run_snapshot_scenario(
                     # document is read, so no later step carries a spelling into a
                     # production seam that takes an Entity Identity.
                     identity = case_entity(model, query.target.canonical).identity
-                    snapshot = db.wire.find(query)
+                    snapshot = _underlying(partial(db.wire.find, query))
                     pin = _find_step_pin(model, query)
                 except _READ_ERRORS as exc:
                     raise EngineError(f"{case.path.name}: {exc}") from exc
