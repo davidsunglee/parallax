@@ -95,7 +95,9 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
     depends on the model alone remains to run on a request path. Each
     collaborator raises on its first refusal and no partial selection escapes.
     A descriptor-backed model prepares with no graph construction: it serves
-    Wire and the write lanes and refuses Typed materialization at the read call.
+    Wire and the write lanes and refuses Typed materialization where a read
+    reaches the selection it is served under — at the call for an eager
+    ``find``, and at scope entry for a stream, which begins its read there.
 
     Preparation runs no query, inspects no schema, and promises nothing about
     stored data, future queries, or database availability. The selection is
@@ -158,7 +160,8 @@ class Database:
         whole at preparation. Provenance decides capability rather than which
         constructor ran: a descriptor-backed model composes no Entity Class, so
         it serves Wire and the write lanes — which name Entities rather than
-        classes — and refuses every modeled read at the read call.
+        classes — and refuses every modeled read where that read reaches its
+        selection: an eager ``find`` at the call, a stream at scope entry.
         """
         if isinstance(model, ServingModel):
             serving = model
@@ -218,8 +221,9 @@ class Database:
         Model. WHICH provenance decides capability rather than which
         constructor ran: a class-backed model supports both public read
         interfaces, and a descriptor-backed one supports Wire and refuses Typed
-        materialization at the read call, before any I/O. A value that is
-        neither is refused here with
+        materialization — at the call for an eager ``find``, at scope entry for
+        a stream, which begins its read there — always before any I/O. A value
+        that is neither is refused here with
         :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError`,
         before the adapter is inspected, and :meth:`__init__` refuses the same
         shape one level down. One model connects to any number of Databases, and
