@@ -156,7 +156,7 @@ note.edit()
 Corpus case: `m-edit-003`
 
 ```python
-note.tag.edit(label="z")
+note.tag.edit(weight=1)
 ```
 
 ## Value Object change-free edit from a constructed source
@@ -205,6 +205,14 @@ Corpus case: `m-edit-009`
 
 ```python
 note.edit(marks=(NoteMark(kind="x", weight=1),))
+```
+
+## Value Object change-free edit from a constructed source preserving explicit-null weight
+
+Corpus case: `m-edit-012`
+
+```python
+note.tag.edit()
 ```
 
 ## A joined unit of work is observed inside the OUTER transaction attempt
