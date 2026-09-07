@@ -135,6 +135,38 @@ def customer_locations_deep_fetch_materializes_the_child_document_too(
     return db.find(Customer.where(Customer.all).include(Customer.locations))
 ```
 
+## Entity changed edit from a constructed source
+
+Corpus case: `m-edit-001`
+
+```python
+note.edit(body=None)
+```
+
+## Entity change-free edit from a constructed source
+
+Corpus case: `m-edit-002`
+
+```python
+note.edit()
+```
+
+## Value Object changed edit from a constructed source
+
+Corpus case: `m-edit-003`
+
+```python
+note.tag.edit(weight=1)
+```
+
+## Value Object change-free edit from a constructed source
+
+Corpus case: `m-edit-004`
+
+```python
+note.tag.edit()
+```
+
 ## A joined unit of work is observed inside the OUTER transaction attempt
 
 Corpus case: `m-execution-lifecycle-006`

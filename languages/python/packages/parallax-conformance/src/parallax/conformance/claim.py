@@ -116,6 +116,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "scenario",
         "conflict",
         "boundary",
+        "edit",
         "error",
         "concurrencySuccess",
         "rejected",

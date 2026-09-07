@@ -17,7 +17,7 @@ The implementation selects `slice-managed-1` and the managed-object lifecycle.
   "capabilities": {
     "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-edit", "m-identity-map", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-op-list", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object", "m-wire"],
     "dialects": ["postgres"],
-    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
+    "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "edit", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-managed-1"] },
     "commands": ["describe", "compile", "run"],
     "provisioning": "self-managed"

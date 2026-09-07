@@ -1,7 +1,7 @@
 """``parallax.conformance.case_format`` enforcement scope (m-case-format).
 
 Loads compatibility cases from ``core/compatibility/cases/**``, parses the
-nine-shape model plus each case's tags / shape / module tags, and hosts the §1
+eleven-shape model plus each case's tags / shape / module tags, and hosts the §1
 case-selection expression (including the ``--parallax-tags`` milestone
 intersection). Filename prefixes are never used for *selection* — membership is
 tag-driven — but the filename does carry a case's identity (its ``<module>-NNN``
@@ -140,7 +140,7 @@ _MODULE_TAG = re.compile(r"^m-[a-z0-9]+(-[a-z0-9]+)*$")
 # The <module>-NNN identity prefix embedded in a case filename stem.
 _CASE_ID = re.compile(r"^(?P<id>m-[a-z0-9]+(?:-[a-z0-9]+)*-\d{3})-")
 
-# The ten case shapes (m-case-format / conformance-adapter caseShape enum).
+# The eleven case shapes (m-case-format / conformance-adapter caseShape enum).
 CASE_SHAPES: Final[frozenset[str]] = frozenset(
     {
         "read",
@@ -151,6 +151,7 @@ CASE_SHAPES: Final[frozenset[str]] = frozenset(
         "error",
         "concurrencySuccess",
         "boundary",
+        "edit",
         "rejected",
         "evolution",
     }

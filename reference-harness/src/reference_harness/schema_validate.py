@@ -814,6 +814,90 @@ def _validate_scenario_edit(
     errors.append(f"{label}: `mutate` set {_edit_refusal(judged, assignments)}")
 
 
+def _validate_edit_case(
+    edit: Any,
+    entity_defs: list[dict[str, Any]],
+    label: str,
+    errors: list[str],
+) -> None:
+    """Resolve an edit case's target and refuse assignments it cannot admit."""
+    if not isinstance(edit, dict):
+        return
+    source = edit.get("source")
+    if not isinstance(source, dict):
+        return
+    root_name = _edit_root_name(source, entity_defs)
+    if root_name is None:
+        errors.append(f"{label}: edit source does not identify one declared Entity")
+        return
+    target = _effective_entity(entity_defs, root_name)
+    if target is None:
+        errors.append(f"{label}: edit source Entity {root_name!r} is not declared")
+        return
+    path = source.get("path")
+    if isinstance(path, str):
+        target = _edit_path_target(target, path)
+        if target is None:
+            errors.append(f"{label}: edit source path {path!r} names no Value Object occurrence")
+            return
+    assignments = edit.get("set")
+    if not isinstance(assignments, dict) or not assignments:
+        return
+    violation = _first_violation(target, assignments)
+    if violation is not None:
+        errors.append(f"{label}: `edit` set {violation}")
+
+
+def _edit_root_name(source: dict[str, Any], entity_defs: list[dict[str, Any]]) -> str | None:
+    query = source.get("objectQuery")
+    if isinstance(query, dict) and isinstance(query.get("target"), str):
+        return query["target"]
+    path = source.get("path")
+    if isinstance(path, str):
+        for definition in entity_defs:
+            entity = Entity(definition=definition)
+            if path == entity.canonical_name or path.startswith(f"{entity.canonical_name}."):
+                return entity.canonical_name
+            if path == entity.name or path.startswith(f"{entity.name}."):
+                return entity.name
+    if len(entity_defs) == 1:
+        return Entity(definition=entity_defs[0]).canonical_name
+    return None
+
+
+def _edit_path_target(root: Entity, path: str) -> Entity | None:
+    prefixes = (root.canonical_name, root.name)
+    remainder = next(
+        (path[len(prefix) + 1 :] for prefix in prefixes if path.startswith(f"{prefix}.")),
+        None,
+    )
+    if remainder is None:
+        return None
+    current = root.runtime_facts
+    display = root.name
+    for name in remainder.split("."):
+        occurrences = current.get("valueObjects", [])
+        occurrence = next(
+            (
+                candidate
+                for candidate in occurrences
+                if isinstance(candidate, dict) and candidate.get("name") == name
+            ),
+            None,
+        )
+        if occurrence is None:
+            return None
+        display = f"{display}.{name}"
+        current = occurrence
+    return Entity(
+        definition={
+            "name": display,
+            "attributes": current.get("attributes", []),
+            "valueObjects": current.get("valueObjects", []),
+        }
+    )
+
+
 def _first_violation(entity: Entity, assignments: dict[str, Any]) -> str | None:
     """Why *entity* refuses the first assignment in *assignments* it cannot take.
 
@@ -1001,6 +1085,25 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                 model_aware=case.get("shape") == "read",
                 encodings=when.get("equivalentEncodings"),
                 encodings_label=f"case {case_path.name} equivalentEncodings",
+            )
+        edit = when.get("edit")
+        if isinstance(edit, dict):
+            source = edit.get("source")
+            query = source.get("objectQuery") if isinstance(source, dict) else None
+            if isinstance(query, dict):
+                _check_object_query(
+                    query,
+                    object_query_schema,
+                    family,
+                    f"case {case_path.name} edit.source.objectQuery",
+                    errors,
+                    registry,
+                )
+            _validate_edit_case(
+                edit,
+                model_entities.get(model_name or "", []),
+                f"case {case_path.name}",
+                errors,
             )
         # A scenario case carries its Object Query per step (under
         # `when.scenario[].objectQuery`); each one validates the same way.

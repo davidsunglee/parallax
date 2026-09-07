@@ -23,6 +23,7 @@ from typing import Final
 
 from parallax.conformance import (
     case_format,
+    edit_runner,
     execution_lifecycle_stories,
     read_models,
     snapshot_recipes,
@@ -440,6 +441,10 @@ EXAMPLES: Final[list[Example]] = [
     # closed-world `UnloadedRelationshipError`, a `pin`/`edge_of` coordinate, or
     # a scenario's own per-step observable, `sameObjectAs` included).
     *(Example(story.case_id, story.title, graph_story_snippet(story)) for story in GRAPH_STORIES),
+    *(
+        Example(case.case_id, edit_runner.title(case), edit_runner.snippet(case))
+        for case in edit_runner.reachable_edit_cases()
+    ),
     # The joined transaction under an installed Provider (m-execution-lifecycle):
     # the case's own oracle states the whole delivered stream and the boundary
     # runner grades it, so what this executable story adds is the SPELLING no
