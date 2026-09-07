@@ -37,7 +37,6 @@ from parallax.snapshot import (
 )
 
 _TARGET_ID = 2
-_ALTER = "alter table account add column nickname varchar(64)"
 
 
 def _seeded(profile_run: Any) -> Any:
@@ -49,15 +48,11 @@ def test_the_usage_guide_update_story_runs_against_a_real_database(profile_run: 
     update = stories.a_running_service_publishes_an_evolved_model_without_restarting(
         _seeded(profile_run)
     )
-    # Two operations, in the only order a database accepts them: the column the
-    # index is over has to exist before the index is created.
-    assert update.statements[0] == _ALTER
-    assert len(update.statements) == 2
-    # The rollout ledger the host keeps: the index this rollout created, named
-    # by the same Physical Index Name a later uniqueness violation reports.
-    (created,) = update.created_indices
-    assert created.unique and created.logical_index_identity.name == "account_nickname"
-    assert created.physical_index_name.value in update.statements[1]
+    # The rollout ledger the host keeps, empty because this evolution adds a
+    # Column and no Index; what a database accepted, and what it then answers
+    # with, is the whole of what this test grades. The statements themselves are
+    # the schema-delta generator's own subject, never a golden string here.
+    assert update.created_indices == ()
     # One handle across the whole update: the transaction before it adopted the
     # earlier selection and the one after it adopted the published one, with no
     # reconnection between them.

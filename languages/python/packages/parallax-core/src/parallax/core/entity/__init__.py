@@ -8,9 +8,13 @@ its closed error-code sets, and the Object Query surface it re-exports from
 ``m-object-query``. The underscored modules
 behind these names are implementation detail rather than caller seams.
 
-It additionally exposes ``model_of``, the durable first-party collaboration
-seam a schema-owning or separately distributed frontend reads a model's accepted
-Metamodel through; the **advanced Entity Graph Construction collaboration**
+It additionally exposes ``model_of``, the durable first-party collaboration seam
+a schema-owning or separately distributed frontend reads a model's accepted
+Metamodel through. It is an operation over a ``DomainModel`` rather than a
+collaborator anything constructs or retains, and top-level ``parallax.core`` does
+not re-export it.
+
+It further exposes the **advanced Entity Graph Construction collaboration**
 — ``EntityGraphConstruction``, its writer, the opaque ``NodeHandle`` its
 positional rows name a node by, and the ``UNLOADED`` sentinel a relationship
 position spells, plus the two operations a lifecycle reads back
