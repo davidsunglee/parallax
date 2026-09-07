@@ -3563,9 +3563,10 @@ of shared edition identity.
   model)` accepts a Domain Model of either provenance. A class-backed model
   serves both interfaces; a descriptor-backed model serves Wire and refuses
   Typed materialization with `SnapshotConnectionError(snapshot-class-backed-model-required)`
-  at the read call, before any I/O. Both connection doors take the same model
-  argument — a Domain Model, or a `ServingModel` holding a prepared one — so
-  provenance is the only thing capability follows.
+  — at the read call for eager `find`, and at context entry for `stream`, which
+  is where a stream begins its read — always before any I/O. Both connection
+  doors take the same model argument — a Domain Model, or a `ServingModel`
+  holding a prepared one — so provenance is the only thing capability follows.
 - **Accepted query spellings.** `find` on either Wire view takes the canonical
   Object Query mapping, the canonical `ObjectQueryNode`, or — on a class-backed
   model — the Typed `ObjectQuery` authoring value directly. All three lower to
