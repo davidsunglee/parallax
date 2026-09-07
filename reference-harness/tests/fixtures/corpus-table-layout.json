@@ -7514,6 +7514,65 @@
       ]
     }
   },
+  "models/note.yaml": {
+    "note": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Note"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Note.id",
+          "declaringOwner": "parallax.compatibility.Note",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Note"
+          ],
+          "column": "title",
+          "contributor": "attribute:parallax.compatibility.Note.title",
+          "declaringOwner": "parallax.compatibility.Note",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Note"
+          ],
+          "column": "body",
+          "contributor": "attribute:parallax.compatibility.Note.body",
+          "declaringOwner": "parallax.compatibility.Note",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Note"
+          ],
+          "column": "tag",
+          "contributor": "valueObject:parallax.compatibility.Note.tag",
+          "declaringOwner": "parallax.compatibility.Note",
+          "effectiveNullable": true,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Note"
+          ],
+          "column": "marks",
+          "contributor": "valueObject:parallax.compatibility.Note.marks",
+          "declaringOwner": "parallax.compatibility.Note",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/orders.yaml": {
     "order_item": {
       "columns": [

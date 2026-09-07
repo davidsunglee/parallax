@@ -18,6 +18,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from parallax.conformance.animal_owner import ANIMAL_MODEL
+from parallax.conformance.edit_models import NOTE_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL
 from parallax.conformance.read_models import (
     BALANCE_MODEL,
@@ -56,6 +57,7 @@ MODELS: Mapping[str, DomainModel] = MappingProxyType(
         "contact": CONTACT_MODEL,
         "customer": CUSTOMER_MODEL,
         "document": DOCUMENT_MODEL,
+        "note": NOTE_MODEL,
         "orders": ORDERS_MODEL,
         "payment": PAYMENT_MODEL,
         "person": PERSON_MODEL,

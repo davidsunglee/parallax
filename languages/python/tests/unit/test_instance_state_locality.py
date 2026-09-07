@@ -126,33 +126,24 @@ INSTANCE_STATE_SITES_REACHING_PRESENCE: dict[str, frozenset[str]] = {
 # Seven sites, each taking exactly what it takes. `_declaration` builds every
 # class's plan and hands each descriptor its ordinal; `_members` addresses the
 # row from those ordinals; both frontends extend the root that answers Pydantic
-# for a value's state, and derive edited copies through it; `_edit` partitions a
-# value's named state; `_row_codec` selects by presence and reads the provenance
+# for a value's state; `_edit` partitions state and derives edited copies;
+# `_row_codec` selects by presence and reads the provenance
 # slot; `_graph_construction` allocates a shell, attaches one whole row to it,
 # reads a relationship position back, and checks the class's own plan against the
 # model's layout. Delete the Module and the tuple, the bitmap, and the ordinal
 # arithmetic reappear at all seven.
 INSTANCE_STATE_CONSUMERS: dict[str, frozenset[str]] = {
     "parallax.core.entity._declaration": frozenset({"PublicationPlan", "install"}),
-    "parallax.core.entity._edit": frozenset({"named_state"}),
-    "parallax.core.entity._entity": frozenset(
-        {"BackedModel", "carry_slots_beside_state", "named_state", "restated"}
+    "parallax.core.entity._edit": frozenset(
+        {"carry_presence", "carry_slots_beside_state", "named_state", "restated"}
     ),
+    "parallax.core.entity._entity": frozenset({"BackedModel", "named_state"}),
     "parallax.core.entity._graph_construction": frozenset(
         {"PublicationPlan", "allocate", "plan_of", "publish", "relationship"}
     ),
     "parallax.core.entity._members": frozenset({"COMPACT_STATE_SLOT", "plan_of"}),
     "parallax.core.entity._row_codec": frozenset({"is_present", "named_state", "plan_of"}),
-    "parallax.core.entity._value_object": frozenset(
-        {
-            "BackedModel",
-            "carry_presence",
-            "carry_slots_beside_state",
-            "is_present",
-            "plan_of",
-            "restated",
-        }
-    ),
+    "parallax.core.entity._value_object": frozenset({"BackedModel", "is_present", "plan_of"}),
 }
 
 _INSTANCE_STATE = f"{ENTITY_PACKAGE}._instance_state"

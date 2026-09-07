@@ -34,7 +34,8 @@ from parallax.core.entity._declaration import (
     members_of,
 )
 from parallax.core.entity._edit import (
-    partition_declared,
+    Resolution,
+    derive,
     unresolved_member_violation,
     use_edit,
 )
@@ -49,9 +50,7 @@ from parallax.core.entity._expressions import (
 )
 from parallax.core.entity._instance_state import (
     BackedModel,
-    carry_slots_beside_state,
     named_state,
-    restated,
 )
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
 from parallax.core.entity._pydantic_storage import attach_instance_state
@@ -464,16 +463,16 @@ def _edit_violations(
     return tuple(violations)
 
 
-def _restate[E: Entity](
-    value: E,
-    declared_state: dict[str, object],
-    carried: dict[str, object],
-    record: ChangeRecord,
-) -> E:
-    """A fresh value holding exactly ``value``'s state under ``record``."""
-    copied = restated(value, declared_state | carried)
-    attach_instance_state(copied, CHANGE_RECORD_SLOT, record)
-    return copied
+def _resolution_of(cls: type) -> Resolution:
+    """The Entity-specific name resolution used by the shared derivation."""
+    names = wire_names_of(cls)
+    entity = declaration_of(cls).identity
+    return Resolution(
+        declared=frozenset(names.py_to_name),
+        framework_owned=names.framework_owned_py,
+        restores_presence=False,
+        violations=lambda changes: _edit_violations(entity, cls.__name__, names, changes),
+    )
 
 
 def _use_edit(cls: type, door: str) -> EditError:
@@ -614,13 +613,13 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         coverage defect rather than a developer-input refusal.
 
         An edit replaces declared member state and preserves everything it
-        neither replaces nor invalidates (:func:`partition_declared`), whichever
-        branch builds the result. A materialized node's relationship views and
-        its lifecycle state therefore reach the copy intact, so the copy answers
-        a relationship and the lifecycle's own inspection surface exactly as the
-        node did — and carries that node's as-of pin, which is what makes a view
-        pinned in the Transaction-Time past read-only through an edit as well as
-        directly.
+        neither replaces nor invalidates
+        (:func:`~parallax.core.entity._edit.derive`), whichever branch builds the
+        result. A materialized node's relationship views and its lifecycle state
+        therefore reach the copy intact, so the copy answers a relationship and
+        the lifecycle's own inspection surface exactly as the node did — and
+        carries that node's as-of pin, which is what makes a view pinned in the
+        Transaction-Time past read-only through an edit as well as directly.
 
         A carried view keeps describing what the read observed, which is all an
         edit can leave it describing: a relationship keyword is refused outright,
@@ -642,32 +641,12 @@ class Entity(BackedModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         refuses it before any merge.
         """
         record = ChangeRecord(_change_record(self) or {})
-        names = wire_names_of(type(self))
-        declared_state, carried = partition_declared(self, set(names.py_to_name))
-        if not changes:
-            return _restate(self, declared_state, carried, record)
-        entity = declaration_of(type(self)).identity
-        violations = _edit_violations(entity, type(self).__name__, names, changes)
-        if violations:
-            raise EditError(violations) from None
-        declared_state.update(changes)
-        carry_forward = {
-            py_name: declared_state.pop(py_name)
-            for py_name in names.framework_owned_py
-            if py_name in declared_state
-        }
-        # re-validates the whole instance (§2 input policies)
-        validated = type(self)(**declared_state)
-        for py_name, value in carry_forward.items():
-            object.__setattr__(validated, py_name, value)
-        for py_name, member in carried.items():
-            attach_instance_state(validated, py_name, member)
-        carry_slots_beside_state(self, validated)
+        copied = derive(self, changes, _resolution_of(type(self)))
         for py_name in changes:
             if py_name not in record:
                 record[py_name] = getattr(self, py_name)
-        attach_instance_state(validated, CHANGE_RECORD_SLOT, record)
-        return validated
+        attach_instance_state(copied, CHANGE_RECORD_SLOT, record)
+        return copied
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
         """Refused: ``edit(**changes)`` is the object-copy verb (spec §3).

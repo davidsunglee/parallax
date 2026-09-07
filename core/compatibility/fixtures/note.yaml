@@ -1,0 +1,13 @@
+parallax.compatibility.Note:
+  - id: 1
+    title: alpha
+    body: first
+    tag: { label: a, weight: 3 }
+    marks:
+      - { kind: pin, weight: 2 }
+      - { kind: flag, weight: null }
+  - id: 2
+    title: beta
+    body: null
+    tag: null
+    marks: []
