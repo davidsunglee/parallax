@@ -1616,9 +1616,10 @@ both halves at once and never two references that could name two models. The
 class index is present exactly for a class-backed Domain Model and absent for a
 descriptor-backed one; it is a bidirectional Entity Identity/Entity Class map
 and carries no per-model identity of its own.
-`Database.connect(adapter, model)` has a static `model: DomainModel` input and
-accepts no bare-Metamodel overload. At runtime it narrows the same way: a value
-that is not a Domain Model at all is rejected before `adapter` is inspected,
+`Database.connect(adapter, model)` has a static `model: DomainModel |
+ServingModel` input and accepts no bare-Metamodel overload. At runtime it
+narrows the same way: a value that is neither a Domain Model nor a
+`ServingModel` holding a prepared one is rejected before `adapter` is inspected,
 with the exported `SnapshotConnectionError(ValueError)` under the sole stable
 code `snapshot-class-backed-model-required`. A Domain Model composing no Entity
 Class connects, because provenance decides capability rather than connectability;
@@ -2121,8 +2122,9 @@ identity a caller may copy or pickle across a boundary of their own.
 
 [ADR 0062](../../../docs/adr/0062-transactions-adopt-one-model-edition-at-open.md)
 records the decision: Parallax prepares, the application publishes, and each
-execution adopts. This section is the first two; adoption is the deferred half
-in [§9](#prepared-model-publication). The public interface is:
+execution adopts. This section is the first two; adoption is §3's for a
+transaction attempt and §4's for a standalone read or entered stream. The
+public interface is:
 
 ```python
 prepare_model(model: DomainModel, *, edition: str) -> ModelSelection
@@ -3351,19 +3353,21 @@ of shared edition identity.
   page DELIVERS: the statement asks for one more, which is the lookahead root
   `m-snapshot-read` prices, so `limit ?` binds `batch_size + 1` on every page a
   declared `limit` does not cap.
-- **Refusal order matches `find`'s, and one order covers every read entry.**
-  Typed `find` and `stream`, Wire `find` and `stream`, and `read_rows` refuse in
-  the same sequence: re-entry first, then the read begun — a standalone entry
+- **Refusal order matches `find`'s, and each entry runs it over the moments it
+  has.** Typed `find`, Wire `find`, and `read_rows` run every rung at the call,
+  in one sequence: re-entry first, then the read begun — a standalone entry
   adopting, a participating one answering its transaction's selection — then a
   selection over a model that composes no Entity Class (Typed only), then this
   call's own arguments — including, on a Wire entry, lowering its three
   accepted spellings to the canonical Object Query, which is an argument of the
   call and not a step above the refusal. The read gate and the deferred-Feature
-  refusal follow, before any I/O. A stream runs that order across its two
-  moments: the call refuses re-entry and judges its own arguments, and context
-  entry begins the read and runs everything model-dependent — the classless
-  refusal, the gate, and the deferred-Feature refusal — so a stream nobody
-  enters adopts nothing and refuses nothing about the model.
+  refusal follow, before any I/O. Typed and Wire `stream` split the same rungs
+  across their two moments, model-independent ones first: the call refuses
+  re-entry and then judges its own arguments — the query lowered, then the page
+  size — and context entry begins the read and runs everything model-dependent
+  after it — the classless refusal, the gate, and the deferred-Feature refusal,
+  still before any I/O. A stream nobody enters therefore adopts nothing and
+  refuses nothing about the model.
 - **Stability is per page, and a `tx.stream` loop that writes can be its own
   concurrent writer.** `m-snapshot-read` states the whole rule; what it means
   for this surface is that a loop mutating the member its query ordered by moves
@@ -3559,8 +3563,9 @@ of shared edition identity.
   model)` accepts a Domain Model of either provenance. A class-backed model
   serves both interfaces; a descriptor-backed model serves Wire and refuses
   Typed materialization with `SnapshotConnectionError(snapshot-class-backed-model-required)`
-  at the read call, before any I/O. Both connection doors take a Domain Model,
-  so provenance is the only thing capability follows.
+  at the read call, before any I/O. Both connection doors take the same model
+  argument — a Domain Model, or a `ServingModel` holding a prepared one — so
+  provenance is the only thing capability follows.
 - **Accepted query spellings.** `find` on either Wire view takes the canonical
   Object Query mapping, the canonical `ObjectQueryNode`, or — on a class-backed
   model — the Typed `ObjectQuery` authoring value directly. All three lower to
@@ -3680,11 +3685,12 @@ of shared edition identity.
   `snapshot-class-backed-model-required`.
 - **Execution variation stays below the verbs.** One concrete Read Scope owns
   preflight, eager execution, stream construction and paging, and result
-  publication. Its private execution adapter supplies four explicit
-  capabilities: begin a read, run an eager read, open stream activity, and run
-  one stream page. The package constructs the scope through standalone and
-  participating factories; it exposes neither an inheritance hierarchy nor a
-  closed mode union.
+  publication. Its private execution adapter supplies one capability — begin
+  this operation's read — and the begun read supplies five: the selection it is
+  served under, run an eager read, open stream activity, run one stream page,
+  and run one delivery advance. The package constructs the scope through
+  standalone and participating factories; it exposes neither an inheritance
+  hierarchy nor a closed mode union.
 - **Call-owned choices remain call-owned.** Typed or Wire result publication is
   selected for each call, after re-entry refusal, and is not configuration
   retained by the Read Scope. `batch_size` remains a `stream` argument and is
@@ -3701,7 +3707,7 @@ package does not re-export it. `connect` adds one keyword-only composition seam:
 ```python
 connect(
     adapter: DatabasePort,
-    model: DomainModel,
+    model: DomainModel | ServingModel,
     *,
     lifecycle_provider: ExecutionLifecycleProvider | None = None,
 ) -> Database

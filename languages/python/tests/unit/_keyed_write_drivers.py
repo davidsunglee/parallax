@@ -646,13 +646,17 @@ def outcome(scenario: Scenario, representation: Representation) -> Outcome:
     except AssertionError:
         raise
     except ExecutionFailure as failed:
-        if isinstance(failed.cause, AssertionError):
-            raise failed.cause from None
-        return _refused(failed.cause, phase, port)
+        underlying = failed.cause
     except Exception as raised:
         return _refused(raised, phase, port)
-    _assert_the_scripted_read_was_reached(port, scenario)
-    return Completed(tuple(port.calls))
+    else:
+        _assert_the_scripted_read_was_reached(port, scenario)
+        return Completed(tuple(port.calls))
+    # Outside the handler, so the wrapper enters neither the chain of the
+    # harness's own claim nor that of the refusal a row is graded on.
+    if isinstance(underlying, AssertionError):
+        raise underlying
+    return _refused(underlying, phase, port)
 
 
 def _reads_the_stored_row(scenario: Scenario) -> bool:

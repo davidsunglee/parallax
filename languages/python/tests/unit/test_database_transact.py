@@ -570,8 +570,10 @@ def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> N
     assert excinfo.value is never_began
     assert excinfo.edition == "adopted-before-begin"
     assert port.calls.count(BeginCall()) == 1
-    # The private carrier that made it terminal is not part of what a caller reads.
-    assert excinfo.value.__suppress_context__
+    # The private carrier that made it terminal is nowhere in what a caller
+    # reads: it is neither the cause of the error the port made nor its context.
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
 
 
 def test_a_failed_rollback_reports_both_live_errors_and_is_never_retried() -> None:

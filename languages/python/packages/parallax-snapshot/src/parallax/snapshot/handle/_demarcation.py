@@ -409,13 +409,16 @@ class Demarcation:
                         attempt, retries=options.retries, extra_retriable=extra_retriable
                     )
                 except _BeginFailure as failed:
-                    # Re-raised here rather than at the port, so the loop sees a
-                    # type it does not retry. `from` its own cause keeps the
-                    # carrier out of the chain the caller reads, leaving exactly
-                    # the error the port made — which the root's own Finished
-                    # event, delivered as this scope is left, attributes to the
-                    # attempt that reported it.
-                    raise failed.error from failed.error.__cause__
+                    # Unwrapped here rather than at the port, so the loop sees a
+                    # type it does not retry.
+                    begin_failure = failed.error
+                # Raised once the handler has been left, so the carrier enters
+                # neither the cause nor the context of what leaves: the caller
+                # reads exactly the error the port made, with the chain that
+                # error already had — and the root's own Finished event,
+                # delivered as this scope is left, attributes it to the attempt
+                # that reported it.
+                raise begin_failure
 
         # Contextualized around the whole invocation and outside the root scope:
         # the classifier saw every underlying error, the lifecycle reported it
