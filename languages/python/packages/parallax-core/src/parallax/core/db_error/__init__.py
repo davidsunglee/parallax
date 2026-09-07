@@ -13,7 +13,7 @@ membership** — not one stringly-typed method:
 - the transaction retry loop (`m-auto-retry`) asks :func:`is_retriable`
   (``category == "deadlock"`` — a true deadlock **or** a serialization failure,
   both retriable);
-- the insert / detached merge-back path asks :func:`violates_unique_index`
+- the insert path asks :func:`violates_unique_index`
   (``category == "uniqueViolation"``);
 - the lock path (`m-read-lock`) asks :func:`is_timed_out`
   (``category == "lockWaitTimeout"``).
@@ -131,7 +131,7 @@ class DatabaseError(Exception):
 
     @property
     def violates_unique_index(self) -> bool:
-        """The insert / merge-back predicate over this error's category."""
+        """The insert-path predicate over this error's category."""
         return violates_unique_index(self.category)
 
     @property
