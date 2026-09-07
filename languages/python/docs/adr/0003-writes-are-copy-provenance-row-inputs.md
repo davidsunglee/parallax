@@ -166,6 +166,11 @@ core. Every inherited copy path is refused on a Value Object Class exactly as on
 an Entity Class, closing the same validation bypass on the shape a write actually
 stores.
 
+The carried complement is installed through the Pydantic storage seam on both
+class kinds rather than through Python attribute assignment. A read-only
+property therefore cannot refuse carry, and a property setter cannot intercept
+or alter application-owned state while an edited copy is derived.
+
 Three things follow from a Value Object having no identity and no Entity, and
 they are the whole difference. A violation locates at `ModelRoot`, because a
 Value Object Class is a reusable shape rather than a position in a model — the

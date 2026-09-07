@@ -318,10 +318,12 @@ compatibility case is.
 
 - **Module tag**: `m-value-object`
 - **Supplements**: *standalone*
-- **Why the corpus cannot state it**: the copy verb is an **in-memory authoring
-  door**. It produces a value; it issues no statement, reaches no database, and
-  publishes no observable a case shape has. A case can only see what the resulting
-  value stores once it is written, which is a different claim.
+- **Why the wire lane cannot state it**: `mutate` can derive and observe a Wire
+  mapping, including whole-occurrence replacement, but it has no host-language
+  Value Object copy door or native validation/refusal vocabulary. The
+  `api-conformance` `edit` shape now observes successful use of that verb and its
+  state-carry witnesses natively; closure over every assignment refusal remains
+  a language-surface assertion rather than a Wire observation.
 - **Required assertion**: deriving a copy of a Value Object by naming the members
   to change returns a validated value carrying every member the receiver
   **populates** and the caller did not name. The receiver's populated set is what
@@ -430,12 +432,12 @@ compatibility case is.
 
 - **Module tag**: `m-value-object`
 - **Supplements**: *standalone*
-- **Why the corpus cannot state it**: the in-memory authoring door, plus the
-  absence of any independent write. A Value Object reaches storage only inside
-  its owner's row, and what that row states is decided by the **owner's** own
-  provenance record, so no case can distinguish a copy verb that recorded what it
-  changed from one that recorded nothing — the owner emits the same statement
-  either way.
+- **Why the wire lane cannot state it**: a Wire mapping carries no native
+  provenance record to inspect, and a Value Object has no independent write. The
+  `api-conformance` `edit` shape now observes the native copy and its portable
+  result/carry behavior, but it has no provenance oracle; once the occurrence is
+  assigned, the owner's own provenance produces the same row whether the Value
+  Object copy recorded changes or recorded nothing.
 - **Required assertion**: deriving a copy of a Value Object records nothing about
   what the derivation touched. A Value Object has no identity and is never
   independently written, so it carries no counterpart of the provenance record an

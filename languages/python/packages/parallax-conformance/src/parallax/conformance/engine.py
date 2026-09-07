@@ -300,7 +300,7 @@ class ScenarioRun:
     named rather than placed: ``errors`` holds one entry per `expectError` step
     whose verb raised its declared application-lifecycle error, and is filled by
     the snapshot action-step lane alone; ``step_rows`` one per read step the run
-    itself drove, carrying the values that step published
+    itself drove plus each row-observing `mutate`, carrying the values that step published
     (`m-conformance-adapter`); ``step_graphs`` one per step declaring
     `expectGraph`, from either placement of that observable — an `access` step's
     retained view on the snapshot lane, a find step's own materialized graph on
@@ -3187,6 +3187,13 @@ def _run_snapshot_scenario(
                     error_class, edited = _grade_mutate_step(case, model, step, results)
                     if error_class is not None:
                         errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
+                    elif "expectRows" in step:
+                        step_rows.append(
+                            {
+                                "at": f"/scenario/{index}",
+                                "rows": [dict(root) for root in edited.roots],
+                            }
+                        )
                     results.append(edited)
             case "write":
                 statements, unit_trips = _run_snapshot_write_step(

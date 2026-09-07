@@ -43,6 +43,8 @@ _CONSTRUCTION = "m-op-list-001-construction-first-access-reaccess.yaml"
 _POPULATED_LIST = "m-op-list-002-deep-fetch-population-stable.yaml"
 _VALUE_OBJECT_LIST = "m-op-list-004-first-access-divergent-value-object-list.yaml"
 _EDIT_KEEPS_ITEMS = "m-snapshot-read-016-edit-keeps-loaded-items.yaml"
+_EDIT_ONE_OCCURRENCE = "m-edit-010-mutate-replaces-a-one-occurrence-whole.yaml"
+_EDIT_MANY_OCCURRENCE = "m-edit-011-mutate-replaces-a-many-occurrence-whole.yaml"
 _MULTI_HOP_ACCESS = "m-snapshot-read-026-multi-hop-access-drops-null-branches.yaml"
 _READ_YOUR_OWN_WRITES = "m-unit-work-029-ryow-relationship.yaml"
 _STREAMED_EVIDENCE = "m-unit-work-030-a-streamed-roots-evidence-licenses-a-later-write.yaml"
@@ -211,6 +213,24 @@ def test_a_find_whose_rows_disagree_with_expectRows_is_refused(damaged_case: Cas
 
     with pytest.raises(CaseFailure, match=r"scenario\[0\] rows != expectRows"):
         assert_unit_work_scenario(case, ScriptedProvider(script=_rows(_ORDERS)))
+
+
+@pytest.mark.parametrize("case_name", [_EDIT_ONE_OCCURRENCE, _EDIT_MANY_OCCURRENCE])
+def test_a_mutate_publishes_its_whole_occurrence_replacement(
+    corpus_case: CaseLoader, case_name: str
+) -> None:
+    physical = {
+        "id": 1,
+        "title": "alpha",
+        "body": "first",
+        "__parallax_document_presence_3": True,
+        "tag": {"label": "a", "weight": 3},
+        "marks": [{"kind": "pin", "weight": 2}, {"kind": "flag", "weight": None}],
+    }
+    with ScriptedProvider(script=_rows([physical])) as db:
+        assert_unit_work_scenario(corpus_case(case_name), db)
+
+    assert len(_calls(db)) == 1
 
 
 def test_a_finds_reference_oracle_runs_on_the_reader_the_golden_used(

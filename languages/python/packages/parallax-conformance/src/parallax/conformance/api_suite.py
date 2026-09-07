@@ -1501,7 +1501,18 @@ _EXECUTION_LIFECYCLE_STREAMED_ROOT_REASON: Final[str] = (
     "`tests/unit/test_execution_lifecycle_stream.py`"
 )
 
+_WIRE_EDIT_OCCURRENCE_REASON: Final[str] = (
+    "the portable Wire `mutate` adapter's whole-occurrence replacement, graded from the "
+    "case's own `expectRows` by both the reference harness and the Python compatibility "
+    "run sweep. The idiomatic copy verb and its native state witnesses are exercised by "
+    "the edit-shape examples, so repeating this mapping-only adapter spelling in the API "
+    "suite would not add a developer surface"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
+    # -- m-edit: portable Wire adapter, independently run-graded -------------- #
+    "m-edit-010": _WIRE_EDIT_OCCURRENCE_REASON,
+    "m-edit-011": _WIRE_EDIT_OCCURRENCE_REASON,
     # -- m-execution-lifecycle: the spine's own two graders -------------------- #
     # (`-006` is an exercised story above: the composition spelling no oracle states)
     "m-execution-lifecycle-001": _EXECUTION_LIFECYCLE_SWEEP_GRADED_REASON,

@@ -503,7 +503,8 @@ def test_write_run_sweep(case: case_format.Case, profile: Profile, profile_run: 
     the group's own last step. A writeSequence executes the whole FK-ordered
     sequence in one transaction. Grading: the envelope's per-step emissions equal the
     golden DML and its total round trips the case's `then.roundTrips`; every scenario
-    read step's `stepRows` observation equals its `expectRows` (:func:`_grade_step_rows`);
+    row-observing step's `stepRows` observation equals its `expectRows`
+    (:func:`_grade_step_rows`);
     a writeSequence's committed `tableState` observation equals `then.tableState`,
     table for table.
     """
@@ -622,15 +623,15 @@ def _names_one_entity(model: Metamodel, left: object, right: object) -> bool:
 def _grade_step_rows(
     case: case_format.Case, model: Metamodel, steps: list[dict[str, Any]], envelope: Any
 ) -> None:
-    """Grade every read step's `expectRows` against the run's own `stepRows`
+    """Grade every row-observing step's `expectRows` against the run's own `stepRows`
     observation.
 
     The values a step published are what `m-conformance-adapter`'s `stepRows`
-    reports — one entry per read step the adapter drove, at that step's own
-    pointer, in step order. What is graded is therefore what the step HANDED OVER,
-    not what its statements returned: a streamed step's entry is its whole
-    delivery's roots, and a deep-fetch step's is its roots alone, with no per-lane
-    arithmetic over result sets in between.
+    reports — one entry per read step the adapter drove plus each `mutate`
+    declaring `expectRows`, at that step's own pointer, in step order. What is
+    graded is therefore what the step HANDED OVER, not what its statements
+    returned: a streamed step's entry is its whole delivery's roots, a deep-fetch
+    step's is its roots alone, and a mutation's is its derived Wire mapping.
 
     A STREAMED step is the one row oracle compared POSITIONALLY: its `expectRows`
     are the roots the delivery published across every page IN DELIVERY ORDER
@@ -649,7 +650,8 @@ def _grade_step_rows(
     expected = [
         (f"/scenario/{index}", step.get("expectRows"), "stream" in step)
         for index, step in enumerate(steps)
-        if "objectQuery" in step and not _resolves_a_materializing_write(model, steps, index)
+        if ("objectQuery" in step and not _resolves_a_materializing_write(model, steps, index))
+        or (step.get("action") == "mutate" and "expectRows" in step)
     ]
     observed = cast("list[dict[str, Any]]", envelope["observations"].get("stepRows", []))
     assert [entry["at"] for entry in observed] == [at for at, _, _ in expected], (

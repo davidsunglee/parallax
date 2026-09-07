@@ -177,6 +177,13 @@ def _published(row: dict[str, Any]) -> PublishedRow:
     return PublishedRow(dict(row), _SEAM)
 
 
+def edited(row: PublishedRow, assignments: Mapping[str, Any]) -> PublishedRow:
+    """Derive a published Wire row by replacing the authored bindings whole."""
+    copied = _materialized_row(row)
+    copied.update(assignments)
+    return _published(copied)
+
+
 def _refuse_an_unpublished_row(case: Case, step: str, row: Mapping[str, Any]) -> None:
     """Refuse a later projection step's input that never came through the seam.
 

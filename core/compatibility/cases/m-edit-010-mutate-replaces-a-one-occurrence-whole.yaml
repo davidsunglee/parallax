@@ -1,0 +1,43 @@
+# A Wire mutation replaces a nullable one-occurrence as one whole document: the
+# source Note carries tag weight 3, the authored replacement carries only label b,
+# and the derived row omits weight rather than merging it from the source. The
+# find contributes the scenario's only statement; mutation is an in-memory mapping
+# derivation with zero round trips, and its expectRows grades the value it publishes.
+model: models/note.yaml
+tags: [m-edit, m-value-object, mutation, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+when:
+  scenario:
+    - objectQuery:
+        target: parallax.compatibility.Note
+        predicate:
+          eq:
+            attr: parallax.compatibility.Note.id
+            value: 1
+      roundTrips: 1
+      statements:
+        - sql:
+            postgres: select t0.id, t0.title, t0.body, not t0.tag is null, t0.tag, t0.marks from note t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - id: 1
+          title: alpha
+          body: first
+          tag: { label: a, weight: 3 }
+          marks:
+            - { kind: pin, weight: 2 }
+            - { kind: flag, weight: null }
+    - action: mutate
+      "on": 0
+      set: { tag: { label: b } }
+      roundTrips: 0
+      expectRows:
+        - id: 1
+          title: alpha
+          body: first
+          tag: { label: b }
+          marks:
+            - { kind: pin, weight: 2 }
+            - { kind: flag, weight: null }
+then:
+  roundTrips: 1

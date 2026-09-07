@@ -256,14 +256,15 @@ def test_a_non_read_action_step_declaring_a_row_observable_is_refused(damaged_ca
     """A verb that publishes nothing has nothing to compare, so a claim about its
     rows is refused rather than skipped.
 
-    Grading one would mean reading what an earlier read retained, which belongs to
-    the read oracle and never crosses back. Refusing it keeps that boundary from
-    being reintroduced by a future case rather than only by today's corpus, in
-    which every observable-bearing action step is a read verb.
+    Grading one would mean reading what an earlier read retained without a verb
+    that publishes a derived value. Refusing it keeps that boundary from being
+    reintroduced by a future case. A `mutate` is the exception: when it declares
+    `expectRows`, the row oracle derives and publishes its Wire copy.
     """
     case = damaged_case("m-snapshot-read-010-mutation-has-no-writeback.yaml")
     source = case.scenario[0]
     mutate = next(step for step in case.scenario if step.get("action") == "mutate")
+    mutate["action"] = "flush"
     mutate["expectRows"] = list(source["expectRows"])
     with pytest.raises(CaseFailure, match="only the read verbs"):
         assert_unit_work_scenario(case, RefusingProvider())
