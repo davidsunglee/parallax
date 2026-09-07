@@ -322,6 +322,35 @@ def test_a_stale_publication_is_refused_with_what_was_expected_and_held() -> Non
     assert serving.current() is c
 
 
+def test_a_refusal_reports_the_comparison_it_was_raised_with() -> None:
+    a, b, c = (prepare_model(_ACCOUNT, edition=edition) for edition in "abc")
+    serving = ServingModel(a)
+    serving.publish(b, expected=a)
+
+    with pytest.raises(PublicationConflictError) as refusal:
+        serving.publish(c, expected=a)
+    # A handler holding the refusal can neither restate what the publisher
+    # expected nor swap what the comparison found held.
+    for name in ("expected", "held"):
+        with pytest.raises(AttributeError):
+            setattr(refusal.value, name, c)
+        with pytest.raises(AttributeError):
+            delattr(refusal.value, name)
+    assert (refusal.value.expected, refusal.value.held) == (a, b)
+
+
+def test_a_refusal_leaves_interpreter_owned_state_writable() -> None:
+    # Read-only is about the two selections this refusal reports, not about the
+    # machinery every exception carries: chaining and notes still work.
+    a, b = (prepare_model(_ACCOUNT, edition=edition) for edition in "ab")
+    refusal = PublicationConflictError(expected=a, held=b)
+    replacement = ValueError("chaining stays interpreter-owned")
+    refusal.__cause__ = replacement
+    refusal.add_note("annotated")
+    assert refusal.__cause__ is replacement
+    assert refusal.__notes__ == ["annotated"]
+
+
 def test_a_refusal_carries_what_its_comparison_read_and_not_a_later_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
