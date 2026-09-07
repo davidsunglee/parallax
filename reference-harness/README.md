@@ -43,7 +43,7 @@ src/reference_harness/
 ├── case_runner.py     # the layered assertion engine: case-shape routing, provisioning,
 │                      #   rejected, writes, conflict, concurrency, and coherence
 ├── object_query_oracle/ # every accepted Object Query observation, behind two names:
-│                        #   assert_case_read, ReadExecutor — plus the Scenario-read
+│                        #   assert_case_read, ReadExecutor — plus the Scenario row-observation
 │                        #   collaboration unit_work_scenario alone imports
 ├── unit_work_scenario/  # every Unit Work Scenario, graded whole, behind one name:
 │                        #   assert_unit_work_scenario — step interpretation, ordered
