@@ -89,7 +89,7 @@ from parallax.core.relationship import (
     view,
 )
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._serde import parse_document
+from parallax.descriptor._parse import parse_document
 
 _ORDER = identity("Order")
 _ITEM = identity("Item")

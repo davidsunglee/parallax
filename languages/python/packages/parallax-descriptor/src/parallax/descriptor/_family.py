@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from parallax.core.inheritance import InheritanceError
+from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -35,7 +36,6 @@ from parallax.descriptor._records import (
     family_root_name,
     parent_identity,
 )
-from parallax.descriptor._serde import parse_document
 
 __all__ = [
     "Family",

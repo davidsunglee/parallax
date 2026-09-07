@@ -1,4 +1,4 @@
-"""Descriptor serde (m-descriptor).
+"""Descriptor document parsing (m-descriptor).
 
 Hand-rolled, snake-to-camel-aware reading of the canonical
 ``metamodel.schema.json`` document shape into the frozen metamodel records.

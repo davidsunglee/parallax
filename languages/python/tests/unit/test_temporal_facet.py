@@ -54,7 +54,7 @@ from parallax.core.temporal_read import (
     compile_facet,
 )
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._serde import parse_document
+from parallax.descriptor._parse import parse_document
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _CORPUS_NAMESPACE: Final[str] = "parallax.compatibility"

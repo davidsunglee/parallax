@@ -6,9 +6,9 @@ text — and three export a class-backed or descriptor-backed hub back to that
 canonical form. A seventh door classifies the inheritance-family defects that
 keep a document from forming at all, which the six above can only report as a
 refusal to build a model. The record vocabulary, the canonical-schema machinery,
-serde, type-spelling conversion, and the Unresolved Metamodel adaptation stay
-private: a descriptor document is the interchange surface, not the records behind
-it.
+document parsing, type-spelling conversion, and the Unresolved Metamodel
+adaptation stay private: a descriptor document is the interchange surface, not
+the records behind it.
 
 The seven error types below are the frontend's OWN failure vocabulary, none of
 them re-exported from ``parallax.core``. They are not the whole of what these

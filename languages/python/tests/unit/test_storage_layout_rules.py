@@ -58,7 +58,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._serde import parse_document
+from parallax.descriptor._parse import parse_document
 
 _ROOT = identity("Ledger")
 _MID = identity("Journal")

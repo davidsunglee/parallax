@@ -23,7 +23,7 @@ from parallax.core.metamodel import (
 )
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._serde import parse_document
+from parallax.descriptor._parse import parse_document
 
 
 @pytest.fixture(scope="module")

@@ -59,7 +59,7 @@ from parallax.core.opt_lock import (
 from parallax.core.temporal_read import FACET_KEY as TEMPORAL_FACET_KEY
 from parallax.core.temporal_read import TEMPORAL_READ_MODULE
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._serde import parse_document
+from parallax.descriptor._parse import parse_document
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _CORPUS_NAMESPACE: Final[str] = "parallax.compatibility"
