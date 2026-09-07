@@ -4,9 +4,11 @@ and the Serving Model*).
 What preparation guarantees is graded as completeness: every product a request
 path reads is derived while ``prepare_model`` runs, so the derivations are made
 to fail afterwards and a read and a write still succeed. What the Serving Model
-guarantees is graded under concurrency: readers racing a publication observe one
-complete selection or the other, and two publishers racing one expectation
-leave exactly one of them holding.
+guarantees is graded under contention that is arranged rather than hoped for:
+every reader is made to span the publication before its observations are judged,
+and every publisher is made to reach the compare/replace window before any of
+them may leave one, so a holder that compared outside that window fails rather
+than passes on favorable scheduling.
 
 Docker-free, against the shared recording port.
 """
@@ -14,6 +16,7 @@ Docker-free, against the shared recording port.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Final
 
 import pytest
@@ -40,6 +43,15 @@ from parallax.snapshot.handle import Database, Transaction
 from parallax.snapshot.handle._publication import read_projection, write_projection
 
 _ACCOUNT: Final = mm.ACCOUNT_MODEL
+
+_RENDEZVOUS: Final = 10.0
+"""Seconds a worker waits for the others to reach the window it shares with
+them. Long enough that a loaded machine never reaches it, so exceeding it is a
+failure to arrive rather than slow arrival."""
+
+_SETTLE: Final = 0.1
+"""Seconds allowed for workers released together to run as far as they can. What
+is graded is where they cannot get, so this bounds a negative observation."""
 
 
 class _ClasslessSource:
@@ -175,6 +187,22 @@ def test_a_selection_admits_no_subclass() -> None:
             pass
 
 
+def test_no_caller_can_construct_a_selection() -> None:
+    # Preparation is the only way one comes into being. A caller who could name
+    # a constructor could pair a model with no projections at all, or with
+    # another selection's, and a Serving Model would hold the result as
+    # prepared — so the class refuses to be called, whatever it is handed.
+    prepared = prepare_model(_ACCOUNT, edition="one")
+    with pytest.raises(TypeError, match="prepared rather than constructed"):
+        ModelSelection()
+    with pytest.raises(TypeError, match="prepared rather than constructed"):
+        ModelSelection("forged", _ACCOUNT, None, None)
+    with pytest.raises(TypeError, match="prepared rather than constructed"):
+        ModelSelection("forged", _ACCOUNT, read_projection(prepared), write_projection(prepared))
+    with pytest.raises(TypeError, match="prepared rather than constructed"):
+        ModelSelection(edition="forged", model=_ACCOUNT)
+
+
 # --------------------------------------------------------------------------- #
 # ServingModel: one holder, identity compare-and-replace, refused when stale.  #
 # --------------------------------------------------------------------------- #
@@ -244,18 +272,29 @@ def test_a_serving_model_admits_no_subclass() -> None:
 
 
 def test_concurrent_readers_observe_only_a_complete_a_or_b() -> None:
+    # Every reader is made to SPAN the publication rather than left to race it:
+    # each takes its first observation before the publisher is released, and
+    # each then reads without pause until it has observed the replacement, so a
+    # reader running wholly before or wholly after it cannot be what passes.
+    # Each records the selections it saw CHANGE between, so the whole history of
+    # a reader that observed only complete states is exactly A then B: a stale,
+    # reverted, or half-replaced answer is one more entry.
     a, b = prepare_model(_ACCOUNT, edition="a"), prepare_model(_ACCOUNT, edition="b")
     serving = ServingModel(a)
-    start = threading.Barrier(5)
     observations: list[list[ModelSelection]] = [[] for _ in range(4)]
+    reading = threading.Barrier(len(observations) + 1)
 
     def read(into: list[ModelSelection]) -> None:
-        start.wait()
-        for _ in range(2000):
-            into.append(serving.current())
+        into.append(serving.current())
+        reading.wait(_RENDEZVOUS)
+        deadline = time.monotonic() + _RENDEZVOUS
+        while into[-1] is not b and time.monotonic() < deadline:
+            observed = serving.current()
+            if observed is not into[-1]:
+                into.append(observed)
 
     def publish() -> None:
-        start.wait()
+        reading.wait(_RENDEZVOUS)
         serving.publish(b, expected=a)
 
     readers = [threading.Thread(target=read, args=(into,)) for into in observations]
@@ -263,13 +302,10 @@ def test_concurrent_readers_observe_only_a_complete_a_or_b() -> None:
     for thread in (*readers, publisher):
         thread.start()
     for thread in (*readers, publisher):
-        thread.join()
+        thread.join(_RENDEZVOUS * 2)
 
     for seen in observations:
-        assert all(one is a or one is b for one in seen)
-        first_b = next((index for index, one in enumerate(seen) if one is b), len(seen))
-        assert all(one is a for one in seen[:first_b])
-        assert all(one is b for one in seen[first_b:])
+        assert seen == [a, b], "a reader spanning the publication observed something else"
     assert serving.current() is b
 
 
@@ -277,26 +313,42 @@ def test_two_publishers_racing_one_expectation_leave_exactly_one_holding() -> No
     a = prepare_model(_ACCOUNT, edition="a")
     candidates = [prepare_model(_ACCOUNT, edition=f"candidate-{n}") for n in range(8)]
     serving = ServingModel(a)
-    start = threading.Barrier(len(candidates))
+    # The compare/replace window itself, held here so that every publisher is
+    # inside one before any of them can finish one. Holding it is what makes the
+    # contention necessary rather than lucky: a check-then-set that compared
+    # outside the window would not be stopped by it, and all eight would replace
+    # what they each saw held.
+    window = serving._lock  # pyright: ignore[reportPrivateUsage] - the window under test
+    calling = threading.Barrier(len(candidates) + 1)
     refusals: list[PublicationConflictError] = []
-    lock = threading.Lock()
+    published: list[ModelSelection] = []
+    outcomes = threading.Lock()
 
     def publish(candidate: ModelSelection) -> None:
-        start.wait()
+        calling.wait(_RENDEZVOUS)
         try:
             serving.publish(candidate, expected=a)
         except PublicationConflictError as refused:
-            with lock:
+            with outcomes:
                 refusals.append(refused)
+        else:
+            with outcomes:
+                published.append(candidate)
 
     threads = [threading.Thread(target=publish, args=(one,)) for one in candidates]
+    window.acquire()
     for thread in threads:
         thread.start()
+    calling.wait(_RENDEZVOUS)
+    time.sleep(_SETTLE)
+    assert all(thread.is_alive() for thread in threads), "a publisher completed outside the window"
+    assert serving.current() is a
+    window.release()
     for thread in threads:
-        thread.join()
+        thread.join(_RENDEZVOUS)
 
     winner = serving.current()
-    assert winner in candidates
+    assert published == [winner]
     assert len(refusals) == len(candidates) - 1
     assert all(refused.expected is a and refused.held is winner for refused in refusals)
 

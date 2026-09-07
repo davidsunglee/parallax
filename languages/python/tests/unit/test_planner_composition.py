@@ -290,7 +290,7 @@ def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
 def test_a_prepared_selection_carries_the_planner_the_factory_built(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Preparation is where the composition root builds a planner now, and the
+    # Preparation is where the composition root builds a planner, and the
     # selection's write projection is the one place it is retained: the object
     # every transaction over that selection plans through is, by identity, the
     # one the factory handed back while preparing.

@@ -34,11 +34,12 @@ live:
 - :mod:`~parallax.snapshot.handle._publication` — :class:`ModelSelection`, the
   opaque prepared form of one Domain Model under one Model Edition that
   :func:`prepare_model` answers; :class:`ServingModel`, the single concrete
-  holder of the selection new executions adopt, publishing by identity
-  compare-and-replace; and :class:`PublicationConflictError`, its refusal of a
+  holder of a current selection, publishing by identity compare-and-replace;
+  and :class:`PublicationConflictError`, its refusal of a
   stale publication, carrying what was expected and what was held. The sealed
-  child scope also owns the selection's two private projections, which the
-  read composition and the transaction receive and nothing exports.
+  child scope also owns the one builder of a selection and the selection's two
+  private projections, which the read composition and the transaction receive
+  and nothing exports.
 - :mod:`~parallax.snapshot.handle._planning` — :func:`build_write_planner`, the
   one factory that wires ``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,
   and ``m-bitemp-write`` into a :class:`~parallax.core.unit_work.WritePlanner`'s

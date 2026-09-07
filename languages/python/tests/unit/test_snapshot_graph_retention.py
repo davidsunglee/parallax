@@ -1930,9 +1930,9 @@ def _catalog_seam(graphs: int) -> Seam:
     the catalog held at the sample point.
 
     The catalog is derived INSIDE the window, over a Metamodel formed outside it,
-    so what the reading sees is the catalog and the layouts those graphs reached
-    through it — and nothing of the graphs themselves, each of which is
-    unreachable again before the next one is built.
+    so what the reading sees is the catalog and every layout it derived — and
+    nothing of the graphs themselves, each of which is unreachable again before
+    the next one is built.
     """
     workload = _WORKLOADS[_LEAST.shape]
     views = workload.views[: _LEAST.slots]
@@ -1962,11 +1962,11 @@ def _catalog_seam(graphs: int) -> Seam:
 @in_a_child_interpreter
 def test_a_models_layout_catalog_is_the_same_size_after_one_graph_and_after_sixty_four() -> None:
     # `python.md`'s "retained layout count and size are independent of the number
-    # of graphs materialized", measured. Entries are derived per exact Entity on
-    # FIRST reach, so the reading is taken over a warmed catalog — the harness's
+    # of graphs materialized", measured. Every entry is derived when the catalog
+    # is constructed, so both readings cover a whole catalog — the harness's
     # warm-up passes fill every memo underneath a layout before the window opens —
     # and what is left is whether a second, or a sixty-fourth, graph adds anything
-    # to what the model retains. Both instruments are read: a per-graph entry
+    # to what the catalog retains. Both instruments are read: a per-graph entry
     # would move the byte count, and a per-graph reference taken by something
     # already alive would move neither unless the objects are counted too.
     tracemalloc.start()

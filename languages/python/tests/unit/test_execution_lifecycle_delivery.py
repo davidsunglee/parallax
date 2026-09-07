@@ -244,10 +244,13 @@ def test_an_ordinary_handler_failure_quarantines_only_that_handler() -> None:
 
 
 def test_a_handler_error_carries_no_event_statement_or_bind() -> None:
+    # The bind is supplied by this query alone and spelled so that nothing else
+    # in a report — a file path, a class name, a timestamp — can contain it.
+    bind = "no-bind-survives-a-handler-error"
     handler = _FailingHandler(fail_at=2, failure=RuntimeError("boom"))
     provider = _Provider(handler)
     port = ScriptedPort(Read(rows=[NEW_ROW]))
-    _read(_db(port, provider))
+    _db(port, provider).find(mm.Account.where(mm.Account.owner == bind)).result()
     (reported,) = provider.reported
     assert set(type(reported).__dataclass_fields__) == {
         "execution_id",
@@ -257,13 +260,15 @@ def test_a_handler_error_carries_no_event_statement_or_bind() -> None:
         "fanout_path",
         "diagnostic",
     }
-    # The failing event was the Database Call's Started, whose statement is
-    # borrowed for delivery alone; nothing about it survives the report. Matched
-    # on the statement's own spelling rather than the keyword alone, which a
-    # file path in the diagnostic's stack may happen to contain.
+    # The failing event was the Database Call's Started, whose statement and
+    # binds are borrowed for delivery alone; neither half survives the report.
+    # The statement is matched on its own spelling rather than the keyword
+    # alone, which a file path in the diagnostic's stack may happen to contain.
+    assert bind in repr(handler.seen[-1]), "the failing event never carried the bind"
     rendered = repr(reported).lower()
     assert "select t0." not in rendered
     assert "from account" not in rendered
+    assert bind not in rendered
 
 
 def test_a_failing_reporter_writes_one_correlation_only_line_and_stops(

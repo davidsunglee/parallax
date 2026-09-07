@@ -351,9 +351,8 @@ def case_edition(case: case_format.Case) -> str:
     """The Model Edition a case's model is prepared under: the model
     descriptor's file stem, ``"account"`` for ``models/account.yaml``.
 
-    One rule, so every lane preparing a case's model — and every fixture
-    asserting the edition an execution adopted — derives the same literal from
-    the same fact about the case.
+    One rule, so every lane preparing a case's model derives the same literal
+    from the same fact about the case.
     """
     return _case_model_path(case).stem
 
