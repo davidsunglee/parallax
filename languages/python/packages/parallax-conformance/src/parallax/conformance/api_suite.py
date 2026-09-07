@@ -262,10 +262,12 @@ RECIPES: Final[list[Recipe]] = [
             "stale publisher is refused with `PublicationConflictError` and "
             "rebases onto the selection it names as held) and "
             "`tests/unit/test_model_publication_stories.py`'s Docker-free halves "
-            "(a candidate that cannot be prepared, a Coordinated Evolution, a "
-            "boundary that never opened, a delta that stopped at its second "
-            "statement, an undo that did not complete, and the snippet being the "
-            "source that ran)"
+            "(a candidate whose preparation derivation fails, a Coordinated "
+            "Evolution, a boundary that never opened, a multi-statement delta "
+            "that stopped at its second statement, a fatal trigger that stays "
+            "primary, an undo that did not complete, the index provenance an "
+            "applying host is handed back, and the snippet being the source "
+            "that ran)"
         ),
         notes=(
             "The order is the whole recipe. **Prepare the candidate first**: that is "
@@ -286,14 +288,17 @@ RECIPES: Final[list[Recipe]] = [
             "past the update because a later uniqueness violation names the "
             "Physical Index Name an entry carries — the correlation "
             "`tests/provider_contract/test_provider_contract.py` grades against a "
-            "real duplicate. "
+            "real duplicate. This evolution adds one Column and creates no Index, "
+            "so the ledger it hands back is empty; one that added an Index would "
+            "carry an entry per Index it created. "
             "Nothing here drains, barriers, or retries a rollout: transactions "
             "already adopted keep the edition they adopted, other processes publish "
             "independently, and an earlier-edition read still reports rows its own "
             "model cannot admit as invalid stored data at the result root. "
             "`ACCOUNT_MODEL` and `NICKNAMED_ACCOUNT_MODEL` are `DomainModel(Account)` "
             "and `DomainModel(NicknamedAccount)` over the two classes below, the "
-            "earlier and later endpoints of the one Evolution this publishes."
+            "earlier and later endpoints of the one added nullable Attribute this "
+            "publishes."
         ),
         snippet=model_publication_stories.publication_snippet(),
     ),

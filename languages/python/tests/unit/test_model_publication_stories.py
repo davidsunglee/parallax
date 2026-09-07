@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from decimal import Decimal
-from typing import cast
 
 import pytest
 
@@ -29,14 +28,23 @@ from parallax.core.db_port import (
     Row,
     TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.entity import DomainModel, model_of
-from parallax.evolution import SchemaDelta, evolve
+from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
+from parallax.core.entity import GraphConstructionError, model_of
+from parallax.core.entity import _graph_construction as graph_construction_module
+from parallax.core.metamodel import EntityIdentity, IndexIdentity, Table
+from parallax.evolution import CreatedIndex, SchemaDelta, evolve
 from parallax.snapshot import ServingModel, connect, prepare_model
 
 _ALTER = "alter table account add column nickname varchar(64)"
-_CREATE_INDEX = "create unique index "
 _ORDERED = ("alter table t add column a int", "create index i on t (a)", "analyze t")
+_ROLLOUT_INDEX = CreatedIndex(
+    physical_index_name=PhysicalIndexName("pxi_account_nickname_0"),
+    physical_table=Table(name="account"),
+    logical_index_identity=IndexIdentity(
+        EntityIdentity("parallax.compatibility", "Account"), "accountNickname"
+    ),
+    unique=True,
+)
 
 
 class _AccountPort:
@@ -83,7 +91,7 @@ class _RefusingPort(_AccountPort):
     """A port whose ``at``-th statement raises, so the delta stops there with
     every earlier statement already sent."""
 
-    def __init__(self, error: Exception, *, at: int = 0) -> None:
+    def __init__(self, error: BaseException, *, at: int = 0) -> None:
         super().__init__()
         self.error = error
         self.at = at
@@ -98,7 +106,7 @@ class _UnrollbackablePort(_AccountPort):
     """A port whose statement fails AND whose undo does not complete, so what
     the database holds is unknown."""
 
-    def __init__(self, trigger: Exception, rollback_error: Exception) -> None:
+    def __init__(self, trigger: BaseException, rollback_error: Exception) -> None:
         super().__init__()
         self.trigger = trigger
         self.rollback_error = rollback_error
@@ -119,17 +127,15 @@ def test_the_documented_update_prepares_applies_then_publishes() -> None:
     assert update.after_edition == "2026-09-b"
     assert update.nickname == "rainy-day"
     # The order is the story: the column exists before anything adopts the
-    # edition prepared over it, so both schema statements precede the write that
-    # names the new member — and the index follows the column it is over.
+    # edition prepared over it, so the schema statement precedes the write that
+    # names the new member.
     assert port.writes[0] == _ALTER
-    assert port.writes[1].startswith(_CREATE_INDEX)
-    assert "nickname" in port.writes[2]
-    assert len(port.writes) == 3
-    assert update.statements == (port.writes[0], port.writes[1])
-    # The rollout ledger the host retains: one entry per Index this delta
-    # created, carrying the name a later uniqueness violation reports.
-    (created,) = update.created_indices
-    assert created.unique and created.physical_index_name.value in port.writes[1]
+    assert "nickname" in port.writes[1]
+    assert len(port.writes) == 2
+    assert update.statements == (port.writes[0],)
+    # One added Attribute creates no Index, so the rollout ledger this update
+    # retains is empty rather than absent.
+    assert update.created_indices == ()
 
 
 def test_the_same_update_run_backwards_is_not_a_live_publication_path() -> None:
@@ -142,19 +148,32 @@ def test_the_same_update_run_backwards_is_not_a_live_publication_path() -> None:
         stories.unilateral(backwards)
 
 
-def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving() -> None:
+def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Preparation is the recipe's FIRST step, which is what makes this failure
-    # cost nothing: it runs before any statement of a delta is generated, let
-    # alone applied, so the database is untouched and the handle connected
-    # before the attempt goes on serving the edition it already adopted.
+    # cost nothing: every fallible model-only derivation runs there, before any
+    # statement of a delta is generated, let alone applied. So the database is
+    # untouched, the held selection is unmoved, and the next execution of the
+    # handle connected before the attempt still adopts A.
+    #
+    # The candidate is the story's own later model and the derivation that fails
+    # is a real one — its graph construction, made to refuse here because a
+    # Domain Model that composes at all is one every derivation accepts.
     port = _AccountPort()
     a = prepare_model(ACCOUNT_MODEL, edition="2026-09-a")
     serving = ServingModel(a)
     db = connect(port, serving)
 
-    unpreparable = cast("DomainModel", object())
-    with pytest.raises(TypeError, match="Domain Model"):
-        prepare_model(unpreparable, edition="2026-09-b")
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        raise GraphConstructionError(
+            code="entity-graph-layout-mismatch",
+            message="the candidate's per-Entity facts could not be derived",
+        )
+
+    monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse)
+    with pytest.raises(GraphConstructionError):
+        prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
 
     assert port.writes == []
     assert serving.current() is a
@@ -194,21 +213,55 @@ def test_a_multi_statement_delta_stops_at_the_first_failure_having_run_the_prefi
     assert port.writes == [_ORDERED[0]]
 
 
-def test_the_generated_delta_stopping_partway_publishes_nothing() -> None:
-    # The same stop, reached through the story's own generated delta: the index
-    # statement fails, so the column change is all that was sent and the write
-    # that names the new member never runs.
-    port = _RefusingPort(RuntimeError("index already exists"), at=1)
+def test_the_generated_delta_that_did_not_apply_publishes_nothing() -> None:
+    # The same stop, reached through the story's own generated delta: the column
+    # statement fails, so nothing reached the database and the write that names
+    # the new member — the one an adopted later edition would make — never runs.
+    port = _RefusingPort(RuntimeError("relation is locked"))
     with pytest.raises(stories.UnpublishableUpdateError):
         stories.a_running_service_publishes_an_evolved_model_without_restarting(port)
 
-    assert port.writes == [_ALTER]
+    assert port.writes == []
+
+
+def test_the_delta_s_index_provenance_is_what_the_applying_host_is_handed_back() -> None:
+    # The rollout ledger is the delta's own: a host that applied the statements
+    # holds the entries to correlate a later uniqueness violation against, by the
+    # Physical Index Name each carries. The story's own evolution creates no
+    # Index, so the provenance is graded over a delta constructed here.
+    port = _AccountPort()
+    delta = SchemaDelta(
+        ("create unique index pxi_account_nickname_0 on account (nickname)",), (_ROLLOUT_INDEX,)
+    )
+    assert stories.apply_schema_delta(port, delta) == (_ROLLOUT_INDEX,)
+    assert port.writes == list(delta.statements)
+
+
+def test_a_fatal_trigger_stays_primary_rather_than_becoming_a_refusal() -> None:
+    # A control-flow failure is not an ordinary one: wrapping an interrupt in the
+    # application's refusal would let a host catch a shutdown in progress and
+    # report it as a schema delta that did not apply.
+    interrupted = KeyboardInterrupt()
+    with pytest.raises(KeyboardInterrupt) as fatal:
+        stories.apply_schema_delta(_RefusingPort(interrupted), SchemaDelta((_ALTER,), ()))
+    assert fatal.value is interrupted
+
+    # The same, with the undo failing too: the interrupt is still primary and
+    # carries the rollback failure as its cause.
+    rollback_error = RuntimeError("the session is gone")
+    port = _UnrollbackablePort(interrupted, rollback_error)
+    with pytest.raises(KeyboardInterrupt) as unrollbackable:
+        stories.apply_schema_delta(port, SchemaDelta((_ALTER,), ()))
+    assert unrollbackable.value is interrupted
+    assert unrollbackable.value.__cause__ is rollback_error
 
 
 def test_an_undo_that_did_not_complete_is_refused_as_an_unknown_database() -> None:
     # Two live failures, and reporting only the trigger would teach a host that
-    # the database is back where it started. It is not: the undo did not run, so
-    # the rollback failure is the cause and the trigger is named beside it.
+    # the database is back where it started. It is not: the undo did not
+    # complete, so how much of it ran is unknown, the rollback failure is the
+    # cause, and BOTH errors survive as objects a host can inspect rather than
+    # as text it would have to parse.
     trigger = RuntimeError("relation is locked")
     rollback_error = RuntimeError("the session is gone")
     port = _UnrollbackablePort(trigger, rollback_error)
@@ -216,7 +269,8 @@ def test_an_undo_that_did_not_complete_is_refused_as_an_unknown_database() -> No
         stories.apply_schema_delta(port, SchemaDelta((_ALTER,), ()))
 
     assert refusal.value.__cause__ is rollback_error
-    assert repr(trigger) in str(refusal.value)
+    assert refusal.value.triggering_error is trigger
+    assert refusal.value.rollback_error is rollback_error
 
 
 def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:

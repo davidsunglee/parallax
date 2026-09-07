@@ -69,7 +69,23 @@ class UnpublishableUpdateError(Exception):
     vocabulary. Raised at either step this recipe puts BEFORE its publication,
     so under this order the earlier selection is still serving and nothing has
     adopted the candidate.
+
+    ``triggering_error`` and ``rollback_error`` are both live objects when an
+    undo did not complete, because either alone misreports what happened; each
+    is ``None`` where only one failure is live, and that one is the ``__cause__``.
     """
+
+    def __init__(
+        self,
+        message: str,
+        /,
+        *,
+        triggering_error: BaseException | None = None,
+        rollback_error: Exception | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.triggering_error = triggering_error
+        self.rollback_error = rollback_error
 
 
 def unilateral(evolution: Evolution, /) -> UnilateralEvolution:
@@ -112,10 +128,17 @@ def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> tuple[CreatedInde
             return delta.created_indices
         case BeginFailed(error):
             raise UnpublishableUpdateError("the schema delta never began") from error
+        # A control-flow or fatal trigger — an interrupt, a cancellation — stays
+        # primary at both rollback outcomes rather than being downgraded into an
+        # ordinary refusal a host catches and reports as a failed update.
+        case RolledBack(trigger) if not isinstance(trigger.error, Exception):
+            raise trigger.error
         case RolledBack(trigger):
             raise UnpublishableUpdateError(
                 "the schema delta did not apply in full"
             ) from trigger.error
+        case RollbackFailed(trigger, rollback_error) if not isinstance(trigger.error, Exception):
+            raise trigger.error from rollback_error
         case RollbackFailed(trigger, rollback_error):
             # Both failures are live and either alone misreports what happened:
             # the statements that had already succeeded could not be undone, so
@@ -123,8 +146,10 @@ def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> tuple[CreatedInde
             # is no longer trustworthy. Retrying the delta is exactly what must
             # not happen — a prefix-safe statement is not an idempotent one.
             raise UnpublishableUpdateError(
-                f"the schema delta could not be undone after {trigger.error!r}, so how much "
-                f"of it the database holds is unknown"
+                f"the schema delta could not be undone after {trigger.error!r}; the undo failed "
+                f"with {rollback_error!r}, so how much of the delta the database holds is unknown",
+                triggering_error=trigger.error,
+                rollback_error=rollback_error,
             ) from rollback_error
 
 
@@ -162,9 +187,9 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     # prepared selection carries its own of: `model_of` is the durable first-party
     # seam a schema-owning host reads one through (`python.md` §2).
     evolution = unilateral(evolve(model_of(a.model), model_of(b.model)))
-    # The statements are ordered and the order is load-bearing — the added
-    # Column exists before the Index over it is created — so they are applied as
-    # given, never reordered, deduplicated, or made idempotent.
+    # The statements are applied exactly as given — never reordered,
+    # deduplicated, or made idempotent — because a delta states what must happen
+    # to a database at the earlier edition rather than reconciling an unknown one.
     delta = schema_delta(evolution, port.dialect)
     created_indices = apply_schema_delta(port, delta)
 
