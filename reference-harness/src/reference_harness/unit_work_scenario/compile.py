@@ -32,11 +32,11 @@ from typing import Any
 from ..case import Case, entry_pairs, entry_statements, names_earlier_step
 from ..case_assertions import CaseFailure
 
-# The m-case-format lifecycle verbs that READ: a `load` triggers a deferred fetch
-# and an `access` reads an already-loaded set. A `mutate` that declares
-# `expectRows` also publishes its derived Wire value for the row oracle. Every
-# other verb either commits buffered DML or acts in memory without an observable.
-_ACTION_READ_VERBS = frozenset({"load", "access"})
+# The m-case-format lifecycle actions whose ordinary effect publishes rows: a load
+# triggers a deferred fetch and an access reads an already-loaded set. A mutate
+# publishes only when it declares expectRows; every other action either commits
+# buffered DML or acts in memory without a row observation.
+_ROW_PUBLISHING_ACTIONS = frozenset({"load", "access"})
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,7 @@ class _Step:
 
     No compiled step carries its authored dictionary. Every fact this package's
     own later phases read is resolved here, so "execution does not reinterpret a
-    raw step" holds by construction rather than by discipline; the read oracle is
+    raw step" holds by construction rather than by discipline; the row observation oracle is
     handed a step index and asks the case itself, in its own vocabulary. The
     adapter-delegated observables a
     step may also declare are validated by the schema and graded by each language's
@@ -134,7 +134,7 @@ class _BoundaryAction(_Step):
 
 
 @dataclass(frozen=True)
-class _Read(_Step):
+class _RowPublishingStep(_Step):
     """A row-publishing step whose observation the Object Query oracle owns.
 
     This includes a ``mutate`` declaring ``expectRows`` beside the read
@@ -148,7 +148,9 @@ class _UnresolvedList(_Step):
     trips, zero rows, and no observation until a later step accesses it."""
 
 
-type _CompiledStep = _GroupedWrite | _UngroupedWrite | _BoundaryAction | _Read | _UnresolvedList
+type _CompiledStep = (
+    _GroupedWrite | _UngroupedWrite | _BoundaryAction | _RowPublishingStep | _UnresolvedList
+)
 
 
 @dataclass(frozen=True)
@@ -221,7 +223,7 @@ def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep
         and step.get("on") is None
     ):
         return _UnresolvedList(*common)
-    return _Read(*common)
+    return _RowPublishingStep(*common)
 
 
 def _boundary_verb(step: Mapping[str, Any]) -> str | None:
@@ -234,7 +236,7 @@ def _boundary_verb(step: Mapping[str, Any]) -> str | None:
     if (
         "write" in step
         or action is None
-        or action in _ACTION_READ_VERBS
+        or action in _ROW_PUBLISHING_ACTIONS
         or (action == "mutate" and "expectRows" in step)
     ):
         return None
@@ -342,7 +344,8 @@ def _assert_no_action_observables(case: Case, index: int, step: Mapping[str, Any
     if declared:
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] is a {step['action']!r} action step "
-            f"declaring {declared}; only the read verbs {sorted(_ACTION_READ_VERBS)} "
+            f"declaring {declared}; only the row-publishing actions "
+            f"{sorted(_ROW_PUBLISHING_ACTIONS)} "
             "and a `mutate` declaring `expectRows` observe rows, so what such a "
             "step publishes is nothing to compare."
         )

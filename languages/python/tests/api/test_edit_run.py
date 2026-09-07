@@ -192,6 +192,16 @@ def test_grading_rejects_mutation_of_the_containing_entity_source() -> None:
     )
 
 
+def test_observe_compares_result_identity_with_the_edit_target() -> None:
+    case = _case("m-edit-003")
+    source = edit_runner.constructed_source(case)
+    before = edit_runner.probe(source)
+
+    observation = edit_runner.observe(source, source.target, before)
+
+    assert observation.distinct is False
+
+
 def test_grading_reports_every_remaining_observation_mismatch() -> None:
     case = _case("m-edit-001")
     observed = _run(case)

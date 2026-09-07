@@ -1,6 +1,6 @@
 """What a Scenario's row-publishing steps observe, driven through one export.
 
-The observation oracle is this package's collaborator rather than an interface
+The row observation oracle is this package's collaborator rather than an interface
 of its own, so its workflows are exercised where a caller reaches them: one Scenario
 graded whole against a scripted provider. What each test asserts is what a caller
 can see — whether the run returned or raised, and which statements reached which

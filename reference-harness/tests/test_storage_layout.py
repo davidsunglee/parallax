@@ -46,7 +46,7 @@ from reference_harness.storage_layout import (
     validate_storage_layout,
 )
 from reference_harness.temporality import derive_temporal_structure
-from reference_harness.unit_work_scenario.reads import ScenarioReads
+from reference_harness.unit_work_scenario.observations import ScenarioRowObservations
 from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1632,33 +1632,36 @@ def test_the_scenario_suite_reaches_the_package_only_through_its_one_export() ->
 def test_the_oracle_exports_two_names_and_no_retained_type() -> None:
     """The read oracle offers one accepted read and the executor it takes.
 
-    Scenario reads are graded there too, but under no name here: the collaboration
+    Scenario row observations are graded there too, but under no name here: the
+    collaboration
     is package-private, and what a Scenario step retains has no public type,
     constructor, fields, or iteration, so orchestration cannot reach a row, a view,
     or an identity it did not ask a step for.
     """
     assert sorted(object_query_oracle.__all__) == ["ReadExecutor", "assert_case_read"]
-    assert not hasattr(object_query_oracle, "ScenarioReads")
-    reads = vars(ScenarioReads)
-    assert sorted(name for name in reads if not name.startswith("_")) == ["assert_step"]
+    assert not hasattr(object_query_oracle, "ScenarioRowObservations")
+    observations = vars(ScenarioRowObservations)
+    assert sorted(name for name in observations if not name.startswith("_")) == ["assert_step"]
 
 
-def test_only_the_scenario_packages_reads_module_imports_the_oracles_scenario_module() -> None:
-    """One name, one importer: `ScenarioReads` enters the harness at exactly one module.
+def test_only_the_scenario_packages_observations_module_imports_the_oracles_scenario_module() -> (
+    None
+):
+    """One name, one importer: `ScenarioRowObservations` enters the harness at exactly one module.
 
     A second importer would make the collaboration an interface again — this time
     an undocumented one — so the rule is pinned over every module of the harness,
     this suite included, rather than stated. Whoever else needs the type asks that
     one module for it, which is what makes the seam a seam.
     """
-    reads = Path(unit_work_scenario.__file__).parent / "reads.py"
+    observations = Path(unit_work_scenario.__file__).parent / "observations.py"
     importers = {
         path
         for path in _harness_modules()
         for edge in _absolute_imports(path)
         if edge.target.endswith("object_query_oracle.scenario")
     }
-    assert importers == {reads}
+    assert importers == {observations}
 
 
 def test_the_case_runner_holds_no_scenario_helper_of_its_own() -> None:

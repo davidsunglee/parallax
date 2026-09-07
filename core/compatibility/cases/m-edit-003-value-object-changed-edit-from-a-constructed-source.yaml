@@ -1,7 +1,7 @@
-# A changed Value Object edit starts with optional weight absent and makes it
-# present, preserves application-owned auxiliary state behind a read-only property
-# by shallow identity with independent bindings, invokes no assignment hook, drops
-# a warm declared cache, and leaves the containing source and occurrence unchanged.
+# A changed Value Object edit leaves an unassigned optional weight present as
+# explicit null while replacing label, preserves application-owned auxiliary state
+# behind a read-only property by shallow identity with independent bindings, invokes
+# no assignment hook, drops a warm declared cache, and leaves source and occurrence unchanged.
 model: models/note.yaml
 tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
 shape: edit
@@ -14,14 +14,14 @@ when:
         id: 1
         title: alpha
         body: first
-        tag: { label: a }
+        tag: { label: a, weight: null }
         marks: []
       path: parallax.compatibility.Note.tag
-    set: { weight: 1 }
+    set: { label: z }
 then:
   result:
-    members: { label: a, weight: 1 }
+    members: { label: z, weight: null }
   carry:
     auxiliary: { identity: shared, binding: independent, hooks: none }
-    derivedCache: { value: A, evaluations: 1 }
+    derivedCache: { value: Z, evaluations: 1 }
   source: { unchanged: true }

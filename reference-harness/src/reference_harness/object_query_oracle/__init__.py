@@ -14,8 +14,8 @@ the case already authored rather than a choice orchestration gets to make.
 
 A Unit Work Scenario's row observations are graded here too, but not through this interface.
 :mod:`..unit_work_scenario` owns a Scenario whole and hands one step at a time to
-:class:`.scenario.ScenarioReads`, which is package-private: it is offered under no
-name here, and ``unit_work_scenario/reads.py`` is its only importer. A step index
+:class:`.scenario.ScenarioRowObservations`, which is package-private: it is offered under no
+name here, and ``unit_work_scenario/observations.py`` is its only importer. A step index
 and a reader cross that seam and nothing comes back — query, relationship load,
 reuse, retained access, and a row-observing mutation stay behaviorally distinct
 inside, and what a step published is retained under its index for the steps

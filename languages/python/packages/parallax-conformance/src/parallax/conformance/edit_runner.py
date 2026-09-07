@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
@@ -15,6 +16,7 @@ __all__ = [
     "AuxiliaryReading",
     "DerivedCacheReading",
     "EditSource",
+    "ObjectStateReading",
     "Observation",
     "Probe",
     "changes",
@@ -107,29 +109,36 @@ def _members(value: BaseModel) -> dict[str, object]:
 
 
 @dataclass(frozen=True, slots=True)
-class Probe:
-    root_members: Mapping[str, object]
-    target_members: Mapping[str, object]
-    root_memo: list[str]
-    root_memo_contents: tuple[str, ...]
+class ObjectStateReading:
+    members: Mapping[str, object]
     memo: list[str]
     memo_contents: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Probe:
+    root: ObjectStateReading
+    target: ObjectStateReading
     derived_cache: str
     ledger: WitnessReading
+
+
+def _read_object_state(value: Editable) -> ObjectStateReading:
+    memo = value.memo
+    return ObjectStateReading(
+        members=_members(value),
+        memo=memo,
+        memo_contents=tuple(memo),
+    )
 
 
 def probe(source: EditSource) -> Probe:
     """Snapshot the root and target state, warming the target's declared cache."""
     target = source.target
     derived_cache = target.shouted
-    memo = target.memo
     return Probe(
-        root_members=_members(source.root),
-        target_members=_members(target),
-        root_memo=source.root.memo,
-        root_memo_contents=tuple(source.root.memo),
-        memo=memo,
-        memo_contents=tuple(memo),
+        root=_read_object_state(source.root),
+        target=_read_object_state(target),
         derived_cache=derived_cache,
         ledger=LEDGER.snapshot(),
     )
@@ -164,20 +173,20 @@ def observe(source: EditSource, result: Editable, before: Probe) -> Observation:
     result.remember(["result-only"])
     independent = (
         result.memo is not target.memo
-        and target.memo is before.memo
-        and tuple(target.memo) == before.memo_contents
+        and target.memo is before.target.memo
+        and tuple(target.memo) == before.target.memo_contents
     )
     cache_value = result.shouted
     after_result_cache = LEDGER.snapshot()
     source_cache = target.shouted
     after_source_cache = LEDGER.snapshot()
     source_unchanged = (
-        _members(source.root) == before.root_members
-        and _members(target) == before.target_members
-        and source.root.memo is before.root_memo
-        and tuple(source.root.memo) == before.root_memo_contents
-        and target.memo is before.memo
-        and tuple(target.memo) == before.memo_contents
+        _members(source.root) == before.root.members
+        and _members(target) == before.target.members
+        and source.root.memo is before.root.memo
+        and tuple(source.root.memo) == before.root.memo_contents
+        and target.memo is before.target.memo
+        and tuple(target.memo) == before.target.memo_contents
         and source_cache == before.derived_cache
         and after_source_cache == after_result_cache
     )
@@ -195,7 +204,7 @@ def observe(source: EditSource, result: Editable, before: Probe) -> Observation:
             evaluations=after_source_cache.cache_evaluations - before.ledger.cache_evaluations,
         ),
         source_unchanged=source_unchanged,
-        distinct=result is not source,
+        distinct=result is not source.target,
     )
 
 
@@ -261,7 +270,8 @@ def _argument(name: str, value: object) -> str:
             f'NoteMark(kind="{mark.kind}", weight={mark.weight!r})' for mark in marks
         )
         return f"marks=({elements},)"
-    return f"{name}={value!r}"
+    rendered = json.dumps(value) if isinstance(value, str) else repr(value)
+    return f"{name}={rendered}"
 
 
 def title(case: case_format.Case) -> str:
