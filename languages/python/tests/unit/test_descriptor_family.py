@@ -20,7 +20,7 @@ from parallax.descriptor._family import (
     validate_families,
 )
 from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
-from parallax.descriptor._serde import deserialize
+from parallax.descriptor._serde import parse_document
 
 _REPO = case_format.find_repo_root()
 _MODELS = corpus_records()
@@ -120,25 +120,23 @@ def test_independent_families_in_one_descriptor_pass_validation() -> None:
 def test_a_rootless_family_beside_a_rooted_one_is_rejected() -> None:
     # A rooted family does not answer for its neighbour: the abstract-orphan chain
     # reaches no root of its own and is still rejected.
-    descriptor = deserialize(
-        {
-            "entities": [
-                *_INDEPENDENT_FAMILIES["entities"],
-                {
-                    "name": "Widget",
-                    "table": "widget",
-                    "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
-                },
-                {
-                    "name": "Pet",
-                    "inheritance": {"role": "abstract-subtype", "parent": "Widget"},
-                    "attributes": [{"name": "licenseId", "type": "string", "maxLength": 16}],
-                },
-            ]
-        }
-    )
+    document = {
+        "entities": [
+            *_INDEPENDENT_FAMILIES["entities"],
+            {
+                "name": "Widget",
+                "table": "widget",
+                "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+            },
+            {
+                "name": "Pet",
+                "inheritance": {"role": "abstract-subtype", "parent": "Widget"},
+                "attributes": [{"name": "licenseId", "type": "string", "maxLength": 16}],
+            },
+        ]
+    }
     with pytest.raises(InheritanceError) as caught:
-        validate_families(descriptor)
+        validate_inheritance_families(document)
     assert caught.value.rule == "inheritance-missing-root"
 
 
@@ -174,7 +172,7 @@ def test_two_families_with_same_named_roots_in_different_namespaces_stay_apart()
     # root's CANONICAL identity: keyed on the bare one, both families answer
     # "Record" and merge, so each side's family-effective primary key picks up
     # the OTHER root's key attribute and no row can satisfy the composite.
-    descriptor = deserialize(
+    descriptor = parse_document(
         {
             "entities": [
                 {
@@ -223,7 +221,7 @@ def test_a_bare_parent_reaches_its_own_namespaces_root() -> None:
     # name, neither would, and each subtype's family-effective primary key would
     # collapse to its own EMPTY local one — leaving every row of it
     # unidentifiable for keyed writes, observations, and coalescing lookups.
-    descriptor = deserialize(
+    descriptor = parse_document(
         {
             "entities": [
                 {

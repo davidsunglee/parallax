@@ -16,17 +16,17 @@ import datetime as dt
 import decimal
 
 import pytest
-from _corpus_model_support import formed, target
 from _corpus_model_support import model as accepted_model
+from _corpus_model_support import target
 
 from _support.sql import compile_read
+from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, TemporalDimension
 from parallax.core.navigate import canonicalize, canonicalize_validated, resolve_relationship
 from parallax.core.object_query import AsOf, TemporalSelection
 from parallax.core.object_query import TemporalDimension as QueryTemporalDimension
-from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
 POLICY = accepted_model("policy")
@@ -363,7 +363,7 @@ _ZOO_MODEL = {
         },
     ]
 }
-_ZOO = formed(deserialize(_ZOO_MODEL))
+_ZOO = models.accepted_model(_ZOO_MODEL)
 
 
 def test_polymorphic_temporal_relationship_target_resolves_axes_via_the_family_root() -> None:

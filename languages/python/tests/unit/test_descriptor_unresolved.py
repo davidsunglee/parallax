@@ -47,7 +47,7 @@ from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._errors import DescriptorError
-from parallax.descriptor._serde import deserialize, parse_document
+from parallax.descriptor._serde import parse_document
 from parallax.descriptor._type_spelling import parse_type_spelling
 
 _MODELS = sorted(
@@ -131,29 +131,6 @@ def test_parse_leaves_a_relationship_target_unresolved() -> None:
     assert isinstance(declaration, records.DefiningRelationship)
     # Unqualified as authored: qualification is the resolver's answer, not parse's.
     assert declaration.join.target.entity == "Entry"
-
-
-def test_parse_accepts_a_model_the_legacy_deserializer_rejects() -> None:
-    text = """
-    entity:
-      name: Account
-      namespace: parallax.fixture
-      table: account
-      attributes:
-        - name: id
-          type: int64
-          primaryKey: true
-      relationships:
-        - name: entries
-          cardinality: one-to-many
-          join:
-            source: id
-            target: { entity: Missing, attribute: accountId }
-    """
-    document = _document(text)
-    parse_document(document)
-    with pytest.raises(DescriptorError, match="unknown entity"):
-        deserialize(document)
 
 
 def test_parse_rejects_an_empty_or_ambiguous_source() -> None:
