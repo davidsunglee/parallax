@@ -6,9 +6,11 @@ path reads is derived while ``prepare_model`` runs, so the derivations are made
 to fail afterwards and a read and a write still succeed. What the Serving Model
 guarantees is graded under contention that is arranged rather than hoped for:
 every reader is made to span the publication before its observations are judged,
-and the compare/replace window is wrapped so that entering it is recorded and
-held shut until every publisher has entered, so a holder that compared outside
-that window fails rather than passes on favorable scheduling.
+and the compare/replace window is wrapped so that both entering and leaving it
+are recorded: it is held shut until every publisher has entered, and no
+publisher runs past it until every publisher has left. A holder that compared
+before taking that window, or replaced after leaving it, fails rather than
+passes on favorable scheduling.
 
 Docker-free, against the shared recording port.
 """
@@ -51,18 +53,24 @@ never arrives into a failure instead of a hung suite."""
 
 
 class _RecordedWindow:
-    """A Serving Model's compare/replace window with arrival recorded at entry.
+    """A Serving Model's compare/replace window with both of its edges recorded.
 
-    ``publish`` enters this in place of the lock itself, so a publisher's
-    arrival is recorded BEFORE it can take the window and therefore after
-    everything the holder does outside one. A test that holds the window shut
-    can then wait for every publisher to arrive, rather than sleeping and
-    reading arrival off thread liveness.
+    ``publish`` enters this in place of the lock itself, so arrival is recorded
+    BEFORE the publisher can take the window and therefore after everything the
+    holder does outside one, and departure is recorded AFTER the window is
+    released and therefore before anything the holder does past it. A test that
+    holds the window shut can then wait for every publisher to arrive rather
+    than sleeping and reading arrival off thread liveness, and holding every
+    publisher at the departure edge makes each of them take the window, in
+    turn, with no other publisher yet past it.
     """
 
-    def __init__(self, window: threading.Lock, arriving: threading.Barrier) -> None:
+    def __init__(
+        self, window: threading.Lock, arriving: threading.Barrier, leaving: threading.Barrier
+    ) -> None:
         self._window = window
         self._arriving = arriving
+        self._leaving = leaving
 
     def __enter__(self) -> None:
         self._arriving.wait(_RENDEZVOUS)
@@ -70,6 +78,7 @@ class _RecordedWindow:
 
     def __exit__(self, *_exception: object) -> None:
         self._window.release()
+        self._leaving.wait(_RENDEZVOUS)
 
 
 class _ClasslessSource:
@@ -357,17 +366,23 @@ def test_two_publishers_racing_one_expectation_leave_exactly_one_holding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The contention is necessary rather than lucky: the window records each
-    # publisher as it enters, and the test holds the window shut until all
-    # eight have. A holder that compared BEFORE taking the window would have
-    # every compare behind it when the window opens, so all eight would replace
-    # the selection they each saw held; a holder that took no window at all
-    # would finish without ever being recorded.
+    # publisher at both edges, the test holds it shut until all eight have
+    # entered, and no publisher may run past it until all eight have left. So
+    # the eight compares happen one at a time with nothing else in between,
+    # and only the replacement each compare is fused to can decide the rest.
+    # A holder that compared BEFORE taking the window would have every compare
+    # behind it when the window opens; one that replaced AFTER leaving it would
+    # have every compare read the selection they each saw held, since no
+    # replacement can run until the last compare is done. Either way all eight
+    # replace and all eight succeed. A holder that took no window at all would
+    # finish without ever being recorded.
     a = prepare_model(_ACCOUNT, edition="a")
     candidates = [prepare_model(_ACCOUNT, edition=f"candidate-{n}") for n in range(8)]
     serving = ServingModel(a)
     window = serving._lock  # pyright: ignore[reportPrivateUsage] - the compare/replace window under test
     arriving = threading.Barrier(len(candidates) + 1)
-    monkeypatch.setattr(serving, "_lock", _RecordedWindow(window, arriving))
+    leaving = threading.Barrier(len(candidates))
+    monkeypatch.setattr(serving, "_lock", _RecordedWindow(window, arriving, leaving))
     refusals: list[PublicationConflictError] = []
     published: list[ModelSelection] = []
     outcomes = threading.Lock()
