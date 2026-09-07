@@ -135,8 +135,11 @@ class _BoundaryAction(_Step):
 
 @dataclass(frozen=True)
 class _Read(_Step):
-    """A step whose observation the Object Query oracle owns. Its group, when it
-    has one, is what selects the reader it is handed."""
+    """A row-publishing step whose observation the Object Query oracle owns.
+
+    This includes a ``mutate`` declaring ``expectRows`` beside the read
+    workflows. Its group, when it has one, selects the reader it is handed.
+    """
 
 
 @dataclass(frozen=True)
@@ -178,10 +181,11 @@ def compile_scenario(case: Case) -> CompiledScenario:
 def _compile_step(case: Case, index: int, step: dict[str, Any]) -> _CompiledStep:
     """Which kind of step this is, decided once and nowhere else.
 
-    "Is this a read?" is written as its complement: the closed set of kinds this
-    package executes itself is a write, an action whose verb neither loads nor
-    accesses, and the zero-round-trip construction of a query-backed list that has
-    not resolved. Every other step is a read, and the read oracle grades whichever
+    "Does this publish rows?" is written as its complement: the closed set of
+    kinds this package executes itself is a write, an action other than ``load``,
+    ``access``, or a ``mutate`` declaring ``expectRows``, and the
+    zero-round-trip construction of a query-backed list that has not resolved.
+    Every other step publishes rows, and the observation oracle grades whichever
     step it is handed rather than asking that question again.
 
     Which kind a step is decides which rules it owes, so the classification comes
@@ -251,7 +255,7 @@ def _assert_on_sources(case: Case, index: int, step: Mapping[str, Any]) -> None:
 
     Only the bound. Whether the named step published anything is a property of the
     run rather than of the document — a step that fails its own observable
-    publishes nothing — so the read oracle refuses that during execution.
+    publishes nothing — so the observation oracle refuses that during execution.
     """
     on = step.get("on")
     sources = list(on) if isinstance(on, list) else [] if on is None else [on]
@@ -272,7 +276,7 @@ def _assert_on_sources(case: Case, index: int, step: Mapping[str, Any]) -> None:
 def _assert_identity_anchor(case: Case, index: int, step: Mapping[str, Any]) -> None:
     """Refuse a ``sameObjectAs`` naming anything but an EARLIER step of this Scenario.
 
-    The read oracle resolves the anchor to what that step observed and compares
+    The observation oracle resolves the anchor to what that step observed and compares
     primary-key identities, so the index must address a step this Scenario
     authored before the oracle reaches for it. Its counterpart
     ``differentObjectFrom`` is graded by no lane this package executes, so the
@@ -325,8 +329,8 @@ def _write_entries(step: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
 def _assert_no_action_observables(case: Case, index: int, step: Mapping[str, Any]) -> None:
     """Refuse a row observable on a step whose verb observes no rows.
 
-    Grading one would mean reading what an earlier read retained, which is private
-    to the read oracle, so a case authoring one is stating an observable this lane
+    Grading one would mean reading what an earlier step retained, which is private
+    to the observation oracle, so a case authoring one is stating an observable this lane
     cannot answer and must fail loudly rather than pass vacuously.
     """
     allowed = {"expectRows"} if step.get("action") == "mutate" else set()
@@ -339,5 +343,6 @@ def _assert_no_action_observables(case: Case, index: int, step: Mapping[str, Any
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] is a {step['action']!r} action step "
             f"declaring {declared}; only the read verbs {sorted(_ACTION_READ_VERBS)} "
-            f"observe rows, so what such a step publishes is nothing to compare."
+            "and a `mutate` declaring `expectRows` observe rows, so what such a "
+            "step publishes is nothing to compare."
         )

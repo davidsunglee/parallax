@@ -31,7 +31,7 @@ def _run(case: case_format.Case) -> edit_runner.Observation:
     LEDGER.reset()
     source = edit_runner.constructed_source(case)
     before = edit_runner.probe(source)
-    result = source.edit(**edit_runner.changes(case))
+    result = source.target.edit(**edit_runner.changes(case))
     return edit_runner.observe(source, result, before)
 
 
@@ -77,19 +77,21 @@ def test_read_edit_case(case: case_format.Case, profile_run: Any) -> None:
     db = connect(profile_run.port, NOTE_MODEL)
     root = db.find(Note.where(Note.id == _read_id(case))).result()
     source = edit_runner.follow_path(root, case)
-    memo_value = source.title if isinstance(source, Note) else source.label
+    target = source.target
+    memo_value = target.title if isinstance(target, Note) else target.label
     LEDGER.reset()
-    source.remember([memo_value])
+    source.root.remember([source.root.title])
+    target.remember([memo_value])
     before = edit_runner.probe(source)
 
-    result = source.edit(**edit_runner.changes(case))
+    result = target.edit(**edit_runner.changes(case))
     observation = edit_runner.observe(source, result, before)
 
     assert edit_runner.grade(case, observation) == ()
     expected_pin_code = (
-        "snapshot-pin-unavailable" if isinstance(source, Note) else "snapshot-node-required"
+        "snapshot-pin-unavailable" if isinstance(target, Note) else "snapshot-node-required"
     )
-    source_refusal = _pin_refusal(source)
+    source_refusal = _pin_refusal(target)
     result_refusal = _pin_refusal(result)
     assert (source_refusal.code, source_refusal.entity) == (
         result_refusal.code,
@@ -118,7 +120,7 @@ def test_constructed_source_rejects_a_read_origin() -> None:
 def test_constructed_source_accepts_native_optional_and_many_occurrences() -> None:
     case = _with_value(_case("m-edit-001"), tag=None, marks=())
 
-    source = cast("Note", edit_runner.constructed_source(case))
+    source = cast("Note", edit_runner.constructed_source(case).target)
 
     assert source.tag is None
     assert source.marks == ()
@@ -173,6 +175,20 @@ def test_grading_rejects_a_setter_altered_memo_after_a_changed_edit() -> None:
     assert edit_runner.grade(case, intercepted) == (
         "carry.auxiliary.identity: expected 'shared', observed 'distinct'",
         "carry.auxiliary.hooks: expected 'none', observed 'invoked'",
+    )
+
+
+def test_grading_rejects_mutation_of_the_containing_entity_source() -> None:
+    case = _case("m-edit-003")
+    source = edit_runner.constructed_source(case)
+    before = edit_runner.probe(source)
+    result = source.target.edit(**edit_runner.changes(case))
+    cast("dict[str, object]", source.root.__dict__)["body"] = "damaged"
+
+    observation = edit_runner.observe(source, result, before)
+
+    assert edit_runner.grade(case, observation) == (
+        "source.unchanged: expected True, observed False",
     )
 
 

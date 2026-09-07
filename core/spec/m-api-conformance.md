@@ -70,7 +70,8 @@ satisfies each is language-local.
    reason. A silent gap — a selected case that is neither exercised nor
    reasoned-skipped — MUST fail the build. The partition covers **every** selected
    case regardless of lane: an
-   `api-conformance`-lane case (a boundary retry case, a read-lock-matrix read) is
+   `api-conformance`-lane case (a boundary retry case, a read-lock-matrix read,
+   or a native edit case) is
    satisfied here — by construction, since the `m-case-format` harness only
    schema-validates it — so its id MUST be exercised or reasoned-skipped exactly
    like a harness-lane case.

@@ -3,7 +3,7 @@
 The loop owns the Scenario, not its reads. Each step executes on the reader or
 connection its own lifecycle selected — a grouped step on its group's held
 session, an ungrouped one on the provider's autocommit connection — and a group
-closes at its own declared last step. What a read then observes is
+closes at its own declared last step. What a row-publishing step then observes is
 :mod:`.reads`'.
 
 Every session a step holds opens at the case's declared `when.uow.isolation`,
@@ -50,7 +50,7 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
     execution = CaseExecution(case, db)
     dialect = execution.dialect
     states = group_states(scenario)
-    reads = ScenarioReads(case)
+    observations = ScenarioReads(case)
 
     # One stack for the whole Scenario, so every session opened during it is
     # CLOSED on return or on raise. Whether each one committed or rolled back was
@@ -74,7 +74,9 @@ def execute_scenario(scenario: CompiledScenario, db: DatabaseProvider) -> None:
                     case _BoundaryAction():
                         _apply_boundary_action(step, execution, dialect)
                     case _Read():
-                        reads.assert_step(step.index, session if session is not None else execution)
+                        observations.assert_step(
+                            step.index, session if session is not None else execution
+                        )
                     case _UnresolvedList():
                         pass
                 finish_group(case, step.index, step.group, states, dialect)
@@ -131,7 +133,7 @@ def _apply_boundary_action(step: _BoundaryAction, execution: CaseExecution, dial
     """Execute a non-read-verb action step's golden DML.
 
     A `flush` / `commit` commits its buffered statements on the unit of work's
-    connection, and a `mutate` / `abort` commits whatever
+    connection, and a non-row-observing `mutate` / `abort` commits whatever
     golden DML it authors (a Valid-Time-past correction's split write); none of
     them observes rows, and the observables they may declare are adapter-delegated
     — validated by the schema, graded by each language's API Conformance Suite —
