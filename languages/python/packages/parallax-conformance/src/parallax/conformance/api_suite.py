@@ -24,6 +24,7 @@ from typing import Final
 from parallax.conformance import (
     case_format,
     execution_lifecycle_stories,
+    model_publication_stories,
     read_models,
     snapshot_recipes,
     stale_web_edit,
@@ -245,6 +246,45 @@ RECIPES: Final[list[Recipe]] = [
             "replacement inside it."
         ),
         snippet=inspect.getsource(stale_web_edit.StaleMilestoneError),
+    ),
+    Recipe(
+        title="Publishing an evolved model to a running service",
+        spec=(
+            "`python.md` §2 (*Model preparation and the Serving Model*, and the "
+            "evolution constraints publication carries), §3 (a transaction adopts "
+            "per attempt) and `m-schema-delta` (the ordered, prefix-safe statements "
+            "the application applies itself)"
+        ),
+        graded_by=(
+            "`tests/api/test_model_publication_story.py` (real Postgres: the story "
+            "runs end to end, the added column is written and read back under the "
+            "later edition, an earlier-edition read is unaffected by it, and a "
+            "stale publisher is refused with `PublicationConflictError` and "
+            "rebases onto the selection it names as held) and "
+            "`tests/unit/test_model_publication_stories.py`'s Docker-free halves "
+            "(the two application refusals, and the snippet being the source that "
+            "ran)"
+        ),
+        notes=(
+            "The order is the whole recipe. **Prepare the candidate first**: that is "
+            "where every fallible model-only derivation runs, so a candidate that "
+            "cannot be prepared raises with the database untouched and the earlier "
+            "selection still serving — which is the guarantee that makes a live "
+            "update safe to attempt at all. **Apply the schema next**, in the "
+            "application's own transaction: Parallax applies nothing, and the "
+            "statements are prefix-safe rather than idempotent, so a run that stops "
+            "partway leaves a database the earlier edition still operates against. "
+            "**Publish last**, because publication ASSERTS the physical schema "
+            "already satisfies what it publishes. `UnpublishableUpdateError` is "
+            "**application**-owned for the same reason `StaleMilestoneError` is: "
+            "which evolutions a host will apply live, and what it makes of a "
+            "statement that did not commit, are its decisions and no framework's. "
+            "Nothing here drains, barriers, or retries a rollout: transactions "
+            "already adopted keep the edition they adopted, other processes publish "
+            "independently, and an earlier-edition read still reports rows its own "
+            "model cannot admit as invalid stored data at the result root."
+        ),
+        snippet=model_publication_stories.publication_snippet(),
     ),
 ]
 

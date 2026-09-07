@@ -130,8 +130,10 @@ uses replaceable generated-Finder portal slots without an adoption guard for
 in-flight transactions. Its replacement mechanism is not adopted here.
 
 This decision extends the existing contracts. The
-[planned Python surface](../../languages/python/spec/python.md#prepared-model-publication)
-records the concrete interface; implementation requires a coordinated migration
-of the active core specifications, lifecycle schemas, and compatibility corpus.
-This decision does not claim that those contracts or runtime behavior have
-already migrated.
+[Python surface](../../languages/python/spec/python.md#model-preparation-and-the-serving-model)
+records the concrete interface. The coordinated migration of the active core
+specifications, lifecycle schemas, and compatibility corpus it required landed
+under COR-123: preparation, publication, adoption by all three execution shapes,
+the retained edition on every result envelope, `ExecutionFailure`, the edition
+each adoption-owning Started event carries, and the executable host-owned update
+example are active contracts rather than planned ones.

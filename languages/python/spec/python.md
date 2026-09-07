@@ -67,22 +67,6 @@ never something an application developer hand-writes.
   `--parallax-tags <m-slug>[,…]`. Filename prefixes are never a conformance
   target.
 
-Prepared model publication is active but for its executable update example.
-Its preparation and publication interface — `prepare_model`, `ModelSelection`,
-`ServingModel`, and `PublicationConflictError` — is an active §2 contract,
-every connection adopts from a `ServingModel`, and all three execution shapes
-are migrated: each transaction attempt, standalone read, and entered standalone
-stream adopts the current selection and retains it, `Transaction.edition` and
-the read-only `edition` on every result envelope and entered stream report it,
-an ordinary failure escaping any of them surfaces as `ExecutionFailure`, a
-delayed `InvalidDataError` carries its result's edition, and the Started event
-of every adoption-owning activity carries its edition with `begin_failed` as a
-terminal attempt outcome (§§3–5). The library's executable host-owned update
-example remains a deferred extension with its adopted contract in
-[§9](#prepared-model-publication) and implementation tracked in
-[COR-123](https://linear.app/flimflam/issue/COR-123); it adds no
-developer-surface or lifecycle-oracle claim to the current contract above.
-
 ## 2. Shared developer API and model surface
 
 ### Temporal vocabulary and configuration
@@ -2224,6 +2208,26 @@ failure reporting belong to the application. It prepares the candidate, ensures
 the schema is ready, and then publishes it. Failed preparation leaves the
 previous selection serving. A local expected-selection comparison does not
 serialize cross-process DDL or undo already-applied statements.
+
+**Evolution and publication readiness.** Publication asserts that the physical
+schema already satisfies the selection being published; Parallax inspects no
+schema and applies none. Only a Unilateral Evolution follows the live
+publication path, and its complete classification, Overlap-Visible Operations,
+and Behavioral Impacts remain owned by `m-model-evolution` and ADR 0063. The
+host prepares the candidate first, applies the ordered `m-schema-delta`
+statements in a transaction of its own — prefix-safe in that order rather than
+idempotent — and publishes only once every one of them has succeeded. A failed
+preparation leaves the earlier selection serving and promises nothing about
+database outages or about the already-specified effects of Edition Overlap in
+other serving processes, where an earlier Adopted Edition still reports rows its
+own model cannot admit as invalid stored data at the result root (§4). Each
+process prepares its own selections, and an initial process must prepare a first
+selection before it can serve. There is no drain, barrier, or automatic rollout
+retry, and a unique violation gains no automatic retry either; correlating one
+to a rollout is the application's own, through the violated Physical Index Name
+the database error already carries (§6). The executable form of this order ships
+as the API Conformance Suite's publication story, rendered into the Usage Guide
+(§6) — not as a generic updater callback interface.
 
 **Static shorthand and the Serving Model at connect.**
 `Database.connect(adapter, model)` keeps its existing positional and keyword
@@ -5943,40 +5947,10 @@ hatchling.
 ## 9. Conditional capability decisions
 
 `m-storage-layout` is claimed, so the Relational Document Layout decision below
-is recorded. Prepared model publication's executable update example is an
-adopted extension deferred in §1; its preparation, publication, adoption,
-stamp, failure, and lifecycle contracts are active in §§2–5.
+is recorded.
 The other conditional subsections of the template are deleted: process caches,
 cross-process coherence, aggregation, additional dialects, and benchmarks are
 outside `slice-snapshot-1` and recorded as deferred in §1.
-
-### Prepared model publication
-
-[ADR 0062](../../../docs/adr/0062-transactions-adopt-one-model-edition-at-open.md)
-records the decision and its alternatives. The preparation and publication
-interface — `prepare_model`, `ModelSelection`, `ServingModel`, and
-`PublicationConflictError` — is active in §2 *Model preparation and the
-Serving Model*, cross-edition sources are §2 *Sources across editions*, and
-every execution shape has migrated: adoption per attempt, `Transaction.edition`,
-and `ExecutionFailure` on a transaction are §3's; adoption by standalone reads
-and entered streams, the `edition` every result envelope and entered stream
-retains, the delayed `InvalidDataError`'s edition, and `ExecutionFailure` on
-those executions are §4's; and the edition every adoption-owning activity's
-Started event carries is §5's. What this section still defers is the library's
-executable host-owned update example, and the evolution constraints publication
-carries are recorded here beside it: the deferred half supplies that example,
-not a generic updater callback interface. Database failures under every shape
-preserve their neutral category, native diagnostics, and optional violated
-Physical Index Name; unique violations gain no automatic retry, and the
-application owns rollout correlation.
-
-**Evolution.** Publication asserts schema readiness under ADR 0063. Only
-Unilateral Evolution follows the live publication path; its complete
-classification, Overlap-Visible Operations, and Behavioral Impacts remain owned
-by `m-model-evolution`. A failed preparation does not promise immunity from
-database outages or from the already-specified effects of Edition Overlap in
-other serving processes. Each process prepares its own selections, and an
-initial process must prepare a first selection before it can serve.
 
 ### Relational Document Layout
 

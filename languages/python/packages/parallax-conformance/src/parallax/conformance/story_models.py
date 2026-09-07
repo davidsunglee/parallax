@@ -7,6 +7,8 @@ included), each
 composed into the Domain Model named for its corpus model. ``Order`` / ``OrderItem``
 carry the family's full relationship set so the SAME classes serve the API
 Conformance Suite's navigate / deep-fetch / snapshot-graph examples and stories.
+``NicknamedAccount`` mirrors no corpus model: it is ``Account`` one Unilateral
+Evolution later, the later endpoint the model publication story evolves to.
 
 Owned by ``parallax.conformance`` (not the test suite's own ``mirrored_models``,
 which lives under ``tests/`` and is unreachable from an installed
@@ -41,10 +43,12 @@ _NS = "parallax.compatibility"
 
 __all__ = [
     "ACCOUNT_MODEL",
+    "NICKNAMED_ACCOUNT_MODEL",
     "ORDERS_MODEL",
     "POSITION_MODEL",
     "WALLET_MODEL",
     "Account",
+    "NicknamedAccount",
     "Order",
     "OrderItem",
     "OrderNote",
@@ -70,6 +74,35 @@ class Account(
 
 
 ACCOUNT_MODEL = DomainModel(Account)
+
+
+class NicknamedAccount(
+    Entity,
+    table="account",
+    name="Account",
+    namespace=_NS,
+    indices=(index("account_owner", "owner"),),
+):
+    """``Account`` one Unilateral Evolution later: the same Entity with one
+    added nullable ``nickname`` — the model the publication story publishes.
+
+    The ``name="Account"`` header is what makes this the SAME Entity as the
+    class above rather than a second one, which is what makes the difference
+    between the two models one added Attribute instead of an Entity removed and
+    another added. An addition is where the live publication path applies: the
+    earlier edition selects every column it knows and admits every row the later
+    one can write, so both editions operate against one schema during Edition
+    Overlap.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str] = attr(max_length=64)
+    balance: Attr[Decimal] = attr(precision=18, scale=2)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    nickname: Attr[str | None] = attr(max_length=64)
+
+
+NICKNAMED_ACCOUNT_MODEL = DomainModel(NicknamedAccount)
 
 
 class Wallet(
