@@ -77,6 +77,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-core": "parallax.core.base",
     "m-wire": "parallax.core.wire",
     "m-metamodel": "parallax.core.metamodel",
+    "m-edit": "parallax.core.entity._edit",
     "m-model-formation": "parallax.core.model_formation",
     "m-descriptor": "parallax.descriptor",
     "m-model-evolution": "parallax.evolution.model_evolution",
@@ -526,6 +527,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 #   shape such a row cannot reach.
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.execution_lifecycle.testing": "parallax.core.execution_lifecycle",
+    "parallax.core.entity._edit": "parallax.core.entity",
     "parallax.core.entity._expressions": "parallax.core.entity",
     "parallax.core.object_query._fluent": "parallax.core.object_query",
     "parallax.core.entity._construction_input": "parallax.core.entity",

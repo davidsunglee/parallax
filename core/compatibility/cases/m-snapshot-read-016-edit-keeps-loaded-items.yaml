@@ -50,7 +50,7 @@
 # accesses (m-op-list-002); on the wire lane it is primary-key equality against this
 # step's own reused source rows.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, closed-world, relationship, mutation, scenario, slice-snapshot-1]
+tags: [m-snapshot-read, m-edit, m-deep-fetch, closed-world, relationship, mutation, scenario, slice-snapshot-1]
 shape: scenario
 compileEligibility:
   mode: run-only

@@ -728,7 +728,7 @@ _TX_PAST_READ_ONLY_CASE = (
 # tag — grading this case through the real run path needs a claim scoped to
 # the case's own routing (its module tags, shape, and slice tag).
 _TX_PAST_READ_ONLY_CLAIM = Claim(
-    modules=("m-identity-map", "m-temporal-read"),
+    modules=("m-edit", "m-identity-map", "m-temporal-read"),
     case_shapes=("scenario",),
     include=("slice-managed-1",),
     exclude=(),

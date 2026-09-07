@@ -15,7 +15,7 @@
 # Valid-Time-axis pin, which is writable — m-identity-map-011.)
 model: models/balance.yaml
 lane: api-conformance
-tags: [m-identity-map, m-temporal-read, identity, as-of, temporal, audit-only, read-only, scenario, slice-managed-1]
+tags: [m-identity-map, m-edit, m-temporal-read, identity, as-of, temporal, audit-only, read-only, scenario, slice-managed-1]
 shape: scenario
 when:
   uow:

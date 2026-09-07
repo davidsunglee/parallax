@@ -5,7 +5,8 @@ a snapshot read returns — identity-resolved within the graph, connected by har
 pointers, pinned whole-graph at one set of as-of coordinates, and **closed
 world**. Per the dependency graph, `m-snapshot-read` depends on `m-deep-fetch`
 (graph population is deep fetch; navigation, as-of propagation, and lists are
-reached transitively). It is the **plain-value** read surface; a managed-object
+reached transitively) and `m-edit` (derivation carries a materialized value's
+state by complement). It is the **plain-value** read surface; a managed-object
 surface materializes managed objects through `m-identity-map` instead.
 
 A snapshot read is **execute → value**: one explicit execution materializes the
@@ -299,9 +300,9 @@ Every clause above survives **composition**. Deriving a node from a
 materialized one, and persisting a write, are the two things that happen to a
 graph after it exists, and neither reaches the view state the read paid for:
 
-- A **derived copy's view state IS its source's**. An authored edit produces a
-  new value carrying the same relationship views the node it derives from
-  carries — an included relationship answers the **same objects** on the copy,
+- A **derived copy's view state IS its source's**. Under `m-edit`'s complement
+  rule, an authored edit carries the relationship views the node it derives from
+  carries: an included relationship answers the **same objects** on the copy,
   and an un-included one is absent on both. A copy rebuilt from its declared
   members alone loses every view the read materialized and is not conforming.
 - A **write changes nothing about a graph already materialized**. The write

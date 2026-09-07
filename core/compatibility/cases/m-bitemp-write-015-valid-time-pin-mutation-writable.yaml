@@ -18,7 +18,7 @@
 # in memory in this closed-world lane — roundTrips 0, no DML.
 model: models/position.yaml
 lane: api-conformance
-tags: [m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, retroactive, scenario, slice-snapshot-1]
+tags: [m-bitemp-write, m-edit, m-temporal-read, bitemporal, temporal, as-of, retroactive, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

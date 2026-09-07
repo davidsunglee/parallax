@@ -57,7 +57,7 @@
 #   case in the corpus grades the keying itself.
 model: models/position.yaml
 lane: api-conformance
-tags: [m-bitemp-write, m-temporal-read, m-snapshot-read, bitemporal, temporal, as-of, scenario, slice-snapshot-1]
+tags: [m-bitemp-write, m-edit, m-temporal-read, m-snapshot-read, bitemporal, temporal, as-of, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:

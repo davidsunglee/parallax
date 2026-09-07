@@ -20,7 +20,7 @@
 # window. The object-reference identity of the held, corrected view is asserted by
 # the API Conformance Suite.
 model: models/position.yaml
-tags: [m-identity-map, m-bitemp-write, m-temporal-read, identity, bitemporal, temporal, rectangle-split, scenario, slice-managed-1]
+tags: [m-identity-map, m-edit, m-bitemp-write, m-temporal-read, identity, bitemporal, temporal, rectangle-split, scenario, slice-managed-1]
 shape: scenario
 when:
   uow:
