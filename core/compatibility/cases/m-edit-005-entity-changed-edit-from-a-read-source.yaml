@@ -1,0 +1,30 @@
+# A changed Entity edit of a read-produced value preserves application-owned auxiliary state by shallow identity with independent bindings, invokes no setter hook while carrying it, drops a warm declared cache after an unrelated body assignment, retains Snapshot provenance, and leaves the source unchanged.
+model: models/note.yaml
+tags: [m-edit, m-value-object, slice-snapshot-1, slice-managed-1]
+shape: edit
+lane: api-conformance
+when:
+  edit:
+    source:
+      origin: read
+      objectQuery:
+        target: parallax.compatibility.Note
+        predicate:
+          eq:
+            attr: parallax.compatibility.Note.id
+            value: 1
+    set: { body: null }
+then:
+  result:
+    members:
+      id: 1
+      title: alpha
+      body: null
+      tag: { label: a, weight: 3 }
+      marks:
+        - { kind: pin, weight: 2 }
+        - { kind: flag, weight: null }
+  carry:
+    auxiliary: { identity: shared, binding: independent, hooks: none }
+    derivedCache: { value: ALPHA, evaluations: 1 }
+  source: { unchanged: true }

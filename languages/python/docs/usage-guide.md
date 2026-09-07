@@ -167,6 +167,46 @@ Corpus case: `m-edit-004`
 note.tag.edit()
 ```
 
+## Entity changed edit from a read source
+
+Corpus case: `m-edit-005`
+
+```python
+note.edit(body=None)
+```
+
+## Entity change-free edit from a read source
+
+Corpus case: `m-edit-006`
+
+```python
+note.edit()
+```
+
+## Value Object changed edit from a read source
+
+Corpus case: `m-edit-007`
+
+```python
+note.tag.edit(weight=1)
+```
+
+## Value Object change-free edit from a read source
+
+Corpus case: `m-edit-008`
+
+```python
+note.tag.edit()
+```
+
+## Entity changed edit from a read source
+
+Corpus case: `m-edit-009`
+
+```python
+note.edit(marks=(NoteMark(kind="x", weight=1),))
+```
+
 ## A joined unit of work is observed inside the OUTER transaction attempt
 
 Corpus case: `m-execution-lifecycle-006`
