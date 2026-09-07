@@ -6,9 +6,9 @@ path reads is derived while ``prepare_model`` runs, so the derivations are made
 to fail afterwards and a read and a write still succeed. What the Serving Model
 guarantees is graded under contention that is arranged rather than hoped for:
 every reader is made to span the publication before its observations are judged,
-and every publisher is made to reach the compare/replace window before any of
-them may leave one, so a holder that compared outside that window fails rather
-than passes on favorable scheduling.
+and the compare/replace window is wrapped so that entering it is recorded and
+held shut until every publisher has entered, so a holder that compared outside
+that window fails rather than passes on favorable scheduling.
 
 Docker-free, against the shared recording port.
 """
@@ -45,13 +45,31 @@ from parallax.snapshot.handle._publication import read_projection, write_project
 _ACCOUNT: Final = mm.ACCOUNT_MODEL
 
 _RENDEZVOUS: Final = 10.0
-"""Seconds a worker waits for the others to reach the window it shares with
-them. Long enough that a loaded machine never reaches it, so exceeding it is a
-failure to arrive rather than slow arrival."""
+"""Seconds a worker waits for the others at a point they share. Nothing is
+graded by how long an arrival takes; the bound is what turns a worker that
+never arrives into a failure instead of a hung suite."""
 
-_SETTLE: Final = 0.1
-"""Seconds allowed for workers released together to run as far as they can. What
-is graded is where they cannot get, so this bounds a negative observation."""
+
+class _RecordedWindow:
+    """A Serving Model's compare/replace window with arrival recorded at entry.
+
+    ``publish`` enters this in place of the lock itself, so a publisher's
+    arrival is recorded BEFORE it can take the window and therefore after
+    everything the holder does outside one. A test that holds the window shut
+    can then wait for every publisher to arrive, rather than sleeping and
+    reading arrival off thread liveness.
+    """
+
+    def __init__(self, window: threading.Lock, arriving: threading.Barrier) -> None:
+        self._window = window
+        self._arriving = arriving
+
+    def __enter__(self) -> None:
+        self._arriving.wait(_RENDEZVOUS)
+        self._window.acquire()
+
+    def __exit__(self, *_exception: object) -> None:
+        self._window.release()
 
 
 class _ClasslessSource:
@@ -178,6 +196,32 @@ def test_a_selections_properties_are_read_only(name: str) -> None:
     selection = prepare_model(_ACCOUNT, edition="one")
     with pytest.raises(AttributeError):
         setattr(selection, name, object())
+
+
+@pytest.mark.parametrize("slot", ["_edition", "_model", "_read", "_write"])
+def test_no_holder_can_alter_what_a_selection_was_prepared_with(slot: str) -> None:
+    # Refusing the constructor closes only the way IN. A holder that could
+    # assign a slot could give a published selection an empty edition, or one
+    # model's catalog under another model's write planner, and every entry
+    # reached through it would resolve against one and encode against the
+    # other; deleting one would fail deep inside a request instead.
+    selection = prepare_model(_ACCOUNT, edition="one")
+    other = prepare_model(_ACCOUNT, edition="two")
+    forged: dict[str, Any] = {
+        "_edition": "",
+        "_model": other.model,
+        "_read": read_projection(other),
+        "_write": write_projection(other),
+    }
+    with pytest.raises(AttributeError, match="immutable"):
+        setattr(selection, slot, forged[slot])
+    with pytest.raises(AttributeError, match="immutable"):
+        delattr(selection, slot)
+
+    assert selection.edition == "one"
+    assert read_projection(selection).model is write_projection(selection).model
+    assert read_projection(selection) is not read_projection(other)
+    assert write_projection(selection) is not write_projection(other)
 
 
 def test_a_selection_admits_no_subclass() -> None:
@@ -309,23 +353,26 @@ def test_concurrent_readers_observe_only_a_complete_a_or_b() -> None:
     assert serving.current() is b
 
 
-def test_two_publishers_racing_one_expectation_leave_exactly_one_holding() -> None:
+def test_two_publishers_racing_one_expectation_leave_exactly_one_holding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The contention is necessary rather than lucky: the window records each
+    # publisher as it enters, and the test holds the window shut until all
+    # eight have. A holder that compared BEFORE taking the window would have
+    # every compare behind it when the window opens, so all eight would replace
+    # the selection they each saw held; a holder that took no window at all
+    # would finish without ever being recorded.
     a = prepare_model(_ACCOUNT, edition="a")
     candidates = [prepare_model(_ACCOUNT, edition=f"candidate-{n}") for n in range(8)]
     serving = ServingModel(a)
-    # The compare/replace window itself, held here so that every publisher is
-    # inside one before any of them can finish one. Holding it is what makes the
-    # contention necessary rather than lucky: a check-then-set that compared
-    # outside the window would not be stopped by it, and all eight would replace
-    # what they each saw held.
-    window = serving._lock  # pyright: ignore[reportPrivateUsage] - the window under test
-    calling = threading.Barrier(len(candidates) + 1)
+    window = serving._lock  # pyright: ignore[reportPrivateUsage] - the compare/replace window under test
+    arriving = threading.Barrier(len(candidates) + 1)
+    monkeypatch.setattr(serving, "_lock", _RecordedWindow(window, arriving))
     refusals: list[PublicationConflictError] = []
     published: list[ModelSelection] = []
     outcomes = threading.Lock()
 
     def publish(candidate: ModelSelection) -> None:
-        calling.wait(_RENDEZVOUS)
         try:
             serving.publish(candidate, expected=a)
         except PublicationConflictError as refused:
@@ -337,15 +384,24 @@ def test_two_publishers_racing_one_expectation_leave_exactly_one_holding() -> No
 
     threads = [threading.Thread(target=publish, args=(one,)) for one in candidates]
     window.acquire()
-    for thread in threads:
-        thread.start()
-    calling.wait(_RENDEZVOUS)
-    time.sleep(_SETTLE)
-    assert all(thread.is_alive() for thread in threads), "a publisher completed outside the window"
-    assert serving.current() is a
-    window.release()
-    for thread in threads:
-        thread.join(_RENDEZVOUS)
+    try:
+        for thread in threads:
+            thread.start()
+        try:
+            arriving.wait(_RENDEZVOUS)
+        except threading.BrokenBarrierError as unarrived:
+            raise AssertionError(
+                "a publisher never entered the compare/replace window"
+            ) from unarrived
+        assert published == [], "a publisher completed outside the window"
+        assert serving.current() is a
+    finally:
+        # Both in the same finally: a publisher left blocked on a window this
+        # test still holds would outlive the suite that failed.
+        window.release()
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(_RENDEZVOUS)
 
     winner = serving.current()
     assert published == [winner]

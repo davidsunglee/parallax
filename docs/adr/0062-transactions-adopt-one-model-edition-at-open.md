@@ -17,11 +17,11 @@ same token must identify the same model throughout a Serving Model's history.
 `PreparedModel` wrapper.
 
 Preparation completes every fallible, finite derivation determined solely by
-the model before the selection can be published, including Entity layouts and
-facts currently derived lazily. Its private `SelectedReadModel` carries a
-shared `CatalogedModel` and optional graph construction; its private
-`SelectedWriteModel` carries that same catalog, the row codec, and the write
-planner. This composition belongs in the snapshot module because it already
+the model before the selection can be published, including Entity layouts, row
+facts, and graph-construction facts; a request path derives none of them. Its
+private `SelectedReadModel` carries a shared `CatalogedModel` and optional
+graph construction; its private `SelectedWriteModel` carries that same catalog,
+the row codec, and the write planner. This composition belongs in the snapshot module because it already
 joins those dependencies; core model formation must not import the snapshot
 planner. Selections are process-local and immutable in their model, edition,
 and prepared composition. Preparation guarantees structural readiness, not

@@ -2109,12 +2109,15 @@ All four are exported from `parallax.snapshot` and `parallax.snapshot.handle`.
 
 **Opaque construction.** `prepare_model` returns the complete selection or
 raises, exposing no partially prepared value; `ModelSelection` admits no
-subclass and no other constructor a caller can name. Its public properties are
-read-only, and `model` is the exact original Domain Model, not a reconstructed
-description. Model Selection is the prepared execution form of that model; no
-additional `PreparedModel` wrapper or type is introduced. A value that is no
-Domain Model is refused with `TypeError`, and an empty edition with
-`ValueError`, before any derivation runs.
+subclass and no other constructor a caller can name. A prepared selection is
+immutable in every part it carries: it refuses attribute assignment and
+deletion under any name, private slots included, so the model, edition, and
+pair of projections it was prepared with cannot be replaced, mismatched, or
+removed afterwards. `model` is the exact original Domain Model, not a
+reconstructed description. Model Selection is the prepared execution form of
+that model; no additional `PreparedModel` wrapper or type is introduced. A
+value that is no Domain Model is refused with `TypeError`, and an empty edition
+with `ValueError`, before any derivation runs.
 
 **Projections.** The selection's private Selected Read Model and Selected Write
 Model carry the same edition and share the exact same `CatalogedModel`. The
