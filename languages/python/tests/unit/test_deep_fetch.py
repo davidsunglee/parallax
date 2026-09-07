@@ -16,10 +16,10 @@ import dataclasses
 from typing import cast
 
 import pytest
-from _corpus_model_support import formed
 from _corpus_model_support import model as accepted_model
 from _corpus_model_support import target as entity_of
 
+from parallax.conformance import models
 from parallax.core import deep_fetch, inheritance, relationship
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -49,7 +49,6 @@ from parallax.core.predicate import (
 )
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
-from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
@@ -654,7 +653,7 @@ _SHELTER_MODEL = {
         },
     ]
 }
-_SHELTER = formed(deserialize(_SHELTER_MODEL))
+_SHELTER = models.accepted_model(_SHELTER_MODEL)
 
 
 def test_a_child_side_correlation_column_is_resolved_at_the_addressed_position() -> None:
