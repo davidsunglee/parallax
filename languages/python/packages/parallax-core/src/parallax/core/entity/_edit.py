@@ -1,30 +1,37 @@
-"""The core both edit surfaces are built from (spec §3).
+"""The derivation sequence both edit surfaces use (spec §3).
 
 ``Entity.edit(**changes)`` and ``ValueObject.edit(**changes)`` derive an edited
-copy the same way: every authored name is resolved against the declaring class,
-every resolved member's value is judged by the one shared assignment judgement,
-and the value is rebuilt with everything the caller did not author carried
-forward. Only the resolution differs — what a name may resolve to, and where a
-refusal locates — so each frontend owns that alone and neither carries a second
-copy of the rest.
+copy through :func:`derive`: partition, change-free restatement, assignment
+judgement, validating reconstruction, and state carry happen here in one order.
+Only resolution and surface-specific outcomes differ, so each frontend supplies
+one :class:`Resolution` and wraps the result it receives.
 """
 
 from __future__ import annotations
 
 import functools
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
+from pydantic import BaseModel
+
 from parallax.core.entity._errors import EditError, EditViolation
-from parallax.core.entity._instance_state import named_state
+from parallax.core.entity._instance_state import (
+    carry_presence,
+    carry_slots_beside_state,
+    named_state,
+    restated,
+)
+from parallax.core.entity._pydantic_storage import attach_instance_state
 
 if TYPE_CHECKING:
-    from collections.abc import Container
-
-    from pydantic import BaseModel
+    from collections.abc import Callable, Container, Mapping
 
     from parallax.core.metamodel import ModelLocation
 
 __all__ = [
+    "Resolution",
+    "derive",
     "partition_declared",
     "unresolved_member_violation",
     "use_edit",
@@ -33,6 +40,23 @@ __all__ = [
 _UNBOUND: Final = object()
 """Distinguishes a class that binds a name to ``None`` from one that binds it not
 at all."""
+
+
+@dataclass(frozen=True, slots=True)
+class Resolution:
+    """The class-shaped decisions one edit derivation needs.
+
+    ``declared`` names the members the caller may replace. ``framework_owned``
+    names declared Entity members that hydration supplies and construction
+    refuses. ``restores_presence`` selects the Value Object rule that preserves
+    absent versus explicit-null state. ``violations`` resolves authored names
+    and applies the shared assignment judgement.
+    """
+
+    declared: frozenset[str]
+    framework_owned: frozenset[str]
+    restores_presence: bool
+    violations: Callable[[Mapping[str, object]], tuple[EditViolation, ...]]
 
 
 def _is_derived_cache(cls: type, key: str) -> bool:
@@ -101,6 +125,33 @@ def partition_declared(
         elif not _is_derived_cache(type(value), key):
             carried[key] = member
     return declared_state, carried
+
+
+def derive[M: BaseModel](value: M, changes: Mapping[str, object], resolution: Resolution) -> M:
+    """Derive one edited value using ``resolution`` for its class-shaped rules."""
+    declared_state, carried = partition_declared(value, resolution.declared)
+    if not changes:
+        return restated(value, declared_state | carried)
+
+    violations = resolution.violations(changes)
+    if violations:
+        raise EditError(violations) from None
+
+    declared_state.update(changes)
+    held = {
+        py_name: declared_state.pop(py_name)
+        for py_name in resolution.framework_owned
+        if py_name in declared_state
+    }
+    copied = type(value)(**declared_state)
+    for py_name, member in held.items():
+        object.__setattr__(copied, py_name, member)
+    for py_name, member in carried.items():
+        attach_instance_state(copied, py_name, member)
+    if resolution.restores_presence:
+        carry_presence(value, copied, changes)
+    carry_slots_beside_state(value, copied)
+    return copied
 
 
 def unresolved_member_violation(

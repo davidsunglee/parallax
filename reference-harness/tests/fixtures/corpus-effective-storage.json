@@ -2736,6 +2736,25 @@
       }
     }
   },
+  "models/note.yaml": {
+    "parallax.compatibility.Note": {
+      "attribute": {
+        "body": "body",
+        "id": "id",
+        "title": "title"
+      },
+      "documentPath": {
+        "marks.kind": "marks:kind",
+        "marks.weight": "marks:weight",
+        "tag.label": "tag:label",
+        "tag.weight": "tag:weight"
+      },
+      "valueObject": {
+        "marks": "marks",
+        "tag": "tag"
+      }
+    }
+  },
   "models/orders.yaml": {
     "parallax.compatibility.Order": {
       "attribute": {

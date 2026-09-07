@@ -1,0 +1,30 @@
+entity:
+  name: Note
+  namespace: parallax.compatibility
+  table: note
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: title
+      type: string
+    - name: body
+      type: string
+      nullable: true
+  valueObjects:
+    - name: tag
+      nullable: true
+      attributes:
+        - name: label
+          type: string
+        - name: weight
+          type: int64
+          nullable: true
+    - name: marks
+      multiplicity: many
+      attributes:
+        - name: kind
+          type: string
+        - name: weight
+          type: int64
+          nullable: true

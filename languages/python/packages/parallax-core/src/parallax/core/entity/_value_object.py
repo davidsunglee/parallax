@@ -37,7 +37,8 @@ from parallax.core.entity._declaration import (
     shape_of,
 )
 from parallax.core.entity._edit import (
-    partition_declared,
+    Resolution,
+    derive,
     unresolved_member_violation,
     use_edit,
 )
@@ -45,11 +46,8 @@ from parallax.core.entity._errors import EditError, EditViolation, EntityDefinit
 from parallax.core.entity._expressions import judged_edit_violation, serialize_member
 from parallax.core.entity._instance_state import (
     BackedModel,
-    carry_presence,
-    carry_slots_beside_state,
     is_present,
     plan_of,
-    restated,
 )
 from parallax.core.metamodel import (
     MODEL_ROOT,
@@ -166,21 +164,7 @@ class ValueObject(BackedModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         An edit with no changes is legal and builds nothing new to validate,
         because nothing was authored.
         """
-        shape = shape_of(type(self))
-        declared_state, carried = partition_declared(self, set(shape.py_to_name))
-        if not changes:
-            return restated(self, declared_state | carried)
-        violations = _edit_violations(type(self), shape, changes)
-        if violations:
-            raise EditError(violations) from None
-        declared_state.update(changes)
-        # re-validates the whole value (§2 input policies)
-        validated = type(self)(**declared_state)
-        for py_name, member in carried.items():
-            object.__setattr__(validated, py_name, member)
-        carry_presence(self, validated, changes)
-        carry_slots_beside_state(self, validated)
-        return validated
+        return derive(self, changes, _resolution_of(type(self)))
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
         """Refused: ``edit(**changes)`` is the object-copy verb (spec §3).
@@ -280,6 +264,17 @@ def _edit_violations(
         if violation is not None:
             violations.append(violation)
     return tuple(violations)
+
+
+def _resolution_of(cls: type) -> Resolution:
+    """The Value Object-specific name resolution used by the shared derivation."""
+    shape = shape_of(cls)
+    return Resolution(
+        declared=frozenset(shape.py_to_name),
+        framework_owned=frozenset(),
+        restores_presence=True,
+        violations=lambda changes: _edit_violations(cls, shape, changes),
+    )
 
 
 def _member_metadata(

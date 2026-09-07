@@ -27,6 +27,7 @@ from decimal import Decimal
 from types import MappingProxyType
 
 from parallax.conformance.animal_owner import ANIMAL_MODEL
+from parallax.conformance.edit_models import NOTE_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL
 from parallax.conformance.read_models import (
     BALANCE_MODEL,
@@ -539,6 +540,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("taxpayer", TAXPAYER_MODEL),
     ("document-codec", DOCUMENT_CODEC_MODEL),
     ("document-layout", DOCUMENT_LAYOUT_MODEL),
+    ("note", NOTE_MODEL),
 ]
 """Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
 

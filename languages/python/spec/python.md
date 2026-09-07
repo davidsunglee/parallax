@@ -2761,17 +2761,29 @@ identity a caller may copy or pickle across a boundary of their own.
   Preservation is by **complement**: what an edit carries is everything it
   neither replaces nor invalidates, so a new kind of instance state travels
   without the edit surface learning its name unless the class itself declares
-  that state derived. Exactly one kind is invalidated rather than carried. A
+  that state derived. Carry is shallow: a reference-valued payload is the same
+  object on source and result, while the name binding that holds it belongs to
+  each value independently, so rebinding the result does not rebind the source
+  and mutating the shared payload is visible through both. Installing the
+  carried complement invokes no application assignment hook. Both Entity and
+  Value Object write it through the Pydantic storage seam rather than through
+  Python attribute assignment, so a read-only `property` cannot refuse it and a
+  property setter cannot intercept or alter it.
+
+  Exactly one kind is invalidated rather than carried. A
   slot naming a `functools.cached_property` on the value's class holds an answer
   computed from declared state the edit may have replaced, so the edit drops it
   and the next access recomputes it: a derived cache is recomputed, never
-  carried. The rule reads the descriptor off the class, which is what lets it
-  need no registry and no lifecycle involvement — and also fixes its reach: a
-  cache a class writes into `self.__dict__` by hand declares nothing, so it is
-  carried like any other slot. Reading the descriptor off the class also confines
-  the rule to names a class may declare: the framework's own `__parallax_` prefix
-  is reserved from every declaration's class body (§2), so no class body declares
-  a lifecycle's state or a Change Record derived.
+  carried, on every edit, including a change-free edit or one that changes a
+  member the cached answer does not read. The source's cache remains warm; no
+  dependency tracking is introduced. The rule reads the descriptor off the
+  class, which is what lets it need no registry and no lifecycle involvement —
+  and also fixes its reach: a cache a class writes into `self.__dict__` by hand
+  declares nothing, so it is carried like any other slot. Reading the descriptor
+  off the class also confines the rule to names a class may declare: the
+  framework's own `__parallax_` prefix is reserved from every declaration's class
+  body (§2), so no class body declares a lifecycle's state or a Change Record
+  derived.
 
   The copy carries the source's `Pin` too, which makes the read-only rule
   indifferent to how the write was authored: an Edited Copy of a view pinned at
@@ -2882,10 +2894,12 @@ identity a caller may copy or pickle across a boundary of their own.
   outside it, so composing edits is the only spelling of a nested change.
 
   It is the same verb, not an analogue: one `EditError`, one closed code set, and
-  the same `judge_assignment` verdict over the member's own accepted metadata,
-  reached through the same resolve-judge-rebuild core `Entity.edit` uses. Three
-  things follow from a Value Object having no identity and no Entity, and they are
-  the whole difference:
+  one derivation sequence in `parallax.core.entity._edit.derive`. Each frontend
+  supplies only the class-shaped resolution — which Python names are declared,
+  which are framework-owned, whether source presence is restored, and how an
+  authored name resolves to the shared `judge_assignment` verdict — then wraps
+  the derived value with its own outcome. Three things follow from a Value Object
+  having no identity and no Entity, and they are the whole difference:
 
   - **No Change Record.** None is stamped and none is carried. Provenance answers
     "what did this object's caller touch", which is a question about an identity a
