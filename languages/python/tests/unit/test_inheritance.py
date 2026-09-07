@@ -56,6 +56,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.unit_work import WriteRejectedError, validate_write
 from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -64,7 +65,6 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
-from parallax.descriptor._serde import parse_document
 
 _REPO = case_format.find_repo_root()
 _MODELS = corpus_records()

@@ -45,7 +45,7 @@ from parallax.core.value_object import (
     VALUE_OBJECT_MODULE,
 )
 from parallax.descriptor._adapter import unresolved_metamodel
-from parallax.descriptor._serde import parse_document
+from parallax.descriptor._parse import parse_document
 
 _OWNER = identity("Customer")
 

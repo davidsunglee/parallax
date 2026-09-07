@@ -19,8 +19,8 @@ from parallax.descriptor._family import (
     family_primary_key,
     validate_families,
 )
+from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
-from parallax.descriptor._serde import parse_document
 
 _REPO = case_format.find_repo_root()
 _MODELS = corpus_records()

@@ -179,8 +179,8 @@ def test_descriptor_wheel_ships_the_privatized_frontend(wheelhouse: Wheelhouse) 
         "parallax/descriptor/_family.py",
         "parallax/descriptor/_hub.py",
         "parallax/descriptor/_ingest.py",
+        "parallax/descriptor/_parse.py",
         "parallax/descriptor/_records.py",
-        "parallax/descriptor/_serde.py",
         "parallax/descriptor/_type_spelling.py",
     }
 

@@ -40,8 +40,8 @@ from parallax.descriptor._errors import (
     canonical_schema_violations,
     canonical_value_violations,
 )
+from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import Metamodel
-from parallax.descriptor._serde import parse_document
 from parallax.descriptor._type_spelling import parse_type_spelling
 
 __all__ = ["SCHEMA_RESOURCE", "ingest_document", "parse_json", "parse_yaml", "schema_text"]
