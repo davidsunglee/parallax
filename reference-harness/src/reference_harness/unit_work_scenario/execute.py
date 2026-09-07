@@ -130,8 +130,8 @@ def _apply_ungrouped_write(
 def _apply_boundary_action(step: _BoundaryAction, execution: CaseExecution, dialect: str) -> None:
     """Execute a non-read-verb action step's golden DML.
 
-    A `flush` / `mergeBack` / `commit` commits its buffered statements on the unit
-    of work's connection, and a `mutate` / `abort` / `detachCopy` commits whatever
+    A `flush` / `commit` commits its buffered statements on the unit of work's
+    connection, and a `mutate` / `abort` commits whatever
     golden DML it authors (a Valid-Time-past correction's split write); none of
     them observes rows, and the observables they may declare are adapter-delegated
     — validated by the schema, graded by each language's API Conformance Suite —

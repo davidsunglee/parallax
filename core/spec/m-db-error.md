@@ -18,7 +18,7 @@ Classification is interrogated at **distinct call sites**, so the seam exposes i
 as predicates defined as category membership — not one stringly-typed method:
 
 - the transaction retry loop asks `isRetriable` (`category = deadlock`);
-- the insert / detached merge-back path asks `violatesUniqueIndex`
+- the insert path asks `violatesUniqueIndex`
   (`category = uniqueViolation`);
 - the lock path asks `isTimedOut` (`category = lockWaitTimeout`).
 

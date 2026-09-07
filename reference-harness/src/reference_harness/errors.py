@@ -36,7 +36,7 @@ def is_retriable(category: str) -> bool:
 
 
 def violates_unique_index(category: str) -> bool:
-    """The insert / detached merge-back path's question."""
+    """The insert path's question."""
     return category == UNIQUE_VIOLATION
 
 

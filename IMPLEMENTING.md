@@ -162,7 +162,7 @@ lifecycle:
    graph-local identity, whole-graph temporal pinning, closed-world loaded state,
    eager includes, and explicit-write separation.
 3. Verify the snapshot-tagged intersections and materialization failures. Do not
-   implement or claim `m-identity-map`, `m-detach`, or `m-op-list`.
+   implement or claim `m-identity-map` or `m-op-list`.
 
 This reaches every module in the canonical `slice-snapshot-1` coverage union;
 `m-db-port` remains its one unclaimed prerequisite. No process cache,
@@ -179,10 +179,8 @@ lifecycle:
 2. Implement `m-navigate`, then `m-deep-fetch`, then `m-op-list`, materializing
    through the transaction-scoped identity map. The list result surface sits
    above the shared fetch algorithm rather than underneath it, so it comes last.
-3. Implement `m-detach` after the identity map, including scope-end detach,
-   abort restoration, deliberate detach, and merge-back.
-4. Verify the managed-tagged intersections, identity behavior, relationship
-   loading, and detach/abort transitions.
+3. Verify the managed-tagged intersections, identity behavior, relationship
+   loading, and commit/abort behavior.
 
 This reaches every module in the canonical `slice-managed-1` coverage union;
 `m-db-port` remains an unclaimed contract prerequisite. No snapshot
@@ -344,9 +342,6 @@ Classify a failure before editing code:
 - **Round-trip failure:** observations are correct but statement counts differ.
   Check query planning, eager/deferred loading, and whether an unclaimed cache
   was accidentally assumed.
-- **Detach/abort failure:** scope-end state, rollback restoration, deliberate
-  copies, deletion state, or merge-back differs. Fix lifecycle transitions in
-  `m-detach` and transaction rollback before optimistic locking.
 - **Temporal failure:** check interval closure, infinity representation,
   defaulted as-of dimensions, Transaction-Time-instant sourcing, and milestone write
   chaining.

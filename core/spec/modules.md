@@ -128,7 +128,6 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-txtime-write` | Transaction-Time-Only temporal writes | active | cases |
 | `m-bitemp-write` | Bitemporal rectangle-split writes | active | cases |
 | `m-validtime-only` | Valid-Time-Only temporal formation (deferred) | deferred | cases |
-| `m-detach` | Object lifecycle & detach / merge-back | active | cases |
 | `m-opt-lock` | Optimistic locking | active | cases |
 | `m-model-evolution` | Model-altitude description of the difference between two accepted Metamodels | active | cases |
 | `m-schema-delta` | Ordered dialect schema statements for a Unilateral Evolution | active | cases |
@@ -253,8 +252,6 @@ m-txtime-write --> m-unit-work
 m-bitemp-write --> m-txtime-write
 m-validtime-only --> m-temporal-read
 m-validtime-only --> m-unit-work
-m-detach --> m-unit-work
-m-detach --> m-identity-map
 m-opt-lock --> m-unit-work
 m-opt-lock --> m-temporal-read
 m-opt-lock --> m-metamodel
@@ -438,10 +435,6 @@ construction it may reference any behavioral module it harnesses.
   includes its **lowered as-of coordinates** — a managed temporal object is a
   view pinned at a coordinate, so the identity module references the as-of read
   model, not just the unit of work that owns the map.
-- **`m-detach --> m-identity-map`.** A detached copy is defined by living
-  *outside* the identity map (and objects leave the map by detaching at their
-  owning scope's end), so the lifecycle module references the map it detaches
-  from.
 - **`m-snapshot-read --> m-deep-fetch`.** A snapshot graph is *populated by*
   deep fetch; navigation, as-of propagation, and lists are reached transitively.
   Snapshot reads and managed reads (`m-identity-map`) are alternative
@@ -532,7 +525,7 @@ explicitly declined for round 1. These are decisions, not oversights.
 | Excluded item | Decision | Rationale |
 |---|---|---|
 | **Source attributes / sharding** | Excluded — but **not a one-way door** | Threading a source through the database layer is pervasive; we don't build it now, but the `m-dialect` / `m-db-port` seam MUST stay able to grow a per-tenant / per-source routing hook. Nothing in the design may *preclude* it. |
-| **Conversation scope (a session spanning transactions)** | Excluded — but **not a one-way door** | The identity map's scope is the unit of work (`m-identity-map`); the cross-transaction editing pattern is detach → merge-back (`m-detach`, gated by `m-opt-lock`), and cross-transaction read reuse is a freshness claim belonging to the deferred `m-process-cache` family. Two drafting rules keep a future widening additive: managed objects detach when **the scope that owns them** ends (today, the transaction), and cross-transaction identity is **not promised but never mandated-distinct** — no spec text or compatibility case may assert that two transactions MUST return different instances. The word "session" stays unspent, reserved for the wider scope if it ever exists. |
+| **Conversation scope (a session spanning transactions)** | Excluded — but **not a one-way door** | The identity map's scope is the unit of work (`m-identity-map`), and cross-transaction read reuse is a freshness claim belonging to the deferred `m-process-cache` family. Cross-transaction identity is **not promised but never mandated-distinct** — no spec text or compatibility case may assert that two transactions MUST return different instances. The word "session" stays unspent, reserved for the wider scope if it ever exists. |
 | **Remote / client-server** | Excluded | Three-tier remoting is cleanly separable and not needed to prove the thesis. |
 | **Off-heap storage** | Excluded | An implementation detail with no observable-behavior contract; per-language if ever. |
 | **XML config as a mandate** | Excluded | The canonical YAML / JSON descriptor is the mandated model-input format. |

@@ -199,7 +199,7 @@ def _selected_slice(envelope: dict[str, Any]) -> str | None:
 def _lifecycle(capabilities: dict[str, Any]) -> str | None:
     modules = {module for module in capabilities.get("modules", []) if isinstance(module, str)}
     snapshot = "m-snapshot-read" in modules
-    managed = {"m-identity-map", "m-detach"}.issubset(modules)
+    managed = "m-identity-map" in modules
     if snapshot == managed:
         return None
     return "snapshot" if snapshot else "managed-object"

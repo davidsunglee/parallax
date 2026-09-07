@@ -394,8 +394,8 @@ class ScenarioReads:
 
         ``expectRows`` compares the step's published rows to the fixture-derived
         expectation; ``sameObjectAs`` checks the one-object-per-PK rule against an
-        earlier step. The reference-identity observables (``differentObjectFrom``,
-        ``expectState``, ``expectError``) are adapter-delegated — validated by the
+        earlier step. The reference-identity and error observables
+        (``differentObjectFrom``, ``expectError``) are adapter-delegated — validated by the
         schema and graded by each language's API Conformance Suite — so the wire
         harness skips them here.
 

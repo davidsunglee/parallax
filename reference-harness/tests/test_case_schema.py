@@ -167,8 +167,7 @@ def _action_scenario_case() -> dict[str, Any]:
     """A scenario with lifecycle ACTION steps.
 
     Exercises the new action-step vocabulary end to end: `action` verbs, `on`,
-    `path`, `set` (mutate-only), and the per-step observables `expectState` and
-    `sameObjectAs` on an action step.
+    `path`, `set` (mutate-only), and `sameObjectAs` on an action step.
     """
     return {
         "model": "models/orders.yaml",
@@ -220,7 +219,6 @@ def _action_scenario_case() -> dict[str, Any]:
                     "on": 0,
                     "set": {"name": "Ada2"},
                     "roundTrips": 0,
-                    "expectState": "persisted",
                 },
             ]
         },
@@ -285,10 +283,10 @@ def _read_expect_graph_case() -> dict[str, Any]:
 
 
 def _action_identity_error_case() -> dict[str, Any]:
-    """A scenario action case exercising `differentObjectFrom`, `on` array, `expectError`."""
+    """A scenario exercising `differentObjectFrom` and `expectError`."""
     return {
         "model": "models/orders.yaml",
-        "tags": ["m-detach"],
+        "tags": ["m-identity-map"],
         "shape": "scenario",
         "when": {
             "scenario": [
@@ -307,18 +305,19 @@ def _action_identity_error_case() -> dict[str, Any]:
                     "expectRows": [{"id": 1}],
                 },
                 {
-                    "action": "detachCopy",
-                    "on": 0,
+                    "objectQuery": {
+                        "target": "Order",
+                        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    },
                     "roundTrips": 0,
-                    "expectState": "detached",
                     "differentObjectFrom": 0,
                 },
                 {
-                    "action": "load",
-                    "on": [0, 1],
-                    "path": "items",
+                    "action": "mutate",
+                    "on": 0,
+                    "set": {"name": "Ada2"},
                     "roundTrips": 0,
-                    "expectError": "detached-relationship-load",
+                    "expectError": "transaction-time-pin-read-only",
                 },
             ]
         },
@@ -811,7 +810,6 @@ def test_schema_accepts_minimal_case_for_every_shape(shape: str) -> None:
 @pytest.mark.parametrize(
     "code",
     [
-        "detached-relationship-load",
         "transaction-time-pin-read-only",
         "write-value-not-stored",
         "write-value-already-stored",
@@ -819,8 +817,8 @@ def test_schema_accepts_minimal_case_for_every_shape(shape: str) -> None:
     ],
 )
 def test_schema_accepts_every_expect_error_code(code: str) -> None:
-    # The closed application-lifecycle vocabulary: the m-detach / m-identity-map
-    # pair plus m-unit-work's three write-value provenance refusals. The
+    # The closed application-lifecycle vocabulary: m-identity-map's finite-pin
+    # refusal plus m-unit-work's three write-value provenance refusals. The
     # `action-unknown-expect-error` rejection fixture pins the other direction.
     doc = _action_identity_error_case()
     doc["when"]["scenario"][2]["expectError"] = code
@@ -1201,8 +1199,8 @@ def _action_set_on_non_mutate() -> dict[str, Any]:
 def _action_object_verb_missing_on() -> dict[str, Any]:
     """An OBJECT-TARGETING action (step 1 is a `load`) missing `on`.
 
-    The per-verb conditional makes `on` REQUIRED for `mutate` / `detachCopy` /
-    `load` / `access` / `mergeBack` — each acts on a prior step's result — so a
+    The per-verb conditional makes `on` REQUIRED for `mutate` / `load` /
+    `access` — each acts on a prior step's result — so a
     `load` without `on` is rejected (unlike a boundary `flush` / `commit` / `abort`,
     where `on` is optional)."""
     doc = _action_scenario_case()

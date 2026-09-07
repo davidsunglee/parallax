@@ -1,13 +1,10 @@
-"""Unit tests for the m-detach / m-opt-lock machinery (no database).
+"""Unit tests for the m-opt-lock machinery (no database).
 
-These pin the DB-free invariants of the lifecycle-detach (m-detach) write-sequence
-cases and the optimistic-lock (m-opt-lock) conflict cases: a conflict case is
-discovered and self-describes (carries `then.affectedRows`, an optional
-`given.apply`, and a single golden write); the conflict / success counts are 0
-/ 1; and the m-detach detached-update case opts into `given.fixtures`. The full
-execute-and-assert behavior (given.apply + the golden write, affected-row count,
-merge-back table state) is exercised end-to-end against real Postgres by the
-compatibility suite.
+These pin the DB-free invariants of optimistic-lock conflict cases: a conflict
+case is discovered and self-describes (carries `then.affectedRows`, an optional
+`given.apply`, and a single golden write), and the conflict / success counts are
+0 / 1. The full execute-and-assert behavior is exercised end to end against real
+Postgres by the compatibility suite.
 """
 
 from __future__ import annotations
@@ -253,14 +250,6 @@ def test_temporal_conflict_close_retry_gates_each_attempt() -> None:
     case.when["attempts"][1]["observedTxStart"] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
         _assert_conflict_input(case, "postgres")
-
-
-def test_detached_update_loads_fixtures() -> None:
-    detached_updates = [c for c in _cases() if c.is_write_sequence and "detached-update" in c.tags]
-    assert detached_updates, "no m-detach detached-update write-sequence case discovered"
-    for case in detached_updates:
-        # The original persisted row must exist before the merge-back UPDATE.
-        assert case.load_fixtures
 
 
 # --- gate detection (m-opt-lock "the gate binds last") ---------------------------

@@ -251,8 +251,8 @@ does not by itself decide the strategy — the unit of work's one Concurrency
 Preference and the Optimistic Lock Facet this flag feeds derive that strategy per
 entity. The flag
 is purely metamodel here; its conflict-detection semantics are `m-opt-lock`, and
-the object-lifecycle states that decide *when* an attribute is written (in-memory
-vs. persisted vs. detached) are `m-detach`.
+the unit of work decides when an accepted assignment becomes durable
+(`m-unit-work`).
 
 **Composition with `temporality` (temporal entities).** A Transaction-Time Entity
 **derives** its optimistic key from the Transaction-Time start Attribute (by

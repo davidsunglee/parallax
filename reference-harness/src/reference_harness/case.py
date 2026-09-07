@@ -806,10 +806,9 @@ class Case:
     def load_fixtures(self) -> bool:
         """Whether the case loads the model's fixtures first (``given.fixtures``).
 
-        Defaults to ``False`` (the m-txtime-write milestone-chaining and m-unit-work batched-insert
-        cases build their own state from an empty schema). The m-detach detached-update
-        merge-back case sets it ``True`` so the original persisted row exists
-        before the merge-back DML mutates it.
+        Defaults to ``False`` (the m-txtime-write milestone-chaining and m-unit-work
+        batched-insert cases build their own state from an empty schema). Cases that
+        mutate fixture rows set it ``True`` so those rows exist before the DML runs.
         """
         return bool(self.given.get("fixtures", False))
 

@@ -123,7 +123,6 @@ def test_real_schema_enum_is_the_full_fifty_two_rule_set() -> None:
 
 
 _EXPECT_ERRORS = {
-    "detached-relationship-load",
     "transaction-time-pin-read-only",
     "write-value-not-stored",
     "write-value-already-stored",

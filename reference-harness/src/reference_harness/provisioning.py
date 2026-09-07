@@ -45,9 +45,9 @@ def provision_empty(case: Case, db: DatabaseProvider) -> None:
 
     A write-sequence case constructs its entire milestone history from its own
     ordered DML (the `insert` step is part of the sequence), so it starts from an
-    empty schema and is fully self-contained — UNLESS it sets ``given.fixtures``
-    (the m-detach detached-update merge-back case), in which case the model's fixtures
-    are loaded first so the merge-back can mutate a pre-existing persisted row.
+    empty schema and is fully self-contained — UNLESS it sets ``given.fixtures``,
+    in which case the model's fixtures are loaded first so the sequence can mutate
+    a pre-existing persisted row.
     """
     db.reset()
     db.apply_ddl(ddl_for(case.model, db.dialect))

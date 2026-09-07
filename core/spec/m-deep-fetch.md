@@ -283,9 +283,8 @@ The normative rules, whatever the trigger:
 
 - A deferred load resolves **only through the live unit of work** that owns the
   objects — the `m-unit-work` rules apply, including the flush of dependent
-  buffered writes before the read. On an object whose owning scope has ended (a
-  detached object, `m-detach`) it raises a **defined Parallax Error**; it never
-  opens a transaction implicitly.
+  buffered writes before the read. Once that owning scope has ended, the load
+  has no resolution context and never opens a transaction implicitly.
 - It propagates **each source object's pinned as-of coordinates** (`m-navigate`,
   applied at the object level), batching sources **per coordinate group**: one
   child statement per relationship level per distinct coordinate group. The
