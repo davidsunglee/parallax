@@ -10,7 +10,9 @@ and the compare/replace window is wrapped so that both entering and leaving it
 are recorded: it is held shut until every publisher has entered, and no
 publisher runs past it until every publisher has left. A holder that compared
 before taking that window, or replaced after leaving it, fails rather than
-passes on favorable scheduling.
+passes on favorable scheduling. A further publication is landed at the instant
+the window closes, so a holder that carried a reread of the served selection
+into its refusal, rather than what its comparison read, fails there too.
 
 Docker-free, against the shared recording port.
 """
@@ -79,6 +81,35 @@ class _RecordedWindow:
     def __exit__(self, *_exception: object) -> None:
         self._window.release()
         self._leaving.wait(_RENDEZVOUS)
+
+
+class _AdvancingWindow:
+    """A Serving Model's compare/replace window with a further publication
+    landed at the instant it closes.
+
+    ``publish`` enters this in place of the lock itself, so the advance takes
+    the window as soon as it is free — the earliest a third publisher could win
+    it, and before anything the holder does past the window. That is exactly
+    where a holder rereading the served selection would take the value its
+    refusal reports. No thread is needed to stand in for that publisher: what
+    is graded is which read the refusal carries, a property of one publication
+    rather than of a race.
+    """
+
+    def __init__(
+        self, window: threading.Lock, serving: ServingModel, further: ModelSelection
+    ) -> None:
+        self._window = window
+        self._serving = serving
+        self._further = further
+
+    def __enter__(self) -> None:
+        self._window.acquire()
+
+    def __exit__(self, *_exception: object) -> None:
+        self._window.release()
+        with self._window:
+            self._serving._selection = self._further  # pyright: ignore[reportPrivateUsage] - the third publisher this stands in for, replacing where one could
 
 
 class _ClasslessSource:
@@ -289,6 +320,31 @@ def test_a_stale_publication_is_refused_with_what_was_expected_and_held() -> Non
     # The loser rebases on what it lost to and succeeds without a second read.
     serving.publish(c, expected=refusal.value.held)
     assert serving.current() is c
+
+
+def test_a_refusal_carries_what_its_comparison_read_and_not_a_later_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `held` is evidence about the comparison that failed, which is the whole
+    # reason a loser may rebase on it instead of calling `current()` again: a
+    # second read may already answer a third selection. So a third publication
+    # is landed the instant the window closes — after the losing comparison,
+    # before anything the publisher does past the window — and the refusal must
+    # still name what the comparison read. A holder that left the window and
+    # reread would hand the loser a selection it never compared against.
+    a, b, c = (prepare_model(_ACCOUNT, edition=edition) for edition in "abc")
+    third = prepare_model(_ACCOUNT, edition="third")
+    serving = ServingModel(a)
+    serving.publish(b, expected=a)
+    window = serving._lock  # pyright: ignore[reportPrivateUsage] - the compare/replace window under test
+    monkeypatch.setattr(serving, "_lock", _AdvancingWindow(window, serving, third))
+
+    with pytest.raises(PublicationConflictError) as refusal:
+        serving.publish(c, expected=a)
+
+    assert serving.current() is third, "the third publication never landed"
+    assert refusal.value.expected is a
+    assert refusal.value.held is b
 
 
 def test_a_selection_with_an_equal_edition_is_not_the_expected_one() -> None:
