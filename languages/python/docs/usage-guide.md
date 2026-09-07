@@ -2115,3 +2115,144 @@ class StaleMilestoneError(RuntimeError):
     concurrency mode.
     """
 ```
+
+### Publishing an evolved model to a running service
+
+Spec: `python.md` §2 (*Model preparation and the Serving Model*, and the evolution constraints publication carries), §3 (a transaction adopts per attempt) and `m-schema-delta` (the ordered, prefix-safe statements the application applies itself). Graded by `tests/api/test_model_publication_story.py` (real Postgres: the story runs end to end, the added column is written and read back under the later edition, an earlier-edition read is unaffected by it, and a stale publisher is refused with `PublicationConflictError` and rebases onto the selection it names as held) and `tests/unit/test_model_publication_stories.py`'s Docker-free halves (the two application refusals, and the snippet being the source that ran).
+
+The order is the whole recipe. **Prepare the candidate first**: that is where every fallible model-only derivation runs, so a candidate that cannot be prepared raises with the database untouched and the earlier selection still serving — which is the guarantee that makes a live update safe to attempt at all. **Apply the schema next**, in the application's own transaction: Parallax applies nothing, and the statements are prefix-safe rather than idempotent, so a run that stops partway leaves a database the earlier edition still operates against. **Publish last**, because publication ASSERTS the physical schema already satisfies what it publishes. `UnpublishableUpdateError` is **application**-owned for the same reason `StaleMilestoneError` is: which evolutions a host will apply live, and what it makes of a statement that did not commit, are its decisions and no framework's. Nothing here drains, barriers, or retries a rollout: transactions already adopted keep the edition they adopted, other processes publish independently, and an earlier-edition read still reports rows its own model cannot admit as invalid stored data at the result root.
+
+```python
+class NicknamedAccount(
+    Entity,
+    table="account",
+    name="Account",
+    namespace=_NS,
+    indices=(index("account_owner", "owner"),),
+):
+    """``Account`` one Unilateral Evolution later: the same Entity with one
+    added nullable ``nickname`` — the model the publication story publishes.
+
+    The ``name="Account"`` header is what makes this the SAME Entity as the
+    class above rather than a second one, which is what makes the difference
+    between the two models one added Attribute instead of an Entity removed and
+    another added. An addition is where the live publication path applies: the
+    earlier edition selects every column it knows and admits every row the later
+    one can write, so both editions operate against one schema during Edition
+    Overlap.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+    owner: Attr[str] = attr(max_length=64)
+    balance: Attr[Decimal] = attr(precision=18, scale=2)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    nickname: Attr[str | None] = attr(max_length=64)
+
+
+class UnpublishableUpdateError(Exception):
+    """The application's own refusal to publish: the update stops before it.
+
+    Application-owned rather than borrowed from the framework, because every
+    reason it is raised for is the application's: which evolutions it is willing
+    to apply live, and what it makes of a schema statement that did not commit.
+    Parallax refuses nothing here — it never inspects a schema and never applies
+    one — so an update that must not proceed has to say so in the host's own
+    vocabulary. Whenever it is raised, the earlier selection is still serving and
+    nothing has adopted the candidate.
+    """
+
+
+def unilateral(evolution: Evolution, /) -> UnilateralEvolution:
+    """``evolution`` as the only kind a live publication can carry, or refuse.
+
+    A Coordinated Evolution is a complete description whose application needs
+    authored changes, data transformation, or rollout coordination, so there is
+    no delta to apply and no moment at which one publication would make the two
+    editions agree. Refusing it here is what keeps that decision the
+    application's rather than something a generated statement discovers.
+    """
+    if isinstance(evolution, UnilateralEvolution):
+        return evolution
+    raise UnpublishableUpdateError(
+        "a Coordinated Evolution needs authored, data, or rollout work that no "
+        "single publication can stand in for"
+    )
+
+
+def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> None:
+    """Apply every statement of ``delta``, in order, in the host's OWN boundary.
+
+    Parallax applies no schema change: these statements are the application's to
+    run, on the connection it owns, before it publishes anything. They are
+    prefix-safe in this order and deliberately not idempotent, so a run that
+    stops partway leaves a database the earlier edition still operates against —
+    which is exactly why a failure here has to prevent the publication rather
+    than be reported beside it.
+    """
+    outcome = port.transaction(
+        lambda schema: [schema.execute_write(statement, ()) for statement in delta.statements]
+    )
+    if isinstance(outcome, Committed):
+        return
+    failed = outcome.error if isinstance(outcome, BeginFailed) else outcome.trigger.error
+    raise UnpublishableUpdateError("the schema delta did not apply in full") from failed
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedUpdate:
+    """What one live update did: the editions either side of it, the statements
+    the host applied between them, and the added member's first written value."""
+
+    before: str
+    statements: tuple[str, ...]
+    after: str
+    nickname: str | None
+
+
+def a_running_service_publishes_an_evolved_model_without_restarting(
+    port: DbPort, /
+) -> PublishedUpdate:
+    """Prepare, apply, publish — in that order — with the service still serving.
+
+    ``port`` is the shipped adapter over the story database, already carrying
+    the earlier edition's schema. The handle is connected once, before the
+    update, and never reconnected: what changes under it is the selection its
+    executions adopt, which is what "without restarting" means here.
+    """
+    serving = ServingModel(prepare_model(ACCOUNT_MODEL, edition="2026-09-a"))
+    db = connect(port, serving)
+    before = db.transact(lambda tx: tx.edition)
+
+    a = serving.current()
+    # Preparation is where every fallible model-only derivation runs, and it
+    # runs BEFORE any schema work. A candidate that cannot be prepared raises
+    # here, with the database untouched and `a` still the selection every
+    # execution adopts.
+    b = prepare_model(NICKNAMED_ACCOUNT_MODEL, edition="2026-09-b")
+
+    # An Evolution is described between two ACCEPTED models, which is what a
+    # prepared selection carries its own of: `accepted_model_of` is the durable
+    # first-party seam a schema-owning host reads one through (`python.md` §2).
+    evolution = unilateral(evolve(accepted_model_of(a.model), accepted_model_of(b.model)))
+    delta = schema_delta(evolution, port.dialect)
+    apply_schema_delta(port, delta)
+
+    # Only now. Publication ASSERTS that the physical schema already satisfies
+    # what is being published, so every execution that adopts B afterwards finds
+    # the column B was prepared over. `expected=a` is what makes this one step
+    # rather than a read and a write: a publisher that lost a race to another
+    # candidate is refused here with `PublicationConflictError` instead of
+    # overwriting the winner.
+    serving.publish(b, expected=a)
+
+    def name_the_account(tx: Transaction) -> tuple[str, str | None]:
+        account = tx.find(NicknamedAccount.where(NicknamedAccount.id == _TARGET_ID)).result()
+        named = account.edit(nickname=_NICKNAME)
+        tx.update(named)
+        return tx.edition, named.nickname
+
+    after, nickname = db.transact(name_the_account)
+    return PublishedUpdate(
+        before=before, statements=delta.statements, after=after, nickname=nickname
+    )
+```
