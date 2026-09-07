@@ -30,33 +30,6 @@ Entry numbering is continuous and never reused. The next new number is **D-94**.
 
 ## Entries
 
-### D-53 — One off-path bare-name reduction remains, with a reproduced defect and a non-determinate repair
-
-*Low — off every production path, recorded so the sweep is not re-run from
-scratch.* Relates to `parallax.conformance.engine`.
-
-**What.** One defect class — an exact `EntityIdentity` reduced to a bare local
-name — was chased through five call sites and fixed at all five. Two further
-sites of the same class were found and verified off-path; one of them remains:
-
-- The conformance engine's default-target convention returns bare names
-  (`_rejected_target`, `_conflict_target`), which feed `meta.entity(...)` and
-  would raise `KeyError` on a duplicated local name.
-
-The other site, `parallax.descriptor._records.concrete_descendant_names`, was an
-unused export with no production caller and has been deleted rather than
-repaired.
-
-The pre-formation family walk carried a third instance of the same defect and no
-longer does: `parallax.descriptor._family` keys every walk on
-`Entity.canonical_name` and resolves a bare `parent` through
-`_records.parent_identity`, with the two namespace shapes pinned by
-`tests/unit/test_descriptor_family.py`.
-
-**Why it is deferred rather than fixed.** The repair changes an exported
-contract with no caller to validate it against, and it is unwitnessed: no
-`rejected` corpus model declares a namespace.
-
 ### D-56 — A table-per-concrete-subtype union-all read cannot run inside a transaction whose target resolves to the Locking strategy
 
 *Low — one concurrency mode of a legal read shape is unreachable from
@@ -932,6 +905,7 @@ prose.
 - **D-47** → fixed. `reduce_declared_members` preserves member presence at every containment depth, as `python.md` §3 and `core/spec/m-document-codec.md` state.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
+- **D-53** → closed. Both sites it left open are gone. The conformance engine's default-target conventions report canonical spellings — `_rejected_target` returns the family root's `identity.canonical`, `_conflict_target` the sole concrete subtype's, and both fall back to `_first_declared_entity`, which reads `conformance.models.declared_entity_spellings` and composes `<namespace>.<name>`, bare only for an Entity the document declares ownerless — so a duplicated local name resolves to the Entity the convention selected instead of reaching `meta.entity(...)` as a name two Entities share. The other site, `parallax.descriptor._records.concrete_descendant_names`, was an unused export with no production caller and is deleted rather than repaired; the pre-formation family walk the entry already recorded as fixed keys every walk on `Entity.canonical_name`.
 - **D-54** → fixed. A subtype's Pydantic field for a member it inherits is the declaring class's own — same default, same requiredness, at every depth — as `python.md` §2's realization-technique paragraph states. Class creation empties the inherited names out of the namespace it hands Pydantic and restores them once the class exists, so Pydantic's own inheritance path supplies each field; the entry's `Tug()` now raises for its missing required members, and a family whose root declares a Value Object occurrence can hydrate a subtype at all, which the undeep-copyable expression made impossible.
 - **D-55** → closed by [COR-115](https://linear.app/flimflam/issue/COR-115/reference-harness-object-query-oracle). The harness work the entry said no Python-target ticket could carry: a Scenario read step is presented as the read it is and materialized by `reference_harness.object_query_oracle`, so a family-target find publishes `familyVariant` rather than the raw tag or branch literal, and an instance-form step projects its `Document` slots. The per-variant narrowing stays deliberately absent — `m-case-format` scopes that node shape to a read case's own `then.graph` leaves, and a step publishes the specified positional superset.
 - **D-57** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). `_identity_row` applies `serialize_member`, so all three Entity Row Codec operations carry one form; `python.md` §5 states that uniform contract in place of the asymmetry, and no golden moved, because a primary key is structurally a scalar Attribute that `serialize_member` passes through unchanged.
