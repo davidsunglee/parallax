@@ -115,11 +115,14 @@ class ModelSelection:
     Opaque by construction: :func:`select_model` is the only builder there is,
     and it runs behind ``prepare_model``, which answers a complete selection or
     raises. Calling the class refuses, so no caller can name a constructor and
-    no partially prepared or mismatched value exists. ``model`` is the exact
-    original Domain Model and ``edition`` the token it was prepared under; the
-    projections behind them are reached through :func:`read_projection` and
-    :func:`write_projection`. Equality is identity, which is what a Serving
-    Model compares when it publishes.
+    no partially prepared or mismatched value exists. What preparation composed
+    it cannot leave either: assignment and deletion are refused for every
+    name, public property and private slot alike, so a published selection
+    keeps the model, edition, and pair of projections it was prepared with.
+    ``model`` is the exact original Domain Model and ``edition`` the token it
+    was prepared under; the projections behind them are reached through
+    :func:`read_projection` and :func:`write_projection`. Equality is identity,
+    which is what a Serving Model compares when it publishes.
     """
 
     __slots__ = ("_edition", "_model", "_read", "_write")
@@ -131,6 +134,12 @@ class ModelSelection:
 
     def __init_subclass__(cls) -> None:
         raise TypeError("ModelSelection is the prepared form itself and admits no subclass")
+
+    def __setattr__(self, name: str, value: object, /) -> NoReturn:
+        raise AttributeError(f"a prepared ModelSelection is immutable: cannot set {name!r}")
+
+    def __delattr__(self, name: str, /) -> NoReturn:
+        raise AttributeError(f"a prepared ModelSelection is immutable: cannot delete {name!r}")
 
     @property
     def model(self) -> DomainModel:
@@ -163,17 +172,20 @@ def select_model(
     selection in existence carries products derived from the ONE ``catalog``
     handed here. That is what makes both projections carry the same edition and
     share the exact same cataloged model by construction rather than by check.
+
+    Because the selection refuses every assignment once allocated, filling it
+    goes through ``object.__setattr__``; the values are composed here first, so
+    an allocated selection is complete before the function returns and is never
+    reachable half filled.
     """
     checked = check_edition(edition)
+    read = SelectedReadModel(edition=checked, model=catalog, construction=construction)
+    write = SelectedWriteModel(edition=checked, model=catalog, codec=codec, planner=planner)
     selection = object.__new__(ModelSelection)
-    selection._edition = checked  # pyright: ignore[reportPrivateUsage] - the module's own builder filling the value it just allocated
-    selection._model = model  # pyright: ignore[reportPrivateUsage] - the module's own builder filling the value it just allocated
-    selection._read = SelectedReadModel(  # pyright: ignore[reportPrivateUsage] - the module's own builder filling the value it just allocated
-        edition=checked, model=catalog, construction=construction
-    )
-    selection._write = SelectedWriteModel(  # pyright: ignore[reportPrivateUsage] - the module's own builder filling the value it just allocated
-        edition=checked, model=catalog, codec=codec, planner=planner
-    )
+    object.__setattr__(selection, "_edition", checked)
+    object.__setattr__(selection, "_model", model)
+    object.__setattr__(selection, "_read", read)
+    object.__setattr__(selection, "_write", write)
     return selection
 
 
