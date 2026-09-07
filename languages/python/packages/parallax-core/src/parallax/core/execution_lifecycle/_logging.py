@@ -235,7 +235,12 @@ def _no_fields(_event: _NoPayload, _detail: LifecycleLogDetail) -> dict[str, obj
 
 
 def _read_started_fields(event: ReadStarted, _detail: LifecycleLogDetail) -> dict[str, object]:
-    return {"target": event.target, "interface": event.interface}
+    """A Read's own payload; ``edition`` is present exactly where the read
+    adopted one, so its presence says the read was a root."""
+    fields: dict[str, object] = {"target": event.target, "interface": event.interface}
+    if event.edition is not None:
+        fields["edition"] = event.edition
+    return fields
 
 
 def _write_batch_started_fields(
@@ -286,11 +291,14 @@ def _attempt_started_fields(
 def _stream_started_fields(
     event: SnapshotStreamStarted, _detail: LifecycleLogDetail
 ) -> dict[str, object]:
-    return {
+    fields: dict[str, object] = {
         "target": event.target,
         "interface": event.interface,
         "batch_size": event.batch_size,
     }
+    if event.edition is not None:
+        fields["edition"] = event.edition
+    return fields
 
 
 def _completed_fields(_outcome: _Completed, _detail: LifecycleLogDetail) -> dict[str, object]:

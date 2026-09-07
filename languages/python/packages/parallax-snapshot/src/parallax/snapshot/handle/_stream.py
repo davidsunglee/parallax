@@ -33,10 +33,9 @@ first, in the discipline the unit of work's own scope flag already uses.
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterator
-from typing import Final, Literal, Protocol, cast
+from typing import Any, Final, Literal, Protocol, cast
 
 from parallax.core import continuation
-from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -44,7 +43,7 @@ from parallax.core.execution_lifecycle._activity import (
     SnapshotStreamActivity,
     StreamBatchActivity,
 )
-from parallax.core.metamodel import AttributeIdentity, EntityMetadata, entity_by_name
+from parallax.core.metamodel import AttributeIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.temporal_read import (
@@ -55,6 +54,7 @@ from parallax.core.temporal_read import (
 )
 from parallax.snapshot.handle._page import At, PagePlan, StreamPage
 from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._publication import SelectedReadModel
 from parallax.snapshot.handle._read import ResultPublication, declaring_metadata, edge_pin
 from parallax.snapshot.materialize import InvalidData, InvalidDataError
 from parallax.snapshot.materialize._graph import root_edges, root_scoped
@@ -68,37 +68,62 @@ __all__ = [
 ]
 
 
-class StreamExecution(Protocol):
-    """The two things a delivery asks its read composition for, as one object.
+class StreamRead(Protocol):
+    """The read a delivery was begun as: one selection, and the bracket every
+    advance of the delivery runs under.
 
-    A stream retains the ONE read composition that opened it, so what a page runs
-    inside and whose activity the stream is are one answer given once, by the
-    object that also served the eager reads beside it. Which answer it is belongs
-    to that composition and never to the loop above: a standalone stream is a
-    Root Execution of its own and its pages read straight through, while a
-    participating one is a child of the current Transaction Attempt and every
-    page of it runs inside its unit of work's force-flush, so buffered writes
-    reach the database before the page that must see them.
+    A stream begins its read at entry and retains it through every page, so the
+    selection it was opened under, whose activity the stream is, and how a
+    failure escaping the delivery reaches the caller are one answer given once.
+    A standalone delivery is a Root Execution of its own that adopted its
+    selection at entry and names that edition on an ordinary failure escaping
+    an advance; a participating one is a child of the current Transaction
+    Attempt, serves the transaction's fixed selection, and lets a failure
+    propagate to the invocation that contextualizes it once.
+    """
+
+    @property
+    def selected(self) -> SelectedReadModel: ...
+
+    def open_stream(
+        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
+    ) -> SnapshotStreamActivity: ...
+
+    def advance[T](self, body: Callable[[], T], /) -> T: ...
+
+
+class StreamScope[R: StreamRead](Protocol):
+    """What a delivery asks its read composition for, as one object.
+
+    A stream retains the ONE read composition that constructed it, so beginning
+    its read, choosing how its roots are published, and reading each page are
+    answered by the object that also serves the eager reads beside it. Which
+    bracket a page runs inside belongs to the read the scope began and never to
+    the loop above: a standalone page reads straight through, while a
+    participating one runs inside its unit of work's force-flush, so buffered
+    writes reach the database before the page that must see them.
 
     A page is handed its own Stream Batch UNENTERED, because where that scope
     opens is part of the same answer: a participating page enters it after the
     flush, which is what leaves the dependency batch an ordered sibling of the
     page rather than a scope around it (`m-execution-lifecycle`).
 
-    The model travels with the page rather than being held below, because the
-    stream is the holder of the ONE selection it was opened under and no page of
-    a delivery may be read under a second one.
+    The read travels with the page rather than being held below, because the
+    stream is the holder of the ONE read it was begun as and no page of a
+    delivery may be read under a second selection.
     """
 
-    def open_stream(
-        self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
-    ) -> SnapshotStreamActivity: ...
+    def begin(self) -> R: ...
+
+    def publication(
+        self, selected: SelectedReadModel, interface: ReadInterface, /
+    ) -> ResultPublication: ...
 
     def page(
         self,
+        read: R,
         page_plan: PagePlan,
         at: At,
-        model: CatalogedModel,
         batch: StreamBatchActivity,
         /,
     ) -> StreamPage: ...
@@ -121,6 +146,11 @@ _SINGLE_PASS: Final = (
     "inside its scope, and to no second view and no second pass"
 )
 _IN_SCOPE: Final = "a Snapshot Stream answers only inside its own scope"
+
+_END: Final = object()
+"""What one advance answers when the delivery ran out, so exhaustion crosses the
+read's bracket as a value: ``StopIteration`` is an ordinary exception, and a
+bracket that contextualizes ordinary failures would otherwise wrap it."""
 
 
 def check_batch_size(batch_size: int) -> None:
@@ -231,16 +261,26 @@ class SnapshotStream[T]:
     Deliberately NOT a :class:`~parallax.snapshot.handle._read.Snapshot`. There
     is no whole-result accessor, no arity accessor, and no way to re-read what
     already went past — a caller holding one holds a position in a delivery
-    rather than a value. Everything outside the scope raises, including
-    :attr:`pin`, so "the stream answers inside its scope" is one rule rather
-    than one rule with an exception.
+    rather than a value. Everything outside the scope raises, :attr:`pin` and
+    :attr:`edition` included, so "the stream answers inside its scope" is one
+    rule rather than one rule with an exception.
+
+    Constructing a stream settles what the call named — the lowered query, the
+    interface, and the page size — and adopts nothing: the read it delivers is
+    begun at entry, which is where the selection is taken, the model-dependent
+    refusals land, and the edition every page is read under is fixed. A stream
+    nobody enters therefore holds no selection and has no edition.
 
     Iterating is the default view and raises
     :class:`~parallax.snapshot.materialize.InvalidDataError` at a root whose
     stored state contradicted the model; :meth:`checked` is the same delivery
     with that root arriving as its record instead. A view is taken once: the
     second — of either kind — is refused rather than silently delivering
-    nothing.
+    nothing. Every advance of a view runs under the begun read's bracket, so an
+    ordinary failure escaping a standalone delivery — a page's statement, a
+    root's publication, the default view's refusal, a tie — arrives
+    contextualized under the stream's edition, while the stream's own state
+    refusals are judged before the bracket and keep their type.
 
     ``batch_size`` counts ROOT positions and, over storage the model describes,
     is a performance dial alone: it changes neither the order roots arrive in,
@@ -263,32 +303,33 @@ class SnapshotStream[T]:
     __slots__ = (
         "_activity",
         "_batch_size",
-        "_execution",
         "_failure",
+        "_interface",
         "_milestones",
-        "_model",
         "_node",
         "_page_plan",
         "_pin",
         "_publication",
+        "_read",
+        "_scope",
         "_state",
     )
 
     def __init__(
         self,
         node: ObjectQueryNode,
-        model: CatalogedModel,
-        publication: ResultPublication,
-        execution: StreamExecution,
+        interface: ReadInterface,
+        scope: StreamScope[Any],
         *,
         batch_size: int,
     ) -> None:
         self._node = node
-        self._model = model
-        self._publication = publication
-        self._execution = execution
+        self._interface: ReadInterface = interface
+        self._scope: StreamScope[Any] = scope
         self._batch_size = batch_size
         self._state: _State = _CREATED
+        self._read: StreamRead | None = None
+        self._publication: ResultPublication | None = None
         self._page_plan: PagePlan | None = None
         self._pin: Pin = Pin()
         self._milestones: EntityMetadata | None = None
@@ -296,32 +337,41 @@ class SnapshotStream[T]:
         self._failure: BaseException | None = None
 
     def __enter__(self) -> SnapshotStream[T]:
-        """Open the stream's scope: gate the query, plan its pages, and start
-        observing it.
+        """Open the stream's scope: begin its read, gate the query, plan its
+        pages, and start observing it.
 
         Everything deterministic happens here and nothing reaches the database:
-        the same read gate an eager find crosses, then the page plan, then the
-        pin the delivery will answer for itself — the query's own lowered as-of
-        coordinates where it reads one instant, and the empty pin where it scans
-        an axis. Each is a refusal a caller can earn, so all of them precede the
-        stream's own activity — a refused stream opens no Root Execution and
-        calls no Provider — and constructing a stream without entering it
-        observes nothing and reads nothing.
+        the read is begun, which is where a standalone stream adopts the
+        selection every page will be served under; then the publication, which
+        is where a selection that can materialize no Snapshot at all refuses a
+        Typed delivery; then the same read gate an eager find crosses, the page
+        plan, and the pin the delivery will answer for itself — the query's own
+        lowered as-of coordinates where it reads one instant, and the empty pin
+        where it scans an axis. Each is a refusal a caller can earn and keeps
+        its own type, so all of them precede the stream's own activity — a
+        refused stream opens no Root Execution and calls no Provider — and
+        constructing a stream without entering it adopts nothing, observes
+        nothing, and reads nothing.
         """
         self._require(_ENTER_ONCE, _CREATED)
-        validated = preflight(self._node, model=self._model.meta, form="graph")
-        entity = self._entity()
-        declaring = declaring_metadata(self._model.meta, entity.identity)
+        read = self._scope.begin()
+        publication = self._scope.publication(read.selected, self._interface)
+        meta = read.selected.model.meta
+        validated = preflight(self._node, model=meta, form="graph")
+        entity = self._entity(meta)
+        declaring = declaring_metadata(meta, entity.identity)
         self._page_plan = PagePlan(
-            continuation.plan(validated, self._model.meta), self._batch_size, self._node.limit
+            continuation.plan(validated, meta), self._batch_size, self._node.limit
         )
         if scans_validated_axis(validated.temporal):
             self._milestones = declaring
             self._pin = Pin()
         else:
             self._pin = validated_query_pin(validated.temporal)
-        self._activity = self._execution.open_stream(
-            self._node.target, self._publication.interface, self._batch_size
+        self._read = read
+        self._publication = publication
+        self._activity = read.open_stream(
+            self._node.target, publication.interface, self._batch_size
         ).__enter__()
         self._state = _OPEN
         return self
@@ -385,6 +435,18 @@ class SnapshotStream[T]:
         self._require(_IN_SCOPE, _OPEN, _DRAINING)
         return self._pin
 
+    @property
+    def edition(self) -> str:
+        """The Model Edition this delivery was begun under, answered where
+        :attr:`pin` is: inside the scope, and never before entry.
+
+        Fixed when the scope was entered and retained through every page, so a
+        publication landing mid-delivery changes neither what a later page is
+        read under nor what this reports. A stream that has not entered has no
+        Adopted Edition, which is what the state refusal before entry says."""
+        self._require(_IN_SCOPE, _OPEN, _DRAINING)
+        return self._begun().selected.edition
+
     def __repr__(self) -> str:
         return f"SnapshotStream(target={self._node.target.canonical!r}, state={self._state!r})"
 
@@ -392,8 +454,15 @@ class SnapshotStream[T]:
         if self._state not in allowed:
             raise SnapshotStreamStateError(rule)
 
-    def _entity(self) -> EntityMetadata:
-        entity = entity_by_name(self._model.meta, self._node.target.canonical)
+    def _begun(self) -> StreamRead:
+        read = self._read
+        # Reachable from an entered scope alone.
+        if read is None:  # pragma: no cover - see above
+            raise SnapshotStreamStateError(_IN_SCOPE)
+        return read
+
+    def _entity(self, meta: Metamodel) -> EntityMetadata:
+        entity = entity_by_name(meta, self._node.target.canonical)
         if entity is None:  # pragma: no cover - the gate above resolved this target
             raise SnapshotStreamStateError(f"{self._node.target.canonical}: no such Entity")
         return entity
@@ -407,17 +476,30 @@ class SnapshotStream[T]:
         yields nothing, and settles nothing — the state it was left in stands,
         and it stands for every later advance too.
 
+        The step itself runs under the begun read's bracket, which is what
+        names the edition on an ordinary failure escaping a standalone
+        delivery; the state check stands before it, so a refusal about the
+        stream keeps its own type. The delivery settles with the failure the
+        step raised, before the bracket sees it, so the verdict the stream
+        announces is the underlying one.
+
         A delivery that already settled keeps answering ``StopIteration`` inside
         its scope, so exhaustion is the end of an iteration rather than a second
         refusal, and the terminal state a settled delivery carries is never
         written over by a later advance.
         """
         self._require(_IN_SCOPE, _DRAINING, _EXHAUSTED, _FAILED)
+        root = self._begun().advance(lambda: self._step(pages))
+        if root is _END:
+            raise StopIteration
+        return root
+
+    def _step(self, pages: Generator[object], /) -> object:
         try:
             return next(pages)
         except StopIteration:
             self._settle(_EXHAUSTED)
-            raise
+            return _END
         except BaseException as failure:
             self._settle(_FAILED, failure)
             raise
@@ -466,19 +548,25 @@ class SnapshotStream[T]:
         the roots it delivered.
         """
         page_plan = self._page_plan
+        publication = self._publication
+        read = self._read
         # Draining is reachable from an entered scope alone.
-        if page_plan is None:  # pragma: no cover - see above
+        if page_plan is None or publication is None or read is None:  # pragma: no cover - see above
             raise SnapshotStreamStateError(_IN_SCOPE)
         coordinate: ContinuationCoordinate | None = None
         emitted = 0
         while True:
-            page = self._execution.page(
-                page_plan, At(coordinate, emitted), self._model, self._activity.batch()
+            page = self._scope.page(
+                read, page_plan, At(coordinate, emitted), self._activity.batch()
             )
             for position, edge in enumerate(root_edges(page.graph, self._milestones)):
-                root = self._published(page, position, edge, ordinal=emitted + position)
+                root = self._published(
+                    publication, page, position, edge, ordinal=emitted + position
+                )
                 if not checked and isinstance(root, InvalidData):
-                    raise InvalidDataError((cast("InvalidData[object]", root),))
+                    raise InvalidDataError(
+                        (cast("InvalidData[object]", root),), edition=publication.edition
+                    )
                 yield root
             emitted += page.delivered
             if page.resume_from is not None:
@@ -493,7 +581,13 @@ class SnapshotStream[T]:
                 return
 
     def _published(
-        self, page: StreamPage, position: int, edge: Edge | None, *, ordinal: int
+        self,
+        publication: ResultPublication,
+        page: StreamPage,
+        position: int,
+        edge: Edge | None,
+        *,
+        ordinal: int,
     ) -> object:
         """The one root at ``position`` of ``page``, published on its own.
 
@@ -508,7 +602,7 @@ class SnapshotStream[T]:
         A milestone root whose axis starts did not decode has no edge of its own
         and is published at the page's pin, and the delivery continues past it.
         """
-        roots = self._publication.roots_of(
+        roots = publication.roots_of(
             root_scoped(page.graph, position, pin=None if edge is None else edge_pin(edge)),
             page.includes,
             ordinal_offset=ordinal,

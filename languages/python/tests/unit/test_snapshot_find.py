@@ -17,11 +17,15 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _transact_support import ACCOUNT, PERSON
+from _transact_support import ACCOUNT, NEW_ROW, PERSON
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
+    Read,
     RefusingPort,
+    ScriptedPort,
+    Transact,
 )
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import models, read_models
@@ -49,9 +53,11 @@ from parallax.snapshot import (
     InvalidDataError,
     ObjectKey,
     QueryTargetError,
+    ServingModel,
     SnapshotMaterializationError,
     StoredDataIssue,
     handle,
+    prepare_model,
 )
 from parallax.snapshot.handle import _read, _read_scope
 from parallax.snapshot.handle._preflight import preflight
@@ -840,7 +846,7 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> 
     # is refused rather than partly published.
     port = QueuePort([[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]])
     db = handle.Database.connect(port, read_models.BALANCE_MODEL)
-    with pytest.raises(SnapshotMaterializationError) as refusal:
+    with raises_contextualized(SnapshotMaterializationError) as refusal:
         db.find(read_models.Balance.where(read_models.Balance.id == 1))
     assert refusal.value.code == "snapshot-materialization-failed"
     assert isinstance(refusal.value.cause, TemporalReadError)
@@ -851,7 +857,7 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> 
 # publishes.                                                                   #
 # --------------------------------------------------------------------------- #
 def _snapshot(roots: tuple[object, ...]) -> handle.Snapshot[object]:
-    return handle.Snapshot(roots, Pin())
+    return handle.Snapshot(roots, Pin(), "edition")
 
 
 def test_result_raises_on_zero_and_on_more_than_one() -> None:
@@ -923,6 +929,8 @@ def test_a_singular_accessor_reports_exactly_the_root_it_narrowed_to() -> None:
         with pytest.raises(InvalidDataError) as refusal:
             getattr(_snapshot((record,)), accessor)()
         assert refusal.value.invalid_data == (record,)
+        # A delayed refusal carries the edition of the result that raised it.
+        assert refusal.value.edition == "edition"
 
 
 def test_eager_results_aggregates_every_invalid_root_in_result_order() -> None:
@@ -936,12 +944,13 @@ def test_eager_results_aggregates_every_invalid_root_in_result_order() -> None:
 
 def test_the_invalid_data_report_is_the_errors_sole_machine_readable_surface() -> None:
     record = _invalid(0)
-    error = InvalidDataError((record,))
+    error = InvalidDataError((record,), edition="edition")
     assert error.invalid_data == (record,)
+    assert error.edition == "edition"
     for absent in ("code", "issues", "records", "cause"):
         assert not hasattr(error, absent)
     with pytest.raises(ValueError, match="at least one record"):
-        InvalidDataError(())
+        InvalidDataError((), edition="edition")
 
 
 def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
@@ -950,12 +959,14 @@ def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
     # `args` the message lives in would let a caller leave the refusal's wording
     # describing results the report no longer carries.
     record = _invalid(0)
-    error = InvalidDataError((record,))
+    error = InvalidDataError((record,), edition="edition")
     message = str(error)
     writable = cast("Any", error)
     for name, replacement in (
         ("invalid_data", ()),
         ("_invalid_data", ()),
+        ("edition", "other"),
+        ("_edition", "other"),
         ("args", ("nothing is wrong",)),
     ):
         with pytest.raises(AttributeError):
@@ -963,13 +974,14 @@ def test_the_report_cannot_be_replaced_after_the_message_is_derived() -> None:
         with pytest.raises(AttributeError):
             delattr(writable, name)
     assert error.invalid_data == (record,)
+    assert error.edition == "edition"
     assert str(error) == message
 
 
 def test_the_frozen_refusal_still_carries_the_state_the_interpreter_owns() -> None:
     # Freezing by hand rather than as a frozen dataclass is what keeps notes and
     # chaining working on a refusal whose report is settled.
-    error = InvalidDataError((_invalid(0),))
+    error = InvalidDataError((_invalid(0),), edition="edition")
     error.add_note("an ordinary exception still takes notes")
     assert error.__notes__ == ["an ordinary exception still takes notes"]
     del error.__notes__
@@ -988,6 +1000,7 @@ def test_the_checked_view_returns_the_union_in_band_over_the_same_storage() -> N
     assert checked.results() == [record, "valid"]
     assert checked.results() is not checked.results()
     assert checked.pin is snapshot.pin
+    assert checked.edition == snapshot.edition == "edition"
     assert "CheckedSnapshot(roots=2" in repr(checked)
     # Same storage, so a second view is another window on one result rather than
     # another copy of it.
@@ -1007,8 +1020,9 @@ def test_the_checked_view_keeps_the_same_arity_rule_and_refuses_nothing_else() -
 
 def test_snapshot_pin_and_repr() -> None:
     pin = Pin(tx_time=dt.datetime(2024, 1, 1, tzinfo=_UTC))
-    snapshot = handle.Snapshot((1,), pin)
+    snapshot = handle.Snapshot((1,), pin, "edition")
     assert snapshot.pin is pin
+    assert snapshot.edition == "edition"
     assert "Snapshot(roots=1" in repr(snapshot)
 
 
@@ -1304,3 +1318,76 @@ def test_every_milestone_graph_of_one_read_is_laid_out_by_the_one_schema() -> No
     schemas = {id(_rows(graph).schema) for graph in result.graphs}
     assert len(result.graphs) == 2
     assert len(schemas) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Adoption: what a standalone read and a transaction report over one Serving   #
+# Model, and what a publication between them moves.                            #
+# --------------------------------------------------------------------------- #
+def _account_query() -> Any:
+    return mm.Account.where(mm.Account.id == 7)
+
+
+def _account_node() -> ObjectQueryNode:
+    return deserialize_query(
+        {"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}}
+    )
+
+
+def test_a_standalone_find_and_a_transaction_report_one_edition_until_a_publication() -> None:
+    # Both shapes adopt from the same Serving Model, so between publications
+    # they report one edition; a publication between them changes only what
+    # is adopted afterwards, and a result already published keeps its stamp.
+    a = prepare_model(ACCOUNT, edition="ledger-a")
+    b = prepare_model(ACCOUNT, edition="ledger-b")
+    serving = ServingModel(a)
+    port = ScriptedPort(
+        Read(rows=[NEW_ROW]),
+        Read(rows=[NEW_ROW]),
+        Read(rows=[NEW_ROW]),
+        Transact(Read(rows=[NEW_ROW])),
+        Read(rows=[NEW_ROW]),
+        Transact(Read(rows=[NEW_ROW])),
+    )
+    db = handle.Database(port, serving)
+
+    found = db.find(_account_query())
+    wired = db.wire.find(_account_node())
+    rows = db.read_rows(_account_node())
+    inside = db.transact(lambda tx: (tx.edition, tx.find(_account_query()).edition))
+    assert (found.edition, found.checked().edition, wired.edition, rows.edition) == (
+        "ledger-a",
+    ) * 4
+    assert inside == ("ledger-a", "ledger-a")
+
+    serving.publish(b, expected=a)
+
+    assert (found.edition, wired.edition, rows.edition) == ("ledger-a",) * 3
+    assert db.find(_account_query()).edition == "ledger-b"
+    assert db.transact(lambda tx: (tx.edition, tx.find(_account_query()).edition)) == (
+        "ledger-b",
+        "ledger-b",
+    )
+
+
+def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None:
+    # The accessor is reached inside a transaction adopted under B, so the
+    # failure escaping that transaction is contextualized under B — and the
+    # refusal it carries is still the one the result under A settled, with A's
+    # edition on it. Access itself starts no execution and adopts nothing.
+    a = prepare_model(ACCOUNT, edition="ledger-a")
+    b = prepare_model(ACCOUNT, edition="ledger-b")
+    serving = ServingModel(a)
+    port = ScriptedPort(Read(rows=[{**NEW_ROW, "balance": None}]), Transact())
+    db = handle.Database(port, serving)
+
+    snapshot = db.find(_account_query())
+    serving.publish(b, expected=a)
+
+    with raises_contextualized(InvalidDataError) as failed:
+        db.transact(lambda tx: snapshot.result())
+
+    assert failed.edition == "ledger-b"
+    assert failed.value.edition == "ledger-a" == snapshot.edition
+    (record,) = failed.value.invalid_data
+    assert {issue.code for issue in record.issues} == {"stored-data-attribute-null"}

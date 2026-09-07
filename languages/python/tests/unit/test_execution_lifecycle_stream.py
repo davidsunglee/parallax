@@ -30,6 +30,7 @@ from _stream_page_support import paged_reads
 from _transact_support import ACCOUNT, account_db
 
 from _support import mirrored_models as mm
+from _support.adoption import raises_contextualized
 from _support.db_port import (
     BeginCall,
     CommitCall,
@@ -63,7 +64,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.unit_work import FixedClock
-from parallax.snapshot import InvalidDataError, connect
+from parallax.snapshot import InvalidDataError, ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Database, QueryTargetError, Transaction
 
 _FIXED: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -379,7 +380,7 @@ def test_a_page_read_failure_fails_its_batch_first_and_causes_the_stream_failure
     failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
     port = ScriptedPort(Read(rows=[_order_row(index) for index in (1, 2, 3)]), Read(raises=failure))
     with (
-        pytest.raises(DatabaseError),
+        raises_contextualized(DatabaseError),
         _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream,
     ):
         assert [root.id for root in stream] == [1, 2]
@@ -408,7 +409,7 @@ def test_a_per_root_publication_failure_leaves_its_batch_completed_and_fails_the
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Read(rows=[_order_row(1), _keyless_order_row()]))
     with (
-        pytest.raises(InvalidDataError),
+        raises_contextualized(InvalidDataError),
         _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream,
     ):
         assert [root.id for root in stream] == [1]
@@ -428,7 +429,7 @@ def test_a_failure_the_caller_caught_still_finishes_the_stream_failed() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedPort(Read(rows=[_order_row(1), _keyless_order_row()]))
     with _orders(port, recorder).stream(_active_orders(), batch_size=2) as stream:  # noqa: SIM117 - the refusal is caught INSIDE the scope, which is the claim
-        with pytest.raises(InvalidDataError):
+        with raises_contextualized(InvalidDataError):
             list(stream)
 
     (root,) = recorder.roots
@@ -472,6 +473,9 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
     (started,) = _of(root, SnapshotStreamStarted)
     attempt = root.events[1]
     assert started.parent_activity_id == attempt.activity_id
+    # A participating stream inherits the attempt's edition and states none of
+    # its own: the parent correlation is what relates the two.
+    assert started.edition is None
     # Five correlation levels, which is the longest chain the algebra admits:
     # invocation, attempt, stream, page, call.
     page = _of(root, StreamBatchStarted)[0]
@@ -611,3 +615,22 @@ def test_an_unobserved_stream_delivers_its_roots_and_publishes_nothing() -> None
     port = ScriptedPort(Read(rows=[_account_row(1)]))
     with account_db(port).stream(mm.Account.where(mm.Account.id >= 1), batch_size=1) as stream:
         assert [account.id for account in stream] == [1]
+
+
+def test_a_standalone_streams_started_event_carries_the_edition_it_adopted_at_entry() -> None:
+    # The stream adopts when its scope is entered, and the Started event
+    # delivered at that entry states the edition — the one every page below it
+    # is read under, however many pages follow.
+    recorder = RecordingLifecycleProvider()
+    serving = ServingModel(prepare_model(ORDERS_MODEL, edition="orders-a"))
+    port = ScriptedPort(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
+    db = connect(port, serving, clock=FixedClock(_FIXED), lifecycle_provider=recorder)
+
+    with db.stream(_active_orders(), batch_size=2) as stream:
+        assert stream.edition == "orders-a"
+        assert [root.id for root in stream] == [1, 2, 3]
+
+    (root,) = recorder.roots
+    (started,) = _of(root, SnapshotStreamStarted)
+    assert started.parent_activity_id is None
+    assert started.edition == "orders-a"

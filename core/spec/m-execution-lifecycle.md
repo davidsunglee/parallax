@@ -184,7 +184,7 @@ uses `None` for both.
 The read transitions are:
 
 ```text
-ReadStarted(target, interface)
+ReadStarted(target, interface, edition)
 ReadFinished(ReadCompleted | ReadFailed(failure))
 ```
 
@@ -192,6 +192,11 @@ ReadFinished(ReadCompleted | ReadFailed(failure))
 preflight and any read-dependency Write Batch. It spans planning, lowering, all
 of its Database Calls, conversion, materialization, and publication until the
 public result is ready. It has no root-count or materialized-node count.
+`edition` is the nonempty opaque token of the Model Edition a **standalone**
+Read adopted for itself before it started, and is present exactly where the
+Read is the root activity; a participating Read carries none, because the
+Transaction Attempt it hangs under already stated the edition it inherits, and
+the parent correlation is what relates the two.
 
 The write-batch transitions are:
 
@@ -347,14 +352,18 @@ the current Transaction Attempt. Construction alone emits nothing. The stream
 starts only after successful context entry and finishes exactly once as:
 
 ```text
-SnapshotStreamStarted(target, interface, batchSize)
+SnapshotStreamStarted(target, interface, batchSize, edition)
 SnapshotStreamFinished(
     StreamExhausted
   | StreamClosedEarly
   | StreamFailed(failure))
 ```
 
-`batchSize` is positive. Exhaustion finishes immediately when discovered. A
+`batchSize` is positive. `edition` is the nonempty opaque token of the Model
+Edition a **standalone** stream adopted at context entry, retained through
+every page, and is present exactly where the stream is the root activity; a
+participating stream carries none, because the Transaction Attempt it hangs
+under already stated the edition it inherits. Exhaustion finishes immediately when discovered. A
 caller break, explicit close, caller exception, or cancellation before
 exhaustion is Closed Early and does not rewrite caller control flow. Failed is
 reserved for Parallax planning, database, conversion, materialization,
@@ -465,9 +474,10 @@ This module owns eight cases:
 | streamed delivery | a Snapshot Stream root brackets one Stream Batch per page, each page's Database Calls are that batch's own, and the delivery finishes exhausted |
 | isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin and finishes `beginFailed` with no callback, no child, and no retry; the invocation finishes failed caused by it |
 
-Every Transaction Attempt Started transition in those cases asserts the
-literal edition the conformance adapter prepared the case's model under
-(`m-conformance-adapter`).
+Every Started transition of an adoption-owning activity in those cases — a
+standalone Read, a standalone Snapshot Stream, and every Transaction Attempt —
+asserts the literal edition the conformance adapter prepared the case's model
+under (`m-conformance-adapter`); a Read or stream under an attempt asserts none.
 
 The compatibility harness validates oracle shape and correlation but observes no
 execution of its own. Each language grades the oracle through its conformance

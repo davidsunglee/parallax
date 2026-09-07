@@ -49,7 +49,7 @@ then:
           - sequence: 1
             activity: 1
             parent: null
-            readStarted: { target: parallax.compatibility.Account, interface: wire }
+            readStarted: { target: parallax.compatibility.Account, interface: wire, edition: account }
           - sequence: 2
             activity: 2
             parent: 1

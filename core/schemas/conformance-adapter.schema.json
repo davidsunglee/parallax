@@ -381,6 +381,20 @@
         {"required": ["snapshotStreamFinished"]},
         {"required": ["streamBatchStarted"]},
         {"required": ["streamBatchFinished"]}
+      ],
+      "allOf": [
+        {
+          "description": "A Read that IS the root activity adopted its own edition and states it; a Read under an attempt inherits the attempt's and states none.",
+          "if": {"required": ["readStarted"], "properties": {"parent": {"type": "null"}}},
+          "then": {"properties": {"readStarted": {"required": ["edition"]}}},
+          "else": {"properties": {"readStarted": {"not": {"required": ["edition"]}}}}
+        },
+        {
+          "description": "A Snapshot Stream that IS the root activity adopted its own edition at entry and states it; a stream under an attempt inherits the attempt's and states none.",
+          "if": {"required": ["snapshotStreamStarted"], "properties": {"parent": {"type": "null"}}},
+          "then": {"properties": {"snapshotStreamStarted": {"required": ["edition"]}}},
+          "else": {"properties": {"snapshotStreamStarted": {"not": {"required": ["edition"]}}}}
+        }
       ]
     },
     "lifecycleNoFields": {
@@ -397,13 +411,14 @@
       "properties": {"edition": {"type": "string", "minLength": 1}}
     },
     "lifecycleReadStarted": {
-      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Write Batch. `interface` is the public read interface that publishes the result — `typed`, `wire`, or the internal `rows` values lane — which is what distinguishes two reads of one Entity differing only in what they materialize.",
+      "description": "A Read opened over `target` through `interface`, after public preflight and after any read-dependency Write Batch. `interface` is the public read interface that publishes the result — `typed`, `wire`, or the internal `rows` values lane — which is what distinguishes two reads of one Entity differing only in what they materialize. `edition` is the Model Edition a STANDALONE Read adopted for itself — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the Read is the root activity; a participating Read carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "interface"],
       "properties": {
         "target": {"$ref": "#/$defs/lifecycleTarget"},
-        "interface": {"enum": ["typed", "wire", "rows"]}
+        "interface": {"enum": ["typed", "wire", "rows"]},
+        "edition": {"type": "string", "minLength": 1}
       }
     },
     "lifecycleWriteBatchStarted": {
@@ -563,14 +578,15 @@
       ]
     },
     "lifecycleStreamStarted": {
-      "description": "A stream over `target` opened and is about to be iterated; construction alone emits nothing. `batchSize` is the positive page size the stream requests, which is what makes its Stream Batch children countable against a result the events never size.",
+      "description": "A stream over `target` opened and is about to be iterated; construction alone emits nothing. `batchSize` is the positive page size the stream requests, which is what makes its Stream Batch children countable against a result the events never size. `edition` is the Model Edition a STANDALONE stream adopted at entry — the model descriptor's file stem the adapter prepared the case's model under (m-conformance-adapter), asserted literally — and is required exactly where the stream is the root activity; a participating stream carries none, because the attempt it hangs under already stated the edition it inherits.",
       "type": "object",
       "additionalProperties": false,
       "required": ["target", "interface", "batchSize"],
       "properties": {
         "target": {"$ref": "#/$defs/lifecycleTarget"},
         "interface": {"enum": ["typed", "wire", "rows"]},
-        "batchSize": {"type": "integer", "minimum": 1}
+        "batchSize": {"type": "integer", "minimum": 1},
+        "edition": {"type": "string", "minLength": 1}
       }
     },
     "lifecycleStreamFinished": {

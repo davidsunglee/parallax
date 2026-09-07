@@ -98,6 +98,16 @@ root's result position; it never prunes the node, silently drops the root, or
 publishes a node-level invalid union. The public result and accessor shapes that
 carry this classification are language-surface concerns built over this contract.
 
+A result also retains the Model Edition it was read under: the whole result is
+served under one prepared selection, adopted before the read started and never
+revised by a publication landing afterwards, and a delayed refusal of the
+result's invalid stored data reports that same edition. A streamed delivery
+adopts once, at entry, and every page it reads and every root it publishes
+stays on that edition, with no page-level interface introduced to say so. How
+the stamp is exposed — on the result envelope, on the entered stream, on the
+refusal — is a language-surface concern; that there is exactly one per read,
+fixed at adoption, is this contract's.
+
 ### Evidence a public issue carries
 
 Every issue names the value that was judged and the place it was found. The

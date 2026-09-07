@@ -6,7 +6,11 @@
 # siblings — one opens `read` and five open `transaction-invocation` — and the
 # Started transition is the only one in the algebra carrying a page size, which
 # is what makes its Stream Batch children countable against a result the events
-# never size.
+# never size. Being a root is also why the Started transition carries
+# `edition`: a standalone stream adopts the Model Edition it delivers under when
+# its scope is entered, and states the literal the adapter prepared the case's
+# model under — `orders`, the model descriptor's stem — where a stream under an
+# attempt inherits the attempt's and states none.
 #
 # Two pages over three orders at `batchSize: 2`, with one include level, so the
 # tree has every relation the module states about a stream. Activity 1 is the
@@ -115,6 +119,7 @@ then:
               target: parallax.compatibility.Order
               interface: wire
               batchSize: 2
+              edition: orders
           - sequence: 2
             activity: 2
             parent: 1

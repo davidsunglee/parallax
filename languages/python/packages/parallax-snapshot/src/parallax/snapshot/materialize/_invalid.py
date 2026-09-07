@@ -213,11 +213,15 @@ class InvalidDataError(RuntimeError):
 
     :attr:`invalid_data` is nonempty, in result order, and is the exception's
     sole machine-readable report: there is no singular code, no flattened issue
-    collection, no cause, and no second name for the same tuple. The
-    constructor settles it together with the message derived from it, and every
-    later attribute assignment or deletion is refused — including the inherited
-    ``args`` :func:`str` reads — so the wording can never describe results the
-    report no longer carries.
+    collection, no cause, and no second name for the same tuple.
+    :attr:`edition` is the Model Edition the result that raised it was read
+    under, supplied by that result's owner: a refusal is delayed until an
+    accessor is reached, so the stamp travels with it rather than being looked
+    up again, and the validators that judged the stored data need no edition
+    at all. The constructor settles both together with the message derived
+    from the report, and every later attribute assignment or deletion is
+    refused — including the inherited ``args`` :func:`str` reads — so the
+    wording can never describe results the report no longer carries.
 
     The two records get that immutability from ``frozen=True``, which an
     exception cannot use: a frozen ``__setattr__`` also refuses
@@ -231,8 +235,9 @@ class InvalidDataError(RuntimeError):
     """
 
     _invalid_data: tuple[InvalidData[object], ...]
+    _edition: str
 
-    def __init__(self, invalid_data: Iterable[InvalidData[object]]) -> None:
+    def __init__(self, invalid_data: Iterable[InvalidData[object]], *, edition: str) -> None:
         records = tuple(invalid_data)
         if not records:
             raise ValueError("an invalid-data refusal carries at least one record")
@@ -241,6 +246,7 @@ class InvalidDataError(RuntimeError):
             f"{len(records)} result root(s) hold invalid stored data ({', '.join(codes)})"
         )
         object.__setattr__(self, "_invalid_data", records)
+        object.__setattr__(self, "_edition", edition)
 
     def __setattr__(self, name: str, value: object) -> None:
         if name not in EXCEPTION_MACHINERY:
@@ -256,3 +262,8 @@ class InvalidDataError(RuntimeError):
     def invalid_data(self) -> tuple[InvalidData[object], ...]:
         """The invalid result roots this refusal reports, in result order."""
         return self._invalid_data
+
+    @property
+    def edition(self) -> str:
+        """The Model Edition the refused result was read under."""
+        return self._edition

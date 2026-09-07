@@ -916,9 +916,13 @@ class _LiveActivity:
 
 
 class _LiveRead(_LiveActivity):
-    """One observed Read: its Database Calls, and its own bracket."""
+    """One observed Read: its Database Calls, and its own bracket.
 
-    __slots__ = ("_interface", "_target")
+    A root Read states the edition it adopted; a participating one states none,
+    because the attempt it hangs under already did.
+    """
+
+    __slots__ = ("_edition", "_interface", "_target")
 
     _interface: ReadInterface
 
@@ -928,10 +932,12 @@ class _LiveRead(_LiveActivity):
         parent: _LiveActivity | None,
         target: ActivityTarget,
         interface: ReadInterface,
+        edition: str | None,
     ) -> None:
         super().__init__(publisher, parent)
         self._target = target.canonical
         self._interface = interface
+        self._edition = edition
 
     def __enter__(self) -> _LiveRead:
         publisher = self._publisher
@@ -946,6 +952,7 @@ class _LiveRead(_LiveActivity):
                 self._parent_activity_id,
                 self._target,
                 self._interface,
+                self._edition,
             )
         )
         return self
@@ -1224,10 +1231,12 @@ class _LiveSnapshotStream(_LiveActivity):
     nothing left to rewrite.
 
     It holds no page state at all, so what one stream costs is the same whether
-    it delivered one page or a million.
+    it delivered one page or a million. A root stream states the edition it
+    adopted at entry; a participating one states none, because the attempt it
+    hangs under already did.
     """
 
-    __slots__ = ("_batch_size", "_finished", "_interface", "_target")
+    __slots__ = ("_batch_size", "_edition", "_finished", "_interface", "_target")
 
     _interface: ReadInterface
 
@@ -1238,11 +1247,13 @@ class _LiveSnapshotStream(_LiveActivity):
         target: ActivityTarget,
         interface: ReadInterface,
         batch_size: int,
+        edition: str | None,
     ) -> None:
         super().__init__(publisher, parent)
         self._target = target.canonical
         self._interface = interface
         self._batch_size = batch_size
+        self._edition = edition
         self._finished = False
 
     def __enter__(self) -> _LiveSnapshotStream:
@@ -1259,6 +1270,7 @@ class _LiveSnapshotStream(_LiveActivity):
                 self._target,
                 self._interface,
                 self._batch_size,
+                self._edition,
             )
         )
         return self
@@ -1399,7 +1411,7 @@ class _LiveTransactionAttempt(_LiveActivity):
         )
 
     def read(self, target: ActivityTarget, interface: ReadInterface, /) -> _LiveRead:
-        return _LiveRead(self._publisher, self, target, interface)
+        return _LiveRead(self._publisher, self, target, interface, None)
 
     def write_batch(self, trigger: WriteBatchTrigger, /) -> _LiveWriteBatch:
         return _LiveWriteBatch(self._publisher, self, trigger)
@@ -1407,7 +1419,7 @@ class _LiveTransactionAttempt(_LiveActivity):
     def snapshot_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
     ) -> _LiveSnapshotStream:
-        return _LiveSnapshotStream(self._publisher, self, target, interface, batch_size)
+        return _LiveSnapshotStream(self._publisher, self, target, interface, batch_size, None)
 
     def joined_invocation(self) -> _LiveJoinedInvocation:
         return _LiveJoinedInvocation(self._publisher, self)
@@ -1593,17 +1605,19 @@ def open_read_root(
     *,
     target: ActivityTarget,
     interface: ReadInterface,
+    edition: str,
 ) -> ReadActivity:
     """The Read root activity for one standalone read, or :data:`INERT`.
 
     Called after deterministic public preflight, which is the earliest point at
     which the opening event's payload is both complete and validated: an invalid
-    target or query therefore creates no root and calls no Provider. With no
-    Provider installed nothing at all is allocated here — no UUID, no
-    descriptor, no publisher, no counter, no clock read, and not even the
-    target's canonical spelling — and a declining Provider costs only the UUID,
-    the descriptor, and the opening call, made inside this Handle's re-entry
-    bracket.
+    target or query therefore creates no root and calls no Provider. ``edition``
+    is the Model Edition the read adopted before opening, which its Started
+    transition states. With no Provider installed nothing at all is allocated
+    here — no UUID, no descriptor, no publisher, no counter, no clock read, and
+    not even the target's canonical spelling — and a declining Provider costs
+    only the UUID, the descriptor, and the opening call, made inside this
+    Handle's re-entry bracket.
     """
     if installed is None:
         return INERT
@@ -1611,7 +1625,7 @@ def open_read_root(
     handler = _opened(installed, execution)
     if handler is None:
         return INERT
-    return _LiveRead(_Publisher(execution.id, installed, handler), None, target, interface)
+    return _LiveRead(_Publisher(execution.id, installed, handler), None, target, interface, edition)
 
 
 def open_snapshot_stream_root(
@@ -1620,6 +1634,7 @@ def open_snapshot_stream_root(
     target: ActivityTarget,
     interface: ReadInterface,
     batch_size: int,
+    edition: str,
 ) -> SnapshotStreamActivity:
     """The Snapshot Stream root activity for one standalone stream, or
     :data:`INERT`.
@@ -1627,9 +1642,10 @@ def open_snapshot_stream_root(
     Called at context entry, after the deterministic gate and the page plan the
     stream is refused by: an invalid target, an invalid query, or an order the
     continuation cannot compose therefore creates no root and calls no Provider,
-    and a stream nobody entered creates none either. With no Provider installed
-    nothing at all is allocated here, the page size the Started transition would
-    carry included.
+    and a stream nobody entered creates none either. ``edition`` is the Model
+    Edition the stream adopted at entry, which its Started transition states.
+    With no Provider installed nothing at all is allocated here, the page size
+    and the edition the Started transition would carry included.
     """
     if installed is None:
         return INERT
@@ -1638,7 +1654,7 @@ def open_snapshot_stream_root(
     if handler is None:
         return INERT
     return _LiveSnapshotStream(
-        _Publisher(execution.id, installed, handler), None, target, interface, batch_size
+        _Publisher(execution.id, installed, handler), None, target, interface, batch_size, edition
     )
 
 

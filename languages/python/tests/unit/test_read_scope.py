@@ -16,11 +16,12 @@ opens exactly the activity the policy answers, and that every page of a delivery
 comes back to the ONE scope and the ONE selection it was opened with.
 
 The recording policy here is the third adapter beside the two production ones:
-it answers a fixed selection, records every capability call, and runs each body
-with INERT activities over whichever :class:`ReadInputs` the case names. That is
-what lets each claim be stated once, for both lanes and both interfaces, rather
-than once per handle. What each production adapter DOES inside its own bracket
-is `test_read_execution.py`'s subject, and what a whole read answers stays the
+it begins every operation as itself, over a fixed selection, records every
+capability call, and runs each body with INERT activities over whichever
+:class:`ReadInputs` the case names. That is what lets each claim be stated
+once, for both lanes and both interfaces, rather than once per handle. What
+each production adapter DOES inside its own bracket — adoption included — is
+`test_read_execution.py`'s subject, and what a whole read answers stays the
 public-surface suites'.
 """
 
@@ -135,11 +136,13 @@ class _Ledger:
 
 
 class _Recording:
-    """A recording ``_ReadExecution``: every capability call, in order.
+    """A recording ``_ReadExecution`` that is its own begun read: every
+    capability call, in order.
 
     Each body runs immediately, with INERT activities and the fixed inputs this
     policy was built with, so a case reads what the scope DID rather than what
-    it would have done.
+    it would have done. An advance runs its body bare and is counted apart from
+    the calls, because a delivery advances once per root and once more to end.
     """
 
     def __init__(self, selected: SelectedReadModel, inputs: ReadInputs) -> None:
@@ -148,10 +151,19 @@ class _Recording:
         self.calls: list[str] = []
         self.eager_calls: list[tuple[ActivityTarget, ReadInterface]] = []
         self.stream_calls: list[tuple[ActivityTarget, ReadInterface, int]] = []
+        self.advances = 0
 
-    def begin(self) -> SelectedReadModel:
+    def begin(self) -> _Recording:
         self.calls.append("begin")
+        return self
+
+    @property
+    def selected(self) -> SelectedReadModel:
         return self._selected
+
+    def advance[T](self, body: Callable[[], T], /) -> T:
+        self.advances += 1
+        return body()
 
     def eager[T](
         self,
@@ -230,11 +242,14 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
         model: CatalogedModel,
         port: DbPort,
         *,
+        edition: str,
         preference: Concurrency | None = None,
         read: ReadActivity = INERT,
     ) -> RowsResult:
         executed.append(_Executed("find_rows", port, preference, None))
-        return handle_read.find_rows(query, model, port, preference=preference, read=read)
+        return handle_read.find_rows(
+            query, model, port, edition=edition, preference=preference, read=read
+        )
 
     patch.setattr(read_scope_module, "find", recording_find)
     patch.setattr(read_scope_module, "find_history", recording_find_history)
@@ -346,7 +361,10 @@ def test_a_wire_verb_refuses_re_entry_before_it_lowers_what_it_was_handed() -> N
             complaining()
 
     assert refusing.calls == []
-    assert lowering.calls == ["begin", "begin"]
+    # Outside the context an eager read has already begun when the lowering
+    # fails, which is what orders those two rungs; a stream verb begins nothing
+    # at the call, so its lowering fails with no read begun at all.
+    assert lowering.calls == ["begin"]
 
 
 # --------------------------------------------------------------------------- #
@@ -454,6 +472,24 @@ def test_one_scope_chooses_its_publication_per_call() -> None:
     assert execution.interfaces == ["TYPED", "WIRE", "ROWS"]
 
 
+def test_the_two_graph_publications_carry_the_selections_edition_and_the_values_lane_has_none() -> (
+    None
+):
+    # A publication is the one place the stamp is applied, so both graph
+    # interfaces take it from the selection they were built over. The values
+    # lane publishes no graph at all: asking it for a publication is a caller
+    # error rather than a third format, and the row form stamps its own result
+    # instead.
+    selected = _selection()
+    typed = read_scope_module.publication_for(selected, "TYPED")
+    wire = read_scope_module.publication_for(selected, "WIRE")
+
+    assert (typed.interface, typed.edition) == ("TYPED", "test")
+    assert (wire.interface, wire.edition) == ("WIRE", "test")
+    with pytest.raises(ValueError, match="the values lane publishes no graph"):
+        read_scope_module.publication_for(selected, "ROWS")
+
+
 # --------------------------------------------------------------------------- #
 # One graph tail serves both interfaces and both temporal shapes               #
 # --------------------------------------------------------------------------- #
@@ -527,39 +563,52 @@ def test_the_row_form_body_threads_the_preference_and_files_into_no_ledger(
 
 
 # --------------------------------------------------------------------------- #
-# A stream's ladder runs at the call; its execution runs at the scope          #
+# A stream's call judges its own arguments; its read begins at the scope       #
 # --------------------------------------------------------------------------- #
-def test_a_stream_refuses_a_classless_selection_before_it_judges_its_page_size() -> None:
-    # The stream verbs run `find`'s ladder with one more rung on it, and the
-    # rung is LAST: what the connection can materialize at all is judged before
-    # this call's own arguments are, so a classless selection is refused with an
-    # invalid page size still unexamined. The same call under a class-backed
-    # selection reaches the page size, which is what orders the two rather than
-    # merely finding both present.
+def test_a_stream_judges_its_page_size_at_the_call_and_begins_no_read_there() -> None:
+    # The stream verbs judge what the call named — the query and the page size
+    # — and nothing model-dependent: no read is begun at the call, so a
+    # classless selection is not consulted there at all, and an invalid page
+    # size is refused with the same selection still unasked.
     port = RefusingPort()
     classless, execution = _scope(port, selected=_selection(materializing=False))
-    class_backed, _ = _scope(port)
+    class_backed, class_backed_execution = _scope(port)
 
-    with pytest.raises(SnapshotConnectionError) as refused:
+    with pytest.raises(ValueError, match="batch_size requires a positive built-in int"):
         classless.stream(_typed_query(), 0)
     with pytest.raises(ValueError, match="batch_size requires a positive built-in int"):
         class_backed.stream(_typed_query(), 0)
+
+    assert execution.calls == []
+    assert class_backed_execution.calls == []
+
+
+def test_a_typed_stream_refuses_a_classless_selection_at_entry_before_the_gate() -> None:
+    # Entry is where the read begins, so entry is where a selection that can
+    # materialize no Snapshot at all refuses a Typed delivery — after `begin`
+    # and before the query is gated, so nothing that executes is reached.
+    port = RefusingPort()
+    scope, execution = _scope(port, selected=_selection(materializing=False))
+    stream = scope.stream(_typed_query(), _VALID_BATCH_SIZE)
+    assert execution.calls == []
+
+    with pytest.raises(SnapshotConnectionError) as refused:
+        stream.__enter__()
 
     assert refused.value.code == "snapshot-class-backed-model-required"
     assert execution.calls == ["begin"]
 
 
-def test_the_wire_stream_verb_crosses_no_classless_refusal_and_still_judges_its_size() -> None:
+def test_the_wire_stream_verb_crosses_no_classless_refusal_at_entry() -> None:
     # A Wire delivery publishes no Entity Class instance, so it needs no graph
-    # construction — and reaches its own page size under exactly the selection
-    # the Typed stream was refused under.
-    port = RefusingPort()
+    # construction — and enters, under exactly the selection the Typed stream
+    # was refused under, as far as its own activity.
+    port = ScriptedPort(Read(rows=[_account_row(1)]))
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
-    with pytest.raises(ValueError, match="batch_size requires a positive built-in int"):
-        scope.wire_stream(_wire_node(), 0)
-
-    assert execution.calls == ["begin"]
+    with scope.wire_stream(_wire_node(), _VALID_BATCH_SIZE) as stream:
+        assert execution.calls == ["begin", "open_stream"]
+        assert [root["id"] for root in stream] == [1]
 
 
 @pytest.mark.parametrize(
@@ -573,9 +622,9 @@ def test_constructing_a_stream_opens_no_activity_and_entering_it_opens_one(
     verb_name: str, interface: ReadInterface, target: str
 ) -> None:
     # The stream's side-effect boundary is its scope rather than its
-    # construction: the verb selects a model and answers an inert delivery, and
-    # the activity that delivery is observed through is opened through THIS
-    # scope when the caller enters it. Which activity that is stays the
+    # construction: the verb answers an inert delivery that has begun no read,
+    # and the read is begun and the activity that delivery is observed through
+    # is opened through THIS scope when the caller enters it. Which activity that is stays the
     # execution policy's, so the scope passes the target, the interface, and the
     # page size and decides nothing.
     port = ScriptedPort(Read(rows=[_account_row(1)]))
@@ -587,7 +636,7 @@ def test_constructing_a_stream_opens_no_activity_and_entering_it_opens_one(
 
     stream = verbs[verb_name]()
 
-    assert execution.calls == ["begin"]
+    assert execution.calls == []
     assert port.calls == []
     with stream:
         assert execution.calls == ["begin", "open_stream"]
@@ -626,6 +675,9 @@ def test_every_page_of_a_delivery_is_read_under_the_one_selection_it_opened_with
     assert execution.calls == ["begin", "open_stream", "page", "page", "page"]
     assert [read.model for read in page_reads] == [selected.model] * 3
     assert all(read.model is selected.model for read in page_reads)
+    # One advance per root delivered and one more to discover the end, each
+    # through the begun read's own bracket.
+    assert execution.advances == 4
 
 
 def test_every_page_threads_the_port_preference_and_ledger_it_was_handed(

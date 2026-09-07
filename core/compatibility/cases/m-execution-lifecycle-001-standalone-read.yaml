@@ -6,7 +6,11 @@
 # distinction this case pins down against its five siblings, every one of which
 # opens `transaction-invocation`. Nothing brackets the Read — no invocation, no
 # attempt, no write batch — so its `parent` is null, which is what "the root
-# activity" means and is stated rather than left absent.
+# activity" means and is stated rather than left absent. Being the root is also
+# why its `readStarted` carries `edition`: a standalone read adopts the Model
+# Edition it runs under for itself, and states the literal the adapter prepared
+# the case's model under — `account`, the model descriptor's stem — where a read
+# under an attempt inherits the attempt's and states none.
 #
 # The four events are one activity bracketing another. Activity 1 is the Read,
 # opened after public preflight and closed when the public result is ready;
@@ -52,7 +56,7 @@ then:
           - sequence: 1
             activity: 1
             parent: null
-            readStarted: { target: parallax.compatibility.Account, interface: rows }
+            readStarted: { target: parallax.compatibility.Account, interface: rows, edition: account }
           - sequence: 2
             activity: 2
             parent: 1

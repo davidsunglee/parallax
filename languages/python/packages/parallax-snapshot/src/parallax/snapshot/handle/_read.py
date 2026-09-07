@@ -213,11 +213,13 @@ class Snapshot[T]:
     :meth:`result_or_none`, :meth:`results` (a FRESH ``list[T]`` per call),
     :meth:`checked`,
     :attr:`pin` (the lowered as-of coordinates — only genuinely PINNED axes; a
-    scanned axis is absent), and
+    scanned axis is absent), :attr:`edition` (the Model Edition the read was
+    served under), and
     ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
     indexing on the container, refresh or write methods, any lazy
     behavior, and every lifecycle accessor — whatever the read published, it
-    published while it ran, and the result retains nothing of it.
+    published while it ran, and the result retains nothing of it but the
+    edition it was read under.
 
     A root whose stored state contradicted the model is held as its
     :class:`~parallax.snapshot.materialize.InvalidData` record. The accessors
@@ -229,16 +231,18 @@ class Snapshot[T]:
     union is partitioned with ordinary collection operations.
     """
 
-    __slots__ = ("_invalid", "_pin", "_roots")
+    __slots__ = ("_edition", "_invalid", "_pin", "_roots")
 
     _roots: tuple[T | InvalidData[T], ...]
     _invalid: tuple[InvalidData[object], ...]
     _pin: Pin
+    _edition: str
 
-    def __init__(self, roots: tuple[T | InvalidData[T], ...], pin: Pin) -> None:
+    def __init__(self, roots: tuple[T | InvalidData[T], ...], pin: Pin, edition: str) -> None:
         self._roots = roots
         self._invalid = _invalid_records(roots)
         self._pin = pin
+        self._edition = edition
 
     def result(self) -> T:
         """The single matched root; raises on zero, on more than one, and on
@@ -268,9 +272,9 @@ class Snapshot[T]:
         """This result's checked view — the same roots, delivered in band.
 
         A lightweight read-only view over the same storage: it performs no I/O,
-        copies no root, and forwards :attr:`pin` unchanged.
+        copies no root, and forwards :attr:`pin` and :attr:`edition` unchanged.
         """
-        return CheckedSnapshot(self._roots, self._pin)
+        return CheckedSnapshot(self._roots, self._pin, self._edition)
 
     @property
     def pin(self) -> Pin:
@@ -278,6 +282,16 @@ class Snapshot[T]:
         genuinely pinned axes — a scanned (``history`` / ``as_of_range``) axis
         is absent, per the core rule that a scan is not a pin."""
         return self._pin
+
+    @property
+    def edition(self) -> str:
+        """The Model Edition the read that published this result adopted.
+
+        Stamped when the result was built and retained for as long as the
+        result is: reading it consults no Serving Model, so a publication
+        landing after the read changes nothing here.
+        """
+        return self._edition
 
     def __repr__(self) -> str:
         return f"Snapshot(roots={len(self._roots)}, pin={self._pin!r})"
@@ -287,30 +301,34 @@ class Snapshot[T]:
 
         An accessor that already narrowed to one root has narrowed this tuple to
         that root's own record too, so the singular accessors report one and
-        ``results()`` reports them all without either restating the rule.
+        ``results()`` reports them all without either restating the rule. The
+        refusal carries this result's own edition, because it is raised
+        whenever the accessor is reached rather than while the read ran.
         """
         if self._invalid:
-            raise InvalidDataError(self._invalid)
+            raise InvalidDataError(self._invalid, edition=self._edition)
 
 
 class CheckedSnapshot[T]:
     """A :class:`Snapshot`'s roots as ``T | InvalidData[T]`` (spec §4).
 
     The whole eager checked surface: the same three arity accessors, the same
-    :attr:`pin`, and nothing else. It shares the result
-    storage rather than owning a second copy of it, does no I/O, and refuses
-    nothing a default accessor would have accepted — an invalid root simply
-    arrives as its record instead of raising.
+    :attr:`pin`, the same :attr:`edition`, and nothing else. It shares the
+    result storage rather than owning a second copy of it, does no I/O, and
+    refuses nothing a default accessor would have accepted — an invalid root
+    simply arrives as its record instead of raising.
     """
 
-    __slots__ = ("_pin", "_roots")
+    __slots__ = ("_edition", "_pin", "_roots")
 
     _roots: tuple[T | InvalidData[T], ...]
     _pin: Pin
+    _edition: str
 
-    def __init__(self, roots: tuple[T | InvalidData[T], ...], pin: Pin) -> None:
+    def __init__(self, roots: tuple[T | InvalidData[T], ...], pin: Pin, edition: str) -> None:
         self._roots = roots
         self._pin = pin
+        self._edition = edition
 
     def result(self) -> T | InvalidData[T]:
         """The single matched root, valid or classified; raises on zero or more
@@ -331,6 +349,11 @@ class CheckedSnapshot[T]:
     def pin(self) -> Pin:
         """The source Snapshot's own pin, forwarded unchanged."""
         return self._pin
+
+    @property
+    def edition(self) -> str:
+        """The source Snapshot's own edition, forwarded unchanged."""
+        return self._edition
 
     def __repr__(self) -> str:
         return f"CheckedSnapshot(roots={len(self._roots)}, pin={self._pin!r})"
@@ -699,6 +722,7 @@ def find_rows(
     model: CatalogedModel,
     port: DbPort,
     *,
+    edition: str,
     preference: Concurrency | None = None,
     read: ReadActivity = INERT,
 ) -> RowsResult:
@@ -714,7 +738,8 @@ def find_rows(
     (`deep_fetch.plan` injects the as-of predicate and canonicalizes navigation
     for both lanes), the same
     private :func:`~parallax.core.sql_gen._compile.compile_read` with the lane selected by
-    ``result_form``, and the same Database Call bracket.
+    ``result_form``, and the same Database Call bracket. ``edition`` is the
+    Model Edition ``model`` was selected under, which the result retains.
 
     A row-form read materializes no relationships, and the shared read gate
     (:func:`~parallax.snapshot.handle._preflight.preflight`) refuses a
@@ -746,7 +771,7 @@ def find_rows(
     for item in stage.rows:
         if item.family_variant is not None:
             item.values["familyVariant"] = item.family_variant
-    return RowsResult(rows=_published_rows(stage, meta))
+    return RowsResult(rows=_published_rows(stage, meta), edition=edition)
 
 
 def _published_rows(stage: StagedRows, meta: Metamodel) -> tuple[PublishedRow, ...]:
@@ -1281,16 +1306,22 @@ class ResultPublication:
     ``interface`` is the same choice named for the Read activity that
     orchestration opens: which materializer publishes IS which read interface
     ran, so the two are one value rather than two that could disagree.
+    ``edition`` is the Model Edition of the selection the publication was
+    built over, and every envelope it publishes is stamped with it — the one
+    place the stamp is applied, so no result form can be published without
+    one.
     """
 
     interface: ReadInterface
     roots_of: RootsOf
+    edition: str
 
     def from_find(self, result: FindResult) -> Snapshot[Any]:
         """``result``'s one graph as a Snapshot at that read's own pin."""
         return Snapshot(
             self.roots_of(result.graph, result.includes, sources=result.sources),
             result.graph.pin,
+            self.edition,
         )
 
     def from_history(self, result: HistoryFindResult) -> Snapshot[Any]:
@@ -1307,10 +1338,12 @@ class ResultPublication:
         roots: list[object] = []
         for graph in result.graphs:
             roots.extend(self.roots_of(graph, ordinal_offset=len(roots)))
-        return Snapshot(tuple(roots), Pin())
+        return Snapshot(tuple(roots), Pin(), self.edition)
 
 
-def typed_publication(meta: Metamodel, construction: EntityGraphConstruction) -> ResultPublication:
+def typed_publication(
+    meta: Metamodel, construction: EntityGraphConstruction, edition: str
+) -> ResultPublication:
     """Publish through the typed materializer: frozen Entity instances."""
 
     def roots_of(
@@ -1326,10 +1359,10 @@ def typed_publication(meta: Metamodel, construction: EntityGraphConstruction) ->
             graph, meta, construction, ordinal_offset=ordinal_offset, sources=sources
         )
 
-    return ResultPublication("TYPED", roots_of)
+    return ResultPublication("TYPED", roots_of, edition)
 
 
-def wire_publication(meta: Metamodel) -> ResultPublication:
+def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
     """Publish through the wire materializer: frozen declared-name value trees."""
 
     def roots_of(
@@ -1349,7 +1382,7 @@ def wire_publication(meta: Metamodel) -> ResultPublication:
             sources=merge.by_allocation(sources),
         )
 
-    return ResultPublication("WIRE", roots_of)
+    return ResultPublication("WIRE", roots_of, edition)
 
 
 def _materialize_result_graph(

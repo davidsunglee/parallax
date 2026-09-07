@@ -207,7 +207,6 @@ from _support.db_port import (
     Write,
     body_outcome,
 )
-from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
     CommitFailed,
@@ -247,7 +246,7 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
 
 SMALL_ROWS: Final = 500
 LARGE_ROWS: Final = 5_000
@@ -260,6 +259,7 @@ SMALL: Final = rows(SMALL_ROWS)
 LARGE: Final = rows(LARGE_ROWS)
 
 PAGE: Final = 1_000
+EDITION: Final = "edition"
 """The page size a streamed root reports — ``stream``'s own default.
 
 Outside the interpreter's small-integer cache and built once at import, so a
@@ -640,7 +640,7 @@ def _observed_read_over(result: list[dict[str, object]]) -> Seam:
 
     def run(sample: Callable[[], None]) -> None:
         with (
-            open_read_root(INSTALLED, target=TARGET, interface="TYPED") as read,
+            open_read_root(INSTALLED, target=TARGET, interface="TYPED", edition=EDITION) as read,
             read.database_call(STATEMENT, "READ", TARGET) as call,
         ):
             call.read_completed(result)
@@ -663,7 +663,7 @@ def _observed_read_owning(count: int) -> Seam:
     def run(sample: Callable[[], None]) -> None:
         result = rows(count)
         with (
-            open_read_root(INSTALLED, target=TARGET, interface="TYPED") as read,
+            open_read_root(INSTALLED, target=TARGET, interface="TYPED", edition=EDITION) as read,
             read.database_call(STATEMENT, "READ", TARGET) as call,
         ):
             call.read_completed(result)
@@ -701,7 +701,9 @@ alone it is one live chain, and every level of it is measured where it stands.
 
 def _read_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
     """A Read root and its Database Call: the shallowest shape a root has."""
-    read = stack.enter_context(open_read_root(installed, target=TARGET, interface="TYPED"))
+    read = stack.enter_context(
+        open_read_root(installed, target=TARGET, interface="TYPED", edition=EDITION)
+    )
     call = stack.enter_context(read.database_call(STATEMENT, "READ", TARGET))
     call.read_completed(SMALL)
     return (read, call)
@@ -775,7 +777,9 @@ def _stream_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[obje
     Database Call three levels down rather than two.
     """
     stream = stack.enter_context(
-        open_snapshot_stream_root(installed, target=TARGET, interface="TYPED", batch_size=PAGE)
+        open_snapshot_stream_root(
+            installed, target=TARGET, interface="TYPED", batch_size=PAGE, edition=EDITION
+        )
     )
     batch = stack.enter_context(stream.batch())
     call = stack.enter_context(batch.database_call(STATEMENT, "READ", TARGET))
@@ -1363,7 +1367,7 @@ def test_a_retried_transaction_leaves_neither_its_events_nor_its_diagnostics_ali
     db = _observed_db(port)
 
     def run() -> None:
-        with suppress(DatabaseError):
+        with suppress(ExecutionFailure):
             db.transact(lambda tx: tx.insert(new_account()), retries=1)
 
     assert _left_behind(run) == []

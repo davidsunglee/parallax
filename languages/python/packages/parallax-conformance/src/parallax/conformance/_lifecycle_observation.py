@@ -430,8 +430,14 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
     algebra fails to type-check here until the observation can spell it.
     """
     match event:
-        case ReadStarted(target=target, interface=interface):
-            return {"readStarted": {"target": target, "interface": _READ_INTERFACE[interface]}}
+        case ReadStarted(target=target, interface=interface, edition=edition):
+            read_started: dict[str, object] = {
+                "target": target,
+                "interface": _READ_INTERFACE[interface],
+            }
+            if edition is not None:
+                read_started["edition"] = edition
+            return {"readStarted": read_started}
         case ReadFinished(outcome=outcome):
             return {"readFinished": _read_outcome(outcome)}
         case WriteBatchStarted(trigger=trigger):
@@ -454,14 +460,17 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
             return {"transactionAttemptStarted": {"edition": edition}}
         case TransactionAttemptFinished(outcome=outcome):
             return {"transactionAttemptFinished": _attempt_outcome(outcome)}
-        case SnapshotStreamStarted(target=target, interface=interface, batch_size=batch_size):
-            return {
-                "snapshotStreamStarted": {
-                    "target": target,
-                    "interface": _READ_INTERFACE[interface],
-                    "batchSize": batch_size,
-                }
+        case SnapshotStreamStarted(
+            target=target, interface=interface, batch_size=batch_size, edition=edition
+        ):
+            stream_started: dict[str, object] = {
+                "target": target,
+                "interface": _READ_INTERFACE[interface],
+                "batchSize": batch_size,
             }
+            if edition is not None:
+                stream_started["edition"] = edition
+            return {"snapshotStreamStarted": stream_started}
         case SnapshotStreamFinished(outcome=outcome):
             return {"snapshotStreamFinished": _stream_outcome(outcome)}
         case StreamBatchStarted():
