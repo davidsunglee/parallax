@@ -2125,8 +2125,10 @@ class ServingModel:
     def publish(self, candidate: ModelSelection, *, expected: ModelSelection) -> None: ...
 
 class PublicationConflictError(RuntimeError):
-    expected: ModelSelection
-    held: ModelSelection
+    @property
+    def expected(self) -> ModelSelection: ...
+    @property
+    def held(self) -> ModelSelection: ...
 ```
 
 All four are exported from `parallax.snapshot` and `parallax.snapshot.handle`.
@@ -2192,9 +2194,12 @@ selection. `current()` returns that exact selection and invokes no
 application-supplied code, source I/O, or preparation. Publication atomically
 compares the current selection by identity with `expected` and either replaces
 it with the complete candidate or raises `PublicationConflictError` without
-changing it; the refusal carries `expected` and the selection actually `held`,
-so the loser of a race can rebase without a second `current()` that may already
-observe a third. The comparison and replacement are one operation for
+changing it; the refusal carries read-only `expected` and the selection
+actually `held`, so the loser of a race can rebase without a second `current()`
+that may already observe a third. Both are settled by the constructor and
+read-only from then on, like `ExecutionFailure`'s pair: a refusal reports the
+comparison that was actually made, so no handler can restate what a publisher
+expected or what the holder was found to hold. The comparison and replacement are one operation for
 concurrent readers and publishers. Stale publication is not retried
 automatically, and opaque editions are never ordered to pick a winner.
 

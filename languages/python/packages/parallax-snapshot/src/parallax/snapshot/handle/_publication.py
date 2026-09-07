@@ -208,14 +208,31 @@ class PublicationConflictError(RuntimeError):
     :attr:`held` is what actually was, so the loser of a race can rebase on the
     selection it lost to without a second ``current()`` that may already
     observe a third.
+
+    The constructor settles both, and each is read-only from then on: a refusal
+    reports the comparison that was actually made, so no handler can restate
+    what the publisher expected or what the holder was found to hold. The state
+    the interpreter owns — chaining, traceback, and notes — stays writable,
+    which is why the two facts are held privately rather than by a frozen
+    ``__setattr__``.
     """
 
     def __init__(self, *, expected: ModelSelection, held: ModelSelection) -> None:
         super().__init__(
             f"publication refused: expected {expected!r} to be serving, but {held!r} is"
         )
-        self.expected = expected
-        self.held = held
+        self._expected = expected
+        self._held = held
+
+    @property
+    def expected(self) -> ModelSelection:
+        """The selection the publisher believed was being served."""
+        return self._expected
+
+    @property
+    def held(self) -> ModelSelection:
+        """The selection the comparison actually found held."""
+        return self._held
 
 
 class ServingModel:
