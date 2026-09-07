@@ -1,28 +1,20 @@
 """Descriptor serde (m-descriptor).
 
-Hand-rolled, snake-to-camel-aware serialization between the frozen metamodel
-records and the canonical ``metamodel.schema.json`` document shape. Python
-record fields are snake_case; canonical descriptor keys are camelCase.
+Hand-rolled, snake-to-camel-aware reading of the canonical
+``metamodel.schema.json`` document shape into the frozen metamodel records.
+Python record fields are snake_case; canonical descriptor keys are camelCase.
 
 ``parse_document`` reads a descriptor document (JSON- or YAML-derived) into
 records and stops there: cross-entity references keep their authored spelling,
 because resolving them belongs to the foundational resolver behind the
-``m-metamodel`` Unresolved seam. ``deserialize`` is the older entry that also
-resolves references and compiles relationships eagerly, for consumers that
-still read a self-contained record graph.
-
-``serialize`` re-emits the **canonical minimal** form, dropping every optional
-key whose value equals the fact import re-derives — including an
-application-assigned ``pkGeneration`` on a declared key — and normalizing
-the single-vs-multi ``entity``/``entities`` form. ``canonicalize``
-composes the two, giving the fixpoint the no-drift guard and round-trip tests
-compare against: ``serialize(deserialize(canonical)) == canonical``.
+``m-metamodel`` Unresolved seam. The canonical minimal document an accepted
+model emits back is ``_export``'s answer, over the accepted Metamodel rather
+than over these records.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
 from typing import Literal, cast
 
 from parallax.core.metamodel import default_column_name, derive_temporal_structure
@@ -55,7 +47,7 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 
-__all__ = ["canonicalize", "deserialize", "parse_document", "serialize"]
+__all__ = ["parse_document"]
 
 _PERSISTENCE_MODES: frozenset[str] = frozenset({"read-write", "read-only"})
 _PK_STRATEGIES: frozenset[str] = frozenset({"application-assigned", "max", "sequence"})
@@ -127,7 +119,7 @@ def _closed(m: Mapping[str, object], allowed: frozenset[str], where: str) -> Non
 
 
 # --------------------------------------------------------------------------- #
-# Deserialize.                                                                 #
+# Parse (document shape to records).                                           #
 # --------------------------------------------------------------------------- #
 def _pk_from(value: object, where: str) -> PkGenerator:
     if isinstance(value, str):
@@ -535,86 +527,6 @@ def _layout_from(m: Mapping[str, object], where: str) -> Layout | None:
     return DocumentLayout(column=_str(document, "column", f"{where}.layout.document"))
 
 
-def _resolved_relationship_entities(entities: tuple[Entity, ...]) -> tuple[Entity, ...]:
-    def canonical_name(entity: Entity) -> str:
-        return entity.name if entity.namespace is None else f"{entity.namespace}.{entity.name}"
-
-    by_identity = {canonical_name(entity): entity for entity in entities}
-
-    def resolve(owner: Entity, reference: str) -> Entity:
-        identity = (
-            reference
-            if "." in reference
-            else (reference if owner.namespace is None else f"{owner.namespace}.{reference}")
-        )
-        try:
-            return by_identity[identity]
-        except KeyError as exc:
-            raise DescriptorError(
-                f"entity {canonical_name(owner)!r} references unknown entity {reference!r}"
-            ) from exc
-
-    def attribute(entity: Entity, attribute_name: str) -> Attribute:
-        current = entity
-        seen: set[str] = set()
-        while canonical_name(current) not in seen:
-            seen.add(canonical_name(current))
-            for candidate in current.attributes:
-                if candidate.name == attribute_name:
-                    return candidate
-            inheritance = current.inheritance
-            if inheritance is None or inheritance.parent is None:
-                break
-            current = resolve(current, inheritance.parent)
-        raise DescriptorError(
-            f"entity {canonical_name(entity)} has no applicable attribute {attribute_name!r}"
-        )
-
-    resolved_entities: list[Entity] = []
-    for entity in entities:
-        resolved_relationships: list[RelationshipDeclaration] = []
-        for relationship in entity.relationships:
-            if isinstance(relationship, DefiningRelationship):
-                target = resolve(entity, relationship.join.target.entity)
-                attribute(entity, relationship.join.source)
-                attribute(target, relationship.join.target.attribute)
-                for term in relationship.order_by:
-                    attribute(target, term.attr)
-                resolved_relationships.append(
-                    replace(
-                        relationship,
-                        join=RelationshipJoin(
-                            source=relationship.join.source,
-                            target=RelationshipTarget(
-                                entity=canonical_name(target),
-                                attribute=relationship.join.target.attribute,
-                            ),
-                        ),
-                    )
-                )
-                continue
-
-            target_ref, target_relationship = relationship.reverse_of.rsplit(".", 1)
-            defining_entity = resolve(entity, target_ref)
-            resolved_relationships.append(
-                replace(
-                    relationship,
-                    reverse_of=f"{canonical_name(defining_entity)}.{target_relationship}",
-                )
-            )
-        resolved_entities.append(
-            replace(
-                entity,
-                relationships=tuple(resolved_relationships),
-            )
-        )
-    resolved = tuple(resolved_entities)
-    metamodel = Metamodel(entities=resolved)
-    for entity in resolved:
-        metamodel.relationships_for(entity)
-    return resolved
-
-
 def _parsed_entities(document: Mapping[str, object]) -> tuple[Entity, ...]:
     """The document's entity records in authoring order, references untouched.
 
@@ -644,204 +556,3 @@ def parse_document(document: Mapping[str, object]) -> Metamodel:
     model-wide question belong to Model Formation.
     """
     return Metamodel(entities=_parsed_entities(document))
-
-
-def deserialize(document: Mapping[str, object]) -> Metamodel:
-    """Parse a descriptor document into a reference-resolved :class:`Metamodel`."""
-    return Metamodel(entities=_resolved_relationship_entities(_parsed_entities(document)))
-
-
-# --------------------------------------------------------------------------- #
-# Serialize (canonical minimal form).                                          #
-# --------------------------------------------------------------------------- #
-def _pk_to_json(pk: PkGenerator) -> object:
-    extras: dict[str, object] = {}
-    if pk.sequence_name is not None:
-        extras["name"] = pk.sequence_name
-    if pk.batch_size not in (None, 1):
-        extras["batchSize"] = pk.batch_size
-    if pk.initial_value not in (None, 1):
-        extras["initialValue"] = pk.initial_value
-    if pk.increment_size not in (None, 1):
-        extras["incrementSize"] = pk.increment_size
-    if not extras:
-        return pk.strategy
-    return {"strategy": pk.strategy, **extras}
-
-
-def _attribute_to_json(attr: Attribute) -> dict[str, object]:
-    out: dict[str, object] = {"name": attr.name, "type": attr.type}
-    if attr.column != default_column_name(attr.name):
-        out["column"] = attr.column
-    if attr.primary_key:
-        out["primaryKey"] = True
-    if attr.nullable:
-        out["nullable"] = True
-    if attr.max_length is not None:
-        out["maxLength"] = attr.max_length
-    if attr.read_only:
-        out["readOnly"] = True
-    if attr.optimistic_locking:
-        out["optimisticLocking"] = True
-    if attr.pk_generator is not None and attr.pk_generator.strategy != "none":
-        out["pkGeneration"] = _pk_to_json(attr.pk_generator)
-    return out
-
-
-def _order_by_to_json(term: OrderByTerm) -> dict[str, object]:
-    out: dict[str, object] = {"attribute": term.attr}
-    if term.direction != "asc":
-        out["direction"] = term.direction
-    if term.nulls != "last":
-        out["nulls"] = term.nulls
-    return out
-
-
-def _qualified_reference(reference: str, namespace: str | None) -> str:
-    if "." in reference or namespace is None:
-        return reference
-    return f"{namespace}.{reference}"
-
-
-def _relationship_to_json(rel: RelationshipDeclaration, namespace: str | None) -> dict[str, object]:
-    out: dict[str, object] = {"name": rel.name}
-    if isinstance(rel, ReverseRelationship):
-        target_ref, target_relationship = rel.reverse_of.rsplit(".", 1)
-        out["reverseOf"] = f"{_qualified_reference(target_ref, namespace)}.{target_relationship}"
-    else:
-        if not rel.join.source or not rel.join.target.entity or not rel.join.target.attribute:
-            raise DescriptorError(f"relationship {rel.name!r} has an invalid structured join")
-        target = _qualified_reference(rel.join.target.entity, namespace)
-        out["cardinality"] = rel.cardinality
-        out["join"] = {
-            "source": rel.join.source,
-            "target": {"entity": target, "attribute": rel.join.target.attribute},
-        }
-        if rel.dependent:
-            out["dependent"] = True
-    if rel.order_by:
-        out["orderBy"] = [_order_by_to_json(term) for term in rel.order_by]
-    return out
-
-
-def _index_to_json(index: Index) -> dict[str, object]:
-    out: dict[str, object] = {"name": index.name, "attributes": list(index.attributes)}
-    if index.unique:
-        out["unique"] = True
-    return out
-
-
-def _inheritance_to_json(inh: Inheritance, namespace: str | None) -> dict[str, object]:
-    out: dict[str, object] = {}
-    if inh.strategy is not None:
-        out["strategy"] = inh.strategy
-    out["role"] = inh.role
-    if inh.parent is not None:
-        out["parent"] = _qualified_reference(inh.parent, namespace)
-    if inh.tag_column is not None:
-        out["tag"] = {"column": inh.tag_column}
-    if inh.tag_value is not None:
-        out["tagValue"] = inh.tag_value
-    return out
-
-
-def _vo_attribute_to_json(attr: ValueObjectAttribute) -> dict[str, object]:
-    out: dict[str, object] = {"name": attr.name, "type": attr.type}
-    if attr.nullable:
-        out["nullable"] = True
-    return out
-
-
-def _nested_vo_to_json(vo: NestedValueObject) -> dict[str, object]:
-    out: dict[str, object] = {"name": vo.name}
-    if vo.nullable:
-        out["nullable"] = True
-    if vo.multiplicity != "one":
-        out["multiplicity"] = vo.multiplicity
-    if vo.attributes:
-        out["attributes"] = [_vo_attribute_to_json(a) for a in vo.attributes]
-    if vo.value_objects:
-        out["valueObjects"] = [_nested_vo_to_json(n) for n in vo.value_objects]
-    return out
-
-
-def _value_object_to_json(vo: ValueObject) -> dict[str, object]:
-    out: dict[str, object] = {"name": vo.name}
-    if vo.column is not None:
-        out["column"] = vo.column
-    if vo.nullable:
-        out["nullable"] = True
-    if vo.multiplicity != "one":
-        out["multiplicity"] = vo.multiplicity
-    if vo.attributes:
-        out["attributes"] = [_vo_attribute_to_json(a) for a in vo.attributes]
-    if vo.value_objects:
-        out["valueObjects"] = [_nested_vo_to_json(n) for n in vo.value_objects]
-    return out
-
-
-def _is_family_descendant(entity: Entity) -> bool:
-    """Whether ``entity`` occupies a non-root position in an inheritance family.
-
-    Canonical form omits ``persistence``, ``layout``, and ``temporality`` on such
-    an entity unconditionally: each is family-wide and root-owned, so a
-    descendant has none of its own to spell and absence there means inherit. A
-    record that nonetheless declares one keeps it — that is the evidence family
-    validation is stated over — but it is never part of the canonical spelling.
-    """
-    return entity.inheritance is not None and entity.inheritance.role != "root"
-
-
-def _authored_attributes(entity: Entity) -> tuple[Attribute, ...]:
-    """The entity's attributes minus the endpoints its profile derives.
-
-    Canonical form spells what an author writes, and re-importing the profile
-    derives the endpoints again, so emitting them would state the same members
-    twice.
-    """
-    derived = {attribute.name for attribute in _temporal_structure(entity.temporality)[0]}
-    return tuple(attribute for attribute in entity.attributes if attribute.name not in derived)
-
-
-def _entity_to_json(entity: Entity) -> dict[str, object]:
-    out: dict[str, object] = {"name": entity.name}
-    if entity.namespace is not None:
-        out["namespace"] = entity.namespace
-    if entity.table is not None:
-        out["table"] = entity.table
-    if entity.persistence == "read-only" and not _is_family_descendant(entity):
-        out["persistence"] = "read-only"
-    if entity.layout is not None and not _is_family_descendant(entity):
-        out["layout"] = {"document": {"column": entity.layout.column}}
-    if (
-        entity.temporality is not None
-        and entity.temporality != "nontemporal"
-        and not _is_family_descendant(entity)
-    ):
-        out["temporality"] = entity.temporality
-    authored = _authored_attributes(entity)
-    if authored:
-        out["attributes"] = [_attribute_to_json(a) for a in authored]
-    if entity.relationships:
-        out["relationships"] = [
-            _relationship_to_json(r, entity.namespace) for r in entity.relationships
-        ]
-    if entity.indices:
-        out["indices"] = [_index_to_json(i) for i in entity.indices]
-    if entity.value_objects:
-        out["valueObjects"] = [_value_object_to_json(v) for v in entity.value_objects]
-    if entity.inheritance is not None:
-        out["inheritance"] = _inheritance_to_json(entity.inheritance, entity.namespace)
-    return out
-
-
-def serialize(metamodel: Metamodel) -> dict[str, object]:
-    """Emit the canonical minimal descriptor document for ``metamodel``."""
-    if len(metamodel.entities) == 1:
-        return {"entity": _entity_to_json(metamodel.entities[0])}
-    return {"entities": [_entity_to_json(entity) for entity in metamodel.entities]}
-
-
-def canonicalize(document: Mapping[str, object]) -> dict[str, object]:
-    """The canonical minimal form of ``document`` (``serialize ∘ deserialize``)."""
-    return serialize(deserialize(document))

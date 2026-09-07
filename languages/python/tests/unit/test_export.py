@@ -1,11 +1,13 @@
 """Canonical export over the accepted Metamodel (m-descriptor).
 
 Export is the inverse adapter: an accepted Metamodel becomes the canonical
-minimal descriptor document ``_serde.canonicalize`` produces from a parsed one.
-These pin the canonicalization law (export equals canonicalize, the omission set,
-idempotence, a canonical fixpoint) over the corpus and over an alternate model
-implementation, and the error path (an induced defect surfaces as
-``DescriptorExportError`` with no partial output and no ``DescriptorError``).
+minimal descriptor document. Every model file under ``core/compatibility/models``
+is hand-authored in that form, so the file itself is the expected value — an
+oracle written by an author rather than by the exporter under test. These pin
+that agreement, the omission set, the enumeration order, determinism, a
+canonical fixpoint, the same export over an alternate model implementation, and
+the error path (an induced defect surfaces as ``DescriptorExportError`` with no
+partial output and no ``DescriptorError``).
 """
 
 from __future__ import annotations
@@ -37,12 +39,17 @@ from parallax.core.metamodel import (
 )
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._export import DescriptorExportError, export_document
-from parallax.descriptor._serde import canonicalize
 
 
 def _corpus_paths() -> list[Path]:
     root = case_format.find_repo_root() / "core" / "compatibility" / "models"
     return sorted(root.glob("*.yaml"))
+
+
+def _entities(document: dict[str, object]) -> list[dict[str, object]]:
+    if "entity" in document:
+        return [cast("dict[str, object]", document["entity"])]
+    return cast("list[dict[str, object]]", document["entities"])
 
 
 def _by_identity(document: dict[str, object]) -> dict[tuple[object, object], dict[str, object]]:
@@ -52,32 +59,44 @@ def _by_identity(document: dict[str, object]) -> dict[tuple[object, object], dic
     document preserves its authored order, so entities are compared as an
     identity-keyed mapping rather than positionally.
     """
-    if "entity" in document:
-        entities = [cast("dict[str, object]", document["entity"])]
-    else:
-        entities = cast("list[dict[str, object]]", document["entities"])
-    return {(entity.get("namespace"), entity["name"]): entity for entity in entities}
+    return {(entity.get("namespace"), entity["name"]): entity for entity in _entities(document)}
+
+
+def _entity_names(document: dict[str, object]) -> list[object]:
+    return [entity["name"] for entity in _entities(document)]
 
 
 @pytest.mark.parametrize("path", _corpus_paths(), ids=lambda path: path.stem)
-def test_export_equals_canonicalize_over_the_corpus(path: Path) -> None:
+def test_export_reproduces_the_authored_corpus_document(path: Path) -> None:
     raw = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
+    document = cast("dict[str, object]", raw)
+    exported = export_document(models.accepted_model(document))
+    assert ("entity" in exported) == ("entity" in document)
+    assert _by_identity(exported) == _by_identity(document)
+
+
+@pytest.mark.parametrize("path", _corpus_paths(), ids=lambda path: path.stem)
+def test_export_enumerates_entities_in_the_accepted_models_order(path: Path) -> None:
+    # The order the corpus file cannot answer for: it keeps its authoring order,
+    # while the accepted model enumerates canonically. The model is the oracle
+    # here, and it is not the exporter's to choose.
     model = models.load_model(path)
-    exported = export_document(model)
-    corpus = canonicalize(cast("dict[str, object]", raw))
-    assert ("entity" in exported) == ("entity" in corpus)
-    assert _by_identity(exported) == _by_identity(corpus)
+    assert _entity_names(export_document(model)) == [
+        entity.identity.name for entity in model.entities
+    ]
 
 
-def test_export_over_an_alternate_implementation_matches_the_canonical_form() -> None:
+def test_export_over_an_alternate_implementation_matches_the_descriptor_backed_export() -> None:
     # `parity_model` builds no descriptor record, so export reads only the
-    # metamodel protocols; `PARITY_DESCRIPTOR` is the same model as text.
+    # metamodel protocols; `PARITY_DESCRIPTOR` is the same model as text, spelled
+    # with its defaults written out. Two implementations of one logical model
+    # therefore export one document.
     raw = case_format.safe_load_yaml(fake_metamodel.PARITY_DESCRIPTOR)
     assert isinstance(raw, dict)
-    exported = export_document(fake_metamodel.parity_model())
-    corpus = canonicalize(cast("dict[str, object]", raw))
-    assert _by_identity(exported) == _by_identity(corpus)
+    alternate = export_document(fake_metamodel.parity_model())
+    descriptor_backed = export_document(models.accepted_model(cast("dict[str, object]", raw)))
+    assert alternate == descriptor_backed
 
 
 def test_export_applies_the_omission_set() -> None:
@@ -106,6 +125,34 @@ def test_export_applies_the_omission_set() -> None:
     # Read Write is the default, so only the read-only Audit spells persistence.
     assert "persistence" not in account
     assert exported[("parallax.fake", "Audit")]["persistence"] == "read-only"
+
+
+def test_export_omits_a_pk_generation_the_document_spelled_as_the_default() -> None:
+    # Application-assigned is the generation a bare declared key re-derives, so a
+    # document may spell it and the canonical form still may not. No corpus model
+    # witnesses this: every one of them is already canonical, which is exactly
+    # what leaves the written-out spelling with no file to be authored in.
+    document: dict[str, object] = {
+        "entity": {
+            "name": "Ledger",
+            "table": "ledger",
+            "attributes": [
+                {
+                    "name": "id",
+                    "type": "int64",
+                    "primaryKey": True,
+                    "pkGeneration": "application-assigned",
+                }
+            ],
+        }
+    }
+    assert export_document(models.accepted_model(document)) == {
+        "entity": {
+            "name": "Ledger",
+            "table": "ledger",
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        }
+    }
 
 
 def test_export_retains_acronym_domain_and_old_camel_case_overrides() -> None:
@@ -313,9 +360,9 @@ def test_export_is_deterministic_and_a_canonical_fixpoint() -> None:
     first = export_document(model)
     second = export_document(model)
     assert first == second
-    # Re-canonicalizing an export changes nothing: export already emits the
-    # canonical minimal form.
-    assert canonicalize(first) == first
+    # Re-importing an export and exporting it again changes nothing: export
+    # already emits the canonical minimal form.
+    assert export_document(models.accepted_model(first)) == first
 
 
 class _ExplodingEntity:

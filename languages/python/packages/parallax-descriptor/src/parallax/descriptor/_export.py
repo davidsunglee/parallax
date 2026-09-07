@@ -1,9 +1,9 @@
 """Canonical export over the accepted Metamodel (m-descriptor).
 
 The inverse of ingestion: an accepted :class:`~parallax.core.metamodel.Metamodel`
-becomes the canonical minimal descriptor document — the same byte-for-byte form
-:func:`~parallax.descriptor._serde.canonicalize` produces from a parsed
-document. Export reads only the representation-independent Metadata (identities,
+becomes the canonical minimal descriptor document — authored facts only, with
+every re-derivable default omitted, so re-importing it forms the model it came
+from. Export reads only the representation-independent Metadata (identities,
 closed value vocabularies, storage locations) and renews no validation: an
 accepted model is exportable by contract, so the only way export fails is an
 implementation defect, which surfaces as :class:`DescriptorExportError` rather
@@ -91,8 +91,9 @@ class DescriptorExportError(RuntimeError):
 def export_document(metamodel: Metamodel) -> dict[str, object]:
     """The canonical minimal descriptor document for an accepted ``metamodel``.
 
-    Structurally equal to :func:`~parallax.descriptor._serde.canonicalize` over
-    the same logical model, and deterministic: repeated exports of one accepted
+    Authored facts only, in the accepted model's enumeration order: every
+    re-derivable default is omitted, so a canonical document re-imports to the
+    model that produced it. Deterministic: repeated exports of one accepted
     Metamodel are equal. Returns the complete document or, on an implementation
     defect, raises :class:`DescriptorExportError` with no partial output.
     """

@@ -165,24 +165,24 @@ def test_snapshot_wheel_ships_the_materialize_package(wheelhouse: Wheelhouse) ->
 
 
 def test_descriptor_wheel_ships_the_privatized_frontend(wheelhouse: Wheelhouse) -> None:
-    # Same idiom, same reasoning as the two package checks above: Hatch discovers
-    # the tree, so the ABSENT public module names are the load-bearing half — a
-    # wheel still carrying `records.py` beside `_records.py` is what a stale build
-    # or a half-applied move looks like, and it would also re-expose the record
-    # vocabulary §8 keeps private.
-    names = _names(wheelhouse, "parallax-descriptor")
-    assert "parallax/descriptor/__init__.py" in names
-    assert "parallax/descriptor/_adapter.py" in names
-    assert "parallax/descriptor/_errors.py" in names
-    assert "parallax/descriptor/_export.py" in names
-    assert "parallax/descriptor/_hub.py" in names
-    assert "parallax/descriptor/_ingest.py" in names
-    assert "parallax/descriptor/_records.py" in names
-    assert "parallax/descriptor/_relationship.py" in names
-    assert "parallax/descriptor/_serde.py" in names
-    assert "parallax/descriptor/_type_spelling.py" in names
-    for retired in ("records", "serde", "ingest", "export", "unresolved", "errors", "relationship"):
-        assert f"parallax/descriptor/{retired}.py" not in names
+    # Same idiom, same reasoning as the two package checks above: the shipped set
+    # is asserted whole, so an unexpected module fails as loudly as a missing one.
+    # A wheel still carrying `records.py` beside `_records.py` is what a stale
+    # build or a half-applied move looks like, and it would re-expose the record
+    # vocabulary §8 keeps private; a wheel carrying a module the frontend retired
+    # fails the same way.
+    assert _modules_directly_in(wheelhouse, "parallax-descriptor", "parallax/descriptor/") == {
+        "parallax/descriptor/__init__.py",
+        "parallax/descriptor/_adapter.py",
+        "parallax/descriptor/_errors.py",
+        "parallax/descriptor/_export.py",
+        "parallax/descriptor/_family.py",
+        "parallax/descriptor/_hub.py",
+        "parallax/descriptor/_ingest.py",
+        "parallax/descriptor/_records.py",
+        "parallax/descriptor/_serde.py",
+        "parallax/descriptor/_type_spelling.py",
+    }
 
 
 def test_descriptor_wheel_schema_matches_the_authoritative_source(wheelhouse: Wheelhouse) -> None:
