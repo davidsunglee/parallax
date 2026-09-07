@@ -1026,8 +1026,9 @@ source may instead contribute its retained version or milestone evidence even
 when `db.find` produced it outside the transaction; the database gate remains
 the concurrency authority. The Source Hint selects that privately retained
 evidence but is not itself evidence. An unversioned Non-Temporal source has no
-optimistic gate and therefore contributes retained evidence only after a read
-in the current Unit Work. Copy
+optimistic gate and therefore must participate in a read in the current Unit
+Work, proving that the required shared row lock is held; it contributes no
+retained evidence. Copy
 operations on the immutable value may return the same value, while conversion
 or serialization produces ordinary data that is not a keyed write source.
 Callers cannot construct or attach a Source Hint.
