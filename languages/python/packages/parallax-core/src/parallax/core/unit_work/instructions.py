@@ -46,6 +46,11 @@ from typing import Final, Literal, cast
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import TIMESTAMP, NeutralType, coerce_neutral_input, matches_neutral_type
+from parallax.core.document_codec import (
+    DocumentShape,
+    canonical_managed_document,
+    entity_shape,
+)
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
@@ -823,14 +828,7 @@ def _prepare_write(
     transformed_assignments: tuple[_TransformedAssignment, ...] = ()
     if isinstance(instruction, KeyedWrite):
         transformed_rows = tuple(
-            _transform_row(
-                model,
-                entity,
-                row,
-                converter=converter,
-                fill_missing_many=instruction.mutation in INSERT_MUTATIONS,
-            )
-            for row in instruction.rows
+            _transform_row(model, entity, row, converter=converter) for row in instruction.rows
         )
         if assigned_members is not None:
             if len(transformed_rows) != 1:
@@ -869,7 +867,6 @@ def _prepare_write(
                     member,
                     assignment.value,
                     converter=converter,
-                    fill_missing_many=False,
                     path=assignment.attr,
                 )
             assignment_results.append(
@@ -1042,7 +1039,12 @@ def _prepare_managed_write(
         return PreparedKeyedWrite(
             mutation=instruction.mutation,
             target=entity,
-            rows=instruction.rows,
+            rows=tuple(
+                _canonical_write_row(
+                    model, entity, row, opening=instruction.mutation in INSERT_MUTATIONS
+                )
+                for row in instruction.rows
+            ),
             bounds=PreparedTemporalBounds(managed_valid_from, managed_until),
         )
     assert validated_predicate is not None
@@ -1090,9 +1092,7 @@ def decode_wire_row(
     name, value, assignment, or temporal rule is applied here, and this is never
     a door for caller input.
     """
-    return _transform_row(
-        model, entity, row, converter=_decode_wire_leaf, fill_missing_many=False
-    ).row
+    return _transform_row(model, entity, row, converter=_decode_wire_leaf).row
 
 
 type _LeafConverter = Callable[[NeutralType, object, str], tuple[object, bool]]
@@ -1135,13 +1135,48 @@ def _declared_member_map(
     }
 
 
+def _canonical_write_row(
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    row: Mapping[str, object],
+    *,
+    opening: bool,
+) -> Mapping[str, object]:
+    """``row`` in the canonical form ``m-document-codec`` gives it, in the frozen
+    carriers a prepared write retains.
+
+    An OPENING row is canonicalized against every applicable member, so a `many`
+    occurrence it never named states the empty collection that absence means. A
+    REVISING row is canonicalized against the members it names alone, so one it
+    left alone stays untouched rather than becoming a value the statement writes.
+    Which members is the whole of the distinction; the zero rule itself, and its
+    recursion into every assigned occurrence, belong to the codec.
+
+    Canonicalization follows judgement rather than preceding it. Absence, null,
+    and the empty collection are one stored value, but they are three different
+    things for a caller to have written, and :func:`validate_write` refuses two of
+    them — a `many` occurrence named null has no state to name at any depth.
+    """
+    members = _declared_member_map(model, entity)
+    if not opening:
+        members = {name: member for name, member in members.items() if name in row}
+    canonical = canonical_managed_document(_row_shape(members), row)
+    return cast("Mapping[str, object]", freeze_retained_value(canonical))
+
+
+def _row_shape(members: Mapping[str, _DeclaredMember]) -> DocumentShape:
+    return entity_shape(
+        tuple(member for member in members.values() if isinstance(member, AttributeMetadata)),
+        tuple(member for member in members.values() if not isinstance(member, AttributeMetadata)),
+    )
+
+
 def _transform_row(
     model: AcceptedMetamodel,
     entity: EntityMetadata,
     row: Mapping[str, object],
     *,
     converter: _LeafConverter,
-    fill_missing_many: bool,
 ) -> _TransformedRow:
     members = _declared_member_map(model, entity)
     transformed: dict[str, object] = {}
@@ -1156,7 +1191,6 @@ def _transform_row(
             member,
             value,
             converter=converter,
-            fill_missing_many=fill_missing_many,
             path=f"{entity.identity.canonical}.{name}",
         )
         transformed[name] = result.value
@@ -1164,12 +1198,6 @@ def _transform_row(
             attribute_validity[name] = result.value_valid
         else:
             violations[name] = result.vo_violation
-    if fill_missing_many:
-        for member in members.values():
-            if not isinstance(member, AttributeMetadata):
-                name = member.identity.path[-1]
-                if member.multiplicity is Multiplicity.MANY and name not in transformed:
-                    transformed[name] = ()
     for member in members.values():
         if not isinstance(member, AttributeMetadata):
             violations.setdefault(member.identity.path[-1], None)
@@ -1185,7 +1213,6 @@ def _transform_member(
     value: object,
     *,
     converter: _LeafConverter,
-    fill_missing_many: bool,
     path: str,
 ) -> _TransformedMember:
     if value is None:
@@ -1201,7 +1228,6 @@ def _transform_member(
         member,
         value,
         converter=converter,
-        fill_missing_many=True,
         path=path,
     )
     return _TransformedMember(managed, violation, True)
@@ -1212,7 +1238,6 @@ def _transform_occurrence(
     value: object,
     *,
     converter: _LeafConverter,
-    fill_missing_many: bool,
     path: str,
 ) -> tuple[object, VoDocumentViolation | None]:
     if occurrence.multiplicity is Multiplicity.MANY:
@@ -1225,7 +1250,6 @@ def _transform_occurrence(
                 occurrence,
                 item,
                 converter=converter,
-                fill_missing_many=fill_missing_many,
                 path=f"{path}[{index}]",
             )
             transformed.append(managed)
@@ -1236,7 +1260,6 @@ def _transform_occurrence(
         occurrence,
         value,
         converter=converter,
-        fill_missing_many=fill_missing_many,
         path=path,
     )
 
@@ -1246,7 +1269,6 @@ def _transform_document(
     value: object,
     *,
     converter: _LeafConverter,
-    fill_missing_many: bool,
     path: str,
 ) -> tuple[object, VoDocumentViolation | None]:
     if not isinstance(value, Mapping):
@@ -1277,7 +1299,6 @@ def _transform_document(
                     occurrence,
                     nested,
                     converter=converter,
-                    fill_missing_many=fill_missing_many,
                     path=child_path,
                 )
                 transformed[name] = managed
@@ -1310,10 +1331,6 @@ def _transform_document(
             if child_violation is not None:
                 violation = _prefixed_vo_violation(name, child_violation)
                 break
-    if fill_missing_many:
-        for name, occurrence in occurrences.items():
-            if occurrence.multiplicity is Multiplicity.MANY and name not in transformed:
-                transformed[name] = ()
     return MappingProxyType(transformed), violation
 
 
