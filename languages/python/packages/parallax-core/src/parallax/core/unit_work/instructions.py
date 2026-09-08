@@ -1174,8 +1174,10 @@ def _canonical_write_row(
 
     Canonicalization follows judgement rather than preceding it. Absence, null,
     and the empty collection are one stored value, but they are three different
-    things for a caller to have written, and :func:`validate_write` refuses two of
-    them — a `many` occurrence named null has no state to name at any depth.
+    things for a caller to have written, and :func:`validate_write` refuses
+    exactly one of them at any depth: a `many` occurrence named null, which the
+    model gives no null state to name. Absence and the empty collection are both
+    legal there and canonicalize to the same zero.
     """
     members = _declared_member_map(model, entity)
     if not opening:

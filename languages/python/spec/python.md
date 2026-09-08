@@ -4377,20 +4377,18 @@ These feature tests do not claim the deferred `benchmark` command or general
   answers an `EffectiveChangeSet` carrying two disjoint sets of member names,
   `effective` and `restored`, which together name exactly the declared members
   the assignment states. `canonical_managed_document` is the shape-aware walk
-  beneath it — declared members only, presence preserved inside an occurrence, a
-  `many` zero-filled at every depth — and is the one operation a consumer reduces
-  a managed document through. Neither decodes a leaf and neither refuses, so a
+  beneath it, and is the one operation a consumer reduces a managed document
+  through. Neither decodes a leaf and neither refuses, so a
   correction authored against stored state a current authoring constraint would
   reject still reaches the buffer. The answer names members and carries no
   payload: a caller selects its own already-prepared values by those names, so
   nothing about what will be stored is decided by asking.
 
   Provenance comparison is **not restated here**: the rule an occurrence
-  compares by — whole at either cardinality, presence preserved on both sides,
-  an omitted nested Many read as the zero both sides store — is
-  `classify_effective_change`'s, stated once in `m-document-codec` *Managed
-  documents and the effective change set* and derived there from `m-unit-work`
-  *Comparing an assigned member with its persisted value*. The Typed and Wire
+  compares by is `classify_effective_change`'s, stated once in `m-document-codec`
+  *Managed documents and the effective change set*, whose consequences for a
+  write `m-unit-work` *Comparing an assigned member with its persisted value*
+  carries. The Typed and Wire
   keyed verbs agree on it **structurally** rather than by two implementations
   happening to match: the ingress asks that one operation over one shape for
   both, and the originals it weighs are the same observed value on both sides —
