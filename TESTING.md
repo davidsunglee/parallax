@@ -136,7 +136,7 @@ it locally safe.
 | `harness-check-db` | `postgres`, `mariadb` | `just harness-check-db` |
 | `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14: `just python-check-dbfree`; 3.13: `just python-test-dbfree` with coverage disabled |
 | `python-check-db` | — | `just python-check-db` |
-| `python-check-cost` | — | `just python-check-cost` |
+| `python-check-cost` | shards `1/4` to `4/4` | `just python-check-cost I/4`, one cell per shard of the class, together the one run the command owns |
 | `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` |
 
 Every job but the last runs a command `check-all` contains.
