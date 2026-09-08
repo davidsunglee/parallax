@@ -493,12 +493,13 @@ it does change is the position each patch names, whole.
   and a `many`'s elements additionally have no identity by which stored and
   supplied elements could be matched.
 
-The exported declared-member reduction is the sole shape-aware operation over an
-encoded document: what a materialization reduces a stored document through, and
-what normalizes an encoded assignment into the managed document a comparison is
-stated over. It decodes leaves by declared Neutral Type, reduces a `one`
-recursively and a `many` element-wise, and excludes every key the shape does not
-declare. Consumers MUST NOT implement another local reduction.
+The exported declared-member reduction is the one operation that walks a whole
+encoded document against its shape — the others above build a document, read one
+path, or write the positions their patches name — and it is what a materialization
+reduces a stored document through and what normalizes an encoded assignment into
+the managed document a comparison is stated over. It decodes leaves by declared
+Neutral Type, reduces a `one` recursively and a `many` element-wise, and excludes
+every key the shape does not declare. Consumers MUST NOT implement another local reduction.
 
 The reduction takes one option that narrows its result. **Presence preservation**
 asks which members *this document* holds, which the source answers by itself: a
@@ -567,10 +568,10 @@ containment depth — an omitted member stays omitted and a null one stays null 
 and the same `many` exception applies: an omitted key, a null, and an empty
 collection are one zero value and all three answer the empty collection. A `one`
 is canonicalized recursively and a `many` element-wise in stored order. It is the
-declared-member reduction's managed counterpart, and it is the sole shape-aware
-operation over managed documents: a consumer that fills a `many`'s zero or drops
-an unknown key by hand is implementing a second reduction, which this module
-already forbids.
+declared-member reduction's managed counterpart and, like it, the one operation
+that walks a whole managed document against its shape: a consumer that fills a
+`many`'s zero or drops an unknown key by hand is implementing a second reduction,
+which this module already forbids.
 
 `classifyEffectiveChange` is the one operation answering whether an assignment
 changes anything, and every consumer that asks that question asks it here. It
@@ -583,14 +584,17 @@ The classification is total: it decodes nothing, judges nothing, and refuses
 nothing. Stored state that a current authoring constraint would reject is still
 readable state, and a correction written against it must reach the store, so a
 value contradicting its declared shape passes through canonicalization as itself
-and compares unequal to any well-formed one. What a shape states about a managed
-value is its composition, so composition is what such a contradiction is against:
-a non-document where a `one` is declared, a non-array where a `many` is. A leaf is
-one value whatever its carrier resembles — a `bytes` value is never read as the
-array of its byte values — and a stored leaf whose spelling contradicts its
-declared Neutral Type has no managed value at all, so it is refused where the
-document is decoded rather than carried here. What the assignment states was
-judged where it entered.
+and compares unequal to any well-formed one. Of everything a shape states, these
+two operations read composition alone — which members are declared, and whether
+each is a leaf, a `one`, or a `many` — so composition is what such a contradiction
+is against: a non-document where a `one` is declared, a non-array where a `many`
+is. The declared Neutral Type is not theirs to read, so a leaf is one value
+whatever its carrier resembles: a `bytes` value is never read as the array of its
+byte values. A stored leaf whose spelling contradicts that type has no managed
+value at all and so never reaches here as one — decoding is where it is judged,
+recorded as `LeafUndecodable` and hydrated as `Unavailable`. Nullability is judged
+in those same two places: decoding, for stored state, and ingress, for what an
+assignment states.
 
 The rules the comparison applies are the ones above with one addition at the top
 level, and that addition is the whole of the absent-versus-null collapse `Presence`

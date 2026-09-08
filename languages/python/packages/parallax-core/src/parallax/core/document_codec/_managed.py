@@ -3,9 +3,11 @@
 A managed document is one whose leaves are already the host carriers of their
 declared Neutral Types — what a caller assigns and what a read decodes — rather
 than the encoded spellings :mod:`parallax.core.document_codec._document` reads and
-writes. These operations therefore decode nothing and refuse nothing: they impose
-the shape's own rules on a document whose leaves are somebody else's answer, so a
-stored value that violates a current authoring constraint stays correctable.
+writes. These operations therefore decode nothing and refuse nothing: of everything the
+shape states they read composition alone — which members are declared, and whether
+each is a leaf, a ``one``, or a ``many`` — over a document whose leaves are
+somebody else's answer, so a stored value that violates a current authoring
+constraint stays correctable.
 
 This file imports the shape algebra and nothing else of the codec, which is what
 makes "takes managed leaves, decodes nothing, never refuses" checkable rather than
