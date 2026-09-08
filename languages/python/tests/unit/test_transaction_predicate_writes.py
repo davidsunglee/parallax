@@ -20,6 +20,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
@@ -89,6 +90,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.write_planner import assigned_many_path
 from parallax.snapshot import QueryTargetError, SnapshotDecodingError
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
+from parallax.snapshot.handle._family import comparison_shape
 from parallax.snapshot.handle._predicate_writes import (
     _is_no_op_assignment,  # pyright: ignore[reportPrivateUsage] - the lane's own per-row no-op comparison, driven off hand-built rows so a normalization defect names itself rather than surfacing as a missing statement
     _normalize_assignment_values,  # pyright: ignore[reportPrivateUsage] - the lane's own once-per-write assignment decoding, driven directly so each encoded spelling is proved rather than inferred from the SQL a whole write emitted
@@ -187,6 +189,9 @@ class WhereManagedSubscriber(
 ):
     id: Attr[int] = attr(primary_key=True)
     version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+    day: Attr[dt.date]
+    payload: Attr[bytes]
     details: Attr[WhereManagedOccurrence]
     entries: Attr[tuple[WhereManagedOccurrence, ...]]
 
@@ -1376,7 +1381,13 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     assert [type(op) for op in document_port.calls] == [BeginCall, ReadCall, CommitCall]
 
 
-def test_no_op_comparison_normalizes_production_encoded_one_and_many_assignments() -> None:
+def test_normalizing_production_encoded_assignments_yields_the_managed_comparison_operand() -> None:
+    # `set` accepts an occurrence in the encoded spelling production emits, so the
+    # authored side is decoded ONCE for the whole write. What normalization answers
+    # is already the operand the codec weighs: the same managed document a resolved
+    # row's own decode produces, for a `one` and for every element of a `many`. The
+    # comparison that follows therefore decodes nothing, and a Decimal, date, time,
+    # timestamp, UUID, or bytes leaf is weighed as the host value both sides hold.
     encoded = {
         "amount": "19.95",
         "payload": "0a1b",
@@ -1393,49 +1404,76 @@ def test_no_op_comparison_normalizes_production_encoded_one_and_many_assignments
         "instant": dt.datetime(2026, 8, 13, 13, 30, tzinfo=dt.UTC),
         "token": UUID("12345678-1234-5678-1234-567812345678"),
     }
+    meta = model_of(_WHERE_MANAGED_SUBSCRIBER_META)
     entity = next(
         entity
         for entity in _WHERE_MANAGED_SUBSCRIBER_META.entities
         if entity.identity.name == "WhereManagedSubscriber"
     )
-    occurrences = {
-        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
-    }
+    shape = comparison_shape(meta, entity)
     columns = {"details": ("details", True), "entries": ("entries", True)}
     row: Row = {"details": managed, "entries": [managed]}
 
-    assignments = _normalize_assignment_values(
-        {"details": encoded, "entries": [encoded]}, occurrences
-    )
+    assignments = _normalize_assignment_values({"details": encoded, "entries": [encoded]}, shape)
 
-    assert _is_no_op_assignment(columns, assignments, row, occurrences)
+    assert assignments == {"details": managed, "entries": [managed]}
+    assert _is_no_op_assignment(shape, columns, assignments, row)
+
+
+def test_managed_scalar_operands_are_compared_as_the_host_values_the_row_holds() -> None:
+    # A resolved row's scalars arrive from `observable_columns` in their declared
+    # Neutral Type's managed carrier, and an assignment already carries one, so
+    # normalization leaves both sides alone and the comparison weighs two host
+    # values without an encode/decode round trip between them. Nothing on either
+    # side is judged, so a stored value a current authoring constraint would reject
+    # — a Decimal carrying more fractional digits than the declared scale — is
+    # compared rather than refused, and the assignment correcting it is a change.
+    meta = model_of(_WHERE_MANAGED_SUBSCRIBER_META)
+    entity = next(
+        entity
+        for entity in _WHERE_MANAGED_SUBSCRIBER_META.entities
+        if entity.identity.name == "WhereManagedSubscriber"
+    )
+    shape = comparison_shape(meta, entity)
+    columns = {"amount": ("amount", False), "day": ("day", False), "payload": ("payload", False)}
+    stored = {"amount": Decimal("19.95"), "day": dt.date(2026, 8, 13), "payload": b"\x0a\x1b"}
+    row: Row = dict(stored)
+
+    assert _is_no_op_assignment(shape, columns, _normalize_assignment_values(stored, shape), row)
+    assert not _is_no_op_assignment(shape, columns, {"payload": b"\x0a\x1c"}, row)
+    assert not _is_no_op_assignment(shape, columns, {"day": dt.date(2026, 8, 14)}, row)
+
+    out_of_scale: Row = {"amount": Decimal("19.9501")}
+    assert not _is_no_op_assignment(shape, columns, {"amount": Decimal("19.95")}, out_of_scale)
 
 
 def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None:
-    # An assigned occurrence is compared whole, because the write it stands for
-    # replaces the subtree whole. Naming only `city` is therefore a CHANGE against a
-    # row holding `geo` — issuing it removes `geo`, so eliminating it would leave
-    # stored state the assignment says is gone. The target declares Relational
-    # Document Layout, so both sides of every comparison are document-resident.
-    person = document_layout_entity(document_model(), "Person")
-    occurrences = {
-        occurrence.identity.path[-1]: occurrence for occurrence in person.declared_value_objects
-    }
+    # The operand the comparison weighs is the document the assignment would STORE:
+    # normalization answers the whole subtree, because the write replaces it whole.
+    # Naming only `city` is therefore a CHANGE against a row holding `geo` — issuing
+    # it removes `geo`, so eliminating it would leave stored state the assignment
+    # says is gone. The target declares Relational Document Layout, so both sides of
+    # every comparison are document-resident.
+    model = document_model()
+    person = document_layout_entity(model, "Person")
+    shape = comparison_shape(model, person)
     columns = {"address": ("address", True), "tags": ("tags", True)}
     row: Row = {
         "address": {"city": "Bergen", "geo": {"country": "NO"}},
         "tags": [{"label": "founder"}],
     }
 
-    assert _is_no_op_assignment(
-        columns,
-        {"address": {"city": "Bergen", "geo": {"country": "NO"}}, "tags": [{"label": "founder"}]},
-        row,
-        occurrences,
+    def no_op(assignments: Mapping[str, object]) -> bool:
+        return _is_no_op_assignment(
+            shape, columns, _normalize_assignment_values(assignments, shape), row
+        )
+
+    assert no_op(
+        {"address": {"city": "Bergen", "geo": {"country": "NO"}}, "tags": [{"label": "founder"}]}
     )
-    assert not _is_no_op_assignment(columns, {"address": {"city": "Bergen"}}, row, occurrences)
-    assert not _is_no_op_assignment(columns, {"address": {"city": "Oslo"}}, row, occurrences)
-    assert not _is_no_op_assignment(columns, {"tags": []}, row, occurrences)
+    assert not no_op({"address": {"city": "Bergen"}})
+    assert not no_op({"address": {"city": "Oslo"}})
+    assert not no_op({"tags": []})
 
 
 def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op() -> None:

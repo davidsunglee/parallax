@@ -53,7 +53,12 @@ from typing import Any, Final, cast
 from parallax.core import deep_fetch, inheritance
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import LockMode
-from parallax.core.document_codec import occurrence_shape, reduce_declared_members
+from parallax.core.document_codec import (
+    DocumentShape,
+    Occurrence,
+    classify_effective_change,
+    reduce_declared_members,
+)
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import TransactionAttemptActivity
@@ -63,7 +68,6 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
-    ValueObjectMetadata,
     entity_by_name,
 )
 from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
@@ -102,6 +106,7 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.write_planner import assigned_many_path
 from parallax.snapshot.handle._family import (
     assignment_member,
+    comparison_shape,
     declaring,
     entity_layout,
     entity_of,
@@ -511,10 +516,8 @@ def _materialize_predicate_write(
     assignment_bearing = instruction.mutation in _ASSIGNMENT_BEARING
     predecessor_need = version_attr is None and temporal
     member_columns = members(placed_members(meta, entity, layout))
-    occurrences = {
-        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
-    }
-    comparison_assignments = _normalize_assignment_values(assignments, occurrences)
+    shape = comparison_shape(meta, entity)
+    comparison_assignments = _normalize_assignment_values(assignments, shape)
 
     # The resolve is a Read of its own (`m-execution-lifecycle`: every
     # statement-reaching operation belongs to exactly one Read, Write Batch, or
@@ -594,7 +597,7 @@ def _materialize_predicate_write(
         version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
         for row in rows:
             if assignment_bearing and _is_no_op_assignment(
-                member_columns, comparison_assignments, row, occurrences
+                shape, member_columns, comparison_assignments, row
             ):
                 continue  # per-row no-op elimination (assignment-bearing verbs only)
             append_key(row)
@@ -622,7 +625,7 @@ def _materialize_predicate_write(
     document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
     for materialized, row in zip(resolved, rows, strict=True):
         if assignment_bearing and _is_no_op_assignment(
-            member_columns, comparison_assignments, row, occurrences
+            shape, member_columns, comparison_assignments, row
         ):
             continue  # per-row no-op elimination (assignment-bearing verbs only)
         append_key(row)
@@ -667,8 +670,7 @@ def _materialize_predicate_write(
 # for the whole write so every row's comparison reads the same operand.        #
 # --------------------------------------------------------------------------- #
 def _normalize_assignment_values(
-    assignments: Mapping[str, object],
-    occurrences: Mapping[str, ValueObjectMetadata] | None = None,
+    assignments: Mapping[str, object], shape: DocumentShape
 ) -> dict[str, object]:
     """Decode each encoded occurrence assignment once into its managed value.
 
@@ -676,86 +678,61 @@ def _normalize_assignment_values(
     complete document the assignment would STORE — presence preserved, so a member
     the author omits contributes no key exactly as an unstored one does — because
     assigning an occurrence replaces its subtree whole and the comparison below is
-    against a resolved row's own reduction of what it holds. A nested ``many`` is
-    the one member presence preservation leaves alone, because it has no absence to
-    preserve: the stored document carries ``[]`` there whichever of the three zero
-    spellings was written, and so does the document this assignment would store, so
-    the reduction answers ``[]`` for an omitted one rather than dropping the key
-    and calling a stored zero a change. The returned mapping is reusable across
-    every row resolved by one predicate write.
+    against a resolved row's own reduction of what it holds. The returned mapping
+    is reusable across every row resolved by one predicate write, and it is the
+    operand the codec compares: what remains after it is the comparison, never a
+    second normalization.
     """
-    occurrence_index: Mapping[str, ValueObjectMetadata] = (
-        cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
-    )
     normalized: dict[str, object] = {}
     for member, value in assignments.items():
-        occurrence = occurrence_index.get(member)
-        if occurrence is None:
+        declared = shape.member(member)
+        if not isinstance(declared, Occurrence):
             normalized[member] = value
             continue
-        shape = occurrence_shape(occurrence)
-        if occurrence.multiplicity is Multiplicity.MANY:
-            encoded = list(cast("tuple[object, ...]", value)) if isinstance(value, tuple) else value
+        if declared.multiplicity is Multiplicity.MANY:
             normalized[member] = [
-                reduce_declared_members(shape, element, preserve_presence=True)
-                for element in cast("Sequence[object]", encoded)
+                reduce_declared_members(declared.shape, element, preserve_presence=True)
+                for element in cast("Sequence[object]", value)
             ]
         else:
-            normalized[member] = reduce_declared_members(shape, value, preserve_presence=True)
+            normalized[member] = reduce_declared_members(
+                declared.shape, value, preserve_presence=True
+            )
     return normalized
 
 
 def _is_no_op_assignment(
+    shape: DocumentShape,
     member_columns: Mapping[str, tuple[str, bool]],
     assignments: Mapping[str, object],
     row: Row,
-    occurrences: Mapping[str, ValueObjectMetadata] | None = None,
 ) -> bool:
-    """Whether EVERY assigned member's new value already equals ``row``'s own
-    (`m-opt-lock` per-row no-op elimination — structural equality, the SAME
-    comparison a keyed no-op's effective-change-set test uses).
+    """Whether ``row`` is one an assignment-bearing verb would leave unchanged
+    (`m-opt-lock` per-row no-op elimination): the effective change set of these
+    assignments against it is empty.
 
-    ``row`` is one resolved row of the write's own resolving read, after that
-    read's row transform: a document-mapped member is compared against the value
-    the fan-out decoded, in its declared Neutral Type, rather than against a
-    fragment of the raw Structured Column. An absent Document Path and an
-    explicit JSON null both decode to ``None``, which is the one logical
-    not-present state a NULL Column also carries, so a member assigned ``None``
-    is a no-op in either spelling.
+    The rule is the document codec's, asked here over the row's own values rather
+    than restated: this projects each assigned member's stored value out of the
+    resolved row and hands both sides to
+    :func:`~parallax.core.document_codec.classify_effective_change`. ``row`` is one
+    row of the write's own resolving read, after that read's row transform, so a
+    document-mapped member's stored value is the one the fan-out decoded in its
+    declared Neutral Type rather than a fragment of the raw Structured Column; a
+    member whose column the row does not carry is the observed null the codec's
+    own top level collapses with an explicit one.
 
     ``assignments`` has already crossed :func:`_normalize_assignment_values` once
-    for the whole predicate write, so an occurrence arrives as the complete
-    document the assignment would store and is compared against the row's whole
-    decoded occurrence, without decoding either side again. Nothing is masked by
-    the members the author named: assigning an occurrence replaces its subtree,
-    so an omitted declared member the row does hold is a change like any other,
-    and eliminating that write would leave stored state the assignment removes.
-    A nested ``many`` is the one omission that removes nothing — both sides read
-    it as the empty collection the store holds either way — so an occurrence
-    authored short of one is a no-op rather than a change.
+    for the whole predicate write, so both sides arrive as managed values and
+    neither is decoded again.
 
-    This is the ONE narrow result-dependent normalization a materializing
-    resolve performs while streaming: a resolved row an assignment-bearing
-    verb would leave unchanged never joins its Materialized Write Group.
-    ``delete`` / ``terminate`` / ``terminateUntil`` have no assignments to
-    compare and therefore never call this — every resolved row is retained.
+    This is the ONE result-dependent decision a materializing resolve makes while
+    streaming: a resolved row an assignment-bearing verb would leave unchanged
+    never joins its Materialized Write Group. ``delete`` / ``terminate`` /
+    ``terminateUntil`` have no assignments to compare and therefore never call
+    this — every resolved row is retained.
     """
-    occurrence_index: Mapping[str, ValueObjectMetadata] = (
-        cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
-    )
-    for member, value in assignments.items():
-        stored = row.get(member_columns[member][0])
-        occurrence = occurrence_index.get(member)
-        compared = (
-            list(cast("tuple[object, ...]", stored))
-            if occurrence is not None
-            and occurrence.multiplicity is Multiplicity.MANY
-            and isinstance(stored, tuple)
-            else stored
-        )
-        if value != compared:
-            return False
-    return True
+    originals = {member: row.get(member_columns[member][0]) for member in assignments}
+    return not classify_effective_change(shape, assignments, originals).effective
 
 
 def _key_column_values(
