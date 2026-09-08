@@ -46,11 +46,30 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def _cardinal(digits: str) -> int | None:
+    """The number an ASCII digit string names, or ``None`` when it names none.
+
+    ``str.isdigit`` answers for spellings Python's own parser then rejects, such
+    as ``'²'`` and a run of more digits than the interpreter will convert.
+    """
+    if not (digits.isascii() and digits.isdigit()):
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
 def _shard(spec: str) -> tuple[int, int]:
-    """The ``(index, count)`` a ``--shard I/N`` spelling names, one-based."""
+    """The ``(index, count)`` a ``--shard I/N`` spelling names, one-based.
+
+    Every other spelling is the option's usage error rather than a failure
+    partway through the session that read it.
+    """
     index, separator, count = spec.partition("/")
-    if separator and index.isdigit() and count.isdigit() and 1 <= int(index) <= int(count):
-        return int(index), int(count)
+    first, total = _cardinal(index), _cardinal(count)
+    if separator and first is not None and total is not None and 1 <= first <= total:
+        return first, total
     raise pytest.UsageError(f"--shard expects I/N with 1 <= I <= N, not {spec!r}")
 
 
