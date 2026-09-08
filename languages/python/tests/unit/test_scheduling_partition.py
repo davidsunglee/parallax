@@ -17,8 +17,10 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 from memory_instruments import takes_its_own_interpreter
 
 from _support.repo import PY_ROOT, REPO_ROOT
@@ -27,6 +29,11 @@ from check_database_access import ENTRY_POINT_FIXTURE
 SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cost"})
 DATABASE_FIXTURES = frozenset({ENTRY_POINT_FIXTURE})
 ORTHOGONAL_SELECTORS = frozenset({"compile_sweep", "adapter_smoke"})
+
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+COST_JOB = "python-check-cost"
+COST_JOB_STEP = "just python-check-cost ${{ matrix.shard }}"
+WHOLE_CLASS = "1/1"
 
 # The primary semantic surfaces, each one directory under `tests/`.
 SURFACES = frozenset(
@@ -106,8 +113,25 @@ def test_only_the_derivation_names_a_scheduling_class() -> None:
     assert offenders == {}
 
 
-def _cost_selection(shard: str) -> list[str]:
-    """The cost items one session selects under ``--shard``, in collection order.
+def _cost_job() -> Any:
+    """The `python-check-cost` job as the CI workflow declares it."""
+    workflow: Any = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+    return workflow["jobs"][COST_JOB]
+
+
+def _deployed_cells() -> list[str]:
+    """The shard each cell of that job runs, in the order the matrix names them."""
+    return [str(cell) for cell in _cost_job()["strategy"]["matrix"]["shard"]]
+
+
+def _index_and_count(cell: str) -> tuple[int, int]:
+    index, _, count = cell.partition("/")
+    return int(index), int(count)
+
+
+def _selection(expression: str, shard: str) -> list[str]:
+    """The items one session selects under ``-m expression --shard shard``, in
+    collection order.
 
     A shard is a property of a whole session, so it is read off sessions of its
     own rather than off the one grading it.
@@ -118,7 +142,7 @@ def _cost_selection(shard: str) -> list[str]:
             "-m",
             "pytest",
             "-m",
-            "cost",
+            expression,
             "--shard",
             shard,
             "--collect-only",
@@ -134,16 +158,82 @@ def _cost_selection(shard: str) -> list[str]:
     return [line for line in collected.stdout.splitlines() if "::" in line]
 
 
-def test_the_shards_partition_the_cost_class() -> None:
-    # What lets CI run the class as four cells and still own it once (§9): every
-    # cost item lands in exactly one shard, no shard is empty, and nothing but the
-    # cost class is touched. The whole-class selection is the reference, so a
-    # shard mechanism that dropped or doubled an item would be caught here.
-    whole = _cost_selection("1/1")
-    shards = [_cost_selection(f"{index}/4") for index in (1, 2, 3, 4)]
+def test_the_cost_jobs_cells_are_every_shard_of_one_count() -> None:
+    # The cells are the workflow's, not a copy of it: N of them, each naming N,
+    # together naming every index of it once. A deleted, duplicated, or
+    # renumbered cell fails here rather than silently dropping class members.
+    cells = [_index_and_count(cell) for cell in _deployed_cells()]
+    assert {count for _, count in cells} == {len(cells)}
+    assert sorted(index for index, _ in cells) == list(range(1, len(cells) + 1))
+
+
+def test_the_cost_job_runs_the_shard_its_cell_names() -> None:
+    # A cell is its own shard only if the step passes it through; a shard spelled
+    # into the step would run one part of the class in every cell.
+    runs = [str(step["run"]).strip() for step in _cost_job()["steps"] if "run" in step]
+    assert [run for run in runs if COST_JOB in run] == [COST_JOB_STEP]
+
+
+def test_the_deployed_cells_partition_the_cost_class() -> None:
+    # What lets CI run the class as one cell per shard and still own it once
+    # (§9): the cells' selections together hold every cost item exactly once, and
+    # none of them is empty. The whole-class selection is the reference, so a
+    # shard mechanism that dropped or doubled an item is caught here.
+    whole = _selection("cost", WHOLE_CLASS)
+    shards = [_selection("cost", cell) for cell in _deployed_cells()]
     assert all(shards)
     assert sorted(item for shard in shards for item in shard) == sorted(whole)
-    assert sum(len(shard) for shard in shards) == len(whole)
+
+
+def test_a_shard_leaves_every_other_class_whole() -> None:
+    # The partition above is graded within `-m cost`, where no other class is
+    # present; that a sharded session still holds the whole of the rest of the
+    # suite is what confines `--shard` to the class CI splits.
+    assert _selection("not cost", "2/4") == _selection("not cost", WHOLE_CLASS)
+
+
+def _malformed_shard_session(shard: str) -> subprocess.CompletedProcess[str]:
+    """The outcome of a session given a ``--shard`` value, collecting this module
+    alone so what it reports is the option's answer rather than the suite's."""
+    return subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(Path(__file__)),
+            "--shard",
+            shard,
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=PY_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "shard",
+    [
+        "",
+        "1",
+        "1/",
+        "0/4",
+        "5/4",
+        "²/4",
+        pytest.param("9" * 5000 + "/4", id="more-digits-than-int-converts"),
+    ],
+)
+def test_a_malformed_shard_is_the_options_usage_error(shard: str) -> None:
+    # `str.isdigit` is wider than Python's integer parser, so a value it accepts
+    # can still be one `int` refuses; the option answers every spelling with its
+    # own diagnostic rather than an exception raised partway through a session.
+    completed = _malformed_shard_session(shard)
+    assert completed.returncode == pytest.ExitCode.USAGE_ERROR
+    assert "--shard expects I/N" in completed.stderr
 
 
 def test_the_marker_catalog_is_the_partition_plus_the_orthogonal_selectors() -> None:
