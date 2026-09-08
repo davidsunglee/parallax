@@ -217,13 +217,17 @@ class TypedKeyedWriteSource:
     ) -> PreparedSourceWrite:
         """The instruction this value authors, beside its own originals.
 
-        Both sides run through the SAME producer: an update family verb measures
-        the Change Record's two halves — every touched member at the value it now
-        holds, and those same members at the value the chain first recorded — so
-        the ingress weighs effectiveness over canonical values on both sides
-        rather than over a serialized document on one. A destructive or close verb
-        names no member at all and authors its identity row alone, and so does an
-        update off a value whose chain touched nothing.
+        Both sides cross the SAME coercion and only the authored side is judged:
+        an update family verb measures the Change Record's two halves — every
+        touched member at the value it now holds, and those same members at the
+        value the chain first recorded — so the ingress weighs effectiveness over
+        like carriers rather than over a serialized document on one side. What the
+        chain first recorded is state this write revises rather than anything its
+        caller stated in the call, so preparation's judgement is asked of the
+        authored half alone and a correction of a member current authoring would
+        refuse still reaches the ingress. A destructive or close verb names no
+        member at all and authors its identity row alone, and so does an update
+        off a value whose chain touched nothing.
 
         The object a refusal reports comes from the source's own hint where there
         is one, and is derived from the authored row where there is not — the two
@@ -238,15 +242,10 @@ class TypedKeyedWriteSource:
             )
             originals: Mapping[str, object] = {}
         else:
-            touched = frozenset(authored.originals)
-            identity = {name: value for name, value in authored.row.items() if name not in touched}
             instruction = prepared_typed_write(
                 meta, mutation, resolved.entity, authored.row, bounds
             )
-            restored = prepared_typed_write(
-                meta, mutation, resolved.entity, {**identity, **authored.originals}, bounds
-            )
-            originals = {name: restored.rows[0][name] for name in touched}
+            originals = instructions.coerce_typed_row(authored.originals, meta, resolved.entity)
         return PreparedSourceWrite(
             instruction=instruction,
             object_key=(
