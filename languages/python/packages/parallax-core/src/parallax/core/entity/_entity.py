@@ -384,6 +384,8 @@ under the slot as corruption of private first-party state. It lives in
 model — which is also why every inherited copy door that shallow-copies that
 dictionary is refused."""
 
+_EDIT_RESOLUTION_SLOT: Final = "__parallax_entity_edit_resolution__"
+
 
 def _change_record(value: BaseModel) -> ChangeRecord | None:
     """``value``'s Change Record, or ``None`` when it carries none.
@@ -465,14 +467,20 @@ def _edit_violations(
 
 def _resolution_of(cls: type) -> Resolution:
     """The Entity-specific name resolution used by the shared derivation."""
+    cached = cls.__dict__.get(_EDIT_RESOLUTION_SLOT)
+    if isinstance(cached, Resolution):
+        return cached
+
     names = wire_names_of(cls)
     entity = declaration_of(cls).identity
-    return Resolution(
+    resolution = Resolution(
         declared=frozenset(names.py_to_name),
         framework_owned=names.framework_owned_py,
         restores_presence=False,
         violations=lambda changes: _edit_violations(entity, cls.__name__, names, changes),
     )
+    type.__setattr__(cls, _EDIT_RESOLUTION_SLOT, resolution)
+    return resolution
 
 
 def _use_edit(cls: type, door: str) -> EditError:

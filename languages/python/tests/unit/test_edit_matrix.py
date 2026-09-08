@@ -156,6 +156,7 @@ class _PlainBinding(
 
 
 def test_the_first_mro_binding_decides_whether_state_is_a_derived_cache() -> None:
+    _CachedRoot.model_construct(id=0, label="root").edit()
     source = _PlainBinding.model_construct(id=1, label="a")
     payload = object()
     attach_instance_state(source, "memo", payload)
