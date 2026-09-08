@@ -5,7 +5,6 @@ Everything the runner does not require lives under ``_support/``.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 from collections.abc import Iterator, Sequence
@@ -15,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from _support import cost_durations
 from _support.distributions import ALL_PACKAGES, Wheelhouse
 from _support.repo import PY_ROOT
 
@@ -37,10 +37,6 @@ _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
 
 _WHOLE_CLASS = "1/1"
 
-# What a cost item is known to cost, by node id, from the last stored run. The
-# shards are balanced over these; an item the file does not know weighs the mean
-# of the ones it does, so a new test degrades the balance and never the partition.
-_COST_DURATIONS = PY_ROOT / "tests" / "_support" / "cost_durations.json"
 _recorded_durations: dict[str, float] = {}
 _store_durations = False
 
@@ -55,7 +51,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--store-cost-durations",
         action="store_true",
-        help=f"after the run, merge every cost item's call duration into {_COST_DURATIONS.name}",
+        help=(
+            f"after the run, record every cost item's call duration in "
+            f"{cost_durations.COST_DURATIONS.name}: a whole-class run replaces what is stored, "
+            f"a shard merges into it"
+        ),
     )
 
 
@@ -91,12 +91,6 @@ def _shard(spec: str) -> tuple[int, int]:
     if separator and first is not None and total is not None and 1 <= first <= total:
         return first, total
     raise pytest.UsageError(f"--shard expects I/N with 1 <= I <= N, not {spec!r}")
-
-
-def _known_durations() -> dict[str, float]:
-    if not _COST_DURATIONS.exists():
-        return {}
-    return {str(k): float(v) for k, v in json.loads(_COST_DURATIONS.read_text()).items()}
 
 
 def _shard_of_each(weights: Sequence[float], count: int) -> list[int]:
@@ -160,7 +154,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if count == 1:
         return
     cost_items = [item for item in items if item.get_closest_marker("cost") is not None]
-    known = _known_durations()
+    known = cost_durations.known()
     unknown = sum(known.values()) / len(known) if known else 1.0
     shard_of = _shard_of_each([known.get(item.nodeid, unknown) for item in cost_items], count)
     deselected = [item for item, shard in zip(cost_items, shard_of, strict=True) if shard != index]
@@ -175,11 +169,31 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
         _recorded_durations[report.nodeid] = report.duration
 
 
-def pytest_sessionfinish() -> None:
+def _measured_the_whole_class(config: pytest.Config) -> bool:
+    """Whether this session's selection was the cost class entire.
+
+    Only such a session can say a stored item is gone rather than merely
+    unselected, so anything this cannot recognize as the whole class is treated
+    as part of it: merging keeps a measurement the session did not take, while
+    replacing on a narrowed run would discard every item it did not run.
+
+    A shard, a path, or a keyword each narrow the selection. A marker expression
+    narrows it only when it is neither the class itself nor the absent one that
+    selects every class; a wider expression selects the class whole.
+    """
+    _, count = _shard(str(config.getoption("--shard")))
+    return (
+        count == 1
+        and config.args_source is not pytest.Config.ArgsSource.ARGS
+        and not config.option.keyword
+        and config.option.markexpr in {"", "cost"}
+    )
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
     if not _store_durations or not _recorded_durations:
         return
-    merged = _known_durations() | {k: round(v, 1) for k, v in _recorded_durations.items()}
-    _COST_DURATIONS.write_text(json.dumps(dict(sorted(merged.items())), indent=1) + "\n")
+    cost_durations.store(_recorded_durations, whole_class=_measured_the_whole_class(session.config))
 
 
 def record_db_skip(reason: str) -> None:

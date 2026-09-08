@@ -34,6 +34,7 @@ no test command of its own.
 | Module | Holds |
 |---|---|
 | `_support/repo.py` | `PY_ROOT`, `REPO_ROOT`, and the canonical core artifacts read from them — `adapter_schema()`, `canonical_snapshot_claim()` |
+| `_support/cost_durations.py` | What each cost item last cost: the contract `cost_durations.json` is read under, and the store a measuring run writes back through |
 | `_support/corpus.py` | A case's document and fixtures, and the grading comparators the run sweep and the API-suite story lane share |
 | `_support/db_port.py` | The shared `m-db-port` doubles — `ScriptedPort` and its script entries, `RefusingPort`, the `PortCall` recording — and the transaction outcome a fake with no boundary of its own reports |
 | `_support/sweep_goldens.py` | The corpus cases the compile and run sweeps grade against authored goldens, and the golden readers both use |
@@ -196,9 +197,21 @@ The cost cells are balanced by what each cost item last cost, read from
 heaviest first and places each onto the lightest shard so far, so the N shards
 partition the class however the file is populated, and an item the file does not
 know weighs the mean of the ones it does. Only the balance depends on the file's
-currency, never the partition. Refresh it after the class changes shape, then
-commit the result:
+currency, never the partition. The file is a required input to a sharded session
+all the same: missing, or holding anything but finite non-negative numbers of
+seconds, it is that session's usage error naming the file, because the balance
+falling back to equal weights is a shard mechanism doing nothing while every
+partition check stays green.
+
+Refresh it after the class changes shape, then commit the result:
 
 ```sh
 cd languages/python && uv run pytest -m cost -n auto --store-cost-durations
 ```
+
+That run measures the whole class, so what it measured becomes the file and an
+item deleted or renamed since the last refresh leaves no entry behind to weigh a
+shard that will never run it. A run measuring less than the whole class — one
+cell's `--shard I/N`, or a selection narrowed to some of the class — stores what
+it ran and keeps every other entry, because those entries are the only record of
+the items it did not run.

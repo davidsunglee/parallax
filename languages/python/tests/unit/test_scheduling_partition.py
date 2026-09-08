@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ import pytest
 import yaml
 from memory_instruments import takes_its_own_interpreter
 
+from _support import cost_durations
 from _support.repo import PY_ROOT, REPO_ROOT
 from check_database_access import ENTRY_POINT_FIXTURE
 
@@ -259,6 +261,80 @@ def test_a_malformed_shard_is_the_options_usage_error(shard: str) -> None:
     completed = _malformed_shard_session(shard)
     assert completed.returncode == pytest.ExitCode.USAGE_ERROR
     assert "--shard expects I/N" in completed.stderr
+
+
+# --------------------------------------------------------------------------
+# The durations the shards are balanced over
+# --------------------------------------------------------------------------
+def _load_of_each(halves: Sequence[Sequence[str]], known: Mapping[str, float]) -> list[float]:
+    unknown = sum(known.values()) / len(known)
+    return [sum(known.get(item, unknown) for item in half) for half in halves]
+
+
+def test_the_shards_are_balanced_by_the_stored_durations() -> None:
+    # Two shards make the claim sharpest. The class's items span two orders of
+    # magnitude, so halves drawn by position are hundreds of seconds apart while
+    # halves drawn by what each item last cost are a fraction of a second apart:
+    # a mechanism that stopped reading the file would still partition the class
+    # and would fail here.
+    known = cost_durations.known()
+    halves = [_selection("cost", f"{index}/2") for index in (1, 2)]
+    balanced = _load_of_each(halves, known)
+    positional = _load_of_each([sorted(known)[::2], sorted(known)[1::2]], known)
+    assert abs(balanced[0] - balanced[1]) <= max(known.values())
+    assert abs(balanced[0] - balanced[1]) <= abs(positional[0] - positional[1])
+
+
+def test_the_stored_durations_are_the_contract_the_shards_read_them_under() -> None:
+    # The tracked file is an input to every sharded session, so what it holds is
+    # graded here rather than only where a malformed entry would silently skew a
+    # shard.
+    assert cost_durations.known()
+
+
+def test_a_missing_durations_file_is_a_usage_error(tmp_path: Path) -> None:
+    # Absent, the shards would fall back to equal weights, still partition the
+    # class, and balance it by nothing — green, and no longer doing the one thing
+    # the file exists for.
+    with pytest.raises(pytest.UsageError, match=r"never-stored\.json"):
+        cost_durations.known(tmp_path / "never-stored.json")
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param("[1.0, 2.0]", id="not-an-object"),
+        pytest.param('{"a::b": ', id="truncated"),
+        pytest.param('{"a::b": "1.0"}', id="string"),
+        pytest.param('{"a::b": true}', id="boolean"),
+        pytest.param('{"a::b": -1.0}', id="negative"),
+        pytest.param('{"a::b": NaN}', id="nan"),
+        pytest.param('{"a::b": Infinity}', id="infinite"),
+    ],
+)
+def test_a_duration_that_is_not_a_finite_non_negative_number_is_a_usage_error(
+    payload: str, tmp_path: Path
+) -> None:
+    # `float` accepts every one of these, and a `NaN` among them would poison the
+    # mean an unknown item weighs and collapse the choice of lightest shard,
+    # leaving the balance decided by nothing while the partition stayed intact.
+    path = tmp_path / "cost_durations.json"
+    path.write_text(payload, encoding="utf-8")
+    with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
+        cost_durations.known(path)
+
+
+def test_a_whole_class_store_replaces_and_a_shard_merges(tmp_path: Path) -> None:
+    # A whole-class run measured every item there is, so an entry it did not
+    # observe names an item that no longer exists; a shard measured its own part
+    # of the class, so the entries it did not observe are the only record of the
+    # items the other shards run.
+    path = tmp_path / "cost_durations.json"
+    path.write_text('{"a::renamed": 5.0, "a::kept": 2.0}\n', encoding="utf-8")
+    cost_durations.store({"a::kept": 3.04}, whole_class=False, path=path)
+    assert cost_durations.known(path) == {"a::renamed": 5.0, "a::kept": 3.0}
+    cost_durations.store({"a::kept": 3.04}, whole_class=True, path=path)
+    assert cost_durations.known(path) == {"a::kept": 3.0}
 
 
 def test_the_marker_catalog_is_the_partition_plus_the_orthogonal_selectors() -> None:
