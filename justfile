@@ -267,7 +267,7 @@ python-check-dbfree: python-format-check python-lint python-typecheck python-che
 python-check-db: python-test-db
 
 [doc("Every Python check needing an interpreter no other test shares.")]
-python-check-cost: python-check-instrument-access python-test-cost
+python-check-cost shard="1/1": python-check-instrument-access (python-test-cost shard)
 
 [metadata("runtime:slow", "scheduling:dbfree")]
 [doc("Every Python test whose fixture closure reaches no database, plus branch coverage.")]
@@ -286,10 +286,13 @@ python-test-db:
 # not trace, so what this selects contributes nothing to a coverage report; the
 # production lines these measurements drive are covered by the suites grading
 # their behavior, which `python-test-dbfree` owns.
+# `shard` is CI's: each cell of the job's shard matrix runs one I/N of the class,
+# and the four cells together are the one run the class command owns
+# (core/spec/language-testing.md §9). The default is the whole class.
 [metadata("runtime:slow", "scheduling:cost")]
 [doc("Every Python test reading the whole interpreter, each in one of its own.")]
-python-test-cost:
-    cd {{python}} && uv run pytest -m cost -n auto
+python-test-cost shard="1/1":
+    cd {{python}} && uv run pytest -m cost -n auto --shard {{shard}}
 
 # The six semantic surfaces are focused selectors for iteration, and deliberately
 # no gate's dependencies: each cuts across the scheduling partition, so an

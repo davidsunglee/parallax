@@ -34,9 +34,29 @@ _DATABASE_FIXTURES = frozenset({"profile_run"})
 # held together by `tools/check_instrument_access.py`.
 _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
 
+_WHOLE_CLASS = "1/1"
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Assign each collected item its scheduling class.
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--shard",
+        default=_WHOLE_CLASS,
+        metavar="I/N",
+        help="run the I-th of N shards of the cost class; every other class is unaffected",
+    )
+
+
+def _shard(spec: str) -> tuple[int, int]:
+    """The ``(index, count)`` a ``--shard I/N`` spelling names, one-based."""
+    index, separator, count = spec.partition("/")
+    if separator and index.isdigit() and count.isdigit() and 1 <= int(index) <= int(count):
+        return int(index), int(count)
+    raise pytest.UsageError(f"--shard expects I/N with 1 <= I <= N, not {spec!r}")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Assign each collected item its scheduling class, then keep the cost
+    class's requested shard.
 
     The class is read off what the item requires — its resolved fixture closure
     for a database, the boundary its function carries for an interpreter of its
@@ -48,6 +68,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     Two resources at once is a contradiction rather than a precedence: a reading
     over the whole interpreter cannot be taken of a process a container is also
     living in, so the run fails instead of picking a winner.
+
+    A shard is the cost class's items at every N-th position of its collection
+    order, which is stable, so the N shards partition the class and their union
+    is the whole of it (core/spec/language-testing.md §9); `--shard` never
+    touches another class, and the default keeps everything.
     """
     for item in items:
         function = item if isinstance(item, pytest.Function) else None
@@ -68,6 +93,22 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.cost)
         else:
             item.add_marker(pytest.mark.dbfree)
+
+    index, count = _shard(str(config.getoption("--shard")))
+    if count == 1:
+        return
+    kept: list[pytest.Item] = []
+    deselected: list[pytest.Item] = []
+    position = 0
+    for item in items:
+        if item.get_closest_marker("cost") is None:
+            kept.append(item)
+            continue
+        (kept if position % count == index - 1 else deselected).append(item)
+        position += 1
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = kept
 
 
 def record_db_skip(reason: str) -> None:

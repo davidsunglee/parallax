@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -102,6 +104,46 @@ def test_only_the_derivation_names_a_scheduling_class() -> None:
         and _authored_marks(path.read_text(encoding="utf-8")) & SCHEDULING_CLASSES
     }
     assert offenders == {}
+
+
+def _cost_selection(shard: str) -> list[str]:
+    """The cost items one session selects under ``--shard``, in collection order.
+
+    A shard is a property of a whole session, so it is read off sessions of its
+    own rather than off the one grading it.
+    """
+    collected = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-m",
+            "cost",
+            "--shard",
+            shard,
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
+        cwd=PY_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [line for line in collected.stdout.splitlines() if "::" in line]
+
+
+def test_the_shards_partition_the_cost_class() -> None:
+    # What lets CI run the class as four cells and still own it once (§9): every
+    # cost item lands in exactly one shard, no shard is empty, and nothing but the
+    # cost class is touched. The whole-class selection is the reference, so a
+    # shard mechanism that dropped or doubled an item would be caught here.
+    whole = _cost_selection("1/1")
+    shards = [_cost_selection(f"{index}/4") for index in (1, 2, 3, 4)]
+    assert all(shards)
+    assert sorted(item for shard in shards for item in shard) == sorted(whole)
+    assert sum(len(shard) for shard in shards) == len(whole)
 
 
 def test_the_marker_catalog_is_the_partition_plus_the_orthogonal_selectors() -> None:
