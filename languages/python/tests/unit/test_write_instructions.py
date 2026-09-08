@@ -605,10 +605,10 @@ def test_a_coerced_typed_row_projects_its_leaves_and_judges_none() -> None:
     # side of that write states the same members in. The `float32` crosses the
     # same width projection preparation applies, so a member an author restored
     # to what its own read published compares equal rather than differing by the
-    # projection alone. The out-of-scale `amount` — readable stored state a
-    # current authoring constraint refuses, as the assertion below shows the
-    # judging producer doing — passes through as itself, because the write
-    # correcting that member is the write this row is the original of.
+    # projection alone. Coercion judges nothing, so the out-of-scale `amount` —
+    # a synthetic leaf, refused by the write-preparing producer as the assertion
+    # below shows — passes through as itself: what a row is weighed against is
+    # answered here, and whether it may be authored is answered there alone.
     model = _MODELS["writable-scalars"]
     entity = wi.resolve_target(model, "WritableScalar")
     row: dict[str, object] = {"id": 1, "f32": 0.1, "amount": Decimal("1.00005")}

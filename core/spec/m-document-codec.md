@@ -694,7 +694,7 @@ neither outcome changes this shape-aware verdict.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`. It also asks here
   whether an assignment changes anything — `classifyEffectiveChange` — and
-  canonicalizes the managed documents it prepares here.
+  canonicalizes the documents of the keyed rows it prepares here.
 - Read materialization obtains `LocatedMemberInput` from the direct Structured
   Column's already-tagged `DocumentRead` or from `locateEntityMember`, passes
   either arm to `decodeLocatedMemberClassified`, then uses `decodeClassified`

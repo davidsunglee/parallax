@@ -428,10 +428,10 @@ construction it may reference any behavioral module it harnesses.
   when a write distinguishes authored assignments from the source state they
   carry forward. The direction stays one-way: `m-edit` names neither lifecycle,
   transactions, reads, nor persistence.
-- **`m-unit-work --> m-document-codec`.** A prepared write's documents carry the
-  canonical form the codec's shape rules give them, so the rule that an unspelled
-  `many` occurrence is the empty collection has one owner rather than a restatement
-  in the module that prepares those documents. The edge reaches the codec's
+- **`m-unit-work --> m-document-codec`.** A prepared keyed row's documents carry
+  the canonical form the codec's shape rules give them, so the rule that an
+  unspelled `many` occurrence is the empty collection has one owner rather than a
+  restatement in the module that prepares those rows. The edge reaches the codec's
   managed-document canonicalization alone: unit work encodes nothing through it,
   decodes nothing through it, and compares nothing through it, since a prepared
   write's leaves are already managed values. The direction stays one-way —
