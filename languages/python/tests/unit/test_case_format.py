@@ -70,12 +70,15 @@ def test_a_core_serialized_level_converts_to_its_python_literal(
     assert case_format.isolation_literal(serialized) == literal
 
 
-def test_a_level_outside_the_vocabulary_is_refused_at_ingress() -> None:
-    # The schema closes `when.uow.isolation`, so a value reaching here that the
-    # port does not name is a corpus defect — reported where it is read rather
-    # than carried into a runner as a string.
+@pytest.mark.parametrize("declared", ["read-uncommitted", "read_committed", "repeatable_read", ""])
+def test_a_token_outside_the_core_vocabulary_is_refused_at_ingress(declared: str) -> None:
+    # `when.uow.isolation` is closed to the three core serialized tokens, so a
+    # value reaching here that the corpus does not spell is a corpus defect,
+    # reported where it is read rather than carried into a runner as a string.
+    # A Python level's own spelling is refused with the rest: accepting it would
+    # make the language's identifier a second name for a core-authored token.
     with pytest.raises(ValueError, match="isolation must be one of"):
-        case_format.isolation_literal("read-uncommitted")
+        case_format.isolation_literal(declared)
 
 
 def test_a_declared_level_is_read_off_when_uow() -> None:
