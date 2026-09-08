@@ -354,21 +354,6 @@ def test_an_identity_row_reads_the_primary_key_of_either_backing(build: Builder)
     assert _codec().identity_row(build(Depot, id=1, label="north")) == {"id": 1}
 
 
-def test_an_edited_row_is_the_identity_plus_the_effective_changes(build: Builder) -> None:
-    edited = build(Depot, id=1, label="north", capacity=12).edit(label="south")
-    assert _codec().edited_row(edited) == {"id": 1, "label": "south"}
-
-
-def test_an_edited_row_answers_none_for_a_value_no_edit_touched(build: Builder) -> None:
-    assert _codec().edited_row(build(Depot, id=1, label="north")) is None
-
-
-def test_an_edited_row_answers_none_for_a_chain_that_nets_to_zero(build: Builder) -> None:
-    value = build(Depot, id=1, label="north")
-    assert _codec().edited_row(value.edit(label="south").edit(label="north")) is None
-    assert _codec().restored_members(value.edit(label="south").edit(label="north")) == {"label"}
-
-
 def test_an_authored_row_carries_both_sides_of_the_change_off_either_backing(
     build: Builder,
 ) -> None:
@@ -401,8 +386,6 @@ def test_a_row_derived_from_a_published_value_creates_no_storage_for_it() -> Non
     codec = _codec()
     codec.full_row(value)
     codec.identity_row(value)
-    codec.edited_row(value)
-    codec.restored_members(value)
     codec.authored_row(value)
     assert not carries_instance_storage(value)
     # Read last, because reading it is what creates it.
