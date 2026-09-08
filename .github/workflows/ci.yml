@@ -208,8 +208,16 @@ jobs:
   # that has loaded only what it needs. `just check` deliberately omits this
   # class (core/spec/language-testing.md §7) so the command run after every
   # change stays fast; this job is what keeps it gated on every change instead.
+  # The children are CPU-bound and this runner has two physical cores, so the
+  # class is split into four shards, one cell each: together they are the one
+  # run the class command owns (§9), and the partition is proved by
+  # `test_scheduling_partition.py`.
   python-check-cost:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/4", "2/4", "3/4", "4/4"]
     env:
       UV_FROZEN: "1"
     steps:
@@ -221,8 +229,8 @@ jobs:
       - name: Sync Python workspace (frozen)
         working-directory: languages/python
         run: uv sync --frozen
-      - name: just python-check-cost
-        run: just python-check-cost
+      - name: just python-check-cost (shard ${{ matrix.shard }})
+        run: just python-check-cost ${{ matrix.shard }}
 
   # The Pydantic parity corpus resolved against the minimum Pydantic release
   # parallax-core declares, rather than against the locked one
