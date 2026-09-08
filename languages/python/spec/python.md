@@ -5378,12 +5378,17 @@ and the row does not claim them: `modules.md` routes the port through
 modules through `parallax.core.entity`, whose values every Typed write is stated
 over. A forbidden row is the complement of a closure, so each rides in whatever
 the ingress itself imports, and what the row says about them is that this scope
-inherits them rather than that they are forbidden. `m-document-codec` IS named,
-because the ingress reaches it directly: an effective change set is the codec's
-answer, and no dependency this row already carries reaches it. The verb-input
-step library this ingress composes, the family answers it resolves through, and the
-predicate-selected lane beside it are all modules of the parent package rather
-than declared scopes, so no contract can name any of them either way.
+inherits them rather than that they are forbidden. `m-document-codec` IS named
+for the opposite reason, and not because the closure would otherwise lack it:
+`parallax.core.entity` already carries the codec in, exactly as it carries the two
+traversal modules, so naming it moves no generated contract. What the row states
+is direct use — an effective change set is the codec's answer and the ingress asks
+for it itself — which is what tells a reader where the ingress's own imports end
+rather than leaving the codec to be inferred from a transitive edge. The
+verb-input step library this ingress composes, the family answers it resolves
+through, and the predicate-selected lane beside it are all modules of the parent
+package rather than declared scopes, so no contract can name any of them either
+way.
 
 A behavioral module maps to the scope that needs its whole edge set.
 `m-execution-lifecycle` is owned by `parallax.core.execution_lifecycle`, while

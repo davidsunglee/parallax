@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+from collections.abc import Mapping
+from typing import cast
 
 from parallax.core.base import BOOLEAN, BYTES, DATE, STRING, Decimal
 from parallax.core.document_codec import (
@@ -186,6 +188,34 @@ def test_a_value_contradicting_its_declared_shape_is_effective_rather_than_refus
         frozenset({"entries"})
     )
     assert _classify({"origin": "Oslo"}, {"origin": "Oslo"}).restored == frozenset({"origin"})
+
+
+def test_a_bytes_leaf_is_one_value_rather_than_the_array_of_its_byte_values() -> None:
+    # A provider hands a stored `bytes` value back as a bytearray or a memoryview,
+    # each of which Python also reads as a sequence of integers. The leaf reading
+    # is the one that holds, so a correction written over a stored array of those
+    # byte values is an effective change rather than a restoration of the value
+    # already there.
+    assert _classify({"payload": bytearray(b"ab")}, {"payload": [97, 98]}).effective == frozenset(
+        {"payload"}
+    )
+    assert _classify({"payload": memoryview(b"ab")}, {"payload": (97, 98)}).effective == frozenset(
+        {"payload"}
+    )
+    assert _classify({"payload": b"ab"}, {"payload": memoryview(b"ab")}).restored == frozenset(
+        {"payload"}
+    )
+
+
+def test_a_root_that_is_no_document_passes_through_canonicalization_as_itself() -> None:
+    # Totality reaches the root and not only the positions inside it. Reading a
+    # non-document against the shape would invent one: an empty sequence would
+    # answer a mapping carrying every `many`'s zero, and a value that is not even
+    # iterable would refuse — the two failures a total operation may not have.
+    empty: object = []
+    assert canonical_managed_document(_SHAPE, cast("Mapping[str, object]", empty)) is empty
+    scalar: object = 7
+    assert canonical_managed_document(_SHAPE, cast("Mapping[str, object]", scalar)) is scalar
 
 
 def test_canonicalization_keeps_declared_members_and_fills_every_many_zero() -> None:

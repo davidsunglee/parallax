@@ -493,10 +493,12 @@ it does change is the position each patch names, whole.
   and a `many`'s elements additionally have no identity by which stored and
   supplied elements could be matched.
 
-The exported declared-member reduction is the sole shape-aware operation used by
-materialization and write comparison. It decodes leaves by declared Neutral Type,
-reduces a `one` recursively and a `many` element-wise, and excludes every key the
-shape does not declare. Consumers MUST NOT implement another local reduction.
+The exported declared-member reduction is the sole shape-aware operation over an
+encoded document: what a materialization reduces a stored document through, and
+what normalizes an encoded assignment into the managed document a comparison is
+stated over. It decodes leaves by declared Neutral Type, reduces a `one`
+recursively and a `many` element-wise, and excludes every key the shape does not
+declare. Consumers MUST NOT implement another local reduction.
 
 The reduction takes one option that narrows its result. **Presence preservation**
 asks which members *this document* holds, which the source answers by itself: a
@@ -517,17 +519,14 @@ is only that the distinction survives materialization rather than being collapse
 by it — a reduction is what a read reduces the stored document through, so a read
 never loses a presence state this module keeps.
 
-Presence preservation is what a mutation comparison uses on both sides, the
-`many` exception included on each. An assignment states the complete value its
+Presence preservation is how an encoded assignment becomes the managed document a
+mutation comparison is stated over. An assignment states the complete value its
 occurrence will hold, so the document it would store — presence preserved, a
 member the author omits contributing no key exactly as an unstored one does, and
-an omitted `many` contributing the `[]` that store will hold — is what a stored
-occurrence's own presence-preserving reduction is compared against. Narrowing the
-stored side to the members the assignment happens to name would call a write that
-removes a member no change at all, so no authored-member mask over the reduction
-exists. Preserving an omitted `many` would err the other way: it would call a
-write that stores the very zero already there a change, and issue DML, advance a
-version, and consult a clock for it.
+an omitted `many` contributing the `[]` that store will hold — is the operand the
+comparison receives. Whether that operand changes anything is not this reduction's
+answer: `classifyEffectiveChange` below is the one operation that decides it, and
+the rules it applies are stated there once.
 
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical
@@ -584,7 +583,13 @@ The classification is total: it decodes nothing, judges nothing, and refuses
 nothing. Stored state that a current authoring constraint would reject is still
 readable state, and a correction written against it must reach the store, so a
 value contradicting its declared shape passes through canonicalization as itself
-and compares unequal to any well-formed one. What the assignment states was
+and compares unequal to any well-formed one. What a shape states about a managed
+value is its composition, so composition is what such a contradiction is against:
+a non-document where a `one` is declared, a non-array where a `many` is. A leaf is
+one value whatever its carrier resembles — a `bytes` value is never read as the
+array of its byte values — and a stored leaf whose spelling contradicts its
+declared Neutral Type has no managed value at all, so it is refused where the
+document is decoded rather than carried here. What the assignment states was
 judged where it entered.
 
 The rules the comparison applies are the ones above with one addition at the top
@@ -622,7 +627,9 @@ the same length and equal elements in the same order, because a `Many` is
 ordered and its order is observable state.
 Consumers that compare documents state their own rules on top of this one:
 `m-case-format` fixes structural comparison for asserted table state and
-fixtures, and `m-unit-work` fixes it for whole-occurrence observed equality.
+fixtures. Whole-occurrence observed equality is not one of them — it is this
+module's own effective-change classification above, which every consumer asking
+whether an assignment changes anything asks rather than restates.
 
 ## Invalid stored data
 

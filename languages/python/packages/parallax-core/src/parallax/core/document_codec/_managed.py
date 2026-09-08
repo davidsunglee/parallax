@@ -72,10 +72,12 @@ def canonical_managed_document(
     shares every nested container the canonical form did not have to rebuild.
     Container type is not a criterion: a tuple and a list are both canonical
     sequence carriers, and a mapping proxy and a dict both canonical mapping ones,
-    so a frozen carrier is answered as itself.
+    so a frozen carrier is answered as itself. A root that is no mapping at all is
+    the same contradiction one nested position deep and is answered the same way,
+    as itself, rather than reduced to a document it never was.
     """
-    if document is None:
-        return None
+    if not _is_document(document):
+        return document
     return _canonical_document(shape, document)
 
 
@@ -181,7 +183,17 @@ def _is_document(value: object) -> TypeIs[Mapping[str, object]]:
 
 
 def _is_array(value: object) -> TypeIs[Sequence[object]]:
-    return isinstance(value, Sequence) and not isinstance(value, str | bytes)
+    """Whether ``value`` carries a document array rather than a leaf.
+
+    Every bytes-like carrier is excluded, not just ``bytes``: a provider hands a
+    ``bytearray`` or a ``memoryview`` back for a stored ``bytes`` value, and each
+    is a Sequence of integers to Python while being one leaf to a caller. Reading
+    one as an array would make it equal to an array of its byte values, which is a
+    different logical value.
+    """
+    return isinstance(value, Sequence) and not isinstance(
+        value, str | bytes | bytearray | memoryview
+    )
 
 
 def _is_many(member: DocumentMember) -> bool:
