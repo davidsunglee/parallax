@@ -14,7 +14,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 import yaml
 
@@ -64,10 +64,22 @@ _CORE_SCHEMA: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
 )
 
 
-class _Yaml12CoreLoader(yaml.SafeLoader):
-    """A ``yaml.SafeLoader`` whose implicit resolvers are exactly the YAML 1.2
-    core schema's four — null, boolean, integer, float — so every other plain
-    scalar in a corpus document is the STRING its author wrote.
+# The schema below lives entirely on the Python side of a load — in the
+# resolver table that decides which plain scalars carry a type and in the
+# constructors that decide what each one means — and both of PyYAML's parsers
+# hand their scalars to those same tables. Which parser scans the text therefore
+# changes what a corpus read costs and nothing about what it reads, so the
+# loader takes libyaml's when the installed wheel carries it.
+if TYPE_CHECKING:
+    _SafeLoaderBase = yaml.SafeLoader
+else:
+    _SafeLoaderBase = yaml.CSafeLoader if yaml.__with_libyaml__ else yaml.SafeLoader
+
+
+class _Yaml12CoreLoader(_SafeLoaderBase):
+    """The safe loader whose implicit resolvers are exactly the YAML 1.2 core
+    schema's four — null, boolean, integer, float — so every other plain scalar
+    in a corpus document is the STRING its author wrote.
 
     PyYAML's own default resolvers are the YAML 1.1 set, which is a different
     document language: it folds ``yes``/``no``/``on``/``off`` into booleans (so

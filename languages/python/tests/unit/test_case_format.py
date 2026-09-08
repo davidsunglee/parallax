@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+import yaml
 
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
@@ -262,6 +263,25 @@ def test_select_preserves_order_and_filters() -> None:
 )
 def test_a_plain_scalar_resolves_under_the_core_schema(scalar: str, value: object) -> None:
     assert case_format.safe_load_yaml(f"key: {scalar}\n") == {"key": value}
+
+
+def test_the_corpus_reads_the_same_under_either_yaml_parser() -> None:
+    # The core schema is applied after parsing, in the resolver and constructor
+    # tables, so the parser the installed PyYAML wheel carries — libyaml's or its
+    # own — must leave every corpus document unchanged; a machine without libyaml
+    # reads the corpus through the fallback this pins against.
+    shipped = case_format._Yaml12CoreLoader  # pyright: ignore[reportPrivateUsage] - the twin below is built from the shipped loader's own tables
+
+    class PurePython(yaml.SafeLoader):
+        pass
+
+    PurePython.yaml_implicit_resolvers = dict(shipped.yaml_implicit_resolvers)
+    PurePython.yaml_constructors = dict(shipped.yaml_constructors)
+    documents = sorted(case_format.default_cases_dir().rglob("*.yaml"))
+    assert documents
+    for path in documents:
+        text = path.read_text(encoding="utf-8")
+        assert case_format.safe_load_yaml(text) == yaml.load(text, Loader=PurePython), path
 
 
 def test_a_temporal_scalar_stays_its_portable_literal() -> None:
