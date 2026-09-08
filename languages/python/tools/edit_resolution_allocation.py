@@ -100,6 +100,7 @@ def _path_identity(source: Path) -> SourceIdentity:
 
 
 def _loaded_provenance() -> Provenance:
+    import parallax.core.entity._declaration as declaration_core
     import parallax.core.entity._edit as edit_core
     import parallax.core.entity._entity as entity_frontend
     import parallax.core.entity._value_object as value_object_frontend
@@ -109,6 +110,7 @@ def _loaded_provenance() -> Provenance:
         "python": sys.version.split()[0],
         "instrument": _path_identity(Path(__file__)),
         "implementation": {
+            "declaration": _source_identity(declaration_core),
             "edit": _source_identity(edit_core),
             "entity": _source_identity(entity_frontend),
             "value_object": _source_identity(value_object_frontend),
