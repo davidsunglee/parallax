@@ -20,8 +20,9 @@ import decimal as _decimal
 import enum
 import re
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from types import NoneType, UnionType
+from types import MappingProxyType, NoneType, UnionType
 from typing import Any, ClassVar, Final, ForwardRef, Never, Union, cast, get_args, get_origin
 
 from pydantic import ConfigDict, field_validator
@@ -469,9 +470,9 @@ class ValueObjectShape:
     """
 
     shape: ValueObjectShapeDeclaration
-    name_to_py: dict[str, str]
-    py_to_name: dict[str, str]
-    nested_classes: dict[str, type]
+    name_to_py: Mapping[str, str]
+    py_to_name: Mapping[str, str]
+    nested_classes: Mapping[str, type]
     many_py: frozenset[str]
 
 
@@ -1075,9 +1076,11 @@ def _build_value_object(
             attributes=tuple(attributes),
             value_objects=tuple(nested),
         ),
-        name_to_py={canonical: py_name for py_name, canonical in py_to_name.items()},
-        py_to_name=py_to_name,
-        nested_classes=nested_classes,
+        name_to_py=MappingProxyType(
+            {canonical: py_name for py_name, canonical in py_to_name.items()}
+        ),
+        py_to_name=MappingProxyType(py_to_name),
+        nested_classes=MappingProxyType(nested_classes),
         many_py=frozenset(many_py),
     )
     cls = _pydantic_class(mcs, cls_name, bases, ns)
