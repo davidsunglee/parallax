@@ -113,8 +113,8 @@
 
 - name: class-owner-selecting-the-other-class
   file: justfile
-  old: "uv run pytest -m dbfree --cov"
-  new: "uv run pytest -m db --cov"
+  old: "uv run pytest -m dbfree -n auto --cov"
+  new: "uv run pytest -m db -n auto --cov"
   code: scheduling-recipe-selection
   message: "`python-test-dbfree` selects db rather than exactly dbfree"
   problems: 1
