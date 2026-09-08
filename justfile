@@ -272,12 +272,15 @@ python-check-cost: python-check-instrument-access python-test-cost
 [metadata("runtime:slow", "scheduling:dbfree")]
 [doc("Every Python test whose fixture closure reaches no database, plus branch coverage.")]
 python-test-dbfree:
-    cd {{python}} && uv run pytest -m dbfree --cov --cov-branch --cov-report=xml --cov-report=term-missing --cov-fail-under=95
+    cd {{python}} && uv run pytest -m dbfree -n auto --cov --cov-branch --cov-report=xml --cov-report=term-missing --cov-fail-under=95
 
+# A fixed worker count rather than one per core: each worker provisions a
+# Postgres container of its own, so what bounds the count is containers a host
+# can start at once, not cores.
 [metadata("runtime:slow", "scheduling:db")]
 [doc("Every Python test whose fixture closure reaches a database (Testcontainers; Docker).")]
 python-test-db:
-    cd {{python}} && uv run pytest -m db
+    cd {{python}} && uv run pytest -m db -n 4
 
 # No coverage here. Every reading is taken in a child interpreter the parent does
 # not trace, so what this selects contributes nothing to a coverage report; the
@@ -286,7 +289,7 @@ python-test-db:
 [metadata("runtime:slow", "scheduling:cost")]
 [doc("Every Python test reading the whole interpreter, each in one of its own.")]
 python-test-cost:
-    cd {{python}} && uv run pytest -m cost -n 2
+    cd {{python}} && uv run pytest -m cost -n auto
 
 # The six semantic surfaces are focused selectors for iteration, and deliberately
 # no gate's dependencies: each cuts across the scheduling partition, so an
