@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -44,8 +44,20 @@ _CORE_SCHEMA: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 )
 
 
-class _CoreSchemaLoader(yaml.SafeLoader):
-    """A ``SafeLoader`` reading the YAML 1.2 core schema.
+# The schema below lives entirely on the Python side of a load — in the
+# resolver table that decides which plain scalars carry a type and in the
+# constructors that decide what each one means — and both of PyYAML's parsers
+# hand their scalars to those same tables. Which parser scans the text therefore
+# changes what a corpus read costs and nothing about what it reads, so the
+# loader takes libyaml's when the installed wheel carries it.
+if TYPE_CHECKING:
+    _SafeLoaderBase = yaml.SafeLoader
+else:
+    _SafeLoaderBase = yaml.CSafeLoader if yaml.__with_libyaml__ else yaml.SafeLoader
+
+
+class _CoreSchemaLoader(_SafeLoaderBase):
+    """The safe loader reading the YAML 1.2 core schema.
 
     Both halves are replaced. The implicit RESOLVERS decide which plain scalars
     carry a type at all; the CONSTRUCTORS decide what each resolved scalar means,
