@@ -15,7 +15,7 @@ written.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Final, Self, cast
 
 from pydantic._internal._model_construction import ModelMetaclass
 
@@ -65,6 +65,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 __all__ = ["ValueObject", "ValueObjectMeta", "shape_of", "to_document"]
+
+_EDIT_RESOLUTION_SLOT: Final = "__parallax_value_object_edit_resolution__"
 
 
 class ValueObjectMeta(ModelMetaclass):
@@ -268,13 +270,19 @@ def _edit_violations(
 
 def _resolution_of(cls: type) -> Resolution:
     """The Value Object-specific name resolution used by the shared derivation."""
+    cached = cls.__dict__.get(_EDIT_RESOLUTION_SLOT)
+    if isinstance(cached, Resolution):
+        return cached
+
     shape = shape_of(cls)
-    return Resolution(
+    resolution = Resolution(
         declared=frozenset(shape.py_to_name),
         framework_owned=frozenset(),
         restores_presence=True,
         violations=lambda changes: _edit_violations(cls, shape, changes),
     )
+    type.__setattr__(cls, _EDIT_RESOLUTION_SLOT, resolution)
+    return resolution
 
 
 def _member_metadata(
