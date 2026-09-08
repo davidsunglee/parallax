@@ -154,16 +154,37 @@ class FakeDbPort:
         return body_outcome(self, body)
 
 
-# Each index reads the corpus once for the whole module: what it answers is
-# shared between tests, so a test that edits a document takes `_own_copy` first.
+# One corpus read serves the whole module, and both indexes project it: what
+# they answer is shared between tests, so a test that edits a document takes
+# `_own_copy` first.
+@functools.cache
+def _corpus() -> tuple[case_format.Case, ...]:
+    return tuple(case_format.load_cases())
+
+
+def _by_id(cases: Sequence[case_format.Case]) -> Mapping[str, case_format.Case]:
+    # A case id is unique within its module, so a collision here means two case
+    # files claim one id; keying them into a dict would silently resolve every
+    # lookup to whichever file sorts last.
+    index: dict[str, case_format.Case] = {}
+    for case in cases:
+        claimed = index.setdefault(case.case_id, case)
+        if claimed is not case:
+            raise ValueError(
+                f"case id {case.case_id!r} is claimed by both "
+                f"{claimed.path.name} and {case.path.name}"
+            )
+    return index
+
+
 @functools.cache
 def _reachable_by_id() -> Mapping[str, case_format.Case]:
-    return {c.case_id: c for c in sweep.reachable_cases()}
+    return _by_id(sweep.reachable_cases(cases=list(_corpus())))
 
 
 @functools.cache
 def _corpus_by_id() -> Mapping[str, case_format.Case]:
-    return {c.case_id: c for c in case_format.load_cases()}
+    return _by_id(_corpus())
 
 
 def _case(case_id: str) -> case_format.Case:
@@ -517,7 +538,7 @@ def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> No
 
 def test_eligibility_reads_the_case_declaration() -> None:
     assert engine.eligibility(_case("m-value-object-001")) is None
-    cases = case_format.load_cases()
+    cases = _corpus()
     run_only = [c for c in cases if engine.eligibility(c) is not None]
     assert run_only, "the corpus declares at least one run-only case"
     first = engine.eligibility(run_only[0])
@@ -559,7 +580,7 @@ def test_the_compile_lane_refuses_a_deferred_execution_feature() -> None:
 
 
 def test_compile_rejects_non_read_shape() -> None:
-    write_seq = next(c for c in case_format.load_cases() if c.shape == "writeSequence")
+    write_seq = next(c for c in _corpus() if c.shape == "writeSequence")
     with pytest.raises(engine.EngineError, match="only `read`-shape compile"):
         engine.compile_read_case(write_seq, "postgres")
 
@@ -4621,7 +4642,7 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
     # m-txtime-write-006: a temporal optimistic-lock CLOSE conflict (`when.at` /
     # `when.observedTxStart`, no `observedVersion`) is driven through
     # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
-    (case,) = [c for c in case_format.load_cases() if c.case_id == "m-txtime-write-006"]
+    case = _load_case("m-txtime-write-006")
     port = FakeWritePort()
     emissions, affected, table_state, _round_trips = engine.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -5316,7 +5337,7 @@ def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None
     # SOLE concrete subtype (MeterReading, tag `meter`) — never the abstract
     # root `_rejected_target` resolves to for the read lane's own default-target
     # convention.
-    (case,) = [c for c in case_format.load_cases() if c.case_id == "m-inheritance-105"]
+    case = _load_case("m-inheritance-105")
     port = FakeWritePort()
     emissions, affected, table_state, _round_trips = engine.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -5332,7 +5353,7 @@ def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> N
     # own `db.transact` unit composing `handle.plan_temporal_close` directly
     # (the `is_temporal` branch of the attempts loop, distinct from the
     # non-temporal versioned-UPDATE retry `m-opt-lock-007` already covers).
-    (case,) = [c for c in case_format.load_cases() if c.case_id == "m-temporal-read-011"]
+    case = _load_case("m-temporal-read-011")
     port = FakeWritePort()
     emissions, affected, table_state, _round_trips = engine.run_conflict_case(case, port)
     assert [e.case_pointer for e in emissions] == [
@@ -5405,11 +5426,6 @@ def test_an_evolution_case_whose_earlier_endpoint_is_neither_a_path_nor_null_is_
 # Rejected — the pre-SQL model-aware validation lane.                          #
 # Three-way `when` dispatch, and a three-form `when.write` inside it.          #
 # --------------------------------------------------------------------------- #
-def _rejected_case(case_id: str) -> case_format.Case:
-    (case,) = [c for c in case_format.load_cases() if c.case_id == case_id]
-    return case
-
-
 def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
     from pathlib import Path
 
@@ -5424,27 +5440,27 @@ def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
 
 
 def test_run_rejected_case_query_dispatch_classifies_the_rule() -> None:
-    case = _rejected_case("m-inheritance-040")
+    case = _load_case("m-inheritance-040")
     assert engine.run_rejected_case(case) == "narrow-outside-position"
 
 
 def test_run_rejected_case_query_dispatch_over_a_value_object_model() -> None:
-    case = _rejected_case("m-value-object-034")
+    case = _load_case("m-value-object-034")
     assert engine.run_rejected_case(case) == "nested-path-first-segment-not-value-object"
 
 
 def test_run_rejected_case_model_dispatch_reuses_the_phase_3_validator() -> None:
-    case = _rejected_case("m-inheritance-020")
+    case = _load_case("m-inheritance-020")
     assert engine.run_rejected_case(case) == "inheritance-unknown-parent"
 
 
 def test_run_rejected_case_write_dispatch_classifies_the_rule() -> None:
-    case = _rejected_case("m-value-object-039")
+    case = _load_case("m-value-object-039")
     assert engine.run_rejected_case(case) == "write-required-attribute-missing"
 
 
 def test_run_rejected_case_write_dispatch_over_an_inheritance_model() -> None:
-    case = _rejected_case("m-inheritance-088")
+    case = _load_case("m-inheritance-088")
     assert engine.run_rejected_case(case) == "abstract-write-target"
 
 
@@ -5513,7 +5529,7 @@ def _synthetic_keyed_rejected(write: dict[str, object], model: str) -> case_form
 
 
 def test_run_rejected_case_keyed_write_dispatch_classifies_the_rule() -> None:
-    case = _rejected_case("m-unit-work-016")
+    case = _load_case("m-unit-work-016")
     assert engine.run_rejected_case(case) == "temporal-keyed-write-multi-row"
 
 
