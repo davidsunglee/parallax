@@ -5,9 +5,10 @@ Everything the runner does not require lives under ``_support/``.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +37,13 @@ _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
 
 _WHOLE_CLASS = "1/1"
 
+# What a cost item is known to cost, by node id, from the last stored run. The
+# shards are balanced over these; an item the file does not know weighs the mean
+# of the ones it does, so a new test degrades the balance and never the partition.
+_COST_DURATIONS = PY_ROOT / "tests" / "_support" / "cost_durations.json"
+_recorded_durations: dict[str, float] = {}
+_store_durations = False
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
@@ -43,6 +51,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=_WHOLE_CLASS,
         metavar="I/N",
         help="run the I-th of N shards of the cost class; every other class is unaffected",
+    )
+    parser.addoption(
+        "--store-cost-durations",
+        action="store_true",
+        help=f"after the run, merge every cost item's call duration into {_COST_DURATIONS.name}",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    global _store_durations
+    _store_durations = bool(config.getoption("--store-cost-durations")) and not hasattr(
+        config, "workerinput"
     )
 
 
@@ -73,6 +93,28 @@ def _shard(spec: str) -> tuple[int, int]:
     raise pytest.UsageError(f"--shard expects I/N with 1 <= I <= N, not {spec!r}")
 
 
+def _known_durations() -> dict[str, float]:
+    if not _COST_DURATIONS.exists():
+        return {}
+    return {str(k): float(v) for k, v in json.loads(_COST_DURATIONS.read_text()).items()}
+
+
+def _shard_of_each(weights: Sequence[float], count: int) -> list[int]:
+    """The one-based shard each weighted item lands in.
+
+    Heaviest first, each onto the lightest shard so far, ties to the lowest
+    index: deterministic over stable input, and within one item's weight of the
+    best balance.
+    """
+    loads = [0.0] * count
+    shard = [0] * len(weights)
+    for position in sorted(range(len(weights)), key=lambda p: (-weights[p], p)):
+        target = min(range(count), key=lambda i: (loads[i], i))
+        loads[target] += weights[position]
+        shard[position] = target + 1
+    return shard
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Assign each collected item its scheduling class, then keep the cost
     class's requested shard.
@@ -88,10 +130,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     over the whole interpreter cannot be taken of a process a container is also
     living in, so the run fails instead of picking a winner.
 
-    A shard is the cost class's items at every N-th position of its collection
-    order, which is stable, so the N shards partition the class and their union
-    is the whole of it (core/spec/language-testing.md §9); `--shard` never
-    touches another class, and the default keeps everything.
+    A shard is one of N sets the cost class is balanced into by what each item
+    last cost, in a deterministic order over the stable collection order, so the
+    N shards partition the class and their union is the whole of it
+    (core/spec/language-testing.md §9); `--shard` never touches another class,
+    and the default keeps everything.
     """
     for item in items:
         function = item if isinstance(item, pytest.Function) else None
@@ -116,18 +159,27 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     index, count = _shard(str(config.getoption("--shard")))
     if count == 1:
         return
-    kept: list[pytest.Item] = []
-    deselected: list[pytest.Item] = []
-    position = 0
-    for item in items:
-        if item.get_closest_marker("cost") is None:
-            kept.append(item)
-            continue
-        (kept if position % count == index - 1 else deselected).append(item)
-        position += 1
+    cost_items = [item for item in items if item.get_closest_marker("cost") is not None]
+    known = _known_durations()
+    unknown = sum(known.values()) / len(known) if known else 1.0
+    shard_of = _shard_of_each([known.get(item.nodeid, unknown) for item in cost_items], count)
+    deselected = [item for item, shard in zip(cost_items, shard_of, strict=True) if shard != index]
     if deselected:
         config.hook.pytest_deselected(items=deselected)
-        items[:] = kept
+        excluded = set(deselected)
+        items[:] = [item for item in items if item not in excluded]
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    if _store_durations and report.when == "call" and "cost" in report.keywords:
+        _recorded_durations[report.nodeid] = report.duration
+
+
+def pytest_sessionfinish() -> None:
+    if not _store_durations or not _recorded_durations:
+        return
+    merged = _known_durations() | {k: round(v, 1) for k, v in _recorded_durations.items()}
+    _COST_DURATIONS.write_text(json.dumps(dict(sorted(merged.items())), indent=1) + "\n")
 
 
 def record_db_skip(reason: str) -> None:
