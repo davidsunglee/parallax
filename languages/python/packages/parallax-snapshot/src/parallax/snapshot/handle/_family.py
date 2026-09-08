@@ -5,9 +5,10 @@ answers here off the accepted Metamodel and its facets: the declaring root
 (:func:`declaring`), whether the family is temporal at all (:func:`is_temporal`)
 and which axes it declares (:func:`tx_time_axis` / :func:`valid_time_axis`), the
 optimistic-lock version attribute (:func:`version_attribute`), and the
-family-effective primary key (:func:`family_primary_key`), plus the small
-``Class.member`` reference split (:func:`assignment_member`) that resolves an
-authored assignment against the entity's members.
+family-effective primary key (:func:`family_primary_key`), the document shape a
+write's effective-change comparison is stated over (:func:`comparison_shape`),
+plus the small ``Class.member`` reference split (:func:`assignment_member`) that
+resolves an authored assignment against the entity's members.
 
 Every PHYSICAL answer instead comes from the Storage Layout Facet, entered
 through :func:`entity_layout`: the row-owning Entity's canonical slot selection.
@@ -39,6 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core import inheritance, opt_lock, storage_layout
+from parallax.core.document_codec import DocumentShape, entity_shape
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -56,6 +58,7 @@ __all__ = [
     "PlacedMembers",
     "assignment_member",
     "axis_columns",
+    "comparison_shape",
     "declaring",
     "entity_layout",
     "entity_of",
@@ -205,6 +208,22 @@ def assignment_member(attr: str) -> str:
     """The declared member name of an assignment's ``Class.member`` reference."""
     _, _, member = attr.rpartition(".")
     return member
+
+
+def comparison_shape(model: Metamodel, entity: EntityMetadata) -> DocumentShape:
+    """``entity``'s applicable members as one document shape, for the codec's
+    effective-change comparison.
+
+    Every applicable logical member regardless of where its Table puts it: the
+    comparison asks what an assignment says about a member's logical value, which
+    a Storage Layout cannot change. That is why this reads the Inheritance view's
+    member sequences directly rather than :func:`placed_members`' layout-paired
+    ones — the only shape both write surfaces can ask for one member set with.
+    """
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return entity_shape((), ())
+    return entity_shape(view.applicable_attributes, view.applicable_value_objects)
 
 
 @dataclass(frozen=True, slots=True)

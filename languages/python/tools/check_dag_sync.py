@@ -398,7 +398,8 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     ),
     # The keyed write ingress, scoped apart from its package so the generated
     # contract carries what a keyed write reaches: the value and the metadata it
-    # resolves an Entity from, the temporal vocabulary its pin and window are
+    # resolves an Entity from, the document codec whose one comparison answers
+    # its effective change set, the temporal vocabulary its pin and window are
     # stated in, the unit of work it claims and buffers into, and the lifecycle
     # whose re-entry it refuses first. A keyed write addresses a row its caller
     # already holds, so the read half of the parent scope falls outside this
@@ -420,6 +421,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.entity",
             "parallax.snapshot._inspection",
             "parallax.core.metamodel",
+            "parallax.core.document_codec",
             "parallax.core.temporal_read",
             "parallax.core.unit_work",
             "parallax.core.execution_lifecycle",

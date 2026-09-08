@@ -723,22 +723,26 @@ mutation did not name — rides forward exactly as stored.
 
 Wherever this module compares an assigned member with the value a read observed —
 the write-input comparison of a Materialized Write Group below, and the no-op
-elimination that precedes planning — the comparison follows the member's kind,
-and does so identically under either Storage Layout. These are the structural
-equality rules those steps name.
+elimination that precedes planning — the comparison is `m-document-codec`'s one
+effective-change classification, over the members the write explicitly assigns
+and, under those same names, the values the read observed, and it answers
+identically under either Storage Layout. What this module states is which members
+it hands that operation and what it does with the answer; the rules below are the
+codec's, restated for what each means for a write.
 
 A **scalar** member compares as one logical value with the two not-present forms
 collapsed: an absent Document Path and a JSON null at that path are the same
-observed null (`m-document-codec` keeps them distinct and leaves this collapse to
-its consumer, which is this rule). Assigning null to a member whose key is absent
-is therefore a no-op — it issues no DML, advances no version, and consults no
-clock — exactly as assigning null to an already-null Column is.
+observed null. Assigning null to a member whose key is absent is therefore a
+no-op — it issues no DML, advances no version, and consults no clock — exactly as
+assigning null to an already-null Column is. The collapse is the codec's own,
+applied at the top level of that classification; its encoding and decoding still
+keep the two distinct, because a document's own presence is observable state.
 
-A **whole Value Object occurrence** compares through `m-document-codec`'s one
-declared-member reduction, presence preserved on both sides: recursively for a
-`one` and element-wise in stored order for a `many`. A key no member declares
-takes no part on either side, so an occurrence that differs only in undeclared
-keys is equal and its write is eliminated. That leaves the undeclared key
+A **whole Value Object occurrence** compares through the same operation, presence
+preserved on both sides: recursively for a `one` and element-wise in stored order
+for a `many`. A key no member declares takes no part on either side, so an
+occurrence that differs only in undeclared keys is equal and its write is
+eliminated. That leaves the undeclared key
 standing where issuing the write would have replaced the subtree and removed it,
 and the elimination is deliberately the conservative direction: an assignment
 cannot name such a key, so a write with nothing declared to say is not the place
@@ -747,8 +751,8 @@ because the assignment removes it: the two sides compared are the complete
 document the assignment would store and the complete document the row holds. A
 `many` member is the one omission that removes nothing — the document the
 assignment stores holds `[]` there whether or not the author spelled it, which is
-that reduction's own `many` rule — so an authored occurrence short of a `many` and
-a stored one carrying its empty collection are equal and that write is eliminated,
+the codec's own `many` rule — so an authored occurrence short of a `many` and a
+stored one carrying its empty collection are equal and that write is eliminated,
 issuing no DML, advancing no version, and consulting no clock. Key order and
 insignificant whitespace never make two otherwise equal documents differ.
 

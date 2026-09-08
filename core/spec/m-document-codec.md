@@ -457,9 +457,11 @@ for `Missing` and writes JSON null for `ExplicitNull`, and `decode` of that
 occurrence's path answers with the same arm it was given. Presence
 inside a Value Object subtree is not collapsed: a missing nullable occurrence and
 an explicitly null one remain distinct, and so do a missing and an explicitly
-null leaf inside it. Where a consumer's own contract collapses the two — scalar
-observed no-op equality does (`m-unit-work`) — that collapse belongs to the
-consumer and is applied to the codec's answer, not built into it.
+null leaf inside it. The one place the two collapse is the top level of this
+module's own effective-change classification below, where an absent original and
+a null one are the same observed null; encoding and decoding keep them distinct
+either side of it, because a document's own presence is observable state and a
+comparison's operands are not.
 
 A key the shape does not name is an **unknown key**: valid data written by some
 other version of an application. Decoding never fails on one and never turns one
@@ -538,6 +540,70 @@ at the assigned paths alone rather than by re-encoding decoded members, so keys
 the running application does not declare survive the close-and-insert outside
 every occurrence the mutation assigned (`m-unit-work`).
 
+## Managed documents and the effective change set
+
+A **managed document** is one whose leaves are already the host carriers of their
+declared Neutral Types rather than the portable encodings above: what an
+assignment states and what a classified decode answers. Two operations read one,
+and neither decodes a leaf and neither refuses.
+
+```text
+canonicalManagedDocument(shape: DocumentShape,
+                         document: ManagedDocument | Null) -> ManagedDocument | Null
+
+classifyEffectiveChange(shape: DocumentShape,
+                        authored:  Mapping<MemberName, ManagedValue | Null>,
+                        originals: Mapping<MemberName, ManagedValue | Null>)
+                                                           -> EffectiveChangeSet
+
+EffectiveChangeSet
+  effective: set<MemberName>
+  restored:  set<MemberName>
+```
+
+`canonicalManagedDocument` answers the one form the shape gives a managed
+document's logical value. Only declared members contribute and an unknown key is
+dropped, exactly as the reduction excludes one. Presence is preserved at every
+containment depth — an omitted member stays omitted and a null one stays null —
+and the same `many` exception applies: an omitted key, a null, and an empty
+collection are one zero value and all three answer the empty collection. A `one`
+is canonicalized recursively and a `many` element-wise in stored order. It is the
+declared-member reduction's managed counterpart, and it is the sole shape-aware
+operation over managed documents: a consumer that fills a `many`'s zero or drops
+an unknown key by hand is implementing a second reduction, which this module
+already forbids.
+
+`classifyEffectiveChange` is the one operation answering whether an assignment
+changes anything, and every consumer that asks that question asks it here. It
+takes the members an assignment explicitly states and, under those same names,
+the values a read observed. A member no assignment names is not compared and is
+never filled: what is not in `authored` takes no part. A key the shape does not
+declare takes no part either, on either side.
+
+The classification is total: it decodes nothing, judges nothing, and refuses
+nothing. Stored state that a current authoring constraint would reject is still
+readable state, and a correction written against it must reach the store, so a
+value contradicting its declared shape passes through canonicalization as itself
+and compares unequal to any well-formed one. What the assignment states was
+judged where it entered.
+
+The rules the comparison applies are the ones above with one addition at the top
+level, and that addition is the whole of the absent-versus-null collapse `Presence`
+defers to here. An original `originals` does not carry is the same observed null
+as one it carries as null, for a member of any kind, because a stored NULL Column
+and an absent Document Path are two spellings of one observed value and a write
+may not see a difference between them. Below that top level presence is the
+shape's: an omitted declared leaf or `one` inside an assigned occurrence differs
+from an explicit null and can therefore be an effective change, because the
+assignment states a complete value and removing a member is a change like any
+other.
+
+The answer names members and carries no payload. `effective` and `restored` are
+disjoint and together name exactly the declared members `authored` states, so a
+consumer selects its own already-prepared values by those names; nothing here
+rewrites what will be stored, and no consumer learns a second spelling of a value
+from asking.
+
 ## Determinism and comparison
 
 Document object-member order is **not observable state**. Construction is
@@ -615,7 +681,9 @@ neither outcome changes this shape-aware verdict.
   adapts a written document — so no lowering and no golden ever holds its rendered
   text.
 - Write composition encodes an insert's complete document here and derives each
-  update's patches here, then lowers them through `m-dialect`.
+  update's patches here, then lowers them through `m-dialect`. It also asks here
+  whether an assignment changes anything — `classifyEffectiveChange` — and
+  canonicalizes the managed documents it prepares here.
 - Read materialization obtains `LocatedMemberInput` from the direct Structured
   Column's already-tagged `DocumentRead` or from `locateEntityMember`, passes
   either arm to `decodeLocatedMemberClassified`, then uses `decodeClassified`
@@ -631,5 +699,6 @@ neither outcome changes this shape-aware verdict.
 
 No consumer may hand a raw host-language value to a JSON serializer, spell a leaf
 encoding of its own, assemble a `Many` occurrence's array or a containment
-candidate itself, decode by inspecting a JSON value's shape, or expose a raw
-document as an Entity member or result field.
+candidate itself, decode by inspecting a JSON value's shape, expose a raw
+document as an Entity member or result field, compare an assigned member with the
+value it revises by a rule of its own, or fill a `Many`'s zero state by hand.

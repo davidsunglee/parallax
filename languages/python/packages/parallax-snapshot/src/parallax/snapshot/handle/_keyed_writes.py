@@ -66,6 +66,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
 
+from parallax.core.document_codec import classify_effective_change
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import InstalledLifecycle, refuse_reentry
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
@@ -91,6 +92,7 @@ from parallax.core.unit_work.instructions import (
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
+from parallax.snapshot.handle._family import comparison_shape
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._write_inputs import (
     BufferedInserts,
@@ -192,8 +194,8 @@ class PreparedSourceWrite:
     original values. Both sides pass through the SAME producer inside the
     adapter, so the effective change set is a comparison of like with like
     whether the originals came from a Change Record or from a published row —
-    and the comparison itself belongs to the ingress rather than to any adapter,
-    so no source decides its own effectiveness.
+    and the comparison itself is the document codec's, applied by the ingress
+    rather than by any adapter, so no source decides its own effectiveness.
 
     A destructive or close verb names no member, so ``originals`` is empty and
     the instruction is the identity row alone.
@@ -205,6 +207,18 @@ class PreparedSourceWrite:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "originals", _sealed_row(self.originals))
+
+    @property
+    def assigned(self) -> Mapping[str, object]:
+        """The authored side of the comparison: the instruction's members under
+        ``originals``' names, identity excluded.
+
+        The two sides of a comparison are the same member set, which is what
+        ``originals``' own invariant says; reading the assigned side through it
+        is that invariant spelled once rather than restated at the comparison.
+        """
+        row = self.instruction.rows[0]
+        return {name: row[name] for name in self.originals}
 
 
 @dataclass(frozen=True, slots=True)
@@ -495,33 +509,33 @@ def _effective_row(
     """The row this write actually buffers and the members it restored, or
     ``None`` for the write that buffers nothing.
 
-    One comparison rule, applied here rather than in either adapter, over values
-    the adapter ran through one producer on both sides: a member whose authored
-    value equals the original the source states was RESTORED, and what is left is
-    the effective change set. A restoration is not nothing — it is the author's
-    last word on that member — so a wholly restoring chain still buffers its
-    identity row when this transaction already buffered an assignment at the
-    scope it would claim, and the merged write is eliminated instead of writing
-    a value the caller took back.
+    Effectiveness is the document codec's one rule, asked here rather than in
+    either adapter, over values the adapter ran through one producer on both
+    sides: a member whose authored value is the original the source states was
+    RESTORED, and what is left is the effective change set. A restoration is not
+    nothing — it is the author's last word on that member — so a wholly restoring
+    chain still buffers its identity row when this transaction already buffered
+    an assignment at the scope it would claim, and the merged write is eliminated
+    instead of writing a value the caller took back.
+
+    The codec answers names alone, so what buffers is the prepared row's own
+    values selected by them: the comparison never rewrites what will be stored.
 
     A destructive or close verb names no member and always buffers its identity
     row: what it says about the row's existence is not a change set to reduce.
     """
     authored = prepared.instruction.rows[0]
-    originals = prepared.originals
-    identity = {name: value for name, value in authored.items() if name not in originals}
+    identity = {name: value for name, value in authored.items() if name not in prepared.originals}
     if mutation not in UPDATE_MUTATIONS:
         return identity, frozenset()
-    effective: dict[str, object] = {}
-    restored: set[str] = set()
-    for name, original in originals.items():
-        if authored[name] == original:
-            restored.add(name)
-        else:
-            effective[name] = authored[name]
-    restorations = frozenset(restored)
-    if effective:
-        return {**identity, **effective}, restorations
+    change = classify_effective_change(
+        comparison_shape(ctx.model.meta, resolved.entity),
+        prepared.assigned,
+        prepared.originals,
+    )
+    restorations = change.restored
+    if change.effective:
+        return {**identity, **{name: authored[name] for name in change.effective}}, restorations
     if not restorations or not cancels_a_pending_assignment(
         ctx.uow, ctx.model.meta, resolved.entity, resolved.hint, mutation
     ):
