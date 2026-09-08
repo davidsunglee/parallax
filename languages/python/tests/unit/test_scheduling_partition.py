@@ -33,6 +33,7 @@ ORTHOGONAL_SELECTORS = frozenset({"compile_sweep", "adapter_smoke"})
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 COST_JOB = "python-check-cost"
 COST_JOB_STEP = "just python-check-cost ${{ matrix.shard }}"
+UNGATING_KEYS = frozenset({"if", "continue-on-error"})
 WHOLE_CLASS = "1/1"
 
 # The primary semantic surfaces, each one directory under `tests/`.
@@ -124,6 +125,12 @@ def _deployed_cells() -> list[str]:
     return [str(cell) for cell in _cost_job()["strategy"]["matrix"]["shard"]]
 
 
+def _cost_job_step() -> Any:
+    """The step of that job which invokes the class command."""
+    (step,) = [step for step in _cost_job()["steps"] if COST_JOB in str(step.get("run", ""))]
+    return step
+
+
 def _index_and_count(cell: str) -> tuple[int, int]:
     index, _, count = cell.partition("/")
     return int(index), int(count)
@@ -158,6 +165,15 @@ def _selection(expression: str, shard: str) -> list[str]:
     return [line for line in collected.stdout.splitlines() if "::" in line]
 
 
+def test_the_cost_jobs_matrix_is_the_shard_vector_alone() -> None:
+    # The shard vector is the whole expansion only while it is the matrix's only
+    # key: a second dimension would multiply the cells, and `include` or
+    # `exclude` would add or drop cells the vector never names. Every assertion
+    # below reads that vector, so this is what makes them assertions about the
+    # cells GitHub Actions runs.
+    assert set(_cost_job()["strategy"]["matrix"]) == {"shard"}
+
+
 def test_the_cost_jobs_cells_are_every_shard_of_one_count() -> None:
     # The cells are the workflow's, not a copy of it: N of them, each naming N,
     # together naming every index of it once. A deleted, duplicated, or
@@ -174,11 +190,20 @@ def test_the_cost_job_runs_the_shard_its_cell_names() -> None:
     assert [run for run in runs if COST_JOB in run] == [COST_JOB_STEP]
 
 
+def test_every_cost_cell_runs_unconditionally_and_gates_on_its_verdict() -> None:
+    # A cell gates the shard it names only while it always runs and its failure
+    # is the job's: an `if` on the job or on the invoking step would skip part of
+    # the class, and `continue-on-error` on either would run that part ungated.
+    assert UNGATING_KEYS.isdisjoint(_cost_job())
+    assert UNGATING_KEYS.isdisjoint(_cost_job_step())
+
+
 def test_the_deployed_cells_partition_the_cost_class() -> None:
-    # What lets CI run the class as one cell per shard and still own it once
-    # (§9): the cells' selections together hold every cost item exactly once, and
-    # none of them is empty. The whole-class selection is the reference, so a
-    # shard mechanism that dropped or doubled an item is caught here.
+    # The cells' selections together hold every cost item exactly once and none
+    # of them is empty; with the expansion and the gating pinned above, that is
+    # what lets CI run the class as one cell per shard and still own it once
+    # (§9). The whole-class selection is the reference, so a shard mechanism that
+    # dropped or doubled an item is caught here.
     whole = _selection("cost", WHOLE_CLASS)
     shards = [_selection("cost", cell) for cell in _deployed_cells()]
     assert all(shards)
