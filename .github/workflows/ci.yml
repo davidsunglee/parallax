@@ -208,10 +208,12 @@ jobs:
   # that has loaded only what it needs. `just check` deliberately omits this
   # class (core/spec/language-testing.md §7) so the command run after every
   # change stays fast; this job is what keeps it gated on every change instead.
-  # The children are CPU-bound and this runner has two physical cores, so the
-  # class is split into four shards, one cell each: together they are the one
-  # run the class command owns (§9), and the partition is proved by
-  # `test_scheduling_partition.py`.
+  # Each child is CPU-bound work in an interpreter of its own, so the class is
+  # split across cells rather than across more workers within one: four cells
+  # bring this job under the longest of the others, past which splitting it
+  # further cannot shorten the run. Together they are the one run the class
+  # command owns (§9), over the shards `test_scheduling_partition.py` grades
+  # against this matrix.
   python-check-cost:
     runs-on: ubuntu-latest
     strategy:
