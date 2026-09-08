@@ -292,9 +292,10 @@ class WritePlanner:
         inspected. ``request.transaction_instant`` is threaded unevaluated
         until a surviving temporal mutation needs it.
 
-        Every surviving opening row is canonicalized before batching and settling
-        (:func:`_canonical_item`), so membership — which decides both — reads one
-        answer rather than one per stage.
+        Batching and settling read an opening row's member set directly, because
+        preparation already spelled every applicable member out: two rows that
+        write the same row therefore reach one group key and satisfy the Planned
+        Insert's own same-members rule without a canonicalizing pass here.
 
         A Materialized Write Group settles every group-wide semantic fact —
         temporal topology, the gate/concurrency decision, the affected-row
@@ -316,8 +317,7 @@ class WritePlanner:
             for item in (_without_noop_rows(item, resolved) for item in coalesced)
             if item is not None
         ]
-        canonical = [_canonical_item(item, resolved) for item in survivors]
-        batched = self._form_batches(canonical, resolved)
+        batched = self._form_batches(survivors, resolved)
         ordered = self._order(batched, resolved)
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
@@ -1934,40 +1934,3 @@ def _without_noop_rows(item: _CoalescedItem, resolved: Targets) -> _CoalescedIte
     if len(kept) == len(instruction.rows):
         return item
     return derive_keyed_write(instruction, kept)
-
-
-def _canonical_item(item: _CoalescedItem, resolved: Targets) -> _CoalescedItem:
-    """``item`` with every opening row's canonical member set spelled out.
-
-    An opening row that does not name a `many` Value Object occurrence has said the
-    occurrence holds no elements, so the empty collection is a member of that row as
-    surely as any value it wrote (`m-value-object`). Membership *is* the batching
-    decision and it is also what one step's entries must share, so the two rows
-    ``{id, tags: []}`` and ``{id}`` have to reach both with one member set: left
-    apart, they answer different group keys and then fail the Planned Insert's own
-    same-members rule, though they write the same row.
-
-    Only an OPENING row is canonicalized. A revising one is sparse — an unnamed
-    member there is untouched rather than zero — so adding the occurrence would turn
-    a member the caller left alone into one the statement assigns.
-
-    Passing an observation carrier through untouched loses no opening row: an
-    ``ObservedKeyedWrite`` refuses to wrap an insert, so every carrier is a
-    revising write by construction.
-    """
-    if not isinstance(item, PreparedKeyedWrite) or item.mutation not in INSERT_MUTATIONS:
-        return item
-    entity = item.target
-    zero_state = resolved.zero_state_members(entity)
-    if not zero_state:
-        return item
-    rows = tuple(_with_zero_states(row, zero_state) for row in item.rows)
-    return derive_keyed_write(item, rows)
-
-
-def _with_zero_states(row: Mapping[str, object], zero_state: Sequence[str]) -> Mapping[str, object]:
-    filled: dict[str, object] = dict(row)
-    for name in zero_state:
-        if name not in filled:
-            filled[name] = []
-    return filled

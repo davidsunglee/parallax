@@ -5482,7 +5482,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core`, `m-dialect` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
-| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read`, `m-edit` | generated forbidden contracts |
+| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read`, `m-edit`, `m-document-codec` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
 | `m-execution-lifecycle` | `parallax.core.execution_lifecycle` | `parallax.core.execution_lifecycle` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |

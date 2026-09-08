@@ -77,7 +77,7 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-sql` | src/sql | sql | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec`, `m-wire`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
 | `m-relationship` | src/relationship | relationship | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-temporal-read` | src/temporal-read | temporal-read | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
-| `m-unit-work` | src/unit-work | unit-work | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read`, `m-edit` | depcheck.toml |
+| `m-unit-work` | src/unit-work | unit-work | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read`, `m-edit`, `m-document-codec` | depcheck.toml |
 | `m-value-object` | src/value-object | value-object | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-wire` | src/wire | wire | `m-core` | depcheck.toml |
 | adapter composition | tests/composition | composition | postgres adapter | depcheck.toml |

@@ -176,6 +176,10 @@ def test_case_write_adapter_leaves_unknown_entities_for_core_classification() ->
 
 
 def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
+    # The adapter hands the authored document to core unread, and core answers the
+    # document its shape gives it: every declared leaf decoded into its managed
+    # carrier at every depth, and a key no member declares taking no part — the same
+    # canonical form the occurrence is stored in.
     instruction = instructions.KeyedWrite(
         "insert",
         "parallax.compatibility.Sample",
@@ -201,8 +205,8 @@ def test_case_write_adapter_normalizes_nested_value_object_documents() -> None:
     assert cast("Mapping[str, object]", profile["origin"])["since"] == dt.date(2026, 1, 1)
     entries = cast("Sequence[Mapping[str, object]]", profile["entries"])
     assert entries[0]["price"] == decimal.Decimal("2.25")
-    assert entries[0]["future"] is None
-    assert profile["future"] == {"opaque": True}
+    assert "future" not in entries[0]
+    assert "future" not in profile
 
 
 def test_case_query_adapter_preserves_canonical_carriers_before_core_validation() -> None:

@@ -563,6 +563,44 @@ def test_wire_preparation_owns_recursive_value_object_decoding() -> None:
 
 
 @pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
+def test_a_prepared_opening_row_states_every_applicable_many_occurrence(prepare: Any) -> None:
+    # Absence and the empty collection are one zero state, so an opening row that
+    # never mentions `marks` has said the occurrence holds none. Preparation is where
+    # that is spelled out, on both lanes: batching, the Planned Insert's own
+    # same-members rule, and lowering all read the row's member set, and a row whose
+    # zero state stayed implicit would answer them differently from a byte-identical
+    # one that named it.
+    prepared = prepare(
+        wi.KeyedWrite("insert", "Note", ({"id": 1, "title": "Ada"},)),
+        _MODELS["note"],
+    )
+    assert isinstance(prepared, wi.PreparedKeyedWrite)
+    assert prepared.rows[0] == {"id": 1, "title": "Ada", "marks": ()}
+
+
+def test_a_prepared_revising_row_fills_inside_what_it_assigns_and_nowhere_else() -> None:
+    # The opening-versus-revising distinction: a revising row is sparse, so a
+    # top-level occurrence it never named stays absent rather than becoming a zero
+    # the statement would write. Inside an occurrence it DID assign, the same
+    # absence is a value — assigning a document replaces the whole subtree, so a
+    # nested `many` the document left out is that subtree's empty collection.
+    note = wi.prepare_typed_write(
+        wi.KeyedWrite("update", "Note", ({"id": 1, "title": "Ada"},)),
+        _MODELS["note"],
+    )
+    assert isinstance(note, wi.PreparedKeyedWrite)
+    assert dict(note.rows[0]) == {"id": 1, "title": "Ada"}
+
+    customer = wi.prepare_typed_write(
+        wi.KeyedWrite("update", "Customer", ({"id": 9, "address": {"street": "Main"}},)),
+        _MODELS["customer"],
+    )
+    assert isinstance(customer, wi.PreparedKeyedWrite)
+    assert set(customer.rows[0]) == {"id", "address"}
+    assert customer.rows[0]["address"] == {"street": "Main", "phones": ()}
+
+
+@pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
 def test_prepared_json_leaves_are_deeply_frozen_before_retention(prepare: Any) -> None:
     payload: dict[str, object] = {"items": [{"value": 1}]}
     prepared = prepare(
@@ -673,7 +711,6 @@ def test_member_transformation_preserves_unknown_values_when_position_metadata_i
         entity,
         {"future": {"opaque": True}},
         converter=lambda _type, value, _path: (value, True),
-        fill_missing_many=False,
     )
     assert transformed.row == {"future": {"opaque": True}}
 

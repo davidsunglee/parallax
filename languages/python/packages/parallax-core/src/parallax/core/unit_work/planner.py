@@ -29,7 +29,6 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    Multiplicity,
     PrimaryKey,
     ValueObjectIdentity,
 )
@@ -217,24 +216,6 @@ class Targets:
         for value_object in position.applicable_value_objects:
             resolved[value_object.identity.path[-1]] = value_object.identity
         return resolved
-
-    def zero_state_members(self, entity: EntityMetadata) -> tuple[str, ...]:
-        """The member spellings whose ABSENCE from an opening row is a value.
-
-        Exactly ``entity``'s family-effective `many` Value Object occurrences.
-        Absence and the empty collection are one logical zero state for a `many`
-        (`m-value-object`), so a row that does not name one has said it holds no
-        elements — which makes the occurrence part of that row's canonical member
-        set whether or not the row spells it out.
-        """
-        position = self.families.entity(entity.identity)
-        if position is None:  # pragma: no cover - the facet covers every accepted Entity
-            return ()
-        return tuple(
-            value_object.identity.path[-1]
-            for value_object in position.applicable_value_objects
-            if value_object.multiplicity is Multiplicity.MANY
-        )
 
 
 def targets(model: Metamodel) -> Targets:
