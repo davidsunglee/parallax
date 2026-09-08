@@ -742,9 +742,9 @@ A **whole Value Object occurrence** compares through the same operation, presenc
 preserved on both sides: recursively for a `one` and element-wise in stored order
 for a `many`. A key no member declares takes no part on either side, so an
 occurrence that differs only in undeclared keys is equal and its write is
-eliminated. That leaves the undeclared key
-standing where issuing the write would have replaced the subtree and removed it,
-and the elimination is deliberately the conservative direction: an assignment
+eliminated. That leaves the undeclared key standing where issuing the write would
+have replaced the subtree and removed it, and the elimination is deliberately the
+conservative direction: an assignment
 cannot name such a key, so a write with nothing declared to say is not the place
 to destroy one. A declared member the authored document omits DOES take part,
 because the assignment removes it: the two sides compared are the complete

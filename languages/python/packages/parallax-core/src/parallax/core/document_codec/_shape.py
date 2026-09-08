@@ -203,16 +203,18 @@ def entity_shape(
     attributes: Sequence[AttributeMetadata],
     value_objects: Sequence[ValueObjectMetadata],
 ) -> DocumentShape:
-    """The document shape of one Entity's Structured Column, from its
-    document-resident members.
+    """One root document shape over the Entity members it is given.
 
-    The Entity-document counterpart of :func:`occurrence_shape`: one root object
-    holding every member of one row that lives inside the shared Structured
-    Column, each addressed by its canonical declared name. Residency is the
-    CALLER's answer — ``m-storage-layout``'s Member Placement decides it and this
-    module may not read a layout — so this takes the already-filtered members and
-    only unwinds their declarations into shape members, leaves before
-    occurrences, in the order given.
+    The Entity counterpart of :func:`occurrence_shape`: one root object holding
+    the given attributes and value objects, each addressed by its canonical
+    declared name, leaves before occurrences in the order given. This only unwinds
+    their declarations into shape members.
+
+    WHICH members is the CALLER's answer, because ``m-storage-layout``'s Member
+    Placement decides residency and this module may not read a layout. A caller
+    shaping a stored Structured Column passes that column's residents alone; one
+    stating a layout-neutral rule over a whole row — the effective-change
+    comparison, which a placement cannot change — passes every applicable member.
     """
     leaves: tuple[DocumentMember, ...] = tuple(
         Leaf(name=attribute.identity.name, type=attribute.type, nullable=attribute.nullable)
