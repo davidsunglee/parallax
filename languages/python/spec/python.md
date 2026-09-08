@@ -84,10 +84,27 @@ alias whose members no core contract names — is spelled in lowercase
 snake_case, the same convention Python identifiers use. `read_committed`,
 `read_dependency`, and `pre_commit` already follow it.
 
+A **code** is the one exception, and it is spelled the other way. A code is the
+stable identifier an error, refusal, or finding carries so an application can
+match on it rather than name it: `WriteEvidenceErrorCode`,
+`KEYED_WRITE_VALUE_CODES`, the document codec's finding codes, the
+query-definition and Snapshot-inspection refusal codes, and the structural
+violation reasons `parallax.core.base` and `parallax.core.metamodel` classify
+with. Every code the core spec authors is hyphenated —
+`descriptor-value-invalid`, `stored-data-leaf-undecodable`,
+`neutral-literal-noncanonical` — and a Python-authored code is hyphenated too,
+because the two arrive through one error surface and a caller matching that
+surface should not have to know which side authored which code.
+
 Where a runtime classification and a core-authored representation describe the
 same distinction, the module that already projects to the core form owns the
-translation and states both spellings literally. There is no shared casing
-converter, and a runtime value is never fed to one to produce a core token.
+translation and states both spellings literally in a table: the lifecycle
+observation's projections, the case format's Isolation Level tables, and
+materialization's stored-data issue codes. No casing converter stands in for
+such a table, and a runtime value is never recased or interpolated to produce a
+core token. The snake_case→camelCase member-name convention is not one of these
+translations: it derives an author's own member name (§3), not a second spelling
+of one fixed classification.
 
 Serialized output that Python itself defines — the built-in logging Provider's
 structured fields — carries the runtime spelling, because Python owns that
@@ -98,8 +115,9 @@ A value Python reproduces rather than authors is not a runtime classification
 and keeps its source spelling. That covers a native database error code and a
 driver's own message, and it also covers a `Literal` whose members restate a
 core-authored representation: `m-db-error`'s `uniqueViolation`, `deadlock`,
-`lockWaitTimeout`, and `connectionDead`, and the decoding reasons named by
-`m-wire`'s diagnostic codes.
+`lockWaitTimeout`, and `connectionDead`, the decoding reasons named by
+`m-wire`'s diagnostic codes, `m-sql`'s `MANAGED` and `COMPARISON_TEXT` bind
+forms, and `m-snapshot-read`'s `stored-data-*` issue codes.
 
 ### Temporal vocabulary and configuration
 
@@ -3890,12 +3908,14 @@ receive the current and subsequent events. Distinct Providers may share a
 concurrency-safe backend.
 
 `LoggingLifecycleProvider` accepts an application-configured `logging.Logger`
-and a `LifecycleLogDetail` of `safe` (default) or `diagnostic`. It owns no queue,
-listener, sink, overflow policy, flush, or shutdown. Both modes emit detached
-structured records without SQL or binds; Safe includes correlation, activity
-and outcome types, entity/interface, counters, duration, error type/code,
-database category/native code, and truncation flags, while Diagnostic adds the
-bounded message and stack. Started and ordinary non-root Finished events use
+and a `LifecycleLogDetail` of `safe` (default) or `diagnostic`; any other detail
+raises `ValueError` at construction rather than resolving to one of them, since a
+disclosure level nobody asked for is neither safe to widen nor safe to narrow. It
+owns no queue, listener, sink, overflow policy, flush, or shutdown. Both modes
+emit detached structured records without SQL or binds; Safe includes
+correlation, activity and outcome types, entity/interface, counters, duration,
+error type/code, database category/native code, and truncation flags, while
+Diagnostic adds the bounded message and stack. Started and ordinary non-root Finished events use
 DEBUG, successful root summaries INFO, retry-eligible rollbacks WARNING, and
 failed roots or rollback failures ERROR. The Logger is asked `isEnabledFor` for
 an event's exact level before that event is described, and an event it declines

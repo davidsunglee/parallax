@@ -200,16 +200,34 @@ class Case:
         raise ValueError(f"{self.path.name}: no module tag in {self.tags!r}")
 
 
+_SERIALIZED_ISOLATION: Final[Mapping[IsolationLevel, str]] = {
+    "read_committed": "read-committed",
+    "repeatable_read": "repeatable-read",
+    "serializable": "serializable",
+}
+"""The `m-case-format` `when.uow.isolation` token each Python level is named by.
+
+Both spellings are stated because only the right-hand side is core-authored:
+recasing one into the other would make the Python identifier load-bearing for a
+corpus token it does not state (`core/spec/00-overview.md` *Representation
+spelling*).
+"""
+
+_ISOLATION_LITERALS: Final[Mapping[str, IsolationLevel]] = {
+    serialized: level for level, serialized in _SERIALIZED_ISOLATION.items()
+}
+
+
 def isolation_literal(value: str) -> IsolationLevel:
     """The Python level a case's core serialized `when.uow.isolation` names.
 
     The corpus spells a level hyphenated and the language spells it as a Python
-    identifier, so one conversion sits at case ingress and every runner reads the
-    converted value. Routing it through :func:`~parallax.core.db_port.isolation_level`
-    keeps a corpus value the schema does not admit a refusal here rather than a
-    string a runner passes on.
+    identifier, so one projection sits at case ingress and every runner reads the
+    projected value. A token the projection does not name is refused through
+    :func:`~parallax.core.db_port.isolation_level`, so a corpus value the schema
+    does not admit stops here rather than reaching a runner as a bare string.
     """
-    return isolation_level(value.replace("-", "_"))
+    return isolation_level(_ISOLATION_LITERALS.get(value, value))
 
 
 def serialized_isolation(level: IsolationLevel) -> str:
@@ -220,7 +238,7 @@ def serialized_isolation(level: IsolationLevel) -> str:
     a level leaving the language reaches that comparison spelled as the corpus
     spells it.
     """
-    return level.replace("_", "-")
+    return _SERIALIZED_ISOLATION[level]
 
 
 def uow_isolation(case: Case) -> IsolationLevel | None:

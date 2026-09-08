@@ -82,6 +82,27 @@ database category and native code, and the truncation flags. ``diagnostic`` adds
 the bounded message and rendered stack. Neither carries SQL or binds.
 """
 
+_LOG_DETAILS: Final[tuple[LifecycleLogDetail, ...]] = ("safe", "diagnostic")
+"""The closed detail vocabulary, in the order a refusal lists it."""
+
+
+def _accepted_detail(value: object) -> LifecycleLogDetail:
+    """Return the vocabulary's own spelling of ``value``, or raise ``ValueError``.
+
+    A detail outside the two names no disclosure level this Provider can honor,
+    and answering it by falling back would let a request for ``diagnostic``
+    become ``safe`` — a configured observability setting silently degraded, and
+    under the opposite spelling a configured ``safe`` silently widened. The
+    candidate is compared to each name rather than looked up in a set, so a
+    value no set can be asked about is refused the same way as any other.
+    """
+    if isinstance(value, str):
+        for detail in _LOG_DETAILS:
+            if value == detail:
+                return detail
+    raise ValueError(f"detail must be one of {list(_LOG_DETAILS)}, got {value!r}")
+
+
 _MESSAGE: Final = "parallax execution lifecycle %s"
 """One deferred-formatting message per record: the transition name, and every
 other field through ``extra`` where a formatter can reach it structurally."""
@@ -742,6 +763,9 @@ class LoggingLifecycleProvider:
     ``DEBUG``, the root's summary at ``INFO`` when it succeeded and ``ERROR``
     when it did not, a retry-eligible rollback at ``WARNING``, and a failed
     rollback at ``ERROR``.
+
+    ``detail`` outside :data:`LifecycleLogDetail` raises ``ValueError`` at
+    construction, before any root is observed.
     """
 
     __slots__ = ("_detail", "_logger")
@@ -750,7 +774,7 @@ class LoggingLifecycleProvider:
 
     def __init__(self, logger: logging.Logger, /, *, detail: LifecycleLogDetail = "safe") -> None:
         self._logger = logger
-        self._detail = detail
+        self._detail = _accepted_detail(detail)
 
     def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
         return _LoggingHandler(self._logger, self._detail, execution)
