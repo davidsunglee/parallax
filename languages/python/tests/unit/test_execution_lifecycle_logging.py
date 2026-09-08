@@ -331,18 +331,18 @@ def test_every_runtime_classification_is_logged_in_its_own_python_spelling(
     ) == {"callback", "pre_commit", "commit"}
 
 
-def test_the_retired_detail_spelling_selects_nothing(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_a_detail_outside_the_vocabulary_is_refused_at_construction() -> None:
     # `LifecycleLogDetail` is the one family an application configures, so its
     # migration has to be a rejection rather than a rename that keeps working.
-    # There is no alias: the retired spelling is an unknown value, and an
-    # unknown value discloses the less of the two details rather than the more.
-    finished = ReadFinished(EXECUTION.id, 1, 1, None, ReadFailed(_failure()))
-    retired = cast("LifecycleLogDetail", "DIAGNOSTIC")
-    (record,) = _records(caplog, [finished], detail=retired)
-    assert "error_message" not in record.fields
-    assert "error_stack" not in record.fields
+    # There is no alias: the retired spelling names no disclosure level, and
+    # accepting it would either narrow a requested `diagnostic` or widen a
+    # requested `safe` without the application ever being told. The accepted
+    # half is read off the alias, so a detail added later is graded here too.
+    for detail in get_args(LifecycleLogDetail.__value__):
+        assert LoggingLifecycleProvider(_logger(), detail=detail).open(EXECUTION) is not None
+    for refused in ("SAFE", "DIAGNOSTIC", "", None, 0):
+        with pytest.raises(ValueError, match=r"detail must be one of"):
+            LoggingLifecycleProvider(_logger(), detail=cast("LifecycleLogDetail", refused))
 
 
 def test_a_caused_failure_names_the_direct_child_it_is_attributed_to(

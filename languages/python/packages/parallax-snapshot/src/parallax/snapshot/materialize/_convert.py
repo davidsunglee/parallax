@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Protocol, cast
+from typing import Final, Protocol, cast
 
 from parallax.core.base import (
     SQL_NULL,
@@ -47,6 +47,7 @@ from parallax.core.db_port import Row
 from parallax.core.document_codec import (
     UNAVAILABLE,
     DocumentFinding,
+    DocumentFindingCode,
     DocumentPathSegment,
     Present,
     decode_occurrence_classified,
@@ -500,6 +501,22 @@ def _occurrence_issue(
     )
 
 
+_STORED_ISSUE_CODES: Final[Mapping[DocumentFindingCode, StoredDataIssueCode]] = {
+    "required-member-absent": "stored-data-required-member-absent",
+    "required-member-null": "stored-data-required-member-null",
+    "one-wrong-kind": "stored-data-one-wrong-kind",
+    "many-wrong-kind": "stored-data-many-wrong-kind",
+    "leaf-undecodable": "stored-data-leaf-undecodable",
+}
+"""The `m-snapshot-read` issue code each codec-local finding is published as.
+
+Both spellings are stated because only the right-hand side is core-authored:
+composing one from the other would make the codec's own vocabulary load-bearing
+for a corpus token it does not state (`core/spec/00-overview.md` *Representation
+spelling*).
+"""
+
+
 def _stored_issue_code(
     finding: DocumentFinding,
     *,
@@ -513,7 +530,7 @@ def _stored_issue_code(
         "required-member-null",
     }:
         return "stored-data-attribute-null"
-    return cast("StoredDataIssueCode", f"stored-data-{finding.code}")
+    return _STORED_ISSUE_CODES[finding.code]
 
 
 def _member_identity(

@@ -32,11 +32,13 @@ from parallax.core.execution_lifecycle import (
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
+    AttemptPhase,
     AttemptRollbackFailed,
     AttemptRolledBack,
     CausedFailure,
     DatabaseCallFailed,
     DatabaseCallFinished,
+    DatabaseCallKind,
     DatabaseCallStarted,
     DatabaseReadCompleted,
     DatabaseWriteCompleted,
@@ -52,6 +54,7 @@ from parallax.core.execution_lifecycle import (
     ReadCompleted,
     ReadFailed,
     ReadFinished,
+    ReadInterface,
     ReadStarted,
     RootExecutionKind,
     SnapshotStreamFinished,
@@ -74,6 +77,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.unit_work import WriteBatchTrigger
 
 __all__ = [
     "LifecycleObservation",
@@ -111,7 +115,10 @@ class ObservedCall:
 # is still written out: the tables are what makes the corpus token independent of
 # the runtime one, so deriving any member — by casing rule or by falling back to
 # the runtime value — would make a Python rename silently rewrite the oracle.
-_CALL_KIND: Final[dict[str, Literal["read", "write"]]] = {"read": "read", "write": "write"}
+_CALL_KIND: Final[dict[DatabaseCallKind, Literal["read", "write"]]] = {
+    "read": "read",
+    "write": "write",
+}
 
 _ROOT_KIND: Final[dict[RootExecutionKind, str]] = {
     "read": "read",
@@ -119,14 +126,18 @@ _ROOT_KIND: Final[dict[RootExecutionKind, str]] = {
     "snapshot_stream": "snapshot-stream",
 }
 
-_READ_INTERFACE: Final[dict[str, str]] = {"typed": "typed", "wire": "wire", "rows": "rows"}
+_READ_INTERFACE: Final[dict[ReadInterface, str]] = {
+    "typed": "typed",
+    "wire": "wire",
+    "rows": "rows",
+}
 
-_WRITE_BATCH_TRIGGER: Final[dict[str, str]] = {
+_WRITE_BATCH_TRIGGER: Final[dict[WriteBatchTrigger, str]] = {
     "read_dependency": "read-dependency",
     "pre_commit": "pre-commit",
 }
 
-_ATTEMPT_PHASE: Final[dict[str, str]] = {
+_ATTEMPT_PHASE: Final[dict[AttemptPhase, str]] = {
     "callback": "callback",
     "pre_commit": "pre-commit",
     "commit": "commit",

@@ -283,7 +283,7 @@ class _Fault:
     an attempt whose callback ran, while a ``boundary`` fault stops the boundary
     from opening, so the one attempt that adopted and started finishes
     begin-failed before any callback and is never retried. ``retriable`` is `m-auto-retry` /
-    `m-opt-lock`'s verdict on the kind, ``opt-in`` where
+    `m-opt-lock`'s verdict on the kind, ``opt_in`` where
     `retryOptimisticConflicts` decides it. ``error`` builds the translated
     :class:`DatabaseError` the real adapter's own classification would produce,
     and is ``None`` for the one kind that raises nothing: an optimistic conflict
@@ -294,7 +294,7 @@ class _Fault:
     """
 
     seam: Literal["work", "boundary"]
-    retriable: Literal["always", "never", "opt-in"]
+    retriable: Literal["always", "never", "opt_in"]
     error: Callable[[], DatabaseError] | None
 
 
@@ -320,7 +320,7 @@ _FAULTS: Final[Mapping[str, _Fault]] = {
             category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
         ),
     ),
-    "optimistic-lock-conflict": _Fault(seam="work", retriable="opt-in", error=None),
+    "optimistic-lock-conflict": _Fault(seam="work", retriable="opt_in", error=None),
     # Uncategorized on purpose: a refused session setup is a request the engine
     # would not honor, not a contention the classifier has a neutral category
     # for, so nothing above may read it as retriable.
@@ -501,7 +501,7 @@ def expected_attempts(
         return 1
     retriable = (
         bool(retry_optimistic_conflicts)
-        if kind.retriable == "opt-in"
+        if kind.retriable == "opt_in"
         else kind.retriable == "always"
     )
     if not retriable:
