@@ -287,7 +287,7 @@ python-test-db:
 # production lines these measurements drive are covered by the suites grading
 # their behavior, which `python-test-dbfree` owns.
 # `shard` is CI's: each cell of the job's shard matrix runs one I/N of the class,
-# and the four cells together are the one run the class command owns
+# and the cells together are the one run the class command owns
 # (core/spec/language-testing.md §9). The default is the whole class.
 [metadata("runtime:slow", "scheduling:cost")]
 [doc("Every Python test reading the whole interpreter, each in one of its own.")]
