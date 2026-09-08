@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import yaml
 
-from parallax.core.db_port import IsolationLevel, isolation_level
+from parallax.core.db_port import IsolationLevel
 from parallax.core.wire._json import authored_number
 
 __all__ = [
@@ -223,11 +223,18 @@ def isolation_literal(value: str) -> IsolationLevel:
 
     The corpus spells a level hyphenated and the language spells it as a Python
     identifier, so one projection sits at case ingress and every runner reads the
-    projected value. A token the projection does not name is refused through
-    :func:`~parallax.core.db_port.isolation_level`, so a corpus value the schema
-    does not admit stops here rather than reaching a runner as a bare string.
+    projected value. Only the three core serialized tokens are accepted: a
+    Python level's own spelling names no corpus value, so admitting it would
+    alias a core-authored representation (`core/spec/00-overview.md`
+    *Representation spelling*). A token outside the projection is refused here
+    rather than reaching a runner as a bare string.
     """
-    return isolation_level(_ISOLATION_LITERALS.get(value, value))
+    level = _ISOLATION_LITERALS.get(value)
+    if level is None:
+        raise ValueError(
+            f"when.uow.isolation must be one of {sorted(_ISOLATION_LITERALS)}, got {value!r}"
+        )
+    return level
 
 
 def serialized_isolation(level: IsolationLevel) -> str:
