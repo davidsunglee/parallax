@@ -88,8 +88,8 @@ def _nothing(sample: Callable[[], None]) -> None:
 
 def _unobserved_read(sample: Callable[[], None]) -> None:
     with (
-        open_read_root(None, target=TARGET, interface="TYPED", edition=EDITION) as read,
-        read.database_call(STATEMENT, "READ", TARGET) as call,
+        open_read_root(None, target=TARGET, interface="typed", edition=EDITION) as read,
+        read.database_call(STATEMENT, "read", TARGET) as call,
     ):
         call.read_completed(ROWS)
         sample()
@@ -97,8 +97,8 @@ def _unobserved_read(sample: Callable[[], None]) -> None:
 
 def _declined_read(sample: Callable[[], None]) -> None:
     with (
-        open_read_root(DECLINED, target=TARGET, interface="TYPED", edition=EDITION) as read,
-        read.database_call(STATEMENT, "READ", TARGET) as call,
+        open_read_root(DECLINED, target=TARGET, interface="typed", edition=EDITION) as read,
+        read.database_call(STATEMENT, "read", TARGET) as call,
     ):
         call.read_completed(ROWS)
         sample()
@@ -107,7 +107,7 @@ def _declined_read(sample: Callable[[], None]) -> None:
 def _one_declined_opening(sample: Callable[[], None]) -> None:
     """The control for the declined path: exactly the UUID, the descriptor, and
     the opening call the specification permits it, and nothing else."""
-    execution = RootExecution(uuid4(), "READ")
+    execution = RootExecution(uuid4(), "read")
     DECLINING.open(execution)
     sample()
 
@@ -132,7 +132,7 @@ def _unobserved_transaction(sample: Callable[[], None]) -> None:
         invocation.attempt("edition") as attempt,
     ):
         with attempt.write_batch("pre_commit") as batch:
-            with batch.database_call(STATEMENT, "WRITE", TARGET) as call:
+            with batch.database_call(STATEMENT, "write", TARGET) as call:
                 call.write_completed(AFFECTED)
             with batch.enforcing(call):
                 sample()
@@ -149,7 +149,7 @@ def _flush_under(batch: WriteBatchActivity) -> Seam:
     """
 
     def run(sample: Callable[[], None]) -> None:
-        with batch.database_call(STATEMENT, "WRITE", TARGET) as call:
+        with batch.database_call(STATEMENT, "write", TARGET) as call:
             call.write_completed(AFFECTED)
             sample()
 
@@ -158,7 +158,7 @@ def _flush_under(batch: WriteBatchActivity) -> Seam:
 
 def _scopes_under(root: ReadActivity) -> Seam:
     def run(sample: Callable[[], None]) -> None:
-        with root as read, read.database_call(STATEMENT, "READ", TARGET) as call:
+        with root as read, read.database_call(STATEMENT, "read", TARGET) as call:
             call.read_completed(ROWS)
             sample()
 
@@ -265,8 +265,8 @@ def test_after_a_decline_the_scopes_cost_what_the_default_path_costs() -> None:
     # "After decline it has the same event-, counter-, diagnostic-, and
     # clock-free path": the opening is the whole difference, so what a declined
     # root opens is costed exactly as the default path's scopes are.
-    declined = open_read_root(DECLINED, target=TARGET, interface="TYPED", edition=EDITION)
-    default = open_read_root(None, target=TARGET, interface="TYPED", edition=EDITION)
+    declined = open_read_root(DECLINED, target=TARGET, interface="typed", edition=EDITION)
+    default = open_read_root(None, target=TARGET, interface="typed", edition=EDITION)
     tracemalloc.start()
     try:
         default_kept, default_transient = allocation(_scopes_under(default))

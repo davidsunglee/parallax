@@ -640,8 +640,8 @@ def _observed_read_over(result: list[dict[str, object]]) -> Seam:
 
     def run(sample: Callable[[], None]) -> None:
         with (
-            open_read_root(INSTALLED, target=TARGET, interface="TYPED", edition=EDITION) as read,
-            read.database_call(STATEMENT, "READ", TARGET) as call,
+            open_read_root(INSTALLED, target=TARGET, interface="typed", edition=EDITION) as read,
+            read.database_call(STATEMENT, "read", TARGET) as call,
         ):
             call.read_completed(result)
             sample()
@@ -663,8 +663,8 @@ def _observed_read_owning(count: int) -> Seam:
     def run(sample: Callable[[], None]) -> None:
         result = rows(count)
         with (
-            open_read_root(INSTALLED, target=TARGET, interface="TYPED", edition=EDITION) as read,
-            read.database_call(STATEMENT, "READ", TARGET) as call,
+            open_read_root(INSTALLED, target=TARGET, interface="typed", edition=EDITION) as read,
+            read.database_call(STATEMENT, "read", TARGET) as call,
         ):
             call.read_completed(result)
             del result
@@ -702,9 +702,9 @@ alone it is one live chain, and every level of it is measured where it stands.
 def _read_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[object, ...]:
     """A Read root and its Database Call: the shallowest shape a root has."""
     read = stack.enter_context(
-        open_read_root(installed, target=TARGET, interface="TYPED", edition=EDITION)
+        open_read_root(installed, target=TARGET, interface="typed", edition=EDITION)
     )
-    call = stack.enter_context(read.database_call(STATEMENT, "READ", TARGET))
+    call = stack.enter_context(read.database_call(STATEMENT, "read", TARGET))
     call.read_completed(SMALL)
     return (read, call)
 
@@ -744,7 +744,7 @@ def _write_batch_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple
     """
     invocation, attempt = _begun_attempt(stack, installed)
     batch = stack.enter_context(attempt.write_batch("pre_commit"))
-    call = stack.enter_context(batch.database_call(STATEMENT, "WRITE", TARGET))
+    call = stack.enter_context(batch.database_call(STATEMENT, "write", TARGET))
     # The count is measured off the same list the shallow call reports the length
     # of, rather than named as a constant: an integer a module already holds is a
     # reference and an integer a call computes is an allocation, and a call has to
@@ -764,8 +764,8 @@ def _participating_read_chain(
     two levels down under an attempt.
     """
     invocation, attempt = _begun_attempt(stack, installed)
-    read = stack.enter_context(attempt.read(TARGET, "TYPED"))
-    call = stack.enter_context(read.database_call(STATEMENT, "READ", TARGET))
+    read = stack.enter_context(attempt.read(TARGET, "typed"))
+    call = stack.enter_context(read.database_call(STATEMENT, "read", TARGET))
     call.read_completed(SMALL)
     return (invocation, attempt, read, call)
 
@@ -778,11 +778,11 @@ def _stream_chain(stack: ExitStack, installed: InstalledLifecycle) -> tuple[obje
     """
     stream = stack.enter_context(
         open_snapshot_stream_root(
-            installed, target=TARGET, interface="TYPED", batch_size=PAGE, edition=EDITION
+            installed, target=TARGET, interface="typed", batch_size=PAGE, edition=EDITION
         )
     )
     batch = stack.enter_context(stream.batch())
-    call = stack.enter_context(batch.database_call(STATEMENT, "READ", TARGET))
+    call = stack.enter_context(batch.database_call(STATEMENT, "read", TARGET))
     call.read_completed(SMALL)
     stack.callback(stream.exhausted)
     return (stream, batch, call)
@@ -798,9 +798,9 @@ def _participating_stream_chain(
     the per-depth reading below say anything about them.
     """
     invocation, attempt = _begun_attempt(stack, installed)
-    stream = stack.enter_context(attempt.snapshot_stream(TARGET, "TYPED", PAGE))
+    stream = stack.enter_context(attempt.snapshot_stream(TARGET, "typed", PAGE))
     batch = stack.enter_context(stream.batch())
-    call = stack.enter_context(batch.database_call(STATEMENT, "READ", TARGET))
+    call = stack.enter_context(batch.database_call(STATEMENT, "read", TARGET))
     call.read_completed(SMALL)
     stack.callback(stream.exhausted)
     return (invocation, attempt, stream, batch, call)

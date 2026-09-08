@@ -103,7 +103,7 @@ def test_a_typed_find_brackets_its_one_database_call() -> None:
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots
-    assert root.execution.kind == "READ"
+    assert root.execution.kind == "read"
     started, call_started, call_finished, finished = root.events
     assert _transitions(root.events) == [
         "ReadStarted",
@@ -119,9 +119,9 @@ def test_a_typed_find_brackets_its_one_database_call() -> None:
     assert {event.execution_id for event in root.events} == {root.execution.id}
 
     assert isinstance(started, ReadStarted)
-    assert (started.target, started.interface) == ("parallax.compatibility.Account", "TYPED")
+    assert (started.target, started.interface) == ("parallax.compatibility.Account", "typed")
     assert isinstance(call_started, DatabaseCallStarted)
-    assert (call_started.target, call_started.kind) == ("parallax.compatibility.Account", "READ")
+    assert (call_started.target, call_started.kind) == ("parallax.compatibility.Account", "read")
     assert isinstance(call_finished, DatabaseCallFinished)
     assert call_finished.outcome == DatabaseReadCompleted(1)
     assert isinstance(finished, ReadFinished)
@@ -233,7 +233,7 @@ def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
         )
     )
     wire_root, rows_root = recorder.roots
-    for root, interface in ((wire_root, "WIRE"), (rows_root, "ROWS")):
+    for root, interface in ((wire_root, "wire"), (rows_root, "rows")):
         started = root.events[0]
         assert isinstance(started, ReadStarted)
         assert started.interface == interface
@@ -383,8 +383,8 @@ def test_the_default_path_never_spells_the_target_it_is_handed() -> None:
     probe = _Probe()
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=probe, interface="TYPED", edition="edition") as read,
-        read.database_call(statement, "READ", probe) as call,
+        open_read_root(None, target=probe, interface="typed", edition="edition") as read,
+        read.database_call(statement, "read", probe) as call,
     ):
         call.read_completed(())
     assert _Probe.reads == 0
@@ -405,8 +405,8 @@ def test_the_default_path_never_sizes_the_rows_it_is_handed() -> None:
     rows = _Rows()
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=ACCOUNT_TARGET, interface="TYPED", edition="edition") as read,
-        read.database_call(statement, "READ", ACCOUNT_TARGET) as call,
+        open_read_root(None, target=ACCOUNT_TARGET, interface="typed", edition="edition") as read,
+        read.database_call(statement, "read", ACCOUNT_TARGET) as call,
     ):
         call.read_completed(rows)
     assert _Rows.sizings == 0
@@ -420,8 +420,8 @@ def test_the_default_path_binds_no_method_to_enter_or_leave_a_scope() -> None:
     # methods answer the function itself, so no scope entry binds anything.
     statement = LoweredStatement("select 1", ())
     with (
-        open_read_root(None, target=ACCOUNT_TARGET, interface="TYPED", edition="edition") as read,
-        read.database_call(statement, "READ", ACCOUNT_TARGET) as call,
+        open_read_root(None, target=ACCOUNT_TARGET, interface="typed", edition="edition") as read,
+        read.database_call(statement, "read", ACCOUNT_TARGET) as call,
     ):
         bound = [
             obj
@@ -548,7 +548,7 @@ def test_a_real_call_site_hands_the_seam_only_what_the_read_already_holds(
     (statement, kind, call_target), *further_calls = borrowing.calls
     assert further_openings == []
     assert further_calls == []
-    assert (interface, kind) == ("TYPED", "READ")
+    assert (interface, kind) == ("typed", "read")
     assert root_target is compiled.target
     assert call_target is compiled.target
     assert statement is compiled.statement

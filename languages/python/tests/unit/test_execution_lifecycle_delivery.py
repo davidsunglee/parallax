@@ -200,7 +200,7 @@ def test_a_declining_provider_is_asked_once_and_told_nothing_after() -> None:
     port = ScriptedPort(Read(rows=[NEW_ROW]))
     db = _db(port, provider)
     _read(db)
-    assert [execution.kind for execution in provider.opened] == ["READ"]
+    assert [execution.kind for execution in provider.opened] == ["read"]
     assert provider.reported == []
     # The declined root ran the query exactly as an unobserved one does.
     assert [type(op) for op in port.calls] == [ReadCall]
@@ -396,11 +396,11 @@ def test_a_deactivated_publisher_drops_an_event_it_is_still_handed() -> None:
     # directly so a future activity that forgets to ask cannot revive a root.
     handler = _FailingHandler(fail_at=1, failure=KeyboardInterrupt())
     provider = _Provider(handler)
-    execution = RootExecution(uuid4(), "READ")
+    execution = RootExecution(uuid4(), "read")
     publisher = _activity._Publisher(  # pyright: ignore[reportPrivateUsage] - the unit test drives the per-root publisher directly
         execution.id, _installed(provider), handler
     )
-    event = ReadStarted(execution.id, 1, 1, None, "Account", "TYPED", "edition")
+    event = ReadStarted(execution.id, 1, 1, None, "Account", "typed", "edition")
     with pytest.raises(KeyboardInterrupt):
         publisher.deliver(event)
     assert not publisher.active
@@ -444,10 +444,10 @@ def test_a_database_call_reports_a_write_count_the_same_way_it_reports_a_read() 
     recorder = RecordingLifecycleProvider()
     account = EntityIdentity(None, "Account")
     root = open_read_root(
-        _installed(recorder), target=account, interface="TYPED", edition="edition"
+        _installed(recorder), target=account, interface="typed", edition="edition"
     )
     statement = LoweredStatement("update account set balance = ?", (5,))
-    with root as read, read.database_call(statement, "WRITE", account) as call:
+    with root as read, read.database_call(statement, "write", account) as call:
         call.write_completed(3)
 
     (recorded,) = recorder.roots

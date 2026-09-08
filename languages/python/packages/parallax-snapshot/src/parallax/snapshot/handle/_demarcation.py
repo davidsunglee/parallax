@@ -592,7 +592,7 @@ class _FlushEdge:
         dialect = self._conn.dialect
         batch = self._batch
         for step, statement in stream_lowered(plan, self._model, dialect):
-            with batch.database_call(statement, "WRITE", step.entity) as call:
+            with batch.database_call(statement, "write", step.entity) as call:
                 affected = self._conn.execute_write(
                     dialect.to_driver_sql(statement.sql), list(statement.binds)
                 )

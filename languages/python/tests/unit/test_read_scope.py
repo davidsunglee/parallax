@@ -469,7 +469,7 @@ def test_one_scope_chooses_its_publication_per_call() -> None:
     scope.wire_find(_wire_node()).result()
     scope.read_rows(_rows_node())
 
-    assert execution.interfaces == ["TYPED", "WIRE", "ROWS"]
+    assert execution.interfaces == ["typed", "wire", "rows"]
 
 
 def test_the_two_graph_publications_carry_the_selections_edition_and_the_values_lane_has_none() -> (
@@ -481,13 +481,13 @@ def test_the_two_graph_publications_carry_the_selections_edition_and_the_values_
     # error rather than a third format, and the row form stamps its own result
     # instead.
     selected = _selection()
-    typed = read_scope_module.publication_for(selected, "TYPED")
-    wire = read_scope_module.publication_for(selected, "WIRE")
+    typed = read_scope_module.publication_for(selected, "typed")
+    wire = read_scope_module.publication_for(selected, "wire")
 
-    assert (typed.interface, typed.edition) == ("TYPED", "test")
-    assert (wire.interface, wire.edition) == ("WIRE", "test")
+    assert (typed.interface, typed.edition) == ("typed", "test")
+    assert (wire.interface, wire.edition) == ("wire", "test")
     with pytest.raises(ValueError, match="the values lane publishes no graph"):
-        read_scope_module.publication_for(selected, "ROWS")
+        read_scope_module.publication_for(selected, "rows")
 
 
 # --------------------------------------------------------------------------- #
@@ -614,8 +614,8 @@ def test_the_wire_stream_verb_crosses_no_classless_refusal_at_entry() -> None:
 @pytest.mark.parametrize(
     ("verb_name", "interface", "target"),
     [
-        ("stream", "TYPED", "parallax.compatibility.Account"),
-        ("wire_stream", "WIRE", "Account"),
+        ("stream", "typed", "parallax.compatibility.Account"),
+        ("wire_stream", "wire", "Account"),
     ],
 )
 def test_constructing_a_stream_opens_no_activity_and_entering_it_opens_one(

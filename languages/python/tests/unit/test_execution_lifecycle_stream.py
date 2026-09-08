@@ -175,7 +175,7 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
         assert [root.id for root in stream] == [1, 2, 3]
 
     (root,) = recorder.roots
-    assert root.execution.kind == "SNAPSHOT_STREAM"
+    assert root.execution.kind == "snapshot_stream"
     assert _transitions(root) == [
         "SnapshotStreamStarted",
         "StreamBatchStarted",
@@ -207,7 +207,7 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
     (started,) = _of(root, SnapshotStreamStarted)
     assert (started.target, started.interface, started.batch_size) == (
         "parallax.compatibility.Order",
-        "TYPED",
+        "typed",
         2,
     )
     (finished,) = _of(root, SnapshotStreamFinished)
@@ -222,7 +222,7 @@ def test_a_wire_stream_reports_its_own_interface() -> None:
 
     (root,) = recorder.roots
     (started,) = _of(root, SnapshotStreamStarted)
-    assert started.interface == "WIRE"
+    assert started.interface == "wire"
 
 
 def test_a_page_filled_exactly_is_the_last_batch_and_the_stream_still_exhausts() -> None:
@@ -453,7 +453,7 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
     assert _accounts(port, recorder).transact(fn) == [1, 2, 3]
 
     (root,) = recorder.roots
-    assert root.execution.kind == "TRANSACTION_INVOCATION"
+    assert root.execution.kind == "transaction_invocation"
     assert _transitions(root) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
@@ -567,7 +567,7 @@ def test_a_declined_stream_root_costs_its_opening_and_delivers_unchanged() -> No
     port = ScriptedPort(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
     with _connected(port, ORDERS_MODEL, provider).stream(_active_orders(), batch_size=2) as stream:
         assert [root.id for root in stream] == [1, 2, 3]
-    assert [execution.kind for execution in provider.opened] == ["SNAPSHOT_STREAM"]
+    assert [execution.kind for execution in provider.opened] == ["snapshot_stream"]
     assert [type(op) for op in port.calls] == [ReadCall, ReadCall]
 
 

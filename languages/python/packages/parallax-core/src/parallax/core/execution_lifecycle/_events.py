@@ -28,15 +28,15 @@ from parallax.core.execution_lifecycle._diagnostics import (
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import Concurrency, WriteBatchTrigger
 
-type RootExecutionKind = Literal["READ", "TRANSACTION_INVOCATION", "SNAPSHOT_STREAM"]
+type RootExecutionKind = Literal["read", "transaction_invocation", "snapshot_stream"]
 """Which outermost Handle operation a Root Execution describes."""
 
-type ReadInterface = Literal["TYPED", "WIRE", "ROWS"]
-"""Which read interface published a Read's result; ``ROWS`` is the internal
+type ReadInterface = Literal["typed", "wire", "rows"]
+"""Which read interface published a Read's result; ``rows`` is the internal
 values lane."""
 
-type DatabaseCallKind = Literal["READ", "WRITE"]
-"""Whether a Database Call ran a query or DML — carried so a FAILED call stays
+type DatabaseCallKind = Literal["read", "write"]
+"""Whether a Database Call ran a query or DML — carried so a failed call stays
 classifiable without parsing its SQL."""
 
 
@@ -311,12 +311,12 @@ class TransactionInvocationFinished(_Event):
     outcome: TransactionInvocationOutcome
 
 
-type AttemptPhase = Literal["CALLBACK", "PRE_COMMIT", "COMMIT"]
+type AttemptPhase = Literal["callback", "pre_commit", "commit"]
 """Where inside a physical attempt its failure arose.
 
-``CALLBACK`` covers the callback itself and everything it caused — joined
-invocations, reads, and read-dependency batches. ``PRE_COMMIT`` is the final
-automatic batch after the callback returned. ``COMMIT`` is the durability call.
+``callback`` covers the callback itself and everything it caused — joined
+invocations, reads, and read-dependency batches. ``pre_commit`` is the final
+automatic batch after the callback returned. ``commit`` is the durability call.
 """
 
 

@@ -1146,7 +1146,7 @@ def execute_read(port: DbPort, compiled: CompiledRead, calls: DatabaseCallScope)
     """
     statement = compiled.statement
     document_reads = compiled.document_reads
-    with calls.database_call(statement, "READ", compiled.target) as call:
+    with calls.database_call(statement, "read", compiled.target) as call:
         driver_sql = port.dialect.to_driver_sql(statement.sql)
         binds = list(statement.binds)
         rows = (
@@ -1359,7 +1359,7 @@ def typed_publication(
             graph, meta, construction, ordinal_offset=ordinal_offset, sources=sources
         )
 
-    return ResultPublication("TYPED", roots_of, edition)
+    return ResultPublication("typed", roots_of, edition)
 
 
 def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
@@ -1382,7 +1382,7 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
             sources=merge.by_allocation(sources),
         )
 
-    return ResultPublication("WIRE", roots_of, edition)
+    return ResultPublication("wire", roots_of, edition)
 
 
 def _materialize_result_graph(

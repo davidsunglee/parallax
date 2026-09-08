@@ -2,7 +2,7 @@
 (m-execution-lifecycle, Docker-free).
 
 Two claims carry the whole module. The first is a SAFETY claim: no record
-carries SQL or a bind at either detail, which is what lets ``SAFE`` be the
+carries SQL or a bind at either detail, which is what lets ``safe`` be the
 production default rather than a reduced mode somebody has to select. The
 second is a COMPLETENESS claim: the level rule and the field set answer every
 transition in the algebra, the four stream ones included, so an operator reading
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Final, get_args
+from typing import Any, Final, cast, get_args
 from uuid import UUID, uuid4
 
 import pytest
@@ -88,9 +88,9 @@ from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
 
-EXECUTION = RootExecution(uuid4(), "READ")
-TRANSACTION = RootExecution(uuid4(), "TRANSACTION_INVOCATION")
-STREAM = RootExecution(uuid4(), "SNAPSHOT_STREAM")
+EXECUTION = RootExecution(uuid4(), "read")
+TRANSACTION = RootExecution(uuid4(), "transaction_invocation")
+STREAM = RootExecution(uuid4(), "snapshot_stream")
 STATEMENT = LoweredStatement("select id from account where id = ?", (7,))
 
 _STANDARD: Final = frozenset(
@@ -133,7 +133,7 @@ def _records(
     events: list[ExecutionEvent],
     *,
     execution: RootExecution = EXECUTION,
-    detail: LifecycleLogDetail = "SAFE",
+    detail: LifecycleLogDetail = "safe",
 ) -> list[_Written]:
     """What one root's Handler writes for ``events``, in order."""
     logger = _logger()
@@ -170,7 +170,7 @@ def _failure(message: str = "the row vanished") -> DirectFailure:
 
 
 def _attempt_failure(*, retry_eligible: bool) -> AttemptFailure:
-    return AttemptFailure("CALLBACK", _failure(), retry_eligible)
+    return AttemptFailure("callback", _failure(), retry_eligible)
 
 
 def _db(port: DbPort, provider: Any) -> Database:
@@ -181,19 +181,19 @@ def test_a_started_transition_carries_its_correlation_and_its_own_payload(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     (record,) = _records(
-        caplog, [ReadStarted(EXECUTION.id, 1, 1, None, "Account", "TYPED", "edition")]
+        caplog, [ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition")]
     )
     assert record.level == logging.DEBUG
     assert record.message == "parallax execution lifecycle readStarted"
     assert record.fields == {
         "execution_id": str(EXECUTION.id),
-        "execution_kind": "READ",
+        "execution_kind": "read",
         "sequence": 1,
         "activity": 1,
         "parent_activity": None,
         "transition": "readStarted",
         "target": "Account",
-        "interface": "TYPED",
+        "interface": "typed",
         "edition": "edition",
     }
 
@@ -207,8 +207,8 @@ def test_a_participating_read_or_stream_logs_no_edition_of_its_own(
     records = _records(
         caplog,
         [
-            ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED", None),
-            SnapshotStreamStarted(EXECUTION.id, 2, 3, 1, "Account", "WIRE", 10, None),
+            ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "typed", None),
+            SnapshotStreamStarted(EXECUTION.id, 2, 3, 1, "Account", "wire", 10, None),
         ],
     )
     assert all("edition" not in record.fields for record in records)
@@ -220,10 +220,10 @@ def test_neither_detail_carries_a_statement_or_a_bind(
     # The separation the production default rests on: a Database Call borrows
     # the exact statement it ran, and no record projects any of it.
     events: list[ExecutionEvent] = [
-        DatabaseCallStarted(EXECUTION.id, 1, 2, 1, "Account", "READ", STATEMENT),
+        DatabaseCallStarted(EXECUTION.id, 1, 2, 1, "Account", "read", STATEMENT),
         DatabaseCallFinished(EXECUTION.id, 2, 2, 1, STATEMENT, 4_000, DatabaseReadCompleted(3)),
     ]
-    for detail in ("SAFE", "DIAGNOSTIC"):
+    for detail in ("safe", "diagnostic"):
         for record in _records(caplog, events, detail=detail):
             rendered = repr(record.fields).lower()
             assert "select" not in rendered
@@ -271,9 +271,78 @@ def test_only_diagnostic_detail_carries_the_bounded_message_and_stack(
     assert "error_stack" not in safe.fields
 
     caplog.clear()
-    (diagnostic,) = _records(caplog, [finished], detail="DIAGNOSTIC")
+    (diagnostic,) = _records(caplog, [finished], detail="diagnostic")
     assert diagnostic.fields["error_message"] == "the row vanished"
     assert "RuntimeError" in str(diagnostic.fields["error_stack"])
+
+
+def test_every_runtime_classification_is_logged_in_its_own_python_spelling(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A logged value is a Python contract of its own, so the whole vocabulary is
+    # read back off records here rather than left to whichever single member the
+    # surrounding cases happen to use.
+    def _logged(
+        key: str, events: list[ExecutionEvent], root: RootExecution = EXECUTION
+    ) -> set[object]:
+        caplog.clear()
+        return {
+            record.fields[key]
+            for record in _records(caplog, events, execution=root)
+            if key in record.fields
+        }
+
+    kinds: set[object] = set()
+    for root in (EXECUTION, TRANSACTION, STREAM):
+        kinds |= _logged(
+            "execution_kind", [ReadStarted(root.id, 1, 1, None, "Account", "typed", None)], root
+        )
+    assert kinds == {"read", "transaction_invocation", "snapshot_stream"}
+
+    assert _logged(
+        "interface",
+        [
+            ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", None),
+            ReadStarted(EXECUTION.id, 2, 2, 1, "Account", "wire", None),
+            SnapshotStreamStarted(EXECUTION.id, 3, 3, 1, "Account", "rows", 100, None),
+        ],
+    ) == {"typed", "wire", "rows"}
+
+    assert _logged(
+        "call_kind",
+        [
+            DatabaseCallStarted(EXECUTION.id, 1, 1, None, "Account", "read", STATEMENT),
+            DatabaseCallStarted(EXECUTION.id, 2, 2, None, "Account", "write", STATEMENT),
+        ],
+    ) == {"read", "write"}
+
+    assert _logged(
+        "phase",
+        [
+            TransactionAttemptFinished(
+                EXECUTION.id,
+                sequence,
+                1,
+                None,
+                AttemptRolledBack(AttemptFailure(phase, _failure(), retry_eligible=False)),
+            )
+            for sequence, phase in enumerate(("callback", "pre_commit", "commit"), start=1)
+        ],
+    ) == {"callback", "pre_commit", "commit"}
+
+
+def test_the_retired_detail_spelling_selects_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # `LifecycleLogDetail` is the one family an application configures, so its
+    # migration has to be a rejection rather than a rename that keeps working.
+    # There is no alias: the retired spelling is an unknown value, and an
+    # unknown value discloses the less of the two details rather than the more.
+    finished = ReadFinished(EXECUTION.id, 1, 1, None, ReadFailed(_failure()))
+    retired = cast("LifecycleLogDetail", "DIAGNOSTIC")
+    (record,) = _records(caplog, [finished], detail=retired)
+    assert "error_message" not in record.fields
+    assert "error_stack" not in record.fields
 
 
 def test_a_caused_failure_names_the_direct_child_it_is_attributed_to(
@@ -292,8 +361,8 @@ def test_the_root_summary_is_info_when_it_succeeded_and_error_when_it_did_not(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     events: list[ExecutionEvent] = [
-        ReadStarted(EXECUTION.id, 1, 1, None, "Account", "TYPED", "edition"),
-        DatabaseCallStarted(EXECUTION.id, 2, 2, 1, "Account", "READ", STATEMENT),
+        ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"),
+        DatabaseCallStarted(EXECUTION.id, 2, 2, 1, "Account", "read", STATEMENT),
         DatabaseCallFinished(EXECUTION.id, 3, 2, 1, STATEMENT, 4_000, DatabaseReadCompleted(3)),
         ReadFinished(EXECUTION.id, 4, 1, None, ReadCompleted()),
     ]
@@ -342,7 +411,7 @@ def test_only_a_retry_eligible_rollback_is_a_warning(
     )
     assert eligible.level == logging.WARNING
     assert eligible.fields["outcome"] == "rolledBack"
-    assert eligible.fields["phase"] == "CALLBACK"
+    assert eligible.fields["phase"] == "callback"
     assert eligible.fields["retry_eligible"] is True
     assert terminal.level == logging.DEBUG
     assert (committed.level, committed.fields["outcome"]) == (logging.DEBUG, "committed")
@@ -392,7 +461,7 @@ def test_a_failed_rollback_is_an_error_carrying_both_live_failures(
         caplog,
         [TransactionAttemptFinished(TRANSACTION.id, 1, 2, 1, outcome)],
         execution=TRANSACTION,
-        detail="DIAGNOSTIC",
+        detail="diagnostic",
     )
     assert record.level == logging.ERROR
     assert record.fields["outcome"] == "rollbackFailed"
@@ -514,7 +583,7 @@ def test_the_stream_vocabulary_logs_like_every_other_transition(
     records = _records(
         caplog,
         [
-            SnapshotStreamStarted(STREAM.id, 1, 1, None, "Account", "WIRE", 500, "edition"),
+            SnapshotStreamStarted(STREAM.id, 1, 1, None, "Account", "wire", 500, "edition"),
             StreamBatchStarted(STREAM.id, 2, 2, 1),
             StreamBatchFinished(STREAM.id, 3, 2, 1, StreamBatchCompleted()),
             StreamBatchFinished(STREAM.id, 4, 3, 1, StreamBatchFailed(_failure())),
@@ -525,7 +594,7 @@ def test_the_stream_vocabulary_logs_like_every_other_transition(
         execution=STREAM,
     )
     assert records[0].fields["target"] == "Account"
-    assert records[0].fields["interface"] == "WIRE"
+    assert records[0].fields["interface"] == "wire"
     assert records[0].fields["batch_size"] == 500
     assert records[0].fields["edition"] == "edition"
     assert [record.fields.get("outcome") for record in records[2:]] == [
@@ -572,17 +641,17 @@ def test_the_logger_answers_every_transition_the_algebra_admits(
     # why the closure needs stating here rather than being a byproduct of some
     # suite that happens to drive every kind of work.
     every: list[ExecutionEvent] = [
-        ReadStarted(EXECUTION.id, 1, 1, None, "Account", "TYPED", "edition"),
+        ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"),
         ReadFinished(EXECUTION.id, 2, 1, None, ReadCompleted()),
         WriteBatchStarted(EXECUTION.id, 3, 2, 1, "read_dependency"),
         WriteBatchFinished(EXECUTION.id, 4, 2, 1, WriteBatchCompleted()),
-        DatabaseCallStarted(EXECUTION.id, 5, 3, 2, "Account", "WRITE", STATEMENT),
+        DatabaseCallStarted(EXECUTION.id, 5, 3, 2, "Account", "write", STATEMENT),
         DatabaseCallFinished(EXECUTION.id, 6, 3, 2, STATEMENT, 9, DatabaseWriteCompleted(1)),
         TransactionInvocationStarted(EXECUTION.id, 7, 4, 1, JoinedInvocation()),
         TransactionInvocationFinished(EXECUTION.id, 8, 4, 1, JoinedInvocationReturned()),
         TransactionAttemptStarted(EXECUTION.id, 9, 5, 1, "account"),
         TransactionAttemptFinished(EXECUTION.id, 10, 5, 1, AttemptCommitted()),
-        SnapshotStreamStarted(EXECUTION.id, 11, 6, 1, "Account", "ROWS", 100, None),
+        SnapshotStreamStarted(EXECUTION.id, 11, 6, 1, "Account", "rows", 100, None),
         SnapshotStreamFinished(EXECUTION.id, 12, 6, 1, StreamExhausted()),
         StreamBatchStarted(EXECUTION.id, 13, 7, 6),
         StreamBatchFinished(EXECUTION.id, 14, 7, 6, StreamBatchCompleted()),
@@ -597,7 +666,7 @@ def test_a_handler_error_is_logged_correlation_only(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     logger = _logger()
-    provider = LoggingLifecycleProvider(logger, detail="DIAGNOSTIC")
+    provider = LoggingLifecycleProvider(logger, detail="diagnostic")
     error = ExecutionLifecycleHandlerError(
         execution_id=EXECUTION.id,
         sequence=3,
@@ -622,7 +691,7 @@ def test_a_logger_below_the_level_is_told_nothing(caplog: pytest.LogCaptureFixtu
     handler = LoggingLifecycleProvider(logger).open(EXECUTION)
     assert handler is not None
     with caplog.at_level(logging.WARNING, logger=logger.name):
-        handler.handle(ReadStarted(EXECUTION.id, 1, 1, None, "Account", "TYPED", "edition"))
+        handler.handle(ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"))
         handler.handle(ReadFinished(EXECUTION.id, 2, 1, None, ReadCompleted()))
     assert caplog.records == []
 
@@ -673,7 +742,7 @@ def test_only_a_root_activity_or_an_attempt_finishing_is_worth_more_than_debug(
     for record in _records(
         caplog,
         [
-            ReadStarted(EXECUTION.id, 1, 1, None, "Account", "TYPED", "edition"),
+            ReadStarted(EXECUTION.id, 1, 1, None, "Account", "typed", "edition"),
             ReadFinished(EXECUTION.id, 2, 1, None, ReadFailed(root)),
             ReadFinished(EXECUTION.id, 3, 2, 1, ReadFailed(root)),
             WriteBatchFinished(EXECUTION.id, 4, 3, 1, WriteBatchFailed(root)),
@@ -761,7 +830,7 @@ def test_the_level_the_guard_asks_about_is_the_level_the_record_is_written_at() 
     handler = LoggingLifecycleProvider(logger).open(EXECUTION)
     assert handler is not None
     for event in [
-        ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "TYPED", None),
+        ReadStarted(EXECUTION.id, 1, 2, 1, "Account", "typed", None),
         TransactionAttemptFinished(
             EXECUTION.id, 2, 3, 1, AttemptRolledBack(_attempt_failure(retry_eligible=True))
         ),

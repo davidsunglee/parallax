@@ -64,6 +64,28 @@ idiomatic developer experience while still guaranteeing parity.
   implementation uses codegen, dynamic proxies, or metaprogramming.
 - The suggested reference architecture mirroring Reladomo's decomposition.
 
+### Representation spelling
+
+The boundary above applies to the **spelling of a value**, not only to the
+behavior it describes. A representation this spec authors — a corpus token, a
+schema enum member, a canonical name, a descriptor or wire field — is normative
+and MUST be reproduced verbatim wherever an implementation emits it. An
+implementation MUST NOT rename, recase, or alias a core-authored representation,
+and MUST NOT derive one by transforming a runtime value of its own.
+
+A classification that exists only inside one implementation's runtime is
+non-normative, and that language SHOULD spell it the way its own conventions
+spell such a value. Where a runtime classification and a core-authored
+representation describe the same distinction, the implementation translates
+between them explicitly at the point that already projects to the core form. A
+generic casing converter is not such a point: it makes every runtime spelling
+load-bearing for a contract it does not state.
+
+Opaque values a specification copies rather than authors — a database's native
+error code, a driver's own text — are neither. They pass through unchanged
+because reinterpreting them would lose information, not because this spec fixed
+their spelling.
+
 ## Requirement levels (RFC 2119)
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
