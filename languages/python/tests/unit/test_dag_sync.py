@@ -74,7 +74,8 @@ def linted_copy(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 def broken_by(tree: Path, module: str, statement: str) -> str:
     """`lint-imports`' report over ``tree``, unwrapped, with ``statement``
-    appended to ``module`` — the copied module named by its dotted import path.
+    appended to ``module`` — the copied module named by its dotted import path,
+    created inside its package when the copy holds no module of that name.
 
     Asserts a contract broke, because every caller is a canary whose subject is
     which contract the tool then names and along which edge. The report wraps
@@ -83,9 +84,11 @@ def broken_by(tree: Path, module: str, statement: str) -> str:
     lint_imports = shutil.which("lint-imports")
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
-    (target,) = tree.glob(f"packages/*/src/{module.replace('.', '/')}.py")
-    original = target.read_text()
-    target.write_text(f"{original}{statement}\n")
+    package, _, name = module.rpartition(".")
+    (directory,) = tree.glob(f"packages/*/src/{package.replace('.', '/')}")
+    target = directory / f"{name}.py"
+    original = target.read_text() if target.exists() else None
+    target.write_text(f"{original or ''}{statement}\n")
     try:
         result = subprocess.run(
             [lint_imports],
@@ -96,7 +99,10 @@ def broken_by(tree: Path, module: str, statement: str) -> str:
             | {"PYTHONPATH": os.pathsep.join(str(src) for src in tree.glob("packages/*/src"))},
         )
     finally:
-        target.write_text(original)
+        if original is None:
+            target.unlink()
+        else:
+            target.write_text(original)
 
     assert result.returncode != 0, result.stdout
     return " ".join(result.stdout.split())
@@ -512,10 +518,19 @@ def test_fence_and_tool_edited_consistently_still_fail_a_stale_prose_row(
         dag.generate()
 
 
-def test_a_tampered_prose_row_alone_exits_one_at_the_command() -> None:
+def test_a_tampered_prose_row_alone_exits_one_at_the_command(tmp_path: Path) -> None:
     # Command level, not library level: `python-check-dag-sync` runs the script, so the
-    # prose arm has to block there too. Same write-run-restore shape as the
-    # `lint-imports` canaries below, against the real committed spec.
+    # prose arm has to block there too. The script resolves the three files it reads
+    # from its own location, so a copy of it laid out beside a tampered spec is the
+    # command run against that spec, and the committed spec is never written.
+    checkout = tmp_path / "languages" / "python"
+    shutil.copytree(
+        PY_ROOT / "tools", checkout / "tools", ignore=shutil.ignore_patterns("__pycache__")
+    )
+    shutil.copy(dag.PYPROJECT, checkout / dag.PYPROJECT.name)
+    (checkout / "spec").mkdir()
+    (tmp_path / "core" / "spec").mkdir(parents=True)
+    shutil.copy(dag.MODULES_MD, tmp_path / "core" / "spec" / dag.MODULES_MD.name)
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
         "| `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, "
@@ -525,16 +540,14 @@ def test_a_tampered_prose_row_alone_exits_one_at_the_command() -> None:
         1,
     )
     assert edited != original
-    dag.PYTHON_MD.write_text(edited)
-    try:
-        result = subprocess.run(
-            [sys.executable, str(PY_ROOT / "tools/check_dag_sync.py")],
-            cwd=PY_ROOT,
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        dag.PYTHON_MD.write_text(original)
+    (checkout / "spec" / dag.PYTHON_MD.name).write_text(edited)
+
+    result = subprocess.run(
+        [sys.executable, str(checkout / "tools" / "check_dag_sync.py")],
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+    )
 
     assert result.returncode == 1, result.stdout
     assert "parallax.snapshot.handle._materializer" in result.stderr
@@ -1091,20 +1104,15 @@ def test_child_scope_contract_blocks_an_import_the_parent_permits(linted_copy: P
 # --------------------------------------------------------------------------
 # Canary 4: the named exception admits one edge, not the whole child grant.
 # --------------------------------------------------------------------------
-def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+def test_the_hub_seam_stays_confined_to_the_descriptor_child_scope(linted_copy: Path) -> None:
+    reported = broken_by(
+        linted_copy,
+        "parallax.descriptor._canary_seam",
+        "import parallax.core.entity._model  # deliberate seam violation",
+    )
 
-    canary = PY_ROOT / "packages/parallax-descriptor/src/parallax/descriptor/_canary_seam.py"
-    canary.write_text("import parallax.core.entity._model  # deliberate seam violation\n")
-    try:
-        result = subprocess.run([lint_imports], cwd=PY_ROOT, capture_output=True, text=True)
-    finally:
-        canary.unlink()
-
-    assert result.returncode != 0, result.stdout
-    assert "parallax.descriptor may import only its permitted dependencies BROKEN" in result.stdout
-    assert "not allowed to import parallax.core.entity" in result.stdout
+    assert "parallax.descriptor may import only its permitted dependencies BROKEN" in reported
+    assert "not allowed to import parallax.core.entity" in reported
 
 
 # --------------------------------------------------------------------------
@@ -1305,26 +1313,16 @@ def test_hand_edited_contract_fails_check(tmp_path: Path, monkeypatch: pytest.Mo
 # --------------------------------------------------------------------------
 # Canary 2: a deliberately illegal scope import fails lint-imports.
 # --------------------------------------------------------------------------
-def test_illegal_scope_import_fails_lint_imports() -> None:
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
-
-    canary = PY_ROOT / "packages/parallax-core/src/parallax/core/base/_canary_illegal_import.py"
+def test_illegal_scope_import_fails_lint_imports(linted_copy: Path) -> None:
     # base (m-core) has no permitted dependencies, so importing predicate is illegal.
-    canary.write_text("import parallax.core.predicate  # deliberate DAG violation\n")
-    try:
-        result = subprocess.run(
-            [lint_imports],
-            cwd=PY_ROOT,
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        canary.unlink()
+    reported = broken_by(
+        linted_copy,
+        "parallax.core.base._canary_illegal_import",
+        "import parallax.core.predicate  # deliberate DAG violation",
+    )
 
-    assert result.returncode != 0, result.stdout
-    assert "parallax.core.base" in result.stdout
-    assert "not allowed to import parallax.core.predicate" in result.stdout
+    assert "parallax.core.base" in reported
+    assert "not allowed to import parallax.core.predicate" in reported
 
 
 def test_lint_imports_is_green_without_the_canary() -> None:
@@ -1338,25 +1336,17 @@ def test_lint_imports_is_green_without_the_canary() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_production_import_of_unmodeled_conformance_scope_fails_lint_imports() -> None:
+def test_production_import_of_unmodeled_conformance_scope_fails_lint_imports(
+    linted_copy: Path,
+) -> None:
     # A production scope importing an *unmodeled* conformance scope (`.adapter`,
     # not `.case_format`/`.cli`) must still be caught — the whole subtree is
     # forbidden, so a new conformance module can never become importable.
-    lint_imports = shutil.which("lint-imports")
-    assert lint_imports is not None, "lint-imports must be installed in the dev env"
+    reported = broken_by(
+        linted_copy,
+        "parallax.core.base._canary_conformance_import",
+        "import parallax.conformance.adapter  # deliberate boundary violation",
+    )
 
-    canary = PY_ROOT / "packages/parallax-core/src/parallax/core/base/_canary_conformance_import.py"
-    canary.write_text("import parallax.conformance.adapter  # deliberate boundary violation\n")
-    try:
-        result = subprocess.run(
-            [lint_imports],
-            cwd=PY_ROOT,
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        canary.unlink()
-
-    assert result.returncode != 0, result.stdout
-    assert "parallax.core.base" in result.stdout
-    assert "parallax.conformance" in result.stdout
+    assert "parallax.core.base" in reported
+    assert "parallax.conformance" in reported
