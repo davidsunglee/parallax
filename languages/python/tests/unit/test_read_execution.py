@@ -268,10 +268,10 @@ def test_a_standalone_eager_read_runs_inside_a_read_root_of_its_own() -> None:
     execution = _Standalone(installed_lifecycle(provider), _SERVING, ReadInputs(port, None, None))
     body = _Body(provider)
 
-    assert execution.begin().eager(_TARGET, "TYPED", body) is _ANSWER
+    assert execution.begin().eager(_TARGET, "typed", body) is _ANSWER
 
     (root,) = provider.roots
-    assert root.execution.kind == "READ"
+    assert root.execution.kind == "read"
     # The body ran with the Read open and nothing else around it: no flush, no
     # batch, and no second activity.
     assert body.only.transitions == ("ReadStarted",)
@@ -288,7 +288,7 @@ def test_a_standalone_body_is_handed_the_port_and_neither_a_preference_nor_a_led
     execution = _Standalone(None, _SERVING, ReadInputs(port, None, None))
     body = _Body()
 
-    execution.begin().eager(_TARGET, "TYPED", body)
+    execution.begin().eager(_TARGET, "typed", body)
 
     handed = body.only.inputs
     assert (handed.port, handed.preference, handed.ledger) == (port, None, None)
@@ -310,7 +310,7 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
         raise boom
 
     try:
-        execution.begin().eager(_TARGET, "TYPED", failing)
+        execution.begin().eager(_TARGET, "typed", failing)
     except ExecutionFailure as failure:
         assert (failure.edition, failure.cause) == ("test", boom)
         assert failure.__cause__ is boom
@@ -321,7 +321,7 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
 
     def run(execution: Any, _uow: UnitOfWork) -> None:
         try:
-            execution.begin().eager(_TARGET, "TYPED", failing)
+            execution.begin().eager(_TARGET, "typed", failing)
         except RuntimeError as raised:
             assert raised is boom
         else:  # pragma: no cover - the assertion is the except arm
@@ -337,7 +337,7 @@ def test_a_standalone_read_lets_a_control_flow_exception_pass_untouched() -> Non
         raise KeyboardInterrupt
 
     try:
-        execution.begin().eager(_TARGET, "TYPED", interrupting)
+        execution.begin().eager(_TARGET, "typed", interrupting)
     except KeyboardInterrupt:
         pass
     else:  # pragma: no cover - the assertion is the except arm
@@ -355,7 +355,7 @@ def test_a_participating_eager_read_force_flushes_before_its_body_runs() -> None
 
     def run(execution: Any, uow: UnitOfWork) -> None:
         uow.buffer(_account_insert(9))
-        assert execution.eager(_TARGET, "TYPED", body) is _ANSWER
+        assert execution.eager(_TARGET, "typed", body) is _ANSWER
 
     _participating(run, flushes=flushes)
 
@@ -373,7 +373,7 @@ def test_a_participating_read_opens_inside_the_flush_as_the_batchs_ordered_sibli
 
     def run(execution: Any, uow: UnitOfWork) -> None:
         uow.buffer(_account_insert(9))
-        execution.eager(_TARGET, "TYPED", body)
+        execution.eager(_TARGET, "typed", body)
 
     _participating(run, provider=provider, flushes=flushes)
 
@@ -405,7 +405,7 @@ def test_a_participating_body_is_handed_the_connection_the_preference_and_the_un
     body = _Body()
 
     def run(execution: Any, uow: UnitOfWork) -> None:
-        execution.eager(_TARGET, "TYPED", body)
+        execution.eager(_TARGET, "typed", body)
         handed = body.only.inputs
         assert (handed.port, handed.preference, handed.ledger) == (port, "locking", uow)
 
@@ -421,12 +421,12 @@ def test_a_standalone_stream_opens_a_root_execution_of_its_own() -> None:
         installed_lifecycle(provider), _SERVING, ReadInputs(RefusingPort(), None, None)
     )
 
-    activity: SnapshotStreamActivity = execution.begin().open_stream(_TARGET, "TYPED", 5)
+    activity: SnapshotStreamActivity = execution.begin().open_stream(_TARGET, "typed", 5)
     with activity:
         pass
 
     (root,) = provider.roots
-    assert root.execution.kind == "SNAPSHOT_STREAM"
+    assert root.execution.kind == "snapshot_stream"
     assert _parentage(root) == [
         ("SnapshotStreamStarted", 1, None),
         ("SnapshotStreamFinished", 1, None),
@@ -440,13 +440,13 @@ def test_a_participating_stream_is_a_child_of_the_current_attempt() -> None:
     provider = RecordingLifecycleProvider()
 
     def run(execution: Any, _uow: UnitOfWork) -> None:
-        with execution.open_stream(_TARGET, "TYPED", 5):
+        with execution.open_stream(_TARGET, "typed", 5):
             pass
 
     _participating(run, provider=provider)
 
     (root,) = provider.roots
-    assert root.execution.kind == "TRANSACTION_INVOCATION"
+    assert root.execution.kind == "transaction_invocation"
     assert _parentage(root) == [
         ("TransactionInvocationStarted", 1, None),
         ("TransactionAttemptStarted", 2, 1),
@@ -467,7 +467,7 @@ def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing(
     body = _Body(provider)
 
     read = execution.begin()
-    with read.open_stream(_TARGET, "TYPED", 5) as stream:
+    with read.open_stream(_TARGET, "typed", 5) as stream:
         assert read.page(stream.batch(), body) is _ANSWER
 
     (root,) = provider.roots
@@ -493,7 +493,7 @@ def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_
     body = _Body(provider, flushes)
 
     def run(execution: Any, uow: UnitOfWork) -> None:
-        with execution.open_stream(_TARGET, "TYPED", 5) as stream:
+        with execution.open_stream(_TARGET, "typed", 5) as stream:
             uow.buffer(_account_insert(9))
             execution.page(stream.batch(), body)
 
@@ -521,7 +521,7 @@ def test_a_participating_page_hands_its_body_the_same_inputs_every_read_gets() -
     body = _Body()
 
     def run(execution: Any, uow: UnitOfWork) -> None:
-        with execution.open_stream(_TARGET, "TYPED", 5) as stream:
+        with execution.open_stream(_TARGET, "typed", 5) as stream:
             execution.page(stream.batch(), body)
         handed = body.only.inputs
         assert (handed.port, handed.preference, handed.ledger) == (port, "locking", uow)

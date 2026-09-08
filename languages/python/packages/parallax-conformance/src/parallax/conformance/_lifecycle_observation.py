@@ -106,15 +106,20 @@ class ObservedCall:
     kind: Literal["read", "write"]
 
 
-_CALL_KIND: Final[dict[str, Literal["read", "write"]]] = {"READ": "read", "WRITE": "write"}
+# The five tables below are the projection from Python's runtime vocabularies to
+# the corpus tokens the core spec authors. A member whose two spellings coincide
+# is still written out: the tables are what makes the corpus token independent of
+# the runtime one, so deriving any member — by casing rule or by falling back to
+# the runtime value — would make a Python rename silently rewrite the oracle.
+_CALL_KIND: Final[dict[str, Literal["read", "write"]]] = {"read": "read", "write": "write"}
 
 _ROOT_KIND: Final[dict[RootExecutionKind, str]] = {
-    "READ": "read",
-    "TRANSACTION_INVOCATION": "transaction-invocation",
-    "SNAPSHOT_STREAM": "snapshot-stream",
+    "read": "read",
+    "transaction_invocation": "transaction-invocation",
+    "snapshot_stream": "snapshot-stream",
 }
 
-_READ_INTERFACE: Final[dict[str, str]] = {"TYPED": "typed", "WIRE": "wire", "ROWS": "rows"}
+_READ_INTERFACE: Final[dict[str, str]] = {"typed": "typed", "wire": "wire", "rows": "rows"}
 
 _WRITE_BATCH_TRIGGER: Final[dict[str, str]] = {
     "read_dependency": "read-dependency",
@@ -122,9 +127,9 @@ _WRITE_BATCH_TRIGGER: Final[dict[str, str]] = {
 }
 
 _ATTEMPT_PHASE: Final[dict[str, str]] = {
-    "CALLBACK": "callback",
-    "PRE_COMMIT": "pre-commit",
-    "COMMIT": "commit",
+    "callback": "callback",
+    "pre_commit": "pre-commit",
+    "commit": "commit",
 }
 
 

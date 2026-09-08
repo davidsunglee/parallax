@@ -167,9 +167,9 @@ def publication_for(selected: SelectedReadModel, interface: ReadInterface, /) ->
     crosses no such rung. Either carries the selection's edition, so every
     envelope it publishes is stamped with what the read was served under.
     """
-    if interface == "TYPED":
+    if interface == "typed":
         return typed_publication(selected.model.meta, materializing(selected), selected.edition)
-    if interface == "WIRE":
+    if interface == "wire":
         return wire_publication(selected.model.meta, selected.edition)
     raise ValueError(f"the values lane publishes no graph, so {interface!r} names no publication")
 
@@ -286,7 +286,7 @@ class ReadScope:
         # them is even consulted (`m-execution-lifecycle`).
         refuse_reentry(self._lifecycle)
         read = self._execution.begin()
-        publication = publication_for(read.selected, "TYPED")
+        publication = publication_for(read.selected, "typed")
         return self._graph(read, object_query_node(query), publication)
 
     def stream(self, query: ObjectQuery[Any, Any], batch_size: int) -> SnapshotStream[Any]:
@@ -298,7 +298,7 @@ class ReadScope:
         where a selection that can materialize no Snapshot at all refuses it.
         """
         refuse_reentry(self._lifecycle)
-        return self._streamed(object_query_node(query), "TYPED", batch_size)
+        return self._streamed(object_query_node(query), "typed", batch_size)
 
     def read_rows(self, node: ObjectQueryNode) -> RowsResult:
         """One row-form read, published as transformed rows and no graph.
@@ -324,7 +324,7 @@ class ReadScope:
                 read=activity,
             )
 
-        return read.eager(node.target, "ROWS", published)
+        return read.eager(node.target, "rows", published)
 
     def wire_find(self, query: WireQuery) -> Snapshot[Any]:
         """One Wire whole-result read, published as frozen Wire nodes.
@@ -336,7 +336,7 @@ class ReadScope:
         """
         refuse_reentry(self._lifecycle)
         read = self._execution.begin()
-        publication = publication_for(read.selected, "WIRE")
+        publication = publication_for(read.selected, "wire")
         return self._graph(read, wire_query_node(query), publication)
 
     def wire_stream(self, query: WireQuery, batch_size: int) -> SnapshotStream[Any]:
@@ -346,7 +346,7 @@ class ReadScope:
         lowered, then the page size judged, and the read begun at entry.
         """
         refuse_reentry(self._lifecycle)
-        return self._streamed(wire_query_node(query), "WIRE", batch_size)
+        return self._streamed(wire_query_node(query), "wire", batch_size)
 
     def begin(self) -> _BegunRead:
         """The read one delivery is begun as, when its scope is entered and

@@ -81,7 +81,7 @@ def test_the_storys_provider_refuses_to_swallow_a_handler_failure() -> None:
     # story whose Handler cannot fail treats being told as its own defect
     # rather than as something to log and move past.
     provider = execution_lifecycle_stories.JoinedShapeProvider()
-    assert provider.open(RootExecution(uuid4(), "READ")) is not None
+    assert provider.open(RootExecution(uuid4(), "read")) is not None
     reported = ExecutionLifecycleHandlerError(
         execution_id=uuid4(),
         sequence=1,

@@ -70,12 +70,12 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
     assert account.balance == Decimal("250.00")
 
     (root,) = recorder.roots
-    assert root.execution.kind == "READ"
+    assert root.execution.kind == "read"
     started, call_started, call_finished, finished = root.events
     assert isinstance(started, ReadStarted)
-    assert started.interface == "TYPED"
+    assert started.interface == "typed"
     assert isinstance(call_started, DatabaseCallStarted)
-    assert call_started.kind == "READ"
+    assert call_started.kind == "read"
     assert isinstance(call_finished, DatabaseCallFinished)
     # The row count is the driver's own, and the duration brackets a round trip
     # that genuinely happened.
@@ -108,7 +108,7 @@ def test_a_declining_provider_changes_nothing_about_the_query(profile_run: Any) 
     db = connect(_seeded(profile_run), MODELS["account"], lifecycle_provider=provider)
 
     assert db.find(Account.where(Account.id == 2)).result().balance == Decimal("250.00")
-    assert [execution.kind for execution in provider.opened] == ["READ"]
+    assert [execution.kind for execution in provider.opened] == ["read"]
     assert provider.reported == []
 
 

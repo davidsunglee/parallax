@@ -1370,7 +1370,7 @@ class _LiveTransactionAttempt(_LiveActivity):
             # and rolled back is the honest reading: an adapter owes the boundary
             # an undo before it stops answering for it.
             outcome = AttemptRolledBack(
-                self._attempt_failure("CALLBACK", exc if exc is not None else RuntimeError())
+                self._attempt_failure("callback", exc if exc is not None else RuntimeError())
             )
         publisher.deliver(
             TransactionAttemptFinished(
@@ -1445,9 +1445,9 @@ class _LiveTransactionAttempt(_LiveActivity):
         """
         error = trigger.error
         phase: AttemptPhase = (
-            "COMMIT"
+            "commit"
             if isinstance(trigger, CommitFailed)
-            else ("PRE_COMMIT" if error is self._pre_commit_failure else "CALLBACK")
+            else ("pre_commit" if error is self._pre_commit_failure else "callback")
         )
         return self._attempt_failure(phase, error)
 
@@ -1621,7 +1621,7 @@ def open_read_root(
     """
     if installed is None:
         return INERT
-    execution = RootExecution(uuid4(), "READ")
+    execution = RootExecution(uuid4(), "read")
     handler = _opened(installed, execution)
     if handler is None:
         return INERT
@@ -1649,7 +1649,7 @@ def open_snapshot_stream_root(
     """
     if installed is None:
         return INERT
-    execution = RootExecution(uuid4(), "SNAPSHOT_STREAM")
+    execution = RootExecution(uuid4(), "snapshot_stream")
     handler = _opened(installed, execution)
     if handler is None:
         return INERT
@@ -1685,7 +1685,7 @@ def open_transaction_root(
     """
     if installed is None:
         return INERT
-    execution = RootExecution(uuid4(), "TRANSACTION_INVOCATION")
+    execution = RootExecution(uuid4(), "transaction_invocation")
     handler = _opened(installed, execution)
     if handler is None:
         return INERT

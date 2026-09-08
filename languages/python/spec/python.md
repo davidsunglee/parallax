@@ -69,6 +69,38 @@ never something an application developer hand-writes.
 
 ## 2. Shared developer API and model surface
 
+### Representation spelling
+
+Python realizes the core representation boundary
+(`core/spec/00-overview.md`) as follows.
+
+A core-authored representation keeps its specified spelling wherever Python
+emits it: canonical member names, descriptor and wire fields, Object Query and
+Predicate serde, compatibility-corpus tokens, and schema enum members. Python
+authors none of these and renames none of them.
+
+A string classification that exists only in the Python runtime — a `Literal`
+alias whose members no core contract names — is spelled in lowercase
+snake_case, the same convention Python identifiers use. `read_committed`,
+`read_dependency`, and `pre_commit` already follow it.
+
+Where a runtime classification and a core-authored representation describe the
+same distinction, the module that already projects to the core form owns the
+translation and states both spellings literally. There is no shared casing
+converter, and a runtime value is never fed to one to produce a core token.
+
+Serialized output that Python itself defines — the built-in logging Provider's
+structured fields — carries the runtime spelling, because Python owns that
+contract too. Changing such a value changes a public Python contract and its
+documented expected output together.
+
+A value Python reproduces rather than authors is not a runtime classification
+and keeps its source spelling. That covers a native database error code and a
+driver's own message, and it also covers a `Literal` whose members restate a
+core-authored representation: `m-db-error`'s `uniqueViolation`, `deadlock`,
+`lockWaitTimeout`, and `connectionDead`, and the decoding reasons named by
+`m-wire`'s diagnostic codes.
+
 ### Temporal vocabulary and configuration
 
 Python exposes no public `AsOfAxis` declaration type. Authors select exactly
@@ -3758,9 +3790,26 @@ class ExecutionLifecycleHandler(Protocol):
     def handle(self, event: ExecutionEvent, /) -> None: ...
 ```
 
+Five `Literal` aliases classify what the observation describes. Each is a
+Python runtime vocabulary under the representation-spelling rule of §2, so its
+members are lowercase snake_case:
+
+| Alias | Members |
+|---|---|
+| `RootExecutionKind` | `read`, `transaction_invocation`, `snapshot_stream` |
+| `ReadInterface` | `typed`, `wire`, `rows` |
+| `DatabaseCallKind` | `read`, `write` |
+| `AttemptPhase` | `callback`, `pre_commit`, `commit` |
+| `LifecycleLogDetail` | `safe`, `diagnostic` |
+
+These are the values a Handler receives and the built-in logging Provider
+writes. The compatibility corpus states the same distinctions in its own
+core-authored tokens — `transaction-invocation`, `snapshot-stream`,
+`pre-commit` — which the conformance observation projects to explicitly, member
+by member. Neither vocabulary is derived from the other.
+
 `RootExecution` is a frozen, slotted value carrying only `id: UUID` and
-`kind: RootExecutionKind`; kinds are `READ`, `TRANSACTION_INVOCATION`, and
-`SNAPSHOT_STREAM`. Deterministic public preflight runs first. With no installed
+`kind: RootExecutionKind`. Deterministic public preflight runs first. With no installed
 Provider the Handle branches before allocating UUIDs, descriptors, events,
 publishers, counters, diagnostics, or lifecycle clock reads, and performs no
 allocation, clock read, or I/O; a shared immutable inert activity may stand in
@@ -3841,7 +3890,7 @@ receive the current and subsequent events. Distinct Providers may share a
 concurrency-safe backend.
 
 `LoggingLifecycleProvider` accepts an application-configured `logging.Logger`
-and a `LifecycleLogDetail` of `SAFE` (default) or `DIAGNOSTIC`. It owns no queue,
+and a `LifecycleLogDetail` of `safe` (default) or `diagnostic`. It owns no queue,
 listener, sink, overflow policy, flush, or shutdown. Both modes emit detached
 structured records without SQL or binds; Safe includes correlation, activity
 and outcome types, entity/interface, counters, duration, error type/code,

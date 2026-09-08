@@ -41,9 +41,9 @@ from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database
 
-READ = RootExecution(uuid4(), "READ")
-STARTED = ReadStarted(READ.id, 1, 1, None, "Account", "TYPED", "edition")
-NEXT = ReadStarted(READ.id, 2, 2, 1, "Account", "TYPED", None)
+READ = RootExecution(uuid4(), "read")
+STARTED = ReadStarted(READ.id, 1, 1, None, "Account", "typed", "edition")
+NEXT = ReadStarted(READ.id, 2, 2, 1, "Account", "typed", None)
 
 
 class _Child:

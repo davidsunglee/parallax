@@ -110,7 +110,7 @@ def _tree(events: Sequence[ExecutionEvent]) -> list[tuple[str, int, int | None]]
 
 def _only(recorder: RecordingLifecycleProvider) -> RecordedRoot:
     (root,) = recorder.roots
-    assert root.execution.kind == "TRANSACTION_INVOCATION"
+    assert root.execution.kind == "transaction_invocation"
     # Correlation is contiguous and one-based on both counters for every root
     # this module drives, so each test below asserts shape rather than restating
     # the envelope's own contract.
@@ -296,7 +296,7 @@ def test_a_row_form_read_is_a_child_of_the_attempt_under_the_rows_interface() ->
     root = _only(recorder)
     read = root.events[2]
     assert isinstance(read, ReadStarted)
-    assert (read.parent_activity_id, read.interface) == (2, "ROWS")
+    assert (read.parent_activity_id, read.interface) == (2, "rows")
 
 
 # --------------------------------------------------------------------------- #
@@ -329,7 +329,7 @@ def test_a_retried_invocation_holds_both_attempts_under_one_root() -> None:
     # and its own call — every activity of the first is closed before it starts.
     rolled_back, committed = _attempt_outcomes(root)
     assert isinstance(rolled_back, AttemptRolledBack)
-    assert (rolled_back.failure.phase, rolled_back.failure.retry_eligible) == ("COMMIT", True)
+    assert (rolled_back.failure.phase, rolled_back.failure.retry_eligible) == ("commit", True)
     assert committed == AttemptCommitted()
     assert _finished(root) == OuterInvocationCommitted()
 
@@ -438,7 +438,7 @@ def test_a_commit_failure_is_the_commit_phase() -> None:
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
-    assert rolled_back.failure.phase == "COMMIT"
+    assert rolled_back.failure.phase == "commit"
     assert not rolled_back.failure.retry_eligible
 
 
@@ -453,7 +453,7 @@ def test_a_callback_failure_is_the_callback_phase() -> None:
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
-    assert rolled_back.failure.phase == "CALLBACK"
+    assert rolled_back.failure.phase == "callback"
     assert isinstance(rolled_back.failure.failure, DirectFailure)
 
 
@@ -469,7 +469,7 @@ def test_a_failure_in_the_final_batch_is_the_pre_commit_phase() -> None:
 
     (rolled_back,) = _attempt_outcomes(_only(recorder))
     assert isinstance(rolled_back, AttemptRolledBack)
-    assert rolled_back.failure.phase == "PRE_COMMIT"
+    assert rolled_back.failure.phase == "pre_commit"
 
 
 def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
@@ -491,7 +491,7 @@ def test_a_failure_in_a_dependency_batch_is_still_the_callback_phase() -> None:
     assert batch.trigger == "read_dependency"
     (rolled_back,) = _attempt_outcomes(root)
     assert isinstance(rolled_back, AttemptRolledBack)
-    assert rolled_back.failure.phase == "CALLBACK"
+    assert rolled_back.failure.phase == "callback"
 
 
 def test_a_rollback_failure_reports_both_live_failures() -> None:
@@ -511,7 +511,7 @@ def test_a_rollback_failure_reports_both_live_failures() -> None:
     root = _only(recorder)
     (outcome,) = _attempt_outcomes(root)
     assert isinstance(outcome, AttemptRollbackFailed)
-    assert outcome.triggering_failure.phase == "CALLBACK"
+    assert outcome.triggering_failure.phase == "callback"
     assert outcome.triggering_failure.failure.diagnostic.qualified_type == "builtins.ValueError"
     assert outcome.rollback_failure.qualified_type == "parallax.core.db_error.DatabaseError"
     # The invocation raises an error of its own rather than the trigger, so its
@@ -887,7 +887,7 @@ def test_a_failure_stashed_past_a_later_one_is_reported_as_direct() -> None:
     assert "the stashed failure" in stashed_read.outcome.failure.diagnostic.message
     (rolled_back,) = _attempt_outcomes(root)
     assert isinstance(rolled_back, AttemptRolledBack)
-    assert rolled_back.failure.phase == "CALLBACK"
+    assert rolled_back.failure.phase == "callback"
     assert isinstance(rolled_back.failure.failure, DirectFailure)
     assert "the stashed failure" in rolled_back.failure.failure.diagnostic.message
 
@@ -1114,7 +1114,7 @@ def test_an_attempt_is_finished_even_when_the_port_reports_no_outcome() -> None:
     assert isinstance(outcome, AttemptRolledBack)
     assert isinstance(outcome.failure.failure, DirectFailure)
     assert outcome.failure == AttemptFailure(
-        "CALLBACK", DirectFailure(outcome.failure.failure.diagnostic), False
+        "callback", DirectFailure(outcome.failure.failure.diagnostic), False
     )
     assert outcome.failure.failure.diagnostic.qualified_type == "builtins.RuntimeError"
     # An attempt that finishes failed reports its value to the invocation under

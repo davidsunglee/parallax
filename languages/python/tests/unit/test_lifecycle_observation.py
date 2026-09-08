@@ -101,7 +101,7 @@ def _roots(observation: dict[str, object]) -> list[dict[str, Any]]:
 
 def _portable(*events: ExecutionEvent, statements: list[str] | None = None) -> list[dict[str, Any]]:
     observation = execution_lifecycle_observation(
-        [_root("READ", *events)], statements if statements is not None else []
+        [_root("read", *events)], statements if statements is not None else []
     )
     return cast("list[dict[str, Any]]", _roots(observation)[0]["events"])
 
@@ -118,8 +118,8 @@ _ENVELOPE = frozenset({"sequence", "activity", "parent"})
 
 
 def test_every_event_states_its_correlation_and_names_its_transition() -> None:
-    started = ReadStarted(_EXECUTION, 1, 1, None, "Account", "TYPED", "account")
-    call = DatabaseCallStarted(_EXECUTION, 2, 2, 1, "Account", "READ", _STATEMENT)
+    started = ReadStarted(_EXECUTION, 1, 1, None, "Account", "typed", "account")
+    call = DatabaseCallStarted(_EXECUTION, 2, 2, 1, "Account", "read", _STATEMENT)
     events = _portable(started, call)
     assert events[0]["sequence"] == 1
     assert events[0]["activity"] == 1
@@ -131,14 +131,14 @@ def test_every_event_states_its_correlation_and_names_its_transition() -> None:
 
 
 def test_a_root_states_its_kind_and_its_first_observation_index() -> None:
-    read = _root("READ", ReadStarted(_EXECUTION, 1, 1, None, "Account", "ROWS", "account"))
+    read = _root("read", ReadStarted(_EXECUTION, 1, 1, None, "Account", "rows", "account"))
     invocation = _root(
-        "TRANSACTION_INVOCATION",
+        "transaction_invocation",
         TransactionInvocationStarted(_EXECUTION, 1, 1, None, JoinedInvocation()),
     )
     stream = _root(
-        "SNAPSHOT_STREAM",
-        SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "WIRE", 100, "account"),
+        "snapshot_stream",
+        SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "wire", 100, "account"),
     )
     roots = _roots(execution_lifecycle_observation([read, invocation, stream], []))
     assert [root["execution"] for root in roots] == [1, 2, 3]
@@ -153,10 +153,10 @@ def test_a_root_states_its_kind_and_its_first_observation_index() -> None:
 
 
 def test_a_read_states_its_target_and_the_interface_that_publishes_it() -> None:
-    assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "TYPED", "account")) == {
+    assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "typed", "account")) == {
         "readStarted": {"target": "Account", "interface": "typed", "edition": "account"}
     }
-    assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "WIRE", "account")) == {
+    assert _transition(ReadStarted(_EXECUTION, 1, 1, None, "Account", "wire", "account")) == {
         "readStarted": {"target": "Account", "interface": "wire", "edition": "account"}
     }
     assert _transition(ReadFinished(_EXECUTION, 2, 1, None, ReadCompleted())) == {
@@ -185,14 +185,14 @@ def test_a_write_batch_states_the_trigger_that_produced_it() -> None:
 
 
 def test_a_database_call_names_its_statement_by_index_and_never_by_text() -> None:
-    started = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "WRITE", _STATEMENT)
+    started = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "write", _STATEMENT)
     assert _transition(started, statements=[_STATEMENT.sql]) == {
         "databaseCallStarted": {"target": "Account", "kind": "write", "statement": 0}
     }
     # A lane authoring no golden SQL leaves the index absent rather than
     # inventing one, which is exactly what its cases author.
     assert _transition(started) == {"databaseCallStarted": {"target": "Account", "kind": "write"}}
-    read = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "READ", _STATEMENT)
+    read = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "read", _STATEMENT)
     assert _transition(read) == {"databaseCallStarted": {"target": "Account", "kind": "read"}}
 
 
@@ -276,7 +276,7 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
         "transactionAttemptFinished": {"outcome": "committed"}
     }
     rolled = AttemptRolledBack(
-        AttemptFailure("PRE_COMMIT", CausedFailure(_diagnostic(), 3), retry_eligible=True)
+        AttemptFailure("pre_commit", CausedFailure(_diagnostic(), 3), retry_eligible=True)
     )
     assert _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, rolled)) == {
         "transactionAttemptFinished": {
@@ -288,7 +288,7 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
         }
     }
     failed_rollback = AttemptRollbackFailed(
-        AttemptFailure("CALLBACK", DirectFailure(_diagnostic()), retry_eligible=False),
+        AttemptFailure("callback", DirectFailure(_diagnostic()), retry_eligible=False),
         _diagnostic("undo-failed"),
     )
     assert _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, failed_rollback)) == {
@@ -303,7 +303,7 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
         }
     }
     commit_phase = AttemptRolledBack(
-        AttemptFailure("COMMIT", DirectFailure(_diagnostic()), retry_eligible=True)
+        AttemptFailure("commit", DirectFailure(_diagnostic()), retry_eligible=True)
     )
     finished = _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, commit_phase))
     assert finished["transactionAttemptFinished"]["phase"] == "commit"
@@ -320,7 +320,7 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
 
 
 def test_a_stream_states_the_page_size_that_makes_its_batches_countable() -> None:
-    started = SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "ROWS", 500, "account")
+    started = SnapshotStreamStarted(_EXECUTION, 1, 1, None, "Account", "rows", 500, "account")
     assert _transition(started) == {
         "snapshotStreamStarted": {
             "target": "Account",
@@ -357,13 +357,13 @@ def test_a_stream_batch_names_no_page_of_its_own() -> None:
 
 
 def test_a_call_beyond_the_reported_emissions_is_an_adapter_defect() -> None:
-    call = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "READ", _STATEMENT)
+    call = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "read", _STATEMENT)
     with pytest.raises(StatementIndexError, match="would name nothing"):
         _portable(call, call, statements=[_STATEMENT.sql])
 
 
 def test_a_call_whose_index_would_name_a_different_statement_is_an_adapter_defect() -> None:
-    call = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "READ", _STATEMENT)
+    call = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "read", _STATEMENT)
     with pytest.raises(StatementIndexError, match="would name a different statement"):
         _portable(call, statements=["select 2 from account"])
 
@@ -371,7 +371,7 @@ def test_a_call_whose_index_would_name_a_different_statement_is_an_adapter_defec
 def test_an_emission_no_call_named_is_an_adapter_defect() -> None:
     """The half of the correspondence a per-call check cannot see: every index
     handed out landed, and an emission was still left unnamed."""
-    call = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "READ", _STATEMENT)
+    call = DatabaseCallStarted(_EXECUTION, 1, 1, None, "Account", "read", _STATEMENT)
     with pytest.raises(StatementIndexError, match="named only 1"):
         _portable(call, statements=[_STATEMENT.sql, "insert into account(id) values (?)"])
 
@@ -383,7 +383,7 @@ class _Handler:
     """Stands in for the Handle a Provider is installed on."""
 
     def __init__(self, observation: LifecycleObservation) -> None:
-        self.handler = observation.provider.open(RootExecution(_EXECUTION, "READ"))
+        self.handler = observation.provider.open(RootExecution(_EXECUTION, "read"))
 
     def deliver(self, *events: ExecutionEvent) -> None:
         assert self.handler is not None
@@ -398,7 +398,7 @@ def _call(kind: str, sql: str) -> DatabaseCallStarted:
 def test_the_statements_a_run_reports_are_the_ones_its_calls_borrowed() -> None:
     observation = LifecycleObservation()
     handle = _Handler(observation)
-    handle.deliver(_call("READ", "select 1"), _call("WRITE", "insert 1"), _call("READ", "select 2"))
+    handle.deliver(_call("read", "select 1"), _call("write", "insert 1"), _call("read", "select 2"))
 
     assert [statement.sql for statement in observation.statements] == [
         "select 1",
@@ -415,9 +415,9 @@ def test_the_statements_a_run_reports_are_the_ones_its_calls_borrowed() -> None:
 def test_a_step_reads_its_own_statements_from_the_mark_it_took() -> None:
     observation = LifecycleObservation()
     handle = _Handler(observation)
-    handle.deliver(_call("READ", "select 1"))
+    handle.deliver(_call("read", "select 1"))
     mark = observation.round_trips
-    handle.deliver(_call("WRITE", "insert 1"), _call("READ", "select 2"))
+    handle.deliver(_call("write", "insert 1"), _call("read", "select 2"))
 
     assert [statement.sql for statement in observation.since(mark)] == ["insert 1", "select 2"]
     assert [statement.sql for statement in observation.since(mark, "read")] == ["select 2"]
@@ -428,7 +428,7 @@ def test_a_failed_call_is_the_round_trip_it_was_charged_for() -> None:
     handle = _Handler(observation)
     failure = DatabaseCallFailed(DatabaseFailureDiagnostic(_diagnostic(), "deadlock", "40P01"))
     handle.deliver(
-        _call("WRITE", "insert 1"),
+        _call("write", "insert 1"),
         DatabaseCallFinished(_EXECUTION, 2, 1, None, LoweredStatement("insert 1", ()), 5, failure),
     )
     # Read off Started rather than off its Finished peer: a call the database
@@ -446,8 +446,8 @@ def test_a_resolving_read_takes_no_index_and_shifts_none() -> None:
     observation = LifecycleObservation()
     handler = _Handler(observation)
     with observation.resolving_reads():
-        handler.deliver(_call("READ", "select 1"))
-    handler.deliver(_call("WRITE", "insert 1"), _call("WRITE", "insert 2"))
+        handler.deliver(_call("read", "select 1"))
+    handler.deliver(_call("write", "insert 1"), _call("write", "insert 2"))
 
     assert observation.resolving_read_calls == frozenset({0})
     portable = execution_lifecycle_observation(
@@ -464,14 +464,14 @@ def test_a_run_answers_the_roots_its_handles_opened_in_order() -> None:
     run = LifecycleRun()
     first = run.observation()
     second = run.observation()
-    first.provider.open(RootExecution(uuid4(), "READ"))
-    second.provider.open(RootExecution(uuid4(), "TRANSACTION_INVOCATION"))
-    first.provider.open(RootExecution(uuid4(), "READ"))
+    first.provider.open(RootExecution(uuid4(), "read"))
+    second.provider.open(RootExecution(uuid4(), "transaction_invocation"))
+    first.provider.open(RootExecution(uuid4(), "read"))
 
     assert [root.execution.kind for root in run.roots] == [
-        "READ",
-        "READ",
-        "TRANSACTION_INVOCATION",
+        "read",
+        "read",
+        "transaction_invocation",
     ]
 
 
@@ -482,11 +482,11 @@ def test_a_run_positions_each_observations_resolving_reads_in_its_own_order() ->
     first, second = run.observation(), run.observation()
     first_handler, second_handler = _Handler(first), _Handler(second)
     with first.resolving_reads():
-        first_handler.deliver(_call("READ", "select 1"))
-    first_handler.deliver(_call("WRITE", "insert 1"))
+        first_handler.deliver(_call("read", "select 1"))
+    first_handler.deliver(_call("write", "insert 1"))
     with second.resolving_reads():
-        second_handler.deliver(_call("READ", "select 2"))
-    second_handler.deliver(_call("WRITE", "insert 2"))
+        second_handler.deliver(_call("read", "select 2"))
+    second_handler.deliver(_call("write", "insert 2"))
 
     assert first.resolving_read_calls == second.resolving_read_calls == frozenset({0})
     assert run.resolving_read_calls == frozenset({0, 2})

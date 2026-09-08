@@ -525,7 +525,7 @@ def _materialize_predicate_write(
     # forces out is its ordered sibling rather than its parent, and spanning its
     # own planning and lowering so a compile refusal is a FAILED Read rather than
     # work outside every activity. It is row-form, so it names the internal
-    # `ROWS` interface — no caller ever sees its result, which is exactly why it
+    # `rows` interface — no caller ever sees its result, which is exactly why it
     # is not published through either public one. Its Database Call brackets
     # through the package's one read-call seam, never a second copy of those
     # rules.
@@ -540,7 +540,7 @@ def _materialize_predicate_write(
     # successor be patched from the document the row actually held — without a
     # second extraction that could disagree with the first.
     def resolve() -> tuple[CompiledRead, StagedRows]:
-        with attempt.read(entity.identity, "ROWS") as read:
+        with attempt.read(entity.identity, "rows") as read:
             query = deep_fetch.plan_mutation_read(
                 instruction,
                 model=meta,

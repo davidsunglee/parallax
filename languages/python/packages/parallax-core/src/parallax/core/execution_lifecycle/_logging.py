@@ -9,7 +9,7 @@ writes. That is what keeps all of them out of this package.
 Every field travels through ``extra=``, so the application's formatter decides
 rendering and nothing here composes a human sentence out of values a machine
 wanted. No record carries SQL or a bind at either detail — that separation is
-what lets :data:`SAFE` be the production default rather than a reduced mode
+what lets ``safe`` be the production default rather than a reduced mode
 somebody has to remember to select.
 """
 
@@ -73,12 +73,12 @@ from parallax.core.execution_lifecycle._events import (
 
 __all__ = ["LifecycleLogDetail", "LoggingLifecycleProvider"]
 
-type LifecycleLogDetail = Literal["SAFE", "DIAGNOSTIC"]
+type LifecycleLogDetail = Literal["safe", "diagnostic"]
 """How much of a failure a record carries.
 
-``SAFE`` carries correlation, the transition and its outcome, the entity and
+``safe`` carries correlation, the transition and its outcome, the entity and
 interface, the counters, the duration, the failure's type and stable code, the
-database category and native code, and the truncation flags. ``DIAGNOSTIC`` adds
+database category and native code, and the truncation flags. ``diagnostic`` adds
 the bounded message and rendered stack. Neither carries SQL or binds.
 """
 
@@ -158,7 +158,7 @@ def _diagnostic_fields(
         "message_truncated": diagnostic.message_truncated,
         "stack_truncated": diagnostic.stack_truncated,
     }
-    if detail == "DIAGNOSTIC":
+    if detail == "diagnostic":
         fields["error_message"] = diagnostic.message
         fields["error_stack"] = diagnostic.stack
     return fields
@@ -179,7 +179,7 @@ def _rollback_diagnostic_fields(
         "rollback_message_truncated": diagnostic.message_truncated,
         "rollback_stack_truncated": diagnostic.stack_truncated,
     }
-    if detail == "DIAGNOSTIC":
+    if detail == "diagnostic":
         fields["rollback_error_message"] = diagnostic.message
         fields["rollback_error_stack"] = diagnostic.stack
     return fields
@@ -748,7 +748,7 @@ class LoggingLifecycleProvider:
 
     _detail: LifecycleLogDetail
 
-    def __init__(self, logger: logging.Logger, /, *, detail: LifecycleLogDetail = "SAFE") -> None:
+    def __init__(self, logger: logging.Logger, /, *, detail: LifecycleLogDetail = "safe") -> None:
         self._logger = logger
         self._detail = detail
 
