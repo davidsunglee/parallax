@@ -1095,6 +1095,26 @@ def decode_wire_row(
     return _transform_row(model, entity, row, converter=_decode_wire_leaf).row
 
 
+def coerce_typed_row(
+    row: Mapping[str, object], model: AcceptedMetamodel, entity: EntityMetadata
+) -> Mapping[str, object]:
+    """``row``'s members in the managed carriers :func:`prepare_typed_write`
+    produces, judged by nothing — the Typed peer of :func:`decode_wire_row`, for
+    that operation's reason.
+
+    Coercion rather than decoding, because a runtime argument already carries a
+    native value: what this side owes the weighing is the width projection and
+    normalization the authoring producer applies and nothing else, so a member
+    restored to the `float32` its own read published is the same value on both
+    sides rather than differing by the projection alone.
+
+    Judging it would refuse the write that repairs it. State a write is addressed
+    against is state some earlier door admitted, and a constraint tightened since
+    then makes correcting that member the whole point of the call.
+    """
+    return _transform_row(model, entity, row, converter=_coerce_typed_leaf).row
+
+
 type _LeafConverter = Callable[[NeutralType, object, str], tuple[object, bool]]
 type _BoundDecoder = Callable[[object | None, str], dt.datetime | None]
 

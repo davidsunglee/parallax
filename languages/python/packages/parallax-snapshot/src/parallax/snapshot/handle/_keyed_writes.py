@@ -190,12 +190,14 @@ class PreparedSourceWrite:
     """What a Keyed Write Source answers once the window has been judged.
 
     ``instruction`` carries the identity plus every member the caller named,
-    canonical and owned; ``originals`` carries those same members' canonical
-    original values. Both sides pass through the SAME producer inside the
-    adapter, so the effective change set is a comparison of like with like
-    whether the originals came from a Change Record or from a published row —
-    and the comparison itself is the document codec's, applied by the ingress
-    rather than by any adapter, so no source decides its own effectiveness.
+    canonical and owned; ``originals`` carries those same members' original
+    values in the carriers that instruction states them in. Both sides cross the
+    SAME leaf conversion inside the adapter and only the authored one is judged,
+    so the effective change set is a comparison of like with like whether the
+    originals came from a Change Record or from a published row, and state a
+    write corrects never refuses that write. The comparison itself is the
+    document codec's, applied by the ingress rather than by any adapter, so no
+    source decides its own effectiveness.
 
     A destructive or close verb names no member, so ``originals`` is empty and
     the instruction is the identity row alone.

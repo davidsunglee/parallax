@@ -52,10 +52,18 @@ from _support.db_port import (
 from _support.model_capabilities import cataloged_for, graph_construction_for
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, Person
-from parallax.conformance.vo_models import CUSTOMER_MODEL, Customer
+from parallax.conformance.vo_models import (
+    CONTACT_MODEL,
+    CUSTOMER_MODEL,
+    Contact,
+    ContactAddress,
+    ContactGeo,
+    ContactPoint,
+    Customer,
+)
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
-from parallax.core.base import InstantError, PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.base import DocumentValue, InstantError, PresentDocument
+from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
     EntityGraphWriter,
@@ -158,6 +166,61 @@ def test_update_lowers_to_its_keyed_dml() -> None:
             (175.00, 2, 1, 1),
         ),
         CommitCall(),
+    ]
+
+
+def test_a_correction_of_stored_state_current_authoring_refuses_reaches_its_dml() -> None:
+    # `Contact` requires every member inside its address and the stored document
+    # states no `city`, so the read publishes a hydratable classified record while
+    # assigning that same document is refused (`Contact.address.city: required
+    # attribute is absent (or null)`, pinned at the producer in
+    # `test_write_instructions.py`). The write repairing it is a correction, and a
+    # correction against readable state has to reach the buffer: the verb judges
+    # what its caller authored, and weighs the original for effectiveness rather
+    # than admitting it. Only the corrected member is assigned.
+    stored: dict[str, DocumentValue] = {
+        "street": "Main",
+        "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
+        "phones": [],
+    }
+    port = ScriptedPort(
+        Transact(
+            Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(stored))}]),
+            Write(),
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        published = tx.find(Contact.where(Contact.id == 1)).checked().result()
+        assert isinstance(published, InvalidData)
+        current = cast("Contact", published.data)
+        tx.update(
+            current.edit(
+                address=ContactAddress(
+                    street="Main",
+                    city="Berlin",
+                    geo=ContactGeo(country="DE", point=ContactPoint(lat=1.0, lon=2.0)),
+                    phones=(),
+                )
+            )
+        )
+
+    db_for(CONTACT_MODEL, port).transact(fn)
+    assert [op for op in port.calls if isinstance(op, WriteCall)] == [
+        WriteCall(
+            POSTGRES.to_driver_sql("update contact set address = ? where id = ?"),
+            (
+                JsonDocument(
+                    {
+                        "street": "Main",
+                        "city": "Berlin",
+                        "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
+                        "phones": [],
+                    }
+                ),
+                1,
+            ),
+        )
     ]
 
 

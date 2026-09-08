@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
-from typing import Final
+from typing import Final, cast
 
 import pytest
 from _transact_support import (
@@ -31,13 +31,22 @@ from _transact_support import (
 from _support import mirrored_models as mm
 from _support.db_port import Read, ScriptedPort
 from _support.model_capabilities import cataloged_for, row_codec_for
+from parallax.conformance.vo_models import (
+    CONTACT_MODEL,
+    Contact,
+    ContactAddress,
+    ContactGeo,
+    ContactPoint,
+)
 from parallax.core import LATEST, Attr, DomainModel, attr
+from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import EntityRowCodec, EntityRowError
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work import ObjectKey
 from parallax.core.unit_work.instructions import PreparedTemporalBounds
+from parallax.snapshot import InvalidData
 from parallax.snapshot.handle._transaction import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
@@ -87,6 +96,30 @@ def _published_account() -> mm.Account:
     """One `Account` as a standalone read of this store hands it back."""
     port = ScriptedPort(Read(rows=[dict(_ACCOUNT_ROW)]))
     return db_for(ACCOUNT, port).find(mm.Account.where(mm.Account.id == 1)).result()
+
+
+_STORED_ADDRESS: Final[dict[str, DocumentValue]] = {
+    "street": "Main",
+    "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
+    "phones": [],
+}
+_COMPLETE_ADDRESS: Final = ContactAddress(
+    street="Main",
+    city="Berlin",
+    geo=ContactGeo(country="DE", point=ContactPoint(lat=1.0, lon=2.0)),
+    phones=(),
+)
+
+
+def _published_contact() -> Contact:
+    """One `Contact` whose stored address states no `city`, as the read that
+    classifies it still hands the hydrated root back."""
+    port = ScriptedPort(
+        Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(_STORED_ADDRESS))}])
+    )
+    published = db_for(CONTACT_MODEL, port).find(Contact.where(Contact.id == 1)).checked().result()
+    assert isinstance(published, InvalidData)
+    return cast("Contact", published.data)
 
 
 # --------------------------------------------------------------------------- #
@@ -196,6 +229,36 @@ def test_a_wholly_restoring_chain_still_states_the_member_it_took_back() -> None
 
     assert prepared.instruction.rows[0] == {"id": 1, "balance": Decimal("100.00")}
     assert prepared.originals == {"balance": Decimal("100.00")}
+
+
+def test_a_correction_states_the_original_current_authoring_would_refuse() -> None:
+    # `Contact` requires every member inside its address, and the stored document
+    # states no `city`: readable state a read publishes as a hydratable
+    # classified record, which authoring refuses — assigning that same document
+    # is `Contact.address.city: required attribute is absent (or null)`. The
+    # write repairing it is a correction, so the adapter states the deficient
+    # original beside the complete assignment rather than refusing the write for
+    # the state that write revises. Only the authored side is judged.
+    meta = cataloged_for(CONTACT_MODEL).meta
+    source = TypedKeyedWriteSource(
+        _published_contact().edit(address=_COMPLETE_ADDRESS), row_codec_for(CONTACT_MODEL)
+    )
+
+    prepared = source.prepare(source.resolve(meta, "update"), _UNBOUNDED)
+
+    assert prepared.instruction.rows[0]["address"] == {
+        "street": "Main",
+        "city": "Berlin",
+        "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
+        "phones": (),
+    }
+    assert prepared.originals == {
+        "address": {
+            "street": "Main",
+            "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
+            "phones": (),
+        }
+    }
 
 
 def test_an_untouched_copy_authors_its_identity_row_alone() -> None:

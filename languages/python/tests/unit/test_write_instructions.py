@@ -600,6 +600,26 @@ def test_a_prepared_revising_row_fills_inside_what_it_assigns_and_nowhere_else()
     assert customer.rows[0]["address"] == {"street": "Main", "phones": ()}
 
 
+def test_a_coerced_typed_row_projects_its_leaves_and_judges_none() -> None:
+    # The state a keyed write is addressed AGAINST, in the carriers the authored
+    # side of that write states the same members in. The `float32` crosses the
+    # same width projection preparation applies, so a member an author restored
+    # to what its own read published compares equal rather than differing by the
+    # projection alone. The out-of-scale `amount` — readable stored state a
+    # current authoring constraint refuses, as the assertion below shows the
+    # judging producer doing — passes through as itself, because the write
+    # correcting that member is the write this row is the original of.
+    model = _MODELS["writable-scalars"]
+    entity = wi.resolve_target(model, "WritableScalar")
+    row: dict[str, object] = {"id": 1, "f32": 0.1, "amount": Decimal("1.00005")}
+
+    coerced = wi.coerce_typed_row(row, model, entity)
+
+    assert dict(coerced) == {"id": 1, "f32": 0.10000000149011612, "amount": Decimal("1.00005")}
+    with pytest.raises(WriteRejectedError, match="does not match the declared type"):
+        wi.prepare_typed_write(wi.KeyedWrite("update", "WritableScalar", (row,)), model)
+
+
 @pytest.mark.parametrize("prepare", [wi.prepare_typed_write, wi.prepare_wire_write])
 def test_prepared_json_leaves_are_deeply_frozen_before_retention(prepare: Any) -> None:
     payload: dict[str, object] = {"items": [{"value": 1}]}
