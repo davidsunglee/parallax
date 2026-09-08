@@ -9,6 +9,7 @@ from dataclasses import FrozenInstanceError
 from typing import Any, cast
 
 import pytest
+from pydantic import PrivateAttr
 
 import parallax.core.entity._entity as entity_frontend
 import parallax.core.entity._value_object as value_object_frontend
@@ -21,6 +22,7 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core.entity import shape_of
 from parallax.core.entity._edit import Resolution
 
 
@@ -53,6 +55,10 @@ class _EntityLeaf(
 
 class _OtherValueObjectProbe(ValueObject):
     detail: Attr[str]
+
+
+class _InstanceStatePayload:
+    pass
 
 
 def _resolution_of(module: object) -> Callable[[type], Resolution]:
@@ -158,10 +164,13 @@ def _entity_class_with_discarded_instances() -> tuple[type, tuple[weakref.Refere
     class HeldEntity(Entity, table="held_entity", namespace="parallax.edit_resolution"):
         id: Attr[int] = attr(primary_key=True)
         label: Attr[str]
+        _payload = PrivateAttr()
 
     source = HeldEntity(id=1, label="a")
+    payload = _InstanceStatePayload()
+    cast("Any", source)._payload = payload
     result = source.edit(label="b")
-    return HeldEntity, (weakref.ref(source), weakref.ref(result))
+    return HeldEntity, (weakref.ref(source), weakref.ref(result), weakref.ref(payload))
 
 
 def _value_object_class_with_discarded_instances() -> tuple[
@@ -169,10 +178,13 @@ def _value_object_class_with_discarded_instances() -> tuple[
 ]:
     class HeldValueObject(ValueObject):
         label: Attr[str]
+        _payload = PrivateAttr()
 
     source = HeldValueObject(label="a")
+    payload = _InstanceStatePayload()
+    cast("Any", source)._payload = payload
     result = source.edit(label="b")
-    return HeldValueObject, (weakref.ref(source), weakref.ref(result))
+    return HeldValueObject, (weakref.ref(source), weakref.ref(result), weakref.ref(payload))
 
 
 @pytest.mark.parametrize(
@@ -212,3 +224,35 @@ def test_cached_resolution_metadata_is_immutable(frontend: object, cls: type) ->
         type(resolution).__setattr__(
             resolution, "restores_presence", not resolution.restores_presence
         )
+
+
+def test_entity_formation_metadata_cannot_stale_a_cached_resolution() -> None:
+    resolution = _resolution_of(entity_frontend)(_EntityProbe)
+    (attribute,) = tuple(
+        attribute for attribute in _EntityProbe.attributes if attribute.identity.name == "label"
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        type(attribute).__setattr__(attribute, "nullable", not attribute.nullable)
+
+    assert _resolution_of(entity_frontend)(_EntityProbe) is resolution
+    assert _EntityProbe(id=1, label="a").edit(label="b").label == "b"
+
+
+def test_value_object_formation_metadata_cannot_stale_a_cached_resolution() -> None:
+    resolution = _resolution_of(value_object_frontend)(_ValueObjectProbe)
+    shape = shape_of(_ValueObjectProbe)
+
+    with pytest.raises(TypeError):
+        cast("Any", shape.py_to_name)["alias"] = "label"
+    with pytest.raises(TypeError):
+        cast("Any", shape.name_to_py)["label"] = "alias"
+    with pytest.raises(TypeError):
+        cast("Any", shape.nested_classes)["nested"] = _ValueObjectProbe
+    with pytest.raises(FrozenInstanceError):
+        type(shape.shape.attributes[0]).__setattr__(
+            shape.shape.attributes[0], "nullable", not shape.shape.attributes[0].nullable
+        )
+
+    assert _resolution_of(value_object_frontend)(_ValueObjectProbe) is resolution
+    assert _ValueObjectProbe(label="a").edit(label="b").label == "b"
