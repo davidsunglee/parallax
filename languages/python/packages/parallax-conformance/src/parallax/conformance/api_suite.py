@@ -972,12 +972,12 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
 )
 # The interleaved two-session optimistic-lock race (`m-opt-lock-012`,
 # `m-case-format` unit-of-work grouping) holds two concurrent
-# `db.transact` units of work over the `Provisioner.peer` seam, sequenced in
-# authored order — `parallax.conformance.engine.run_interleaved_scenario_case`.
+# `db.transact` units of work, each over a dedicated session of its own,
+# sequenced in authored order — `parallax.conformance.engine.run_interleaved_scenario_case`.
 _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
     "the interleaved two-session optimistic-lock race (two concurrently-held "
-    "`db.transact` units of work over the `Provisioner.peer` seam, sequenced in "
-    "authored order) is graded end-to-end by the run sweep's own interleaved-group "
+    "`db.transact` units of work, each over a dedicated session of its own, "
+    "sequenced in authored order) is graded end-to-end by the run sweep's own interleaved-group "
     "runner (`parallax.conformance.engine.run_interleaved_scenario_case`); no idiomatic "
     "example exists (a two-connection race has no single-callback developer "
     "expression) — the reference harness remains its independent behavioral "

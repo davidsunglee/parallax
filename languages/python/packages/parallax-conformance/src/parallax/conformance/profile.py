@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from parallax.conformance.provision import Provisioner
 from parallax.core.db_port import (
@@ -36,6 +36,13 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
+
+if TYPE_CHECKING:
+    from parallax.conformance._database_control import DriverControl, InterleavedExecution
+    from parallax.core.entity import DomainModel
+    from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
+    from parallax.core.unit_work import Clock
+    from parallax.snapshot.handle import ServingModel
 
 __all__ = [
     "PROFILES",
@@ -143,9 +150,24 @@ class ProvisionedRun(ProfileRun):
         """Reset the schema, apply the model-derived DDL, and load the fixtures."""
         self._provisioner.reset(model, fixtures)
 
-    def peer(self, *, autocommit: bool = True) -> DbPort:  # pragma: no cover - Docker
-        """An independent second connection to the same database (provider `peer`)."""
-        return self._provisioner.peer(autocommit=autocommit)
+    def control(self, *, autocommit: bool = True) -> DriverControl:  # pragma: no cover - Docker
+        """A separately owned second session to the same database (provider `peer`).
+
+        Scoped to the caller: whoever opens one closes it, on every exit.
+        """
+        return self._provisioner.control(autocommit=autocommit)
+
+    def interleaved_execution(  # pragma: no cover - Docker
+        self,
+        model: DomainModel | ServingModel,
+        *,
+        clock: Clock | None = None,
+        lifecycle_provider: ExecutionLifecycleProvider | None = None,
+    ) -> InterleavedExecution:
+        """A dedicated session for one interleaved choreography, and its Database."""
+        return self._provisioner.interleaved_execution(
+            model, clock=clock, lifecycle_provider=lifecycle_provider
+        )
 
     def taken_at_session_default(self, level: str) -> DbPort:  # pragma: no cover - Docker
         """A port over a connection whose own default isolation is ``level``,

@@ -65,12 +65,16 @@ ENTRY_POINT_FIXTURE = "profile_run"
 CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
 
 # Fully qualified callables that acquire a live database. Constructing the
-# provisioner or a container starts a server; the two ``connect`` seams open a
-# socket to one; constructing a provisioned run opens the profile's own
-# provisioning. Constructing `PostgresAdapter` over an already-open connection
-# is deliberately absent: the internal-behavior surface wraps fakes with it.
+# provisioner or a container starts a server; the ``connect`` and ``open`` seams
+# open a socket to one; constructing a provisioned run opens the profile's own
+# provisioning. Constructing `PostgresAdapter` over an already-open connection is
+# deliberately absent: the internal-behavior surface wraps fakes with it, and so
+# is constructing either scoped control, which likewise takes an adapter already
+# opened — only the ``open`` that opens one for itself acquires anything.
 DATABASE_SEAMS: frozenset[str] = frozenset(
     {
+        "parallax.conformance._postgres_control.PostgresControl.open",
+        "parallax.conformance._postgres_control.PostgresInterleavedExecution.open",
         "parallax.conformance.profile.ProvisionedRun",
         "parallax.conformance.provision.Provisioner",
         "parallax.postgres.PostgresAdapter.connect",

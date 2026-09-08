@@ -15,9 +15,11 @@ TWO-SESSION choreography every such case shares:
   ordered, per-node step plan (`ConcurrencyStep`) — the language-neutral
   golden statements + each present step's `kind` / `expectRows`.
 - :func:`run_rounds` drives it: each node (`A` / `B`) gets its OWN
-  independent, non-autocommit session (the `Provisioner.peer` seam, threaded
-  in EXPLICITLY as `peer_factory` — this module constructs no connections
-  itself, m-db-port), tuned with a short session-scoped `deadlock_timeout` /
+  independent, non-autocommit session (a scoped
+  :class:`~parallax.conformance._database_control.DriverControl`, driven
+  through the narrow :class:`RoundsSession` view and threaded in EXPLICITLY
+  as `control_factory` — this module constructs no connections itself,
+  m-db-port), tuned with a short session-scoped `deadlock_timeout` /
   `lock_timeout` pair so a genuinely blocked lock wait fails fast rather than
   hanging the suite, WITHOUT starving the deadlock detector (`m-case-format`
   "Error cases": "the dialect's lock-contention tuning ... applied so a
@@ -58,7 +60,7 @@ import contextlib
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol, cast, runtime_checkable
+from typing import Protocol, cast
 
 from parallax.conformance import case_format
 from parallax.core.db_error import DatabaseError
@@ -69,8 +71,8 @@ from parallax.postgres import isolation_spelling
 __all__ = [
     "ConcurrencyStep",
     "NodeOutcome",
-    "PeerSession",
     "RoundsRun",
+    "RoundsSession",
     "parse_rounds",
     "run_rounds",
 ]
@@ -122,24 +124,19 @@ _LOCK_TIMEOUT: str = "250ms"
 _NODES: tuple[str, ...] = ("A", "B")
 
 
-@runtime_checkable
-class PeerSession(Protocol):
-    """The two `m-db-port` verbs this runner drives (`execute` / `execute_write`
-    — never `transaction`, since a peer session's own non-autocommit
-    connection life IS its unit of work here, the SAME `Provisioner.peer`
-    pattern the provider-contract deadlock proof drives by hand) PLUS its
-    OWN connection lifecycle (`Provisioner.peer`): the rounds runner opens
-    two independent, non-autocommit sessions and MUST close each itself once
-    a case's choreography finishes (successfully or not) — releasing every
-    lock the session held so the NEXT case's schema reset is never blocked
-    behind a leaked open transaction. A narrower, purpose-built structural
-    protocol rather than the full `~parallax.core.db_port.DbPort` (which
-    declares `transaction` too, unused here, and no lifecycle method at all
-    — a demarcated `Database` handle never closes its own port).
+class RoundsSession(Protocol):
+    """The narrow view this runner takes of one node's own scoped session.
 
-    It reports the dialect its statements execute in for the same reason a
-    port does: a caller cannot drive `execute` correctly without knowing the
-    SQL spelling of the connection behind the session.
+    A node's session is a
+    :class:`~parallax.conformance._database_control.DriverControl` the caller
+    opened, and this states only what the choreography drives: `execute` /
+    `execute_write` — never `transaction`, since a non-autocommit session's own
+    connection life IS its unit of work here — the dialect its statements are
+    spelled in (a caller cannot drive `execute` correctly without knowing the
+    SQL spelling of the connection behind it), and `close`, because this runner
+    MUST release each session once a case's choreography finishes, successfully
+    or not: a leaked open transaction still holds its locks and blocks the NEXT
+    case's schema reset.
     """
 
     @property
@@ -246,7 +243,7 @@ class RoundsRun:
     rounds: tuple[dict[str, NodeOutcome], ...]
 
 
-def _execute_step(session: PeerSession, step: ConcurrencyStep) -> tuple[Row, ...]:
+def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> tuple[Row, ...]:
     """Run one step's statements VERBATIM on ``session`` (`m-case-format`'s
     own case contract for this shape), returning the LAST statement's rows.
 
@@ -308,7 +305,7 @@ def _commit_of_an_abandoned_transaction(result: _WorkerResult, step: Concurrency
 
 def run_rounds(
     rounds: Sequence[Mapping[str, ConcurrencyStep]],
-    peer_factory: Callable[[], PeerSession],
+    control_factory: Callable[[], RoundsSession],
     *,
     isolation: IsolationLevel | None = None,
 ) -> RoundsRun:
@@ -325,7 +322,7 @@ def run_rounds(
     statement. ``None`` (a case declaring no level) issues no statement at all
     and keeps the driver's own default.
 
-    Opens exactly two sessions via ``peer_factory`` (never constructs a
+    Opens exactly two sessions via ``control_factory`` (never constructs a
     connection itself) with INCREMENTAL protection (`contextlib.ExitStack`):
     a session is registered for close the
     MOMENT it opens, so a second-peer construction failure — or a
@@ -358,15 +355,15 @@ def run_rounds(
     visible in the traceback.
     """
     with contextlib.ExitStack() as stack:
-        sessions: dict[str, PeerSession] = {}
+        sessions: dict[str, RoundsSession] = {}
         for node in _NODES:
-            session = peer_factory()
+            session = control_factory()
             stack.callback(session.close)
             sessions[node] = session
         for session in sessions.values():
             # The isolation override (when present) MUST run first: a peer
             # session's whole choreography is ONE continuous transaction
-            # (`PeerSession`'s own docstring), and the SQL-standard `SET
+            # (`RoundsSession`'s own docstring), and the SQL-standard `SET
             # TRANSACTION ISOLATION LEVEL` is only legal as a transaction's
             # OWN first statement — never after `deadlock_timeout` /
             # `lock_timeout` (plain session GUCs, safe at any point) have

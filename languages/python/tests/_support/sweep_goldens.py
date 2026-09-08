@@ -293,7 +293,8 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
 # sessions) — it is `compileEligibility: run-only` regardless (its version binds
 # are query-result-dependent, `_skip_reason`'s own run-only branch classifies
 # it, shape-agnostically, before this set is even consulted). Its run-lane entry
-# point uses the `Provisioner.peer` seam; see
+# point opens a dedicated session per group
+# (`ProvisionedRun.interleaved_execution`); see
 # `test_run_sweep.py::test_interleaved_uow_group_run_sweep`
 # (`engine.run_interleaved_scenario_case`), routed to explicitly rather than
 # through this set or `adapter.run_case`.

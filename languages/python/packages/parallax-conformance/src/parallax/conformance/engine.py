@@ -17,14 +17,12 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import json
-import os
-import socket
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
+from typing import Any, Final, Literal, cast
 
 from parallax.conformance import (
     _case_ingress,
@@ -34,6 +32,11 @@ from parallax.conformance import (
     temporal_state,
 )
 from parallax.conformance._actual_wire import ActualWireProjection
+from parallax.conformance._database_control import (
+    InterleavedExecution,
+    InterleavedExecutionFactory,
+    ModeledExecution,
+)
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
@@ -4442,8 +4445,8 @@ class _CaseContext:
 
     The dialect is deliberately NOT one of them. It is fixed by the connection a
     unit executes through rather than by the case, and one case's steps do not
-    all run through one connection — an interleaved group runs on its own peer
-    session. Each lowering therefore reads it off the port about to execute the
+    all run through one connection — each interleaved group runs on a dedicated
+    session of its own. Each lowering therefore reads it off the port about to execute the
     statement (:class:`_GroupSession` for a group, the unit's own port
     otherwise), so this record can travel beside any of them.
 
@@ -4794,7 +4797,8 @@ class _GroupSession:
 
     One value rather than two arguments because a group's SQL is spelled by the
     port that executes it (`m-dialect`), and one case's groups do not all run on
-    one connection — an interleaved group runs on its own peer session. Handing
+    one connection — each interleaved group runs on a dedicated session of its
+    own. Handing
     a runner a Handle and a dialect apart admits a group lowering in one
     connection's spelling while executing in another's, so this takes the port
     alone and OPENS the Handle over it: no caller can hand it a Handle connected
@@ -4830,7 +4834,7 @@ class _GroupSession:
 
 def _run_group_step(
     tx: handle.Transaction,
-    session: _GroupSession,
+    session: ModeledExecution,
     context: _CaseContext,
     state: _GroupState,
     step: Mapping[str, object],
@@ -4867,7 +4871,8 @@ def _run_group_step(
 
     ``session`` is the connection ``tx`` was opened over, and the spelling of
     every statement this step lowers is read off its port. A group runs on its
-    own connection — an interleaved group's on a peer session — so the lowering
+    own connection — an interleaved group's on the dedicated session opened for
+    it — so the lowering
     a step reports is spelled by whatever is about to execute it rather than by
     the caller's own port.
 
@@ -5014,8 +5019,9 @@ def _run_uow_group(
 # opens and those oracles hold at EVERY level — a pass asserting nothing about #
 # isolation. `_run_uow_group` above runs                                       #
 # ONE contiguous group on the main connection; a genuinely interleaved case    #
-# needs TWO groups held open CONCURRENTLY over TWO real sessions (the          #
-# `Provisioner.peer` seam) — a DIFFERENT consumer of that seam than the        #
+# needs TWO groups held open CONCURRENTLY over TWO real sessions (the scoped   #
+# `ProvisionedRun.interleaved_execution` seam) — a DIFFERENT scoped-control    #
+# consumer than the                                                           #
 # `when.concurrency` rounds runner (`parallax.conformance.concurrency_runner`, #
 # real `db.transact` calls, production routing, not verbatim                   #
 # authored statements). :class:`_Turnstile` sequences the two groups' own      #
@@ -5026,19 +5032,6 @@ def _run_uow_group(
 # read step's every page is drained before the turnstile advances, so a peer's #
 # commit lands BETWEEN two deliveries and never inside one.                    #
 # --------------------------------------------------------------------------- #
-@runtime_checkable
-class _PeerConnection(DbPort, Protocol):
-    """A `DbPort` peer connection (`Provisioner.peer`) with its own closeable
-    lifecycle: the interleaved-group runner opens a SECOND, independent
-    session for the second-declared group and MUST close it itself once the
-    choreography finishes (successfully or not) — this module constructs no
-    connection itself otherwise, so the CALLER threads the factory in
-    explicitly (`run_interleaved_scenario_case`'s own `peer_factory`
-    parameter)."""
-
-    def close(self) -> None: ...
-
-
 class _Turnstile:
     """A strict, shared step-index cursor two worker threads take turns
     through: a thread's own step at index ``i``
@@ -5101,7 +5094,7 @@ class _InterleavedGroupResult:
 
 
 def _run_interleaved_group(
-    session: _GroupSession,
+    session: ModeledExecution,
     observation: LifecycleObservation,
     context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
@@ -5142,8 +5135,8 @@ def _run_interleaved_group(
     observe that commit for real, never a same-process illusion of one.
 
     ``session`` is passed beside the shared ``context`` rather than read out of
-    it because the two groups run on two connections: the peer group's
-    steps execute on, and lower in the spelling of, its own peer session.
+    it because the two groups run on two connections: each group's steps execute
+    on, and lower in the spelling of, the dedicated session opened for it.
 
     ``context`` carries the SAME single :class:`TemporalShadow` every group
     shares (`_run_uow_group`'s own convention) — safe here ONLY because every
@@ -5207,127 +5200,31 @@ def _run_interleaved_group(
 _INTERLEAVED_GROUP_JOIN_TIMEOUT: Final[float] = 30.0
 
 
-def _underlying_connection(connection: object) -> object | None:
-    """The termination ladder's rung-two/rung-three shared reach target
-    (:func:`_terminate_connection`): the duck-typed underlying transport
-    (mirroring :attr:`~parallax.postgres.PostgresAdapter.connection`, the
-    wrapped psycopg ``Connection``), or ``None`` when ``connection`` exposes
-    no such escalation seam at all. Used only by
-    :func:`_terminate_connection`'s own rungs two and three; preflight
-    (:func:`_require_interleaved_termination_capability`) does not inspect a
-    connection's shape at all."""
-    return getattr(connection, "connection", None)
-
-
-# ---------------------------------------------------------------------------
-# The termination ladder's trust marker. A structural check — whether
-# `close()` / `fileno()` are CALLABLE — cannot prove termination is
-# RELIABLE: a port whose cancellation, close, underlying close, and socket
-# teardown are all CALLABLE yet all RAISE at runtime would pass such a check
-# (`preflight=('validated',)`) and then hang the unbounded post-ladder join
-# forever (`helper_completed=False`). Runtime reliability of an arbitrary
-# duck-typed object this module does not itself construct is not provable by
-# inspection, so preflight REQUIRES an explicit, truthful GRANT of trust
-# rather than inferring a guarantee from shape.
-# ---------------------------------------------------------------------------
-_TERMINATION_LADDER_TRUST_ATTR: Final[str] = "termination_ladder_trusted"
-"""The trust marker's attribute name (a named boolean rather than a separate
-ABC/Protocol, kept a plain duck-typed attribute so a test fake needs no
-extra base class to declare
-it). A connection type this module does not itself construct DECLARES the
-deterministic-termination contract by setting this attribute truthy on
-itself — a class attribute (inherited by every instance) is the natural
-place, but an instance attribute counts identically — asserting EXACTLY
-that the termination ladder's own escalation
-(:func:`_terminate_connection` — outer ``close()``, then the underlying
-``connection``'s own ``close()``, then real OS-level socket teardown)
-deterministically unblocks whatever this connection's own I/O is doing.
-Declaring the marker IS taking responsibility for it: a truthful
-declaration means :func:`_await_interleaved_workers`'s own unbounded
-post-ladder join can never hang past this connection; an UNTRUTHFUL
-declaration is a bug in the DECLARING type, diagnosable at that exact join
-line, never a defect this preflight could have caught — this module's own
-contract is discharged the moment a truthful declaration exists, never by
-attempting to verify one is true (a shape cannot be trusted to imply the
-declaration this module needs)."""
-
-
-def _validate_termination_trust(connection: object, label: str) -> list[str]:
-    """The pre-start refusal check enforcing the DECLARED termination-trust
-    contract: ``connection``
-    passes ONLY when it grants that trust explicitly, by exactly one of —
-
-    1. Being the KNOWN-DETERMINISTIC real type,
-       :class:`~parallax.postgres.PostgresAdapter` — the concrete shape
-       ``provision.py``'s own ``Provisioner.port`` AND ``Provisioner.peer()``
-       both construct (the SAME class serves the caller's own connection
-       and its peer alike). Trusted BY CONSTRUCTION, never inferred: its
-       own ``close()`` tears down the wrapped psycopg connection, whose own
-       ``close()`` tears down the underlying OS-level socket fd — an OS
-       guarantee, not a hope, that any driver call blocked on that fd's I/O
-       unblocks.
-    2. Carrying a truthy :data:`_TERMINATION_LADDER_TRUST_ATTR` attribute —
-       this module's own documented marker (see its own module-level
-       docstring for exactly what declaring it promises) — by which the
-       declarer takes on the SAME responsibility the real adapter carries
-       by construction.
-
-    A CALLABLE ``close()`` / ``fileno()`` — even a whole structurally
-    plausible ladder of them — is NEVER sufficient on its own: a port with
-    every rung callable
-    and every rung RAISING at runtime is refused WITHOUT
-    CALLING any of them (a pure trust check, never a behavioral probe —
-    nothing here is invoked, only inspected).
-
-    Returns every defect found (empty when ``connection`` validates) rather
-    than raising itself — the caller
-    (:func:`_require_interleaved_termination_capability`) combines BOTH
-    connections' own defects into one loud refusal rather than stopping at
-    the first one."""
-    from parallax.postgres import PostgresAdapter  # local: keep the unit lane psycopg-import-light
-
-    if isinstance(connection, PostgresAdapter):
-        return []
-    if getattr(connection, _TERMINATION_LADDER_TRUST_ATTR, False) is True:
-        return []
-    return [
-        f"{label} declares no trusted termination contract — it is neither the "
-        "known-deterministic PostgresAdapter shape (whose close() tears down an "
-        "OS-level socket fd, an OS-level guarantee) nor does it carry a truthy "
-        f"`{_TERMINATION_LADDER_TRUST_ATTR}` attribute, the documented marker "
-        "promising that the termination ladder deterministically unblocks its "
-        "own I/O; a callable close()/fileno() alone is never sufficient"
-    ]
-
-
-def _require_interleaved_termination_capability(
-    main_connection: DbPort, peer_connection: _PeerConnection, case_name: str
+def _refuse_untrusted_terminations(
+    executions: Mapping[str, InterleavedExecution], case_name: str
 ) -> None:
-    """The termination-trust preflight entry point. A merely structural check
-    — that a connection's ``close()`` / ``fileno()`` are CALLABLE — is
-    insufficient: a port that passes it yet whose every runtime rung RAISES
-    would leave :func:`_await_interleaved_workers`'s own deliberately
-    UNBOUNDED post-ladder join hanging indefinitely with no live process
-    able to unstick it. So the check is TRUST, not STRUCTURE: BEFORE either
-    interleaved-group worker thread
-    starts, BOTH ``main_connection`` (the caller-owned port) and
-    ``peer_connection`` must carry a DECLARED deterministic-termination
-    contract (:func:`_validate_termination_trust`) — refusing loudly, naming
-    EVERY defective connection at once (main, peer, or both; never
-    first-failure-only) rather than letting a defect surface only much
-    later as that indefinite hang.
+    """Refuse the choreography unless every execution grants termination trust.
 
-    Called from :func:`run_interleaved_scenario_case` before either worker
-    thread is even constructed: a refusal here leaves nothing running and
-    nothing to clean up on ``main_connection`` — the caller's own port is
-    inspected only, never called, exactly as untouched as if this function
-    had never run at all. (The caller is responsible for ``peer_connection``,
-    which it opened via its own ``peer_factory``; this function neither
-    closes it nor assumes anything about it beyond the same trust check
-    ``main_connection`` gets.)"""
-    defects = _validate_termination_trust(
-        main_connection, "main connection"
-    ) + _validate_termination_trust(peer_connection, "peer connection")
+    The lane's post-termination join is deliberately unbounded, so a worker it
+    cannot unstick hangs there rather than racing the harness. What makes that
+    trade sound is a DECLARED contract rather than an inspected shape: a
+    structural check — that a session's own close and its transport's are
+    callable — passes an implementation whose every rung raises, and that
+    implementation hangs the same join anyway. So the refusal happens BEFORE
+    either worker thread is constructed, naming EVERY execution that failed to
+    declare it rather than stopping at the first, and nothing here calls into an
+    execution at all.
+
+    Past this gate, a hang at that join can only mean a grant was untruthful — a
+    defect in the declaring type, diagnosable at that exact line.
+    """
+    defects = [
+        f"{label} declares no trusted termination contract "
+        f"(`termination_ladder_trusted`), so nothing promises the termination "
+        f"ladder can unblock its own I/O"
+        for label, execution in executions.items()
+        if execution.termination_ladder_trusted is not True
+    ]
     if not defects:
         return
     raise EngineError(
@@ -5335,330 +5232,90 @@ def _require_interleaved_termination_capability(
     )
 
 
-def _cancel_in_flight_work(connection: object) -> None:
-    """Best-effort, non-destructive interruption of whatever ``connection``
-    is blocked on right now (:func:`_await_interleaved_workers`'s second
-    escalation):
-    a worker parked in REAL driver I/O wakes for neither
-    :meth:`_Turnstile.release_all` (it is not inside ``turnstile.wait_for``)
-    nor closing some OTHER session, so its OWN connection's outstanding
-    operation must be cancelled directly. The concrete adapter
-    (:class:`~parallax.postgres.PostgresAdapter`) is a legal
-    ``parallax-conformance`` dependency (`pyproject.toml`), so a real
-    Postgres connection is cancelled through psycopg's thread-safe,
-    connection-preserving ``Connection.cancel_safe`` — callable from a
-    thread other than the one running the blocked query, and unlike
-    ``close()`` it does not itself destroy the connection: THIS rung never
-    tears a session down, whether it is the peer's or the caller's own
-    ``ours`` session. A survivor this rung cannot reach (cancellation fails
-    or is unavailable) escalates one rung further, to
-    :func:`_terminate_connection` — the GUARANTEED close ladder,
-    never best-effort like this rung — which DOES close it; cancellation
-    staying non-destructive only means a session that wakes here is never
-    needlessly destroyed, not that it can never be destroyed at all. A fake
-    port (unit lane) legally carries no psycopg connection; it instead
-    exposes its OWN duck-typed ``cancel()`` capability, probed for and
-    invoked when present. Neither path is a guarantee — a cancellation
-    request can itself fail or time out, and a fake's ``cancel()`` is
-    whatever its test author wired — so this is deliberately best-effort;
-    the caller rejoins bounded afterward and reports an honest terminal
-    state either way."""
-    from parallax.postgres import PostgresAdapter
-
-    # The concrete-adapter path needs a real psycopg `Connection`, which the
-    # unit lane (no container/socket I/O) never constructs; exercised only
-    # informally by the Docker-backed conformance lanes, none of which
-    # witness a genuine join timeout (`m-opt-lock-012` itself always
-    # resolves within the bound).
-    if isinstance(connection, PostgresAdapter):  # pragma: no cover
-        with contextlib.suppress(Exception):
-            connection.connection.cancel_safe()
-        return
-    cancel = getattr(connection, "cancel", None)
-    if callable(cancel):
-        with contextlib.suppress(Exception):
-            cancel()
-
-
-def _terminate_underlying_socket(  # pragma: no cover - real transport only, Docker-lane exercised
-    underlying: object, label: str
-) -> list[str]:
-    """The termination ladder's LAST rung (:func:`_terminate_connection`'s
-    own final escalation, reached only once BOTH ``underlying``'s own
-    ``close()`` is missing or has already raised): genuine OS-level socket
-    teardown on ``underlying``'s raw connection fd (``underlying.fileno()``
-    — psycopg's own documented seam for exactly this, normally used for
-    ``selectors``-based readiness waiting, reused here as the escalation's
-    own reach into the transport). ``shutdown(SHUT_RDWR)`` is the
-    thread-safe way to force a DIFFERENT thread's blocking
-    read/write/recv syscall on that SAME fd to return with an OS-level
-    error — the standard "unstick a blocked peer" trick, safe to call
-    concurrently with a blocking call on the same fd (unlike a bare
-    ``close()`` of that fd from another thread, which POSIX leaves
-    unsafe/undefined while a syscall on it is in flight elsewhere). The fd
-    is unconditionally closed afterward regardless of whether
-    ``shutdown()`` itself succeeded (``finally``): this connection is
-    already condemned by the time this rung runs, so closing it too is
-    never a new loss, and a ``shutdown()`` failure alone (e.g. the socket
-    was already disconnected) must never leave the fd itself still open.
-    Unreachable from any test fake — no fake in this module's unit lane
-    carries a real OS fd — so this rung is exercised only informally by the
-    Docker-backed conformance lanes, the SAME reasoning
-    :func:`_cancel_in_flight_work`'s own ``PostgresAdapter``-only
-    ``cancel_safe`` rung already carries."""
-    failures: list[str] = []
-    fileno = getattr(underlying, "fileno", None)
-    if not callable(fileno):
-        failures.append(f"{label}: underlying connection exposes no fileno() for OS-level teardown")
-        return failures
-    try:
-        fd = cast("int", fileno())
-    except Exception as exc:
-        failures.append(f"{label}: underlying connection.fileno() raised {exc!r}")
-        return failures
-    try:
-        sock = socket.socket(fileno=fd)
-    except Exception as exc:  # a misbehaving fileno() must never crash this rung
-        failures.append(f"{label}: OS-level socket(fileno={fd}) raised {exc!r}")
-        with contextlib.suppress(Exception):
-            os.close(fd)
-        return failures
-    try:
-        sock.shutdown(socket.SHUT_RDWR)
-    except Exception as exc:
-        failures.append(f"{label}: OS-level shutdown(fd={fd}) raised {exc!r}")
-    finally:
-        with contextlib.suppress(Exception):
-            sock.close()
-    return failures
-
-
-def _terminate_connection(connection: object, label: str) -> list[str]:
-    """Escalation rung three (:func:`_await_interleaved_workers`'s FINAL
-    escalation): unlike :func:`_cancel_in_flight_work`
-    (best-effort, non-destructive), this rung is GUARANTEED, never
-    best-effort. A single, silently-swallowed ``close()``
-    probe would assume closing always works; if BOTH ``cancel()`` and
-    ``close()`` fail on the SAME survivor, a
-    live worker keeps racing the caller after this rung has already run and
-    :func:`_await_interleaved_workers` has already raised — which this
-    ladder exists to prevent.
-
-    This ladder, each rung attempted only once the one above it is
-    missing or itself raises (never silently — every miss and every raise is
-    RECORDED and returned, so the caller can attach the full trail to the
-    timeout error as context rather than masking it):
-
-    1. ``connection``'s own duck-typed ``close()`` (``main_connection`` is
-       typed as the abstract ``DbPort``, with no ``close()`` in that
-       protocol — mirroring :func:`_cancel_in_flight_work`'s own
-       ``cancel()`` probe, this duck-types rather than assumes the
-       capability; :class:`_PeerConnection`, `PostgresAdapter`, and every
-       termination-rung test fake all expose one).
-    2. The UNDERLYING transport, reached the SAME duck-typed way — a
-       ``connection`` attribute (:attr:`~parallax.postgres.PostgresAdapter.
-       connection`, the wrapped psycopg ``Connection``), closed directly.
-       Unlike :func:`_cancel_in_flight_work`'s own ``cancel_safe`` rung,
-       this is NOT ``isinstance``-gated to the concrete adapter: ``close()``
-       is a universal enough capability name that a test fake can
-       legitimately expose the SAME seam a real adapter does, so this rung
-       reaches both alike. This is the documented seam a termination-rung
-       test fake must expose once its own OUTER ``close()`` is made to fail.
-    3. :func:`_terminate_underlying_socket` — genuine OS-level socket
-       teardown on the underlying connection's raw fd, real-transport only.
-
-    The guarantee this ladder exists to satisfy: for every connection type
-    actually wired into this path today (the real ``PostgresAdapter``,
-    escalating through rungs 1-3; a test fake, via whichever rung its own
-    documented seam answers), the ladder's last successful rung
-    deterministically unblocks a worker parked in that connection's I/O. A
-    fake whose documented seam the ladder genuinely cannot reach is a
-    defect in that fake, not in this function — it hangs the suite, which
-    is this module's own documented contract for an unreachable fake, not a
-    bug this rung papers over.
-
-    Rungs 1 and 2 reach the underlying transport through
-    :func:`_underlying_connection`. The preflight gate above this ladder does
-    not infer a guarantee by inspecting these rung shapes; it requires a
-    caller-visible, DECLARED trust contract instead
-    (:func:`_require_interleaved_termination_capability`,
-    :data:`_TERMINATION_LADDER_TRUST_ATTR`). :func:`_underlying_connection`
-    is simply this ladder's own single-sourced reach for rungs two and
-    three."""
-    failures: list[str] = []
-
-    def _attempt(target: object, rung: str) -> bool:
-        close = getattr(target, "close", None)
-        if not callable(close):
-            failures.append(f"{label}: {rung} exposes no close() capability")
-            return False
-        try:
-            close()
-        except Exception as exc:  # escalate; recorded, never masks the timeout error below
-            failures.append(f"{label}: {rung}.close() raised {exc!r}")
-            return False
-        return True
-
-    if _attempt(connection, "connection"):
-        return failures
-
-    underlying = _underlying_connection(connection)
-    if underlying is None:
-        failures.append(f"{label}: connection exposes no underlying `connection` escalation seam")
-        return failures
-    if _attempt(underlying, "underlying connection"):
-        return failures
-
-    failures.extend(  # pragma: no cover - real transport only; Docker-lane exercised
-        _terminate_underlying_socket(underlying, label)
-    )
-    return failures
-
-
 def _await_interleaved_workers(
-    thread_a: threading.Thread,
-    thread_b: threading.Thread,
+    workers: Mapping[str, tuple[threading.Thread, InterleavedExecution]],
     turnstile: _Turnstile,
-    main_connection: DbPort,
-    peer_connection: _PeerConnection,
     case_name: str,
     *,
     timeout: float = _INTERLEAVED_GROUP_JOIN_TIMEOUT,
 ) -> None:
     """Join both interleaved-group worker threads within ``timeout``; on a
-    timeout, cooperatively UNSTICK them before raising rather than raising
-    while they may still be alive: wake every
-    waiter parked in ``turnstile.wait_for`` (:meth:`_Turnstile.release_all` —
-    the SAME defensive unstick a worker's own unexpected failure already
-    uses), close ``peer_connection`` so any outstanding database work the
-    peer-side worker still holds terminates, THEN rejoin both threads (bounded
-    again, never a second indefinite hang).
+    timeout, cooperatively unstick them before raising rather than raising
+    while they may still be alive.
 
-    That first escalation cannot reach a worker blocked in REAL database I/O
-    on its OWN session: ``release_all`` only wakes a thread parked in
-    ``turnstile.wait_for``, and closing ``peer_connection`` touches only the
-    ``concurrent`` group's session, never ``main_connection``. So any thread
-    STILL alive after that rejoin gets a SECOND escalation:
-    :func:`_cancel_in_flight_work` — best-effort, non-destructive, and
-    ALLOWED to stay that way, because the
-    guarantee below lives entirely in the rung after it — on its OWN
-    connection (``main_connection`` for ``thread_a``, ``peer_connection``
-    for ``thread_b``), then one more bounded rejoin of both.
+    Three escalations, each reaching a survivor the one before it cannot:
 
-    FINAL CONTRACT: this function has NO code path — return, raise, or assert
-    — that runs while any started worker is alive. A bounded rejoin behind an
-    assumed-guaranteed ``close()`` is not enough: if BOTH ``cancel()`` and
-    ``close()`` fail on the same survivor, a live worker remains at the very
-    point this function would otherwise
-    raise. So any thread STILL alive after the cancel rejoin gets a THIRD
-    escalation that is no longer best-effort: :func:`_terminate_connection`'s
-    own GUARANTEED close ladder (duck-typed ``close()`` -> the underlying
-    driver connection -> OS-level socket teardown for the real adapter
-    shape; a documented underlying seam for a test fake — see that
-    function) on its OWN connection, INCLUDING ``main_connection`` (the
-    caller's own port) when its worker is the survivor — superseding the
-    earlier "never close the caller-owned port" invariant, since a live
-    worker still racing the caller on that port is strictly worse than a
-    terminated port that fails loudly on next use.
+    1. :meth:`_Turnstile.release_all` wakes every thread parked on a hand-off
+       that never arrived — the ordinary harness defect, and the only one that
+       needs nothing destructive.
+    2. :meth:`~parallax.conformance._database_control.InterleavedExecution.
+       cancel_active` on a survivor's OWN execution, for a thread parked in real
+       driver I/O that no turnstile release can reach. Non-destructive and
+       best-effort, which it is allowed to be because the guarantee lives in the
+       rung after it.
+    3. :meth:`~parallax.conformance._database_control.InterleavedExecution.
+       terminate_active` — the guaranteed one. Every execution here is a session
+       this run opened for this choreography alone, so destroying it is a loss
+       of nothing the caller still owns; that is why the lane never runs a group
+       over the fixture's own connection.
 
-    The join AFTER this rung is DELIBERATELY UNBOUNDED (``thread.join()``,
-    no ``timeout=``): there is no second, narrower timeout to violate. The trade,
-    made explicit: against a hypothetical FUTURE connection whose own close
-    ladder is defeated all the way down (a rung this module cannot reach,
-    or one that itself blocks), the failure mode is a diagnosable hang at
-    THIS join — a stuck process a maintainer can inspect and attribute to
-    this exact line — never a live worker racing the caller on a port the
-    caller already believes is theirs. Every connection type actually wired
-    into this path today (the real ``PostgresAdapter``; every
-    termination-rung test fake, via its documented seam) satisfies the
-    ladder's guarantee, so in practice this join returns promptly; the
-    unbounded wait is insurance against a violation of that guarantee, not
-    evidence one is expected. Worker exceptions the termination itself
-    provokes (a close-induced driver error inside the worker) are expected
-    collateral, captured on the worker's own ``_InterleavedGroupResult.
-    failure`` and never consulted once this function has already raised —
-    the caller only reaches that check on the ordinary, non-timeout path, so
-    the timeout error below is always what a caller here actually sees.
+    FINAL CONTRACT: no path — return, raise, or assert — runs while a started
+    worker is alive. The join after the termination rung is therefore
+    deliberately unbounded: against an execution whose ladder is somehow
+    defeated, the failure mode is a diagnosable hang at that exact line rather
+    than a live worker racing the caller through a session the caller believes
+    is finished. Every execution reaching this point has DECLARED that the
+    ladder unblocks it (:func:`_refuse_untrusted_terminations`), so in practice
+    the join returns at once.
 
-    This unbounded join is safe only because
-    :func:`run_interleaved_scenario_case` calls
-    :func:`_require_interleaved_termination_capability` on BOTH
-    ``main_connection`` and ``peer_connection`` before either worker thread
-    even starts. A merely structural check — that a connection's ``close()``
-    / ``fileno()`` are CALLABLE — is insufficient: a port with every one of
-    those callable yet every one RAISING at runtime would pass it and hang
-    this SAME join anyway (``preflight=('validated',)``,
-    ``helper_completed=False``). So the check is TRUST, not STRUCTURE — a
-    connection passes only by carrying a DECLARED deterministic-termination
-    contract (:func:`_validate_termination_trust`: the known-deterministic
-    ``PostgresAdapter`` shape, trusted by construction, or an explicit
-    :data:`_TERMINATION_LADDER_TRUST_ATTR` marker declaring the SAME
-    responsibility). Past that validation, a hang at the join below can only
-    mean a connection's trust grant was UNTRUTHFUL — a lying declaration (or
-    a `PostgresAdapter` whose own OS-level guarantee was somehow defeated):
-    a contract violation by that connection type, diagnosable at this exact
-    line, never an ordinary or expected outcome. The declaration makes the
-    requirement explicit and caller-visible instead of leaving it implicit
-    in an unbounded join a maintainer would otherwise have to
-    reverse-engineer.
+    Worker exceptions the termination itself provokes are expected collateral,
+    captured on each worker's own :class:`_InterleavedGroupResult` and never
+    consulted once this function has raised. The error names every execution
+    that had to be terminated and carries every recorded ladder failure as
+    :meth:`~BaseException.add_note` context — recorded, never masking it. The
+    caller's own ``finally`` still closes every execution unconditionally.
+    """
 
-    The terminal state is always honest, never a silent leak: because the
-    join above cannot return while a worker remains alive, EVERY path past
-    it raises the SAME timeout error this function has always raised,
-    naming whether ``main_connection`` (the caller's own port) was itself
-    terminated (closed) — the caller's next use must treat it as unsafe to
-    reuse either way — and now also carrying every close-ladder failure the
-    termination rung recorded (a missing capability, a raised ``close()``,
-    …) as `~BaseException.add_note` context: recorded, never silently
-    suppressed, never masking this error. The caller's own ``finally`` still
-    closes ``peer_connection`` unconditionally (idempotent,
-    `parallax.postgres.PostgresAdapter.close`), so a double close here is
-    harmless."""
-    thread_a.join(timeout=timeout)
-    thread_b.join(timeout=timeout)
-    if not thread_a.is_alive() and not thread_b.is_alive():
+    def rejoin() -> list[str]:
+        for thread, _execution in workers.values():
+            thread.join(timeout=timeout)
+        return [label for label, (thread, _) in workers.items() if thread.is_alive()]
+
+    if not rejoin():
         return
 
     turnstile.release_all()
-    peer_connection.close()
-    thread_a.join(timeout=timeout)
-    thread_b.join(timeout=timeout)
+    survivors = rejoin()
 
-    workers = ((thread_a, main_connection), (thread_b, peer_connection))
-    survivors = [(thread, connection) for thread, connection in workers if thread.is_alive()]
     if survivors:
-        for _thread, connection in survivors:
-            _cancel_in_flight_work(connection)
-        thread_a.join(timeout=timeout)
-        thread_b.join(timeout=timeout)
+        for label in survivors:
+            workers[label][1].cancel_active()
+        survivors = rejoin()
 
-    survivors = [(thread, connection) for thread, connection in workers if thread.is_alive()]
-    terminated_caller_port = False
-    termination_failures: list[str] = []
-    for thread, connection in survivors:
-        if connection is main_connection:
-            terminated_caller_port = True
-        termination_failures.extend(_terminate_connection(connection, thread.name))
+    terminated: list[str] = []
+    failures: list[str] = []
+    for label in survivors:
+        report = workers[label][1].terminate_active()
+        terminated.append(label)
+        failures.extend(f"{label}: {failure}" for failure in report.failures)
 
-    # UNBOUNDED — see docstring: a diagnosable hang here beats ever raising
-    # (or returning) while a worker is still alive, so there is no separate,
+    # UNBOUNDED — see docstring: a diagnosable hang here beats ever raising (or
+    # returning) while a worker is still alive, so there is no separate,
     # narrower termination-join bound to violate.
-    thread_a.join()
-    thread_b.join()
+    for thread, _execution in workers.values():
+        thread.join()
 
-    if terminated_caller_port:
+    if terminated:
         error = EngineError(
-            f"{case_name}: the interleaved-group choreography did not "
-            "finish within its bound — the caller-owned port was "
-            "terminated (closed) to unstick it and must be treated as "
-            "unsafe to reuse"
+            f"{case_name}: the interleaved-group choreography did not finish within its "
+            f"bound — {', '.join(terminated)} had to be terminated to unstick it"
         )
     else:
         error = EngineError(
             f"{case_name}: the interleaved-group choreography did not "
             "finish within its bound — a turnstile hand-off is missing"
         )
-    for failure in termination_failures:
+    for failure in failures:
         error.add_note(f"termination ladder: {failure}")
     raise error
 
@@ -5666,7 +5323,7 @@ def _await_interleaved_workers(
 def run_interleaved_scenario_case(
     case: case_format.Case,
     port: DbPort,
-    peer_factory: Callable[[], _PeerConnection],
+    execution_factory: InterleavedExecutionFactory,
 ) -> tuple[list[Emission], int, int | None, list[list[Mapping[str, object]]]]:
     """Run a two-group interleaved-`uow`-group scenario — the optimistic-lock
     race (`m-opt-lock-012`) and the Isolation Level scenarios alike, whose ONE
@@ -5674,15 +5331,17 @@ def run_interleaved_scenario_case(
     here: this entry point carries no `stepGraphs` channel, so that oracle would
     go unasserted — read oracles are row-valued only, and a write step, stating
     no oracle of its own, is asked for nothing):
-    the
-    FIRST-declared group on the caller's own ``port``, the second on a
-    SECOND, peer-backed connection (``peer_factory``
-    — this function constructs no connection itself), each a REAL
-    ``db.transact`` (production routing) whose steps lower in the dialect its
-    OWN connection declares, steps sequenced across
-    the two in AUTHORED order (:class:`_Turnstile`). Any ungrouped step
-    (each witnessed case's own trailing verify find) runs AFTER both groups
-    have resolved, on the caller's ``port``.
+    each
+    declared group on a DEDICATED session of its own (``execution_factory`` —
+    this function constructs no connection itself), each a REAL ``db.transact``
+    (production routing) whose steps lower in the dialect its OWN connection
+    declares, steps sequenced across the two in AUTHORED order
+    (:class:`_Turnstile`). Neither group runs on the caller's ``port``: a stuck
+    worker is unstuck by destroying the session it is parked in, and what this
+    lane may destroy is only a session it opened for this one choreography. The
+    caller's ``port`` therefore serves the case's out-of-band `given.apply`
+    statements and any ungrouped step (each witnessed case's own trailing verify
+    find), which runs AFTER both groups have resolved.
 
     Reports the ordered emissions, total round trips, and — when a group's
     own last write step conflicted — the conflict's ``actual`` affected-row
@@ -5698,13 +5357,11 @@ def run_interleaved_scenario_case(
     ordinary shape-dispatched entry points, the SAME reasoning the rounds
     runner's own dispatch follows.
 
-    Before either worker thread starts, both ``port`` and the connection
-    ``peer_factory`` produces must carry a TRUSTED deterministic-termination
-    contract (:func:`_require_interleaved_termination_capability`) — a
-    connection with no declared trust
-    refuses loudly here, rather than surfacing only much later as an
-    indefinite hang at :func:`_await_interleaved_workers`'s own unbounded
-    post-ladder join.
+    Before either worker thread starts, every execution must DECLARE a trusted
+    deterministic-termination contract (:func:`_refuse_untrusted_terminations`):
+    an execution that declares none is refused loudly here, rather than
+    surfacing only much later as an indefinite hang at
+    :func:`_await_interleaved_workers`'s own unbounded post-ladder join.
     """
     steps = _scenario_steps(case)
     serving = case_serving_model(case)
@@ -5736,49 +5393,40 @@ def run_interleaved_scenario_case(
     observed_a = lifecycle.observation()
     observed_b = lifecycle.observation()
     context = _CaseContext(serving, model, concurrency, shadow, case_format.uow_isolation(case))
-    session_a = _GroupSession(port, context, instant, observed_a)
-    peer_connection = peer_factory()
-    try:
-        _require_interleaved_termination_capability(port, peer_connection, case.path.name)
-    except BaseException:
-        # Refusing here means neither worker thread ever started, so there is
-        # nothing to unstick — only the peer connection this function itself
-        # opened via `peer_factory` to release. Best-effort and swallowed
-        # (never let a broken `close()` on an already-refused connection mask
-        # the loud refusal above): a connection that failed validation may
-        # have no working `close()` at all, by definition.
-        with contextlib.suppress(Exception):
-            peer_connection.close()
-        raise
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
-    thread_a = threading.Thread(
-        target=_run_interleaved_group,
-        args=(session_a, observed_a, context, steps, indices_a, turnstile, result_a),
-        name=f"uow-{label_a}",
+    # Incremental protection: each execution is registered for release the
+    # moment it opens, so a second-session failure — or the trust refusal below
+    # — releases the first rather than leaking it, and the ordinary exit
+    # releases both whatever the choreography did.
+    plans = (
+        (f"uow-{label_a}", observed_a, indices_a, result_a),
+        (f"uow-{label_b}", observed_b, indices_b, result_b),
     )
-    thread_b = threading.Thread(
-        target=_run_interleaved_group,
-        args=(
-            _GroupSession(peer_connection, context, instant, observed_b),
-            observed_b,
-            context,
-            steps,
-            indices_b,
-            turnstile,
-            result_b,
-        ),
-        name=f"uow-{label_b}",
-    )
-    try:
-        thread_a.start()
-        thread_b.start()
-        _await_interleaved_workers(
-            thread_a, thread_b, turnstile, port, peer_connection, case.path.name
-        )
-    finally:
-        peer_connection.close()
+    with contextlib.ExitStack() as stack:
+        executions: dict[str, InterleavedExecution] = {}
+        for name, observed, _indices, _result in plans:
+            execution = execution_factory(
+                serving, clock=FixedClock(instant), lifecycle_provider=observed.provider
+            )
+            stack.callback(execution.close)
+            executions[name] = execution
+        _refuse_untrusted_terminations(executions, case.path.name)
+        workers = {
+            name: (
+                threading.Thread(
+                    target=_run_interleaved_group,
+                    args=(executions[name], observed, context, steps, indices, turnstile, result),
+                    name=name,
+                ),
+                executions[name],
+            )
+            for name, observed, indices, result in plans
+        }
+        for thread, _execution in workers.values():
+            thread.start()
+        _await_interleaved_workers(workers, turnstile, case.path.name)
     for result in (result_a, result_b):
         if result.failure is not None:
             raise result.failure

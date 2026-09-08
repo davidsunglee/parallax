@@ -30,6 +30,7 @@ deterministic instant per flushing transaction removes that flakiness.
 from __future__ import annotations
 
 import datetime as dt
+from contextlib import closing
 from decimal import Decimal
 from typing import Any
 
@@ -123,13 +124,12 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
 
     _node, edge = render_balance_milestone(db, id=1)  # RENDER time -- the stale edge
 
-    peer_db = connect(profile_run.peer(), _BALANCE, clock=ScriptedClock([_I2]))
-
     def concurrent_write(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.update(current.edit(value=Decimal("200.00")))
 
-    peer_db.transact(concurrent_write)
+    with closing(profile_run.control()) as peer:
+        connect(peer, _BALANCE, clock=ScriptedClock([_I2])).transact(concurrent_write)
 
     with raises_contextualized(StaleMilestoneError, match="superseded"):
         submit_balance_edit(
@@ -212,15 +212,14 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
 
     _node, edge = render_branch_milestone(db, id=1)  # RENDER time — the stale edge
 
-    # An independent second connection commits a REAL chaining update first.
-    peer_port = profile_run.peer()
-    peer_db = connect(peer_port, _BRANCH, clock=ScriptedClock([_I2]))
-
     def concurrent_write(tx: Transaction) -> None:
         current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=LATEST)).result()
         tx.update(current.edit(name="Renamed By Someone Else"), valid_from=_I2)
 
-    peer_db.transact(concurrent_write)
+    # An independent second session commits a REAL chaining update first, and is
+    # released with the choreography that needed it.
+    with closing(profile_run.control()) as peer:
+        connect(peer, _BRANCH, clock=ScriptedClock([_I2])).transact(concurrent_write)
 
     with raises_contextualized(StaleMilestoneError, match="superseded"):
         # SUBMIT time — nothing is ever applied, so the correction's own

@@ -17,7 +17,7 @@ skip is reported, never silent (spec §6).
 from __future__ import annotations
 
 import threading
-from contextlib import suppress
+from contextlib import closing, suppress
 from typing import Any
 
 import pytest
@@ -229,14 +229,14 @@ def test_a_duplicate_names_the_index_it_violated_by_its_created_name(
 # session that is gone by the time the undo is sent.                           #
 # --------------------------------------------------------------------------- #
 def _terminate(executioner: Any, victim: Any) -> None:
-    """End ``victim``'s own database session from a second connection.
+    """End ``victim``'s own database session from a second one.
 
     The only way to make a genuine ROLLBACK fail: the session it would run in no
     longer exists, so the undo cannot be sent and what the transaction left
-    behind is unknown.
+    behind is unknown. The control lane owns the statements that do it, so this
+    proof states the choreography and not the SQL.
     """
-    (row,) = victim.execute("select pg_backend_pid() as pid", [])
-    executioner.execute("select pg_terminate_backend(%s) as terminated", [row["pid"]])
+    executioner.terminate_session(victim)
 
 
 @pytest.mark.adapter_smoke
@@ -244,7 +244,7 @@ def test_transaction_reports_a_boundary_that_never_began(profile_run: Any) -> No
     # A closed connection is the reachable begin failure. What makes it distinct
     # from every other unhappy outcome is that the callback never runs, so there
     # is nothing to undo and nothing to re-execute.
-    port = profile_run.peer()
+    port = profile_run.control()
     port.close()
     ran: list[str] = []
 
@@ -262,27 +262,27 @@ def test_transaction_reports_a_commit_failure_as_rolled_back(profile_run: Any) -
     # A DEFERRABLE INITIALLY DEFERRED unique constraint is checked at COMMIT, so
     # the duplicate the body inserts succeeds as a statement and the durability
     # call is what fails — the one failure no `execute_write` can report.
-    port = profile_run.peer()
-    for statement in provision.reset_statements():
-        port.execute_write(statement, [])
-    port.execute_write(
-        "create table deferred_tag (id integer primary key, tag integer, "
-        "constraint deferred_tag_unique unique (tag) deferrable initially deferred)",
-        [],
-    )
-    port.execute_write("insert into deferred_tag (id, tag) values (1, 1)", [])
+    with closing(profile_run.control()) as port:
+        for statement in provision.reset_statements():
+            port.execute_write(statement, [])
+        port.execute_write(
+            "create table deferred_tag (id integer primary key, tag integer, "
+            "constraint deferred_tag_unique unique (tag) deferrable initially deferred)",
+            [],
+        )
+        port.execute_write("insert into deferred_tag (id, tag) values (1, 1)", [])
 
-    def duplicate(conn: Any) -> int:
-        return conn.execute_write("insert into deferred_tag (id, tag) values (2, 1)", [])
+        def duplicate(conn: Any) -> int:
+            return conn.execute_write("insert into deferred_tag (id, tag) values (2, 1)", [])
 
-    outcome = port.transaction(duplicate)
-    assert isinstance(outcome, RolledBack)
-    trigger = outcome.trigger
-    assert isinstance(trigger, CommitFailed)
-    assert isinstance(trigger.error, DatabaseError)
-    assert trigger.error.violates_unique_index
-    # The rollback completed, so the connection is usable and nothing landed.
-    assert port.execute("select count(*) as n from deferred_tag", []) == [{"n": 1}]
+        outcome = port.transaction(duplicate)
+        assert isinstance(outcome, RolledBack)
+        trigger = outcome.trigger
+        assert isinstance(trigger, CommitFailed)
+        assert isinstance(trigger.error, DatabaseError)
+        assert trigger.error.violates_unique_index
+        # The rollback completed, so the connection is usable and nothing landed.
+        assert port.execute("select count(*) as n from deferred_tag", []) == [{"n": 1}]
 
 
 @pytest.mark.adapter_smoke
@@ -292,14 +292,13 @@ def test_transaction_reports_a_rollback_that_could_not_undo_the_callbacks_failur
     class _Rollback(Exception):
         pass
 
-    port = profile_run.peer()
-    executioner = profile_run.peer()
+    with closing(profile_run.control()) as port, closing(profile_run.control()) as executioner:
 
-    def body(conn: Any) -> None:
-        _terminate(executioner, conn)
-        raise _Rollback
+        def body(conn: Any) -> None:
+            _terminate(executioner, conn)
+            raise _Rollback
 
-    outcome = port.transaction(body)
+        outcome = port.transaction(body)
     assert isinstance(outcome, RollbackFailed)
     trigger = outcome.trigger
     assert isinstance(trigger, CallbackRaised)
@@ -313,14 +312,13 @@ def test_transaction_reports_a_rollback_that_could_not_undo_the_callbacks_failur
 def test_transaction_reports_a_rollback_that_could_not_undo_a_failed_commit(
     profile_run: Any,
 ) -> None:
-    port = profile_run.peer()
-    executioner = profile_run.peer()
+    with closing(profile_run.control()) as port, closing(profile_run.control()) as executioner:
 
-    def body(conn: Any) -> str:
-        _terminate(executioner, conn)
-        return "unreachable"
+        def body(conn: Any) -> str:
+            _terminate(executioner, conn)
+            return "unreachable"
 
-    outcome = port.transaction(body)
+        outcome = port.transaction(body)
     assert isinstance(outcome, RollbackFailed)
     trigger = outcome.trigger
     # The commit is what ended the transaction, so it stays the trigger rather
@@ -359,8 +357,8 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(profile_run: Any) ->
     port.execute_write("create table gauge (id integer primary key, v integer)", [])
     port.execute_write("insert into gauge (id, v) values (1, 0), (2, 0)", [])
 
-    a = profile_run.peer(autocommit=False)
-    b = profile_run.peer(autocommit=False)
+    a = profile_run.control(autocommit=False)
+    b = profile_run.control(autocommit=False)
     victims: list[DatabaseError] = []
     record = threading.Lock()
 
@@ -374,7 +372,7 @@ def test_deadlock_is_reraised_as_a_retriable_database_error(profile_run: Any) ->
             # Roll back regardless: a victim releases its locks so the survivor can
             # finish; the survivor discards its speculative update.
             with suppress(Exception):
-                peer.connection.rollback()
+                peer.rollback()
 
     try:
         # Round 1: A locks row 1, B locks row 2 (no contention yet).
