@@ -44,6 +44,11 @@ from parallax.core.document_codec._document import (
     reduce_declared_members_classified,
 )
 from parallax.core.document_codec._leaf import LeafEncodingError, encode_leaf, is_text_compared
+from parallax.core.document_codec._managed import (
+    EffectiveChangeSet,
+    canonical_managed_document,
+    classify_effective_change,
+)
 from parallax.core.document_codec._shape import (
     MISSING,
     NULL,
@@ -71,6 +76,7 @@ __all__ = [
     "DocumentPatch",
     "DocumentPathSegment",
     "DocumentShape",
+    "EffectiveChangeSet",
     "ExplicitNull",
     "Leaf",
     "LeafEncodingError",
@@ -83,6 +89,8 @@ __all__ = [
     "SetValue",
     "Unavailable",
     "apply_patches",
+    "canonical_managed_document",
+    "classify_effective_change",
     "comparison_text",
     "decode_located_member_classified",
     "decode_occurrence_classified",

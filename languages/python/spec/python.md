@@ -4375,6 +4375,22 @@ These feature tests do not claim the deferred `benchmark` command or general
   `entity-row-member-missing` from `full_row` and emits a row from
   `identity_row`, whose selection is the declared primary key.
 
+  **One effective change set, and the document codec owns it.** Whether an
+  assignment changes the value it was authored against is
+  `parallax.core.document_codec.classify_effective_change`'s answer and no other
+  module's. It takes the applicable document shape, the explicitly assigned
+  members as managed values, and those same members' observed originals, and
+  answers an `EffectiveChangeSet` carrying two disjoint sets of member names,
+  `effective` and `restored`, which together name exactly the declared members
+  the assignment states. `canonical_managed_document` is the shape-aware walk
+  beneath it — declared members only, presence preserved inside an occurrence, a
+  `many` zero-filled at every depth — and is the one operation a consumer reduces
+  a managed document through. Neither decodes a leaf and neither refuses, so a
+  correction authored against stored state a current authoring constraint would
+  reject still reaches the buffer. The answer names members and carries no
+  payload: a caller selects its own already-prepared values by those names, so
+  nothing about what will be stored is decided by asking.
+
   Provenance comparison is stated rather than implied: an occurrence compares as
   a **whole** at either cardinality, presence preserved on both sides, because
   assigning one replaces its subtree (`m-unit-work` *Comparing an assigned member
@@ -4870,7 +4886,9 @@ These feature tests do not claim the deferred `benchmark` command or general
   source — every keyed verb but the two inserts — runs, Typed or Wire: reentry;
   representation-only shape; source resolution and provenance; pin; window;
   member names, values, assignment legality, and preparation; effective changes
-  and restorations with the no-op return; the buffered-insert exemption;
+  and restorations, which are `classify_effective_change`'s answer over the
+  prepared assigned members and the source's originals, with the no-op return;
+  the buffered-insert exemption;
   evidence; claim and buffer. One private ingress owns that order; each
   representation answers only source facts through a private adapter, and a
   conformance call enters the same ingress once. Reentry is refused once, as the
@@ -5360,8 +5378,10 @@ and the row does not claim them: `modules.md` routes the port through
 modules through `parallax.core.entity`, whose values every Typed write is stated
 over. A forbidden row is the complement of a closure, so each rides in whatever
 the ingress itself imports, and what the row says about them is that this scope
-inherits them rather than that they are forbidden. The verb-input step library
-this ingress composes, the family answers it resolves through, and the
+inherits them rather than that they are forbidden. `m-document-codec` IS named,
+because the ingress reaches it directly: an effective change set is the codec's
+answer, and no dependency this row already carries reaches it. The verb-input
+step library this ingress composes, the family answers it resolves through, and the
 predicate-selected lane beside it are all modules of the parent package rather
 than declared scopes, so no contract can name any of them either way.
 
@@ -5478,7 +5498,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot read composition (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._read_scope` | `parallax.snapshot.handle._read_scope` | `parallax.core.entity`, `parallax.core.continuation`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-read-lock`, `m-opt-lock`, `m-execution-lifecycle` | generated forbidden contracts |
-| Snapshot keyed write ingress (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._keyed_writes` | `parallax.snapshot.handle._keyed_writes` | `parallax.core.entity`, `parallax.snapshot._inspection`, `m-metamodel`, `m-temporal-read`, `m-unit-work`, `m-execution-lifecycle` | generated forbidden contracts |
+| Snapshot keyed write ingress (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._keyed_writes` | `parallax.snapshot.handle._keyed_writes` | `parallax.core.entity`, `parallax.snapshot._inspection`, `m-metamodel`, `m-document-codec`, `m-temporal-read`, `m-unit-work`, `m-execution-lifecycle` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Snapshot handle write execution (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._keyed_sql`, `._write_lowering` | those three scopes, sharing one grant row | `m-core`, `m-wire`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | Snapshot write-observation retention (support, sealed child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._retention` | `parallax.snapshot.handle._retention` | `m-metamodel`, `m-unit-work`, `m-temporal-read`, `parallax.snapshot.handle._family` | generated forbidden contracts + `tools/check_scope_ownership.py` |
@@ -5627,6 +5647,7 @@ parallax.snapshot.handle._read_scope --> parallax.core.execution_lifecycle
 parallax.snapshot.handle._keyed_writes --> parallax.core.entity
 parallax.snapshot.handle._keyed_writes --> parallax.snapshot._inspection
 parallax.snapshot.handle._keyed_writes --> parallax.core.metamodel
+parallax.snapshot.handle._keyed_writes --> parallax.core.document_codec
 parallax.snapshot.handle._keyed_writes --> parallax.core.temporal_read
 parallax.snapshot.handle._keyed_writes --> parallax.core.unit_work
 parallax.snapshot.handle._keyed_writes --> parallax.core.execution_lifecycle

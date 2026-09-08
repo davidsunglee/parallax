@@ -168,6 +168,22 @@ def test_prepare_states_every_touched_member_beside_its_original() -> None:
     assert prepared.object_key == ObjectKey(mm.Account.identity, (("id", 1),))
 
 
+def test_the_assigned_side_of_the_comparison_is_the_originals_names_and_no_identity() -> None:
+    # The two sides of the comparison are one member set, which is `originals`'
+    # own invariant; reading the assigned side through it is what keeps the
+    # ingress from restating that invariant at the comparison. The key the row
+    # also carries names the object rather than assigning anything, so it is not
+    # on either side.
+    meta, codec = _accounts()
+    edited = _published_account().edit(balance=Decimal("125.00"))
+    source = TypedKeyedWriteSource(edited, codec)
+
+    prepared = source.prepare(source.resolve(meta, "update"), _UNBOUNDED)
+
+    assert prepared.assigned == {"balance": Decimal("125.00")}
+    assert prepared.assigned.keys() == prepared.originals.keys()
+
+
 def test_a_wholly_restoring_chain_still_states_the_member_it_took_back() -> None:
     # Both halves name the member, and both carry the same value: the effective
     # change set is the ingress's to reduce, so the adapter states what was
