@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import datetime
+from pathlib import Path
 
 import pytest
+import yaml
 
+from reference_harness import corpus_yaml
 from reference_harness.corpus_yaml import load_corpus_yaml
 from reference_harness.portable_literal import AuthoredNumber, decode_number
 
@@ -43,6 +46,28 @@ from reference_harness.portable_literal import AuthoredNumber, decode_number
 def test_a_plain_scalar_resolves_under_the_core_schema(scalar: str, value: object) -> None:
     loaded = load_corpus_yaml(f"key: {scalar}\n")
     assert loaded == {"key": value} or (value != value and loaded["key"] != loaded["key"])
+
+
+def test_the_corpus_reads_the_same_under_either_yaml_parser() -> None:
+    # The core schema is applied after parsing, in the resolver and constructor
+    # tables, so the parser the installed PyYAML wheel carries — libyaml's or its
+    # own — must leave every corpus document unchanged; a machine without libyaml
+    # reads the corpus through the fallback this pins against.
+    shipped = corpus_yaml._CoreSchemaLoader  # pyright: ignore[reportPrivateUsage]
+
+    class PurePython(yaml.SafeLoader):
+        pass
+
+    PurePython.yaml_implicit_resolvers = dict(shipped.yaml_implicit_resolvers)
+    PurePython.yaml_constructors = dict(shipped.yaml_constructors)
+    corpus = Path(__file__).resolve().parents[2] / "core" / "compatibility"
+    documents = sorted(
+        path for read in ("cases", "models", "fixtures") for path in (corpus / read).rglob("*.yaml")
+    )
+    assert documents
+    for path in documents:
+        text = path.read_text(encoding="utf-8")
+        assert load_corpus_yaml(text) == yaml.load(text, Loader=PurePython), path
 
 
 def test_a_temporal_scalar_stays_its_portable_literal() -> None:
