@@ -379,9 +379,11 @@ CI MUST use the same interface as local verification.
 
 - A job's identifier matches the command it executes.
 - The job's primary verification step invokes that command directly.
-- A job MAY expand one command across a declared language-version or database
-  matrix; the expansion MUST be recognizable as intentional rather than as
-  duplicate ownership.
+- A job MAY expand one command across a declared language-version, database,
+  or shard matrix; the expansion MUST be recognizable as intentional rather
+  than as duplicate ownership. A shard matrix's cells partition one scheduling
+  class's selection: each cell runs its part exactly once, their union is the
+  whole class, and the partition MUST be enforced mechanically.
 - A job MUST NOT embed a raw test, lint, build, coverage, or audit command when a
   canonical command owns that gate.
 - Setup, dependency installation, secret scanning, and event-specific checks MAY
