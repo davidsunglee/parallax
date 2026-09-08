@@ -326,7 +326,7 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 
 
 # The interleaved cases `test_interleaved_uow_group_run_sweep` drives through
-# `engine.run_interleaved_scenario_case` over the `Provisioner.peer` seam:
+# `engine.run_interleaved_scenario_case` over its own dedicated executions:
 # `m-opt-lock-012`'s optimistic-lock race, and the two Repeatable Read proofs
 # `m-unit-work-032` (a plain object find) and `m-unit-work-034` (a streamed
 # delivery) — two units of work reading and writing one row, whose second read is
@@ -921,7 +921,7 @@ _INTERLEAVED_CASES = _reachable_interleaved_uow_group_cases()
 @pytest.mark.parametrize("case", _INTERLEAVED_CASES, ids=[c.case_id for c in _INTERLEAVED_CASES])
 def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: Any) -> None:
     """The two-connection interleaved-group entry point: two units of work held
-    open at once over a REAL peer connection
+    open at once, each over a dedicated session this run opened for it
     (`engine.run_interleaved_scenario_case`), never through `adapter.run_case`
     (which cannot hold a second session open).
 
@@ -953,7 +953,7 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, profile_run: An
     profile_run.reset(model, case_fixtures(case))
 
     emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
-        case, profile_run.port, lambda: profile_run.peer()
+        case, profile_run.port, profile_run.interleaved_execution
     )
 
     golden_statements = write_golden_statements(case)
@@ -1248,7 +1248,7 @@ def test_run_only_write_sequence_run_sweep(
 # --------------------------------------------------------------------------- #
 # The `when.concurrency` rounds runner (the m-read-lock behavioral matrix,   #
 # joined by `m-db-error`'s own five two-session error cases too, case-       #
-# driven through the SAME `Provisioner.peer` choreography): `m-read-lock-006`#
+# driven through the SAME two-control choreography): `m-read-lock-006`      #
 # (error / lockWaitTimeout), `-007`/`-008` (concurrencySuccess), and          #
 # `m-db-error-004/-005/-006/-007/-009` (deadlock cycle/reverse, lock-wait     #
 # timeout x2, serialization failure) — structurally identical to the         #
@@ -1299,7 +1299,7 @@ def test_concurrency_rounds(case: case_format.Case, profile: Profile, profile_ru
     rounds = concurrency_runner.parse_rounds(case, profile.dialect.name)
     run = concurrency_runner.run_rounds(
         rounds,
-        lambda: profile_run.peer(autocommit=False),
+        lambda: profile_run.control(autocommit=False),
         isolation=case_format.uow_isolation(case),
     )
 

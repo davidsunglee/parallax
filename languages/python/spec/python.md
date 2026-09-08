@@ -5115,6 +5115,26 @@ remains observable rather than making Python its own oracle.
   (`loadFixtures`). No snapshot/template-database optimization in v1 — the
   simple path is the only path (recorded as a deferred optimization), so no
   provider snapshot API or fallback needs naming.
+- **Scoped driver controls.** Everything the harness executes outside a shipped
+  `Database` — the schema reset, generated DDL, fixture binds, catalog reads, a
+  case's verbatim golden SQL, the `peer` capability's second session holding its
+  own transaction, and the dedicated session an interleaved choreography may
+  destroy — runs on a session the harness itself opened and owns.
+  `ProvisionedRun.control(autocommit=…)` opens one; `ProvisionedRun
+  .interleaved_execution(model, …)` opens one and composes the `Database` over
+  it, so no caller can pair a handle with a session it does not own. Both are
+  **scoped**: whoever opens one closes it, on success, on failure, and on a
+  refusal to start, and provisioning teardown is only the backstop for one a
+  caller never released. The engine consumes these as declared capabilities
+  (`parallax.conformance._database_control` — protocols carrying no driver)
+  rather than discovering an adapter's shape, and every psycopg fact — opening a
+  session, ending another session through the server, and the cancel / close /
+  OS-level socket-teardown escalation that unblocks a thread parked in driver
+  I/O — lives in one native module the provisioner reaches through a deferred
+  import, so naming a control costs no driver load. Cancellation and transport
+  escalation target only these dedicated support-owned sessions, never one an
+  application composed a `Database` over; modeled scenario work still runs
+  through the shipped `Database` such a session stands under.
 - **Golden SQL selection.** The `postgres` key of each statement entry; every
   claimed case carries it (guaranteed by the claim's dialect filter). A
   missing key is a hard error, never a silent skip.

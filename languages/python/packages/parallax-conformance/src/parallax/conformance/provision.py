@@ -58,7 +58,16 @@ from parallax.evolution.model_evolution import ABSENT, evolve
 from parallax.evolution.schema_delta import schema_delta
 
 if TYPE_CHECKING:
+    from parallax.conformance._database_control import DriverControl, InterleavedExecution
+    from parallax.conformance._postgres_control import (
+        PostgresControl,
+        PostgresInterleavedExecution,
+    )
+    from parallax.core.entity import DomainModel
+    from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
+    from parallax.core.unit_work import Clock
     from parallax.postgres import PostgresAdapter
+    from parallax.snapshot.handle import ServingModel
 
 __all__ = [
     "Provisioner",
@@ -356,6 +365,24 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
         return PostgresAdapter
 
+    @staticmethod
+    def _control() -> type[PostgresControl]:
+        """The control implementation this provisioner opens scoped sessions with.
+
+        Reached through the same deferred import as the adapter itself: naming a
+        control must cost no psycopg import until something opens one.
+        """
+        from parallax.conformance._postgres_control import PostgresControl
+
+        return PostgresControl
+
+    @staticmethod
+    def _interleaved() -> type[PostgresInterleavedExecution]:
+        """The dedicated-execution implementation, reached the same deferred way."""
+        from parallax.conformance._postgres_control import PostgresInterleavedExecution
+
+        return PostgresInterleavedExecution
+
     def __init__(self) -> None:
         from testcontainers.community.postgres import PostgresContainer
 
@@ -378,26 +405,63 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         self._adapter = self.adapter().connect(
             self._conninfo, autocommit=True, prepare_threshold=None
         )
-        self._peers: list[PostgresAdapter] = []
+        # Every scoped session still open. A control removes itself as it closes,
+        # so this is empty whenever every caller has released what it opened, and
+        # `close` below is the backstop for one that did not.
+        self._open: set[PostgresControl | PostgresInterleavedExecution] = set()
+        # The intake seam's own connections, which outlive the case that asked
+        # for one because the adapter under test is the second one taking it.
+        self._taken: list[PostgresAdapter] = []
 
     @property
     def port(self) -> DbPort:
         """The concrete ``m-db-port`` over the container."""
         return self._adapter
 
-    def peer(self, *, autocommit: bool = True) -> PostgresAdapter:
-        """An independent second connection to the same container (provider `peer`).
+    def control(self, *, autocommit: bool = True) -> DriverControl:
+        """A separately owned second session to the same container (provider `peer`).
 
         Concurrent-writer checks (the `m-db-error` deadlock / lock-wait proof) need
-        a second connection that holds its own transaction, so `peer` returns the
-        **concrete** :class:`~parallax.postgres.PostgresAdapter` (not just the
-        abstract port) — a non-autocommit peer keeps a transaction open across
-        statements. Tracked for teardown; also usable as a manual
-        ``execRolledBack`` connection.
+        a second session holding its own transaction across statements, which is
+        what `autocommit=False` opens; the same seam serves a manual
+        ``execRolledBack`` connection, an executioner that ends another session,
+        and any direct statement a case authors verbatim.
+
+        The session belongs to the caller for exactly as long as the choreography
+        that asked for it: closing it is the caller's, on every exit including a
+        refusal to start. What is tracked here is only the backstop for one a
+        caller never closed at all.
         """
-        peer = self.adapter().connect(self._conninfo, autocommit=autocommit)
-        self._peers.append(peer)
-        return peer
+        control = self._control().open(
+            self._conninfo, autocommit=autocommit, on_release=self._open.discard
+        )
+        self._open.add(control)
+        return control
+
+    def interleaved_execution(
+        self,
+        model: DomainModel | ServingModel,
+        *,
+        clock: Clock | None = None,
+        lifecycle_provider: ExecutionLifecycleProvider | None = None,
+    ) -> InterleavedExecution:
+        """A dedicated session for one interleaved choreography, and its Database.
+
+        The adversarial lane may have to destroy the session a stuck worker is
+        parked in, so it never runs over this provisioner's own connection: each
+        group holds a session opened for it alone, whose Database is composed over
+        that session here rather than paired with it afterwards. Scoped exactly as
+        :meth:`control` is.
+        """
+        execution = self._interleaved().open(
+            self._conninfo,
+            model,
+            clock=clock,
+            lifecycle_provider=lifecycle_provider,
+            on_release=self._open.discard,
+        )
+        self._open.add(execution)
+        return execution
 
     def taken_at_session_default(self, level: str) -> PostgresAdapter:
         """The adapter over a connection whose OWN default isolation is ``level``.
@@ -415,7 +479,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         opened = self.adapter().connect(self._conninfo, autocommit=True)
         opened.execute_write(_SESSION_DEFAULTS[level], [])
         taken = self.adapter()(opened.connection)
-        self._peers.append(taken)
+        self._taken.append(taken)
         return taken
 
     def reset(self, model: Metamodel, fixtures: Mapping[str, object]) -> None:
@@ -434,8 +498,12 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             self._adapter.execute_write(dialect.to_driver_sql(sql), binds)
 
     def close(self) -> None:
-        for peer in self._peers:
+        """Close this provisioning, and anything a caller left open behind it."""
+        for session in tuple(self._open):
             with suppress(Exception):
-                peer.close()
+                session.close()
+        for taken in self._taken:
+            with suppress(Exception):
+                taken.close()
         self._adapter.close()
         self._container.stop()

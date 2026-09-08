@@ -141,10 +141,10 @@ def test_parse_rounds_a_node_absent_from_a_round_is_omitted() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# run_rounds: the thread/barrier choreography over fake peer sessions.        #
+# run_rounds: the thread/barrier choreography over fake node sessions.        #
 # --------------------------------------------------------------------------- #
 class _FakeSession:
-    """A fake `PeerSession`: records every call, optionally raises a scripted
+    """A fake `RoundsSession`: records every call, optionally raises a scripted
     `DatabaseError` on a matching statement, never blocks."""
 
     dialect: Dialect = POSTGRES
@@ -302,20 +302,20 @@ def test_run_rounds_closes_both_sessions_even_when_one_raises() -> None:
 
 
 def test_run_rounds_setup_failure_closes_the_already_open_first_session() -> None:
-    # A second-peer CONSTRUCTION failure must
+    # A second-session CONSTRUCTION failure must
     # not leak the already-open first session — incremental `ExitStack`
     # protection registers each session for close the moment it opens.
     a = _FakeSession()
     calls = {"n": 0}
 
-    def peer_factory() -> Any:
+    def control_factory() -> Any:
         calls["n"] += 1
         if calls["n"] == 1:
             return a
-        raise RuntimeError("the second peer never opens")
+        raise RuntimeError("the second session never opens")
 
-    with pytest.raises(RuntimeError, match="the second peer never opens"):
-        concurrency_runner.run_rounds(_rounds({}), peer_factory)
+    with pytest.raises(RuntimeError, match="the second session never opens"):
+        concurrency_runner.run_rounds(_rounds({}), control_factory)
     assert a.closed
 
 

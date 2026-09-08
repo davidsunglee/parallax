@@ -9,7 +9,6 @@ reading and the engine's failure modes are pinned too.
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import dataclasses
 import datetime as dt
@@ -30,6 +29,7 @@ from _support.db_port import body_outcome, projected_row
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, models, sweep
 from parallax.conformance._actual_wire import ActualWireProjection
+from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     execution_lifecycle_observation,
@@ -102,7 +102,7 @@ from parallax.evolution.schema_delta import (
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,
 )
-from parallax.snapshot import DeferredFeatureError
+from parallax.snapshot import DeferredFeatureError, handle
 from parallax.snapshot.handle import WriteEvidenceError
 
 
@@ -1412,7 +1412,9 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
     steps[0]["expectGraph"] = {"Account": [{"id": 2}]}
 
     with pytest.raises(engine.EngineError, match="carries no `stepGraphs` channel"):
-        engine.run_interleaved_scenario_case(case, _ScriptedPort(), lambda: _ScriptedPort())
+        engine.run_interleaved_scenario_case(
+            case, _ScriptedPort(), _ScriptedExecutions(_ScriptedPort(), _ScriptedPort())
+        )
 
 
 def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
@@ -1776,14 +1778,91 @@ class _ScriptedPort:
         self.closed = True
 
 
-# Round 5's own documented trust marker, declared on the class itself (every
-# instance inherits it) rather than hardcoding `engine`'s own private
-# attribute name as a string literal here.
-setattr(
-    _ScriptedPort,
-    engine._TERMINATION_LADDER_TRUST_ATTR,  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    True,
-)
+class _ScriptedExecution:
+    """One interleaved group's dedicated execution, over a scripted port.
+
+    It declares the termination contract truthfully by default: every call into
+    a `_ScriptedPort` is a plain synchronous in-memory one that never blocks on
+    real I/O, so there is nothing for the ladder to unblock. `trusted=False` is
+    the refusal shape — an execution that grants nothing, which the lane must
+    refuse before either worker thread starts.
+    """
+
+    def __init__(
+        self,
+        port: _ScriptedPort,
+        model: Any,
+        *,
+        clock: Any = None,
+        lifecycle_provider: Any = None,
+        trusted: bool = True,
+    ) -> None:
+        self.port = port
+        self.trusted = trusted
+        self.closed = False
+        self.cancel_calls = 0
+        self.terminate_calls = 0
+        self._database = handle.Database(
+            port, model, clock=clock, lifecycle_provider=lifecycle_provider
+        )
+
+    @property
+    def database(self) -> handle.Database:
+        return self._database
+
+    @property
+    def dialect(self) -> Dialect:
+        return self.port.dialect
+
+    @property
+    def termination_ladder_trusted(self) -> bool:
+        return self.trusted
+
+    def cancel_active(self) -> None:  # pragma: no cover - the entry-point pins never time out
+        self.cancel_calls += 1
+
+    def terminate_active(self) -> TerminationReport:  # pragma: no cover - same
+        self.terminate_calls += 1
+        return TerminationReport(terminated=True)
+
+    def close(self) -> None:
+        self.closed = True
+        self.port.close()
+
+
+class _ScriptedExecutions:
+    """The lane's own execution factory, handing out one scripted execution per
+    group in the order the groups are declared.
+
+    ``trusted`` states each group's own declaration, and ``refuse_at`` makes the
+    n-th open FAIL — the shape that proves the lane releases what it had already
+    opened rather than leaking it.
+    """
+
+    def __init__(
+        self,
+        *ports: _ScriptedPort,
+        trusted: Sequence[bool] = (),
+        refuse_at: int | None = None,
+    ) -> None:
+        self._ports = ports
+        self._trusted = tuple(trusted) if trusted else (True,) * len(ports)
+        self._refuse_at = refuse_at
+        self.opened: list[_ScriptedExecution] = []
+
+    def __call__(self, model: Any, *, clock: Any = None, lifecycle_provider: Any = None) -> Any:
+        index = len(self.opened)
+        if index == self._refuse_at:
+            raise RuntimeError("this session could not be opened")
+        execution = _ScriptedExecution(
+            self._ports[index],
+            model,
+            clock=clock,
+            lifecycle_provider=lifecycle_provider,
+            trusted=self._trusted[index],
+        )
+        self.opened.append(execution)
+        return execution
 
 
 def _wire_row(row: Row) -> dict[str, object]:
@@ -1806,17 +1885,20 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
         "balance": decimal.Decimal("250.00"),
         "version": 1,
     }
-    main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0])
+    caller_port = _ScriptedPort(read_rows=[[]])
+    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
+    executions = _ScriptedExecutions(ours_port, peer_port)
 
     emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
-        case, main_port, lambda: peer_port
+        case, caller_port, executions
     )
 
     assert round_trips == 6
     assert len(emissions) == 6
     assert conflict_actual == 0
-    assert peer_port.closed
+    # Both dedicated sessions are released by the lane that opened them.
+    assert [execution.closed for execution in executions.opened] == [True, True]
     assert [e.case_pointer for e in emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/objectQuery",
@@ -1827,7 +1909,7 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     ]
     assert emissions[3].sql.startswith("insert into account")
     assert emissions[4].sql.startswith("update account set")
-    assert len(main_port.writes) == 2  # the doomed group's insert + gated update
+    assert len(ours_port.writes) == 2  # the doomed group's insert + gated update
     assert len(peer_port.writes) == 1  # the concurrent group's own gated update
     # Every find step's own observed rows, in
     # scenario step order (0, 1, then the trailing ungrouped verify at 4) —
@@ -1851,11 +1933,12 @@ def test_each_interleaved_group_lowers_in_its_own_connections_dialect() -> None:
         "balance": decimal.Decimal("250.00"),
         "version": 1,
     }
-    main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0])
+    caller_port = _ScriptedPort(read_rows=[[]])
+    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
     peer_port = _ScriptedPort(dialect=BACKTICKED, read_rows=[[row_v1]], write_affected=[1])
 
     emissions, _round_trips, _conflict_actual, _find_rows = engine.run_interleaved_scenario_case(
-        case, main_port, lambda: peer_port
+        case, caller_port, _ScriptedExecutions(ours_port, peer_port)
     )
 
     concurrent_write = next(e for e in emissions if e.case_pointer == "/scenario/2/write")
@@ -1884,13 +1967,17 @@ def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the
         "balance": decimal.Decimal("250.00"),
         "version": 1,
     }
-    main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0, 0])
+    caller_port = _ScriptedPort(read_rows=[[]], write_affected=[0])
+    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
 
-    engine.run_interleaved_scenario_case(with_apply, main_port, lambda: peer_port)
+    engine.run_interleaved_scenario_case(
+        with_apply, caller_port, _ScriptedExecutions(ours_port, peer_port)
+    )
 
-    assert main_port.writes[0][0] == "update account set balance = %s"
-    assert len(main_port.writes) == 3  # the statement, then the doomed group's two
+    assert caller_port.writes[0][0] == "update account set balance = %s"
+    assert len(caller_port.writes) == 1  # the out-of-band statement, and nothing else
+    assert len(ours_port.writes) == 2  # the doomed group's own two
 
 
 def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_too() -> None:
@@ -1954,11 +2041,11 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
         "balance": decimal.Decimal("250.00"),
         "version": 1,
     }
-    main_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
+    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
     peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[0])
 
     _emissions, _round_trips, conflict_actual, _find_rows = engine.run_interleaved_scenario_case(
-        case, main_port, lambda: peer_port
+        case, _ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
     )
 
     assert conflict_actual == 0
@@ -2029,16 +2116,16 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
         "balance": decimal.Decimal("10.00"),
         "version": 1,
     }
-    main_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 1])
+    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 1])
     peer_port = _ScriptedPort(read_rows=[[row3]])
 
     emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
-        case, main_port, lambda: peer_port
+        case, _ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
     )
 
     assert conflict_actual is None
     assert round_trips == 4
-    assert len(main_port.writes) == 2  # buffered together, flushed once at the group's last step
+    assert len(ours_port.writes) == 2  # buffered together, flushed once at the group's last step
     assert [e.case_pointer for e in emissions] == [
         "/scenario/0/objectQuery",
         "/scenario/1/write",
@@ -2056,755 +2143,241 @@ def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -
     # itself never hangs either.
     case = _load_case("m-opt-lock-012")
     failure = RuntimeError("a worker thread's own unexpected defect")
-    main_port = _ScriptedPort(raise_on_read=failure)
+    ours_port = _ScriptedPort(raise_on_read=failure)
     peer_port = _ScriptedPort(
         read_rows=[
             [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
         ]
     )
+    executions = _ScriptedExecutions(ours_port, peer_port)
 
     with pytest.raises(RuntimeError, match="unexpected defect"):
-        engine.run_interleaved_scenario_case(case, main_port, lambda: peer_port)
-    assert peer_port.closed
+        engine.run_interleaved_scenario_case(case, _ScriptedPort(), executions)
+    assert [execution.closed for execution in executions.opened] == [True, True]
+
+
+class _BlockingExecution:
+    """An interleaved execution whose worker parks in "driver I/O" until a named
+    escalation reaches it.
+
+    ``wakes_on`` is the rung that releases the block — ``"cancel"`` for a session
+    a cancellation request can interrupt, ``"terminate"`` for one only the
+    guaranteed ladder reaches — so a pin states exactly which escalation it is
+    proving. ``ladder_failures`` is what the ladder RECORDS while getting there:
+    a rung that failed on the way to one that worked, which the lane must carry
+    as context rather than swallow.
+
+    Its ``database`` is never reached: these pins drive
+    :func:`~parallax.conformance.engine._await_interleaved_workers` directly with
+    threads of their own, so a Database over this session would be an unused
+    composition standing in the way of what the pin is about.
+    """
+
+    def __init__(
+        self,
+        *,
+        wakes_on: str = "terminate",
+        trusted: bool = True,
+        ladder_failures: tuple[str, ...] = (),
+    ) -> None:
+        self._wakes_on = wakes_on
+        self._released = threading.Event()
+        self._ladder_failures = ladder_failures
+        self.trusted = trusted
+        self.cancel_calls = 0
+        self.terminate_calls = 0
+        self.closed = False
+
+    @property
+    def database(self) -> handle.Database:  # pragma: no cover - never reached; see the docstring
+        raise AssertionError("these pins never run a group through this execution")
+
+    @property
+    def dialect(self) -> Dialect:
+        return POSTGRES
+
+    @property
+    def termination_ladder_trusted(self) -> bool:
+        return self.trusted
+
+    def block(self) -> None:
+        """Stand in for a driver call parked in socket I/O.
+
+        Self-bounded so a pin that never reaches the escalation it is proving
+        fails on its own assertions rather than hanging the suite.
+        """
+        self._released.wait(timeout=5.0)
+
+    def cancel_active(self) -> None:
+        self.cancel_calls += 1
+        if self._wakes_on == "cancel":
+            self._released.set()
+
+    def terminate_active(self) -> TerminationReport:
+        self.terminate_calls += 1
+        self._released.set()
+        return TerminationReport(terminated=True, failures=self._ladder_failures)
+
+    def close(self) -> None:
+        self.closed = True
+        self._released.set()
+
+
+def _stuck_worker(turnstile: Any, name: str) -> threading.Thread:
+    """A worker parked on a turnstile index this choreography never advances to."""
+
+    def run() -> None:
+        turnstile.wait_for(2**30)
+
+    return threading.Thread(target=run, name=name)
+
+
+def _workers(*entries: tuple[threading.Thread, Any]) -> dict[str, Any]:
+    return {thread.name: (thread, execution) for thread, execution in entries}
 
 
 def test_await_interleaved_workers_unsticks_both_on_timeout_then_joins_before_raising() -> None:
-    # The join-timeout path: a genuine harness
-    # defect (a missing turnstile `advance()` somewhere) leaves BOTH workers
-    # blocked in `wait_for` forever — the timeout path must wake every one of
-    # them (`_Turnstile.release_all`), close the peer connection, JOIN both
-    # threads, and only THEN raise; no live thread and no open peer connection
-    # may outlive the call. A tiny `timeout` (never the production 30s bound)
-    # keeps this deterministic and fast. Neither worker's own connection ever
-    # needs cancelling here (both wake on `release_all`), so a plain
-    # `_ScriptedPort` stands in for `main_connection` too.
+    # The join-timeout path: a genuine harness defect (a missing turnstile
+    # `advance()` somewhere) leaves BOTH workers blocked in `wait_for` forever —
+    # the timeout path must wake every one of them (`_Turnstile.release_all`),
+    # JOIN both threads, and only THEN raise; no live thread may outlive the
+    # call. Nothing here needs destroying, so no execution is cancelled or
+    # terminated and the error names the missing hand-off rather than a
+    # termination. A tiny `timeout` (never the production 30s bound) keeps this
+    # deterministic and fast.
     turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    main_connection = _ScriptedPort()
-    peer = _ScriptedPort()
-
-    def stuck(index: int) -> Any:
-        def run() -> None:
-            turnstile.wait_for(index)  # an index this choreography never advances to
-
-        return run
-
-    thread_a = threading.Thread(target=stuck(99), name="stuck-a")
-    thread_b = threading.Thread(target=stuck(100), name="stuck-b")
+    ours = _BlockingExecution()
+    peer = _BlockingExecution()
+    thread_a = _stuck_worker(turnstile, "uow-ours")
+    thread_b = _stuck_worker(turnstile, "uow-concurrent")
     thread_a.start()
     thread_b.start()
 
     with pytest.raises(engine.EngineError, match="turnstile hand-off is missing"):
         engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            thread_a,
-            thread_b,
+            _workers((thread_a, ours), (thread_b, peer)),
             turnstile,
-            main_connection,
-            peer,
             "m-unit-work-999-synthetic.yaml",
             timeout=0.05,
         )
 
     assert not thread_a.is_alive()
     assert not thread_b.is_alive()
-    assert peer.closed
-
-
-class _CancellableBlockingConnection:
-    """A fake `DbPort` whose ``execute`` blocks (standing in for a real
-    driver call parked in socket I/O) until its own :meth:`cancel` seam
-    fires — never on `_Turnstile.release_all` (nothing here is parked in
-    `turnstile.wait_for`) and never on some OTHER connection closing (this
-    is not the peer). This is the shape not otherwise covered: a worker
-    blocked in REAL database
-    I/O on its OWN session, which only :func:`~parallax.conformance.engine.
-    _cancel_in_flight_work`'s duck-typed ``cancel()`` probe can reach — the
-    first escalation (turnstile release + peer close) cannot wake it, and a
-    survivor's OWN connection is exactly what the second escalation targets.
-    """
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self) -> None:
-        self._released = threading.Event()
-        self.cancel_calls = 0
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:
-        self._released.wait(timeout=5.0)  # self-bounded even if `cancel` is never called
-        return []
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
-
-    def cancel(self) -> None:
-        self.cancel_calls += 1
-        self._released.set()
+    assert (ours.cancel_calls, ours.terminate_calls) == (0, 0)
+    assert (peer.cancel_calls, peer.terminate_calls) == (0, 0)
 
 
 def test_await_interleaved_workers_cancels_a_survivor_blocked_in_real_io_then_joins() -> None:
-    # A worker blocked
-    # in REAL database I/O on its OWN (CALLER-OWNED) connection survives the
-    # first escalation intact — `release_all` has nothing to wake (the
-    # worker is not inside `turnstile.wait_for`) and closing the peer
-    # touches only the OTHER session. The second escalation must cancel that
-    # survivor's OWN connection, rejoin bounded, and — once every worker is
-    # (now) actually joined — raise the SAME ordinary timeout error this
-    # function has always raised, with `is_alive()` false for every worker
-    # before it does.
+    # A worker blocked in REAL database I/O on its OWN session survives the
+    # first escalation intact: `release_all` has nothing to wake, because the
+    # worker is not inside `turnstile.wait_for`. The second escalation must
+    # cancel that survivor's own execution, rejoin bounded, and — every worker
+    # now actually joined — raise the ordinary missing-hand-off error, since a
+    # session cancellation released was never destroyed.
     turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    main_connection = _CancellableBlockingConnection()
-    peer = _ScriptedPort()
-
-    def run_a() -> None:
-        main_connection.execute("select 1", [])
-
-    def run_b() -> None:
-        turnstile.wait_for(100)  # an index this choreography never advances to
-
-    thread_a = threading.Thread(target=run_a, name="uow-ours")
-    thread_b = threading.Thread(target=run_b, name="uow-concurrent")
+    ours = _BlockingExecution(wakes_on="cancel")
+    peer = _BlockingExecution()
+    thread_a = threading.Thread(target=ours.block, name="uow-ours")
+    thread_b = _stuck_worker(turnstile, "uow-concurrent")
     thread_a.start()
     thread_b.start()
 
     with pytest.raises(engine.EngineError, match="turnstile hand-off is missing"):
         engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            thread_a,
-            thread_b,
+            _workers((thread_a, ours), (thread_b, peer)),
             turnstile,
-            main_connection,
-            peer,
             "m-unit-work-999-synthetic.yaml",
             timeout=0.1,
         )
 
-    assert main_connection.cancel_calls == 1
+    assert ours.cancel_calls == 1
+    assert ours.terminate_calls == 0
     assert not thread_a.is_alive()
     assert not thread_b.is_alive()
-    assert peer.closed
 
 
-class _TerminableBlockingConnection:
-    """A fake `DbPort` whose ``execute`` blocks (standing in for a real
-    driver call parked in socket I/O) and exposes NO :meth:`cancel`
-    capability at all — the shape a survivor neither `_Turnstile.release_all`
-    nor :func:`~parallax.conformance.engine._cancel_in_flight_work`'s
-    duck-typed ``cancel()`` probe can reach, forcing the THIRD, destructive
-    escalation, :func:`~parallax.conformance.engine._terminate_connection`.
-    Its own :meth:`close` mirrors REAL closed-connection semantics closely
-    enough to prove that rung's own contract: the blocked ``execute`` call
-    wakes and RAISES once ``close`` fires (a closed connection can never
-    fulfil the in-flight call), and any LATER call raises immediately too,
-    as far as this fake allows — never silently executing against a
-    terminated connection."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self) -> None:
-        self._closed = threading.Event()
-        self.close_calls = 0
-        self.closed = False
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:
-        self._closed.wait(timeout=5.0)  # self-bounded even if `close` is never called
-        raise RuntimeError("connection is closed")
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
-
-    def close(self) -> None:
-        self.close_calls += 1
-        self.closed = True
-        self._closed.set()
-
-
-def test_await_interleaved_workers_terminates_a_survivor_with_no_cancel_capability() -> None:
-    # A survivor
-    # neither `release_all` nor the cancellation probe can reach (no
-    # `cancel()` capability at all, `main_connection` here — the
-    # CALLER-OWNED port) escalates to the THIRD, destructive rung —
-    # `_terminate_connection` closes its OWN connection outright — rather
-    # than this function ever raising while that worker remains alive; the
-    # contract has no "loud leak" terminal state at all.
-    # `is_alive()` must be False for EVERY worker at the moment of the
-    # raise, and the raised error must report that the caller-owned port
-    # was itself terminated. The fake's own `close()` seam mirrors REAL
-    # close semantics closely enough to prove it: its blocked `execute`
-    # wakes and raises once closed, and a later call raises too (as far as
-    # the fake allows) rather than executing.
+def test_await_interleaved_workers_terminates_a_survivor_cancellation_cannot_reach() -> None:
+    # A survivor neither `release_all` nor cancellation can reach escalates to
+    # the third, destructive rung rather than this function ever raising while
+    # that worker remains alive: the contract has no "loud leak" terminal state
+    # at all. `is_alive()` must be False for EVERY worker at the moment of the
+    # raise, the error must name the execution that had to be terminated, and
+    # every rung the ladder recorded on its way must survive as context rather
+    # than being swallowed.
     turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    main_connection = _TerminableBlockingConnection()
-    peer = _ScriptedPort()
-
-    def run_a() -> None:
-        # expected collateral of the termination escalation itself
-        with contextlib.suppress(RuntimeError):
-            main_connection.execute("select 1", [])
-
-    def run_b() -> None:
-        turnstile.wait_for(100)  # an index this choreography never advances to
-
-    thread_a = threading.Thread(target=run_a, name="uow-ours")
-    thread_b = threading.Thread(target=run_b, name="uow-concurrent")
+    ours = _BlockingExecution(
+        ladder_failures=("the session's own close() raised RuntimeError('outer close failed')",)
+    )
+    peer = _BlockingExecution()
+    thread_a = threading.Thread(target=ours.block, name="uow-ours")
+    thread_b = _stuck_worker(turnstile, "uow-concurrent")
     thread_a.start()
     thread_b.start()
 
-    with pytest.raises(engine.EngineError, match=r"terminated \(closed\).*unsafe to reuse"):
+    with pytest.raises(engine.EngineError, match="uow-ours had to be terminated") as raised:
         engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            thread_a,
-            thread_b,
+            _workers((thread_a, ours), (thread_b, peer)),
             turnstile,
-            main_connection,
-            peer,
             "m-unit-work-999-synthetic.yaml",
             timeout=0.1,
         )
 
+    assert ours.cancel_calls == 1  # attempted first, and it could not reach this one
+    assert ours.terminate_calls == 1
+    assert peer.terminate_calls == 0  # the turnstile release was enough for its own worker
     assert not thread_a.is_alive()
     assert not thread_b.is_alive()
-    assert main_connection.close_calls == 1
-    assert main_connection.closed
-    assert peer.closed
-    with pytest.raises(RuntimeError):
-        main_connection.execute("select 1", [])  # a terminated port raises, never executes
-
-
-class _UnderlyingConnectionSeam:
-    """The termination ladder's documented underlying-transport escalation
-    seam for a test fake — mirrors `PostgresAdapter.connection`, the wrapped psycopg
-    ``Connection`` a real adapter's own outer ``close()`` failure escalates
-    to (:func:`~parallax.conformance.engine._terminate_connection`'s rung
-    two). Closing THIS is what actually unblocks the survivor's blocked
-    call; its own ``close()`` succeeding is what proves the ladder reaches
-    PAST a broken outer ``close()`` rather than stopping there."""
-
-    def __init__(self, released: threading.Event) -> None:
-        self._released = released
-        self.close_calls = 0
-
-    def close(self) -> None:
-        self.close_calls += 1
-        self._released.set()
-
-
-class _TerminableOnlyViaUnderlyingSeamConnection:
-    """A fake `DbPort` whose own OUTER ``close()`` FAILS (mirroring a real
-    driver's own close-time complaint) and whose ``cancel()`` capability is
-    absent entirely — the adversarial shape where BOTH
-    ``cancel()`` and ``close()`` fail on the same survivor. The
-    escalation's first two rungs (:func:`~parallax.conformance.engine.
-    _cancel_in_flight_work`'s probe, then ``connection.close()`` itself)
-    both come up empty — a "close always works" assumption does
-    not hold here BY DESIGN — forcing :func:`~parallax.conformance.engine.
-    _terminate_connection` past the failing outer ``close()`` to the
-    documented underlying seam (``self.connection``, mirroring
-    `PostgresAdapter.connection`)."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self) -> None:
-        self._released = threading.Event()
-        self.close_calls = 0
-        self.connection = _UnderlyingConnectionSeam(self._released)
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:
-        self._released.wait(timeout=5.0)  # self-bounded even if the ladder never reaches it
-        raise RuntimeError("connection is closed")
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
-
-    def close(self) -> None:
-        self.close_calls += 1
-        raise RuntimeError("outer close failed")
-
-
-def test_await_interleaved_workers_escalates_past_a_failing_close_to_the_underlying_seam() -> None:
-    # `cancel()` absent AND `close()` raising
-    # on the SAME survivor — `_terminate_connection`'s GUARANTEED
-    # ladder must escalate past the failing outer `close()` to the fake's
-    # documented underlying seam, unblock it there, join both workers, and
-    # raise the SAME terminated-caller-port timeout error the close-succeeds
-    # pin above raises — never a live worker at the raise, and the failing
-    # outer `close()` itself must never be silently swallowed: it must
-    # surface as recorded context on the raised error rather than masked.
-    turnstile = engine._Turnstile()  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    main_connection = _TerminableOnlyViaUnderlyingSeamConnection()
-    peer = _ScriptedPort()
-
-    def run_a() -> None:
-        # expected collateral of the termination escalation itself
-        with contextlib.suppress(RuntimeError):
-            main_connection.execute("select 1", [])
-
-    def run_b() -> None:
-        turnstile.wait_for(100)  # an index this choreography never advances to
-
-    thread_a = threading.Thread(target=run_a, name="uow-ours")
-    thread_b = threading.Thread(target=run_b, name="uow-concurrent")
-    thread_a.start()
-    thread_b.start()
-
-    with pytest.raises(
-        engine.EngineError, match=r"terminated \(closed\).*unsafe to reuse"
-    ) as exc_info:
-        engine._await_interleaved_workers(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            thread_a,
-            thread_b,
-            turnstile,
-            main_connection,
-            peer,
-            "m-unit-work-999-synthetic.yaml",
-            timeout=0.1,
-        )
-
-    assert not thread_a.is_alive()
-    assert not thread_b.is_alive()
-    assert main_connection.close_calls == 1  # the failing outer close was still attempted
-    assert main_connection.connection.close_calls == 1  # the underlying seam is what unblocked it
-    assert peer.closed
-    notes = "\n".join(exc_info.value.__notes__)
-    assert "outer close failed" in notes  # the swallowed failure is recorded context
-
-
-class _NoCloseNoUnderlyingConnection:
-    """A connection shape exposing NEITHER a ``close()`` NOR a
-    ``connection`` (underlying-transport) attribute at all —
-    :func:`~parallax.conformance.engine._terminate_connection`'s own two
-    "nothing more this rung can do" terminal branches, one per probe. A
-    live worker parked on a connection this shape describes would never
-    unblock — this module's own documented contract for an unreachable
-    fake, not something a test should ever actually trigger through
-    :func:`~parallax.conformance.engine._await_interleaved_workers` (that
-    would hang the whole suite) — so this pin calls
-    :func:`~parallax.conformance.engine._terminate_connection` directly and
-    asserts on its own recorded return value instead."""
-
-
-def test_terminate_connection_records_every_missing_capability() -> None:
-    # `_terminate_connection`'s own two "nothing more this rung can do"
-    # terminal branches: a connection exposing NEITHER `close()` NOR the
-    # underlying `connection` escalation seam records BOTH misses (never
-    # silently doing nothing, matching the ladder's own "every failure is
-    # recorded" contract) rather than raising or hanging. See
-    # `_NoCloseNoUnderlyingConnection` for why this calls the rung directly.
-    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        _NoCloseNoUnderlyingConnection(), "uow-ours"
-    )
-    assert len(failures) == 2
-    assert failures[0] == "uow-ours: connection exposes no close() capability"
-    assert failures[1] == "uow-ours: connection exposes no underlying `connection` escalation seam"
-
-
-class _FailingUnderlyingSeam:
-    """An underlying-transport seam (:func:`~parallax.conformance.engine.
-    _terminate_connection`'s rung two) whose OWN ``close()`` also fails and
-    which exposes no ``fileno()`` either — forces the ladder all the way to
-    (and back out of) rung three,
-    :func:`~parallax.conformance.engine._terminate_underlying_socket`,
-    without a real OS fd (that rung is real-transport only; see its own
-    docstring)."""
-
-    def close(self) -> None:
-        raise RuntimeError("underlying close failed too")
-
-
-class _FailingOuterCloseWithFailingUnderlyingSeam:
-    """A connection whose OUTER ``close()`` fails AND whose own underlying
-    ``connection`` seam ALSO fails to close —
-    :func:`~parallax.conformance.engine._terminate_connection`'s own full
-    ladder, every rung attempted and every rung's own failure recorded. A
-    live worker parked on this shape would never unblock (see
-    `_NoCloseNoUnderlyingConnection`'s own docstring for why this is
-    exercised by calling the rung directly rather than end to end)."""
-
-    def __init__(self) -> None:
-        self.connection = _FailingUnderlyingSeam()
-
-    def close(self) -> None:
-        raise RuntimeError("outer close failed too")
-
-
-def test_terminate_connection_escalates_through_every_rung_when_all_fail() -> None:
-    # `_terminate_connection`'s own full ladder when EVERY rung fails: the
-    # outer `close()`, the underlying seam's own `close()`, and rung
-    # three's own `fileno()` probe (real-transport only) all miss or raise —
-    # every one of them recorded, never silently dropped.
-    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        _FailingOuterCloseWithFailingUnderlyingSeam(), "uow-ours"
-    )
-    assert len(failures) == 3
-    assert (
-        failures[0] == "uow-ours: connection.close() raised RuntimeError('outer close failed too')"
-    )
-    assert failures[1] == (
-        "uow-ours: underlying connection.close() raised RuntimeError('underlying close failed too')"
-    )
-    assert (
-        failures[2] == "uow-ours: underlying connection exposes no fileno() for OS-level teardown"
-    )
-
-
-class _CapabilityLessConnection:
-    """A connection exposing NEITHER `close()`, NOR an underlying
-    `connection` attribute, NOR `fileno()` anywhere, NOR the trust
-    marker — the most defective refusal shape: preflight must name and
-    refuse a connection like this BEFORE either worker thread starts, never
-    let it surface only later as an indefinite join hang. `execute_calls` is this pin's own
-    observable for "no thread ever started": a defect here refuses before
-    either worker is even constructed, so nothing ever calls it."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self) -> None:
-        self.execute_calls = 0
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:  # pragma: no cover
-        self.execute_calls += 1
-        return []
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        self.execute_calls += 1
-        return 1
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
+    notes = "\n".join(raised.value.__notes__)
+    assert "uow-ours: the session's own close() raised" in notes
 
 
 @pytest.mark.parametrize(
-    "main_defective, peer_defective, expected_labels",
+    "trusted, expected_labels",
     [
-        (True, False, ("main connection",)),
-        (False, True, ("peer connection",)),
-        (True, True, ("main connection", "peer connection")),
+        ((False, True), ("uow-ours",)),
+        ((True, False), ("uow-concurrent",)),
+        ((False, False), ("uow-ours", "uow-concurrent")),
     ],
 )
-def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_capability_less(
-    main_defective: bool, peer_defective: bool, expected_labels: tuple[str, ...]
+def test_run_interleaved_scenario_case_refuses_an_execution_granting_no_termination_trust(
+    trusted: tuple[bool, bool], expected_labels: tuple[str, ...]
 ) -> None:
-    # A capability-less connection — no `close()`, no underlying transport,
-    # no `fileno()`, no trust marker — must be refused loudly BEFORE either
-    # worker thread starts, all defects reported at once rather than
-    # first-failure-only. Covers both positions individually and together
-    # (main only / peer only / both). `_ScriptedPort` stands in for the
-    # HEALTHY side because it carries the trust marker (see its
-    # own docstring) — the SAME reason it passes preflight everywhere else
-    # in this module.
+    # The lane's post-termination join is unbounded, so an execution that grants
+    # nothing must be refused BEFORE either worker thread starts — every defect
+    # named at once rather than first-failure-only, and the refusal must still
+    # release both sessions it had already opened. Nothing ran: neither scripted
+    # port ever saw a statement.
     case = _load_case("m-opt-lock-012")
     healthy_row: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
-    main_connection: _CapabilityLessConnection | _ScriptedPort = (
-        _CapabilityLessConnection() if main_defective else _ScriptedPort(read_rows=[[healthy_row]])
-    )
-    peer_connection: _CapabilityLessConnection | _ScriptedPort = (
-        _CapabilityLessConnection() if peer_defective else _ScriptedPort(read_rows=[[healthy_row]])
-    )
+    ours_port = _ScriptedPort(read_rows=[[healthy_row]])
+    peer_port = _ScriptedPort(read_rows=[[healthy_row]])
+    executions = _ScriptedExecutions(ours_port, peer_port, trusted=trusted)
 
-    with pytest.raises(engine.EngineError, match="refuses to start") as exc_info:
-        engine.run_interleaved_scenario_case(
-            case, cast("Any", main_connection), lambda: cast("Any", peer_connection)
-        )
+    with pytest.raises(engine.EngineError, match="refuses to start") as raised:
+        engine.run_interleaved_scenario_case(case, _ScriptedPort(), executions)
 
-    message = str(exc_info.value)
+    message = str(raised.value)
     for label in expected_labels:
         assert label in message
-
-    # No worker thread ever started: a capability-less connection's own
-    # `execute` was never called, and a HEALTHY counterpart (`_ScriptedPort`)
-    # never executed anything either — the refusal happens strictly before
-    # either thread is even constructed.
-    for connection in (main_connection, peer_connection):
-        if isinstance(connection, _CapabilityLessConnection):
-            assert connection.execute_calls == 0
-        else:
-            assert connection.reads == []
-            # A healthy peer opened via `peer_factory` is still cleaned up
-            # on refusal even though nothing ran; a healthy MAIN connection
-            # is the caller's own port and is left untouched either way.
-            if connection is peer_connection:
-                assert connection.closed
+    assert [execution.closed for execution in executions.opened] == [True, True]
+    assert ours_port.reads == []
+    assert peer_port.reads == []
 
 
-class _AllRungsRaiseConnection:
-    """A structurally-plausible port whose EVERY runtime rung RAISES: a
-    CALLABLE `close()`, a CALLABLE `cancel()`, and an underlying
-    `connection` seam with a CALLABLE `close()` AND `fileno()` too — every
-    one of those IS callable, so a merely structural check would PASS it
-    (`preflight=('validated',)`, `helper_completed=False`). No trust
-    marker, not a `PostgresAdapter` — the trust preflight must refuse it
-    WITHOUT EVER CALLING a single one of the raising methods below (a pure
-    trust check, never a behavioral probe): `calls` staying empty is this
-    pin's own proof that no worker thread ever got far enough to discover
-    any of this."""
-
-    dialect: Dialect = POSTGRES
-
-    class _Underlying:
-        def __init__(self, calls: list[str]) -> None:
-            self._calls = calls
-
-        def close(self) -> None:  # pragma: no cover - never reached; preflight refuses first
-            self._calls.append("underlying.close")
-            raise RuntimeError("underlying close raises")
-
-        def fileno(self) -> int:  # pragma: no cover - never reached; preflight refuses first
-            self._calls.append("underlying.fileno")
-            raise RuntimeError("underlying fileno raises")
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.connection = self._Underlying(self.calls)
-
-    def close(self) -> None:  # pragma: no cover - never reached; preflight refuses first
-        self.calls.append("close")
-        raise RuntimeError("close raises")
-
-    def cancel(self) -> None:  # pragma: no cover - never reached; preflight refuses first
-        self.calls.append("cancel")
-        raise RuntimeError("cancel raises")
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:  # pragma: no cover
-        self.calls.append("execute")
-        return []
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        self.calls.append("execute_write")
-        return 1
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        self.calls.append("transaction")
-        return body_outcome(self, body)
-
-
-def test_run_interleaved_scenario_case_refuses_before_any_worker_starts_all_rungs_raising() -> None:
-    # A structurally-plausible port whose EVERY
-    # runtime termination rung raises — a shape a merely structural
-    # preflight check would pass, hanging the unbounded post-ladder join —
-    # must be refused BEFORE either worker thread starts, and the refusal
-    # must never invoke a single one of its raising methods.
+def test_run_interleaved_scenario_case_releases_the_first_when_the_second_will_not_open() -> None:
+    # Incremental ownership: a second session that cannot be opened must not
+    # leak the first. The failure surfaces as itself — never masked by the
+    # release — and the session already opened is closed on the way out.
     case = _load_case("m-opt-lock-012")
-    healthy_row: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
-    main_connection = _AllRungsRaiseConnection()
-    peer_connection = _ScriptedPort(read_rows=[[healthy_row]])
+    ours_port = _ScriptedPort()
+    peer_port = _ScriptedPort()
+    executions = _ScriptedExecutions(ours_port, peer_port, refuse_at=1)
 
-    with pytest.raises(engine.EngineError, match="refuses to start") as exc_info:
-        engine.run_interleaved_scenario_case(
-            case, cast("Any", main_connection), lambda: cast("Any", peer_connection)
-        )
+    with pytest.raises(RuntimeError, match="could not be opened"):
+        engine.run_interleaved_scenario_case(case, _ScriptedPort(), executions)
 
-    assert "main connection" in str(exc_info.value)
-    # No worker thread ever started: not one of this port's structurally
-    # -plausible-but-lying methods was ever invoked, and the healthy peer
-    # (still opened via `peer_factory`) never executed anything either.
-    assert main_connection.calls == []
-    assert peer_connection.reads == []
-    assert peer_connection.closed
-
-
-class _RungOneOnlyConnection:
-    """A connection exposing a CALLABLE `close()` and nothing else — a merely
-    structural check would accept a shape like this, but the trust preflight
-    refuses it anyway, because a callable capability is never the same as a
-    DECLARED trust contract. Reused
-    directly by `_terminate_connection`'s own ladder-mechanics pins below,
-    which bypass preflight entirely — proving the ladder itself is
-    untouched by the trust gate."""
-
-    def __init__(self) -> None:
-        self.close_calls = 0
-
-    def close(self) -> None:
-        self.close_calls += 1
-
-
-class _RungTwoOnlyConnection:
-    """Exposes NO outer `close()` at all, only an underlying `connection`
-    seam whose OWN `close()` is callable — mirrors
-    `PostgresAdapter.connection`'s own escalation seam, WITHOUT declaring
-    the trust contract: refused by preflight for that reason
-    alone, even though `_terminate_connection`'s own ladder (bypassing
-    preflight, below) can act on it."""
-
-    class _Underlying:
-        def __init__(self) -> None:
-            self.close_calls = 0
-
-        def close(self) -> None:
-            self.close_calls += 1
-
-    def __init__(self) -> None:
-        self.connection = self._Underlying()
-
-
-class _RungThreeOnlyConnection:
-    """Exposes NO outer `close()`, and an underlying `connection` seam
-    with NEITHER a `close()` NOR anything but a callable `fileno()` — the
-    OS-socket-only shape, undeclared and so refused by preflight the same
-    way. Structural only: real OS-level socket teardown
-    (`_terminate_underlying_socket`) is real-transport-only and exercised
-    solely by the Docker lane, mirroring that function's own documented
-    scope."""
-
-    class _Underlying:
-        def fileno(self) -> int:  # pragma: no cover - structural probe, never invoked
-            raise NotImplementedError
-
-    def __init__(self) -> None:
-        self.connection = self._Underlying()
-
-
-class _CancelOnlyConnection:
-    """Exposes ONLY `cancel()` — `_cancel_in_flight_work`'s own
-    best-effort rung, never a termination-ladder rung at all — refused by
-    preflight for the SAME reason every undeclared shape here is: no trust
-    grant, regardless of which capability it happens to carry."""
-
-    def cancel(self) -> None:  # pragma: no cover - structural probe, never invoked
-        pass
-
-
-@pytest.mark.parametrize(
-    "connection",
-    [
-        _RungOneOnlyConnection(),
-        _RungTwoOnlyConnection(),
-        _RungThreeOnlyConnection(),
-        _CancelOnlyConnection(),
-    ],
-)
-def test_validate_termination_trust_refuses_an_undeclared_but_healthy_shape(
-    connection: object,
-) -> None:
-    # Round 5's own deepened contract: a WORKING capability — even exactly
-    # the shape the termination ladder itself can act on — is refused when
-    # nothing DECLARES the trust contract. Trust is never inferred from
-    # shape or behavior, only granted by `PostgresAdapter`'s own
-    # known-deterministic type or an explicit marker.
-    defects = engine._validate_termination_trust(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        connection, "main connection"
-    )
-    assert len(defects) == 1
-    assert "main connection" in defects[0]
-
-
-def test_terminate_connection_succeeds_on_the_rung_one_only_shape() -> None:
-    # `_terminate_connection`'s own ladder mechanics are untouched by round
-    # 5's correction: this bypasses preflight entirely (mirroring
-    # `_await_interleaved_workers`'s own direct pins above) and exercises
-    # rung one (outer `close()`) directly.
-    connection = _RungOneOnlyConnection()
-    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        connection, "main connection"
-    )
-    assert failures == []
-    assert connection.close_calls == 1
-
-
-def test_terminate_connection_succeeds_on_the_rung_two_only_shape() -> None:
-    # Rung two (the underlying `connection` seam's own `close()`), bypassing
-    # preflight the same way. The ladder still RECORDS rung one's own miss
-    # (no outer `close()`) as trail context even though rung two succeeds
-    # and actually terminates the connection — `_terminate_connection`'s
-    # own documented contract ("every miss and every raise is RECORDED",
-    # never a bare success/failure flag) — so what proves the ladder ACTED
-    # on this shape is the underlying seam's own `close()` firing, not an
-    # empty trail.
-    connection = _RungTwoOnlyConnection()
-    failures = engine._terminate_connection(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        connection, "main connection"
-    )
-    assert failures == ["main connection: connection exposes no close() capability"]
-    assert connection.connection.close_calls == 1
-
-
-class _FakeAdaptersRegistry:
-    """A `connection.adapters` stand-in — just enough for
-    `PostgresAdapter.__init__`'s own `register_loader` call — mirroring
-    `test_postgres_adapter.py`'s own `_FakeAdapters`."""
-
-    def register_loader(self, name: str, loader: object) -> None:
-        pass
-
-
-class _FakePsycopgConnection:
-    """A minimal `psycopg.Connection` stand-in carrying only what
-    `PostgresAdapter.__init__` touches — proving the real-type
-    trust rule needs no live database at all: `isinstance` against the
-    concrete `PostgresAdapter` class is what grants trust, never anything
-    this fake's own connection does."""
-
-    def __init__(self) -> None:
-        self.adapters = _FakeAdaptersRegistry()
-
-
-def test_validate_termination_trust_accepts_the_postgres_adapter_shape() -> None:
-    # The known-deterministic real type (the OTHER trust path,
-    # alongside the documented marker): the SAME concrete class
-    # `provision.py`'s own `Provisioner.port` constructs, trusted BY
-    # CONSTRUCTION — no marker required, nothing beyond `isinstance`
-    # inspected.
-    from parallax.postgres import PostgresAdapter
-
-    adapter = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
-    assert (
-        engine._validate_termination_trust(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            adapter, "main connection"
-        )
-        == []
-    )
-
-
-def test_require_interleaved_termination_capability_trusts_the_postgres_adapter_peer_too() -> None:
-    # `provision.py`'s own `Provisioner.port` AND `Provisioner.peer()` both
-    # construct this SAME concrete class (the peer seam) — the preflight
-    # entry point trusts BOTH positions without
-    # a marker, never raising.
-    from parallax.postgres import PostgresAdapter
-
-    main_connection = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
-    peer_connection = PostgresAdapter(cast("Any", _FakePsycopgConnection()))
-    engine._require_interleaved_termination_capability(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        main_connection, peer_connection, "m-unit-work-999-synthetic.yaml"
-    )
-
-
-def test_require_interleaved_termination_capability_accepts_a_marked_fake() -> None:
-    # The documented marker mechanism: a fake that DECLARES the
-    # deterministic-termination contract passes preflight even though this
-    # module never inspects its close()/fileno() shape at all — proven with
-    # `_ScriptedPort`, which carries the marker (see its own docstring).
-    # `run_interleaved_scenario_case`'s own entry-point pins above already
-    # exercise the full helper path past this preflight; this pin isolates
-    # the marker's own acceptance at the entry point itself.
-    engine._require_interleaved_termination_capability(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        cast("Any", _ScriptedPort()), cast("Any", _ScriptedPort()), "m-unit-work-999-synthetic.yaml"
-    )
+    assert [execution.closed for execution in executions.opened] == [True]
+    assert ours_port.reads == []
 
 
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:

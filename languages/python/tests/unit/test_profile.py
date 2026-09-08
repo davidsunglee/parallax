@@ -201,6 +201,40 @@ def test_the_driver_stays_out_of_the_cold_cli_import_graph() -> None:
     }
 
 
+def test_naming_a_scoped_control_loads_no_driver() -> None:
+    # The provisioner hands out scoped controls — the session a case drives
+    # directly, and the dedicated one an interleaved choreography may destroy —
+    # and every psycopg fact those need lives in one native module. Naming a
+    # control must cost no driver import: the protocols the engine consumes
+    # carry no driver at all, and the provisioner reaches the native module
+    # inside the call that opens a session, exactly as it already reaches the
+    # adapter class. Both readings matter: absent after the protocols and the
+    # provisioner are imported is the property, and present after the native
+    # module is what proves the deferral reaches a real psycopg implementation.
+    probed = _probe(
+        "import json, sys\n"
+        "import parallax.conformance._database_control as control\n"
+        "import parallax.conformance.provision as provision\n"
+        "declared = 'psycopg' in sys.modules\n"
+        "import parallax.conformance._postgres_control as native\n"
+        "print(json.dumps({'declared': declared, 'native': 'psycopg' in sys.modules,"
+        " 'protocols': sorted(control.__all__),"
+        " 'provisioner': hasattr(provision.Provisioner, 'control')}))\n"
+    )
+    assert probed == {
+        "declared": False,
+        "native": True,
+        "protocols": [
+            "DriverControl",
+            "InterleavedExecution",
+            "InterleavedExecutionFactory",
+            "ModeledExecution",
+            "TerminationReport",
+        ],
+        "provisioner": True,
+    }
+
+
 def test_deriving_a_profiles_dialect_starts_no_container() -> None:
     probed = _probe(
         "import json, sys\n"

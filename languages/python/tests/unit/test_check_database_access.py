@@ -72,6 +72,28 @@ def test_the_adapter_connect_classmethod_is_a_seam_but_its_constructor_is_not() 
     assert _seams("from parallax.postgres import PostgresAdapter\nPostgresAdapter(fake)\n") == []
 
 
+def test_a_scoped_controls_open_is_a_seam_but_its_constructor_is_not() -> None:
+    # A control the harness hands out opens a session of its own, so its `open`
+    # acquires a database exactly as the adapter's `connect` does.
+    assert _seams(
+        "from parallax.conformance._postgres_control import PostgresControl\n"
+        "PostgresControl.open('')\n"
+    ) == ["parallax.conformance._postgres_control.PostgresControl.open"]
+    assert _seams(
+        "from parallax.conformance import _postgres_control\n"
+        "_postgres_control.PostgresInterleavedExecution.open('', model)\n"
+    ) == ["parallax.conformance._postgres_control.PostgresInterleavedExecution.open"]
+    # Constructing either over an already-open adapter opens nothing — which is
+    # how the control's own unit lane drives it, over a fake.
+    assert (
+        _seams(
+            "from parallax.conformance._postgres_control import PostgresControl\n"
+            "PostgresControl(fake)\n"
+        )
+        == []
+    )
+
+
 def test_a_profiles_provisioner_member_is_a_seam_however_the_profile_was_reached() -> None:
     # The profile indirection reaches a seam through no importable name of its own:
     # the fixture is handed a profile, and a rogue test could resolve one inline.
