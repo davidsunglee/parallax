@@ -4,7 +4,9 @@ Mirrors the drift-canary pattern in ``test_dag_sync.py``: the tool is imported a
 a library (``pythonpath = ["tools", "tests"]``), the clean tree must pass, and a
 deliberately planted untracked file must block. The canary proves the guard
 actually closes the vacuous-diff-cover hole it exists for — a guard that only
-ever returns 0 is indistinguishable from no guard.
+ever returns 0 is indistinguishable from no guard. Every plant goes into a
+scratch checkout the guard is pointed at, never into the real tree: another
+test auditing the real tree at the same moment would otherwise find it.
 """
 
 from __future__ import annotations
@@ -12,9 +14,18 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 import check_untracked_sources as untracked
 
-PY_ROOT = Path(__file__).resolve().parents[2]
+
+@pytest.fixture
+def checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    for guarded in ("packages/parallax-core/src/parallax/core/base", "tests/unit"):
+        (tmp_path / guarded).mkdir(parents=True)
+    monkeypatch.setattr(untracked, "PY_ROOT", tmp_path)
+    return tmp_path
 
 
 # --------------------------------------------------------------------------
@@ -58,42 +69,34 @@ def test_classify_drops_unguarded_roots() -> None:
 # Canary: the clean tree passes, a planted untracked source blocks.
 # --------------------------------------------------------------------------
 def test_clean_tree_has_no_untracked_sources() -> None:
-    # Also guards against a leaked canary from this module or test_dag_sync.py.
+    # The real tree, which no canary in this module touches.
     assert untracked.main([]) == 0
     assert untracked.main(["--check"]) == 0
 
 
-def test_untracked_production_source_fails() -> None:
-    canary = PY_ROOT / "packages/parallax-core/src/parallax/core/base/_canary_untracked.py"
+def test_untracked_production_source_fails(checkout: Path) -> None:
+    canary = checkout / "packages/parallax-core/src/parallax/core/base/_canary_untracked.py"
     canary.write_text("# deliberately unstaged production module\n")
-    try:
-        assert untracked.main([]) == 1
-    finally:
-        canary.unlink()
+    assert untracked.main([]) == 1
+    canary.unlink()
     assert untracked.main([]) == 0
 
 
-def test_untracked_test_source_fails() -> None:
-    # Named `_canary_*` rather than `test_*` so it can never be collected.
-    canary = PY_ROOT / "tests/unit/_canary_untracked.py"
+def test_untracked_test_source_fails(checkout: Path) -> None:
+    canary = checkout / "tests/unit/_canary_untracked.py"
     canary.write_text("# deliberately unstaged test module\n")
-    try:
-        assert untracked.main([]) == 1
-    finally:
-        canary.unlink()
+    assert untracked.main([]) == 1
+    canary.unlink()
     assert untracked.main([]) == 0
 
 
-def test_untracked_non_python_file_is_ignored() -> None:
-    canary = PY_ROOT / "packages/parallax-core/src/parallax/core/base/_canary_untracked.txt"
+def test_untracked_non_python_file_is_ignored(checkout: Path) -> None:
+    canary = checkout / "packages/parallax-core/src/parallax/core/base/_canary_untracked.txt"
     canary.write_text("not a Python source\n")
-    try:
-        assert untracked.main([]) == 0
-    finally:
-        canary.unlink()
+    assert untracked.main([]) == 0
 
 
-def test_gitignored_production_source_still_fails() -> None:
+def test_gitignored_production_source_still_fails(checkout: Path) -> None:
     # `--exclude-standard` is deliberately not passed: being ignored on purpose
     # does not make a module visible to diff-cover. Coverage follows imports, so
     # an ignored module under packages/*/src is still measured while
@@ -101,20 +104,12 @@ def test_gitignored_production_source_still_fails() -> None:
     # produces. A local `.gitignore` is the cheapest way to prove the flag is
     # really absent; `git check-ignore` confirms the rule actually bites first,
     # so this cannot pass for the trivial reason that nothing was ignored.
-    directory = PY_ROOT / "packages/parallax-core/src/parallax/core/base"
+    directory = checkout / "packages/parallax-core/src/parallax/core/base"
     canary = directory / "_canary_ignored.py"
-    ignore_file = directory / ".gitignore"
-    ignore_file.write_text("_canary_ignored.py\n")
+    (directory / ".gitignore").write_text("_canary_ignored.py\n")
     canary.write_text("# deliberately gitignored production module\n")
-    try:
-        ignored = subprocess.run(
-            ["git", "check-ignore", "-q", str(canary)],
-            cwd=PY_ROOT,
-            check=False,
-        )
-        assert ignored.returncode == 0, "canary was not actually ignored by git"
-        assert untracked.main([]) == 1
-    finally:
-        canary.unlink()
-        ignore_file.unlink()
+    ignored = subprocess.run(["git", "check-ignore", "-q", str(canary)], cwd=checkout, check=False)
+    assert ignored.returncode == 0, "canary was not actually ignored by git"
+    assert untracked.main([]) == 1
+    canary.unlink()
     assert untracked.main([]) == 0

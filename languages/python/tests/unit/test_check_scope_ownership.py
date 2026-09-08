@@ -31,6 +31,7 @@ apart again.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,24 @@ import check_dag_sync as dag
 import check_scope_ownership as own
 
 PY_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def owned_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway copy of the graded packages, which every test here points the
+    check at: a canary planted into it leaves the real tree alone, so a test
+    auditing that tree from another worker cannot find it."""
+    packages = tmp_path / "packages"
+    ignore_bytecode = shutil.ignore_patterns("__pycache__")
+    for src in sorted(PY_ROOT.glob("packages/*/src")):
+        shutil.copytree(src, packages / src.parent.name / "src", ignore=ignore_bytecode)
+    monkeypatch.setattr(own, "PACKAGES", packages)
+    return packages
+
+
+def _planted(relative: str) -> Path:
+    """Where a file written for one test lands: inside the copy under audit."""
+    return own.PACKAGES / relative
 
 
 # --------------------------------------------------------------------------
@@ -150,12 +169,10 @@ def test_unowned_production_file_fails(capsys: pytest.CaptureFixture[str]) -> No
     # `parallax.snapshot` is a distribution package interface, not an enforcement
     # scope, so a module dropped beside it belongs to nothing — the exact shape
     # `parallax/snapshot/wrap.py` had before it was retired.
-    canary = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/_canary_unowned.py"
+    canary = _planted("parallax-snapshot/src/parallax/snapshot/_canary_unowned.py")
     canary.write_text('"""Deliberately outside every enforcement scope."""\n')
-    try:
-        assert own.main([]) == 1
-    finally:
-        canary.unlink()
+    assert own.main([]) == 1
+    canary.unlink()
     assert "_canary_unowned.py" in capsys.readouterr().err
     assert own.main([]) == 0
 
@@ -212,7 +229,7 @@ def test_dropping_a_child_declaration_fails(
 # --------------------------------------------------------------------------
 # Canary 3: an import-free module beside a zero-grant scope.
 # --------------------------------------------------------------------------
-_STDLIB_LEAF = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_stdlib_leaf.py"
+_STDLIB_LEAF = "parallax-snapshot/src/parallax/snapshot/handle/_stdlib_leaf.py"
 _IMPORT_FREE = '"""Deliberately import-free, and outside every declared child scope."""\n'
 _FIRST_PARTY = (
     f"{_IMPORT_FREE}\n"
@@ -229,11 +246,12 @@ def test_import_free_module_beside_a_zero_grant_scope_fails(
     # a declared sibling scope, so the row cannot name it, and it reaches nothing
     # outside the package, so no indirect chain catches it either. Written to
     # disk for real, like canary 1.
-    _STDLIB_LEAF.write_text(_IMPORT_FREE)
+    leaf = _planted(_STDLIB_LEAF)
+    leaf.write_text(_IMPORT_FREE)
     try:
         assert own.main([]) == 1
     finally:
-        _STDLIB_LEAF.unlink()
+        leaf.unlink()
     err = capsys.readouterr().err
     assert "_stdlib_leaf.py" in err
     assert "parallax.snapshot.handle._errors cannot name it" in err
@@ -245,11 +263,12 @@ def test_a_sibling_that_imports_first_party_is_left_to_the_import_gate() -> None
     # same undeclared module with one first-party import passes here and is left
     # to `lint-imports`, which reports an import of it wherever the chain through
     # it leaves the package — as this module's import of `parallax.core` does.
-    _STDLIB_LEAF.write_text(_FIRST_PARTY)
+    leaf = _planted(_STDLIB_LEAF)
+    leaf.write_text(_FIRST_PARTY)
     try:
         assert own.main([]) == 0
     finally:
-        _STDLIB_LEAF.unlink()
+        leaf.unlink()
 
 
 def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
@@ -269,14 +288,15 @@ def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
         tampered[scope] = frozenset({"parallax.core.base"})
     monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
     assert own.zero_grant_scopes() == {}
-    _STDLIB_LEAF.write_text(_IMPORT_FREE)
+    leaf = _planted(_STDLIB_LEAF)
+    leaf.write_text(_IMPORT_FREE)
     try:
         assert own.main([]) == 0
     finally:
-        _STDLIB_LEAF.unlink()
+        leaf.unlink()
 
 
-_NEST = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_nest"
+_NEST = "parallax-snapshot/src/parallax/snapshot/handle/_nest"
 _NESTED = '"""Declared beneath a sibling scope, and import-free."""\n'
 
 
@@ -309,9 +329,10 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
     assert "parallax.snapshot.handle._nest" in dag.scope_siblings(
         "parallax.snapshot.handle._errors"
     )
-    _NEST.mkdir()
-    (_NEST / "__init__.py").write_text(_NESTED)
-    (_NEST / "_leaf.py").write_text(_NESTED)
+    nest = _planted(_NEST)
+    nest.mkdir()
+    (nest / "__init__.py").write_text(_NESTED)
+    (nest / "_leaf.py").write_text(_NESTED)
     try:
         assert own.owning_scopes("parallax.snapshot.handle._nest._leaf", own.declared_scopes()) == [
             "parallax.snapshot.handle",
@@ -320,9 +341,9 @@ def test_a_declared_grandchild_beside_a_zero_grant_scope_is_accepted(
         ]
         assert own.main([]) == 0
     finally:
-        (_NEST / "_leaf.py").unlink()
-        (_NEST / "__init__.py").unlink()
-        _NEST.rmdir()
+        (nest / "_leaf.py").unlink()
+        (nest / "__init__.py").unlink()
+        nest.rmdir()
 
 
 def test_first_party_imports_sees_every_import_form() -> None:
@@ -398,8 +419,8 @@ def test_containing_package_folds_only_a_package_interface() -> None:
 # --------------------------------------------------------------------------
 # Canary 4: an isolated scope imported from inside its own ancestors.
 # --------------------------------------------------------------------------
-_LIFECYCLE = PY_ROOT / "packages/parallax-core/src/parallax/core/execution_lifecycle"
-_INTRUDER = _LIFECYCLE / "_intruder.py"
+_LIFECYCLE = "parallax-core/src/parallax/core/execution_lifecycle"
+_INTRUDER = f"{_LIFECYCLE}/_intruder.py"
 _ABSOLUTE = (
     '"""Written by a test: production code reaching its own isolated child."""\n'
     "\n"
@@ -441,11 +462,12 @@ def test_a_production_module_importing_its_own_isolated_child_fails(
     # naming a member of the scope or naming the scope itself — the last one
     # binds the child package through its parent, which is the form a reader is
     # likeliest to mistake for an import of the parent alone.
-    _INTRUDER.write_text(source)
+    intruder = _planted(_INTRUDER)
+    intruder.write_text(source)
     try:
         assert own.main([]) == 1
     finally:
-        _INTRUDER.unlink()
+        intruder.unlink()
     err = capsys.readouterr().err
     assert "imports of an isolated scope from inside its own ancestors" in err
     assert "_intruder.py (imports parallax.core.execution_lifecycle.testing" in err
@@ -458,7 +480,7 @@ def test_the_isolated_scope_may_import_its_own_parent(
     # Scoped to the direction that has no contract: the recorder's own row DOES
     # state what it may reach, and it is granted the parent package, so a module
     # written inside the isolated scope is left to `lint-imports`.
-    inside = _LIFECYCLE / "testing" / "_probe.py"
+    inside = _planted(f"{_LIFECYCLE}/testing/_probe.py")
     inside.write_text(
         '"""Written by a test: inside the isolated scope, reaching its parent."""\n'
         "\n"
@@ -511,7 +533,7 @@ def test_a_sealed_scope_reaching_its_parent_package_fails(
     )
 
 
-_PROBE = PY_ROOT / "packages/parallax-core/src/parallax/core/entity/_probe.py"
+_PROBE = "parallax-core/src/parallax/core/entity/_probe.py"
 _PROBE_SCOPE = "parallax.core.entity._probe"
 
 
@@ -548,7 +570,7 @@ def _spellings(module: str, name: str) -> list[tuple[str, str, str]]:
 
 
 def _write_probe(statement: str, bound: str) -> None:
-    _PROBE.write_text(
+    _planted(_PROBE).write_text(
         '"""Written by a test: one spelling of a sealed scope\'s intra-package reach."""\n'
         "\n"
         f"{statement}\n"
@@ -580,7 +602,7 @@ def test_a_sealed_scope_reaching_what_its_row_already_permits_fails(
     try:
         assert own.main([]) == 1
     finally:
-        _PROBE.unlink()
+        _planted(_PROBE).unlink()
     err = capsys.readouterr().err
     assert f"_probe.py (imports {escaped}, which {_PROBE_SCOPE}" in err
     assert own.main([]) == 0
@@ -605,7 +627,7 @@ def test_a_sealed_scope_reaching_a_granted_sibling_passes_in_every_spelling(
         assert own.imports_escaping_a_sealed_child_row(own.production_files()) == []
         assert own.main([]) == 0
     finally:
-        _PROBE.unlink()
+        _planted(_PROBE).unlink()
 
 
 def test_the_sealed_rule_applies_only_to_a_scope_declared_sealed(
