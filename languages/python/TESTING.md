@@ -203,11 +203,8 @@ seconds, it is that session's usage error naming the file, because the balance
 falling back to equal weights is a shard mechanism doing nothing while every
 partition check stays green.
 
-Refresh it after the class changes shape, then commit the result:
-
-```sh
-cd languages/python && uv run pytest -m cost -n auto --store-cost-durations
-```
+Refresh it after the class changes shape with the recipe-less step
+[`AGENTS.md`](AGENTS.md) names, then commit the result.
 
 That run measures the whole class, so what it measured becomes the file and an
 item deleted or renamed since the last refresh leaves no entry behind to weigh a

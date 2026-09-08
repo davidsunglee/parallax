@@ -51,10 +51,13 @@ full text of entries it no longer carries.
 
 Every Python command is a `python-*` recipe in the root `justfile`; `just --list`
 prints the catalog and `just show-gates python-check` prints what the merge gate
-owns. Two steps have no recipe of their own:
+owns. Three steps have no recipe of their own:
 
 - `cd languages/python && uv sync` — install the dev environment (all five
   workspace distributions editable, plus the toolchain).
 - `cd languages/python && uv run python tools/check_dag_sync.py --write` —
   regenerate the import-linter forbidden-edge complement after a
   `core/spec/modules.md` change.
+- `cd languages/python && uv run pytest -m cost -n auto --store-cost-durations` —
+  refresh `tests/_support/cost_durations.json`, which balances the cost class's
+  CI shards, after that class changes shape.
