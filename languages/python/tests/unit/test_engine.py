@@ -14,6 +14,7 @@ import copy
 import dataclasses
 import datetime as dt
 import decimal
+import functools
 import re
 import threading
 import uuid
@@ -153,9 +154,20 @@ class FakeDbPort:
         return body_outcome(self, body)
 
 
+# Each index reads the corpus once for the whole module: what it answers is
+# shared between tests, so a test that edits a document takes `_own_copy` first.
+@functools.cache
+def _reachable_by_id() -> Mapping[str, case_format.Case]:
+    return {c.case_id: c for c in sweep.reachable_cases()}
+
+
+@functools.cache
+def _corpus_by_id() -> Mapping[str, case_format.Case]:
+    return {c.case_id: c for c in case_format.load_cases()}
+
+
 def _case(case_id: str) -> case_format.Case:
-    (case,) = [c for c in sweep.reachable_cases() if c.case_id == case_id]
-    return case
+    return _reachable_by_id()[case_id]
 
 
 def _load_case(case_id: str) -> case_format.Case:
@@ -163,8 +175,11 @@ def _load_case(case_id: str) -> case_format.Case:
     # IMPLEMENTED_MODULES` reachability: these engine-function-level tests
     # exercise `run_conflict_case` on its own terms, never gated on whether
     # the case has ALSO been flipped visible in the sweep.
-    (case,) = [c for c in case_format.load_cases() if c.case_id == case_id]
-    return case
+    return _corpus_by_id()[case_id]
+
+
+def _own_copy(case: case_format.Case) -> case_format.Case:
+    return dataclasses.replace(case, document=copy.deepcopy(case.document))
 
 
 def test_compile_read_case_matches_golden() -> None:
@@ -1357,7 +1372,7 @@ def test_run_scenario_case_refuses_a_read_step_graph_over_no_include_path() -> N
     # The read placement states the relationships that read materialized, and a
     # read declaring no Include Path materialized none. The schema refuses the
     # shape; the lane refuses it too rather than reporting an empty graph.
-    case = _load_case("m-unit-work-029")
+    case = _own_copy(_load_case("m-unit-work-029"))
     when = cast("dict[str, Any]", case.document["when"])
     steps = cast("list[dict[str, Any]]", when["scenario"])
     del steps[0]["objectQuery"]["includes"]
@@ -1370,7 +1385,7 @@ def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_conte
     # That entry point reports emissions, round trips and find rows and carries no
     # `stepGraphs` channel, so an `expectGraph` authored on an interleaved case
     # would be an oracle nothing answers. It is refused rather than left silent.
-    case = _load_case("m-opt-lock-012")
+    case = _own_copy(_load_case("m-opt-lock-012"))
     when = cast("dict[str, Any]", case.document["when"])
     steps = cast("list[dict[str, Any]]", when["scenario"])
     steps[0]["expectGraph"] = {"Account": [{"id": 2}]}
