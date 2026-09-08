@@ -2992,7 +2992,8 @@ of shared edition identity.
   `edit()` with **no changes** is legal and yields an Edited Copy carrying the
   receiver's **own** Change Record forward, which is what the merge rule above
   already says a zero-change merge of records is. On a never-edited value that
-  record is empty, so its `edited_row` (§5) is `None`; on an already-edited
+  record is empty, so its `authored_row` (§5) is `None` and the write it feeds
+  states no assignment for the effective change set to weigh; on an already-edited
   value the pending edit survives, because stamping an empty record would
   discard it and silently turn a write into nothing to write. Nothing is
   validated, because nothing was authored. Refusing it would need a ninth code
@@ -3230,7 +3231,7 @@ of shared edition identity.
     `edit-framework-owned`. One rule rather than three checks is the point:
     those surfaces differ only in how they resolve a name to a member.
   - **Arrived by hydration** — readable on the value and silently omitted from
-    the Entity Row Codec's `full_row` and `edited_row` (§5), never an error.
+    the Entity Row Codec's `full_row` and `authored_row` (§5), never an error.
     Refusing it would make a stored row unreadable, and emitting it would
     launder stored state into an assignment the caller never made.
     Materialization is safe by construction: it enters no Pydantic constructor
@@ -4246,7 +4247,6 @@ These feature tests do not claim the deferred `benchmark` command or general
                                     #   at construction, or raised there
     full_row(value)     -> dict[str, object]
     identity_row(value) -> dict[str, object]
-    edited_row(value)   -> dict[str, object] | None
     authored_row(value) -> AuthoredRow | None      # .row / .originals
 
   EntityRowError(RuntimeError)      # exported from parallax.core.entity
@@ -4271,8 +4271,8 @@ These feature tests do not claim the deferred `benchmark` command or general
   Members come from the model's family-effective metadata, which also supplies
   the canonical keys, and each operation selects from those candidates by its
   own rule: `full_row` selects what `model_fields_set` reports as populated,
-  `identity_row` selects the primary key, and `edited_row` and `authored_row`
-  both select the primary key plus the members the Change Record names. Neither side alone would do:
+  `identity_row` selects the primary key, and `authored_row`
+  selects the primary key plus the members the Change Record names. Neither side alone would do:
   metadata cannot know what the caller populated, and the class cannot be the
   authority on which members the model declares. A member an operation selects
   but **cannot emit** raises `entity-row-member-missing` rather than being
@@ -4288,13 +4288,13 @@ These feature tests do not claim the deferred `benchmark` command or general
   operation's own selection and nothing else — neither the populated set at
   large nor the narrower set the finished row carries. The harm it names is
   losing a member the operation's selection claims, and an operation that drops
-  members by contract — `identity_row` every non-key member, `edited_row` every
+  members by contract — `identity_row` every non-key member, `authored_row` every
   member its Change Record does not name — loses nothing by dropping one more.
   So a populated undeclared member an edit never touched is outside
-  `edited_row`'s selection and outside its judgement, while `full_row` on that
-  same value still raises. Effectiveness is weighed after the selection is
-  judged and never narrows it: an undeclared recorded name still raises when the
-  edit that touched it restored its original value, though the row would have
+  `authored_row`'s selection and outside its judgement, while `full_row` on that
+  same value still raises. Nothing downstream narrows the selection either: an
+  undeclared recorded name still raises when the edit that touched it restored
+  its original value, though the write's own effective change set would have
   carried nothing for it. Judging the populated set uniformly instead would
   refuse a keyed write over a member no keyed write emits, and it would refuse
   it on exactly the cross-model value the resolution-not-ownership rule above
@@ -4321,22 +4321,16 @@ These feature tests do not claim the deferred `benchmark` command or general
   by identity, so `identity_row`'s values are the ones the instance holds
   whatever the rule says.
 
-  `edited_row` returns the identity row plus the **effective** caller-authored
-  changes, those whose current value differs from the recorded original. It
-  preserves first-touched originals across a chain and answers `None` when the
-  value carries no effective change. `None` is one proposition — *this value
-  names no change to write* — so a net-zero edit and a value no edit ever
-  touched are the same answer, and "nothing to write" has exactly one
-  representation whatever the value's history.
-
-  `authored_row` answers the same selection with **no** effectiveness weighed:
-  the identity plus every touched member at the value it now holds, beside those
-  same members at the value the chain first recorded. It answers `None` only
-  when the chain touched nothing, so a net-zero edit — one answer to `edited_row`
-  — is two rows here, which is the whole difference between them. It exists
-  because effectiveness is not always the codec's to weigh: a write comparing a
-  Typed value's authoring against another representation's owns the comparison
-  rule itself, and can only own it if both sides reach it unjudged.
+  `authored_row` answers the identity plus every touched member at the value it
+  now holds, beside those same members at the value the chain first recorded. It
+  preserves first-touched originals across a chain, and it weighs **no**
+  effectiveness: a member whose current value equals its original is emitted on
+  both sides like any other, so a net-zero edit is two rows here rather than an
+  absence. It answers `None` only when the chain touched nothing, which says
+  there is nothing to compare rather than that nothing changed. Effectiveness is
+  not the codec's to weigh at all — the write that consumes this pair asks
+  `classify_effective_change` below, and can only ask it if both sides reach it
+  unjudged.
 
   A **Change Record** is a mapping from each member the edit chain touched to
   the value that member held when it was first touched, stored in one private
@@ -4361,15 +4355,15 @@ These feature tests do not claim the deferred `benchmark` command or general
 
   **Refusals are ordered, so one input has one code.** Every operation resolves
   the value's Entity Identity first — `entity-row-not-an-entity`, then
-  `entity-row-target-not-in-model` — and judges members last. The two operations
-  reading a Change Record settle the carrier in between, before that record is
+  `entity-row-target-not-in-model` — and judges members last. The one operation
+  reading a Change Record settles the carrier in between, before that record is
   read for names: a carrier no edit wrote raises
   `entity-row-malformed-provenance` whatever else that value populates, so
-  `entity-row-member-missing` from `edited_row` or `authored_row` always reports
+  `entity-row-member-missing` from `authored_row` always reports
   a name an accepted record supplied. An absent record narrows
   nothing: the primary-key half of the selection is judged exactly as it is for
-  a net-zero chain, so a value whose class supplies no attribute for a declared
-  key member is refused rather than answered `None`. `full_row` and
+  a chain that touched something, so a value whose class supplies no attribute
+  for a declared key member is refused rather than answered `None`. `full_row` and
   `identity_row` read no Change Record at all, so the same plain value whose
   populated member the model does not declare raises
   `entity-row-member-missing` from `full_row` and emits a row from
@@ -4391,27 +4385,22 @@ These feature tests do not claim the deferred `benchmark` command or general
   payload: a caller selects its own already-prepared values by those names, so
   nothing about what will be stored is decided by asking.
 
-  Provenance comparison is stated rather than implied: an occurrence compares as
-  a **whole** at either cardinality, presence preserved on both sides, because
-  assigning one replaces its subtree (`m-unit-work` *Comparing an assigned member
-  with its persisted value*). A declared member the authored value omits is a
-  member the write removes, so it makes the edit effective rather than passing
-  as un-authored; an explicit null and an omitted key stay distinct on both
-  sides, the same explicit-versus-defaulted distinction canonical document
-  serialization draws (§3). A nested Many is the one member an omission does not
-  remove, and it is not preserved as one: it has no absent state, so both sides
-  read it as the `()` / `[]` the write stores either way, and an occurrence
-  authored short of it is a no-op against a row already holding that zero. The
-  Wire keyed verb applies that identical rule to its own effective-change set,
-  and it weighs it against the same observed value: this comparison reads the
-  hydrated original's populated set and the Wire verb reads the node its source
-  published, which is that same materialization's own document (§4) — one
-  document under two names. One authored value therefore earns one answer from
-  both peer interfaces, including where the answer turns on presence: against a
-  row storing an occurrence short of a declared member, authoring that member's
-  explicit null is an effective change through either, and the two emit the same
-  DML, while authoring the occurrence short of a nested Many is DML through
-  neither.
+  Provenance comparison is **not restated here**: the rule an occurrence
+  compares by — whole at either cardinality, presence preserved on both sides,
+  an omitted nested Many read as the zero both sides store — is
+  `classify_effective_change`'s, stated once in `m-document-codec` *Managed
+  documents and the effective change set* and derived there from `m-unit-work`
+  *Comparing an assigned member with its persisted value*. The Typed and Wire
+  keyed verbs agree on it **structurally** rather than by two implementations
+  happening to match: the ingress asks that one operation over one shape for
+  both, and the originals it weighs are the same observed value on both sides —
+  the hydrated value's populated members on the Typed lane, the node its source
+  published on the Wire lane, which is that same materialization's own document
+  (§4). One authored value therefore earns one answer from both peer interfaces,
+  including where the answer turns on presence: against a row storing an
+  occurrence short of a declared member, authoring that member's explicit null is
+  an effective change through either and the two emit the same DML, while
+  authoring the occurrence short of a nested Many is DML through neither.
 
   **The codec is an authoring codec, never a provenance decorator.** It emits
   only caller-authored identity and domain values in canonical Attribute-keyed
@@ -5203,30 +5192,18 @@ remains observable rather than making Python its own oracle.
   `parallax-postgres` adapter against the real Testcontainers Postgres.
 - **Coverage partition and no-drift guards.** An assertion computes
   `exercised ∪ reasoned-skipped == active slice` from corpus data at runtime,
-  failing on stale case IDs or empty skip reasons. Four no-drift guards
+  failing on stale case IDs or empty skip reasons. Three no-drift guards
   close the loop. Two run per example: the idiomatic Object Query's
   serialization equals the corpus document, and idiomatic class descriptors
-  equal corpus descriptors. A third, scoped to every registered write story,
+  equal corpus descriptors. The third, scoped to every registered write story,
   drives it against a recording fake port and asserts its wire DML equals its
   corpus golden byte-exact (a commit story the golden DML, an abort story
-  nothing for the discarded buffer). The fourth is a Docker-free, database-free
-  **copy-to-row contract test** (`tests/api/test_copy_to_row_no_drift.py`, in the
-  `dbfree` class), scoped to the
-  write shapes that actually pass through Edited Copy lowering — keyed
-  non-temporal updates and keyed temporal updates driven by an Edited Copy;
-  inserts, deletes/terminates, and set-based materialize paths never reach
-  `edited_row` and are proven by the ordinary conformance path. For
-  each in-scope claimed write case it builds the fixture node, applies the
-  case's changes through `edit(...)`, and lowers the Edited Copy through the
-  lowering seam, which takes the **transaction observation** (the observed
-  version or `in_z` the unit of work supplies at flush) as an explicit input:
-  the test supplies a synthetic observation and asserts the lowered
-  row-shaped write input (sparse row non-temporal, full row temporal) binds
-  exactly that observation, and a companion assertion lowers the SAME edited
-  copy against a *different* observation and proves the bound value tracks
-  the observation, never anything the copy itself carries — so the
-  copy-provenance lowering (ADR 0003) and the framework-owned observation
-  rule (§5) cannot drift while the other three proof paths stay green.
+  nothing for the discarded buffer). What an Edited Copy lowers to needs no
+  guard of its own: `edit` refuses a framework-owned reassignment at the entity
+  frontend and lowering refuses a row carrying a version rather than binding it,
+  so the copy's own value cannot silently leak into a bind, and the observation
+  a bind does track is witnessed end to end by the `m-opt-lock` and
+  `m-txtime-write` conformance cases against a real database.
 - **Usage Guide.** Generated from suite source (`uv run gen-usage-guide`) into
   `languages/python/docs/usage-guide.md`; CI runs `--check` and fails on
   drift. The guide and suite are additive to conformance-adapter proof, never
@@ -6064,7 +6041,7 @@ rows receive the transaction's shared lock.
 | Supported language/runtime versions | CPython; `requires-python >= 3.13` | each distribution's `pyproject.toml` | (local dev on any supported minor) | CI matrix: 3.14 full gate; 3.13 database-free tests without coverage | support the latest minor + one prior minor; the latest minor owns every version-independent verdict and the full database and cost gates, while the prior minor proves database-free runtime compatibility; admitting a new latest minor and raising the floor are reviewed spec changes |
 | Dependency and supply-chain audit | committed `uv.lock` + `uv lock --check` + pip-audit + scheduled `uv lock --upgrade` refresh | `languages/python/uv.lock` | `uv lock --check && uv run pip-audit` | `python-check-dbfree` job on every PR, plus a monthly scheduled CI job opening a `uv lock --upgrade` refresh PR | high-severity findings block; exceptions carry owner + expiry inline; lockfile drift fails; freshness: the monthly upgrade PR is human-reviewed like any change and may not be merged red |
 | Compatibility Conformance Suite | pytest conformance runner + jsonschema envelope validation | `languages/python/tests/compatibility/` | `uv run pytest -m compile_sweep` (Docker-free) and `uv run pytest tests/compatibility/test_run_sweep.py` (`pg-full`) | `python-check-dbfree` (compile sweep) + `python-check-db` (run sweep) | selection = active slice ∩ capability tags; every envelope validates against `conformance-adapter.schema.json` |
-| API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api/`; `languages/python/docs/usage-guide.md` | `uv run pytest tests/api && uv run gen-usage-guide --check` | `python-check-dbfree` (partition, no-drift guards, guide drift) + `python-check-db` (story and boundary runs) | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); query, descriptor, and database-free copy-to-row no-drift guards green; guide drift fails |
+| API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api/`; `languages/python/docs/usage-guide.md` | `uv run pytest tests/api && uv run gen-usage-guide --check` | `python-check-dbfree` (partition, no-drift guards, guide drift) + `python-check-db` (story and boundary runs) | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); query, descriptor, and write-story no-drift guards green; guide drift fails |
 | Database-backed verification | testcontainers Postgres profiles | §6 profile definitions | `uv run pytest -m db` | `python-check-db` job | required profiles `pg-full`, provider contract, adapter smoke; every skipped check is reported with a reason in the session summary; silent skips are forbidden and any CI skip fails |
 
 - **Storage Layout contract verification.** Before the target advertises the

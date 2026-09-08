@@ -222,3 +222,33 @@ The rule is a peer-interface obligation as much as a codec one. The Wire keyed
 verb computes its own effective change set against the source its read published
 and has always compared whole decoded values, so the mask was one authored value
 getting two answers from two peer interfaces (ADR 0057).
+
+## Amendment (2026-09, COR-131): the codec derives rows and weighs nothing
+
+The row-derivation paragraph above records `edited_row` as one of the codec's
+three operations and as "identity plus the canonical effective change set", and
+the two amendments above state the comparison rule that operation applied.
+
+**Superseding decision:** `edited_row` and `restored_members` are deleted, and
+the Entity Row Codec exposes `full_row`, `identity_row`, and `authored_row`
+alone. Whether an assignment changes the value it was authored against is
+`m-document-codec`'s `classifyEffectiveChange`, which every write asks and no
+other module decides; the composition `edited_row` named — identity plus the
+effective members, and nothing to write when that set is empty — is the keyed
+write ingress's, applied to `authored_row`'s two unjudged sides.
+
+The original decision held because the write path performed that composition by
+hand and the codec was the one place to name it. Three write paths later
+performed three different comparisons, agreeing only because three unrelated
+producers encoded one presence rule; the codec's own was the one with no
+production caller at all, since `Transaction.update` hands `authored_row` to the
+ingress unjudged. Naming the composition once was worth less than deciding the
+comparison once, and the comparison cannot be decided in an authoring codec: the
+predicate write path reaches no Entity value to derive a row from.
+
+The comparison rule the two amendments above settled is unchanged and now lives
+where it is applied — an occurrence compares whole at either cardinality with
+presence preserved, a nested `many` reads as the zero both sides store, and a
+key no member declares takes no part. What changed is that the peer-interface
+obligation the COR-85 amendment recorded is now structural: the Typed and Wire
+keyed verbs ask one operation rather than matching each other's answers.

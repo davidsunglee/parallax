@@ -4,20 +4,21 @@ Exposed from ``parallax.core.entity`` and deliberately **not** from top-level
 ``parallax.core``: it is the seam a write path derives rows through, not
 developer surface.
 
-Four operations answer one question each — every member the caller populated,
-the identity, the effective caller-authored changes, and every member an edit
-chain named beside the original it first recorded — and a consumer asking for one
-learns nothing about Pydantic, the private Change Record slot, physical column
-names, temporal planning, or Audit Provenance. It is an **authoring** codec: it
+Three operations answer one question each — every member the caller populated,
+the identity, and every member an edit chain named beside the original it first
+recorded — and a consumer asking for one learns nothing about Pydantic, the
+private Change Record slot, physical column names, temporal planning, or Audit
+Provenance. It is an **authoring** codec: it
 emits only what a caller authored, never computes or stamps a framework-owned
 value, and is never an Audit Provenance extension point. Its dependencies are the
 accepted Metamodel, the value's own class, and — for the private slot alone — the
 value's own instance storage, and nothing else.
 
-Weighing effectiveness is one operation's own rule rather than the codec's:
-:meth:`EntityRowCodec.edited_row` answers what a write with no other basis for
-comparison needs, and :meth:`EntityRowCodec.authored_row` answers the two sides
-of that comparison for a caller that judges it itself.
+Weighing effectiveness is no operation's rule here.
+:meth:`EntityRowCodec.authored_row` answers both sides of the comparison and
+judges neither, and the write ingress decides which of them changed anything
+through ``parallax.core.document_codec.classify_effective_change``, the one
+definition of an effective change.
 
 Input validation **resolves; it does not own.** The codec resolves the Entity
 Identity the value's class declares and refuses at resolution only when its model
@@ -175,7 +176,7 @@ class EntityRowCodec:
         """``value``'s primary-key members, keyed by canonical name.
 
         Its values are serialized exactly as :meth:`full_row`'s and
-        :meth:`edited_row`'s are, so all three operations carry one form and a
+        :meth:`authored_row`'s are, so all three operations carry one form and a
         caller holding several of them compares like with like. Its selection is
         the resolved identity's own declared primary key, so it names no
         candidate the metadata did not supply; a
@@ -186,47 +187,22 @@ class EntityRowCodec:
         facts, names = self._resolved(value)
         return self._identity_row(facts, names, value, "identity_row")
 
-    def edited_row(self, value: object) -> dict[str, object] | None:
-        """``value``'s identity plus its effective caller-authored changes, or
-        ``None`` when it carries no effective change.
-
-        ``None`` is one proposition — *this value names no change to write* —
-        and a value no edit ever touched answers it exactly as a chain that nets
-        to zero does. A member the edit chain touched drops out when its current
-        value equals the original the chain first recorded, so "nothing to
-        write" has exactly one representation whatever the value's history.
-        Which members dropped out that way is :meth:`restored_members`'s answer,
-        for the one consumer that needs to know.
-
-        The whole selection — the primary key and every recorded name — is
-        judged from both sides before effectiveness is weighed
-        (:meth:`_touched`), so a selection this codec could not emit is refused
-        whether or not the chain nets to zero.
-        """
-        facts, names = self._resolved(value)
-        effective = self._effective_members(facts, names, value, "edited_row")
-        if not effective:
-            return None
-        row = self._identity_row(facts, names, value, "edited_row")
-        row.update(self._serialized(facts, names, value, effective, "edited_row"))
-        return row
-
     def authored_row(self, value: object) -> AuthoredRow | None:
         """``value``'s identity plus every member its edit chain touched, beside
         those members' first-recorded originals — or ``None`` when the chain
         touched nothing.
 
-        The pair :meth:`edited_row` reduces to one side of. Where that operation
-        weighs effectiveness and drops the members whose current value equals
-        their original, this one weighs none and emits both values, so a caller
-        that owns the comparison rule can apply its own. ``None`` therefore says
-        only that there is nothing to compare — a chain that nets to zero still
-        answers its touched members, which is exactly the case the two operations
-        differ on.
+        Effectiveness is weighed nowhere here: both values are emitted whatever
+        their relation, so the caller that owns the comparison rule applies it.
+        ``None`` therefore says only that there is nothing to compare, and a
+        chain that nets to zero still answers its touched members — a
+        restoration is the caller's last word on that member, and a consumer
+        deciding what to write needs to see it.
 
-        The selection is judged from both sides before either value is read
-        (:meth:`_touched`), identically to :meth:`edited_row`'s, so the two
-        operations refuse the same value for the same reason.
+        The whole selection — the primary key and every recorded name — is
+        judged from both sides before either value is read (:meth:`_touched`),
+        so a selection this codec could not emit is refused whether or not the
+        chain nets to zero.
         """
         facts, names = self._resolved(value)
         touched, _py_names = self._touched(facts, names, value, "authored_row")
@@ -243,40 +219,19 @@ class EntityRowCodec:
             },
         )
 
-    def restored_members(self, value: object) -> frozenset[str]:
-        """The members ``value``'s edit chain touched and then put back, keyed by
-        canonical name — everything :meth:`edited_row` weighed and left out.
-
-        The pair is the whole of what an edit chain authored: what it changed,
-        and what it named and then restored. A restoration is not nothing. It is
-        the caller's last word on that member, so when another write of the same
-        observed state is already pending it has to be able to cancel that
-        write's assignment rather than being dropped as though the member was
-        never mentioned — which is what makes ``100 -> 125 -> 100`` emit no DML
-        instead of writing ``125``.
-
-        Judged exactly as :meth:`edited_row` judges effectiveness, so the two
-        partition the touched set and a member can never be in both or neither.
-        """
-        facts, names = self._resolved(value)
-        touched, _py_names = self._touched(facts, names, value, "restored_members")
-        return frozenset(touched) - self._effective_members(facts, names, value, "restored_members")
-
     def _touched(
         self, facts: _RowFacts, names: WireNames, value: object, operation: str
     ) -> tuple[Mapping[str, object], Mapping[str, str]]:
         """``value``'s Change Record as canonical-keyed originals, plus those
         members' Python names — judged from both sides before anything is read.
 
-        Refusal follows selection, and effectiveness is weighed afterwards: the
-        whole selection is judged before a net-zero edit can answer that it names
-        nothing to write, because what the rule protects is a selection the codec
+        Refusal follows selection: the whole selection is judged before any
+        value is read, because what the rule protects is a selection the codec
         cannot emit. So a recorded name the resolved identity does not declare is
         refused even when the edit that touched it restored the original value,
         and a value whose class supplies no attribute for a selected member is
-        refused even when its chain nets to zero. Weighing effectiveness first
-        would read that attribute to compare it, so the judgement has to precede
-        the comparison rather than merely the emission.
+        refused rather than reaching the ``getattr`` that would escape the closed
+        code set with an ``AttributeError``.
         """
         record = _change_record(facts, value)
         touched = {
@@ -285,18 +240,6 @@ class EntityRowCodec:
         self._require_declared(facts, touched, operation)
         self._require_supplied(facts, names, facts.primary_key, operation)
         return touched, self._require_supplied(facts, names, touched, operation)
-
-    def _effective_members(
-        self, facts: _RowFacts, names: WireNames, value: object, operation: str
-    ) -> frozenset[str]:
-        """The touched members whose current value differs from the original the
-        chain first recorded."""
-        touched, py_names = self._touched(facts, names, value, operation)
-        return frozenset(
-            canonical
-            for canonical, original in touched.items()
-            if not _assignment_matches_original(getattr(value, py_names[canonical]), original)
-        )
 
     # --- resolution and the shared emission ------------------------------- #
 
@@ -485,21 +428,3 @@ def _change_record(facts: _RowFacts, value: object) -> Mapping[str, object]:
             identity=facts.identity,
         )
     return record
-
-
-def _assignment_matches_original(assigned: object, original: object) -> bool:
-    """Whether an authored member restores the original the chain first recorded.
-
-    Both sides render to their canonical documents and compare **whole**, with
-    presence preserved at every depth: a member one side omits is a member the
-    other side does not match. Assigning an occurrence replaces its subtree, so
-    a declared member the authored value leaves out is one the write removes,
-    and comparing only the keys the caller happened to name would drop a write
-    that changes what storage holds. A ``many`` compares whole for the older
-    reason that its elements carry no identity, and the two cardinalities now
-    answer one rule. A ``many`` also has no absence for either side to preserve:
-    canonical serialization always contributes it, so an unpopulated one renders
-    as the empty collection the store holds and a value authored short of it
-    matches an original carrying that zero.
-    """
-    return serialize_member(assigned) == serialize_member(original)

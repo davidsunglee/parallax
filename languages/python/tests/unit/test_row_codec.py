@@ -1,10 +1,13 @@
-"""The Entity Row Codec: ``full_row`` / ``identity_row`` / ``edited_row`` /
-``authored_row``, its construction over one accepted Metamodel, and the five
-closed ``EntityRowError`` codes (spec §5).
+"""The Entity Row Codec: ``full_row`` / ``identity_row`` / ``authored_row``, its
+construction over one accepted Metamodel, and the four closed
+``EntityRowError`` codes (spec §5).
 
-The write path's consumption of the codec lives in ``test_transaction_writes.py``
-and ``tests/api/test_edited_row_no_drift.py``; what this suite pins is the codec
-itself, driven with no Unit of Work, no SQL, and no adapter in reach.
+Whether an authored value changed anything is not asked here: that is the
+document codec's one rule, pinned at its own interface by
+``test_document_codec_managed.py`` and consumed by the keyed write ingress. The
+write path's consumption of this codec lives in ``test_transaction_writes.py``;
+what this suite pins is the codec itself, driven with no Unit of Work, no SQL,
+and no adapter in reach.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import datetime as dt
 import uuid
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final
 
 import pytest
 from _authored_storage_support import (
@@ -23,7 +26,6 @@ from _authored_storage_support import (
     stored_state,
 )
 from _compact_support import carries_instance_storage, published
-from _snapshot_graph_support import GraphFixture
 from pydantic import TypeAdapter
 
 from _support import mirrored_models as mm
@@ -42,9 +44,6 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._model import model_of
-from parallax.core.entity._row_codec import (
-    _assignment_matches_original,  # pyright: ignore[reportPrivateUsage]
-)
 from parallax.core.metamodel import UnresolvedEntityDeclaration
 
 _SPEC_CODES = frozenset(
@@ -414,165 +413,7 @@ def test_serialization_is_the_identity_on_every_type_a_primary_key_can_hold(
 
 
 # --------------------------------------------------------------------------- #
-# edited_row: identity plus the effective caller-authored changes.            #
-# --------------------------------------------------------------------------- #
-def test_edited_row_merges_the_identity_with_the_effective_changes() -> None:
-    edited = _account().edit(balance=Decimal("175.00"))
-    assert _accounts().edited_row(edited) == {"id": 1, "balance": Decimal("175.00")}
-
-
-def test_edited_row_omits_a_touched_member_whose_value_is_unchanged() -> None:
-    edited = _account("100.00").edit(balance=Decimal("100.00"), owner="Grace")
-    assert _accounts().edited_row(edited) == {"id": 1, "owner": "Grace"}
-
-
-def test_edited_row_reads_a_published_value_s_provenance_without_creating_storage() -> None:
-    # A published value keeps its members in a row and no instance storage of its
-    # own. The provenance slot is absent either way, but reaching for the storage
-    # to learn that would CREATE the dictionary — permanently, per node, on a
-    # read the codec makes of every value it weighs.
-    value = published(mm.Account, id=1, owner="Ada", balance=Decimal("100.00"), version=1)
-    assert _accounts().edited_row(value) is None
-    assert _accounts().full_row(value) == {"id": 1, "owner": "Ada", "balance": Decimal("100.00")}
-    assert not carries_instance_storage(value)
-
-
-def test_edited_row_answers_none_for_a_net_zero_edit() -> None:
-    assert _accounts().edited_row(_account("100.00").edit(balance=Decimal("100.00"))) is None
-
-
-def test_edited_row_answers_none_for_a_net_zero_chain() -> None:
-    round_tripped = _account("100.00").edit(balance=Decimal("200.00"))
-    assert _accounts().edited_row(round_tripped.edit(balance=Decimal("100.00"))) is None
-
-
-def test_edited_row_preserves_the_first_touched_original_across_a_chain() -> None:
-    # 100 -> 150 -> 100 nets to zero against the EARLIEST original, not against
-    # the immediate parent's 150.
-    chained = _account("100.00").edit(balance=Decimal("150.00")).edit(balance=Decimal("100.00"))
-    assert chained.balance == Decimal("100.00")
-    assert _accounts().edited_row(chained) is None
-
-
-def test_edited_row_answers_none_for_an_edit_that_authored_nothing() -> None:
-    assert _accounts().edited_row(_account().edit()) is None
-
-
-def test_edited_row_serializes_a_changed_value_object_beside_a_raw_identity() -> None:
-    # The two halves keep their own value conventions: the identity is what the
-    # instance holds, the change is its canonical document.
-    original = mm.Traveler(
-        id=1,
-        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
-        tags=(),
-    )
-    edited = original.edit(address=mm.TravelerAddress(city="Bergen"))
-    row = row_codec_for(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited)
-    assert row is not None
-    assert row["id"] == 1
-    # The authored occurrence names `city` alone, and a document omits what the
-    # caller never populated rather than spelling it as an explicit null.
-    assert row["address"] == {"city": "Bergen"}
-
-
-def test_edited_row_compares_a_one_occurrence_as_a_whole() -> None:
-    # The authored occurrence names `city` alone, so the omitted `geo` is a
-    # member the write REMOVES — an assignment replaces its subtree whole under
-    # every Storage Layout — and the edit is effective even though every key it
-    # does name is unchanged. Comparing only those keys would eliminate a write
-    # that changes what storage holds.
-    original = mm.Traveler(
-        id=1,
-        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
-        tags=(),
-    )
-    edited = original.edit(address=mm.TravelerAddress(city="Oslo"))
-    assert row_codec_for(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited) == {
-        "id": 1,
-        "address": {"city": "Oslo"},
-    }
-
-
-def test_edited_row_answers_none_for_an_occurrence_restated_unchanged() -> None:
-    # The other side of the same rule: an occurrence restated with the members
-    # its original holds, at the values it holds them, stores exactly what is
-    # there and nets to zero.
-    original = mm.Traveler(
-        id=1,
-        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
-        tags=(),
-    )
-    edited = original.edit(
-        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway"))
-    )
-    codec = row_codec_for(mm.DOCUMENT_LAYOUT_MODEL)
-    assert codec.edited_row(edited) is None
-    assert codec.restored_members(edited) == frozenset({"address"})
-
-
-def test_edited_row_compares_a_many_occurrence_as_a_whole() -> None:
-    # Elements have no identity, so any element difference is a change rather
-    # than a per-key mask.
-    original = mm.Traveler(id=1, address=None, tags=(mm.TravelerTag(label="a"),))
-    edited = original.edit(tags=(mm.TravelerTag(label="b"),))
-    row = row_codec_for(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited)
-    assert row is not None
-    assert row["tags"] == [{"label": "b"}]
-
-
-def test_edited_row_writes_an_authored_null_a_materialized_read_never_set() -> None:
-    # Storage holds a `Customer.address` document that never wrote `geo` at all,
-    # so the materialized read's own `address` names `geo` ABSENT rather than
-    # null (`model_fields_set` omits it) — presence at materialization is what
-    # `test_snapshot_merge.py`'s
-    # `test_a_materialized_value_object_names_exactly_what_storage_held` pins.
-    # Authoring `geo=None` on the edit is then a REAL difference from what was
-    # read, not a repeat of a fabricated original, and `edited_row` must carry
-    # it through as an explicit null rather than let it cancel out.
-    fixture = GraphFixture(vm.CUSTOMER_MODEL)
-    node = fixture.node(
-        "Customer",
-        {
-            "id": 1,
-            "name": "Ada",
-            "address": {"street": "Main St", "city": "Oslo", "phones": [{"number": "555-0100"}]},
-        },
-    )
-    (root,) = fixture.materialize(node)
-    customer = cast("vm.Customer", root)
-    address = customer.address
-    assert address is not None
-    assert address.model_fields_set == {"street", "city", "phones"}
-
-    edited = customer.edit(
-        address=vm.Address(
-            street=address.street, city=address.city, geo=None, phones=address.phones
-        )
-    )
-    row = row_codec_for(vm.CUSTOMER_MODEL).edited_row(edited)
-    assert row is not None
-    assert row["address"] == {
-        "street": "Main St",
-        "city": "Oslo",
-        "geo": None,
-        "phones": [{"number": "555-0100"}],
-    }
-
-
-def test_whole_comparison_covers_the_nested_and_many_boundaries() -> None:
-    assert _assignment_matches_original({"city": "Oslo"}, {"city": "Oslo"})
-    assert not _assignment_matches_original({}, {"future": 1})
-    assert not _assignment_matches_original({"city": "Oslo"}, {"city": "Oslo", "geo": None})
-    assert not _assignment_matches_original({"city": "Oslo"}, None)
-    assert not _assignment_matches_original({"city": "Oslo"}, {"city": "Bergen"})
-    assert not _assignment_matches_original([{"city": "Oslo"}], [{"city": "Oslo", "future": 1}])
-    assert not _assignment_matches_original([{"city": "Oslo"}], [])
-    assert not _assignment_matches_original([{"city": "Oslo"}], {"city": "Oslo"})
-    assert not _assignment_matches_original("Oslo", "Bergen")
-
-
-# --------------------------------------------------------------------------- #
-# authored_row: the same selection with no effectiveness weighed.             #
+# authored_row: the whole selection, with no effectiveness weighed.           #
 # --------------------------------------------------------------------------- #
 def test_authored_row_answers_both_sides_of_every_touched_member() -> None:
     authored = _accounts().authored_row(_account("100.00").edit(balance=Decimal("175.00")))
@@ -581,12 +422,11 @@ def test_authored_row_answers_both_sides_of_every_touched_member() -> None:
     assert authored.originals == {"balance": Decimal("100.00")}
 
 
-def test_authored_row_keeps_a_restored_member_edited_row_drops() -> None:
-    # The whole difference between the two operations: `edited_row` weighs
-    # effectiveness and answers `None`, and this one answers the two values a
-    # caller weighing it itself needs.
+def test_authored_row_keeps_a_restored_member_against_its_first_original() -> None:
+    # 100 -> 150 -> 100 answers both sides against the EARLIEST original, not
+    # against the immediate parent's 150, and neither side is dropped for being
+    # equal to the other: what a restoration means is the consumer's question.
     chained = _account("100.00").edit(balance=Decimal("150.00")).edit(balance=Decimal("100.00"))
-    assert _accounts().edited_row(chained) is None
     authored = _accounts().authored_row(chained)
     assert authored is not None
     assert authored.row == {"id": 1, "balance": Decimal("100.00")}
@@ -596,6 +436,33 @@ def test_authored_row_keeps_a_restored_member_edited_row_drops() -> None:
 def test_authored_row_answers_none_only_for_a_chain_that_touched_nothing() -> None:
     assert _accounts().authored_row(_account()) is None
     assert _accounts().authored_row(_account().edit()) is None
+
+
+def test_authored_row_reads_a_published_value_s_provenance_without_creating_storage() -> None:
+    # A published value keeps its members in a row and no instance storage of its
+    # own. The provenance slot is absent either way, but reaching for the storage
+    # to learn that would CREATE the dictionary — permanently, per node, on a
+    # read the codec makes of every value it is handed.
+    value = published(mm.Account, id=1, owner="Ada", balance=Decimal("100.00"), version=1)
+    assert _accounts().authored_row(value) is None
+    assert _accounts().full_row(value) == {"id": 1, "owner": "Ada", "balance": Decimal("100.00")}
+    assert not carries_instance_storage(value)
+
+
+def test_authored_row_states_a_changed_value_object_beside_a_raw_identity() -> None:
+    # The two halves keep their own value conventions: the identity is what the
+    # instance holds, the occurrence its canonical document, which omits what the
+    # caller never populated rather than spelling it as an explicit null.
+    original = mm.Traveler(
+        id=1,
+        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
+        tags=(),
+    )
+    edited = original.edit(address=mm.TravelerAddress(city="Bergen"))
+    authored = row_codec_for(mm.DOCUMENT_LAYOUT_MODEL).authored_row(edited)
+    assert authored is not None
+    assert authored.row["id"] == 1
+    assert authored.row["address"] == {"city": "Bergen"}
 
 
 def test_authored_row_orders_both_sides_by_the_models_candidate_pass() -> None:
@@ -631,9 +498,10 @@ def test_authored_row_serializes_an_occurrence_on_both_sides() -> None:
     }
 
 
-def test_authored_row_refuses_the_selection_edited_row_refuses() -> None:
-    # The selection is judged from both sides before either value is read, so
-    # the two operations refuse the same value for the same reason.
+def test_authored_row_refuses_a_selection_a_restoration_would_have_carried() -> None:
+    # The selection is judged from both sides before either value is read, so a
+    # member the resolved identity does not declare is refused even where the
+    # chain restored it and no consumer would have written anything for it.
     restored = WiderWidget(id=1, label="a", extra="x").edit(extra="y").edit(extra="x")
     with pytest.raises(EntityRowError) as refusal:
         row_codec_for(NARROW_MODEL).authored_row(restored)
@@ -641,7 +509,7 @@ def test_authored_row_refuses_the_selection_edited_row_refuses() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The five refusals.                                                          #
+# The four refusals.                                                          #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("value", [object(), "Account", mm.TravelerGeo(country="Norway")])
 def test_a_value_that_is_no_entity_derives_no_row(value: object) -> None:
@@ -655,7 +523,7 @@ def test_an_identity_this_model_does_not_declare_is_refused_by_every_operation()
     for operation in (
         row_codec_for(NARROW_MODEL).full_row,
         row_codec_for(NARROW_MODEL).identity_row,
-        row_codec_for(NARROW_MODEL).edited_row,
+        row_codec_for(NARROW_MODEL).authored_row,
     ):
         with pytest.raises(EntityRowError) as refusal:
             operation(account)
@@ -678,29 +546,22 @@ def test_full_row_refuses_a_populated_member_the_resolved_identity_does_not_decl
     assert "'extra'" in refusal.value.message
 
 
-def test_the_same_value_emits_an_identity_row_and_an_untouched_edited_row() -> None:
+def test_the_same_value_emits_an_identity_row_and_an_untouched_authored_row() -> None:
     # Refusal follows SELECTION: `identity_row` drops every non-key member and
-    # `edited_row` every member its Change Record does not name, so neither
+    # `authored_row` every member its Change Record does not name, so neither
     # loses anything by dropping one more.
     wider = WiderWidget(id=1, label="a", extra="x")
     codec = row_codec_for(NARROW_MODEL)
     assert codec.identity_row(wider) == {"id": 1}
-    assert codec.edited_row(wider.edit(label="b")) == {"id": 1, "label": "b"}
+    authored = codec.authored_row(wider.edit(label="b"))
+    assert authored is not None
+    assert authored.row == {"id": 1, "label": "b"}
 
 
-def test_edited_row_refuses_a_recorded_name_the_resolved_identity_does_not_declare() -> None:
+def test_authored_row_refuses_a_recorded_name_the_resolved_identity_does_not_declare() -> None:
     edited = WiderWidget(id=1, label="a", extra="x").edit(extra="y")
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_for(NARROW_MODEL).edited_row(edited)
-    assert refusal.value.code == "entity-row-member-missing"
-
-
-def test_a_restored_undeclared_member_is_still_refused_by_edited_row() -> None:
-    # Effectiveness is weighed AFTER the selection is judged and never narrows
-    # it: the row would have carried nothing for `extra`, and it still raises.
-    restored = WiderWidget(id=1, label="a", extra="x").edit(extra="y").edit(extra="x")
-    with pytest.raises(EntityRowError) as refusal:
-        row_codec_for(NARROW_MODEL).edited_row(restored)
+        row_codec_for(NARROW_MODEL).authored_row(edited)
     assert refusal.value.code == "entity-row-member-missing"
 
 
@@ -715,11 +576,11 @@ def test_a_cross_model_value_keyed_by_another_member_derives_no_identity_row() -
     assert refusal.value.identity == Widget.identity
 
 
-def test_a_cross_model_value_keyed_by_another_member_derives_no_edited_row() -> None:
-    # `edited_row` selects the primary key too, so the identity half is judged by
-    # the same rule rather than emitted short.
+def test_a_cross_model_value_keyed_by_another_member_derives_no_authored_row() -> None:
+    # `authored_row` selects the primary key too, so the identity half is judged
+    # by the same rule rather than emitted short.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_for(NARROW_MODEL).edited_row(RekeyedWidget(key=1, label="a").edit(label="b"))
+        row_codec_for(NARROW_MODEL).authored_row(RekeyedWidget(key=1, label="a").edit(label="b"))
     assert refusal.value.code == "entity-row-member-missing"
     assert "'id'" in refusal.value.message
 
@@ -735,36 +596,37 @@ def test_a_cross_model_value_keyed_by_another_member_derives_no_edited_row() -> 
 def test_a_net_zero_edit_of_a_rekeyed_value_is_refused_rather_than_answering_none(
     net_zero: RekeyedWidget,
 ) -> None:
-    # Effectiveness never narrows the selection, and the primary key is half of
-    # it: an empty effective set cannot excuse a key member the value's class
-    # supplies no attribute for, or "nothing to write" would answer for a value
-    # no write could have keyed.
+    # An empty touched set never narrows the selection, and the primary key is
+    # half of it: "nothing to compare" cannot excuse a key member the value's
+    # class supplies no attribute for, or `None` would answer for a value no
+    # write could have keyed.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_for(NARROW_MODEL).edited_row(net_zero)
+        row_codec_for(NARROW_MODEL).authored_row(net_zero)
     assert refusal.value.code == "entity-row-member-missing"
     assert "'id'" in refusal.value.message
 
 
 def test_a_recorded_name_the_value_supplies_no_attribute_for_is_refused() -> None:
     # The other side of the pairing, reached through the RECORDED half of
-    # `edited_row`'s selection rather than the key half: `extra` is declared by
+    # `authored_row`'s selection rather than the key half: `extra` is declared by
     # the resolved identity and named by the record, and this narrower class
-    # carries no attribute to compare it against its original. Suppliedness is
-    # judged before effectiveness because weighing effectiveness would itself
-    # read that attribute, escaping the closed code set with an `AttributeError`.
+    # carries no attribute to emit its current value from. Suppliedness is judged
+    # before anything is read, because reading it would escape the closed code
+    # set with an `AttributeError`.
     narrow = Widget(id=1, label="a")
     object.__setattr__(narrow, CHANGE_RECORD_SLOT, ChangeRecord({"extra": "x"}))
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_for(WIDER_MODEL).edited_row(narrow)
+        row_codec_for(WIDER_MODEL).authored_row(narrow)
     assert refusal.value.code == "entity-row-member-missing"
     assert "'extra'" in refusal.value.message
     assert refusal.value.identity == Widget.identity
 
 
-def test_a_never_edited_value_derives_no_edited_row() -> None:
-    # `None` is one proposition — this value names no change to write — so a
-    # value no edit ever touched answers it exactly as a net-zero chain does.
-    assert _accounts().edited_row(_account()) is None
+def test_a_never_edited_value_derives_no_authored_row() -> None:
+    # An absent record and an empty one name the same empty selection, so the
+    # ordinary never-edited value answers `None` rather than a keyed row with
+    # nothing beside the key.
+    assert _accounts().authored_row(_account()) is None
 
 
 @pytest.mark.parametrize(
@@ -782,7 +644,7 @@ def test_a_change_record_no_edit_wrote_reports_corruption_rather_than_absence(
     account = _account()
     object.__setattr__(account, CHANGE_RECORD_SLOT, carrier)
     with pytest.raises(EntityRowError) as refusal:
-        _accounts().edited_row(account)
+        _accounts().authored_row(account)
     assert refusal.value.code == "entity-row-malformed-provenance"
 
 
@@ -795,7 +657,9 @@ def test_a_class_body_denying_the_change_record_still_writes_the_edit() -> None:
     edited = FilteredWidget(id=1, label="a").edit(label="b")
     assert CHANGE_RECORD_SLOT not in edited.__dict__
 
-    assert row_codec_for(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
+    authored = row_codec_for(NARROW_MODEL).authored_row(edited)
+    assert authored is not None
+    assert authored.row == {"id": 1, "label": "b"}
 
 
 def test_a_class_body_inventing_a_change_record_earns_no_row() -> None:
@@ -805,7 +669,7 @@ def test_a_class_body_inventing_a_change_record_earns_no_row() -> None:
     plain = InventedWidget(id=1, label="a")
     assert plain.__dict__[CHANGE_RECORD_SLOT] == _FORGED_RECORD
 
-    assert row_codec_for(NARROW_MODEL).edited_row(plain) is None
+    assert row_codec_for(NARROW_MODEL).authored_row(plain) is None
 
 
 def test_a_change_record_forged_into_a_value_s_own_storage_earns_no_row() -> None:
@@ -820,7 +684,7 @@ def test_a_change_record_forged_into_a_value_s_own_storage_earns_no_row() -> Non
         forge_into_storage(plain, CHANGE_RECORD_SLOT, dict(_FORGED_RECORD))
         assert stored_state(plain)[CHANGE_RECORD_SLOT] == _FORGED_RECORD
         with pytest.raises(EntityRowError) as refusal:
-            row_codec_for(NARROW_MODEL).edited_row(plain)
+            row_codec_for(NARROW_MODEL).authored_row(plain)
         assert refusal.value.code == "entity-row-malformed-provenance"
 
 
@@ -847,7 +711,10 @@ def test_an_edit_of_such_a_value_still_records_the_original_it_touched() -> None
     forge_into_storage(original, CHANGE_RECORD_SLOT, dict(_FORGED_RECORD))
     edited = original.edit(label="b")
 
-    assert row_codec_for(NARROW_MODEL).edited_row(edited) == {"id": 1, "label": "b"}
+    authored = row_codec_for(NARROW_MODEL).authored_row(edited)
+    assert authored is not None
+    assert authored.row == {"id": 1, "label": "b"}
+    assert authored.originals == {"label": "a"}
 
 
 # --------------------------------------------------------------------------- #
@@ -855,19 +722,19 @@ def test_an_edit_of_such_a_value_still_records_the_original_it_touched() -> None
 # --------------------------------------------------------------------------- #
 def test_an_unresolved_identity_outranks_every_later_refusal() -> None:
     # A plain value of an Entity this model does not declare reports the
-    # identity rather than answering the no-change `None`.
+    # identity rather than answering the nothing-to-compare `None`.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_for(NARROW_MODEL).edited_row(_account())
+        row_codec_for(NARROW_MODEL).authored_row(_account())
     assert refusal.value.code == "entity-row-target-not-in-model"
 
 
 def test_a_never_edited_value_still_judges_the_primary_key_selection() -> None:
-    # A never-edited value and a net-zero chain answer `None` through the SAME
-    # path, so both judge the identity selection first: a value whose class
-    # carries no attribute for a key member the resolved identity declares is
-    # refused rather than answered.
+    # A never-edited value and a chain that touched nothing answer `None`
+    # through the SAME path, so both judge the identity selection first: a value
+    # whose class carries no attribute for a key member the resolved identity
+    # declares is refused rather than answered.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_for(NARROW_MODEL).edited_row(RekeyedWidget(key=1, label="a"))
+        row_codec_for(NARROW_MODEL).authored_row(RekeyedWidget(key=1, label="a"))
     assert refusal.value.code == "entity-row-member-missing"
     assert "'id'" in refusal.value.message
 
