@@ -1747,12 +1747,13 @@ EntityGraphConstruction(cataloged: CatalogedModel, classes: ClassIndex)  # §3
 Each constructor derives every Entity's facts whole and raises on the first
 refusal, so construction is the one fallible point and a lookup afterwards can
 fail only by naming an Entity the model does not declare. The codec is stated
-over the accepted Metamodel alone and never consults the Entity Identity/Entity
-Class index (§5), so a descriptor-backed model prepares a fully functional
-codec; the graph construction takes the class index, which a descriptor-backed
-model lacks, so preparation builds none for it, and refusing such a model is the
-job of the caller that needs classes — `Database.find` and `Transaction.find`,
-by name and before any I/O — never of a collaborator answering absence. Both
+over the cataloged model alone — the accepted Metamodel and the member layouts
+derived from it — and never consults the Entity Identity/Entity Class index
+(§5), so a descriptor-backed model prepares a fully functional codec; the
+graph construction takes the class index, which a descriptor-backed model
+lacks, so preparation builds none for it, and refusing such a model is the job
+of the caller that needs classes — `Database.find` and `Transaction.find`, by
+name and before any I/O — never of a collaborator answering absence. Both
 classes are reached from `parallax.core.entity`, neither is re-exported from
 top-level `parallax.core`, and `prepare_model` (§2 *Model preparation and the
 Serving Model*) is the one production caller of either constructor. There is no
