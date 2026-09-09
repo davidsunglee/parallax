@@ -34,11 +34,15 @@ from _support.model_capabilities import graph_construction_for, row_codec_for
 from parallax.core.entity import (
     MANY_TO_ONE,
     UNLOADED,
+    AbstractRoot,
+    AbstractSubtype,
     Attr,
+    ConcreteSubtype,
     Entity,
     EntityGraphWriter,
     NodeHandle,
     Rel,
+    TablePerHierarchy,
     ValueObject,
     attr,
     lifecycle_state_of,
@@ -55,7 +59,12 @@ from parallax.core.entity._graph_construction import (
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import DomainModel, class_index, model_of
-from parallax.core.metamodel import EntityIdentity, RelationshipIdentity, ValueObjectIdentity
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    RelationshipIdentity,
+    ValueObjectIdentity,
+)
 
 _NS = "publication"
 
@@ -590,3 +599,145 @@ def test_a_value_object_path_layout_the_class_lays_out_differently_is_refused() 
     refusal = _disagreeing(_Composed, _SwappedDocMembers)
     assert f"{_CORR.canonical}.doc lays out members ('second', 'first')" in refusal.message
     assert "_Doc is laid out as ('first', 'second')" in refusal.message
+
+
+class _AlphaRoot(
+    Entity,
+    table="fam_alpha",
+    name="Alpha",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    """One of two families whose members are spelled identically and declared
+    differently, so a name says which member only once an ancestry is fixed."""
+
+    id: Attr[int] = attr(primary_key=True)
+    payload: Attr[str] = attr(max_length=16)
+
+
+class _BetaRoot(
+    Entity,
+    table="fam_beta",
+    name="Beta",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    payload: Attr[int]
+
+
+class _KinOfAlpha(
+    _AlphaRoot, name="Kin", namespace=_NS, inheritance=ConcreteSubtype(tag_value="k")
+):
+    pass
+
+
+class _KinOfBeta(_BetaRoot, name="Kin", namespace=_NS, inheritance=ConcreteSubtype(tag_value="k")):
+    pass
+
+
+class _NextOfBeta(
+    _BetaRoot, name="Next", namespace=_NS, inheritance=ConcreteSubtype(tag_value="n")
+):
+    pass
+
+
+class _NextOfAlpha(
+    _AlphaRoot, name="Next", namespace=_NS, inheritance=ConcreteSubtype(tag_value="n")
+):
+    pass
+
+
+_ANCESTRIES = (
+    DomainModel(_AlphaRoot, _BetaRoot, _KinOfAlpha, _NextOfBeta),
+    DomainModel(_AlphaRoot, _BetaRoot, _KinOfBeta, _NextOfAlpha),
+)
+
+
+class _TieRoot(
+    Entity,
+    table="tie",
+    name="TieRoot",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    """The family whose root owns ``peer``, against a twin whose middle does."""
+
+    id: Attr[int] = attr(primary_key=True)
+    peer_id: Attr[int | None]
+    peer: Rel[CorrPeer | None] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+
+
+class _TieRootSilent(
+    Entity,
+    table="tie",
+    name="TieRoot",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    peer_id: Attr[int | None]
+
+
+class _TieMid(_TieRoot, name="TieMid", namespace=_NS, inheritance=AbstractSubtype):
+    pass
+
+
+class _TieMidNavigating(_TieRootSilent, name="TieMid", namespace=_NS, inheritance=AbstractSubtype):
+    peer: Rel[CorrPeer | None] = rel(cardinality=MANY_TO_ONE, join=("peer_id", "id"))
+
+
+class _Anchor(_TieMid, name="Anchor", namespace=_NS, inheritance=ConcreteSubtype(tag_value="a")):
+    pass
+
+
+class _AnchorNavigating(
+    _TieMidNavigating, name="Anchor", namespace=_NS, inheritance=ConcreteSubtype(tag_value="a")
+):
+    pass
+
+
+_DECLARING_LEVELS = (
+    DomainModel(_TieRoot, _TieMid, _Anchor, CorrPeer),
+    DomainModel(_TieRootSilent, _TieMidNavigating, _AnchorNavigating, CorrPeer),
+)
+
+
+def _refusal_across(cataloged: DomainModel, composed: DomainModel) -> GraphConstructionError:
+    """The refusal a construction earns when it lays its rows out against
+    ``cataloged`` and publishes ``composed``'s classes."""
+    classes = class_index(composed)
+    assert classes is not None
+    with pytest.raises(GraphConstructionError) as refusal:
+        EntityGraphConstruction(CatalogedModel(model_of(cataloged)), classes)
+    assert refusal.value.code == "entity-graph-layout-mismatch"
+    return refusal.value
+
+
+def test_a_member_row_two_ancestries_spell_the_same_way_is_refused() -> None:
+    # A member's local name is unique down ONE ancestry, so an equal-looking row
+    # is not an equal row across two. Both models declare the same four Entity
+    # Identities and assign `Kin` to opposite parents, so every identity has a
+    # class and the two `Kin` rows spell ('id', 'payload') on both sides — while
+    # the model means Beta's members and the class carries Alpha's. Without this
+    # the pair passes and a `(1, 7)` row publishes the integer 7 into a member
+    # declared `str`, because the value is checked against the layout's declared
+    # type and written at the class's own position.
+    refusal = _refusal_across(_ANCESTRIES[1], _ANCESTRIES[0])
+    assert "the model declares member 0 ('id')" in refusal.message
+    assert "name='Beta'" in refusal.message
+    assert "name='Alpha'" in refusal.message
+    assert refusal.identity == AttributeIdentity(EntityIdentity(_NS, "Beta"), "id")
+
+
+def test_a_relationship_two_ancestries_declare_at_different_levels_is_refused() -> None:
+    # The tail analogue, and the one a local name cannot express: both families
+    # navigate one `peer`, one declaring it at the root and one at the middle, so
+    # `Anchor`'s tail is spelled ('peer',) on both sides and names two different
+    # relationships — whose targets and cardinalities the check may not assume
+    # agree. `Anchor` is refused rather than an ancestor because Entity
+    # enumeration is canonical Identity order and the refusal names the Entity
+    # whose own row the disagreement would misdirect.
+    refusal = _refusal_across(_DECLARING_LEVELS[0], _DECLARING_LEVELS[1])
+    assert "the model lays out relationship 0 ('peer')" in refusal.message
+    assert refusal.identity == RelationshipIdentity(EntityIdentity(_NS, "TieRoot"), "peer")

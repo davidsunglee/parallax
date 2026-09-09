@@ -2644,13 +2644,18 @@ of shared edition identity.
   `entity-graph-layout-mismatch` refuses the pair when they disagree about the
   member row, about which positions are Value Object occurrences and which Value
   Object Class each takes, about the broad-relationship tail, or about any
-  occurrence's own path layout at any containment depth. The comparison is per
-  `(class, model)` and is made where the per-Entity facts are derived, so it is
-  made once and no member read ever pays for it. It is the mechanism rather than
-  a backstop: a positional row of the model's own width says how many members
-  there are and nothing about which kind each position is, so a model and a class
-  that disagree about a member's kind are unrepresentable at the door and
-  detectable only here.
+  occurrence's own path layout at any containment depth. Agreement is over the
+  accepted declarations at each position and not over the names spelling them: a
+  member name is unique down one inheritance ancestry and no further, so a class
+  whose ancestry runs through one Entity and a layout derived where it runs
+  through another spell one row and mean two, and each position's whole accepted
+  member metadata and each tail position's whole Relationship Identity are what
+  must match. The comparison is per `(class, model)` and is made where the
+  per-Entity facts are derived, so it is made once and no member read ever pays
+  for it. It is the mechanism rather than a backstop: a positional row of the
+  model's own width says how many members there are and nothing about which kind
+  each position is, so a model and a class that disagree about a member's kind
+  are unrepresentable at the door and detectable only here.
 
 - **Construction is whole-graph per call.** One `construct(...)` allocates,
   populates, and publishes every node the call reaches, and there is no partial,
