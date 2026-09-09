@@ -26,17 +26,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
-__all__ = [
-    "MESSAGE_LIMIT_BYTES",
-    "STACK_LIMIT_BYTES",
-    "UNAVAILABLE",
-    "FailureDiagnostic",
-    "bounded",
-    "diagnostic_for",
-    "exact_str",
-    "guarded",
-    "qualified_type",
-]
+__all__ = ["MESSAGE_LIMIT_BYTES", "STACK_LIMIT_BYTES", "FailureDiagnostic"]
+"""The projection and its two ceilings, and nothing else.
+
+The names below them — the sentinel, the guarded read, the exact copy, the
+qualified type, the byte bound, and :func:`diagnostic_for` itself — are how the
+first-party scopes named in the Python specification's scope table BUILD a
+diagnostic. They are importable by those scopes and are deliberately not part of
+the public surface: an application receives :class:`FailureDiagnostic` values
+and never assembles one.
+"""
 
 MESSAGE_LIMIT_BYTES: Final = 8 * 1024
 """The best-effort message's UTF-8 byte ceiling."""

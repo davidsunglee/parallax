@@ -36,7 +36,7 @@ no test command of its own.
 | `_support/repo.py` | `PY_ROOT`, `REPO_ROOT`, and the canonical core artifacts read from them — `adapter_schema()`, `canonical_snapshot_claim()` |
 | `_support/cost_durations.py` | What each cost item last cost: the contract `cost_durations.json` is read under, and the store a measuring run writes back through |
 | `_support/corpus.py` | A case's document and fixtures, and the grading comparators the run sweep and the API-suite story lane share |
-| `_support/db_port.py` | The shared `m-db-port` doubles — `ScriptedPort` and its script entries, `RefusingPort`, the `PortCall` recording — and the transaction outcome a fake with no boundary of its own reports |
+| `_support/db_port.py` | The shared `m-db-port` doubles, each an ADAPTER owning the runtime, acquisition contexts and revocable connections beneath it — `ScriptedAdapter` and its script entries, `RefusingAdapter`, `ConnectsAsItself` for a double that is its own runtime, the `PortCall` recording — and the transaction outcome a fake with no boundary of its own reports |
 | `_support/sweep_goldens.py` | The corpus cases the compile and run sweeps grade against authored goldens, and the golden readers both use |
 | `_support/distributions.py` | The distribution name tuples and the `Wheelhouse` the `wheelhouse` fixture builds |
 | `_support/fake_metamodel.py` | An alternate accepted-Metamodel implementation and the parity model it pins |
@@ -82,26 +82,38 @@ stay globally unique across the test tree.
 
 ## Fixtures
 
-All three are session-scoped and defined in `tests/conftest.py`.
+All four are defined in `tests/conftest.py`; the first three are session-scoped
+and requested by name, and the last is function-scoped and autouse.
 
 | Fixture | Live database? | Yields |
 |---|---|---|
 | `profile` | no | The declared matrix profile the database-backed lane runs (`pg-full`) |
 | `profile_run` | **yes** | That profile's own run: a self-managed Testcontainers Postgres, paired with the name the run reports under |
 | `wheelhouse` | no | A directory of freshly built wheels plus a package-name-to-wheel map |
+| `release_case_runtimes` | no | Nothing. After each test it closes every runtime a `Database` composed in that test left open |
 
 `profile` resolves a declaration and opens nothing, so it classifies no item; it
 is what `profile_run` is opened by, and what a database-backed test names
 when it needs the dialect its run executed in. Requesting it alone leaves an item
 `dbfree`.
 
+`release_case_runtimes` classifies no item either, and that is why it reads
+`request.fixturenames` instead of requesting `profile_run`: requesting it would
+put the live database in every item's fixture closure and reclassify the whole
+suite as database-backed. A connected handle owns a pool, so a handle a test
+composed and never closed would hold connections and maintenance threads for the
+rest of the session; each handle that closes itself leaves this backstop nothing
+to do.
+
 `profile_run` is what the profile provisions for itself, so a test never names a
 port: it resets through the run, executes through `run.port`, and hands the run
 itself to `adapter.run_case`, which reports the profile that opened the database it
-executed against. It is the only route to a live database, and
-`tools/check_database_access.py` is what keeps it so: it fails when any module
-under `tests/` calls a seam that starts a container or opens a connection
-anywhere but inside that fixture. When Docker or the provider cannot be brought
+executed against. It is the only sanctioned route to a live database, and
+`tools/check_database_access.py` is what holds the suite to it: it fails when
+any module under `tests/` calls a seam that starts a container or opens a
+connection anywhere but inside that fixture. The rule is syntactic, so what it
+enforces is the spellings it can resolve — its own module comment states which
+those are. When Docker or the provider cannot be brought
 up the fixture records the reason and skips, and the terminal summary prints
 every recorded reason; `PARALLAX_REQUIRE_DB=1` turns any such skip into a
 failure. Docker setup — including the one-time `~/.testcontainers.properties` fix

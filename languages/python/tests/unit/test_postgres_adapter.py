@@ -337,7 +337,7 @@ def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> 
         ("id", "doc_present", "doc"),
         (
             (1, False, None),
-            (2, True, connection_module._PRESENT_JSON_NULL),  # pyright: ignore[reportPrivateUsage]
+            (2, True, connection_module._PRESENT_JSON_NULL),  # pyright: ignore[reportPrivateUsage] - the module-private sentinel is the raw value this fold is graded on
         ),
         ((1, 2),),
     )
@@ -348,8 +348,8 @@ def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> 
 
 
 def test_json_loader_preserves_only_present_json_null() -> None:
-    load = connection_module._load_json_preserving_null  # pyright: ignore[reportPrivateUsage]
-    assert load("null") is connection_module._PRESENT_JSON_NULL  # pyright: ignore[reportPrivateUsage]
+    load = connection_module._load_json_preserving_null  # pyright: ignore[reportPrivateUsage] - the module-private loader is this test's subject
+    assert load("null") is connection_module._PRESENT_JSON_NULL  # pyright: ignore[reportPrivateUsage] - identity with the module-private sentinel is the distinction being proved
     assert load(b'{"answer": 42}') == {"answer": 42}
 
 
@@ -368,7 +368,7 @@ class _JsonNullCursor(_FakeCursor):
         self.description = (SimpleNamespace(name="id"), SimpleNamespace(name="doc"))
 
     def fetchall(self) -> list[object]:
-        return [(1, connection_module._PRESENT_JSON_NULL)]  # pyright: ignore[reportPrivateUsage]
+        return [(1, connection_module._PRESENT_JSON_NULL)]  # pyright: ignore[reportPrivateUsage] - the fake answers the module-private sentinel a real driver row would carry
 
 
 class _JsonNullConnection(_FakeConnection):

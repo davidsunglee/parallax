@@ -121,7 +121,7 @@ def test_two_handles_from_one_configuration_own_two_independent_runtimes() -> No
 def test_a_model_that_could_never_be_served_costs_no_resource() -> None:
     adapter = RefusingAdapter()
     with pytest.raises(Exception, match="snapshot-class-backed-model-required"):
-        connect(adapter, "not a model")  # pyright: ignore[reportArgumentType]
+        connect(adapter, "not a model")  # pyright: ignore[reportArgumentType] - the runtime refusal of an untyped caller is what this proves
 
 
 # --------------------------------------------------------------------------- #
@@ -229,7 +229,7 @@ def test_a_stream_closed_before_its_first_page_releases_nothing() -> None:
 def test_a_failed_stream_releases_where_it_failed() -> None:
     failure = DatabaseError(category=None, native_code=None, message="the page failed")
     adapter = ScriptedAdapter(Read(raises=failure))
-    with _db(adapter, ORDERS_MODEL) as db, pytest.raises(ExecutionFailure):  # noqa: SIM117
+    with _db(adapter, ORDERS_MODEL) as db, pytest.raises(ExecutionFailure):  # noqa: SIM117 - one combined `with` would nest the raises inside the handle's own scope
         with db.stream(_orders_query(), batch_size=2) as roots:
             list(roots)
     assert adapter.cleanups == [Returned()]
@@ -241,7 +241,7 @@ def test_a_failed_stream_releases_where_it_failed() -> None:
 
 
 def _unacquirable(reason: str = "closed") -> ConnectionAcquisitionError:
-    return ConnectionAcquisitionError("no connection", reason=reason)  # pyright: ignore[reportArgumentType]
+    return ConnectionAcquisitionError("no connection", reason=reason)  # pyright: ignore[reportArgumentType] - the caller parametrizes over reason strings the literal type spells one at a time
 
 
 def test_an_attempt_that_cannot_acquire_is_terminal_and_runs_no_callback() -> None:
@@ -284,7 +284,7 @@ def test_a_stream_that_cannot_acquire_its_first_page_fails_the_delivery() -> Non
     refusal = _unacquirable("timeout")
     adapter = ScriptedAdapter(acquisition_failures=[refusal])
 
-    with _db(adapter, ORDERS_MODEL) as db, pytest.raises(ExecutionFailure) as raised:  # noqa: SIM117
+    with _db(adapter, ORDERS_MODEL) as db, pytest.raises(ExecutionFailure) as raised:  # noqa: SIM117 - one combined `with` would nest the raises inside the handle's own scope
         with db.stream(_orders_query(), batch_size=2) as roots:
             list(roots)
 
@@ -395,7 +395,7 @@ def test_reporting_never_raises_whatever_logging_does(monkeypatch: pytest.Monkey
     def refuse(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("the logging configuration is broken")
 
-    monkeypatch.setattr(resource_logging._LOGGER, "warning", refuse)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(resource_logging._LOGGER, "warning", refuse)  # pyright: ignore[reportPrivateUsage] - the restricted logger is module-private and is the seam this proves nothing reaches
     issue = CleanupIssue(phase="inspect", code="suspect", diagnostic=_issue())
     report_resource_issues("startup", Unrelinquished((issue,)))
 
@@ -411,26 +411,43 @@ class _NeverAcquires(ConnectsAsItself):
 
 def test_a_refused_query_reaches_no_runtime_at_all() -> None:
     with pytest.raises(Exception, match="snapshot-class-backed-model-required"):
-        connect(_NeverAcquires(), "not a model")  # pyright: ignore[reportArgumentType]
+        connect(_NeverAcquires(), "not a model")  # pyright: ignore[reportArgumentType] - the runtime refusal of an untyped caller is what this proves
 
 
-def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
+def test_a_model_that_cannot_be_prepared_opens_no_runtime_at_all(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The model is judged first, so a value that could never be served costs no
-    # resource; a refusal on the other side of the open closes what it took, so
-    # no half-composed handle and no orphaned runtime escapes. The refusal is
-    # injected at model preparation, which is the fallible step composition does
-    # after opening.
+    # Preparation is the fallible half of judging a model, and it runs BEFORE
+    # anything is opened: a model that could never be served costs no resource,
+    # not merely no statement. The adapter here refuses to open at all, so
+    # reaching it is the failure.
     from parallax.snapshot.handle import _database as database_module
 
     def refuse(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("this model cannot be prepared")
 
     monkeypatch.setattr(database_module, "prepare_model", refuse)
-    adapter = ScriptedAdapter()
 
     with pytest.raises(RuntimeError, match="cannot be prepared"):
+        connect(_NeverAcquires(), ACCOUNT, clock=FixedClock(FIXED))
+
+
+def test_a_composition_that_fails_after_the_runtime_opened_closes_it_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A refusal on the other side of the open closes what it took, so no
+    # half-composed handle is published and the runtime is not left to a caller
+    # that never received one. The refusal is injected into the demarcation the
+    # handle composes, which is work that genuinely runs after opening.
+    from parallax.snapshot.handle import _database as database_module
+
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("this handle cannot be composed")
+
+    monkeypatch.setattr(database_module, "Demarcation", refuse)
+    adapter = ScriptedAdapter()
+
+    with pytest.raises(RuntimeError, match="cannot be composed"):
         connect(adapter, ACCOUNT, clock=FixedClock(FIXED))
 
     assert adapter.closes == 1

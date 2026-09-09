@@ -517,14 +517,28 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         Neither changes any behavior a case grades — capacity still grows on
         demand up to the same ceiling.
         """
-        from psycopg.conninfo import make_conninfo
-
         from parallax.postgres import PoolOptions
+
+        return self._built(
+            pool=PoolOptions(min_size=0, num_workers=1),
+            prepare_threshold=None,
+            **conninfo_options,
+        )
+
+    def _built(
+        self,
+        *,
+        pool: PoolOptions | OnDemandOptions,
+        prepare_threshold: int | None,
+        **conninfo_options: str,
+    ) -> PostgresAdapter:
+        """The shipped configuration for this container, under ``conninfo_options``."""
+        from psycopg.conninfo import make_conninfo
 
         return self.adapter()(
             make_conninfo(self._conninfo, **conninfo_options),
-            pool=PoolOptions(min_size=0, num_workers=1),
-            prepare_threshold=None,
+            pool=pool,
+            prepare_threshold=prepare_threshold,
         )
 
     @property
@@ -585,6 +599,7 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         *,
         pool: PoolOptions | OnDemandOptions | None = None,
         prepare_threshold: int | None = None,
+        settings: Mapping[str, str] | None = None,
     ) -> PostgresAdapter:
         """This container's configuration, tuned as a pool proof needs it.
 
@@ -592,13 +607,24 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
         configurations the ordinary lanes have no use for, and they must still
         name the database this run opened rather than assembling a connection
         string of their own.
+
+        ``settings`` are session settings a deployment would configure its
+        connections with, carried as connection-establishment options so every
+        connection this configuration opens — initial, grown, replacement or
+        on-demand — arrives already carrying them. Values containing spaces are
+        the caller's to escape, exactly as libpq requires.
         """
         from parallax.postgres import PoolOptions
 
-        return self.adapter()(
-            self._conninfo,
+        options = (
+            {}
+            if not settings
+            else {"options": " ".join(f"-c {name}={value}" for name, value in settings.items())}
+        )
+        return self._built(
             pool=pool if pool is not None else PoolOptions(),
             prepare_threshold=prepare_threshold,
+            **options,
         )
 
     def adapter_for_session_default(self, level: str) -> DatabaseAdapter:

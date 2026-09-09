@@ -18,9 +18,11 @@ inspected afterwards.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from time import monotonic
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import psycopg
 import psycopg_pool
@@ -29,6 +31,7 @@ from psycopg.pq import TransactionStatus
 
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import (
+    RESOURCE_LOGGER_NAME,
     ConnectionAcquisitionError,
     DatabaseStartupError,
     Invalidated,
@@ -94,13 +97,13 @@ class _FakeConnection:
         status: TransactionStatus = TransactionStatus.IDLE,
         status_error: Exception | None = None,
         close_error: Exception | None = None,
-        execute_error: Exception | None = None,
+        execute_error: BaseException | None = None,
     ) -> None:
         self.rows = rows if rows is not None else [dict(_PROBE_ROW)]
         self.status = status
         self.status_error = status_error
         self.close_error = close_error
-        self.execute_error = execute_error
+        self.execute_error: BaseException | None = execute_error
         self.statements: list[str] = []
         self.closes = 0
         self.pgconn = _FakePgConn(self)
@@ -174,7 +177,7 @@ def _context(pool: Any, *, deadline: float | None = None, admit: Any = None) -> 
     runtime = _runtime(pool)
     return PostgresConnectionContext(
         pool,
-        admit if admit is not None else runtime._admit,  # pyright: ignore[reportPrivateUsage]
+        admit if admit is not None else runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
         deadline if deadline is not None else monotonic() + 5.0,
         _preparation(),
     )
@@ -408,7 +411,7 @@ def test_a_timeout_names_the_initialization_refusal_on_record() -> None:
     runtime = _runtime(pool)
     resource = PostgresConnectionContext(
         pool,
-        runtime._admit,  # pyright: ignore[reportPrivateUsage]
+        runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
         monotonic() + 5.0,
         preparation,
     )
@@ -491,7 +494,7 @@ def test_a_late_native_success_is_relinquished_rather_than_admitted(
     monkeypatch.setattr(runtime_module, "monotonic", lambda: 1e18)
     resource = PostgresConnectionContext(
         pool,
-        runtime._admit,  # pyright: ignore[reportPrivateUsage]
+        runtime._admit,  # pyright: ignore[reportPrivateUsage] - the context is built with the runtime's own admission check, which is package-private
         monotonic() + 5.0,
         _preparation(),
     )
@@ -670,11 +673,25 @@ def test_a_scope_admitted_before_a_close_may_still_finish() -> None:
     assert pool.returned == [connection]
 
 
-def test_a_native_close_problem_is_reported_rather_than_raised() -> None:
+def test_a_native_close_problem_is_reported_rather_than_raised(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     # Close is what a caller runs while unwinding; a handle that refused to
-    # close would leave them nothing better to do.
-    runtime = _runtime(_pool(close_error=RuntimeError("the pool would not close")))
-    runtime.close()
+    # close would leave them nothing better to do. So the problem leaves as a
+    # report on the restricted resource logger — carrying the phase, the code
+    # and fixed text, and nothing the native failure said — rather than as an
+    # exception, and a close that reported nothing would be a silently lost
+    # runtime.
+    runtime = _runtime(_pool(close_error=RuntimeError("connection to host=secret refused")))
+
+    with caplog.at_level(logging.WARNING, logger=RESOURCE_LOGGER_NAME):
+        runtime.close()
+
+    (record,) = caplog.records
+    assert record.name == RESOURCE_LOGGER_NAME
+    assert "return/handoff-failed" in record.getMessage()
+    assert "secret" not in record.getMessage()
+    assert record.exc_info is None
 
 
 def test_the_ordinary_acquisition_budget_comes_from_the_configured_timeout() -> None:
@@ -723,7 +740,7 @@ def test_the_on_demand_policy_selects_the_native_null_pool(
             return
 
     monkeypatch.setattr(psycopg_pool, "NullConnectionPool", _Null)
-    runtime_module._build_pool(  # pyright: ignore[reportPrivateUsage]
+    runtime_module._build_pool(  # pyright: ignore[reportPrivateUsage] - the module-private pool builder is this test's subject
         "", OnDemandOptions(), 5, _preparation()
     )
     assert built == ["_Null"]
@@ -739,6 +756,49 @@ def test_a_probe_that_answers_more_than_one_row_fails_startup(
         open_runtime("", PoolOptions(min_size=0), 5)
 
     assert failed.value.phase == "probe"
+
+
+def test_a_control_flow_exception_in_the_probe_keeps_its_own_propagation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An interpreter being torn down is not a runtime that failed to become
+    # ready. Translating one would hand a caller who interrupted the process an
+    # ordinary startup error it might catch and carry on from, so the fatal and
+    # control-flow exceptions propagate as themselves — after the same release
+    # every other probe failure reaches.
+    connection = _FakeConnection(execute_error=KeyboardInterrupt())
+    pool = _opened(monkeypatch, _pool(connection))
+
+    with pytest.raises(KeyboardInterrupt):
+        open_runtime("", PoolOptions(min_size=0), 5)
+
+    assert pool.returned == [connection]
+    assert pool.closes == 1
+
+
+def test_an_exit_whose_revocation_fails_still_gives_the_connection_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The exit is the only path back to the pool, so a revocation that does not
+    # complete must not strand a connection outside it — and what does come back
+    # is disposed of first, because a scope that may still reach it is not one
+    # to offer the next caller.
+    from parallax.postgres import _connection as connection_module
+
+    def refuse(_self: object) -> bool:
+        raise RuntimeError("the scope could not be revoked")
+
+    monkeypatch.setattr(connection_module.PostgresConnection, "revoke", refuse)
+    connection = _FakeConnection()
+    pool = _pool(connection)
+    resource = _context(pool)
+
+    with pytest.raises(RuntimeError), resource:
+        pass
+
+    assert connection.closes == 1
+    assert pool.returned == [connection]
+    assert isinstance(resource.cleanup_result, Invalidated)
 
 
 def test_a_budget_already_spent_refuses_to_begin_the_next_phase(
@@ -790,3 +850,103 @@ def test_a_document_read_folds_its_adjacent_cells_on_the_scoped_execution() -> N
     (row,) = rows
     assert row["id"] == 1
     assert row["doc"] == PresentDocument({"a": 1})
+
+
+# --------------------------------------------------------------------------- #
+# The native release this adapter's documented behavior rests on.              #
+# --------------------------------------------------------------------------- #
+
+
+class _NativeStub:
+    """What the INSTALLED native pool creates, hands on, and closes.
+
+    The pins below drive `psycopg_pool` itself rather than a fake of it. Two of
+    this adapter's documented behaviors are the library's rather than its own —
+    on-demand establishment bounded by the remaining acquisition budget, and an
+    on-demand release going to a waiting borrower instead of being closed — so a
+    release that changed either would otherwise change what the adapter promises
+    without changing a line of it.
+    """
+
+    connects: ClassVar[list[dict[str, object]]] = []
+
+    def __init__(self) -> None:
+        self._pool: object = None
+        self._created_at = 0.0
+        self._expire_at = 0.0
+        self.closed = False
+        self.pgconn = _FakePgConn(_FakeConnection())
+
+    @classmethod
+    def connect(cls, conninfo: str, **kwargs: object) -> _NativeStub:
+        cls.connects.append({"conninfo": conninfo, **kwargs})
+        return cls()
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@contextmanager
+def _opened_null_pool() -> Generator[Any]:
+    """An OPEN native null pool over the stub, closed again on the way out.
+
+    Open rather than merely constructed, because "is a borrower waiting" is a
+    question a closed pool answers by closing the connection whatever the queue
+    holds — which would make the pin pass for the wrong reason.
+    """
+    pool = _native_null_pool()
+    pool.open()
+    try:
+        yield pool
+    finally:
+        pool.close()
+
+
+def _native_null_pool(conninfo: str = "", **kwargs: Any) -> Any:
+    _NativeStub.connects = []
+    return cast(
+        "Any",
+        psycopg_pool.NullConnectionPool(
+            conninfo, connection_class=cast("Any", _NativeStub), open=False, **kwargs
+        ),
+    )
+
+
+def test_on_demand_establishment_is_bounded_by_the_remaining_budget_and_rounded() -> None:
+    # `OnDemandOptions` documents this as the reason `acquire_timeout` is the
+    # control that matters there: the establishment limit is whatever remains of
+    # the acquisition budget, rounded to whole seconds with a floor of one.
+    pool = _native_null_pool("connect_timeout=30")
+
+    pool._connect(timeout=4.4)
+    pool._connect(timeout=0.2)
+
+    assert [created["connect_timeout"] for created in _NativeStub.connects] == [4, 1]
+
+
+def test_an_establishment_keyword_overrides_what_the_connection_string_asked_for() -> None:
+    # The other half of the same claim: the derived limit is passed as a keyword,
+    # and a keyword wins over the same setting in the connection string.
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    resolved = conninfo_to_dict(make_conninfo("connect_timeout=30", connect_timeout=4))
+
+    assert resolved["connect_timeout"] == "4"
+
+
+def test_an_on_demand_release_is_handed_to_a_waiting_borrower_rather_than_closed() -> None:
+    # `OnDemandOptions` documents that releasing closes the connection UNLESS a
+    # caller is already waiting, which is why it bounds concurrency without
+    # promising a brand-new physical connection per operation.
+    with _opened_null_pool() as unwatched:
+        alone = unwatched._connect()
+        unwatched._add_to_pool(alone)
+        assert alone.closed is True
+
+    with _opened_null_pool() as queued:
+        queued._waiting.append(object())
+        handed = queued._connect()
+
+        assert queued._maybe_close_connection(handed) is False
+        assert handed.closed is False
+        queued._waiting.clear()

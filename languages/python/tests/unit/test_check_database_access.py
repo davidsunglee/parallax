@@ -74,7 +74,7 @@ def test_the_adapter_open_is_a_seam_but_its_constructor_is_not() -> None:
 
 def test_a_scoped_controls_open_is_a_seam_but_its_constructor_is_not() -> None:
     # A control the harness hands out opens a session of its own, so its `open`
-    # acquires a database exactly as the adapter's `connect` does.
+    # acquires a database exactly as the shipped adapter's own `open` does.
     assert _seams(
         "from parallax.conformance._postgres_control import PostgresControl\n"
         "PostgresControl.open('')\n"

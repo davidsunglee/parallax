@@ -98,7 +98,7 @@ def test_live_structured_document_reads_preserve_sql_null_and_json_null(
         for binary in (False, True):
             with cast("PostgresControl", session).native.cursor(binary=binary) as cursor:
                 cursor.execute(b"select 'null'::jsonb")
-                assert cursor.fetchone() == (connection_module._PRESENT_JSON_NULL,)  # pyright: ignore[reportPrivateUsage]
+                assert cursor.fetchone() == (connection_module._PRESENT_JSON_NULL,)  # pyright: ignore[reportPrivateUsage] - the adapter's own stored-JSON-null sentinel is what this proves the loader returns
     finally:
         session.close()
 

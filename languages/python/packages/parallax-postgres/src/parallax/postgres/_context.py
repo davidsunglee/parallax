@@ -205,8 +205,9 @@ class PostgresConnectionContext:
     access. Leaving it revokes that access and relinquishes the connection once.
 
     Entry is permitted once and once only, including after an entry that failed:
-    a failed entry has already cleaned up whatever it took, so a second attempt
-    would be a second acquisition wearing the first one's identity.
+    a failed entry has already run cleanup over whatever it took and left what
+    that established on :attr:`cleanup_result`, so a second attempt would be a
+    second acquisition wearing the first one's identity.
     """
 
     __slots__ = (
@@ -270,15 +271,25 @@ class PostgresConnectionContext:
         del exc_type, exc, traceback
         connection = self._native
         execution = self._execution
-        self._native = None
-        self._execution = None
         if connection is None or execution is None:
             return
         # Revoked before anything else, so the caller's own reference cannot
         # reach a connection this is about to hand to somebody else — and so the
         # native reference cleanup needs is held here rather than through it.
-        suspect = execution.revoke()
-        self._cleanup_result = relinquish(self._pool, connection, suspect=suspect)
+        #
+        # Relinquishment is what the exit exists for, so it runs even if
+        # revocation does not complete: this is the only path back to the pool,
+        # and clearing the references first would make a second exit a silent
+        # no-op over a connection nothing ever gave back. A revocation that did
+        # not complete leaves a scope that may still reach the connection, so
+        # what is given back is treated as suspect and disposed of.
+        suspect = True
+        try:
+            suspect = execution.revoke()
+        finally:
+            self._native = None
+            self._execution = None
+            self._cleanup_result = relinquish(self._pool, connection, suspect=suspect)
 
     def _require_idle(self, connection: psycopg.Connection[TupleRow]) -> None:
         """Refuse a checkout that did not hand over an idle connection.

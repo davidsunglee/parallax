@@ -90,12 +90,16 @@ statement works. Readiness therefore acquires a real connection, proves the
 decoding the read path depends on through it, and requires it back. Readiness
 runs under ONE cooperative budget that is checked between phases and never
 restarted; a budget stops the next phase from starting and makes no claim about
-interrupting a call already in flight. An open that fails releases everything it
-took and publishes nothing.
+interrupting a call already in flight. An open that fails publishes nothing and
+releases what it took on the way out, under the relinquishment rule below: what
+it reports is what that release ESTABLISHED, never a promise of reclamation a
+native disposal or accounting that itself failed cannot make.
 
 **One acquisition is single-use.** Creating a connection context takes nothing.
-Entering it acquires, prepares, and admits, or fails having cleaned up whatever
-partial ownership it took. Leaving it revokes the execution it yielded and
+Entering it acquires, prepares, and admits, or fails having already run that
+same cleanup over whatever partial ownership it took — so nothing is left for
+the caller to release, and what the cleanup established is readable on the
+context. Leaving it revokes the execution it yielded and
 relinquishes the connection exactly once. Re-entering one, entering one that has
 exited, and entering one whose entry failed are each refused without touching
 the resource. Each entry yields FRESH execution access even where the physical

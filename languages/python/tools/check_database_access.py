@@ -74,11 +74,14 @@ CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
 # else opened — only the ``open`` that opens one for itself acquires anything.
 #
 # The adapter's ``open`` is an instance method, so the dotted resolution below
-# reaches it when it is named through the class rather than through a value. It
-# is declared anyway, because what actually bounds reaching a live SERVER is the
-# container: a connection string is the container's to hand out, so a test that
-# never reaches `PostgresContainer` or `Provisioner` has nothing for an adapter
-# it configured itself to open.
+# reaches it when it is named through the class rather than through a value: an
+# ``adapter.open()`` on a name this rule cannot type is not reported. What
+# narrows the residue is where a connection string comes from — normally the
+# container's to hand out, so a test that never reaches `PostgresContainer` or
+# `Provisioner` has nothing for an adapter it configured itself to open. That
+# narrows rather than bounds: libpq resolves an environment or service-file
+# target with no string at all, so this declaration catches the spelling it
+# resolves and the residue is untested rather than impossible.
 DATABASE_SEAMS: frozenset[str] = frozenset(
     {
         "parallax.conformance._postgres_control.PostgresControl.open",

@@ -221,9 +221,11 @@ class ConnectionContext(Protocol):
     manager over a scoped :class:`~parallax.core.db_port.DatabaseConnection`.
 
     Creating one takes no connection. Entering it checks out, prepares, and
-    admits — or raises :class:`ConnectionAcquisitionError` having cleaned up
-    whatever partial ownership it took. Leaving it revokes the execution access
-    it yielded and relinquishes the connection exactly once.
+    admits — or raises :class:`ConnectionAcquisitionError` having already run
+    cleanup over whatever partial ownership it took, so nothing is left for the
+    caller to release and what that cleanup established is on
+    :attr:`cleanup_result`. Leaving it revokes the execution access it yielded
+    and relinquishes the connection exactly once.
 
     Single-use is the whole lifetime rule: re-entering one, entering one that
     already exited, and entering one whose entry failed each raise
@@ -322,5 +324,6 @@ class DatabaseAdapter(Protocol):
 
     def open(self) -> DatabaseRuntime:
         """Open one independent ready runtime, or raise
-        :class:`DatabaseStartupError` having released whatever it had taken."""
+        :class:`DatabaseStartupError` having published nothing and released what
+        it had taken, so far as that release could be established."""
         ...

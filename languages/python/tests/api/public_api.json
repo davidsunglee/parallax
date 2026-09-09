@@ -119,13 +119,7 @@
   "parallax.core.diagnostics": [
     "FailureDiagnostic",
     "MESSAGE_LIMIT_BYTES",
-    "STACK_LIMIT_BYTES",
-    "UNAVAILABLE",
-    "bounded",
-    "diagnostic_for",
-    "exact_str",
-    "guarded",
-    "qualified_type"
+    "STACK_LIMIT_BYTES"
   ],
   "parallax.core.db_port": [
     "AcquisitionReason",

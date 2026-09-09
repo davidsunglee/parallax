@@ -29,12 +29,14 @@ __all__ = ["enter_connection", "exit_connection"]
 def enter_connection(resource: ConnectionContext) -> DatabaseConnection:
     """Acquire ``resource``'s connection, or raise having consumed its cleanup facts.
 
-    A failed entry has already cleaned up whatever partial ownership it took —
-    Python never calls ``__exit__`` for an ``__enter__`` that raised, so the
-    context does it itself — and what that cleanup established is read back here
-    rather than being left on a value nobody looks at again. The acquisition
-    failure itself propagates untouched, so the owning activity fails with the
-    reason acquisition gave rather than with anything about the cleanup.
+    A failed entry has already run cleanup over whatever partial ownership it
+    took — Python never calls ``__exit__`` for an ``__enter__`` that raised, so
+    the context does it itself — and what that cleanup ESTABLISHED is read back
+    here rather than being left on a value nobody looks at again. Reading it is
+    the point: the cleanup ran, which is not the same as everything having been
+    reclaimed. The acquisition failure itself propagates untouched, so the owning
+    activity fails with the reason acquisition gave rather than with anything
+    about the cleanup.
     """
     try:
         return resource.__enter__()
