@@ -171,25 +171,17 @@ def _selection(expression: str, shard: str) -> list[str]:
 def _selections(requests: Sequence[tuple[str, str]]) -> list[list[str]]:
     """One :func:`_selection` per request, the sessions run side by side.
 
-    Each session collects the whole tree, which is what costs; the sessions
-    share nothing, so waiting on them together costs one collection rather
-    than one per request.
+    Each session collects the whole tree, so the batch performs one collection
+    per request however it is run; waiting on them together overlaps their wall
+    times and nothing else. What the sessions share is the checkout, the
+    environment, and the tracked durations file, which each of them only reads —
+    none of them passes ``--store-cost-durations`` — so running them at once
+    cannot race.
     """
     expressions = [expression for expression, _ in requests]
     shards = [shard for _, shard in requests]
     with ThreadPoolExecutor(max_workers=len(requests)) as sessions:
         return list(sessions.map(_selection, expressions, shards))
-
-
-@pytest.fixture(scope="module")
-def deployed_selections() -> Mapping[str, list[str]]:
-    """The whole cost class, each deployed cell's part of it, and the rest of
-    the suite under the whole class and under one cell, keyed by ``expression
-    shard``: every session the partition claims below are graded on."""
-    cells = _deployed_cells()
-    requests = [("cost", WHOLE_CLASS), *(("cost", cell) for cell in cells)]
-    requests += [("not cost", WHOLE_CLASS), ("not cost", cells[-1])]
-    return dict(zip((f"{e} {s}" for e, s in requests), _selections(requests), strict=True))
 
 
 def test_the_cost_jobs_matrix_is_the_shard_vector_alone() -> None:
@@ -225,28 +217,29 @@ def test_every_cost_cell_runs_unconditionally_and_gates_on_its_verdict() -> None
     assert UNGATING_KEYS.isdisjoint(_cost_job_step())
 
 
-def test_the_deployed_cells_partition_the_cost_class(
-    deployed_selections: Mapping[str, list[str]],
-) -> None:
+def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() -> None:
+    # Both claims are read off one batch of sessions built here rather than out
+    # of a fixture: this suite's own gate runs under `-n auto`, where fixture
+    # scope is per xdist worker, so two tests sharing one would build the batch
+    # twice on different workers. That batch is the width of the proof — one
+    # session per deployed cell, plus the whole class as the reference the cells
+    # are measured against, plus the rest of the suite whole and under one cell.
+    #
     # The cells' selections together hold every cost item exactly once and none
     # of them is empty; with the expansion and the gating pinned above, that is
     # what lets CI run the class as one cell per shard and still own it once
-    # (§9). The whole-class selection is the reference, so a shard mechanism that
-    # dropped or doubled an item is caught here.
-    whole = deployed_selections[f"cost {WHOLE_CLASS}"]
-    shards = [deployed_selections[f"cost {cell}"] for cell in _deployed_cells()]
+    # (§9), and a shard mechanism that dropped or doubled an item fails here. The
+    # partition is graded within `-m cost`, where no other class is present, so
+    # what confines `--shard` to the class CI splits is the last claim: a sharded
+    # session still holds the whole of the rest of the suite.
+    cells = _deployed_cells()
+    requests = [("cost", WHOLE_CLASS), *(("cost", cell) for cell in cells)]
+    requests += [("not cost", WHOLE_CLASS), ("not cost", cells[-1])]
+    whole, *rest = _selections(requests)
+    *shards, others_whole, others_under_one_cell = rest
     assert all(shards)
     assert sorted(item for shard in shards for item in shard) == sorted(whole)
-
-
-def test_a_shard_leaves_every_other_class_whole(
-    deployed_selections: Mapping[str, list[str]],
-) -> None:
-    # The partition above is graded within `-m cost`, where no other class is
-    # present; that a sharded session still holds the whole of the rest of the
-    # suite is what confines `--shard` to the class CI splits.
-    cell = _deployed_cells()[-1]
-    assert deployed_selections[f"not cost {cell}"] == deployed_selections[f"not cost {WHOLE_CLASS}"]
+    assert others_under_one_cell == others_whole
 
 
 def _malformed_shard_session(shard: str) -> subprocess.CompletedProcess[str]:
