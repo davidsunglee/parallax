@@ -93,8 +93,9 @@ from parallax.core.entity._declaration import (
     LIFECYCLE_STATE_SLOT,
     ValueObjectShape,
     shape_of,
+    wire_names_of,
 )
-from parallax.core.entity._entity import attach_lifecycle_state, wire_names_of
+from parallax.core.entity._entity import attach_lifecycle_state
 from parallax.core.entity._errors import GraphConstructionError
 from parallax.core.entity._instance_state import (
     PublicationPlan,

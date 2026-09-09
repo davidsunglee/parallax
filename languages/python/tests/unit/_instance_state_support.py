@@ -109,8 +109,8 @@ from parallax.core.entity import (
     UNLOADED,
 )
 from parallax.core.entity._construction_input import ABSENT, NodeHandle
-from parallax.core.entity._declaration import shape_of
-from parallax.core.entity._entity import attach_lifecycle_state, wire_names_of
+from parallax.core.entity._declaration import shape_of, wire_names_of
+from parallax.core.entity._entity import attach_lifecycle_state
 from parallax.core.entity._graph_construction import EntityGraphWriter
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT
 from parallax.core.entity._layout import EntityLayout

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pickle
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Self, SupportsIndex, cast
 
 from pydantic._internal._model_construction import ModelMetaclass
@@ -29,9 +28,10 @@ from parallax.core.entity._declaration import (
     LIFECYCLE_STATE_SLOT,
     DeclarationKind,
     EntityHeader,
+    WireNames,
     build_class,
     declaration_of,
-    members_of,
+    wire_names_of,
 )
 from parallax.core.entity._edit import (
     Resolution,
@@ -61,14 +61,12 @@ from parallax.core.metamodel import (
     EntityLocation,
     IndexMetadata,
     PersistenceMode,
-    RelationshipIdentity,
     RelationshipLocation,
     StorageContainer,
     StorageLayout,
     TemporalDimension,
     UnresolvedInheritance,
     UnresolvedRelationshipDeclaration,
-    ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
 )
 from parallax.core.object_query import object_query
@@ -90,8 +88,6 @@ __all__ = [
     "Entity",
     "EntityMeta",
     "TxTemporal",
-    "WireNames",
-    "wire_names_of",
 ]
 
 
@@ -209,89 +205,6 @@ class EntityMeta(ModelMetaclass):
             # field the moment `Entity` itself is created.
             ignored_types=(_All,),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class WireNames:
-    """One Entity Class's family-merged Python-name correspondences.
-
-    Built from the same declaration walk the model facts are built from, so the
-    two can never drift. A family member's maps include every Parallax ancestor's
-    declared members, merged base-first so a descendant's own declaration wins.
-    """
-
-    column_to_py: dict[str, str]
-    name_to_py: dict[str, str]
-    py_to_name: dict[str, str]
-    relationship_py: dict[str, str]
-    relationship_identities: dict[str, RelationshipIdentity]
-    """Each Python relationship name to the Identity its own declaration built,
-    so an inherited relationship keeps the declaring Entity a descendant reaches
-    it through cannot supply."""
-    members: dict[str, AttributeMetadata | ValueObjectMetadata]
-    """Each Python member name to the accepted Metadata that decides what may be
-    written to it. Which members are assignable is not recorded here as a name
-    set: that is :func:`~parallax.core.metamodel.judge_assignment`'s verdict, and
-    a second spelling of it here is exactly the drift the single judgement
-    exists to prevent."""
-    pk_py: frozenset[str]
-    vo_classes: dict[str, type]
-
-    @property
-    def framework_owned_py(self) -> frozenset[str]:
-        """The members whose values the framework supplies and the caller never
-        authors, read off :attr:`members` rather than recorded beside it — one
-        designation, projected where a Python-name question needs it."""
-        return frozenset(
-            py_name
-            for py_name, member in self.members.items()
-            if isinstance(member, AttributeMetadata) and member.framework_owned
-        )
-
-
-def wire_names_of(cls: type) -> WireNames:
-    """The MRO-merged member correspondences of an Entity Class."""
-    column_to_py: dict[str, str] = {}
-    name_to_py: dict[str, str] = {}
-    py_to_name: dict[str, str] = {}
-    relationship_py: dict[str, str] = {}
-    relationship_identities: dict[str, RelationshipIdentity] = {}
-    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
-    pk_py: set[str] = set()
-    vo_classes: dict[str, type] = {}
-    declared = False
-    for ancestor in reversed(cls.__mro__):
-        if "__parallax_members__" not in ancestor.__dict__:
-            continue
-        declared = True
-        names = members_of(ancestor)
-        column_to_py.update(names.column_to_py)
-        name_to_py.update(names.name_to_py)
-        py_to_name.update(names.py_to_name)
-        relationship_py.update(names.relationship_py)
-        relationship_identities.update(
-            {
-                names.relationship_py[declaration.identity.name]: declaration.identity
-                for declaration in declaration_of(ancestor).relationships
-            }
-        )
-        members.update(names.members)
-        pk_py.update(names.pk_py)
-        vo_classes.update(names.vo_classes)
-    if not declared:
-        raise EntityDefinitionError(
-            code="entity-base-invalid", message=f"{cls!r} is not a Parallax Entity Class"
-        )
-    return WireNames(
-        column_to_py=column_to_py,
-        name_to_py=name_to_py,
-        py_to_name=py_to_name,
-        relationship_py=relationship_py,
-        relationship_identities=relationship_identities,
-        members=members,
-        pk_py=frozenset(pk_py),
-        vo_classes=vo_classes,
-    )
 
 
 def _family_axes(cls: type) -> tuple[AsOfAxisMetadata, ...]:
