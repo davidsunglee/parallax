@@ -285,7 +285,7 @@ class WriteSettlement:
         return WritePlanningResult(WritePlan(steps=PlannedSteps(tuple(segments))), tuple(claims))
 
     # ----------------------------------------------------------------- #
-    # Stages 3, 6, 7: validate the observation the item arrived carrying, #
+    # Stages 5, 6, 7: validate the observation the item arrived carrying, #
     # resolve the Transaction Instant lazily, and expand temporal          #
     # topology in place. Stage 2 ran before settlement was reached, so a   #
     # known no-op instruction and a no-op ROW of one are both already      #

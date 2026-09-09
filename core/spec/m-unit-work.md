@@ -363,7 +363,7 @@ only the caller holds the value the write was authored from and therefore the
 milestone that value came from. A buffered write against existing state
 **carries** the observation resolved for it (below); the planner is handed
 evidence, never a store to search. Validating that a required observation is
-present remains the planner's, at stage 3.
+present remains the planner's, at stage 5.
 
 The planner is **stateless across calls**: it retains neither request nor result.
 The operation is **pure** with respect to its inputs — it performs no database
@@ -387,9 +387,9 @@ The Write Planner privately owns this stage order:
 ```text
 1. resolve identities and coalesce buffered intent
 2. eliminate known cancellation and no-op work
-3. validate the observation each surviving write carries
-4. form compatible batches
-5. dependency-order private units within barrier regions
+3. form compatible batches
+4. dependency-order private units within barrier regions
+5. validate the observation each surviving write carries
 6. resolve the Transaction Instant only if surviving work needs it
 7. expand temporal topology in place
 8. decorate provenance
@@ -401,12 +401,12 @@ Four of those orderings are load-bearing and therefore normative:
 - **Coalescing and no-op elimination precede time.** Stages 1–2 run before stage
   6, so work that cancels or nets to zero never consults the Clock Strategy.
 - **Observation validation precedes gate rendering.** A required observation
-  that is missing is a planning error raised at stage 3, never a value that
+  that is missing is a planning error raised at stage 5, never a value that
   reaches lowering. The write it belongs to carries it rather than being matched
-  to it, so nothing downstream of stage 3 can bind a gate from evidence about a
+  to it, so nothing downstream of stage 5 can bind a gate from evidence about a
   different row.
 - **Temporal expansion follows ordering.** A surviving temporal mutation stays
-  one indivisible unit through stages 4–5 and expands at its already-decided
+  one indivisible unit through stages 3–4 and expands at its already-decided
   position in stage 7 (ADR 0045), so its close and successors are adjacent and no
   unrelated step interleaves.
 - **Provenance decoration follows topology and precedes lowering.** Stage 8
@@ -417,20 +417,18 @@ Four of those orderings are load-bearing and therefore normative:
 Stages are otherwise private. The stage list is an ordering contract, not an
 interface: nothing outside the planner may name, observe, or invoke a stage.
 
-Stages 1–2 and 4–5 rewrite the buffered sequence: they merge, drop, split, and
-reorder it. Stage 3 and stages 6–9 are **Write Settlement**, and the sequence
-stops changing shape there — settlement reads it once, validates the observation
-each surviving write carries as it settles that write, and only Planned Writes
-come out. Validating there still puts stage 3 ahead of every gate it could bind,
-because every gate is rendered in settlement. Settlement is owned by the planner
-and constructed for the same accepted Metamodel: it reuses that model's compiled
-facets, never observes model publication, and is never rebound after one. It is
-reached through exactly **one** private operation over the **complete**
-dependency-ordered sequence, because packing is a property of adjacency and a
-claim survives by its carrier having reached settlement at all. That operation
-answers the Write Planning Result, which the planner returns unchanged: the
-planner neither wraps nor reconstructs it, so no fact about a settled write is
-decided twice.
+Stages 1–4 rewrite the buffered sequence: they merge, drop, split, and reorder
+it. Stages 5–9 are **Write Settlement**, and the sequence stops changing shape
+there — settlement reads it once, validates the observation each surviving write
+carries as it settles that write, and only Planned Writes come out. Settlement
+is owned by the planner and constructed for the same accepted Metamodel: it
+reuses that model's compiled facets, never observes model publication, and is
+never rebound after one. It is reached through exactly **one** private
+operation over the **complete** dependency-ordered sequence, because packing is
+a property of adjacency and a claim survives by its carrier having reached
+settlement at all. That operation answers the Write Planning Result, which the
+planner returns unchanged: the planner neither wraps nor reconstructs it, so no
+fact about a settled write is decided twice.
 
 ### Write Plan and Planned Steps
 

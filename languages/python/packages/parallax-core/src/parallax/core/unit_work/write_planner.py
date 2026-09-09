@@ -247,7 +247,7 @@ class WritePlanner:
         ]
 
     # ----------------------------------------------------------------- #
-    # Stage 4: form compatible batches. Same-entity, same-mutation,       #
+    # Stage 3: form compatible batches. Same-entity, same-mutation,       #
     # ADJACENT single-row keyed writes merge when the injected batching   #
     # strategy says the run collapses. A preformed multi-row update is    #
     # split into its rows first (`_decomposed_updates`), so no addressed  #
@@ -314,7 +314,7 @@ class WritePlanner:
         return result
 
     # ----------------------------------------------------------------- #
-    # Stage 5: dependency-order within barrier regions. A readless        #
+    # Stage 4: dependency-order within barrier regions. A readless        #
     # predicate write is a hard ordering barrier partitioning the         #
     # sequence into independently reorderable regions.                    #
     # ----------------------------------------------------------------- #
