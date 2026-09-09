@@ -32,7 +32,8 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
 from parallax.core.entity import GraphConstructionError, model_of
 from parallax.core.entity import _graph_construction as graph_construction_module
-from parallax.core.metamodel import EntityIdentity, IndexIdentity, Metamodel, Table
+from parallax.core.entity._layout import CatalogedModel
+from parallax.core.metamodel import EntityIdentity, IndexIdentity, Table
 from parallax.evolution import CreatedIndex, SchemaDelta, evolve
 from parallax.snapshot import ModelSelection, ServingModel, connect
 from parallax.snapshot.handle import Database
@@ -176,13 +177,13 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
     candidate = model_of(NICKNAMED_ACCOUNT_MODEL)
     derive_entity_facts = graph_construction_module._entity_facts  # pyright: ignore[reportPrivateUsage] - the real derivation this refusal stands in front of
 
-    def refuse_the_candidate(model: Metamodel, *derivation: Any) -> Any:
-        if model is candidate:
+    def refuse_the_candidate(cataloged: CatalogedModel, *derivation: Any) -> Any:
+        if cataloged.meta is candidate:
             raise GraphConstructionError(
                 code="entity-graph-layout-mismatch",
                 message="the candidate's per-Entity facts could not be derived",
             )
-        return derive_entity_facts(model, *derivation)
+        return derive_entity_facts(cataloged, *derivation)
 
     monkeypatch.setattr(stories, "connect", connect_and_hold)
     monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse_the_candidate)

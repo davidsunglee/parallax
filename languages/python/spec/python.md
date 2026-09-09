@@ -1740,8 +1740,8 @@ needs are constructed over what the model answers and retained by the runtime
 that composed them:
 
 ```text
-EntityRowCodec(cataloged: CatalogedModel)                                           # §5
-EntityGraphConstruction(model: Metamodel, classes: ClassIndex, layouts: LayoutCatalog)  # §3
+EntityRowCodec(cataloged: CatalogedModel)                                # §5
+EntityGraphConstruction(cataloged: CatalogedModel, classes: ClassIndex)  # §3
 ```
 
 Each constructor derives every Entity's facts whole and raises on the first
@@ -2580,7 +2580,7 @@ of shared edition identity.
   `parallax.core`:
 
   ```text
-  EntityGraphConstruction(model: Metamodel, classes: ClassIndex, layouts: LayoutCatalog)
+  EntityGraphConstruction(cataloged: CatalogedModel, classes: ClassIndex)
   relationship_value_of(instance, relationship: RelationshipIdentity) -> object
   lifecycle_state_of(instance) -> object | None
 
@@ -2606,15 +2606,15 @@ of shared edition identity.
   NodeHandle          # opaque, callback-scoped, no public attribute
   ```
 
-  `EntityGraphConstruction` is per model, constructed over the accepted
-  Metamodel, the class index, and the layout catalog by the preparation that
-  retains it (§2 *Model preparation and the Serving Model*), so `construct(...)`
-  takes no model argument and cannot be handed a mismatched one; the per-Entity
-  facts it derives from accepted metadata — concrete class,
-  identity-to-member-name mapping, and the declaration-ordered navigable
-  relationships — are derived for every Entity at construction, raising there
-  on the first refusal, rather than recomputed per read or derived on first
-  reach. `build` is invoked exactly once with a writer that closes
+  `EntityGraphConstruction` is per model, constructed over the cataloged model —
+  the accepted Metamodel and the member layouts derived from it — and the class
+  index, by the preparation that retains it (§2 *Model preparation and the
+  Serving Model*), so `construct(...)` takes no model argument and cannot be
+  handed a mismatched one; the per-Entity facts it derives from accepted
+  metadata — concrete class, identity-to-member-name mapping, and the
+  declaration-ordered navigable relationships — are derived for every Entity at
+  construction, raising there on the first refusal, rather than recomputed per
+  read or derived on first reach. `build` is invoked exactly once with a writer that closes
   when it returns, and `state_factory` exactly once per node in allocation order
   with a fresh single-use `ResolutionView` that closes when that invocation
   returns. `relationship_value_of` answers the raw slot value including the

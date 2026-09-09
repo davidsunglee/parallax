@@ -361,9 +361,10 @@ class LegacyPlan:
     """Everything the legacy arm resolves once per exact Entity rather than per node.
 
     Entity Graph Construction memoizes exactly this much — the concrete class and
-    the identity-to-Python-name maps — on its ``facts_for`` cache, so a fixture
-    that re-derived it per node would price a derivation publication does not
-    make and would swamp the per-node cost the reading is taken for.
+    where each of the model's row positions lands on it — on its ``facts_for``
+    cache, so a fixture that re-derived it per node would price a derivation
+    publication does not make and would swamp the per-node cost the reading is
+    taken for.
     """
 
     cls: type
