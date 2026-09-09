@@ -503,11 +503,16 @@ connections keep being ATTEMPTED, which is not the same as being replaced: the
 counter is incremented before each attempt, so establishment that keeps failing
 climbs it exactly as replacement does, and a connection refused in preparation
 for a wrong `client_encoding` or `DateStyle` counts as an attempt rather than as
-an error. Read it against `connections_errors` and `connections_lost` — errors
-climbing with it is failing establishment, `connections_lost` climbing with it
-is churn, and neither climbing narrows it to the attempts no counter records:
-a connection refused in preparation, and the ordinary retirement of a healthy
-connection at `max_lifetime`, which closes it and attempts a replacement.
+an error. Read it against `connections_errors`, `connections_lost` and
+`returns_bad`: errors climbing with it is establishment failing,
+`connections_lost` climbing with it is the pool finding connections broken, and
+`returns_bad` climbing with it is connections handed back unusable, a Parallax
+invalidation included. Quiet counters do not narrow the climb. They rule those
+three causes out and leave the ones no counter records and a reading cannot
+tell apart — a connection refused in preparation, a healthy connection retired
+at `max_lifetime`, and, on an on-demand pool, the connection every acquisition
+creates and closes. A climb beside quiet counters is a question for the logs,
+not a fault.
 
 ## Session settings
 
