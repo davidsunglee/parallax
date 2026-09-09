@@ -117,8 +117,6 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.relationship import RelationshipMetadata
-from parallax.core.relationship import view as relationship_view
 
 __all__ = [
     "EntityGraphConstruction",
@@ -150,10 +148,12 @@ class _EntityFacts:
     takes, so a position is read off both without a per-member record pairing
     them.
 
-    The three tuples are what neither value holds, each aligned to the run it is
-    stated over and resolved here rather than per stored value: the Python name
-    a navigable direction's slot is installed under, whether an Attribute may
-    carry the open temporal bound, and whether a direction is to-many.
+    The three tuples are per-position answers resolved once here rather than per
+    stored value, each aligned to the run it is stated over: the Python name a
+    navigable direction's slot is installed under, whether an Attribute may
+    carry the open temporal bound, and whether a direction is to-many. The last
+    two read the layout's own identity-keyed facts into the positional order the
+    rows arrive in; the first is held by neither value.
     """
 
     layout: EntityLayout
@@ -180,7 +180,6 @@ def _entity_facts(
     names = wire_names_of(cls)
     plan = plan_of(cls)
     _require_correspondence(layout, names, plan)
-    facet = relationship_view(cataloged.meta)
     return _EntityFacts(
         layout=layout,
         cls=cls,
@@ -191,13 +190,7 @@ def _entity_facts(
         open_ended=tuple(
             attribute.identity in layout.temporal_ends for attribute in layout.attributes
         ),
-        many=tuple(
-            # Not `None`: the layout's canonical order is this facet's own
-            # directions, so every identity in it resolves against it.
-            cast("RelationshipMetadata", facet.relationship(direction)).cardinality.target
-            is Multiplicity.MANY
-            for direction in layout.relationships
-        ),
+        many=tuple(direction in layout.to_many for direction in layout.relationships),
     )
 
 

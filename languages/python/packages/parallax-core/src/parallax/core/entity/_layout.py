@@ -3,10 +3,11 @@
 A layout is the flyweight a materializing runtime reads instead of rebuilding a
 wrapper skeleton per row. Which members a resolved concrete Entity carries, in
 what order, where its category boundary falls, which positions its family's
-primary key occupies, and what canonical order its relationship views take are
-all functions of the accepted Metamodel alone — so a catalog derives them per
-exact Entity, and every row, every graph, and every execution it serves shares
-what it derived rather than rebuilding one.
+primary key occupies, which of its Attributes may hold the open temporal bound,
+what canonical order its relationship views take, and which of its directions
+are to-many are all functions of the accepted Metamodel alone — so a catalog
+derives them per exact Entity, and every row, every graph, and every execution
+it serves shares what it derived rather than rebuilding one.
 
 Stated over the accepted :class:`~parallax.core.metamodel.Metamodel` rather than
 over the :class:`~parallax.core.entity.DomainModel` that carries one, because
@@ -57,6 +58,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
+from parallax.core.relationship import RelationshipMetadata
 from parallax.core.relationship import view as relationship_view
 
 __all__ = [
@@ -136,6 +138,12 @@ class EntityLayout:
     :meth:`ordered` sorts into, and the positions a full-width
     broad-relationship row is written at — so both read it here rather than each
     deriving it.
+
+    ``to_many`` names the directions whose arm admits several nodes rather than
+    one. A direction's cardinality is fixed by the declaration the ancestry
+    reaches it through, so it is settled here beside the position that direction
+    takes rather than resolved again through the relationship facet by whoever
+    writes or reads that position.
     """
 
     concrete: EntityIdentity
@@ -149,6 +157,7 @@ class EntityLayout:
     temporal_ends: frozenset[AttributeIdentity]
     relationships: tuple[RelationshipIdentity, ...]
     relationship_index: Mapping[RelationshipIdentity, int]
+    to_many: frozenset[RelationshipIdentity]
     primary_key: tuple[int, ...]
 
     def key_of(self, row: tuple[object, ...]) -> object:
@@ -234,7 +243,8 @@ class LayoutCatalog:
             *(occurrence.identity for occurrence in occurrences),
         )
         index_of: Mapping[MemberIdentity, int] = _positions(members, identity.canonical)
-        relationships = _navigable_relationships(self._model, position.ancestry)
+        navigable = _navigable_relationships(self._model, position.ancestry)
+        relationships = tuple(direction.identity for direction in navigable)
         return EntityLayout(
             concrete=identity,
             family=(
@@ -252,6 +262,11 @@ class LayoutCatalog:
             relationships=relationships,
             relationship_index=MappingProxyType(
                 {direction: position for position, direction in enumerate(relationships)}
+            ),
+            to_many=frozenset(
+                direction.identity
+                for direction in navigable
+                if direction.cardinality.target is Multiplicity.MANY
             ),
             primary_key=self._key_positions(identity, position.root, index_of),
         )
@@ -370,17 +385,21 @@ def _spelling(identity: ValueObjectIdentity) -> str:
 
 def _navigable_relationships(
     model: Metamodel, ancestry: Sequence[EntityIdentity]
-) -> tuple[RelationshipIdentity, ...]:
+) -> tuple[RelationshipMetadata, ...]:
     """Every navigable direction in accepted declaration order, ancestry first.
 
     A relationship declared on an inheritance ancestor is reached by every
     concrete descendant under the ancestor's own identity and is never
     redeclared, so the navigable set is the ancestry chain's directions with each
     name taken from the nearest declaration.
+
+    The whole declaration rather than the identity alone, so a caller needing a
+    further fact of a direction takes it from the walk that placed the direction
+    rather than by looking that direction up again.
     """
     facet = relationship_view(model)
-    order: dict[str, RelationshipIdentity] = {}
+    order: dict[str, RelationshipMetadata] = {}
     for ancestor in ancestry:
         for direction in facet.relationships(ancestor) or ():
-            order.setdefault(direction.identity.name, direction.identity)
+            order.setdefault(direction.identity.name, direction)
     return tuple(order.values())

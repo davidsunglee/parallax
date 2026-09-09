@@ -2532,13 +2532,13 @@ of shared edition identity.
 - **Exact-model member layouts.** Which members a resolved concrete Entity
   carries, in what order, where its Attribute / Value Object boundary falls,
   which positions its family's primary key occupies, which of its Attributes may
-  hold the open temporal bound, and what canonical order its relationship views
-  take are fixed by the accepted Metamodel alone. They
-  MUST be derived per exact Entity and shared, never rebuilt per row, per graph,
-  or per execution. A model whose accepted metadata fixes no such row — two
-  members claiming one position, or a family primary key the row does not
-  express — is refused where the layout is derived, as a raised error rather
-  than a stored-data classification.
+  hold the open temporal bound, what canonical order its relationship views
+  take, and which of those directions are to-many are fixed by the accepted
+  Metamodel alone. They MUST be derived per exact Entity and shared, never
+  rebuilt per row, per graph, or per execution. A model whose accepted metadata
+  fixes no such row — two members claiming one position, or a family primary key
+  the row does not express — is refused where the layout is derived, as a raised
+  error rather than a stored-data classification.
 
   A row is read against its layout and against nothing else: a graph-local
   logical identity is computed once, while the graph is built, through the

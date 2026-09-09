@@ -50,6 +50,7 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectMetadata,
 )
+from parallax.core.relationship import view as relationship_view
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import RelationshipViewKey, merge_graph_input
 from parallax.snapshot.materialize._graph import GraphBuilder
@@ -386,6 +387,49 @@ def test_ordered_answers_an_empty_selection_and_a_single_view_unchanged() -> Non
     items = _key("Order", "items")
     assert layout.ordered(()) == ()
     assert layout.ordered((items,)) == (items,)
+
+
+# --------------------------------------------------------------------------- #
+# Which navigable directions are to-many.                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_layout_names_the_directions_it_navigates_at_many_and_no_other() -> None:
+    # OrderItem navigates one direction of each kind: the to-many `statuses` and
+    # the to-one `order`.
+    layout = LayoutCatalog(corpus_model("orders")).entity(_identity("OrderItem"))
+    order = RelationshipIdentity(_identity("OrderItem"), "order")
+    statuses = RelationshipIdentity(_identity("OrderItem"), "statuses")
+    assert set(layout.relationships) == {order, statuses}
+    assert layout.to_many == frozenset({statuses})
+
+
+def test_an_inherited_direction_takes_the_cardinality_its_declaring_ancestor_fixed() -> None:
+    # `owner` is declared to-one on the abstract root Animal and reached by every
+    # concrete descendant under that identity, while Person's own directions are
+    # to-many — so one model answers both ways, and a descendant's answer is the
+    # declaration it inherits rather than anything it states itself.
+    catalog = LayoutCatalog(corpus_model("animal"))
+    cat = catalog.entity(_identity("Cat"))
+    assert cat.relationships == (RelationshipIdentity(_identity("Animal"), "owner"),)
+    assert cat.to_many == frozenset()
+    person = catalog.entity(_identity("Person"))
+    assert person.to_many == frozenset(person.relationships)
+
+
+def test_every_corpus_entitys_to_many_set_is_the_declared_cardinality_of_its_own_row() -> None:
+    reached: set[bool] = set()
+    for stem, model, identity, layout in _corpus_layouts():
+        facet = relationship_view(model)
+        where = (stem, identity.canonical)
+        assert layout.to_many <= set(layout.relationships), where
+        for direction in layout.relationships:
+            declared = facet.relationship(direction)
+            assert declared is not None, where
+            at_many = declared.cardinality.target is Multiplicity.MANY
+            assert (direction in layout.to_many) is at_many, where
+            reached.add(at_many)
+    assert reached == {False, True}
 
 
 # --------------------------------------------------------------------------- #
