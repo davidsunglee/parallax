@@ -3907,7 +3907,10 @@ Database Call Started and Finished borrow the exact deeply immutable
 
 `AcquisitionFinished` and `ReleaseFinished` carry integer nanosecond durations
 measured the same way, around the acquisition and the release call
-respectively, plus a `hold_duration_ns` spanning the two. `AcquisitionFailed`
+respectively, plus a `hold_duration_ns` spanning the two. Both closing readings
+are taken where the resource call itself returned, announced by the helper that
+made it, so reading what a cleanup established off the port falls outside every
+one of the three intervals. `AcquisitionFailed`
 and `ReleaseFinished` carry the `m-db-port` `CleanupResult` directly rather
 than a parallel lifecycle disposition, and `ReleaseFinished` types it
 `CleanupResult | None` because that is what the port's own `cleanup_result`
@@ -3921,7 +3924,10 @@ completion fact that selects between a Handler and the restricted
 quarantine or fan-out internals. A Handler that composes children answers it
 through the package-private `CompletingHandler`, because a fan-out contains its
 children's ordinary failures and its own normal return therefore says nothing
-about whether anyone received the event.
+about whether anyone received the event. A composite that answers no leaf
+received an event quarantines the root's Handler exactly as one that raised
+does, so a composition with no live leaf costs the rest of the root no Activity
+ID, event, or clock reading.
 `FailureDiagnostic` is detached, deeply immutable, total to construct, bounded
 to 8 KiB of message and 64 KiB of chained stack without locals, and carries
 qualified type, optional safely readable string code, and truncation flags.

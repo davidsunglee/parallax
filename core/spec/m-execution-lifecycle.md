@@ -508,11 +508,15 @@ every Release — additionally has a **delivery completion**: whether at least o
 Handler RETURNED from receiving it. A Handler that accepted the root, a delivery
 that was merely attempted, and a Fan-out that contained every one of its
 children's failures and then returned are each NOT a completion. A cleanup fact
-no Handler completed reaches the implementation's restricted failure-only
-resource log instead, which states the cleanup phase and code and fixed
-explanatory text and nothing else (`m-db-port`). Reporting it in both places
-would report it twice, and in neither would lose it, so exactly one of the two
-happens. A normal return acknowledges DELIVERY rather than durable export: a
+carrying at least one issue and completed by no Handler reaches the
+implementation's restricted failure-only resource log instead, which states the
+cleanup phase and code and fixed explanatory text and nothing else
+(`m-db-port`). Reporting it in both places would report it twice, and in neither
+would lose it, so exactly one of the two happens. That log stays failure-only,
+so a cleanup that met no issue and reached no Handler is reported nowhere: the
+fallback exists to keep a problem from being lost, and a cleanup with nothing to
+say loses nothing by being unrecorded. A normal return acknowledges DELIVERY
+rather than durable export: a
 Handler that exports and then raises may cause duplicate reporting elsewhere,
 which is the Handler's own trade.
 
@@ -521,7 +525,10 @@ opens children in declaration order, omits deliberate declines, and declines if
 all children decline. A child open failure aborts the root and discards handlers
 already opened for it. Events are delivered in declaration order. One child's
 ordinary failure quarantines only that child; later siblings receive that event
-and future events. A child that is itself a Fan-out contributes its own children
+and future events. A composition whose every leaf has been quarantined leaves
+the Root Execution with no Handler at all, and it is quarantined with them:
+what follows takes no Activity ID, delivers no event, and reads no lifecycle
+clock. A child that is itself a Fan-out contributes its own children
 to one composition tree, and every rule here reads over that flattened tree
 rather than over one list of siblings: construction rejects the same Provider
 object more than once anywhere in the tree, while distinct Providers may

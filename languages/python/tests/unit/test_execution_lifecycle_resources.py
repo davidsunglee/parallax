@@ -35,6 +35,7 @@ from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ScriptedAdapter,
+    ScriptedContext,
     Transact,
     Write,
 )
@@ -142,10 +143,21 @@ class _SteppingClock:
 
     def __init__(self) -> None:
         self.readings = 0
+        self._burned = 0
 
     def perf_counter_ns(self) -> int:
         self.readings += 1
-        return self.readings * _STEP
+        return self.readings * _STEP + self._burned
+
+    def burn(self, steps: int) -> None:
+        """Advance by ``steps`` without a reading.
+
+        Time somebody else spent: a Handler that took a while, a consumer that
+        paused between pages. Nothing observes it, so it belongs to whichever
+        interval was open across it and to no other — which is the claim the
+        durations have to answer, and an equality answers exactly.
+        """
+        self._burned += steps * _STEP
 
 
 def _stepping(monkeypatch: pytest.MonkeyPatch) -> _SteppingClock:
@@ -154,18 +166,37 @@ def _stepping(monkeypatch: pytest.MonkeyPatch) -> _SteppingClock:
     return clock
 
 
-class _SlowOn:
-    """A Handler that burns wall-clock time on one transition and no other."""
+def _charging_cleanup(monkeypatch: pytest.MonkeyPatch, clock: _SteppingClock, steps: int) -> None:
+    """Make reading a scripted context's cleanup fact cost ``steps``.
 
-    def __init__(self, kind: type[ExecutionEvent], milliseconds: int) -> None:
+    A port may compute what its cleanup established rather than store it, so
+    reading the fact is the CALLER's work happening after the resource call
+    returned. Charging for it is what turns "the bracket ends at the call" into
+    something a duration can be held to.
+    """
+    reported = ScriptedContext.cleanup_result.fget
+    assert reported is not None
+
+    def charged(context: ScriptedContext) -> Any:
+        clock.burn(steps)
+        return reported(context)
+
+    monkeypatch.setattr(ScriptedContext, "cleanup_result", property(charged))
+
+
+class _BurningOn:
+    """A Handler that spends clock on one transition and no other."""
+
+    def __init__(self, kind: type[ExecutionEvent], clock: _SteppingClock, steps: int) -> None:
         self._kind = kind
-        self._milliseconds = milliseconds
+        self._clock = clock
+        self._steps = steps
         self.seen: list[ExecutionEvent] = []
 
     def handle(self, event: ExecutionEvent, /) -> None:
         self.seen.append(event)
         if isinstance(event, self._kind):
-            _busy_wait_ms(self._milliseconds)
+            self._clock.burn(self._steps)
 
 
 class _FailingOn:
@@ -195,14 +226,6 @@ class _Provider:
 
     def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
         self.reported.append(error)
-
-
-def _busy_wait_ms(milliseconds: int) -> None:
-    import time
-
-    end = time.perf_counter_ns() + milliseconds * 1_000_000
-    while time.perf_counter_ns() < end:
-        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -365,26 +388,35 @@ def test_a_failed_acquisition_is_still_measured_around_its_own_cleanup(
     assert _of(root, ReleaseFinished) == []
 
 
-def test_a_handler_on_the_acquisitions_started_cannot_inflate_the_acquisition() -> None:
+def test_a_handler_on_the_acquisitions_started_cannot_inflate_the_acquisition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The Database Call convention, applied to a resource call: the clock starts
-    # only after Started has been delivered, so a Handler that sleeps for 5 ms
-    # there is outside the acquisition it is observing.
-    handler = _SlowOn(AcquisitionStarted, 5)
+    # only after Started has been delivered, so a Handler that spends five steps
+    # there is outside the acquisition it is observing. The acquisition is
+    # therefore still its own two adjacent readings and nothing else.
+    clock = _stepping(monkeypatch)
+    handler = _BurningOn(AcquisitionStarted, clock, 5)
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
     with _db(adapter, _Provider(handler)) as db:
         _read(db)
 
     (acquired,) = [event for event in handler.seen if isinstance(event, AcquisitionFinished)]
-    assert acquired.duration_ns < 5_000_000
+    assert acquired.duration_ns == _STEP
 
 
-def test_the_hold_includes_the_acquisitions_own_finished_delivery() -> None:
+def test_the_hold_includes_the_acquisitions_own_finished_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The one interval that deliberately CONTAINS Handler time. A hold is what
     # the operation occupied, and the connection is already the operation's
     # while the Acquisition's Finished is being delivered — so a Handler that
-    # sleeps 5 ms there is inside the hold and outside every other interval.
-    handler = _SlowOn(AcquisitionFinished, 5)
+    # spends five steps there is inside the hold and outside every other
+    # interval. The hold is otherwise the four readings between the acquisition
+    # and the release, exactly as it is with no Handler at all.
+    clock = _stepping(monkeypatch)
+    handler = _BurningOn(AcquisitionFinished, clock, 5)
     adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
 
     with _db(adapter, _Provider(handler)) as db:
@@ -392,17 +424,20 @@ def test_the_hold_includes_the_acquisitions_own_finished_delivery() -> None:
 
     (acquired,) = [event for event in handler.seen if isinstance(event, AcquisitionFinished)]
     (released,) = [event for event in handler.seen if isinstance(event, ReleaseFinished)]
-    assert acquired.duration_ns < 5_000_000
-    assert released.duration_ns < 5_000_000
-    assert released.hold_duration_ns >= 5_000_000
+    assert acquired.duration_ns == _STEP
+    assert released.duration_ns == _STEP
+    assert released.hold_duration_ns == 9 * _STEP
 
 
-def test_a_consumer_pause_between_pages_is_inside_the_streams_hold() -> None:
+def test_a_consumer_pause_between_pages_is_inside_the_streams_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A delivery holds ONE connection from its first page to its settlement, so
     # what the caller does between pages is time the connection was occupied.
     # The pause is neither an acquisition nor a release, and a hold that
     # excluded it would describe the pool's own bookkeeping rather than this
     # operation's occupancy.
+    clock = _stepping(monkeypatch)
     recorder = RecordingLifecycleProvider()
     adapter = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
 
@@ -412,14 +447,55 @@ def test_a_consumer_pause_between_pages_is_inside_the_streams_hold() -> None:
     ):
         for root in stream:
             del root
-            _busy_wait_ms(3)
+            clock.burn(3)
 
     (observed,) = recorder.roots
     (released,) = _of(observed, ReleaseFinished)
-    # Three roots, so three pauses of 3 ms each are inside the hold, and none of
-    # them is inside the release the delivery ends with.
-    assert released.duration_ns < 9_000_000
-    assert released.hold_duration_ns >= 9_000_000
+    # Three roots over two pages, so the second of the three pauses is a
+    # between-pages one. The hold is every reading from the acquisition's
+    # closing one — the second of the run — to the release's closing one, which
+    # is the last, PLUS the nine steps the consumer spent; the release itself is
+    # its own two adjacent readings, so no pause is inside it.
+    assert released.duration_ns == _STEP
+    assert released.hold_duration_ns == (clock.readings - 2) * _STEP + 9 * _STEP
+
+
+def test_neither_duration_includes_reading_the_cleanup_fact_off_the_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # What a cleanup established is read after the resource call came back, so
+    # it falls outside the release's own bracket AND outside the hold that
+    # bracket ends. The five steps it costs here appear in neither.
+    clock = _stepping(monkeypatch)
+    _charging_cleanup(monkeypatch, clock, 5)
+    recorder = RecordingLifecycleProvider()
+    adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
+
+    with _db(adapter, recorder) as db:
+        _read(db)
+
+    (root,) = recorder.roots
+    (released,) = _of(root, ReleaseFinished)
+    assert released.duration_ns == _STEP
+    assert released.hold_duration_ns == 4 * _STEP
+
+
+def test_a_failed_acquisitions_duration_excludes_reading_its_cleanup_fact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same endpoint on the other end: the cleanup a failed entry ran is
+    # inside the acquisition call, and READING what it established is not.
+    clock = _stepping(monkeypatch)
+    _charging_cleanup(monkeypatch, clock, 5)
+    recorder = RecordingLifecycleProvider()
+    adapter = ScriptedAdapter(acquisition_failures=[_unacquirable()], cleanup_results=[_not_idle()])
+
+    with _db(adapter, recorder) as db, pytest.raises(ExecutionFailure):
+        _read(db)
+
+    (root,) = recorder.roots
+    (finished,) = _of(root, AcquisitionFinished)
+    assert finished.duration_ns == _STEP
 
 
 def test_an_unobserved_operation_reads_no_lifecycle_clock(
@@ -442,6 +518,51 @@ def test_an_unobserved_operation_reads_no_lifecycle_clock(
 # --------------------------------------------------------------------------- #
 # Delivery: the connection outlives whatever the Handler does.                 #
 # --------------------------------------------------------------------------- #
+def test_a_quarantined_handler_leaves_the_rest_of_the_root_reading_no_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Quarantine is permanent for the root, and after it the observation stops
+    # ENTIRELY: the resource scopes take no reading for a duration nobody will
+    # be told. The four readings are the acquisition's two and the call's two,
+    # and the release, opened after the Handler died, takes none.
+    clock = _stepping(monkeypatch)
+    handler = _FailingOn(ReleaseStarted, RuntimeError("the exporter died"))
+    adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
+
+    with _db(adapter, _Provider(handler)) as db:
+        _read(db)
+
+    assert clock.readings == 4
+    assert [event for event in handler.seen if isinstance(event, ReleaseFinished)] == []
+    assert adapter.cleanups == [Returned()]
+
+
+def test_a_fanout_whose_every_leaf_failed_stops_observing_the_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A composite contains each child's failure by contract, so it returns
+    # normally with nobody left to receive anything. Its answer says so, and the
+    # root is quarantined on it: no Activity ID, no event and no clock reading
+    # goes into a fan-out with no leaf, exactly as with a single Handler that
+    # raised. The nesting is what the answer has to survive — an inner fan-out
+    # answers for ITS leaves rather than for its own return.
+    clock = _stepping(monkeypatch)
+    inner = _Provider(_FailingOn(AcquisitionStarted, RuntimeError("the exporter died")))
+    outer = _Provider(_FailingOn(AcquisitionStarted, RuntimeError("so did the other one")))
+    adapter = ScriptedAdapter(Read(rows=[NEW_ROW]))
+    provider = FanoutLifecycleProvider([FanoutLifecycleProvider([inner]), outer])
+
+    with _db(adapter, provider) as db:
+        _read(db)
+
+    assert clock.readings == 0
+    assert len(inner.reported) == 1
+    assert len(outer.reported) == 1
+    # Execution is untouched by any of it: the connection was taken, used and
+    # given back while nothing was observing.
+    assert (adapter.acquisitions, adapter.cleanups) == (1, [Returned()])
+
+
 def test_a_fatal_exception_on_the_acquisitions_started_leaves_nothing_acquired() -> None:
     # Nothing had been taken when delivery died, so there is nothing to give
     # back — and the root is deactivated, so the acquisition that never happened
@@ -595,6 +716,31 @@ def test_an_acquisition_that_failed_for_no_stated_reason_reports_preparation_fai
     outcome = finished.outcome
     assert isinstance(outcome, AcquisitionFailed)
     assert (outcome.reason, outcome.cleanup_result) == ("preparation_failed", None)
+
+
+def test_an_adapter_defect_escaping_acquisition_still_fails_the_attempts_begin() -> None:
+    # An attempt that got no connection never opened a boundary, whatever the
+    # reason the Acquisition derived. The route is the refusal's own: terminal,
+    # no callback, no retry, and the attempt naming the Acquisition it holds —
+    # not the unset-outcome fallback, which would report a rollback of a
+    # transaction that never began.
+    recorder = RecordingLifecycleProvider()
+    defect = RuntimeError("the adapter raised something else")
+
+    with (
+        _db(_UnusableAdapter(defect), recorder) as db,
+        pytest.raises(ExecutionFailure) as raised,
+    ):
+        db.transact(lambda _tx: None)
+
+    assert raised.value.__cause__ is defect
+    (root,) = recorder.roots
+    (acquisition,) = _of(root, AcquisitionStarted)
+    (begin_failed,) = [event.outcome for event in _of(root, TransactionAttemptFinished)]
+    assert isinstance(begin_failed, AttemptBeginFailed)
+    failure = begin_failed.failure
+    assert isinstance(failure, CausedFailure)
+    assert failure.cause_activity_id == acquisition.activity_id
 
 
 def test_an_ordinary_handler_failure_on_the_release_changes_no_outcome() -> None:

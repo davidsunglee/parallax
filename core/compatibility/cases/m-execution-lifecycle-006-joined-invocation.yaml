@@ -24,8 +24,10 @@
 # `returned` is likewise narrower than `committed`. A joined invocation finishes
 # as `returned` or `raised`, which describes the nested CALLBACK only and never
 # claims the physical transaction did anything: sequence 10 says the joined body
-# came back, while the transaction it joined is still open and does not commit
-# until sequence 17.
+# came back, while the transaction it joined is still open. Commit settles the
+# attempt and has no event of its own — it happens after the pre-commit batch
+# closes at sequence 14 and before the connection goes back at 15 and 16, and
+# sequence 17 reports the outcome it already established.
 #
 # The write it buffered proves the sharing. It appears at sequence 12, after the
 # joined invocation already finished, inside the OUTER boundary's own

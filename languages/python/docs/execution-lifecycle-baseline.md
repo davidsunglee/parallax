@@ -37,7 +37,8 @@ arm — against a method whose own rule is that the p50 columns move by a few
 percent between runs of the same code — so a table recorded there would have
 published that machine rather than this change. `just
 python-report-lifecycle-overhead` gates nothing, so nothing was waived to say
-so; what is owed is one run on a machine doing nothing else.
+so; what is owed is one run on a machine doing nothing else, tracked as **D-94**
+in [`deferred-ledger.md`](deferred-ledger.md).
 
 ## Conditions the numbers below were taken under
 

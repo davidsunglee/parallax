@@ -22,9 +22,12 @@ Both ends are also where the operation's resource observation happens, because
 the observed activity and the resource call are the same two moments. Each end
 opens its own scope under the owning activity, so an Acquisition and a Release
 are siblings of the execution work between them rather than a lease enclosing
-it. Observation never changes what the resource does: cleanup that has to happen
-happens whether or not the scope around it could be delivered, and a cleanup
-fact no Handler received falls back to the restricted resource log.
+it. Each also tells its scope where the resource call came back, so what these
+functions then read off the resource — the cleanup fact the call left behind —
+falls outside the interval the scope reports and outside the hold that interval
+bounds. Observation never changes what the resource does: cleanup that has to
+happen happens whether or not the scope around it could be delivered, and a
+cleanup fact no Handler received falls back to the restricted resource log.
 """
 
 from __future__ import annotations
@@ -73,8 +76,10 @@ def enter_connection(
             try:
                 acquired = resource.__enter__()
             except BaseException:
+                acquisition.call_returned()
                 acquisition.unacquired(resource.cleanup_result)
                 raise
+            acquisition.call_returned()
     except BaseException:
         if acquired is not None:
             _leave(resource, None)
@@ -116,6 +121,7 @@ def exit_connection(
                 attempted = True
                 _leave(resource, failure)
             finally:
+                release.call_returned()
                 release.relinquished(resource.cleanup_result)
     except BaseException:
         if not attempted:
