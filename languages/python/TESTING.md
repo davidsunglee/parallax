@@ -198,10 +198,12 @@ heaviest first and places each onto the lightest shard so far, so the N shards
 partition the class however the file is populated, and an item the file does not
 know weighs the mean of the ones it does. Only the balance depends on the file's
 currency, never the partition. The file is a required input to a sharded session
-all the same: unreadable for any reason, holding no durations at all, or holding
-anything but non-negative numbers of seconds a float holds finitely, it is that
-session's usage error naming the file, because weighing every item the same is a
-shard mechanism doing nothing while every partition check stays green.
+all the same: unreadable for any reason, holding no durations at all, holding
+anything but non-negative numbers of seconds a float holds finitely, or holding
+durations that together total more than a float holds — no mean for an unknown
+item to weigh — it is that session's usage error naming the file, because
+weighing every item the same is a shard mechanism doing nothing while every
+partition check stays green.
 
 Refresh it after the class changes shape with the recipe-less step
 [`AGENTS.md`](AGENTS.md) names, then commit the result.

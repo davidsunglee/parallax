@@ -70,33 +70,6 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
-def _cardinal(digits: str) -> int | None:
-    """The number an ASCII digit string names, or ``None`` when it names none.
-
-    ``str.isdigit`` answers for spellings Python's own parser then rejects, such
-    as ``'²'`` and a run of more digits than the interpreter will convert.
-    """
-    if not (digits.isascii() and digits.isdigit()):
-        return None
-    try:
-        return int(digits)
-    except ValueError:
-        return None
-
-
-def _shard(spec: str) -> tuple[int, int]:
-    """The ``(index, count)`` a ``--shard I/N`` spelling names, one-based.
-
-    Every other spelling is the option's usage error rather than a failure
-    partway through the session that read it.
-    """
-    index, separator, count = spec.partition("/")
-    first, total = _cardinal(index), _cardinal(count)
-    if separator and first is not None and total is not None and 1 <= first <= total:
-        return first, total
-    raise pytest.UsageError(f"--shard expects I/N with 1 <= I <= N, not {spec!r}")
-
-
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Assign each collected item its scheduling class, then keep the cost
     class's requested shard.
@@ -138,7 +111,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         else:
             item.add_marker(pytest.mark.dbfree)
 
-    index, count = _shard(str(config.getoption("--shard")))
+    index, count = cost_durations.index_and_count(str(config.getoption("--shard")))
     if count > 1:
         cost_items = [item for item in items if item.get_closest_marker("cost") is not None]
         known = cost_durations.known()
@@ -179,7 +152,7 @@ def _collected_the_whole_class(config: pytest.Config) -> bool:
     session after collection is caught by :func:`pytest_sessionfinish` instead,
     which is what makes this necessary rather than sufficient.
     """
-    _, count = _shard(str(config.getoption("--shard")))
+    _, count = cost_durations.index_and_count(str(config.getoption("--shard")))
     return (
         count == 1
         and config.args_source is not pytest.Config.ArgsSource.ARGS
