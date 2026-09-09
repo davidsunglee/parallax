@@ -2,8 +2,11 @@
 
 :func:`prepare_model` runs every finite, fallible model-only derivation into
 one complete :class:`~parallax.snapshot.handle._publication.ModelSelection`,
-and :meth:`Database.connect` wires a concrete ``m-db-port`` adapter to the
-Serving Model it will serve. The handle itself retains nothing model-derived:
+and :meth:`Database.connect` opens a runtime from a concrete ``m-db-port``
+adapter and connects it to the Serving Model it will serve. That runtime is what
+the handle owns and what :meth:`Database.close` closes; every operation below
+acquires its own connection from it for exactly as long as that operation lasts.
+The handle itself retains nothing model-derived:
 :meth:`Database.find`, :meth:`Database.stream`, and :meth:`Database.read_rows`
 delegate to the one :class:`~parallax.snapshot.handle._read_scope.ReadScope`
 this connection owns — the same scope its Wire view retains, and the same scope
@@ -39,10 +42,15 @@ selection carries, and nothing in the package imports it except
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import TracebackType
 from typing import Any
 from uuid import uuid4
 
-from parallax.core.db_port import DbPort, IsolationLevel
+from parallax.core.db_port import (
+    DatabaseAdapter,
+    DatabaseRuntime,
+    IsolationLevel,
+)
 
 # Sibling implementation modules. None of these names carries a leading
 # underscore, precisely because it crosses a module boundary: privacy is carried
@@ -125,19 +133,25 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
 
 
 class Database:
-    """A connected Parallax database handle: one adapter, one Serving Model (spec §5)."""
+    """A connected Parallax database handle: one runtime, one Serving Model (spec §5).
+
+    It OWNS the runtime it was built over, and closing it closes that runtime.
+    That ownership is why the handle is a context manager and why
+    :meth:`close` exists at all: the connections an application's operations run
+    on belong to this object's lifetime, and nothing above it can release them.
+    """
 
     __slots__ = (
         "_clock",
         "_demarcation",
         "_lifecycle",
-        "_port",
         "_reads",
+        "_runtime",
     )
 
     def __init__(
         self,
-        port: DbPort,
+        runtime: DatabaseRuntime,
         model: DomainModel | ServingModel,
         *,
         clock: Clock | None = None,
@@ -145,6 +159,12 @@ class Database:
     ) -> None:
         """Connect to ``model``: a Serving Model, or a Domain Model of either
         provenance.
+
+        ``runtime`` is an ALREADY READY runtime, and this handle takes ownership
+        of it: :meth:`close` closes it, and a composition that refuses the model
+        below leaves it to the caller that opened it. :meth:`connect` is the
+        entry point that opens one and owns both halves, and is what an
+        application uses.
 
         A Domain Model is prepared once, here, under a generated opaque edition
         that stays fixed for this connection's life, and held in a private
@@ -173,7 +193,7 @@ class Database:
                 "bare accepted Metamodel names no model a connection can serve "
                 "(snapshot-class-backed-model-required)"
             )
-        self._port = port
+        self._runtime = runtime
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
         # operation below branches on it before allocating a UUID, a descriptor,
@@ -188,28 +208,42 @@ class Database:
         # own Typed verbs and the Wire view it answers alike (spec §5 "Private
         # read composition") — and the one demarcation its transactions run
         # through. Both adopt from the same Serving Model.
-        self._reads = standalone_read_scope(lifecycle=self._lifecycle, serving=serving, port=port)
-        self._demarcation = Demarcation(port, self._clock, self._lifecycle, serving)
+        self._reads = standalone_read_scope(
+            lifecycle=self._lifecycle, serving=serving, runtime=runtime
+        )
+        self._demarcation = Demarcation(runtime, self._clock, self._lifecycle, serving)
 
     @classmethod
     def connect(
         cls,
-        adapter: DbPort,
+        adapter: DatabaseAdapter,
         model: DomainModel | ServingModel,
         *,
         clock: Clock | None = None,
         lifecycle_provider: ExecutionLifecycleProvider | None = None,
     ) -> Database:
-        """Wire a concrete ``m-db-port`` adapter to the model it will serve.
+        """Open a runtime from ``adapter`` and connect it to the model it will serve.
 
         The composition-root entry point (spec §8): only the root names a
-        concrete adapter; everything above works against the port, and the
-        dialect every statement is spelled in is that adapter's own.
+        concrete adapter; everything above works against the abstract seam, and
+        the dialect every statement is spelled in is that adapter's own.
         ``clock`` defaults to the system clock
         (inject a fixed clock in tests). ``lifecycle_provider`` is the ONE
         execution-lifecycle seam (`m-execution-lifecycle`): the Provider owns
         its own error reporter, so there is no second argument, and omitting it
         is what makes this connection's operations do no lifecycle work at all.
+
+        ``adapter`` is CONFIGURATION rather than a live resource. This call is
+        what opens a runtime from it and what the returned handle then owns: two
+        handles connected from one configuration own two independent runtimes,
+        and closing either leaves the other working. The model is judged FIRST,
+        so a value that could never be served costs no resource at all; a
+        composition that fails after the runtime opened closes it again before
+        the failure leaves, so no half-composed handle and no orphaned runtime
+        escapes.
+
+        Every handle this returns must be closed — through :meth:`close`, or by
+        using it as a context manager, which are equivalent.
 
         ``model`` is a :class:`ServingModel`, whose current selection every
         execution of this handle adopts, or a Domain Model of either
@@ -221,7 +255,7 @@ class Database:
         a stream, which begins its read there — always before any I/O. A value
         that is neither is refused here with
         :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError`,
-        before the adapter is inspected, and :meth:`__init__` refuses the same
+        before the adapter is opened, and :meth:`__init__` refuses the same
         shape one level down. One model connects to any number of Databases, and
         one Entity Class participates in any number of models.
         """
@@ -232,7 +266,42 @@ class Database:
                 "(snapshot-class-backed-model-required); a bare accepted Metamodel is a "
                 "form no application holds"
             )
-        return cls(adapter, model, clock=clock, lifecycle_provider=lifecycle_provider)
+        runtime = adapter.open()
+        try:
+            return cls(runtime, model, clock=clock, lifecycle_provider=lifecycle_provider)
+        except BaseException:
+            runtime.close()
+            raise
+
+    def close(self) -> None:
+        """Close this handle's runtime. Idempotent, and equivalent to leaving its scope.
+
+        What stops is new work: a read, a stream that has not read its first
+        page, a transaction attempt, and a retry all need a connection of their
+        own from here on and are refused. What does not stop is work already
+        running — a transaction that has its connection finishes on it,
+        including statements it has not issued yet, and a stream that has
+        already read a page reads its remaining pages. This neither waits for
+        them nor interrupts them; their connections are closed as they are
+        returned.
+
+        A retry after this therefore fails rather than replaying: the attempt
+        that would have run it cannot acquire a connection.
+        """
+        self._runtime.close()
+
+    def __enter__(self) -> Database:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        del exc_type, exc, traceback
+        self.close()
 
     def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Execute ``query`` exactly once, materializing fully, and return

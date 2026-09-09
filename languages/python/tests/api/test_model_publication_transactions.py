@@ -15,7 +15,7 @@ from typing import Any
 
 from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine
-from parallax.conformance.boundary_runner import TARGET_ID, FaultInjectingPort
+from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.snapshot import ServingModel, connect, prepare_model
@@ -57,7 +57,7 @@ def test_a_publication_during_a_transaction_leaves_that_transaction_on_a(
 
 def test_a_retry_adopts_b_and_commits_under_it(profile_run: Any) -> None:
     a, b, serving = _editions()
-    port = FaultInjectingPort(_seeded(profile_run), fault="deadlock", persistent=False)
+    port = fault_injecting_adapter(_seeded(profile_run), fault="deadlock", persistent=False)
     db = connect(port, serving)
     seen: list[str] = []
 

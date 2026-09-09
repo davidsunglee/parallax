@@ -308,7 +308,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
 # one unit of work's read, a CONCURRENT unit of work's own write-and-commit, then
 # back to the first. `run_scenario_case`/`adapter.run_case` execute only CONTIGUOUS
 # `uow` groups (`engine._scenario_uow_spans`; a genuinely interleaved group needs a
-# SECOND, independent connection this test's ordinary single-`DbPort` seam does not
+# SECOND, independent connection this test's ordinary single-`DatabaseConnection` seam does not
 # hold open), so every one of them stays OUT of `_WRITE_CASES`/
 # `test_write_run_sweep`. Membership here is a routing exclusion alone;
 # `_INTERLEAVED_RUNNER_CASES` below is the SUBSET this test drives through the

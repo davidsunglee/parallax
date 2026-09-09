@@ -1,442 +1,140 @@
 """The concrete Postgres database adapter (psycopg) — a leaf production artifact.
 
-``PostgresAdapter`` implements the abstract ``m-db-port`` over psycopg 3. It is
-the sole psycopg declarer and is wired only at composition roots. It carries the
-normalize-at-boundary contract: rows come back as attribute/column-keyed dicts of
-managed Python values (psycopg already decodes `numeric` to ``Decimal``, `int8`
-to ``int``, `timestamptz` to aware ``datetime``, and so on), never raw driver
-text. ``execute`` runs row-returning reads; ``execute_write`` runs DML and returns
-the affected-row count without appending row-returning clauses; ``transaction``
-runs a callback in one transaction, committing on success, rolling back on any
-exception, and reporting which phase decided the outcome.
+``PostgresAdapter`` is CONFIGURATION. Constructing one opens no connection, no
+pool, and no thread; it parses the connection string, validates the retention
+policy, and stores both. That is what makes it safe to build at import time, hold
+as a module constant, share between threads, and — importantly for a forking web
+server — build before a fork and open after one.
 
-The adapter is also the `m-db-error` **port boundary**: every psycopg exception
-raised by work the port itself performs — a statement, or the transaction
-boundary's begin, commit, or rollback — becomes a neutral
-:class:`~parallax.core.db_error.DatabaseError` carrying the classified category,
-the preserved native SQLSTATE, the driver message, and the violated Physical
-Index Name a unique violation reports, so no driver exception
-type produced by the PORT ever crosses above it (`m-db-port`
-normalize-at-boundary, `m-db-error`); a statement raises it and a transaction
-boundary carries it back in its outcome. An exception the caller's own
-``transaction`` body raises is not the port's work and is not translated
-(`m-db-port`). Category interpretation is delegated to the pure dialect strategy;
-the adapter only extracts psycopg's driver-specific SQLSTATE, its message, and
-the structured ``diag.constraint_name`` beside them, and parses no message text.
+Opening is a separate act with a separate owner. ``Database.connect`` calls
+:meth:`PostgresAdapter.open` and owns the runtime it gets back until it closes.
+Each ``open`` produces an INDEPENDENT runtime, so reusing one configuration for
+two handles gives two pools that know nothing about each other, and closing
+either leaves the other working.
+
+The implementation is split by responsibility behind this one public value:
+``_options`` validates the retention policy, ``_runtime`` opens and closes the
+native pool, ``_context`` owns one acquisition's lifetime, and ``_connection``
+owns scoped execution, the codecs every physical connection gets, and the
+authoritative transaction outcomes. None of those names is exported; an
+application configures this value and executes through the handle it composes.
 """
 
 from __future__ import annotations
 
-import contextlib
-from collections.abc import Callable, Generator, Sequence
+from dataclasses import dataclass, field
 
 import psycopg
-from psycopg.rows import TupleRow, dict_row
-from psycopg.sql import SQL, Literal
-from psycopg.types.datetime import TimestamptzLoader
-from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
+import psycopg.conninfo
 
-from parallax.core.base import INFINITY
-from parallax.core.db_error import DatabaseError, classify_error
-from parallax.core.db_port import (
-    BeginFailed,
-    CallbackRaised,
-    CommitFailed,
-    Committed,
-    DbPort,
-    DocumentReadOrdinals,
-    IsolationLevel,
-    JsonDocument,
-    RollbackFailed,
-    RollbackTrigger,
-    RolledBack,
-    Row,
-    TransactionOutcome,
-)
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.wire import loads
-from parallax.postgres._isolation import isolation_spelling
+from parallax.core.dialect import POSTGRES
+from parallax.postgres._options import OnDemandOptions, PoolOptions, RetentionOptions
+from parallax.postgres._runtime import PostgresRuntime, open_runtime
 
 __all__ = ["PostgresAdapter"]
 
-
-class _PresentJsonNull:
-    __slots__ = ()
-
-
-_PRESENT_JSON_NULL = _PresentJsonNull()
+_TYPE_REFUSAL = "connection_string must be a string."
+_SYNTAX_REFUSAL = (
+    "Invalid PostgreSQL connection string; expected libpq keyword/value syntax or a PostgreSQL URI."
+)
 
 
-def _load_json_preserving_null(data: str | bytes) -> object:
-    """Decode a stored document, retaining what a plain parse would discard.
+def _parsed(connection_string: str) -> None:
+    """Prove the string is one the driver will accept, and disclose nothing if not.
 
-    A present JSON null keeps a distinct sentinel, so absence and a stored null stay
-    two states. Strict Wire loading retains number tokens privately until the
-    document codec resolves each leaf's declared type.
+    Parsing here is a spelling check and nothing more: it opens no socket,
+    resolves no host, reads no service file, and proves neither that the
+    destination exists nor that the credentials work. Those resolve when each
+    physical connection is created, which is deliberate — immutable
+    configuration must not freeze an environment that the deployment expects to
+    change underneath it.
+
+    The refusal is fixed text. A parser's own message can quote the input it
+    rejected, and the input is a connection string: it can carry a password. So
+    neither the string nor the native message reaches the message, the logs, or
+    the displayed cause chain, and the native exception is suppressed as a cause
+    rather than chained. This disclosure rule is specific to construction-time
+    configuration errors — a failure to CONNECT later chains its cause normally,
+    because by then nothing is quoting the caller's input back.
     """
-    value = loads(data)
-    return _PRESENT_JSON_NULL if value is None else value
-
-
-class _DocumentJsonbLoader(JsonbLoader):
-    _loads = staticmethod(_load_json_preserving_null)
-
-
-class _DocumentJsonbBinaryLoader(JsonbBinaryLoader):
-    _loads = staticmethod(_load_json_preserving_null)
-
-
-class _InfinityTimestamptzLoader(TimestamptzLoader):  # pragma: no cover - Docker read lane
-    """Read a ``timestamptz`` back, mapping native ``infinity`` to the neutral sentinel.
-
-    A temporal interval's open upper bound reads back as Postgres native
-    ``infinity``, which is outside ``datetime``'s range — psycopg's default loader
-    raises *timestamp too large*. The port normalizes it to the ``m-core``
-    :data:`~parallax.core.base.INFINITY` (``TemporalBound``) so no driver-specific
-    sentinel and no out-of-range value crosses the port boundary (``m-db-port``
-    normalize-at-boundary); the grader renders it back to the canonical ``infinity``
-    literal. A finite instant delegates to the default loader.
-    """
-
-    def load(self, data: object) -> object:  # type: ignore[override] - psycopg loader hook is typed Buffer; the port widens to object
-        if bytes(data) == b"infinity":  # type: ignore[arg-type] - psycopg hands the loader a raw buffer at runtime
-            return INFINITY
-        return super().load(data)  # type: ignore[arg-type] - psycopg hands the loader a raw buffer at runtime
-
-
-def translate_driver_error(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:
-    """The `m-db-error` re-raise target for a psycopg exception (port boundary).
-
-    Extracts psycopg's driver-specific SQLSTATE (``exc.sqlstate`` — ``None`` for a
-    non-database failure such as a dropped connection), its message, and the
-    structured constraint name libpq reports beside them, then delegates category
-    interpretation to ``m-db-error`` (which consults ``dialect``'s own code
-    table). libpq treats an index as a constraint whether or not it was created
-    with constraint syntax, so a bare ``create unique index`` reports its own
-    name there; the adapter forwards it and interprets nothing, and never reads
-    the message text. A non-database failure carries no diagnostics at all.
-    This module-internal seam is the psycopg half of the
-    normalize-at-boundary contract; it is not part of the ``parallax.postgres``
-    public exports (``PostgresAdapter`` and ``isolation_spelling`` — §8).
-
-    Each call builds its own error, which is what satisfies the port's
-    failure-identity rule (``m-db-port``): no two invocations share an instance,
-    so the object a caller catches names the invocation that raised it.
-    """
-    diagnostic = getattr(exc, "diag", None)
-    return classify_error(
-        dialect,
-        exc.sqlstate,
-        str(exc),
-        constraint_name=None if diagnostic is None else diagnostic.constraint_name,
-    )
-
-
-def boundary_failure(dialect: Dialect, exc: psycopg.Error) -> DatabaseError:
-    """The neutral error a transaction outcome carries for a boundary failure.
-
-    A statement failure reaches its caller through ``raise ... from``, which is
-    what leaves the driver's own exception on it as the cause. A boundary failure
-    is reported rather than raised, so the same chaining happens here: without it
-    the psycopg exception the classification came from would be dropped on the way
-    into the outcome, and a caller re-raising the error later would see no cause
-    at all.
-    """
-    error = translate_driver_error(dialect, exc)
-    error.__cause__ = exc
-    return error
-
-
-@contextlib.contextmanager
-def translating_driver_errors(dialect: Dialect) -> Generator[None]:
-    """Re-raise any psycopg exception inside the block as a neutral ``DatabaseError``.
-
-    A :class:`~parallax.core.db_error.DatabaseError` raised by an inner port call
-    is **not** a ``psycopg.Error``, so a nested transaction never re-wraps an
-    already-translated error, and a non-driver exception (a rollback signal, a
-    callback's own error) propagates unchanged.
-    """
+    if type(connection_string) is not str:
+        raise TypeError(_TYPE_REFUSAL)
     try:
-        yield
-    except psycopg.Error as exc:
-        raise translate_driver_error(dialect, exc) from exc
+        psycopg.conninfo.conninfo_to_dict(connection_string)
+    except psycopg.Error:
+        raise ValueError(_SYNTAX_REFUSAL) from None
 
 
-def adapt_binds(binds: Sequence[object]) -> list[object]:
-    """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
+def _prepare_threshold(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"prepare_threshold takes an int or None (got {value!r})")
+    if value < 0:
+        raise ValueError(f"prepare_threshold takes a nonnegative int or None (got {value!r})")
+    return value
 
-    Module-internal seam (not part of the ``parallax.postgres`` public exports,
-    which are ``PostgresAdapter`` and ``isolation_spelling`` — §8).
 
-    A :class:`~parallax.core.db_port.JsonDocument` (the neutral ``json`` /
-    value-object carrier) becomes a psycopg ``Jsonb``; every other bind passes
-    through unchanged. This keeps the psycopg bind mechanics internal to the
-    adapter — no driver type is exported to the developer surface (m-db-port).
+def _retention(pool: object) -> RetentionOptions:
+    if not isinstance(pool, PoolOptions | OnDemandOptions):
+        raise TypeError(
+            f"pool takes PoolOptions or OnDemandOptions (got {pool!r}); omit it for the "
+            f"retaining defaults"
+        )
+    return pool
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresAdapter:
+    """How to reach one Postgres database, and how to hold connections to it.
+
+    ``connection_string`` is libpq's own grammar — keyword/value pairs, a
+    ``postgresql://`` URI, a ``service=`` reference, or the empty string, which
+    asks libpq to take everything from the environment. It is stored exactly as
+    given and kept out of this value's representation, because a connection
+    string is a place a password lives and a repr is a place values get logged.
+
+    ``pool`` selects retention. Omitting it takes :class:`PoolOptions`' defaults;
+    :class:`OnDemandOptions` keeps no idle connections instead. Change either by
+    constructing a new configuration — ``dataclasses.replace`` works and
+    revalidates — never by mutating this one, so a runtime already open cannot
+    be reconfigured underneath its handle.
+
+    ``prepare_threshold`` is the driver's server-side auto-preparation after
+    that many identical executions. The default suits an ordinary long-lived
+    application connection against one stable schema. Pass ``None`` to disable
+    it where the SAME connection may see a table's shape change underneath
+    identical query text — a schema-reset-per-case harness, never a deployed
+    application — because Postgres's own "cached plan must not change result
+    type" is a server-side plan-cache invalidation rather than anything
+    Parallax can reconcile.
     """
-    return [Jsonb(bind.value) if isinstance(bind, JsonDocument) else bind for bind in binds]
 
-
-def fold_document_reads(
-    dialect: Dialect,
-    names: Sequence[str],
-    rows: Sequence[Sequence[object]],
-    document_reads: Sequence[DocumentReadOrdinals],
-) -> list[Row]:
-    """Fold raw adjacent document cells into provider-neutral managed rows."""
-    pairs = tuple(document_reads)
-    occupied: set[int] = set()
-    for presence, document in pairs:
-        if document != presence + 1 or presence < 0 or document >= len(names):
-            raise ValueError(
-                "document-read ordinals must be adjacent, zero-based, and within the projection"
-            )
-        if presence in occupied or document in occupied:
-            raise ValueError("document-read ordinal pairs must not overlap")
-        occupied.update((presence, document))
-
-    by_document = {document: presence for presence, document in pairs}
-    omitted = {presence for presence, _document in pairs}
-    managed: list[Row] = []
-    for raw in rows:
-        if len(raw) != len(names):
-            raise ValueError("a database row does not match its result description")
-        row: Row = {}
-        for ordinal, (name, value) in enumerate(zip(names, raw, strict=True)):
-            if ordinal in omitted:
-                continue
-            presence = by_document.get(ordinal)
-            if value is _PRESENT_JSON_NULL:
-                value = None
-            row[name] = (
-                dialect.parse_document_read(raw[presence], value) if presence is not None else value
-            )
-        managed.append(row)
-    return managed
-
-
-class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/provider lanes
-    """A psycopg-backed :class:`~parallax.core.db_port.DbPort` over one connection."""
-
-    dialect: Dialect = POSTGRES
+    dialect = POSTGRES
     """The one place this adapter's SQL spelling is stated.
 
-    Declared on the class, so a composition root reads it off
-    ``PostgresAdapter`` itself without opening a connection, and every dialect
-    decision this adapter makes — error classification, document-read parsing —
-    consults it rather than a module name that could drift from it.
+    Unannotated, so it is a class attribute rather than one of this record's
+    fields: a composition root selects an adapter and lowers SQL in the spelling
+    it will execute in before any configuration, let alone any resource, exists,
+    and no caller can construct one claiming a different spelling.
     """
 
-    def __init__(self, connection: psycopg.Connection[TupleRow]) -> None:
-        self._connection = connection
-        # Normalize native `timestamptz` infinity at the port boundary (m-db-port):
-        # a temporal interval's open upper bound reads back as the neutral m-core
-        # infinity sentinel rather than raising psycopg's out-of-range error.
-        connection.adapters.register_loader("timestamptz", _InfinityTimestamptzLoader)
-        connection.adapters.register_loader("jsonb", _DocumentJsonbLoader)
-        connection.adapters.register_loader("jsonb", _DocumentJsonbBinaryLoader)
+    connection_string: str = field(repr=False)
+    pool: RetentionOptions = field(default_factory=PoolOptions, kw_only=True)
+    prepare_threshold: int | None = field(default=5, kw_only=True)
 
-    @classmethod
-    def connect(
-        cls, conninfo: str, *, autocommit: bool = True, prepare_threshold: int | None = 5
-    ) -> PostgresAdapter:
-        """Open a psycopg connection from documented connection configuration.
+    def __post_init__(self) -> None:
+        _parsed(self.connection_string)
+        object.__setattr__(self, "pool", _retention(self.pool))
+        object.__setattr__(self, "prepare_threshold", _prepare_threshold(self.prepare_threshold))
 
-        ``prepare_threshold`` defaults to psycopg's own (server-side
-        auto-preparation after 5 identical executions) — the right default
-        for an ordinary long-lived application connection against one stable
-        schema. A caller whose SAME connection sees a table's shape change
-        underneath an identical query TEXT across its own lifetime (a
-        schema-reset-per-case test harness, never a deployed app) should pass
-        ``prepare_threshold=None`` to disable it: Postgres's own "cached plan
-        must not change result type" error is a server-side prepared-plan
-        cache invalidation, not a Parallax-level concern.
+    def open(self) -> PostgresRuntime:
+        """Open one independent ready runtime, or raise having released everything.
+
+        Ready means proved: the pool exists, a real connection was acquired,
+        initialized, and made to decode an integer, an unbounded instant, and a
+        structured document, and it was given back. A failure at any of those
+        raises :class:`~parallax.core.db_port.DatabaseStartupError` naming the
+        phase, and leaves no pool, thread, or connection behind.
         """
-        return cls(
-            psycopg.connect(conninfo, autocommit=autocommit, prepare_threshold=prepare_threshold)
-        )
-
-    @property
-    def connection(self) -> psycopg.Connection[TupleRow]:
-        """The underlying psycopg connection (for provider-lane provisioning)."""
-        return self._connection
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:
-        with translating_driver_errors(self.dialect):
-            if document_reads:
-                with self._connection.cursor() as cursor:
-                    cursor.execute(sql.encode(), adapt_binds(binds))
-                    if cursor.description is None:
-                        return []
-                    names = [column.name for column in cursor.description]
-                    return fold_document_reads(
-                        self.dialect, names, cursor.fetchall(), document_reads
-                    )
-            with self._connection.cursor(row_factory=dict_row) as cursor:
-                cursor.execute(sql.encode(), adapt_binds(binds))
-                if cursor.description is None:
-                    return []
-                return [
-                    {
-                        name: None if value is _PRESENT_JSON_NULL else value
-                        for name, value in row.items()
-                    }
-                    for row in cursor.fetchall()
-                ]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        with translating_driver_errors(self.dialect), self._connection.cursor() as cursor:
-            cursor.execute(sql.encode(), adapt_binds(binds))
-            return cursor.rowcount
-
-    def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
-    ) -> TransactionOutcome[T]:
-        """Run ``body`` in one transaction and report which boundary phase decided
-        the outcome.
-
-        Every phase the port itself performs translates, not only the statements
-        inside it: a driver error at the begin, at the commit (a deferred
-        constraint, a serialization failure), or at the rollback an escaping body
-        triggers becomes a neutral ``DatabaseError``, exactly as a statement error
-        raised through the port methods above does — but it is REPORTED rather
-        than raised, because which phase failed is what decides whether the work
-        may be retried and whether this connection is still trustworthy.
-
-        An exception ``body`` itself raises is the CALLER's failure rather than
-        one the port made, so :class:`~parallax.core.db_port.CallbackRaised`
-        carries the identical object (``m-db-port``). Translating it would
-        substitute a port error for the caller's own — and a body-authored
-        deadlock-class exception would then read as retriable to
-        ``m-auto-retry``, which would replay the body over a failure the database
-        never reported. Catching it at its own call site is what keeps it
-        distinguishable from the rollback it triggers even when the driver raises
-        one reused exception object for both.
-
-        The driver's transaction context is driven a phase at a time rather than
-        through a ``with`` statement, because a ``with`` reports only the single
-        exception that escapes it: begin, commit, and rollback would arrive
-        indistinguishable, and a rollback failure — which psycopg's context logs
-        and discards — would not arrive at all.
-
-        A requested ``isolation`` is part of opening the boundary rather than
-        part of the work inside it: it is applied to the transaction just begun,
-        before the body sees a port, so it governs this transaction alone and
-        leaves the connection's own default untouched for the next one. Postgres
-        forbids each portable level's anomalies under its own name for it, so
-        this adapter maps the request to that name and asks for it; a level
-        Postgres nonetheless refuses ends the boundary
-        :class:`~parallax.core.db_port.BeginFailed`: no work of the caller's was
-        attempted, and a request silently downgraded to a level the caller did
-        not ask for is worse than one refused.
-        """
-        # Resolved before the physical transaction exists, so a level outside the
-        # vocabulary — a type violation the handle's own check would have caught —
-        # cannot leave an empty transaction open on the connection.
-        spelling = None if isolation is None else isolation_spelling(isolation)
-        boundary = self._connection.transaction()
-        try:
-            boundary.__enter__()
-        except psycopg.Error as exc:
-            return BeginFailed(boundary_failure(self.dialect, exc))
-        if spelling is not None:
-            unopened = self._at_isolation(spelling, boundary=boundary)
-            if unopened is not None:
-                return unopened
-        try:
-            value = body(self)
-        except BaseException as raised:
-            return self._undone(CallbackRaised(raised), boundary=boundary)
-        try:
-            boundary.__exit__(None, None, None)
-        except psycopg.Error as exc:
-            return self._undone(CommitFailed(boundary_failure(self.dialect, exc)), boundary=None)
-        return Committed(value)
-
-    def _at_isolation(
-        self,
-        spelling: str,
-        *,
-        boundary: contextlib.AbstractContextManager[psycopg.Transaction],
-    ) -> BeginFailed | None:
-        """Ask the transaction just begun for ``spelling``, or report it unopened.
-
-        Postgres accepts a level only as a transaction's first statement, which
-        is what makes this part of opening the boundary rather than of the work
-        inside it.
-
-        The mapped name arrives as the bound VALUE of the transaction-scoped
-        setting rather than as SQL text it is composed into, so what the
-        statement can express is one level and never a second transaction mode
-        or a second statement — a property of the request's SHAPE, which holds
-        however the mapping above is later spelled.
-
-        A refusal leaves a transaction that began and did nothing. Undoing it is
-        this adapter's business rather than the caller's, and the outcome
-        reported is the one for a boundary that never opened as asked — no work
-        of the caller's ran, so there is nothing to retry and nothing for a
-        caller to undo. A connection too broken to undo an empty transaction is
-        discarded rather than handed back, since what it would run next is
-        unknown.
-        """
-        request = SQL("set local transaction_isolation = {}").format(Literal(spelling))
-        try:
-            with self._connection.cursor() as cursor:
-                cursor.execute(request)
-        except psycopg.Error as exc:
-            try:
-                boundary.__exit__(type(exc), exc, exc.__traceback__)
-                self._connection.rollback()
-            except psycopg.Error:
-                self._discard()
-            return BeginFailed(boundary_failure(self.dialect, exc))
-        return None
-
-    def _undone(
-        self,
-        trigger: RollbackTrigger,
-        *,
-        boundary: contextlib.AbstractContextManager[psycopg.Transaction] | None,
-    ) -> RolledBack | RollbackFailed:
-        """Undo the transaction ``trigger`` ended, reporting whether the undo completed.
-
-        ``boundary`` is the driver's still-open transaction context when the
-        callback failed, and ``None`` once a failed commit has already closed it.
-
-        The connection is asked to roll back after that context has exited
-        because psycopg's own exit logs and discards a failed ROLLBACK rather
-        than raising it, so a rollback failure would otherwise be invisible to
-        this port. The second request is a no-op when the transaction already
-        ended — the driver sends nothing on an idle session — and is where a
-        connection too broken to undo the work raises an error this port can
-        classify. Then the outcome of the work is unknown, so the connection is
-        discarded rather than handed back for more.
-        """
-        error = trigger.error
-        try:
-            if boundary is not None:
-                boundary.__exit__(type(error), error, error.__traceback__)
-            self._connection.rollback()
-        except psycopg.Error as exc:
-            rollback_error = boundary_failure(self.dialect, exc)
-            self._discard()
-            return RollbackFailed(trigger, rollback_error)
-        return RolledBack(trigger)
-
-    def _discard(self) -> None:
-        """Drop the connection whose transaction outcome is unknown.
-
-        Closing a connection already broken enough to fail a rollback may itself
-        fail, and that failure adds nothing to what the rollback error already
-        reports.
-        """
-        with contextlib.suppress(psycopg.Error):
-            self.close()
-
-    def close(self) -> None:
-        """Close the underlying connection."""
-        self._connection.close()
+        return open_runtime(self.connection_string, self.pool, self.prepare_threshold)

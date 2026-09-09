@@ -41,11 +41,13 @@ from decimal import Decimal
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance import case_format, sweep
+from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
-    DbPort,
+    DatabaseAdapter,
+    DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
     Row,
@@ -64,6 +66,7 @@ __all__ = [
     "boundary_steps",
     "boundary_uow",
     "expected_attempts",
+    "fault_injecting_adapter",
     "fault_kind",
     "outcome",
     "reachable_boundary_cases",
@@ -397,7 +400,7 @@ class FaultInjectingPort:
 
     def __init__(
         self,
-        inner: DbPort,
+        inner: DatabaseConnection,
         *,
         fault: str | None,
         persistent: bool,
@@ -430,7 +433,7 @@ class FaultInjectingPort:
         return self._inner.execute_write(sql, binds)
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         # A boundary-seam fault is a boundary that never opened, so this ANSWERS
         # `BeginFailed` instead of raising and never reaches the inner port: the
@@ -444,7 +447,7 @@ class FaultInjectingPort:
             return BeginFailed(armed.error())
         inner = self
 
-        def wrapped(conn: DbPort) -> T:
+        def wrapped(conn: DatabaseConnection) -> T:
             return body(
                 FaultInjectingPort(
                     conn, fault=inner._fault, persistent=inner._persistent, state=inner._state
@@ -460,6 +463,25 @@ class FaultInjectingPort:
             return None
         armed = _fault(self._fault)
         return armed if armed.seam == seam else None
+
+
+def fault_injecting_adapter(
+    adapter: DatabaseAdapter, *, fault: str | None, persistent: bool
+) -> DatabaseAdapter:
+    """``adapter``'s configuration with ``fault`` armed on every connection it acquires.
+
+    One :class:`_FaultState` is closed over here, so a one-shot injection stays
+    one-shot across the whole ``db.transact`` retry loop even though every
+    attempt acquires a connection of its own. A state per acquisition would fire
+    once per attempt instead, which is the persistent behavior wearing the
+    one-shot spelling.
+    """
+    state = _FaultState()
+
+    def decorate(connection: DatabaseConnection) -> DatabaseConnection:
+        return FaultInjectingPort(connection, fault=fault, persistent=persistent, state=state)
+
+    return DecoratingAdapter(adapter, decorate)
 
 
 def expected_attempts(

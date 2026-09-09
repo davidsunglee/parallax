@@ -26,6 +26,7 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
     lifecycle_run,
 )
+from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle import (
     AttemptBeginFailed,
     AttemptCommitted,
@@ -40,7 +41,6 @@ from parallax.core.execution_lifecycle import (
     DatabaseWriteCompleted,
     DirectFailure,
     ExecutionEvent,
-    FailureDiagnostic,
     JoinedInvocation,
     JoinedInvocationRaised,
     JoinedInvocationReturned,

@@ -59,7 +59,7 @@ import datetime as dt
 from collections.abc import Mapping
 from typing import Any
 
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity import (
     AttributeAssignment,
     EntityRowCodec,
@@ -356,7 +356,7 @@ class Transaction:
     def __init__(
         self,
         uow: UnitOfWork,
-        conn: DbPort,
+        conn: DatabaseConnection,
         read: SelectedReadModel,
         write: SelectedWriteModel,
         attempt: TransactionAttemptActivity,

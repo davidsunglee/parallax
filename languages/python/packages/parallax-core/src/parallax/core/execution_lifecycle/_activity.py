@@ -37,14 +37,12 @@ from uuid import UUID, uuid4
 
 from parallax.core.auto_retry import retriable_failure
 from parallax.core.db_port import CommitFailed, IsolationLevel, RollbackTrigger
+from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
     CausedFailure,
     DirectFailure,
-    FailureDiagnostic,
     database_diagnostic_for,
-    diagnostic_for,
-    qualified_type,
 )
 from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleHandlerError,

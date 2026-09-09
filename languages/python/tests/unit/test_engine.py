@@ -25,7 +25,7 @@ import pytest
 from _metamodel_support import Declaration, attribute, key, source
 from _second_dialect import BACKTICKED
 
-from _support.db_port import body_outcome, projected_row
+from _support.db_port import ConnectsAsItself, body_outcome, projected_row
 from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, models, sweep
 from parallax.conformance._actual_wire import ActualWireProjection
@@ -48,7 +48,13 @@ from parallax.core.base import (
     Decimal as DecimalType,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Committed, DbPort, JsonDocument, Row, TransactionOutcome
+from parallax.core.db_port import (
+    Committed,
+    DatabaseConnection,
+    JsonDocument,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -130,7 +136,7 @@ def _entry(entry: dict[str, object], key: str) -> Row:
     return cast("Row", entry[key])
 
 
-class FakeDbPort:
+class FakeDbPort(ConnectsAsItself):
     """An in-memory port that records executed SQL and returns canned rows."""
 
     dialect: Dialect = POSTGRES
@@ -149,7 +155,7 @@ class FakeDbPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -626,7 +632,7 @@ def test_compile_read_case_reports_missing_fields(
 # --------------------------------------------------------------------------- #
 # Scenario / writeSequence — the unit-of-work write lanes (Docker-free).       #
 # --------------------------------------------------------------------------- #
-class FakeWritePort:
+class FakeWritePort(ConnectsAsItself):
     """An in-memory ``m-db-port`` recording DML + read execution and commit/rollback."""
 
     dialect: Dialect = POSTGRES
@@ -649,7 +655,7 @@ class FakeWritePort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         outcome = body_outcome(self, body)
         if isinstance(outcome, Committed):
@@ -1713,8 +1719,8 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
         )
 
 
-class _ScriptedPort:
-    """A `DbPort` fake with per-call SCRIPTED read rows / write-affected counts
+class _ScriptedPort(ConnectsAsItself):
+    """A `DatabaseConnection` fake with per-call SCRIPTED read rows / write-affected counts
     (`run_interleaved_scenario_case`'s own unit
     pins) — unlike `FakeWritePort` above (one constant `find_rows` for every
     `execute`, `write_affected` always `1`), a genuinely two-session
@@ -1770,7 +1776,7 @@ class _ScriptedPort:
         return self._write_affected.pop(0) if self._write_affected else 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
@@ -1802,7 +1808,7 @@ class _ScriptedExecution:
         self.closed = False
         self.cancel_calls = 0
         self.terminate_calls = 0
-        self._database = handle.Database(
+        self._database = handle.Database.connect(
             port, model, clock=clock, lifecycle_provider=lifecycle_provider
         )
 
@@ -5485,7 +5491,7 @@ def test_read_table_state_normalizes_values_without_changing_the_projection() ->
 # `mutate` action. What a root LOOKS like is the wire materializer's own       #
 # contract (`test_wire_reads.py`); what is left here is the envelope.          #
 # --------------------------------------------------------------------------- #
-class QueueDbPort:
+class QueueDbPort(ConnectsAsItself):
     """A fake `m-db-port` returning one canned response per `execute()` call."""
 
     dialect: Dialect = POSTGRES
@@ -5504,7 +5510,7 @@ class QueueDbPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
@@ -7221,7 +7227,7 @@ class _QueueWritePort(QueueDbPort):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
@@ -7575,7 +7581,7 @@ class _CorruptionPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover - a corruption runs outside one
         return body_outcome(self, body)
 

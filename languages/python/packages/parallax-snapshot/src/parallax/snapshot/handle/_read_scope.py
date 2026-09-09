@@ -55,7 +55,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import ConnectionContext, DatabaseConnection, DatabaseRuntime
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -80,6 +80,10 @@ from parallax.core.unit_work import Concurrency, UnitOfWork
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores.
 from parallax.snapshot.handle._adoption import AdoptedExecution
+from parallax.snapshot.handle._connection_lifecycle import (
+    enter_connection,
+    exit_connection,
+)
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._page import At, PagePlan, StreamPage, read_stream_page
 from parallax.snapshot.handle._preflight import preflight
@@ -178,14 +182,16 @@ def publication_for(selected: SelectedReadModel, interface: ReadInterface, /) ->
 class ReadInputs:
     """What the executor triad takes that varies by lane, as one value.
 
-    A standalone read carries the Handle's own long-lived port, no Concurrency
-    Preference, and no ledger; a participating one carries the attempt's
-    connection, the unit of work's preference, and the unit of work itself as the
-    ledger retained evidence indexes into. Built once when the scope is
-    constructed, so no read and no page assembles one.
+    A standalone read carries the connection its own operation acquired, no
+    Concurrency Preference, and no ledger; a participating one carries the
+    attempt's connection, the unit of work's preference, and the unit of work
+    itself as the ledger retained evidence indexes into. Either way the
+    connection is the one the operation currently holds rather than anything the
+    Handle retains, which is what makes an operation's statements provably run
+    on the connection that operation acquired.
     """
 
-    port: DbPort
+    connection: DatabaseConnection
     preference: Concurrency | None
     ledger: ObservationLedger | None
 
@@ -229,6 +235,16 @@ class _BegunRead(StreamRead, Protocol):
     ) -> T:
         """Run one page's ``body`` inside this lane's bracket and inside
         ``batch``, which this opens rather than the loop above."""
+        ...
+
+    def release(self, failure: BaseException | None, /) -> None:
+        """Release what :meth:`acquired` took, once, or do nothing.
+
+        Idempotent and total: a delivery settles where it discovers its own end
+        and its scope closes afterwards, so both call this and only the first
+        does anything. A delivery that never reached a page has nothing to
+        release, and a participating one never had anything of its own.
+        """
         ...
 
     def advance[T](self, body: Callable[[], T], /) -> T:
@@ -318,7 +334,7 @@ class ReadScope:
             return find_rows(
                 validated,
                 selected.model,
-                inputs.port,
+                inputs.connection,
                 edition=selected.edition,
                 preference=inputs.preference,
                 read=activity,
@@ -366,10 +382,11 @@ class ReadScope:
         """One page of a delivery, read inside its begun read's own bracket.
 
         A page IS an eager read of a bounded root query, so it threads the same
-        port, Concurrency Preference, and observation ledger an eager graph read
-        here does — and takes its model from the read the delivery was begun
-        as, which holds the one selection it was opened under rather than
-        asking for a second.
+        connection, Concurrency Preference, and observation ledger an eager graph
+        read here does — and takes its model from the read the delivery was begun
+        as, which holds the one selection it was opened under, and the one
+        connection every page of it runs on, rather than asking for a second of
+        either.
         """
         model = read.selected.model
 
@@ -378,7 +395,7 @@ class ReadScope:
                 page_plan,
                 at,
                 model,
-                inputs.port,
+                inputs.connection,
                 preference=inputs.preference,
                 ledger=inputs.ledger,
                 calls=calls,
@@ -423,7 +440,7 @@ class ReadScope:
                     find_history(
                         validated,
                         selected.model,
-                        inputs.port,
+                        inputs.connection,
                         read=activity,
                     )
                 )
@@ -431,7 +448,7 @@ class ReadScope:
                 find(
                     validated,
                     selected.model,
-                    inputs.port,
+                    inputs.connection,
                     preference=inputs.preference,
                     ledger=inputs.ledger,
                     calls=activity,
@@ -441,10 +458,10 @@ class ReadScope:
         return read.eager(node.target, publication.interface, published)
 
 
-@dataclass(frozen=True, slots=True)
 class _StandaloneRead:
-    """One standalone operation's read: its own Root Execution, no flush, and
-    the edition it adopted named on whatever ordinary failure escapes it.
+    """One standalone operation's read: its own Root Execution, its own
+    connection, no flush, and the edition it adopted named on whatever ordinary
+    failure escapes it.
 
     Non-transactional in the three ways that reach the executor: no read lock,
     no Concurrency Preference, and no ledger — which is what leaves the evidence
@@ -452,12 +469,29 @@ class _StandaloneRead:
     operation by :class:`_StandaloneExecution`, over the selection that
     operation adopted, so everything done through it runs under that one
     selection however long a delivery through it takes.
+
+    It is also where a standalone operation's connection lifetime lives. An
+    eager read brackets one around its whole execution and is done with it; a
+    delivery asks for one at its first page and keeps it until it settles, which
+    is why the acquisition is held HERE rather than in either caller: the read
+    is the one object both shapes of standalone operation have exactly one of.
     """
 
-    lifecycle: InstalledLifecycle | None
-    adopted: AdoptedExecution
-    selected: SelectedReadModel
-    inputs: ReadInputs
+    __slots__ = ("_connection", "_resource", "adopted", "lifecycle", "runtime", "selected")
+
+    def __init__(
+        self,
+        lifecycle: InstalledLifecycle | None,
+        adopted: AdoptedExecution,
+        selected: SelectedReadModel,
+        runtime: DatabaseRuntime,
+    ) -> None:
+        self.lifecycle = lifecycle
+        self.adopted = adopted
+        self.selected = selected
+        self.runtime = runtime
+        self._resource: ConnectionContext | None = None
+        self._connection: DatabaseConnection | None = None
 
     def eager[T](
         self,
@@ -467,20 +501,32 @@ class _StandaloneRead:
         /,
     ) -> T:
         # The Root Execution opens AFTER the gate and spans through publication:
-        # the gate is deterministic and reaches no port, so a refused read
-        # creates no root and calls no Provider, while planning, lowering, every
-        # Database Call, conversion, and materialization are all inside it. It
-        # is opened OUTSIDE the failure bracket and entered inside it: a
-        # Provider that fails to open keeps its own type, and the root's own
-        # Finished event sees the underlying failure before the caller sees it
-        # named under this read's edition.
+        # the gate is deterministic and reaches no connection, so a refused read
+        # creates no root and calls no Provider, while acquisition, planning,
+        # lowering, every Database Call, conversion, and materialization are all
+        # inside it. It is opened OUTSIDE the failure bracket and entered inside
+        # it: a Provider that fails to open keeps its own type, and the root's
+        # own Finished event sees the underlying failure before the caller sees
+        # it named under this read's edition.
         root = open_read_root(
             self.lifecycle, target=target, interface=interface, edition=self.selected.edition
         )
 
         def inside() -> T:
             with root as read:
-                return body(read, self.inputs)
+                # One connection for the whole read: every root and relationship
+                # statement, the conversion, and the publication it is
+                # materialized into. Held until the result exists, because a
+                # graph half-built from rows is not a result anything may return.
+                resource = self.runtime.connection()
+                connection = enter_connection(resource)
+                try:
+                    published = body(read, ReadInputs(connection, None, None))
+                except BaseException as failure:
+                    exit_connection(resource, failure)
+                    raise
+                exit_connection(resource, None)
+                return published
 
         return self.adopted.contextualized(inside)
 
@@ -495,6 +541,37 @@ class _StandaloneRead:
             edition=self.selected.edition,
         )
 
+    def _acquired(self) -> DatabaseConnection:
+        """The connection every page of this delivery runs on.
+
+        Acquired the first time a page asks for it and answered unchanged
+        afterwards, which is what makes acquisition happen at the first page
+        rather than at scope entry.
+        """
+        connection = self._connection
+        if connection is not None:
+            return connection
+        resource = self.runtime.connection()
+        # Stored before entry, so a failed entry still leaves the context whose
+        # cleanup facts were consumed reachable — and cleared again, because a
+        # single-use context that failed to open is not one a later page may
+        # retry through.
+        self._resource = resource
+        try:
+            connection = enter_connection(resource)
+        except BaseException:
+            self._resource = None
+            raise
+        self._connection = connection
+        return connection
+
+    def release(self, failure: BaseException | None, /) -> None:
+        resource = self._resource
+        self._resource = None
+        self._connection = None
+        if resource is not None:
+            exit_connection(resource, failure)
+
     def page[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
     ) -> T:
@@ -503,7 +580,7 @@ class _StandaloneRead:
         # own: the batch and the stream above it report the underlying failure,
         # and the advance that reached this page names the edition once.
         with batch as calls:
-            return body(calls, self.inputs)
+            return body(calls, ReadInputs(self._acquired(), None, None))
 
     def advance[T](self, body: Callable[[], T], /) -> T:
         return self.adopted.contextualized(body)
@@ -517,17 +594,20 @@ class _StandaloneExecution:
     begins adopts whatever selection is current at that call, through an
     adoption of its own, and is served under that selection for its whole
     execution — a publication landing afterwards reaches the next operation and
-    never this one.
+    never this one. It holds the RUNTIME for the same reason it holds the
+    Serving Model and not a selection: a connection belongs to one operation,
+    so what is retained here is the ability to acquire one rather than one
+    already acquired.
     """
 
     lifecycle: InstalledLifecycle | None
     serving: ServingModel
-    inputs: ReadInputs
+    runtime: DatabaseRuntime
 
     def begin(self) -> _StandaloneRead:
         adopted = AdoptedExecution(self.serving)
         selected = read_projection(adopted.adopt())
-        return _StandaloneRead(self.lifecycle, adopted, selected, self.inputs)
+        return _StandaloneRead(self.lifecycle, adopted, selected, self.runtime)
 
 
 @dataclass(frozen=True, slots=True)
@@ -557,6 +637,15 @@ class _ParticipatingExecution:
 
     def begin(self) -> _ParticipatingExecution:
         return self
+
+    def release(self, failure: BaseException | None, /) -> None:
+        """Nothing: participating work never checked anything out.
+
+        The attempt owns the connection for its whole life, and a stream inside
+        it is one more thing running on that connection rather than a second
+        borrower of it.
+        """
+        del failure
 
     def advance[T](self, body: Callable[[], T], /) -> T:
         return body()
@@ -600,11 +689,9 @@ def standalone_read_scope(
     *,
     lifecycle: InstalledLifecycle | None,
     serving: ServingModel,
-    port: DbPort,
+    runtime: DatabaseRuntime,
 ) -> ReadScope:
-    return ReadScope(
-        lifecycle, _StandaloneExecution(lifecycle, serving, ReadInputs(port, None, None))
-    )
+    return ReadScope(lifecycle, _StandaloneExecution(lifecycle, serving, runtime))
 
 
 def participating_read_scope(
@@ -612,7 +699,7 @@ def participating_read_scope(
     lifecycle: InstalledLifecycle | None,
     selected: SelectedReadModel,
     uow: UnitOfWork,
-    conn: DbPort,
+    conn: DatabaseConnection,
     attempt: TransactionAttemptActivity,
 ) -> ReadScope:
     return ReadScope(

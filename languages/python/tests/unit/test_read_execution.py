@@ -27,12 +27,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final
 
+import pytest
 from _transact_support import ACCOUNT, FIXED
 
-from _support.db_port import RefusingPort
+from _support.db_port import RefusingAdapter, ScriptedAdapter
 from _support.model_capabilities import cataloged_for, graph_construction_for
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseConnection
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ReadStarted,
@@ -175,7 +176,7 @@ def _account_insert(account_id: int) -> PreparedKeyedWrite:
 def _participating[T](
     run: Callable[[Any, UnitOfWork], T],
     *,
-    conn: DbPort | None = None,
+    conn: DatabaseConnection | None = None,
     provider: RecordingLifecycleProvider | None = None,
     concurrency: Concurrency = "optimistic",
     flushes: _Flushes | None = None,
@@ -186,7 +187,7 @@ def _participating[T](
     The flush executor records rather than lowers: what these cases grade is
     WHEN a flush happened relative to a body, never what its statements were.
     """
-    port = conn if conn is not None else RefusingPort()
+    port = conn if conn is not None else RefusingAdapter()
     executor = flushes if flushes is not None else _Flushes()
     root = open_transaction_root(
         installed_lifecycle(provider),
@@ -226,8 +227,8 @@ def test_each_policy_answers_the_selection_it_was_built_with() -> None:
     # a participating one answers itself, over the transaction's fixed record:
     # what both promise is that the record arrives through the begun read
     # rather than off the handle.
-    port = RefusingPort()
-    standalone = _Standalone(None, _SERVING, ReadInputs(port, None, None))
+    runtime = ScriptedAdapter().open()
+    standalone = _Standalone(None, _SERVING, runtime)
     current = read_projection(_SERVING.current())
     assert standalone.begin().selected is current
     assert standalone.begin().selected is current
@@ -247,7 +248,7 @@ def test_a_standalone_begin_adopts_once_per_operation_and_retains_it() -> None:
     a = prepare_model(ACCOUNT, edition="a")
     b = prepare_model(ACCOUNT, edition="b")
     serving = ServingModel(a)
-    execution = _Standalone(None, serving, ReadInputs(RefusingPort(), None, None))
+    execution = _Standalone(None, serving, ScriptedAdapter().open())
 
     first = execution.begin()
     serving.publish(b, expected=a)
@@ -264,8 +265,8 @@ def test_a_standalone_begin_adopts_once_per_operation_and_retains_it() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_standalone_eager_read_runs_inside_a_read_root_of_its_own() -> None:
     provider = RecordingLifecycleProvider()
-    port = RefusingPort()
-    execution = _Standalone(installed_lifecycle(provider), _SERVING, ReadInputs(port, None, None))
+    runtime = ScriptedAdapter().open()
+    execution = _Standalone(installed_lifecycle(provider), _SERVING, runtime)
     body = _Body(provider)
 
     assert execution.begin().eager(_TARGET, "typed", body) is _ANSWER
@@ -281,17 +282,23 @@ def test_a_standalone_eager_read_runs_inside_a_read_root_of_its_own() -> None:
     assert started.edition == "test"
 
 
-def test_a_standalone_body_is_handed_the_port_and_neither_a_preference_nor_a_ledger() -> None:
+def test_a_standalone_body_is_handed_its_own_connection_and_no_preference_or_ledger() -> None:
     # Non-transactional in the three ways that reach the executor, stated where
-    # the three values are actually chosen.
-    port = RefusingPort()
-    execution = _Standalone(None, _SERVING, ReadInputs(port, None, None))
+    # the three values are actually chosen — and over a connection this read
+    # acquired for itself rather than one the handle was holding.
+    adapter = ScriptedAdapter()
+    execution = _Standalone(None, _SERVING, adapter.open())
     body = _Body()
 
     execution.begin().eager(_TARGET, "typed", body)
 
     handed = body.only.inputs
-    assert (handed.port, handed.preference, handed.ledger) == (port, None, None)
+    assert (handed.preference, handed.ledger) == (None, None)
+    assert adapter.acquisitions == 1
+    # The connection the body ran on is gone by the time this reads it back: the
+    # eager read released at its own end, so what escaped executes nothing.
+    with pytest.raises(RuntimeError):
+        handed.connection.execute("select 1", [])
 
 
 def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_cause() -> None:
@@ -301,9 +308,7 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
     # participating read brackets nothing, because the invocation above it
     # names the attempt's edition once.
     provider = RecordingLifecycleProvider()
-    execution = _Standalone(
-        installed_lifecycle(provider), _SERVING, ReadInputs(RefusingPort(), None, None)
-    )
+    execution = _Standalone(installed_lifecycle(provider), _SERVING, ScriptedAdapter().open())
     boom = RuntimeError("the executor failed")
 
     def failing(_activity: object, _inputs: ReadInputs) -> object:
@@ -331,7 +336,7 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
 
 
 def test_a_standalone_read_lets_a_control_flow_exception_pass_untouched() -> None:
-    execution = _Standalone(None, _SERVING, ReadInputs(RefusingPort(), None, None))
+    execution = _Standalone(None, _SERVING, ScriptedAdapter().open())
 
     def interrupting(_activity: object, _inputs: ReadInputs) -> object:
         raise KeyboardInterrupt
@@ -401,13 +406,13 @@ def test_a_participating_read_opens_inside_the_flush_as_the_batchs_ordered_sibli
 def test_a_participating_body_is_handed_the_connection_the_preference_and_the_unit_of_work() -> (
     None
 ):
-    port = RefusingPort()
+    port = RefusingAdapter()
     body = _Body()
 
     def run(execution: Any, uow: UnitOfWork) -> None:
         execution.eager(_TARGET, "typed", body)
         handed = body.only.inputs
-        assert (handed.port, handed.preference, handed.ledger) == (port, "locking", uow)
+        assert (handed.connection, handed.preference, handed.ledger) == (port, "locking", uow)
 
     _participating(run, conn=port, concurrency="locking")
 
@@ -417,9 +422,7 @@ def test_a_participating_body_is_handed_the_connection_the_preference_and_the_un
 # --------------------------------------------------------------------------- #
 def test_a_standalone_stream_opens_a_root_execution_of_its_own() -> None:
     provider = RecordingLifecycleProvider()
-    execution = _Standalone(
-        installed_lifecycle(provider), _SERVING, ReadInputs(RefusingPort(), None, None)
-    )
+    execution = _Standalone(installed_lifecycle(provider), _SERVING, ScriptedAdapter().open())
 
     activity: SnapshotStreamActivity = execution.begin().open_stream(_TARGET, "typed", 5)
     with activity:
@@ -462,8 +465,8 @@ def test_a_participating_stream_is_a_child_of_the_current_attempt() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing() -> None:
     provider = RecordingLifecycleProvider()
-    port = RefusingPort()
-    execution = _Standalone(installed_lifecycle(provider), _SERVING, ReadInputs(port, None, None))
+    runtime = ScriptedAdapter().open()
+    execution = _Standalone(installed_lifecycle(provider), _SERVING, runtime)
     body = _Body(provider)
 
     read = execution.begin()
@@ -481,7 +484,7 @@ def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing(
         ("SnapshotStreamFinished", 1, None),
     ]
     handed = body.only.inputs
-    assert (handed.port, handed.preference, handed.ledger) == (port, None, None)
+    assert (handed.preference, handed.ledger) == (None, None)
 
 
 def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_flush() -> None:
@@ -517,14 +520,14 @@ def test_every_participating_page_flushes_first_and_opens_its_batch_inside_that_
 
 
 def test_a_participating_page_hands_its_body_the_same_inputs_every_read_gets() -> None:
-    port = RefusingPort()
+    port = RefusingAdapter()
     body = _Body()
 
     def run(execution: Any, uow: UnitOfWork) -> None:
         with execution.open_stream(_TARGET, "typed", 5) as stream:
             execution.page(stream.batch(), body)
         handed = body.only.inputs
-        assert (handed.port, handed.preference, handed.ledger) == (port, "locking", uow)
+        assert (handed.connection, handed.preference, handed.ledger) == (port, "locking", uow)
 
     _participating(run, conn=port, concurrency="locking")
 
@@ -537,7 +540,7 @@ def test_a_standalone_advance_names_the_edition_and_a_participating_one_does_not
     # stream above it; the ADVANCE is where a standalone delivery names its
     # edition, once, on the way out to the caller. A participating advance is
     # the body itself.
-    execution = _Standalone(None, _SERVING, ReadInputs(RefusingPort(), None, None))
+    execution = _Standalone(None, _SERVING, ScriptedAdapter().open())
     boom = RuntimeError("the page failed")
 
     def failing() -> object:

@@ -29,7 +29,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
-from _support.db_port import Read, ScriptedPort
+from _support.db_port import Read, ScriptedAdapter
 from _support.model_capabilities import cataloged_for, row_codec_for
 from parallax.conformance.vo_models import (
     CONTACT_MODEL,
@@ -94,7 +94,7 @@ def _twins() -> tuple[Metamodel, EntityRowCodec]:
 
 def _published_account() -> mm.Account:
     """One `Account` as a standalone read of this store hands it back."""
-    port = ScriptedPort(Read(rows=[dict(_ACCOUNT_ROW)]))
+    port = ScriptedAdapter(Read(rows=[dict(_ACCOUNT_ROW)]))
     return db_for(ACCOUNT, port).find(mm.Account.where(mm.Account.id == 1)).result()
 
 
@@ -114,7 +114,7 @@ _COMPLETE_ADDRESS: Final = ContactAddress(
 def _published_contact() -> Contact:
     """One `Contact` whose stored address states no `city`, as the read that
     classifies it still hands the hydrated root back."""
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(_STORED_ADDRESS))}])
     )
     published = db_for(CONTACT_MODEL, port).find(Contact.where(Contact.id == 1)).checked().result()
@@ -152,7 +152,7 @@ def test_a_plainly_constructed_value_answers_that_no_read_produced_it() -> None:
 
 
 def test_a_pinned_view_answers_the_instant_it_stands_at() -> None:
-    port = ScriptedPort(Read(rows=[dict(_POSITION_ROW)]))
+    port = ScriptedAdapter(Read(rows=[dict(_POSITION_ROW)]))
     query = WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST, tx_time=_TX_PIN)
     node = db_for(WHERE_POSITION_META, port).find(query).result()
     meta = cataloged_for(WHERE_POSITION_META).meta

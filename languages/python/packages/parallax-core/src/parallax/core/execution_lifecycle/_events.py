@@ -20,10 +20,10 @@ from typing import Literal
 from uuid import UUID
 
 from parallax.core.db_port import IsolationLevel
+from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
     DatabaseFailureDiagnostic,
-    FailureDiagnostic,
 )
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import Concurrency, WriteBatchTrigger

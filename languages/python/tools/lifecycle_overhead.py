@@ -72,6 +72,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from decimal import Decimal
+from types import TracebackType
 from typing import Final, NamedTuple
 
 from parallax.conformance.story_models import ACCOUNT_MODEL, Account
@@ -80,7 +81,7 @@ from parallax.core.db_port import (
     Bind,
     CallbackRaised,
     Committed,
-    DbPort,
+    DatabaseConnection,
     RolledBack,
     Row,
     TransactionOutcome,
@@ -95,7 +96,6 @@ from parallax.core.execution_lifecycle import (
     LoggingLifecycleProvider,
     RootExecution,
 )
-from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
 
 PAIRS: Final = 3_000
@@ -133,6 +133,59 @@ P50_OVERHEAD_CEILING: Final = 0.05
 P95_OVERHEAD_CEILING: Final = 0.10
 
 
+class _SoleRuntime:
+    """The whole resource lifetime around one in-memory connection.
+
+    An instrument must not measure itself, so this records nothing: no
+    acquisition list, no cleanup history, and no per-scope allocation beyond the
+    context object the contract requires. Every acquisition hands over the same
+    connection, because there is one and it is not a resource in any sense that
+    would make sharing it wrong here.
+    """
+
+    dialect: Dialect = POSTGRES
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: DatabaseConnection) -> None:
+        self._connection = connection
+
+    @property
+    def pool_metrics(self) -> None:
+        return None
+
+    def connection(self) -> _SoleScope:
+        return _SoleScope(self._connection)
+
+    def close(self) -> None:
+        return
+
+
+class _SoleScope:
+    """One acquisition of the sole connection, reporting no cleanup facts."""
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: DatabaseConnection) -> None:
+        self._connection = connection
+
+    @property
+    def cleanup_result(self) -> None:
+        return None
+
+    def __enter__(self) -> DatabaseConnection:
+        return self._connection
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        return
+
+
 class _MemoryPort:
     """An in-memory `m-db-port` with no boundary of its own.
 
@@ -161,7 +214,7 @@ class _MemoryPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         try:
             return Committed(body(self))
@@ -410,7 +463,7 @@ class _Shape(NamedTuple):
 def _shape() -> _Shape:
     port = _MemoryPort()
     counting = _CountingProvider()
-    _workload(connect(port, ACCOUNT_MODEL, lifecycle_provider=counting))
+    _workload(Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=counting))
     return _Shape(counting.total[0], port.statements)
 
 
@@ -508,12 +561,12 @@ def main(argv: list[str]) -> int:
     port = _MemoryPort()
     records: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=QUEUE_CAPACITY)
     shape = _shape()
-    plain = connect(port, ACCOUNT_MODEL)
+    plain = Database(_SoleRuntime(port), ACCOUNT_MODEL)
     lines = ["parallax execution lifecycle overhead", ""]
     lines += [f"  {name:<12}{value}" for name, value in _conditions(shape)]
     lines += [""]
     for label, provider in _configurations(records):
-        observed = connect(port, ACCOUNT_MODEL, lifecycle_provider=provider)
+        observed = Database(_SoleRuntime(port), ACCOUNT_MODEL, lifecycle_provider=provider)
         lines += _section(label, _measure(plain, observed, records), shape)
     print("\n".join(lines))
     return 0

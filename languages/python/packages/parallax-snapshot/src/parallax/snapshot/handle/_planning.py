@@ -16,7 +16,7 @@ signature so every caller stays unaffected.
 
 The three adapter classes translate this scope's own optional-policy calls
 into the neutral vocabulary the planner's strategy Protocols declare;
-nothing here inherits a Protocol, matching the ``Clock`` / ``DbPort``
+nothing here inherits a Protocol, matching the ``Clock`` / ``DatabaseConnection``
 convention every other strategy shape in the tree follows.
 """
 

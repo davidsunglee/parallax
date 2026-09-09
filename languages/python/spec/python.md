@@ -1743,7 +1743,7 @@ completed state is an empty set; every nonempty entry is
 an explicit, reviewable implementation deferral. A Feature claimed by the
 active Conformance Slice but not implemented is a defect and cannot be made
 permissible by listing it here. This set belongs neither to the connected
-provider, a selected read model, `Dialect`, nor a leased `DbPort`.
+provider, a selected read model, `Dialect`, nor an acquired `DatabaseConnection`.
 
 Target resolution always precedes this classification. An Object Query whose
 target the connected model does not declare raises
@@ -2284,6 +2284,29 @@ to a rollout is the application's own, through the violated Physical Index Name
 the database error already carries (§6). The executable form of this order ships
 as the API Conformance Suite's publication story, rendered into the Usage Guide
 (§6) — not as a generic updater callback interface.
+
+**A connected handle owns its runtime.** `Database.connect(adapter, model)`
+takes **configuration**, not a live resource. `PostgresAdapter(connection_string,
+pool=PoolOptions(...) | OnDemandOptions(...), prepare_threshold=...)` is a frozen
+value that opens no connection, pool, or thread, so it is safe to build at import
+time, share between threads, and build before a fork; `connect` is what opens a
+ready runtime from it and the returned handle is what owns that runtime until it
+closes. Every `connect` over one configuration opens an INDEPENDENT runtime, so
+closing one handle leaves another working. `db.close()` and using the handle as a
+context manager are equivalent, both idempotent, and one of them is required:
+what a handle holds is connections, and nothing above it can release them.
+
+There is no permanent connection on a handle and no raw accessor to one. Each
+operation acquires its own connection and gives it back — an eager read for its
+whole execution including materialization, a standalone delivery from its first
+page to its settlement, a transaction attempt for the attempt including every
+participating read, write batch and delivery inside it. A retry acquires afresh.
+DDL, migrations, fixtures and any statement an application authors verbatim run
+on a connection that application opened itself, exactly as they did before, and
+never on one borrowed from the handle. Acquisition failures reach a caller as
+`ConnectionAcquisitionError` under the failing execution's edition envelope, and
+a runtime that never became ready raises `DatabaseStartupError` instead of
+publishing a handle.
 
 **Static shorthand and the Serving Model at connect.**
 `Database.connect(adapter, model)` keeps its existing positional and keyword
@@ -3794,7 +3817,7 @@ package does not re-export it. `connect` adds one keyword-only composition seam:
 
 ```python
 connect(
-    adapter: DatabasePort,
+    adapter: DatabaseAdapter,
     model: DomainModel | ServingModel,
     *,
     lifecycle_provider: ExecutionLifecycleProvider | None = None,
@@ -4047,7 +4070,7 @@ These feature tests do not claim the deferred `benchmark` command or general
   the anomalies it forbids (`m-unit-work`, `m-db-port`) rather than by any
   database's own spelling; omitting it requests nothing and leaves the
   connection at whatever the adapter or its driver already defaults to (READ
-  COMMITTED on Postgres). The value reaches `DbPort.transaction` unchanged and
+  COMMITTED on Postgres). The value reaches `DatabaseConnection.transaction` unchanged and
   `PostgresAdapter` maps it to this engine's name for it
   (`parallax.postgres.isolation_spelling`), so what Parallax promises is the
   GUARANTEE rather than a string's arrival, and a `Literal` is what makes the
@@ -5162,7 +5185,15 @@ remains observable rather than making Python its own oracle.
   and unmatched DML, and a **real transient classification proof** (two
   crossed-update connections via `peer` provoke a genuine `40P01` deadlock).
   The provider contract suite exercises `reset`, `applyDdl`, `loadFixtures`,
-  `query`, `exec`, `execRolledBack`, and `peer` against the container. The
+  `query`, `exec`, `execRolledBack`, and `peer` against the container, and
+  `tests/provider_contract/test_postgres_pool_contract.py` adds the owned-runtime
+  half of that contract: real reuse, bounded capacity, a bounded queue that
+  refuses, an acquisition timeout, a closed runtime that admits nothing, two
+  independent runtimes from one configuration, on-demand retention keeping no
+  idle connection, the same boundary decoding through every creation path of
+  every retention mode, a connection that comes back idle, isolation between two
+  concurrent scopes, and a session default that arrived with the connection
+  rather than after it. The
   contract's **dialect-binding** obligation is discharged Docker-free in
   `tests/unit/test_dialect_binding.py`, which resolves `PostgresAdapter.dialect`
   off the class with no instance and no connection, and drives both shipped
@@ -5546,12 +5577,15 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Typed Object Query surface (support, child of `parallax.core.object_query`) | `parallax.core.object_query._fluent` | `parallax.core.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.entity` | generated forbidden contracts |
 | `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec`, `m-wire`, `m-unit-work`, `m-deep-fetch` | generated forbidden contracts |
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
+| Detached exception projection (support) | `parallax.core.diagnostics` | `parallax.core.diagnostics` | (none) | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core`, `m-dialect` | generated forbidden contracts |
+| Database port diagnostic projection edge (support edge of the database port scope) | `parallax.core.db_port` | `parallax.core.db_port` | `parallax.core.diagnostics` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
 | `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-wire`, `m-db-port`, `m-temporal-read`, `m-edit`, `m-document-codec` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
 | `m-execution-lifecycle` | `parallax.core.execution_lifecycle` | `parallax.core.execution_lifecycle` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
+| Execution lifecycle diagnostic projection edge (support edge of the execution lifecycle scope) | `parallax.core.execution_lifecycle` | `parallax.core.execution_lifecycle` | `parallax.core.diagnostics` | generated forbidden contracts |
 | `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-txtime-write` | `parallax.core.txtime_write` | `parallax.core.txtime_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
@@ -5584,7 +5618,7 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Published instance state (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._instance_state` | `parallax.core.entity._instance_state` | `parallax.core.entity._construction_input`, `parallax.core.entity._pydantic_storage` | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | A value's own Pydantic storage (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._pydantic_storage` | `parallax.core.entity._pydantic_storage` | (none) | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Exact-model member layouts (support, sealed child of `parallax.core.entity`) | `parallax.core.entity._layout` | `parallax.core.entity._layout` | `m-metamodel`, `m-inheritance`, `m-relationship` | generated forbidden contracts + `tools/check_scope_ownership.py` |
-| Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
+| Concrete Postgres adapter and its owned runtime (support) | `parallax.postgres.adapter`, `._options`, `._runtime`, `._context`, `._connection` | `parallax.postgres` | `m-core`, `m-wire`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg, psycopg_pool | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
 
 Behavioral modules carry a module tag, so their allowed direct dependencies are
@@ -5614,6 +5648,9 @@ outright, the block as the edge target — and naming `(none)` beside a real
 grant is rejected as a contradiction.
 
 ```support-scope-graph
+parallax.core.diagnostics --> (none)
+parallax.core.db_port --> parallax.core.diagnostics
+parallax.core.execution_lifecycle --> parallax.core.diagnostics
 parallax.core._formation_profile --> parallax.core.metamodel
 parallax.core._formation_profile --> parallax.core.model_formation
 parallax.core._formation_profile --> parallax.core.inheritance
@@ -5867,6 +5904,22 @@ parallax.postgres --> parallax.core.dialect
   `parallax.core.entity`'s shipped surface to serve a development-only consumer
   of a documented first-party seam would be the wrong repair.
 
+  One further reach is the harness's own driver sessions:
+  `parallax.conformance._postgres_control` imports
+  `parallax.postgres._connection.initialize_connection` and
+  `parallax.postgres._connection.PostgresConnection`. The harness opens sessions
+  an application never would — the per-case schema reset, a peer holding its own
+  transaction, a case's verbatim golden SQL, and the dedicated session an
+  interleaved choreography may destroy — and every statement it runs on one must
+  be decoded, classified and demarcated exactly as an application's own would be.
+  The alternative is a second implementation of the codecs, the error
+  translation and the transaction outcomes inside the harness, which would grade
+  the adapter against a database nobody runs. What is deliberately NOT reached is
+  the runtime: a session the harness may cancel, close, or tear down at the
+  socket must be one nothing else can be handed, so the controlled adapter beside
+  this reach is the harness's own and the shipped `PostgresAdapter` serves every
+  other lane.
+
   The `m-descriptor` record graph is **not** in the set: corpus models
   reach the adapter through the public `domain_model_from_*` doors and are read
   through the accepted model's own vocabulary, so no `parallax.descriptor`
@@ -6016,11 +6069,11 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContext`, the transaction outcomes, `IsolationLevel`, `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `Unrelinquished`, `CleanupIssue`, and `PoolMetricsSource`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |
-| `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `isolation_spelling` |
+| `parallax-postgres` (Postgres database adapter and owned runtime) | production | `parallax.postgres.*` (concrete adapter, runtime, acquisition context and scoped execution over psycopg) | `psycopg[binary]`, `psycopg-pool` (sole declarer of both) | `parallax-core` | `parallax.postgres`: `PostgresAdapter`, `PoolOptions`, `OnDemandOptions`, `isolation_spelling` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-evolution`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
 - **Common runtime manifest proof.** `parallax-core`'s manifest declares only

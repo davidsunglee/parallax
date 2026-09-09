@@ -148,6 +148,14 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
 # are read back and compared against this table by
 # :func:`check_support_scope_parity`.
 SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
+    # The standard-library-only projection three scopes share. It grants
+    # nothing, which is the whole of what it enforces: a detached diagnostic
+    # value must be reachable from the database port, the execution lifecycle,
+    # and the resource contracts between them without any of those inheriting
+    # the others' edges.
+    "parallax.core.diagnostics": frozenset(),
+    "parallax.core.db_port": frozenset({"parallax.core.diagnostics"}),
+    "parallax.core.execution_lifecycle": frozenset({"parallax.core.diagnostics"}),
     "parallax.core._formation_profile": frozenset(
         {
             "parallax.core.metamodel",

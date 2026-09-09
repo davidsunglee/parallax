@@ -83,7 +83,7 @@ from typing import Any, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DatabaseConnection, Row
 from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
@@ -401,7 +401,7 @@ class _Milestone:
 def find(
     query: ValidatedObjectQuery,
     model: CatalogedModel,
-    port: DbPort,
+    port: DatabaseConnection,
     *,
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
@@ -483,7 +483,7 @@ class RootRead:
 def read_roots(
     query: ValidatedObjectQuery,
     model: CatalogedModel,
-    port: DbPort,
+    port: DatabaseConnection,
     *,
     preference: Concurrency | None = None,
     calls: DatabaseCallScope = INERT,
@@ -519,7 +519,7 @@ def read_roots(
 def build_graph(
     root_read: RootRead,
     model: CatalogedModel,
-    port: DbPort,
+    port: DatabaseConnection,
     *,
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
@@ -720,7 +720,7 @@ def stage_rows(
 def find_rows(
     query: ValidatedObjectQuery,
     model: CatalogedModel,
-    port: DbPort,
+    port: DatabaseConnection,
     *,
     edition: str,
     preference: Concurrency | None = None,
@@ -799,7 +799,7 @@ def _published_rows(stage: StagedRows, meta: Metamodel) -> tuple[PublishedRow, .
 def find_history(
     query: ValidatedObjectQuery,
     model: CatalogedModel,
-    port: DbPort,
+    port: DatabaseConnection,
     *,
     read: ReadActivity = INERT,
 ) -> HistoryFindResult:
@@ -867,7 +867,7 @@ def _convert_level(
     builder: GraphBuilder,
     source: SourceLevel,
     model: CatalogedModel,
-    port: DbPort,
+    port: DatabaseConnection,
     compiled: CompiledRead,
     calls: DatabaseCallScope,
     observations: ObservedRows,
@@ -1105,7 +1105,7 @@ def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> Attrib
 
 
 def _execute_compiled(
-    port: DbPort, compiled: CompiledRead, calls: DatabaseCallScope
+    port: DatabaseConnection, compiled: CompiledRead, calls: DatabaseCallScope
 ) -> Iterator[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN transform.
 
@@ -1128,7 +1128,9 @@ def _execute_compiled(
     return map(compiled.materialize_row, execute_read(port, compiled, calls))
 
 
-def execute_read(port: DbPort, compiled: CompiledRead, calls: DatabaseCallScope) -> list[Row]:
+def execute_read(
+    port: DatabaseConnection, compiled: CompiledRead, calls: DatabaseCallScope
+) -> list[Row]:
     """Run one compiled read's statement inside its own Database Call bracket.
 
     A FAILED call finishes too, and the failure then propagates untouched: a

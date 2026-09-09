@@ -252,6 +252,25 @@ def profile_run(profile: Profile) -> Iterator[Any]:
         opened.close()
 
 
+@pytest.fixture(autouse=True)
+def release_case_runtimes(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Close, after each test, every runtime a Database composed here left open.
+
+    A connected handle owns a pool, so one composed per case and never closed
+    would hold connections and maintenance threads for the whole session — and a
+    corpus of hundreds of cases would run the server out of connections long
+    before it ran out of cases. Each handle that closes itself retires its own;
+    this is the backstop for the ones that do not.
+
+    It reads ``request.fixturenames`` rather than requesting the database
+    fixture, because requesting it would put it in every item's fixture closure
+    and reclassify the whole suite as database-backed.
+    """
+    yield
+    for fixture in _DATABASE_FIXTURES.intersection(request.fixturenames):
+        request.getfixturevalue(fixture).release_case_runtimes()
+
+
 def pytest_terminal_summary(terminalreporter: Any) -> None:
     """Print the database-backed skip summary (silent skips are forbidden, §6)."""
     if not _DB_SKIPS:

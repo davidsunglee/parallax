@@ -45,10 +45,11 @@ from collections.abc import Callable, Sequence
 from decimal import Decimal
 from pathlib import Path
 from time import perf_counter
+from types import TracebackType
 from typing import Any, Final, NamedTuple, cast
 
 from parallax.conformance.story_models import ORDERS_MODEL, Order
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.snapshot import SnapshotStream
@@ -148,6 +149,59 @@ def _item_row(item_id: int, order_id: int) -> Row:
     }
 
 
+class _SoleRuntime:
+    """The whole resource lifetime around one in-memory connection.
+
+    An instrument must not measure itself, so this records nothing: no
+    acquisition list, no cleanup history, and no per-scope allocation beyond the
+    context object the contract requires. Every acquisition hands over the same
+    connection, because there is one and it is not a resource in any sense that
+    would make sharing it wrong here.
+    """
+
+    dialect: Dialect = POSTGRES
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: DatabaseConnection) -> None:
+        self._connection = connection
+
+    @property
+    def pool_metrics(self) -> None:
+        return None
+
+    def connection(self) -> _SoleScope:
+        return _SoleScope(self._connection)
+
+    def close(self) -> None:
+        return
+
+
+class _SoleScope:
+    """One acquisition of the sole connection, reporting no cleanup facts."""
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: DatabaseConnection) -> None:
+        self._connection = connection
+
+    @property
+    def cleanup_result(self) -> None:
+        return None
+
+    def __enter__(self) -> DatabaseConnection:
+        return self._connection
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        return
+
+
 class GeneratingPort:
     """A port that answers each page from a counter and retains nothing beyond
     the page it last answered."""
@@ -185,7 +239,7 @@ class GeneratingPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         raise NotImplementedError
 
@@ -218,7 +272,7 @@ def paused(lane: Lane, total: int, *, batch_size: int) -> Seam:
     at = sample_after(batch_size)
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(cast("DbPort", GeneratingPort(total)), ORDERS_MODEL)
+        database = Database(_SoleRuntime(GeneratingPort(total)), ORDERS_MODEL)
         with lane.opener(database, batch_size) as stream:
             for position, _root in enumerate(stream):
                 if position == at:
@@ -233,7 +287,7 @@ def draining(lane: Lane, total: int, *, batch_size: int, retaining: bool) -> Sea
     root it was handed or none of them."""
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(cast("DbPort", GeneratingPort(total)), ORDERS_MODEL)
+        database = Database(_SoleRuntime(GeneratingPort(total)), ORDERS_MODEL)
         held: list[object] = []
         with lane.opener(database, batch_size) as stream:
             for root in stream:

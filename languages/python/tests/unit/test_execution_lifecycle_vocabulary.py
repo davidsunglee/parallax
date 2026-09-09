@@ -17,6 +17,7 @@ from typing import Any, Final, cast, get_args
 from uuid import uuid4
 
 from parallax.conformance._lifecycle_observation import execution_lifecycle_observation
+from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle import (
     AttemptFailure,
     AttemptPhase,
@@ -25,7 +26,6 @@ from parallax.core.execution_lifecycle import (
     DatabaseCallStarted,
     DirectFailure,
     ExecutionEvent,
-    FailureDiagnostic,
     LifecycleLogDetail,
     ReadInterface,
     ReadStarted,

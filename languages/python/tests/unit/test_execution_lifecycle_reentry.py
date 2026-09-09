@@ -27,11 +27,11 @@ from _support import mirrored_models as mm
 from _support.db_port import (
     Read,
     ReadCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
 )
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseAdapter
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -57,8 +57,8 @@ something.
 """
 
 
-def _db(port: DbPort, provider: Any) -> Database:
-    return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any) -> Database:
+    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
 def _query() -> Any:
@@ -159,7 +159,7 @@ class _Provider:
 
 
 def test_a_read_from_inside_opening_becomes_the_provider_errors_cause() -> None:
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     handle: list[Database] = []
     provider = _Provider(opening=lambda: _read(handle[0]))
     db = _db(port, provider)
@@ -172,7 +172,7 @@ def test_a_read_from_inside_opening_becomes_the_provider_errors_cause() -> None:
 
 
 def test_a_read_from_inside_a_handler_quarantines_it_like_any_other_failure() -> None:
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     handle: list[Database] = []
     provider = _Provider(handling=lambda: _read(handle[0]))
     db = _db(port, provider)
@@ -188,7 +188,7 @@ def test_a_read_from_inside_a_handler_quarantines_it_like_any_other_failure() ->
 
 
 def test_a_read_from_inside_error_reporting_is_refused_and_changes_nothing() -> None:
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     handle: list[Database] = []
     provider = _Provider(
         handling=_raising(RuntimeError("the exporter queue is full")),
@@ -206,9 +206,9 @@ def test_a_read_from_inside_error_reporting_is_refused_and_changes_nothing() -> 
 
 
 def test_the_refusal_is_per_handle_so_an_unrelated_handle_stays_usable() -> None:
-    other_port = ScriptedPort(Read(rows=[NEW_ROW]))
+    other_port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     other = _db(other_port, None)
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     provider = _Provider(handling=lambda: _read(other))
     db = _db(port, provider)
 
@@ -221,7 +221,7 @@ def test_the_refusal_is_per_handle_so_an_unrelated_handle_stays_usable() -> None
 
 
 def test_the_refusal_is_per_thread_so_a_handler_may_hand_work_to_another() -> None:
-    port = ScriptedPort(Read(rows=[NEW_ROW], times=2))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
     handle: list[Database] = []
     escaped: list[BaseException] = []
 
@@ -246,7 +246,7 @@ def test_the_refusal_is_per_thread_so_a_handler_may_hand_work_to_another() -> No
 
 
 def test_the_state_is_cleared_however_a_lifecycle_context_is_left() -> None:
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     provider = _Provider(handling=_raising(KeyboardInterrupt()))
     db = _db(port, provider)
 
@@ -350,7 +350,7 @@ def test_every_public_entry_point_of_the_handle_and_its_transaction_refuses() ->
     # a claim about the WHOLE surface rather than about the entry points that
     # happen to be instrumented: a verb reached from a lifecycle context could
     # buffer a write, force a flush, or open a second boundary.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     handle: list[Database] = []
     opened: list[Transaction] = []
     refused: dict[str, list[str]] = {}

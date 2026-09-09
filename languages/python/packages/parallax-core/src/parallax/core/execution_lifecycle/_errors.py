@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from parallax.core.execution_lifecycle._diagnostics import FailureDiagnostic
+from parallax.core.diagnostics import FailureDiagnostic
 
 
 class ExecutionLifecycleProviderError(RuntimeError):

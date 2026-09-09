@@ -34,7 +34,7 @@ from _transact_support import ACCOUNT
 from _support import mirrored_models as mm
 from _support.db_port import (
     Read,
-    ScriptedPort,
+    ScriptedAdapter,
 )
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
@@ -233,7 +233,7 @@ def test_a_node_a_conforming_root_also_reaches_stays_in_construction() -> None:
 # --------------------------------------------------------------------------- #
 def _customer(row: dict[str, object]) -> InvalidData[object]:
     document = PresentDocument(cast("Any", row["address"]))
-    port = ScriptedPort(Read(rows=[{**row, "address": document}]))
+    port = ScriptedAdapter(Read(rows=[{**row, "address": document}]))
     database = connect(port, vo.CUSTOMER_MODEL)
     return invalid_record(database.find(vo.Customer.where(vo.Customer.id == 1)).checked().result())
 
@@ -272,7 +272,7 @@ def test_a_non_hydrating_root_publishes_no_data() -> None:
 
 
 def _balance(row: dict[str, object]) -> InvalidData[object]:
-    port = ScriptedPort(Read(rows=[row]))
+    port = ScriptedAdapter(Read(rows=[row]))
     database = connect(port, read_models.BALANCE_MODEL)
     query = read_models.Balance.where(read_models.Balance.id == 1).as_of(tx_time=LATEST)
     return invalid_record(database.find(query).checked().result())
@@ -307,7 +307,7 @@ def test_a_temporal_root_whose_milestone_did_not_decode_locates_no_edge() -> Non
 
 def test_a_versioned_root_whose_version_did_not_decode_locates_no_version() -> None:
     row: dict[str, object] = {"id": 1, "owner": "Ada", "balance": Decimal("1.00"), "version": "x"}
-    database = connect(ScriptedPort(Read(rows=[row])), ACCOUNT)
+    database = connect(ScriptedAdapter(Read(rows=[row])), ACCOUNT)
     published = invalid_record(
         database.find(mm.Account.where(mm.Account.id == 1)).checked().result()
     )
@@ -338,7 +338,7 @@ def _published(
     model: DomainModel, query: object, rows: Sequence[Sequence[Row]]
 ) -> InvalidData[Any]:
     """One twin member's published record for a scripted two-level read."""
-    database = connect(ScriptedPort(*(Read(rows=result) for result in rows)), model)
+    database = connect(ScriptedAdapter(*(Read(rows=result) for result in rows)), model)
     record = database.find(cast("Any", query)).checked().result()
     assert isinstance(record, InvalidData), model
     return cast("InvalidData[Any]", record)

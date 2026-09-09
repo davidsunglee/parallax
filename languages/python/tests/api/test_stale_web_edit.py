@@ -30,7 +30,6 @@ deterministic instant per flushing transaction removes that flakiness.
 from __future__ import annotations
 
 import datetime as dt
-from contextlib import closing
 from decimal import Decimal
 from typing import Any
 
@@ -128,8 +127,12 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
         current = tx.find(Balance.where(Balance.id == 1)).result()
         tx.update(current.edit(value=Decimal("200.00")))
 
-    with closing(profile_run.control()) as peer:
-        connect(peer, _BALANCE, clock=ScriptedClock([_I2])).transact(concurrent_write)
+    # The concurrent writer is a SECOND connected handle over the same
+    # configuration: reusing configuration opens an independent runtime, so its
+    # transaction runs on a connection of its own exactly as another process's
+    # would, and closing it leaves the handle under test working.
+    with connect(profile_run.port, _BALANCE, clock=ScriptedClock([_I2])) as peer:
+        peer.transact(concurrent_write)
 
     with raises_contextualized(StaleMilestoneError, match="superseded"):
         submit_balance_edit(
@@ -218,8 +221,8 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
 
     # An independent second session commits a REAL chaining update first, and is
     # released with the choreography that needed it.
-    with closing(profile_run.control()) as peer:
-        connect(peer, _BRANCH, clock=ScriptedClock([_I2])).transact(concurrent_write)
+    with connect(profile_run.port, _BRANCH, clock=ScriptedClock([_I2])) as peer:
+        peer.transact(concurrent_write)
 
     with raises_contextualized(StaleMilestoneError, match="superseded"):
         # SUBMIT time — nothing is ever applied, so the correction's own

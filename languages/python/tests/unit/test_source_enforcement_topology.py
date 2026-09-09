@@ -306,6 +306,19 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance.evolution_wire",
         "parallax.descriptor._type_spelling",
     ): frozenset({"format_type_spelling"}),
+    # The harness's own driver sessions execute through the SHIPPED scoped
+    # execution and get the SHIPPED per-connection setup, so a statement the
+    # harness runs directly is decoded, classified, and demarcated exactly as an
+    # application's own would be. The alternative is a second implementation of
+    # the codecs, the error translation, and the transaction outcomes inside the
+    # harness — which would grade the adapter against a database nobody runs.
+    # What is NOT reached is the runtime: a session the harness may cancel or
+    # tear down must be one nothing else can be handed, so the controlled
+    # adapter beside this reach is the harness's own.
+    (
+        "parallax.conformance._postgres_control",
+        "parallax.postgres._connection",
+    ): frozenset({"PostgresConnection", "initialize_connection"}),
 }
 
 

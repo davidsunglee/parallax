@@ -27,10 +27,11 @@ from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ReadCall,
-    ScriptedPort,
+    ScriptedAdapter,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseAdapter
+from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for
 from parallax.core.execution_lifecycle import (
     DatabaseCallFinished,
     DatabaseFailureDiagnostic,
@@ -39,7 +40,6 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
     ExecutionLifecycleProviderError,
-    FailureDiagnostic,
     ReadStarted,
     RootExecution,
     _activity,
@@ -49,10 +49,7 @@ from parallax.core.execution_lifecycle._activity import (
     InstalledLifecycle,
     open_read_root,
 )
-from parallax.core.execution_lifecycle._diagnostics import (
-    database_diagnostic_for,
-    diagnostic_for,
-)
+from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
@@ -61,8 +58,8 @@ from parallax.snapshot import connect
 from parallax.snapshot.handle import Database
 
 
-def _db(port: DbPort, provider: Any) -> Database:
-    return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any) -> Database:
+    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
 def _installed(provider: Any) -> InstalledLifecycle:
@@ -158,7 +155,7 @@ class _Provider:
 def test_an_accepted_root_carries_a_uuid4_descriptor_of_its_own_kind() -> None:
     handler = _FailingHandler(fail_at=0, failure=RuntimeError())
     provider = _Provider(handler)
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _read(_db(port, provider))
     started = handler.seen[0]
     assert isinstance(started, ReadStarted)
@@ -183,7 +180,7 @@ def test_two_operations_are_two_roots_with_independent_sequences() -> None:
             raise AssertionError("no handler failed")
 
     provider = _PerRoot()
-    port = ScriptedPort(Read(rows=[NEW_ROW], times=2))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
     db = _db(port, provider)
     _read(db)
     _read(db)
@@ -197,7 +194,7 @@ def test_two_operations_are_two_roots_with_independent_sequences() -> None:
 
 def test_a_declining_provider_is_asked_once_and_told_nothing_after() -> None:
     provider = _Declining()
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     db = _db(port, provider)
     _read(db)
     assert [execution.kind for execution in provider.opened] == ["read"]
@@ -208,7 +205,7 @@ def test_a_declining_provider_is_asked_once_and_told_nothing_after() -> None:
 
 def test_an_ordinary_opening_failure_refuses_the_operation_before_any_work() -> None:
     cause = RuntimeError("the exporter is not configured")
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     db = _db(port, _RaisingOpen(cause))
     with pytest.raises(ExecutionLifecycleProviderError) as refusal:
         _read(db)
@@ -218,7 +215,7 @@ def test_an_ordinary_opening_failure_refuses_the_operation_before_any_work() -> 
 
 def test_a_control_flow_exception_from_opening_propagates_unchanged() -> None:
     interrupt = KeyboardInterrupt()
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     db = _db(port, _RaisingOpen(interrupt))
     with pytest.raises(KeyboardInterrupt) as escaped:
         _read(db)
@@ -230,7 +227,7 @@ def test_an_ordinary_handler_failure_quarantines_only_that_handler() -> None:
     failure = RuntimeError("the exporter queue is full")
     handler = _FailingHandler(fail_at=1, failure=failure)
     provider = _Provider(handler)
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     assert _db(port, provider).find(mm.Account.where(mm.Account.id == 7)).result() == read_account()
 
     # The query is unchanged; the Handler saw its first event and no later one.
@@ -250,7 +247,7 @@ def test_a_handler_error_carries_no_event_statement_or_bind() -> None:
     bind = "no-bind-survives-a-handler-error"
     handler = _FailingHandler(fail_at=2, failure=RuntimeError("boom"))
     provider = _Provider(handler)
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, provider).find(mm.Account.where(mm.Account.owner == bind)).result()
     (reported,) = provider.reported
     assert set(type(reported).__dataclass_fields__) == {
@@ -279,7 +276,7 @@ def test_a_failing_reporter_writes_one_correlation_only_line_and_stops(
     monkeypatch.setattr("sys.__stderr__", stderr)
     handler = _FailingHandler(fail_at=1, failure=RuntimeError("the exporter queue is full"))
     provider = _Provider(handler, reporting_failure=RuntimeError("the reporter is unreachable"))
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _read(_db(port, provider))
     line = stderr.getvalue()
     assert line.count("\n") == 1
@@ -295,7 +292,7 @@ def test_the_last_resort_path_is_dropped_silently_when_unavailable(
     monkeypatch.setattr("sys.__stderr__", None)
     handler = _FailingHandler(fail_at=1, failure=RuntimeError("handler"))
     provider = _Provider(handler, reporting_failure=RuntimeError("reporter"))
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     assert _read(_db(port, provider)) is None
 
 
@@ -307,7 +304,7 @@ def test_a_closed_last_resort_stream_is_dropped_silently(
     monkeypatch.setattr("sys.__stderr__", stream)
     handler = _FailingHandler(fail_at=1, failure=RuntimeError("handler"))
     provider = _Provider(handler, reporting_failure=RuntimeError("reporter"))
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     assert _read(_db(port, provider)) is None
 
 
@@ -315,7 +312,7 @@ def test_a_base_exception_from_delivery_aborts_the_root_and_propagates_unchanged
     interrupt = KeyboardInterrupt()
     handler = _FailingHandler(fail_at=1, failure=interrupt)
     provider = _Provider(handler)
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     with pytest.raises(KeyboardInterrupt) as escaped:
         _read(_db(port, provider))
     assert escaped.value is interrupt
@@ -332,7 +329,7 @@ def test_a_handler_type_that_refuses_to_name_itself_costs_only_its_name() -> Non
     # an ordinary Handler failure still quarantines only that Handler.
     handler = _NamelessHandler()
     provider = _Provider(handler)
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     assert _db(port, provider).find(mm.Account.where(mm.Account.id == 7)).result() == read_account()
     (reported,) = provider.reported
     assert reported.handler_type == "<unavailable>"
@@ -355,7 +352,7 @@ def test_cleanup_after_a_fatal_deactivation_renders_no_diagnostic(
     monkeypatch.setattr(_activity, "diagnostic_for", counting)
     interrupt = KeyboardInterrupt()
     provider = _Provider(_FailingHandler(fail_at=2, failure=interrupt))
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     with pytest.raises(KeyboardInterrupt) as escaped:
         _read(_db(port, provider))
     assert escaped.value is interrupt
@@ -376,7 +373,7 @@ def test_a_quarantined_root_renders_no_diagnostic_for_a_failed_call(
 
     monkeypatch.setattr(_activity, "database_diagnostic_for", counting)
     provider = _Provider(_FailingHandler(fail_at=2, failure=RuntimeError("queue full")))
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(
             raises=DatabaseError(
                 category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
@@ -415,7 +412,7 @@ def test_the_recorder_groups_its_roots_and_keeps_what_it_is_told() -> None:
     # and every Handler failure it was told about — the two things a production
     # observability path must not do.
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[NEW_ROW], times=2))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
     db = _db(port, recorder)
     _read(db)
     _read(db)

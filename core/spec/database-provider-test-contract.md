@@ -74,6 +74,25 @@ For every supported adapter, the smoke suite covers:
   an engine that honors a weaker default owes the refusal, because a caller who
   named no level asked for the adapter's default and must not silently receive a
   guarantee the portable vocabulary does not admit
+- where the adapter owns connection lifetimes (`m-db-port`): real **reuse** of a
+  retained connection, a **bounded capacity** two scopes fill and a third waits
+  for, a bounded waiting queue that **refuses** a further caller rather than
+  holding it, an acquisition budget that **times out**, a runtime that admits
+  nothing after **close**, and two runtimes opened from one configuration that
+  are **independent** of each other. What is proved is that these are real rather
+  than modeled: the deterministic failures a server will not produce on demand —
+  a checkout handing over a connection in a transaction, a physical close that
+  raises, an ambiguous return — belong to the language's own internal suites
+- the **per-connection setup applied to every creation path**: initial capacity,
+  growth, replacement, and on-demand establishment alike, proved by reading the
+  same boundary values back through several acquisitions of each retention mode.
+  A codec installed on some connections and not others is a decoding defect that
+  appears under load and nowhere else
+- a **connection that is idle between operations**: a standalone statement opens
+  no implicit whole-operation transaction, so a connection comes back with no
+  transaction of its own and the next scope over it starts clean
+- **isolation between two concurrent scopes** of one runtime: uncommitted work in
+  one is not visible in the other, and becomes visible when it commits
 - a bytes write round trip through the dialect bind seam
 - affected-row semantics for matched and unmatched DML
 - feasible transient classification through the portable database error surface
@@ -182,7 +201,10 @@ A provider contract suite must exercise these operations:
 - `exec`: execute DML and return affected rows
 - `execRolledBack`: execute DML in a transaction that is rolled back
 - `peer`: expose an independent connection for concurrent-writer and coherence
-  style checks when the language's composition root needs one
+  style checks when the language's composition root needs one. Where the target
+  owns connection lifetimes, this is a **separately owned** session the caller
+  closes — never a connection borrowed from what serves application work, and
+  never a raw accessor on a connected handle
 - `catalog`: report what the database itself holds for a named set of tables —
   each table's columns with their types and nullability, and each index with its
   ordered columns and its uniqueness. Column ordinal position is deliberately

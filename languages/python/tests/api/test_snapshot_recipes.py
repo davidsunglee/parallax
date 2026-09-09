@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import pytest
 
-from _support.db_port import projected_row
+from _support.db_port import ConnectsAsItself, projected_row
 from parallax.conformance import snapshot_recipes
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import (
@@ -39,7 +39,7 @@ from parallax.conformance.snapshot_recipes import (
     stream_and_write_inside_one_transaction,
 )
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
-from parallax.core.db_port import Bind, Committed, DbPort, Row, TransactionOutcome
+from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
@@ -268,7 +268,7 @@ def _streamed_write_at_page_two(db: Database) -> list[Decimal]:
     return stream_and_write_inside_one_transaction(db, 2)
 
 
-class _CannedPort:
+class _CannedPort(ConnectsAsItself):
     """A fake `m-db-port` answering every read with no rows, which is all a
     run-through proof needs: an empty root level short-circuits every child."""
 
@@ -283,12 +283,12 @@ class _CannedPort:
         raise AssertionError("a read recipe issues no DML")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read recipe opens no transaction")
 
 
-class _CannedAccountPort:
+class _CannedAccountPort(ConnectsAsItself):
     """A fake `m-db-port` answering ONE account row and then none, so a delivery
     over it runs its caller's loop body exactly once and then ends.
 
@@ -314,9 +314,9 @@ class _CannedAccountPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
-        return Committed(body(cast("DbPort", self)))
+        return Committed(body(cast("DatabaseConnection", self)))
 
 
 _ACCOUNT_ROW: Row = {"id": 1, "owner": "owner-1", "balance": Decimal("100.00"), "version": 1}
@@ -340,7 +340,7 @@ _ORDER_ITEM_ROW: Row = {
 }
 
 
-class _CannedOrderPort:
+class _CannedOrderPort(ConnectsAsItself):
     """A fake `m-db-port` scripting the three reads the streamed read recipe makes.
 
     Its Typed delivery is one short page — one root for a requested two, which is
@@ -364,7 +364,7 @@ class _CannedOrderPort:
         raise AssertionError("a read recipe issues no DML")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read recipe opens no transaction")
 

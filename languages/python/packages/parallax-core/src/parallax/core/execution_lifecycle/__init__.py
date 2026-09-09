@@ -24,8 +24,10 @@ The private modules split by change rate rather than by tidiness:
 
 * ``_events`` — the Root Execution descriptor and the transitions its activities
   emit. Its shape answers to the specified algebra rather than to any caller.
-* ``_diagnostics`` — the detached, byte-bounded projection of an exception and
-  the causal attribution an activity failure carries.
+* ``_diagnostics`` — the two neutral database facts a failed call reports and
+  the causal attribution an activity failure carries. The generic detached
+  projection they are stated over is ``parallax.core.diagnostics``, which
+  every consumer imports directly.
 * ``_activity`` — the Provider and Handler Protocols, the per-root publisher,
   the live activity scopes, the shared inert stand-in, and the per-Handle
   per-thread state a re-entrant call is refused by.
@@ -52,13 +54,10 @@ from parallax.core.execution_lifecycle._activity import (
     ExecutionLifecycleProvider,
 )
 from parallax.core.execution_lifecycle._diagnostics import (
-    MESSAGE_LIMIT_BYTES,
-    STACK_LIMIT_BYTES,
     ActivityFailure,
     CausedFailure,
     DatabaseFailureDiagnostic,
     DirectFailure,
-    FailureDiagnostic,
 )
 from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleHandlerError,
@@ -128,8 +127,6 @@ from parallax.core.execution_lifecycle._logging import (
 )
 
 __all__ = [
-    "MESSAGE_LIMIT_BYTES",
-    "STACK_LIMIT_BYTES",
     "ActivityFailure",
     "ActivityFinished",
     "ActivityStarted",
@@ -155,7 +152,6 @@ __all__ = [
     "ExecutionLifecycleProvider",
     "ExecutionLifecycleProviderError",
     "ExecutionLifecycleReentryError",
-    "FailureDiagnostic",
     "FanoutLifecycleProvider",
     "JoinedInvocation",
     "JoinedInvocationRaised",

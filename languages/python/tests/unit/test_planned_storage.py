@@ -33,7 +33,7 @@ from _support import mirrored_models as mm
 from _support.clock_probes import CountingClock, inert_instant
 from _support.db_port import (
     Read,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -943,7 +943,7 @@ def _position_row(row_id: int) -> dict[str, object]:
 
 
 def test_a_multi_row_materialized_bitemporal_update_lowers_one_close_and_chain_per_row() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[_position_row(1), _position_row(2), _position_row(3)]), Write(times=9))
     )
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
@@ -989,7 +989,7 @@ def _balance_row(row_id: int, value: Decimal) -> dict[str, object]:
 
 
 def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_rest() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[_balance_row(1, Decimal("5.00")), _balance_row(2, Decimal("10.00"))]),
             Write(times=2),
@@ -1011,7 +1011,7 @@ def test_a_temporal_materializing_update_eliminates_a_no_op_row_and_chains_the_r
 
 
 def test_a_temporal_materializing_update_with_every_row_a_no_op_buffers_nothing() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_balance_row(1, Decimal("5.00"))])))
+    port = ScriptedAdapter(Transact(Read(rows=[_balance_row(1, Decimal("5.00"))])))
 
     def fn(tx: Transaction) -> None:
         tx.update_where(

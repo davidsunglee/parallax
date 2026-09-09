@@ -24,10 +24,11 @@ import jsonschema
 import pytest
 
 from _support.corpus import case_document
+from _support.db_port import ConnectsAsItself
 from _support.repo import adapter_schema
 from parallax.conformance import adapter, case_format, sweep
 from parallax.conformance.profile import profile_for
-from parallax.core.db_port import DbPort, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 
 _SCHEMA = adapter_schema()
@@ -39,7 +40,7 @@ _PROFILE = profile_for("pg-full")
 _REACHABLE_EVOLUTION = [c for c in sweep.reachable_cases() if c.shape == "evolution"]
 
 
-class _RefusingPort:
+class _RefusingPort(ConnectsAsItself):
     """An `m-db-port` that fails loudly if the evolution lane ever touches it."""
 
     dialect: Dialect = POSTGRES
@@ -53,7 +54,7 @@ class _RefusingPort:
         raise AssertionError(f"an evolution-case run must not execute SQL: {sql!r}")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         raise AssertionError("an evolution-case run must not open a transaction")
 

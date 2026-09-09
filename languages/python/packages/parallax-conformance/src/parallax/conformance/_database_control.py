@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseAdapter, DatabaseConnection
 
 if TYPE_CHECKING:
     from parallax.core.dialect import Dialect
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from parallax.snapshot.handle import ServingModel
 
 __all__ = [
+    "CaseDatabase",
     "DriverControl",
     "InterleavedExecution",
     "InterleavedExecutionFactory",
@@ -59,7 +60,30 @@ class TerminationReport:
     failures: tuple[str, ...] = ()
 
 
-class DriverControl(DbPort, Protocol):
+class CaseDatabase(DatabaseConnection, DatabaseAdapter, Protocol):
+    """What one conformance run executes against, in the two forms a case needs.
+
+    A case does two different things with a database, and they are not the same
+    thing at all. Modeled work goes through a shipped ``Database``, which is
+    composed from CONFIGURATION and owns the connections it acquires — this is
+    the ``DatabaseAdapter`` half, and it is the behavior under test. Statements
+    a case authors verbatim go through a session the harness drives directly —
+    the ``DatabaseConnection`` half — because ``given.apply``, a golden read of
+    stored state, and a corruption of it are the setup a Database's contract is
+    proven AGAINST rather than part of it.
+
+    They are one value rather than two arguments for the same reason a profile
+    and its run are: two halves passed apart can name two databases, and a case
+    that seeds one database and then grades a Database connected to another is
+    a well-formed and false result.
+
+    A Docker-free double satisfies both halves itself, which is a convenience
+    only a double has: a real run's two halves are a `PostgresAdapter`
+    configuration and a separately owned control session.
+    """
+
+
+class DriverControl(DatabaseConnection, Protocol):
     """A separately owned driver session the harness executes through directly.
 
     It is a ``m-db-port`` — same four verbs, same dialect, same translated errors —
@@ -73,7 +97,7 @@ class DriverControl(DbPort, Protocol):
         """Undo whatever this session's own open transaction has done so far."""
         ...
 
-    def terminate_session(self, target: DbPort) -> None:
+    def terminate_session(self, target: DatabaseConnection) -> None:
         """End ``target``'s database session from this separate one.
 
         The one way to make a genuine ROLLBACK fail: the session an undo would run

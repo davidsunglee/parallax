@@ -14,6 +14,12 @@ violation), `deadlock` (a true deadlock **or** a serialization failure — both
 retriable), `lockWaitTimeout` (blocked past the lock-wait budget), plus
 `connectionDead` (reserved).
 
+A failure to ACQUIRE a connection is outside this closed set entirely. Nothing
+was classified because no modeled statement ran: `m-db-port` states the four
+acquisition reasons and the readiness phases separately, and no predicate here
+answers for them. An implementation MUST NOT map one into a category, and the
+retry loop MUST NOT read one.
+
 Classification is interrogated at **distinct call sites**, so the seam exposes it
 as predicates defined as category membership — not one stringly-typed method:
 

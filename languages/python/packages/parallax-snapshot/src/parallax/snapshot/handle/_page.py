@@ -32,7 +32,7 @@ from dataclasses import dataclass, replace
 from typing import cast
 
 from parallax.core.continuation import ContinuationPlan
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
 from parallax.core.metamodel import AttributeIdentity
@@ -203,7 +203,7 @@ def read_stream_page(
     page_plan: PagePlan,
     at: At,
     model: CatalogedModel,
-    port: DbPort,
+    port: DatabaseConnection,
     *,
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,

@@ -51,7 +51,7 @@ from _transact_support import (
 )
 
 from _support import mirrored_models as mm
-from _support.db_port import PortCall, Read, ReadCall, ScriptedPort, Transact, Write, WriteCall
+from _support.db_port import PortCall, Read, ReadCall, ScriptedAdapter, Transact, Write, WriteCall
 from parallax.conformance.vo_models import ContactAddress, ContactGeo, ContactPhone, ContactPoint
 from parallax.core import LATEST, DomainModel
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
@@ -606,7 +606,7 @@ def answer(scenario: Scenario, representation: Representation) -> Answer:
     return Answer(None, None, None, None, statements)
 
 
-def _refused(raised: Exception, phase: Phase, port: ScriptedPort) -> Refused:
+def _refused(raised: Exception, phase: Phase, port: ScriptedAdapter) -> Refused:
     """The refusal ``raised`` states, in the four facts a row is graded on.
 
     A refusal escaping the transaction arrives as the cause of an
@@ -671,7 +671,7 @@ def _reads_the_stored_row(scenario: Scenario) -> bool:
     return reads and scenario.opened_by is None
 
 
-def _assert_the_scripted_read_was_reached(port: ScriptedPort, scenario: Scenario) -> None:
+def _assert_the_scripted_read_was_reached(port: ScriptedAdapter, scenario: Scenario) -> None:
     """Fail a row that completed without running the read its scenario states.
 
     The write allowance below is a budget rather than a count, so the port cannot
@@ -684,7 +684,7 @@ def _assert_the_scripted_read_was_reached(port: ScriptedPort, scenario: Scenario
         raise AssertionError(f"{scenario}: {expected} scripted read(s), {reads} run")
 
 
-def _port(scenario: Scenario) -> ScriptedPort:
+def _port(scenario: Scenario) -> ScriptedAdapter:
     """A port scripted for the reads this scenario runs and the DML it may emit.
 
     The write budget is deliberately generous: what a row asserts is the DML two
@@ -700,14 +700,14 @@ def _port(scenario: Scenario) -> ScriptedPort:
     writes = Write(times=8)
     if scenario.source == "reread":
         reread = Read(rows=[dict(scenario.target.inserted_row)])
-        return ScriptedPort(Transact(Write(), reread, writes))
+        return ScriptedAdapter(Transact(Write(), reread, writes))
     if scenario.source == "pinned":
-        return ScriptedPort(Transact(read, writes))
+        return ScriptedAdapter(Transact(read, writes))
     if scenario.verb in _INSERT_VERBS or scenario.opened_by is not None:
-        return ScriptedPort(Transact(writes))
+        return ScriptedAdapter(Transact(writes))
     if scenario.source == "standalone":
-        return ScriptedPort(read, Transact(writes))
-    return ScriptedPort(Transact(read, writes))
+        return ScriptedAdapter(read, Transact(writes))
+    return ScriptedAdapter(Transact(read, writes))
 
 
 def _standalone_source(

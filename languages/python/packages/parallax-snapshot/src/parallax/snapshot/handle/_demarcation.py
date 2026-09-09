@@ -46,7 +46,9 @@ from parallax.core.auto_retry import check_retry_bound, run_with_retry
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
-    DbPort,
+    ConnectionAcquisitionError,
+    DatabaseConnection,
+    DatabaseRuntime,
     IsolationLevel,
     RollbackFailed,
     RolledBack,
@@ -83,6 +85,7 @@ from parallax.core.unit_work import (
 # underscore, precisely because it crosses a module boundary: privacy is carried
 # by the private MODULE names and by the package's frozen `__all__`.
 from parallax.snapshot.handle._adoption import AdoptedExecution
+from parallax.snapshot.handle._connection_lifecycle import enter_connection, exit_connection
 from parallax.snapshot.handle._publication import (
     ServingModel,
     read_projection,
@@ -234,25 +237,27 @@ class _Boundary:
 
 
 class Demarcation:
-    """One connection's callback demarcation, built once at connect.
+    """One handle's callback demarcation, built once at connect.
 
     Holds what every invocation needs and nothing an invocation retains: the
-    port every attempt opens its boundary on, the Clock the unit of work reads,
-    the installed lifecycle every root and attempt reports through, and the
-    Serving Model each attempt adopts from. The selection itself is never held
-    here — that is what makes adoption per attempt rather than per connection.
+    runtime every attempt acquires its connection from, the Clock the unit of
+    work reads, the installed lifecycle every root and attempt reports through,
+    and the Serving Model each attempt adopts from. Neither the selection nor a
+    connection is held here — that is what makes both of them per attempt, so a
+    retry adopts afresh and acquires afresh rather than replaying over what its
+    predecessor left.
     """
 
-    __slots__ = ("_clock", "_lifecycle", "_port", "_serving")
+    __slots__ = ("_clock", "_lifecycle", "_runtime", "_serving")
 
     def __init__(
         self,
-        port: DbPort,
+        runtime: DatabaseRuntime,
         clock: Clock,
         lifecycle: InstalledLifecycle | None,
         serving: ServingModel,
     ) -> None:
-        self._port = port
+        self._runtime = runtime
         self._clock = clock
         self._lifecycle = lifecycle
         self._serving = serving
@@ -368,7 +373,7 @@ class Demarcation:
                     meta = write.model.meta
                     with invocation.attempt(selection.edition) as physical:
 
-                        def in_txn(conn: DbPort) -> T:
+                        def in_txn(conn: DatabaseConnection) -> T:
                             edge = _FlushEdge(conn, meta, physical)
 
                             def body(uow: UnitOfWork) -> T:
@@ -400,9 +405,34 @@ class Demarcation:
                                 subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
                             )
 
-                        return _attempted(
-                            self._port.transaction(in_txn, isolation=options.isolation), physical
-                        )
+                        # One connection for this attempt and everything inside
+                        # it — the boundary, the reads, the write batches, the
+                        # streams — acquired after the attempt started and given
+                        # back before it finishes. A retry re-enters this closure
+                        # and acquires again, so nothing of a failed attempt's
+                        # resource is carried into its successor; the pool may
+                        # well hand back the same physical connection, which is
+                        # its business rather than this loop's.
+                        resource = self._runtime.connection()
+                        try:
+                            conn = enter_connection(resource)
+                        except ConnectionAcquisitionError as unacquired:
+                            # No boundary opened and no callback ran, so this is
+                            # the same terminal outcome a refused BEGIN reaches:
+                            # there is nothing to undo and nothing to replay.
+                            # There is also nothing to release — a failed entry
+                            # already cleaned up whatever it took.
+                            physical.begin_failed(unacquired)
+                            raise _BeginFailure(unacquired) from unacquired
+                        try:
+                            settled = _attempted(
+                                conn.transaction(in_txn, isolation=options.isolation), physical
+                            )
+                        except BaseException as failure:
+                            exit_connection(resource, failure)
+                            raise
+                        exit_connection(resource, None)
+                        return settled
 
                 try:
                     return run_with_retry(
@@ -543,7 +573,7 @@ class _FlushEdge:
 
     def __init__(
         self,
-        conn: DbPort,
+        conn: DatabaseConnection,
         model: Metamodel,
         attempt: TransactionAttemptActivity,
     ) -> None:

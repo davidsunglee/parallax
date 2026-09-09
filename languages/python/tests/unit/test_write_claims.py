@@ -36,7 +36,7 @@ from _support.db_port import (
     CommitCall,
     Read,
     ReadCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -126,7 +126,7 @@ def _prepared_intent(mutation: str) -> PreparedKeyedWrite:
     return prepared
 
 
-def _writes(port: ScriptedPort) -> list[WriteCall]:
+def _writes(port: ScriptedAdapter) -> list[WriteCall]:
     return [op for op in port.calls if isinstance(op, WriteCall)]
 
 
@@ -205,7 +205,7 @@ def test_the_claim_table_holds_what_the_buffer_will_carry() -> None:
 # Coalescing through the real verbs.                                          #
 # --------------------------------------------------------------------------- #
 def test_two_updates_of_one_state_with_disjoint_assignments_merge_into_one_write() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -225,7 +225,7 @@ def test_two_updates_of_one_state_with_disjoint_assignments_merge_into_one_write
 
 
 def test_a_repeated_assignment_member_takes_the_later_authored_value() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -241,7 +241,7 @@ def test_a_restoring_edit_cancels_the_assignment_already_buffered_for_that_state
     # but it is the caller's last word on `balance`, so it cancels the pending
     # assignment rather than being dropped. What survives names only the key,
     # which is no work at all — no DML, and the observation stays eligible.
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -257,7 +257,7 @@ def test_a_restoring_edit_with_nothing_buffered_still_buffers_nothing() -> None:
     # The ordinary net-zero no-op: with no pending assignment to cancel, an edit
     # that nets to zero issues no DML and reaches no buffer at all, exactly as
     # it always has.
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -271,7 +271,7 @@ def test_a_restoring_edit_of_an_unversioned_source_buffers_nothing() -> None:
     # An unversioned Non-Temporal row's claim is taken at its OBJECT, and nothing
     # holds one here: the net-zero edit takes the ordinary no-op path and the
     # shared row lock its read holds is all the write it never makes needed.
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}])))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}])))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
@@ -282,7 +282,7 @@ def test_a_restoring_edit_of_an_unversioned_source_buffers_nothing() -> None:
 
 
 def test_a_partial_restore_keeps_the_member_the_later_edit_did_change() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -302,7 +302,7 @@ def test_a_partial_restore_keeps_the_member_the_later_edit_did_change() -> None:
 
 
 def test_an_update_then_a_delete_of_one_state_is_one_delete() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -318,7 +318,7 @@ def test_an_update_then_a_delete_of_one_state_is_one_delete() -> None:
 
 
 def test_identical_destructive_intents_deduplicate() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -332,7 +332,7 @@ def test_identical_destructive_intents_deduplicate() -> None:
 def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
     # No resurrection: the row the assignment would write is going away, and
     # Unit Work invents no order in which both could be true.
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -346,7 +346,7 @@ def test_an_assignment_after_a_destructive_intent_is_refused() -> None:
 
 
 def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> None:
-    port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
@@ -364,7 +364,7 @@ def test_a_temporal_update_and_terminate_over_one_region_is_one_terminate() -> N
 def test_temporal_updates_over_different_regions_are_refused() -> None:
     # Two Valid-Time windows compose no interval, so the second verb refuses
     # rather than Unit Work inventing composition semantics.
-    port = ScriptedPort(Transact(Read(rows=[_position_row()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)).result()
@@ -379,7 +379,7 @@ def test_temporal_updates_over_different_regions_are_refused() -> None:
 def test_temporal_updates_over_one_region_merge_into_one_rectangle_split() -> None:
     # The compatible half of the same pair: one region, so the two sparse
     # assignments merge and the split is planned once rather than twice.
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)).result()
@@ -405,7 +405,7 @@ def _position_row() -> dict[str, object]:
 def test_a_participating_read_flushes_the_first_intent_and_frees_the_state() -> None:
     # The remedy the refusal names: the dependent read force-flushes the pending
     # intent, and the fresh read it then runs observes a state nothing claims.
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         first = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -522,7 +522,7 @@ def test_an_unversioned_update_then_delete_of_one_object_is_one_delete() -> None
     # The object-claimed arm of the same algebra `-022`'s versioned pair proves:
     # the destruction supersedes the assignment buffered before it, so the UPDATE
     # never reaches the wire.
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
@@ -539,7 +539,7 @@ def test_identical_unversioned_destructive_intents_deduplicate() -> None:
     # Unclaimed, the pair reaches the batch collapse as two writes of one key and
     # a Key Target's addressed rows are distinct — so what the claim buys here is
     # a legal two-verb sequence reaching a Planned Write at all.
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
@@ -551,7 +551,7 @@ def test_identical_unversioned_destructive_intents_deduplicate() -> None:
 
 
 def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> None:
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}])))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}])))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
@@ -565,7 +565,7 @@ def test_an_unversioned_assignment_after_a_destructive_intent_is_refused() -> No
 
 
 def test_two_unversioned_updates_of_one_object_merge_into_one_write() -> None:
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
@@ -582,7 +582,7 @@ def test_a_restoring_edit_cancels_an_unversioned_objects_pending_assignment() ->
     # `Ada -> Grace -> Ada` across two verbs: the second is the caller's last word
     # on `name`, so it cancels the pending assignment and the intermediate value
     # never reaches the wire.
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}])))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}])))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
@@ -598,7 +598,7 @@ def test_writes_of_two_unversioned_objects_stay_independent_and_batch() -> None:
     # One claim per object, so two objects' deletes are two claims — and they
     # leave coalescing as the ordinary instructions they always were, which is
     # what lets the batch collapse merge them into one set-based statement.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "name": "Ada"}, {"id": 2, "name": "Linus"}]), Write(affected=2)
         )
@@ -621,7 +621,7 @@ def test_a_restoring_edit_of_a_value_this_transaction_inserted_cancels_nothing()
     # provenance, and same-object coalescing is what would combine the pair. The
     # net-zero chain therefore takes the ordinary no-op path and the INSERT stands
     # alone, carrying the value the caller ended on.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         fresh = Person(id=9, name="Ada")
@@ -656,7 +656,7 @@ def test_a_predicate_group_claims_every_state_it_selected() -> None:
     # compact indivisible unit — so a later keyed write of a state it selected
     # has nothing to join and is refused without the group being indexed or
     # mutated.
-    port = ScriptedPort(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -669,7 +669,7 @@ def test_a_predicate_group_claims_every_state_it_selected() -> None:
 
 
 def test_a_keyed_write_of_a_state_the_group_did_not_select_stays_independent() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[dict(_ACCOUNT_ROW)]),
             Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 7}]),
@@ -690,7 +690,7 @@ def test_a_keyed_intent_before_an_overlapping_predicate_write_force_flushes_firs
     # The reverse order needs no claim: the resolving read force-flushes the
     # buffered keyed write, so the rows the predicate selects are fresh state no
     # pending intent still holds.
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -711,7 +711,7 @@ def test_a_keyed_intent_before_an_overlapping_predicate_write_force_flushes_firs
 def test_the_locked_read_is_what_a_locking_preference_still_licenses() -> None:
     # The claim seam is strategy-independent: an explicit `locking` preference
     # locks the read and the same two assignments still merge into one write.
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -724,7 +724,7 @@ def test_the_locked_read_is_what_a_locking_preference_still_licenses() -> None:
 
 
 def test_the_default_preference_leaves_the_versioned_read_unlocked() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(mm.Account.where(mm.Account.id == 1)).result()

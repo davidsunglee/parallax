@@ -38,7 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity import (
     UNLOADED,
     EntityGraphWriter,
@@ -84,7 +84,7 @@ class AnotherSource:
 
     __slots__ = ("_construction", "_model", "_port")
 
-    def __init__(self, selection: ModelSelection, port: DbPort) -> None:
+    def __init__(self, selection: ModelSelection, port: DatabaseConnection) -> None:
         selected = read_projection(selection)
         if selected.construction is None:
             raise ValueError(

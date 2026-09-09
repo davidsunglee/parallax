@@ -23,22 +23,30 @@ from __future__ import annotations
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from parallax.conformance.provision import Provisioner
 from parallax.core.db_port import (
-    DbPort,
+    DatabaseConnection,
     DeclaresDialect,
     DocumentReadOrdinals,
     IsolationLevel,
     Row,
     TransactionOutcome,
 )
+from parallax.core.db_port import (
+    DatabaseRuntime as _DatabaseRuntime,
+)
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
 
 if TYPE_CHECKING:
-    from parallax.conformance._database_control import DriverControl, InterleavedExecution
+    from parallax.conformance._database_control import (
+        CaseDatabase,
+        DriverControl,
+        InterleavedExecution,
+    )
+    from parallax.core.db_port import DatabaseAdapter
     from parallax.core.entity import DomainModel
     from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
     from parallax.core.unit_work import Clock
@@ -55,7 +63,7 @@ __all__ = [
 
 
 class _NoProvisioningPort:
-    """A `DbPort` that raises if touched — the structural proof that a
+    """A case database that raises if touched — the structural proof that a
     `rejected`-shape ``run`` never provisions and never executes SQL
     (m-conformance-adapter): such a run is dispatched with THIS port instead of a
     Docker-backed one, so a future regression that makes the rejected lane reach
@@ -87,9 +95,12 @@ class _NoProvisioningPort:
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a rejected-case run must not open a transaction")
+
+    def open(self) -> _DatabaseRuntime:  # pragma: no cover
+        raise AssertionError("a rejected-case run must not open a database runtime")
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -114,9 +125,9 @@ class ProfileRun:
     """
 
     name: str
-    port: DbPort
+    port: CaseDatabase
 
-    def __init__(self, profile: Profile, port: DbPort) -> None:
+    def __init__(self, profile: Profile, port: CaseDatabase) -> None:
         object.__setattr__(self, "name", profile.name)
         object.__setattr__(self, "port", port)
 
@@ -169,10 +180,22 @@ class ProvisionedRun(ProfileRun):
             model, clock=clock, lifecycle_provider=lifecycle_provider
         )
 
-    def taken_at_session_default(self, level: str) -> DbPort:  # pragma: no cover - Docker
-        """A port over a connection whose own default isolation is ``level``,
-        established before the adapter took it (`m-db-port` connection intake)."""
-        return self._provisioner.taken_at_session_default(level)
+    def adapter_for_session_default(  # pragma: no cover - Docker
+        self, level: str
+    ) -> DatabaseAdapter:
+        """Configuration whose connections carry ``level`` as their own default
+        before the adapter initializes one (`m-db-port` connection intake)."""
+        return self._provisioner.adapter_for_session_default(level)
+
+    def configured(  # pragma: no cover - Docker
+        self, *, pool: Any = None, prepare_threshold: int | None = None
+    ) -> Any:
+        """This run's database as configuration tuned for one pool proof."""
+        return self._provisioner.configured(pool=pool, prepare_threshold=prepare_threshold)
+
+    def release_case_runtimes(self) -> None:  # pragma: no cover - Docker
+        """Close every runtime a case composed a Database over and left open."""
+        self._provisioner.release_case_runtimes()
 
     def close(self) -> None:  # pragma: no cover - Docker
         """Close the provisioning this run opened."""
@@ -221,7 +244,7 @@ class Profile:
         """
         return ProfileRun(self, _NoProvisioningPort(self.dialect))
 
-    def on_stand_in(self, port: DbPort) -> ProfileRun:
+    def on_stand_in(self, port: CaseDatabase) -> ProfileRun:
         """This profile's run over *port* — a run whose database this profile did
         not open, named at the call site as the substitution it is.
 

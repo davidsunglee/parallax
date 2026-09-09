@@ -42,6 +42,15 @@ Which failures are retriable:
   accepted identity, storage, or lowering invariant does not hold. Re-executing
   the closure would repeat the failure or, worse, write again over corrupt state.
 
+A failure to **acquire a connection** for an attempt is never retriable, under
+any option. No boundary opened and no closure ran, so there is nothing to undo
+and nothing to replay: it is the terminal begin-failure outcome `m-unit-work`
+already states, and it reaches the caller after one attempt however retriable
+its cause might look. Each attempt acquires afresh and releases before it
+finishes, so a retry runs on a connection of its own; nothing about that release
+authorizes another attempt, and an implementation MUST NOT add a wait, a
+reacquisition loop, or a broadened retriable set to accommodate it.
+
 Because each re-execution opens a fresh atomic scope and re-reads through the
 freshness rule, the retry re-observes the version(s) a subsequent `m-opt-lock` gate
 binds — so an auto-retried conflict re-reads the current version and succeeds, with

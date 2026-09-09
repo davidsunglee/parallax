@@ -50,7 +50,7 @@ from _support.db_port import (
     Read,
     ReadCall,
     RollbackCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -294,7 +294,7 @@ _NESTED_READLESS_META = DomainModel(NestedReadlessVoyage)
 # no-op elimination + the atomic-unit buffering, ADR 0014).                    #
 # --------------------------------------------------------------------------- #
 def test_readless_update_where_buffers_one_statement_no_read() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
@@ -308,7 +308,7 @@ def test_readless_update_where_buffers_one_statement_no_read() -> None:
 
 
 def test_readless_document_many_assignment_is_refused_before_write_sql() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -323,7 +323,7 @@ def test_readless_document_many_assignment_is_refused_before_write_sql() -> None
 
 
 def test_readless_nested_document_many_assignment_is_refused_before_write_sql() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -358,7 +358,7 @@ def test_nested_document_many_detection_follows_only_authored_occurrences() -> N
 
 
 def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -371,7 +371,7 @@ def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
 
 
 def test_readless_delete_where_buffers_one_statement_no_read() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1))
@@ -393,7 +393,7 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
     # emits_the_entity_layout_slot_selection`'s own insert-side proof).
     # Eligibility is untouched: the target is still unversioned and
     # non-temporal, so the write stays readless.
-    forward_port = ScriptedPort(Transact(Write()))
+    forward_port = ScriptedAdapter(Transact(Write()))
 
     def forward(tx: Transaction) -> None:
         tx.update_where(
@@ -404,7 +404,7 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
 
     Database.connect(forward_port, ORDERS, clock=FixedClock(FIXED)).transact(forward)
 
-    reordered_port = ScriptedPort(Transact(Write()))
+    reordered_port = ScriptedAdapter(Transact(Write()))
 
     def reordered(tx: Transaction) -> None:
         tx.update_where(
@@ -427,7 +427,7 @@ def test_readless_update_where_reorders_assignments_to_layout_slot_order() -> No
 
 
 def test_where_verb_rejects_a_query_that_is_not_mutation_compatible() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
@@ -443,7 +443,7 @@ def test_where_verb_rejects_an_inheritance_family_target() -> None:
     # composition step accepts it and the family rejection is what refuses the
     # write — which is the point: a set-based write over an inheritance family is
     # unsupported whatever it assigns.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -465,7 +465,7 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
     # canonical instruction the conformance engine hands to Wire preparation
     # carries no query to compose with, and still classifies the family first
     # (`test_write_instructions.py`).
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -479,7 +479,7 @@ def test_where_verb_rejects_an_assignment_addressing_another_entity() -> None:
 
 
 def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id == 1))
@@ -491,7 +491,7 @@ def test_an_assignment_bearing_verb_requires_an_assignment() -> None:
 
 
 def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -507,7 +507,7 @@ def test_one_member_is_assigned_once_in_a_predicate_selected_write() -> None:
 
 
 def test_bitemporal_where_verb_requires_valid_from() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -519,7 +519,7 @@ def test_bitemporal_where_verb_requires_valid_from() -> None:
 
 
 def test_audit_only_where_verb_forbids_valid_from() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.id == 1), valid_from=FIXED)
@@ -529,7 +529,7 @@ def test_audit_only_where_verb_forbids_valid_from() -> None:
 
 
 def test_non_temporal_where_verb_forbids_valid_from() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -544,7 +544,7 @@ def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> Non
     # m-opt-lock-014's own shape: TWO resolved rows, one already equal to the
     # assigned value (skipped: no DML, no version advance), one genuinely
     # changed (one gated per-row UPDATE).
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[
@@ -574,7 +574,7 @@ def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> Non
 def test_materializing_delete_where_writes_every_resolved_row() -> None:
     # m-opt-lock-015's own shape: delete has no assignment equality to test,
     # so every resolved row writes — N always equals the resolved-row count.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[
@@ -600,7 +600,7 @@ def test_materializing_write_with_zero_resolved_rows_writes_nothing() -> None:
     # `m-batch-write` requires zero resolved rows to produce zero keyed writes.
     # A materializing write that resolves nothing still commits
     # cleanly, with no keyed writes at all.
-    port = ScriptedPort(Transact(Read(rows=[])))
+    port = ScriptedAdapter(Transact(Read(rows=[])))
 
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Account.where(mm.Account.balance < 0))
@@ -615,7 +615,7 @@ def test_a_failed_resolving_read_propagates_as_the_call_it_made() -> None:
     # A materializing predicate write reaches the database to resolve its
     # predicate, and a resolve that comes back with a failure is still the call
     # this write made: nothing reinterprets it on the way out.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 raises=DatabaseError(
@@ -662,7 +662,7 @@ def test_materializing_terminate_where_over_an_audit_only_target() -> None:
     # observed-`in_z` candidate binds only under the Optimistic strategy, which
     # `~parallax.core.opt_lock.effective_strategy` reaches for a
     # Transaction-Time target under the default preference alone).
-    port = ScriptedPort(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
@@ -685,7 +685,7 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
     # resolved row's own close carries THAT row's own observed `in_z`, in
     # resolved-row order, mirroring the corpus's `m-txtime-write-006` gated-
     # close shape (`m-value-object-047`'s own re-gated step 2).
-    port = ScriptedPort(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=_two_terminate_rows()), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         tx.terminate_where(mm.Balance.where(mm.Balance.value < 200))
@@ -737,7 +737,7 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
 def test_delete_where_over_a_temporal_target_is_refused_at_the_verb(
     model: DomainModel, entity: str, query: ObjectQuery[Any, Any], representation: str
 ) -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     target: dict[str, object] = {
         "entity": f"parallax.compatibility.{entity}",
         "predicate": {"eq": {"attr": f"parallax.compatibility.{entity}.id", "value": 1}},
@@ -783,7 +783,7 @@ def test_the_buffering_seam_refuses_a_temporal_delete_handed_straight_to_it() ->
         model_of(BALANCE),
     )
     assert isinstance(prepared, instructions.PreparedPredicateWrite)
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError) as refusal:
@@ -803,7 +803,7 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
     # `txtime_write.plan` chains the instruction's OWN authored FULL row —
     # never a separate observed payload — so materialization must merge the
     # resolved row's own unassigned scalar payload (acct_num) forward itself.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[
@@ -844,7 +844,7 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
     # the chained row when the caller does not itself reassign it. The
     # projection that makes this possible is the temporal target's own complete
     # Predecessor Row, which its close-only sibling records just the same.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[
@@ -889,7 +889,7 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
 
 
 def test_materializing_update_where_carries_an_encoded_scalar_in_the_predecessor() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[
@@ -930,7 +930,7 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
         "charterCode": "NB-118",
         "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
     }
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[
@@ -992,7 +992,7 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
         "terms": {"clause": "standard", "sealNumber": "S-4021"},
         "stops": [{"port": "Kristiansand", "berth": "7"}],
     }
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[
@@ -1040,7 +1040,7 @@ def _position_row() -> Row:
 
 
 def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1058,7 +1058,7 @@ def test_materializing_plain_update_where_over_a_bitemporal_target() -> None:
 
 
 def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1072,7 +1072,7 @@ def test_materializing_plain_terminate_where_over_a_bitemporal_target() -> None:
 
 
 def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1092,7 +1092,7 @@ def test_materializing_update_until_where_over_a_bitemporal_target() -> None:
 
 
 def test_materializing_terminate_until_where_over_a_bitemporal_target() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1115,7 +1115,7 @@ def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
     # own multi-row pins -- N resolved rows -> 3*N keyed writes, no cross-row
     # elision (`m-opt-lock.md` "Predicate-selected writes materialize when
     # observations are needed").
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[_position_row(), {**_position_row(), "id": 2}]), Write(times=6))
     )
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
@@ -1157,7 +1157,7 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     # observed prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole" — never decomposed).
     address: dict[str, DocumentValue] = {"city": "Helsinki"}
-    port = ScriptedPort(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1189,7 +1189,7 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
     # resolved row's own `address` forward, whole, since the caller reassigns
     # only `value` — the document is never decomposed at any chain slot.
     address: dict[str, DocumentValue] = {"city": "Tampere"}
-    port = ScriptedPort(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=4)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1228,7 +1228,7 @@ def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -
     # prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole".
     address: dict[str, DocumentValue] = {"city": "Oslo"}
-    port = ScriptedPort(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=2)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1253,7 +1253,7 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
     # BOTH chain the resolved row's OLD payload forward
     # (`bitemp_write.plan`), so the document rides both, whole.
     address: dict[str, DocumentValue] = {"city": "Tampere"}
-    port = ScriptedPort(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_rectangle_row(address=address)]), Write(times=3)))
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -1283,7 +1283,7 @@ def test_materializing_terminate_where_audit_only_observes_the_whole_document() 
     # Predecessor Row (`m-unit-work`) whatever the topology does with it —
     # completeness is a property of the observation, not of the verb
     # (`m-value-object-047`, the corpus witness).
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[
@@ -1321,7 +1321,7 @@ def test_materializing_terminate_where_audit_only_observes_the_whole_document() 
 # declared value object.                                                       #
 # --------------------------------------------------------------------------- #
 def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_row() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}])
         )
@@ -1351,7 +1351,7 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     def rows() -> list[Row]:
         return [{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
 
-    typed_port = ScriptedPort(Transact(Read(rows=rows())))
+    typed_port = ScriptedAdapter(Transact(Read(rows=rows())))
 
     def typed(tx: Transaction) -> None:
         tx.update_where(
@@ -1367,7 +1367,7 @@ def test_an_authored_occurrence_omitting_a_nested_many_is_the_zero_the_row_holds
     # The same value spelled as the rendered document `set` equally accepts, which
     # reaches the comparison without a Value Object's own serialization filling the
     # member in on the way.
-    document_port = ScriptedPort(Transact(Read(rows=rows())))
+    document_port = ScriptedAdapter(Transact(Read(rows=rows())))
 
     def document(tx: Transaction) -> None:
         tx.update_where(
@@ -1477,7 +1477,7 @@ def test_a_no_op_occurrence_is_the_one_the_write_would_store_unchanged() -> None
 
 
 def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op() -> None:
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "version": 1, "payload_hex": "0a1b"}])))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "version": 1, "payload_hex": "0a1b"}])))
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -1492,7 +1492,7 @@ def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op
 
 
 def test_materializing_versioned_update_where_gates_a_changed_value_object_row() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]),
             Write(),
@@ -1517,7 +1517,7 @@ def test_materializing_versioned_update_where_gates_a_changed_value_object_row()
 
 
 def test_materializing_predicate_write_refuses_an_invalid_direct_version() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "version": "bad", "address": PresentDocument({"city": "Bergen"})}])
         )
@@ -1540,7 +1540,7 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
     # Minimal-read discipline: the resolving read projects the ASSIGNED
     # document (`address`) only -- never `profile`, the entity's OTHER
     # declared value object, which this `update_where` never touches.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]),
             Write(),
@@ -1566,7 +1566,7 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
 def test_materializing_update_until_where_rejects_an_equal_window_bound() -> None:
     # No resolving read ever fires — the window rejects at build, before any
     # buffering (`buffer_predicate`, before `_materialize_predicate_write`).
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -1587,7 +1587,7 @@ def test_materializing_update_until_where_rejects_an_equal_window_bound() -> Non
 
 
 def test_materializing_terminate_until_where_rejects_a_reversed_window_bound() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
 
@@ -1609,7 +1609,7 @@ def test_a_where_window_bound_of_no_datetime_type_is_no_instant_either() -> None
     # A bound of no datetime type is no `m-core` instant, and the shared window
     # gate answers it with that module's own class rather than with a bare
     # assertion — the same verdict the keyed verbs answer the same value with.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.update_until_where(
@@ -1632,8 +1632,8 @@ def test_a_where_bounded_verb_states_its_window_as_a_pair() -> None:
     # own `WriteInstructionError` rather than a complaint about the missing
     # half's type. A non-temporal target admits no `valid_from` to supply at all,
     # which is how such a call reaches the gate with one bound.
-    account = ScriptedPort(Transact())
-    position = ScriptedPort(Transact())
+    account = ScriptedAdapter(Transact())
+    position = ScriptedAdapter(Transact())
 
     def absent_valid_from(tx: Transaction) -> None:
         tx.update_until_where(
@@ -1675,7 +1675,7 @@ def test_update_where_rejects_an_ordered_query_end_to_end() -> None:
         tx.update_where(query, mm.Person.name.set("Ada"))
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1686,7 +1686,7 @@ def test_delete_where_rejects_an_ordered_query_end_to_end() -> None:
         tx.delete_where(query)
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1702,9 +1702,9 @@ def test_a_where_verb_never_classifies_deferred_execution_features() -> None:
         tx.delete_where(query)
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedPort(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)).transact(
-            fn
-        )
+        Database.connect(
+            ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)
+        ).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -1716,7 +1716,7 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
         tx.update_where(mm.Person.where(mm.Person.id == 1), mm.Person.name.set("Ada"))
 
     with raises_contextualized(QueryTargetError) as caught:
-        Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
 
@@ -1733,7 +1733,7 @@ def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> Non
         tx.update_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
 
     with raises_contextualized(ModelRejectedError) as caught:
-        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "between-bounds-inverted"
 
 
@@ -1744,7 +1744,7 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
         tx.delete_where(mm.Person.where(mm.Passport.number == "X"))  # pyright: ignore[reportArgumentType]
 
     with raises_contextualized(ModelRejectedError) as caught:
-        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "attribute-outside-active-position"
 
 
@@ -1812,7 +1812,7 @@ def test_a_temporal_bound_is_judged_before_an_invalid_predicate(
 
     with raises_contextualized(expected) as caught:
         Database.connect(
-            ScriptedPort(Transact()), WHERE_POSITION_META, clock=FixedClock(FIXED)
+            ScriptedAdapter(Transact()), WHERE_POSITION_META, clock=FixedClock(FIXED)
         ).transact(fn)
     if rule is not None:
         assert cast("ModelRejectedError", caught.value).rule == rule
@@ -1840,7 +1840,7 @@ def test_an_unrenderable_bound_is_refused_before_any_buffering(
     # whether the target's profile admits a bound at all, so an unrenderable one
     # is refused before the instruction exists — and therefore before the
     # buffering seam, the resolving read, and every statement.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         _bounded_write(tx, WherePosition.where(WherePosition.id == 1), valid_from, until)
@@ -1855,7 +1855,7 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_managed_utc_instant() -> None
     # gate's own canonical literals, so a
     # bound authored at a NON-UTC offset lands in the rectangle split as the
     # same instant in UTC, never as the caller's spelling.
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
         _bounded_write(
@@ -1899,7 +1899,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
     # through this same seam. Refusing that belongs to the instruction serde;
     # what belongs here is that no Parallax code path ever produces such a
     # value.
-    idle = ScriptedPort(Transact())
+    idle = ScriptedAdapter(Transact())
 
     def unrenderable(tx: Transaction) -> None:
         tx.update_until_where(
@@ -1913,7 +1913,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
         Database.connect(idle, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(unrenderable)
     assert idle.calls == [BeginCall(), RollbackCall()]
 
-    typed_port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    typed_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def typed(tx: Transaction) -> None:
         tx.update_until_where(
@@ -1927,7 +1927,7 @@ def test_no_typed_bound_reaches_the_shared_lowering_uncanonicalized() -> None:
         typed, concurrency="optimistic"
     )
 
-    seam_port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    seam_port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def wire(tx: Transaction) -> None:
         tx.wire.update_until_where(
@@ -2069,7 +2069,7 @@ def test_the_wire_predicate_ingress_refuses_an_unvalidated_inheritance_family_ta
         "entity": entity,
         "predicate": {"eq": {"attr": f"{entity}.id", "value": 1}},
     }
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(
@@ -2119,7 +2119,7 @@ def test_the_wire_predicate_ingress_refuses_a_milestone_verb_on_a_non_temporal_t
         "valid_from": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         "until": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
     }
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match=message):
@@ -2165,7 +2165,7 @@ def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
     # pending writes, so a refused predicate write must be refused before
     # `uow.read` and before `uow.buffer` — otherwise an invalid write flushes
     # a valid one.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -2200,7 +2200,7 @@ def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
         tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-not-mutation-compatible"
 
 
@@ -2211,7 +2211,7 @@ def test_query_assignment_target_mismatch_precedes_every_adapter_call() -> None:
         )
 
     with raises_contextualized(QueryDefinitionError) as caught:
-        Database.connect(ScriptedPort(Transact()), PAYMENT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), PAYMENT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-assignment-target-mismatch"
 
 
@@ -2234,7 +2234,7 @@ def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> Non
     # materialized group emits under the Locking strategy is ungated, so a
     # zero-row shortfall is the non-retriable stale write and the whole unit of
     # work rolls back.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
             Write(affected=0),
@@ -2247,7 +2247,7 @@ def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> Non
 
 
 def test_materializing_where_shortfall_in_optimistic_mode_is_a_lock_conflict() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
             Write(affected=0),
@@ -2267,7 +2267,7 @@ def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in
     # the `commit` alone are also true of an attempt that reused the first
     # attempt's materialization.
     resolved = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=resolved), Write(affected=0)),
         Transact(Read(rows=resolved), Write(affected=1)),
     )
@@ -2297,7 +2297,7 @@ def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in
 # inside it.                                                                    #
 # --------------------------------------------------------------------------- #
 def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
@@ -2321,7 +2321,7 @@ def test_a_group_refuses_a_later_keyed_write_of_a_state_it_selected() -> None:
 
 
 def test_a_group_leaves_a_keyed_write_of_an_unselected_state_alone() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),

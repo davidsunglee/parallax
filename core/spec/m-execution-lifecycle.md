@@ -367,8 +367,11 @@ under already stated the edition it inherits. Exhaustion finishes immediately wh
 caller break, explicit close, caller exception, or cancellation before
 exhaustion is Closed Early and does not rewrite caller control flow. Failed is
 reserved for Parallax planning, database, conversion, materialization,
-invalid-data, or resource-cleanup work. Once exhausted, a later caller error
-cannot rewrite the outcome.
+invalid-data, or resource-cleanup work that a delivery needed in order to
+DELIVER. An ordinary problem met while RELEASING the connection a delivery held
+after it ended is not one of them: the delivery is over, its roots stand, and a
+cleanup fact is diagnostic rather than an outcome (`m-db-port`). Once exhausted,
+a later caller error cannot rewrite the outcome.
 
 Each requested page is a **Stream Batch**:
 

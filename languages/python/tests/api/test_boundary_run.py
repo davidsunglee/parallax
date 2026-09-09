@@ -5,7 +5,7 @@ ONE parametrized test over EVERY reachable `boundary`-shape corpus case (the
 `m-auto-retry`/`m-opt-lock`/`m-unit-work` bounded-retry loop-mechanics
 branches a single-connection harness cannot provoke, `m-case-format`
 "Boundary cases"): drives the REAL `db.transact` against the provisioned
-database through `parallax.conformance.boundary_runner.FaultInjectingPort`
+database through `parallax.conformance.boundary_runner`'s fault-injecting adapter
 (wrapping the shipped `parallax-postgres` adapter), and grades `then.outcome`.
 """
 
@@ -24,7 +24,7 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     execution_lifecycle_observation,
 )
-from parallax.conformance.boundary_runner import BoundaryAbort, FaultInjectingPort
+from parallax.conformance.boundary_runner import BoundaryAbort, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
@@ -77,12 +77,17 @@ def test_boundary_case_runs_through_the_shipped_surface(
     fault = boundary_runner.fault_kind(case)
     persistent = fault is not None and outcome != "committed"
 
-    # A case declaring `given.sessionDefault` runs through a connection carrying
-    # that default when the adapter takes it, which is the intake seam the
-    # obligation names; every other case runs through the provisioned port.
+    # A case declaring `given.sessionDefault` runs through configuration whose
+    # connections carry that default before the adapter initializes one, which
+    # is the intake seam the obligation names; every other case runs through the
+    # provisioned configuration.
     default = boundary_runner.session_default(case)
-    adapter = profile_run.port if default is None else profile_run.taken_at_session_default(default)
-    port = FaultInjectingPort(adapter, fault=fault, persistent=persistent)
+    configured = (
+        profile_run.port if default is None else profile_run.adapter_for_session_default(default)
+    )
+    # The fault is armed where the connection is acquired, so it is one fault
+    # across the whole retry loop rather than one per attempt.
+    port = fault_injecting_adapter(configured, fault=fault, persistent=persistent)
     # What the boundary did is observable only WHILE it runs: a failing
     # invocation answers no result, and nothing it returns describes what its
     # attempts did (`m-execution-lifecycle` — observability is transient and

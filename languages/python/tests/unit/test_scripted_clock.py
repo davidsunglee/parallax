@@ -20,7 +20,7 @@ import pytest
 from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -39,7 +39,7 @@ _I1 = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _I2 = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
-def _writes(port: ScriptedPort) -> int:
+def _writes(port: ScriptedAdapter) -> int:
     return sum(1 for call in port.calls if isinstance(call, WriteCall))
 
 
@@ -87,7 +87,7 @@ def test_scripted_clock_requires_at_least_one_instant() -> None:
 # The consumption contract through `Database.transact`.                        #
 # --------------------------------------------------------------------------- #
 def test_each_flushing_temporal_transact_consumes_one_scripted_instant() -> None:
-    port = ScriptedPort(Transact(Write()), Transact(Write()), Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()), Transact(Write()), Transact(Write()))
     db = Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
 
     db.transact(lambda tx: tx.insert(_balance(1)))
@@ -101,7 +101,7 @@ def test_each_flushing_temporal_transact_consumes_one_scripted_instant() -> None
 
 
 def test_force_flush_and_commit_flush_share_one_instant_in_one_transaction() -> None:
-    port = ScriptedPort(Transact(Write(), Read(), Write()), Transact(Write()), Transact())
+    port = ScriptedAdapter(Transact(Write(), Read(), Write()), Transact(Write()), Transact())
     db = Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
 
     def fn(tx: Transaction) -> None:
@@ -119,7 +119,7 @@ def test_force_flush_and_commit_flush_share_one_instant_in_one_transaction() -> 
 
 def test_an_empty_or_read_only_transact_consumes_no_scripted_instant() -> None:
     clock = ScriptedClock([_I1])
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(),
         Transact(
             Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}])
@@ -131,7 +131,7 @@ def test_an_empty_or_read_only_transact_consumes_no_scripted_instant() -> None:
     account_db.transact(lambda tx: tx.find(Account.where(Account.id == 1)).result())
 
     # The single scripted instant is untouched — still available for a temporal write.
-    Database.connect(ScriptedPort(Transact(Write())), _BALANCE, clock=clock).transact(
+    Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock).transact(
         lambda tx: tx.insert(_balance(2))
     )
 
@@ -141,7 +141,7 @@ def test_a_nonempty_non_temporal_flush_consumes_no_scripted_instant() -> None:
     # including the force-flush a dependent read triggers — never asks the Clock
     # Strategy for one.
     clock = ScriptedClock([_I1])
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Write(),
             Read(rows=[{"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}]),
@@ -157,7 +157,7 @@ def test_a_nonempty_non_temporal_flush_consumes_no_scripted_instant() -> None:
     assert _writes(port) == 1
 
     # The single scripted instant is still available, proving nothing above took it.
-    Database.connect(ScriptedPort(Transact(Write())), _BALANCE, clock=clock).transact(
+    Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock).transact(
         lambda tx: tx.insert(_balance(1))
     )
 
@@ -166,7 +166,7 @@ def test_a_coalesced_away_buffer_consumes_no_scripted_instant() -> None:
     # The buffer is nonempty at flush, but same-transaction coalescing cancels
     # the pair before any surviving write could need a Transaction-Time
     # boundary — so no DML runs and no instant is captured.
-    port = ScriptedPort(Transact(), Transact(Write()), Transact(Write()))
+    port = ScriptedAdapter(Transact(), Transact(Write()), Transact(Write()))
     db = Database.connect(port, _BALANCE, clock=ScriptedClock([_I1]))
 
     def fn(tx: Transaction) -> None:
@@ -186,7 +186,9 @@ def test_a_coalesced_away_buffer_consumes_no_scripted_instant() -> None:
 def test_a_retry_attempt_captures_a_fresh_instant() -> None:
     # A retry is a new attempt with its own unit of work, hence its own lazy
     # instant: the failed attempt's capture is never reused.
-    port = ScriptedPort(Transact(Write(raises=_deadlock())), Transact(Write()), Transact(Write()))
+    port = ScriptedAdapter(
+        Transact(Write(raises=_deadlock())), Transact(Write()), Transact(Write())
+    )
     db = Database.connect(port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
 
     db.transact(lambda tx: tx.insert(_balance(1)))
@@ -199,14 +201,14 @@ def test_a_retry_attempt_captures_a_fresh_instant() -> None:
 
 def test_a_retry_that_reaches_no_timestamp_requiring_work_captures_no_instant() -> None:
     clock = ScriptedClock([_I1])
-    port = ScriptedPort(Transact(Write(raises=_deadlock())), Transact(Write()))
+    port = ScriptedAdapter(Transact(Write(raises=_deadlock())), Transact(Write()))
     account_db = Database.connect(port, _ACCOUNT, clock=clock)
 
     account_db.transact(lambda tx: tx.insert(_account(1)))
     assert _writes(port) == 2  # attempt 0's write failed, the retry's succeeded
 
     # Neither attempt asked the clock, so the single scripted instant is intact.
-    Database.connect(ScriptedPort(Transact(Write())), _BALANCE, clock=clock).transact(
+    Database.connect(ScriptedAdapter(Transact(Write())), _BALANCE, clock=clock).transact(
         lambda tx: tx.insert(_balance(2))
     )
 
@@ -216,7 +218,7 @@ def test_a_fixed_clock_factory_story_still_works_single_instant() -> None:
     # instant witness) is unaffected — `WriteStory.clock`'s own type
     # (`Callable[[], Clock]`) admits any `Clock`, not only `ScriptedClock`, and
     # a `FixedClock` never exhausts across successive flushes.
-    port = ScriptedPort(Transact(Write()), Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()), Transact(Write()))
     db = Database.connect(port, _BALANCE, clock=FixedClock(_I1))
     db.transact(lambda tx: tx.insert(_balance(1)))
     db.transact(lambda tx: tx.insert(_balance(2)))
