@@ -1,15 +1,14 @@
 """Source inventories over Python files, for guards stated over source shape.
 
 Two kinds of reader, and no third. What the TEXT settles: globbing a
-distribution's sources, matching a regular expression against their lines,
-parsing them with ``ast``, and reading the import statements out of the parse.
-What only the RUNTIME settles: importing every
-module and walking Python's subclass registry and module namespaces, because
-ancestry and the names a class is bound under are facts no spelling carries. A
-caller gets paths, ``path:line`` sites, parse trees, `Import` records, and sets
-of names, and decides for itself what any of it means. `synthetic_sources` hands
-it source to read in place of this tree's, which is how a guard is shown to fail
-for the shape it forbids and to pass source that merely resembles it.
+distribution's sources, parsing them with ``ast``, and reading the import
+statements out of the parse. What only the RUNTIME settles: importing every
+module and walking Python's subclass registry, because ancestry is a fact no
+spelling carries. A caller gets paths, ``path:line`` sites, parse trees,
+`Import` records, and classes, and decides for itself what any of it means.
+`synthetic_sources` hands it source to read in place of this tree's, which is
+how a guard is shown to fail for the shape it forbids and to pass source that
+merely resembles it.
 
 Nothing here resolves a name to what it denotes. A relative import's source
 module is completed from the importing file's own position, which the file
@@ -26,29 +25,22 @@ from __future__ import annotations
 
 import ast
 import importlib
-import re
-import sys
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 
 from _support.distributions import ALL_PACKAGES, PRODUCTION_PACKAGES, TOP_PACKAGE_DIR
 from _support.repo import PY_ROOT
 
 __all__ = [
     "CONFORMANCE_SRC",
-    "CORE_SRC",
     "ENTITY_PACKAGE",
     "ENTITY_SRC",
-    "PACKAGES",
     "SNAPSHOT_SRC",
     "Import",
     "all_sources",
     "declared_imports",
-    "first_party_binding_names",
     "first_party_descendants",
-    "hits",
     "import_every_module",
     "parsed",
     "production_sources",
@@ -57,14 +49,13 @@ __all__ = [
     "sources",
     "synthetic_site",
     "synthetic_sources",
-    "word",
 ]
 
-PACKAGES = PY_ROOT / "packages"
-CORE_SRC = PACKAGES / "parallax-core" / "src" / "parallax" / "core"
-SNAPSHOT_SRC = PACKAGES / "parallax-snapshot" / "src" / "parallax" / "snapshot"
-ENTITY_SRC = CORE_SRC / "entity"
-CONFORMANCE_SRC = PACKAGES / "parallax-conformance" / "src" / "parallax" / "conformance"
+_PACKAGES = PY_ROOT / "packages"
+_CORE_SRC = _PACKAGES / "parallax-core" / "src" / "parallax" / "core"
+SNAPSHOT_SRC = _PACKAGES / "parallax-snapshot" / "src" / "parallax" / "snapshot"
+ENTITY_SRC = _CORE_SRC / "entity"
+CONFORMANCE_SRC = _PACKAGES / "parallax-conformance" / "src" / "parallax" / "conformance"
 
 ENTITY_PACKAGE = "parallax.core.entity"
 
@@ -78,7 +69,7 @@ def sources(*roots: Path) -> Iterator[tuple[Path, str]]:
 
 
 def _package_sources(names: Iterable[str]) -> Iterator[tuple[Path, str]]:
-    yield from sources(*(PACKAGES / name / "src" / TOP_PACKAGE_DIR[name] for name in names))
+    yield from sources(*(_PACKAGES / name / "src" / TOP_PACKAGE_DIR[name] for name in names))
 
 
 def production_sources() -> Iterator[tuple[Path, str]]:
@@ -96,7 +87,7 @@ def site_of(path: Path, line: int) -> str:
     return f"{path.relative_to(PY_ROOT)}:{line}"
 
 
-_SYNTHETIC_SRC = PACKAGES / "parallax-synthetic" / "src"
+_SYNTHETIC_SRC = _PACKAGES / "parallax-synthetic" / "src"
 
 
 def _synthetic_path(module: str) -> Path:
@@ -122,22 +113,6 @@ def _dotted(path: Path) -> str:
     """A source file's importable module name."""
     src = next(parent for parent in path.parents if parent.name == "src")
     return ".".join(path.relative_to(src).with_suffix("").parts).removesuffix(".__init__")
-
-
-def hits(pattern: str, over: Iterator[tuple[Path, str]], *, flags: int = 0) -> list[str]:
-    """Every ``path:line`` the regular expression ``pattern`` matches."""
-    expression = re.compile(pattern, flags)
-    return [
-        site_of(path, number)
-        for path, text in over
-        for number, line in enumerate(text.splitlines(), 1)
-        if expression.search(line)
-    ]
-
-
-def word(name: str) -> str:
-    """``name`` as a whole-word pattern, so a longer identifier containing it misses."""
-    return rf"\b{re.escape(name)}\b"
 
 
 def parsed(over: Iterator[tuple[Path, str]]) -> Iterator[tuple[Path, ast.Module]]:
@@ -174,34 +149,6 @@ def first_party_descendants(root: type) -> list[type]:
     return sorted(
         (kind for kind in _descendants(root) if kind.__module__.startswith("parallax.")),
         key=lambda kind: (kind.__module__, kind.__qualname__),
-    )
-
-
-def _first_party_modules() -> list[ModuleType]:
-    return [
-        module
-        for module in list(sys.modules.values())
-        if getattr(module, "__name__", "").startswith("parallax.")
-    ]
-
-
-def first_party_binding_names(root: type) -> frozenset[str]:
-    """Every name a shipped module binds a `first_party_descendants` class under.
-
-    A class reached by name is reached under whatever name its holder can import
-    it by, so a re-export under a second name is one of the class's names here.
-    The module namespaces answer that once every module is imported; a class's own
-    ``__name__`` stands whether or not anything re-exports it.
-    """
-    kinds = set(first_party_descendants(root))
-    return frozenset(
-        [kind.__name__ for kind in kinds]
-        + [
-            bound
-            for module in _first_party_modules()
-            for bound, value in list(vars(module).items())
-            if isinstance(value, type) and value in kinds
-        ]
     )
 
 

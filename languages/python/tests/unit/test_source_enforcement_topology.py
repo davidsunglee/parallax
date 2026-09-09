@@ -5,9 +5,7 @@ about the source itself, which is why they are graded by reading source at all.
 These assertions carry the part of §7 that import-linter's scope contracts
 cannot: the private reaches §7 grants module by module, and the single
 composition root a Write Planner may be built in. Each is an inventory of what §7
-grants today, so an entry changes here whenever that grant changes — which is
-what separates them from the pins in `test_frontend_contraction_guards.py`, each
-of which records a surface the frontend removed and is expected to sit untouched.
+grants today, so an entry changes here whenever that grant changes.
 
 The reaches inventoried here are exactly the ones §7 names. A reach §7 does not
 name is a §7 decision before it is a code change, and the exact-set form is what
