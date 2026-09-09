@@ -11,8 +11,8 @@ private Change Record slot, physical column names, temporal planning, or Audit
 Provenance. It is an **authoring** codec: it
 emits only what a caller authored, never computes or stamps a framework-owned
 value, and is never an Audit Provenance extension point. Its dependencies are the
-accepted Metamodel, the value's own class, and — for the private slot alone — the
-value's own instance storage, and nothing else.
+accepted Metamodel's member layouts, the value's own class, and — for the private
+slot alone — the value's own instance storage, and nothing else.
 
 Weighing effectiveness is no operation's rule here.
 :meth:`EntityRowCodec.authored_row` answers both sides of the comparison and
@@ -62,12 +62,10 @@ from parallax.core.entity._errors import (
 )
 from parallax.core.entity._expressions import serialize_member
 from parallax.core.entity._instance_state import is_present, named_state, plan_of
-from parallax.core.inheritance import view as inheritance_view
+from parallax.core.entity._layout import CatalogedModel, EntityLayout
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
-    Metamodel,
-    PrimaryKey,
     ValueObjectMetadata,
 )
 
@@ -121,28 +119,35 @@ class _RowFacts:
 
 
 class EntityRowCodec:
-    """One accepted Metamodel's row-derivation collaboration.
+    """One cataloged model's row-derivation collaboration.
 
-    Per accepted Metamodel rather than per row: it is the home of the per-Entity
-    facts derived once from that metadata — the family-effective candidate set,
-    its canonical order, the framework-owned designation, and the primary key —
-    for every Entity the model declares, all derived when the codec is
-    constructed. Bound to one model at construction, no operation takes a model
-    argument and none can be handed a mismatched one.
+    Per model rather than per row: it is the home of the per-Entity facts
+    derived once from that model — the family-effective candidate set, its
+    canonical order, the framework-owned designation, and the primary key — for
+    every Entity the model declares, all derived when the codec is constructed.
+    Bound to one model at construction, no operation takes a model argument and
+    none can be handed a mismatched one.
 
-    It is stated over the accepted Metamodel rather than over the
-    :class:`~parallax.core.entity.DomainModel` that carries one, because that is
+    Those facts are a name-keyed reshaping of the member layouts the cataloged
+    model already carries, which is why it takes one rather than a bare
+    Metamodel: which members a concrete Entity carries and in what order is the
+    layout's answer, and a codec deriving it again would fix a second one.
+
+    It is stated over the accepted metadata rather than over the
+    :class:`~parallax.core.entity.DomainModel` that carries it, because that is
     the whole of what a row depends on: a model composing no Entity Class
     derives rows exactly as one composing every class does.
     """
 
-    __slots__ = ("_facts_by_identity", "_model")
+    __slots__ = ("_facts_by_identity",)
 
-    def __init__(self, model: Metamodel) -> None:
-        """Derive every Entity's row facts, or raise :class:`EntityRowError`."""
-        self._model = model
+    def __init__(self, cataloged: CatalogedModel) -> None:
+        """Derive every Entity's row facts from the layouts ``cataloged`` holds."""
         self._facts_by_identity: Mapping[EntityIdentity, _RowFacts] = MappingProxyType(
-            {entity.identity: _row_facts(model, entity.identity) for entity in model.entities}
+            {
+                entity.identity: _row_facts(cataloged.layouts.entity(entity.identity))
+                for entity in cataloged.meta.entities
+            }
         )
 
     def full_row(self, value: object) -> dict[str, object]:
@@ -358,40 +363,25 @@ class EntityRowCodec:
         )
 
 
-def _row_facts(model: Metamodel, identity: EntityIdentity) -> _RowFacts:
-    """``identity``'s row facts, derived from the accepted metadata alone."""
-    metadata = model.entity(identity)
-    if metadata is None:  # pragma: no cover - derived only over the Entities the model declares
-        raise EntityRowError(
-            code=ENTITY_ROW_TARGET_NOT_IN_MODEL,
-            message=f"this model declares no Entity {identity.canonical!r}",
-            identity=identity,
-        )
-    position = inheritance_view(model).entity(identity)
-    attributes = (
-        tuple(metadata.declared_attributes)
-        if position is None
-        else tuple(position.applicable_attributes)
-    )
-    occurrences = (
-        tuple(metadata.declared_value_objects)
-        if position is None
-        else tuple(position.applicable_value_objects)
-    )
+def _row_facts(layout: EntityLayout) -> _RowFacts:
+    """``layout``'s member row, keyed by the canonical name a row spells it under.
+
+    The primary key is spelled from the positions the layout already fixed, so
+    which Attributes carry a concrete's key is answered once for every consumer
+    that asks it.
+    """
     members: dict[str, AttributeMetadata | ValueObjectMetadata] = {
-        attribute.identity.name: attribute for attribute in attributes
+        attribute.identity.name: attribute for attribute in layout.attributes
     }
-    members.update({occurrence.identity.path[-1]: occurrence for occurrence in occurrences})
+    members.update({occurrence.identity.path[-1]: occurrence for occurrence in layout.occurrences})
     return _RowFacts(
-        identity=identity,
+        identity=layout.concrete,
         members=MappingProxyType(members),
         framework_owned=frozenset(
-            attribute.identity.name for attribute in attributes if attribute.framework_owned
+            attribute.identity.name for attribute in layout.attributes if attribute.framework_owned
         ),
         primary_key=tuple(
-            attribute.identity.name
-            for attribute in attributes
-            if isinstance(attribute.primary_key, PrimaryKey)
+            layout.attributes[position].identity.name for position in layout.primary_key
         ),
     )
 

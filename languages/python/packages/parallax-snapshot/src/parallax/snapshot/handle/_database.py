@@ -123,7 +123,7 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
             if classes is None
             else EntityGraphConstruction(catalog.meta, classes, catalog.layouts)
         ),
-        codec=EntityRowCodec(catalog.meta),
+        codec=EntityRowCodec(catalog),
         planner=build_write_planner(catalog.meta),
     )
 

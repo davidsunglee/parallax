@@ -22,8 +22,8 @@ def cataloged_for(model: DomainModel) -> CatalogedModel:
 
 
 def row_codec_for(model: DomainModel) -> EntityRowCodec:
-    """A row codec over ``model``'s accepted Metamodel."""
-    return EntityRowCodec(model_of(model))
+    """A row codec over ``model``'s accepted Metamodel and its layouts."""
+    return EntityRowCodec(cataloged_for(model))
 
 
 def graph_construction_for(model: DomainModel) -> EntityGraphConstruction:

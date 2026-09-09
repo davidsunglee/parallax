@@ -43,6 +43,7 @@ from parallax.core.entity import (
     to_document,
 )
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import UnresolvedEntityDeclaration
 
@@ -769,7 +770,8 @@ def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -
     # reachable from here. §7's generated contracts enforce the scope-level half.
     # `_instance_state` is the third dependency the module admits to, and it
     # answers what a value holds by name under either backing and nothing beyond
-    # it; every other entity-scope name is a frontend one.
+    # it; `_layout` is the fourth, and answers which members a concrete Entity
+    # carries; every other entity-scope name is a frontend one.
     assert _codec_imports() == {
         "__future__",
         "collections.abc",
@@ -781,7 +783,7 @@ def test_the_codec_depends_on_metadata_its_own_frontend_and_instance_storage() -
         "parallax.core.entity._errors",
         "parallax.core.entity._expressions",
         "parallax.core.entity._instance_state",
-        "parallax.core.inheritance",
+        "parallax.core.entity._layout",
         "parallax.core.metamodel",
     }
 
@@ -809,8 +811,8 @@ def test_the_codec_names_no_audit_planning_or_physical_dependency(forbidden: str
 
 
 def test_a_codec_states_itself_over_the_accepted_metamodel_alone() -> None:
-    # What the codec retains is derivable from the accepted model with no
-    # Domain Model in reach, which is what makes the bare-Metamodel connection
-    # the conformance adapter builds a fully functional write path.
-    standalone: Any = EntityRowCodec(model_of(mm.ACCOUNT_MODEL))
+    # What the codec retains is derivable from the accepted model with no Domain
+    # Model in reach: a codec built over a catalog of the accepted metadata
+    # alone derives the same row as one preparation built.
+    standalone: Any = EntityRowCodec(CatalogedModel(model_of(mm.ACCOUNT_MODEL)))
     assert standalone.full_row(_account()) == _accounts().full_row(_account())

@@ -116,6 +116,11 @@ class EntityLayout:
     independent primary-key namespace and normalizing would conflate two
     different rows that merely share a key value.
 
+    ``primary_key`` is where that family key sits in this concrete's own row, in
+    the family's declared order. It is public because a caller spelling the key
+    some other way — by name through ``attributes``, say — would otherwise
+    restate which Attributes carry it and fix a second answer.
+
     ``temporal_ends`` names the Attributes whose stored value may be the open
     temporal bound. The declaring family owns its as-of axes, so which of a
     concrete's Attributes close an interval is family-wide and fixed here rather
@@ -144,7 +149,7 @@ class EntityLayout:
     temporal_ends: frozenset[AttributeIdentity]
     relationships: tuple[RelationshipIdentity, ...]
     relationship_index: Mapping[RelationshipIdentity, int]
-    _primary_key: tuple[int, ...]
+    primary_key: tuple[int, ...]
 
     def key_of(self, row: tuple[object, ...]) -> object:
         """``row``'s logical key: the raw scalar for a single-column primary key,
@@ -154,9 +159,9 @@ class EntityLayout:
         omitted, because every row of one materialization stands at the same pin
         and so it can distinguish nothing.
         """
-        if len(self._primary_key) == 1:
-            return row[self._primary_key[0]]
-        return tuple(row[position] for position in self._primary_key)
+        if len(self.primary_key) == 1:
+            return row[self.primary_key[0]]
+        return tuple(row[position] for position in self.primary_key)
 
     def ordered[V: NarrowableView](self, views: Iterable[V]) -> tuple[V, ...]:
         """``views`` in canonical slot order: each relationship's own declaration
@@ -248,7 +253,7 @@ class LayoutCatalog:
             relationship_index=MappingProxyType(
                 {direction: position for position, direction in enumerate(relationships)}
             ),
-            _primary_key=self._key_positions(identity, position.root, index_of),
+            primary_key=self._key_positions(identity, position.root, index_of),
         )
 
     def _temporal_ends(self, root: EntityIdentity) -> frozenset[AttributeIdentity]:

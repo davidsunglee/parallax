@@ -1740,7 +1740,7 @@ needs are constructed over what the model answers and retained by the runtime
 that composed them:
 
 ```text
-EntityRowCodec(model: Metamodel)                                                    # §5
+EntityRowCodec(cataloged: CatalogedModel)                                           # §5
 EntityGraphConstruction(model: Metamodel, classes: ClassIndex, layouts: LayoutCatalog)  # §3
 ```
 
@@ -4236,15 +4236,16 @@ These feature tests do not claim the deferred `benchmark` command or general
   be ambiguous on a Bitemporal Entity, whose one key may have several disjoint
   Valid-Time rectangles current on Transaction Time.
 - **The Entity Row Codec derives every row.** One model-bound `EntityRowCodec`,
-  constructed over the accepted Metamodel by `prepare_model` (§2) and carried
-  by the selection's write projection, is what turns an Entity value into a
-  canonical row. The framework asks it for a row and learns nothing about
-  Pydantic, private provenance storage, physical column names, temporal
-  planning, or Audit Provenance:
+  constructed over the accepted Metamodel and its member layouts by
+  `prepare_model` (§2) and carried by the selection's write projection, is what
+  turns an Entity value into a canonical row. The framework asks it for a row
+  and learns nothing about Pydantic, private provenance storage, physical column
+  names, temporal planning, or Audit Provenance:
 
   ```text
-  EntityRowCodec(model: Metamodel)  # model-bound; every Entity's facts derived
-                                    #   at construction, or raised there
+  EntityRowCodec(cataloged: CatalogedModel)  # model-bound; every Entity's facts
+                                             #   derived at construction from
+                                             #   that model's member layouts
     full_row(value)     -> dict[str, object]
     identity_row(value) -> dict[str, object]
     authored_row(value) -> AuthoredRow | None      # .row / .originals
