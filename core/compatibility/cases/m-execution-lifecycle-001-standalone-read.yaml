@@ -12,16 +12,26 @@
 # the case's model under — `account`, the model descriptor's stem — where a read
 # under an attempt inherits the attempt's and states none.
 #
-# The four events are one activity bracketing another. Activity 1 is the Read,
-# opened after public preflight and closed when the public result is ready;
-# activity 2 is its one Database Call, whose `parent: 1` is the containment.
-# `sequence` is delivery position and `activity` is identity, and the two
-# deliberately disagree here: activity 2 owns sequences 2 and 3, because a
-# Started and its Finished are one activity delivered twice. The Database Call's
-# `readCompleted` carries the PHYSICAL row count the statement returned — one
-# row for account 3 (Grace) — never a count of result roots or graph nodes,
-# which for this flat single-table read happen to coincide and therefore prove
-# nothing on their own.
+# The eight events are one activity bracketing three. Activity 1 is the Read,
+# opened after public preflight and closed when the public result is ready; the
+# other three are its direct children, each `parent: 1`. `sequence` is delivery
+# position and `activity` is identity, and the two deliberately disagree here:
+# activity 2 owns sequences 2 and 3, because a Started and its Finished are one
+# activity delivered twice. The Database Call's `readCompleted` carries the
+# PHYSICAL row count the statement returned — one row for account 3 (Grace) —
+# never a count of result roots or graph nodes, which for this flat
+# single-table read happen to coincide and therefore prove nothing on their own.
+#
+# The Acquisition and the Release are the read's connection, observable at both
+# ends. They are SIBLINGS of the Database Call rather than a lease around it:
+# the statement is the read's own child, and asking the adapter for a connection
+# is one more thing the read did. The Acquisition is the read's first child and
+# the Release its last, so this is also the smallest place the whole ownership
+# rule is visible — a standalone read holds one connection from before its first
+# statement until after its result is built, and gives it back BEFORE it
+# finishes. `cleanup: returned` is what letting go established: the connection
+# was handed back and the handoff completed, which promises nothing about what
+# happens to it afterwards.
 #
 # The Database Call names its statement by INDEX (`statement: 0`) into the
 # authored golden order rather than repeating the SQL or the bind:
@@ -60,15 +70,31 @@ then:
           - sequence: 2
             activity: 2
             parent: 1
+            acquisitionStarted: {}
+          - sequence: 3
+            activity: 2
+            parent: 1
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 4
+            activity: 3
+            parent: 1
             databaseCallStarted:
               target: parallax.compatibility.Account
               kind: read
               statement: 0
-          - sequence: 3
-            activity: 2
+          - sequence: 5
+            activity: 3
             parent: 1
             databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 4
+          - sequence: 6
+            activity: 4
+            parent: 1
+            releaseStarted: {}
+          - sequence: 7
+            activity: 4
+            parent: 1
+            releaseFinished: { cleanup: returned }
+          - sequence: 8
             activity: 1
             parent: null
             readFinished: { outcome: completed }

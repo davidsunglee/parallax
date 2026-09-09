@@ -36,7 +36,14 @@ from typing import ClassVar, Final, Protocol, Self, runtime_checkable
 from uuid import UUID, uuid4
 
 from parallax.core.auto_retry import retriable_failure
-from parallax.core.db_port import CommitFailed, IsolationLevel, RollbackTrigger
+from parallax.core.db_port import (
+    AcquisitionReason,
+    CleanupResult,
+    CommitFailed,
+    ConnectionAcquisitionError,
+    IsolationLevel,
+    RollbackTrigger,
+)
 from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
@@ -50,12 +57,16 @@ from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleReentryError,
 )
 from parallax.core.execution_lifecycle._events import (
+    AcquisitionFailed,
+    AcquisitionFinished,
+    AcquisitionStarted,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptPhase,
     AttemptRollbackFailed,
     AttemptRolledBack,
+    ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallKind,
@@ -75,6 +86,8 @@ from parallax.core.execution_lifecycle._events import (
     ReadFinished,
     ReadInterface,
     ReadStarted,
+    ReleaseFinished,
+    ReleaseStarted,
     RetryPolicy,
     RootExecution,
     SnapshotStreamFinished,
@@ -115,6 +128,35 @@ class ExecutionLifecycleHandler(Protocol):
         """Receive one transition. An ordinary exception quarantines this
         Handler for the rest of its root and changes no execution semantics."""
         ...
+
+
+class CompletingHandler:
+    """A Handler that composes others and can say whether any of them received
+    an event.
+
+    Ordinary delivery answers nothing, and a Handler that swallowed an event is
+    indistinguishable from one that exported it: what a Handler does with an
+    event is the Handler's business. One question is not — whether a cleanup
+    fact reached ANY Handler at all, because the fact has a restricted fallback
+    log waiting for it and reporting it twice is as wrong as reporting it never.
+
+    A leaf Handler answers that question by returning from :meth:`handle`
+    without raising. A composite cannot: it contains each child's ordinary
+    failure by contract, so it returns normally after quarantining every child
+    it has. Inheriting this is how such a Handler says so, and the publisher
+    resolves it ONCE per root rather than asking per event.
+
+    It is not part of the public Handler contract: an application writes
+    :class:`ExecutionLifecycleHandler`, and only the fan-out this package builds
+    composes children whose delivery it has to answer for.
+    """
+
+    __slots__ = ()
+
+    def handle_completing(self, event: ExecutionEvent, /) -> bool:
+        """Deliver ``event`` and answer whether at least one leaf Handler
+        beneath this one returned from ``handle`` normally."""
+        raise NotImplementedError
 
 
 @runtime_checkable
@@ -335,7 +377,109 @@ class DatabaseCallScope(Protocol):
         ...
 
 
-class ReadActivity(Protocol):
+class ConnectionAcquisitionActivity(Protocol):
+    """One acquisition's scope, around the call that asks for a connection.
+
+    It is a SIBLING of the execution activities beside it rather than a lease
+    enclosing them: the statements an operation runs are the operation's own
+    children, and what the operation asked the adapter for is one more thing it
+    did. Nothing opens inside this scope.
+
+    Success is the default and needs no announcement — leaving the scope
+    normally is an acquisition that was granted. A failed one announces the
+    cleanup its own partial ownership already ran, which is the one fact the
+    scope cannot read off the exception.
+    """
+
+    def __enter__(self) -> ConnectionAcquisitionActivity: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+    def unacquired(self, cleanup_result: CleanupResult | None, /) -> None:
+        """What the cleanup a failed acquisition already ran ESTABLISHED, or
+        ``None`` where it never owned anything to clean up."""
+        ...
+
+    @property
+    def held_since_ns(self) -> int | None:
+        """When the acquisition call came back, for a scope that measured it.
+
+        ``None`` where nothing is observing, which is what keeps the default
+        path free of a clock read. It is the start of the HOLD rather than the
+        end of the acquisition's own measurement: everything from here to the
+        end of the release is time the operation occupied a connection,
+        including this activity's own Finished delivery.
+        """
+        ...
+
+    @property
+    def cleanup_reported(self) -> bool:
+        """Whether a Handler completed delivery of this activity's cleanup facts.
+
+        Initial acceptance is not enough and neither is invocation: a return
+        acknowledges delivery, and nothing less does. ``False`` where no
+        Provider is installed, where every Handler was quarantined, and where
+        the activity carried no cleanup fact to deliver — so a caller reads it
+        as "report this yourself" rather than as "delivery failed".
+        """
+        ...
+
+
+class ConnectionReleaseActivity(Protocol):
+    """One release's scope, around the call that gives a connection back.
+
+    Opened only where an acquisition succeeded, so a release in the stream is
+    the end of a hold that existed. Its own result is announced rather than read
+    off the way the scope was left: what a release established is a value the
+    adapter reports, and an exception passing through says nothing about it.
+    """
+
+    def __enter__(self) -> ConnectionReleaseActivity: ...
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None: ...
+
+    def relinquished(self, cleanup_result: CleanupResult | None, /) -> None:
+        """What letting the connection go ESTABLISHED."""
+        ...
+
+    @property
+    def cleanup_reported(self) -> bool:
+        """Whether a Handler completed delivery of this activity's cleanup facts."""
+        ...
+
+
+class ConnectionOwnerActivity(Protocol):
+    """An activity that owns one operation's connection for its own lifetime.
+
+    The three that do are a standalone Read, a Transaction Attempt, and a
+    standalone Snapshot Stream — the same three that adopt a Model Edition,
+    because a connection and a selection are held for exactly one operation.
+    Participating work receives both and owns neither, so it never appears here.
+    """
+
+    def acquisition(self) -> ConnectionAcquisitionActivity:
+        """The scope this activity's one acquisition runs inside."""
+        ...
+
+    def release(self, held_since_ns: int | None, /) -> ConnectionReleaseActivity:
+        """The scope this activity's one release runs inside, over the hold that
+        began at ``held_since_ns``."""
+        ...
+
+
+class ReadActivity(ConnectionOwnerActivity, Protocol):
     """One Read's scope: which children it may open, and nothing else.
 
     A Read's success outcome carries no data, so leaving the scope normally IS
@@ -391,7 +535,7 @@ class StreamBatchActivity(Protocol):
         ...
 
 
-class SnapshotStreamActivity(Protocol):
+class SnapshotStreamActivity(ConnectionOwnerActivity, Protocol):
     """One stream's scope: its pages, and which of its two non-failure endings
     it reached.
 
@@ -426,7 +570,7 @@ class SnapshotStreamActivity(Protocol):
         ...
 
 
-class TransactionAttemptActivity(Protocol):
+class TransactionAttemptActivity(ConnectionOwnerActivity, Protocol):
     """One physical attempt's scope: what runs inside it, and how it ended.
 
     Entering the scope is what starts the attempt, and it is entered before the
@@ -616,6 +760,32 @@ class _InertActivity:
     def attempt(self, edition: str, /) -> _InertActivity:
         return self
 
+    def acquisition(self) -> _InertActivity:
+        return self
+
+    def release(self, held_since_ns: int | None, /) -> _InertActivity:
+        return self
+
+    @property
+    def held_since_ns(self) -> None:
+        """No clock was read, so there is no moment to answer with."""
+        return None
+
+    @property
+    def cleanup_reported(self) -> bool:
+        """Nothing received anything, so a cleanup fact still needs reporting.
+
+        This is what puts the restricted resource log on the default path: the
+        failure-only fallback is a deliberate exception to "no Provider means no
+        lifecycle work", because a connection nobody could give back is worth
+        saying whether or not anyone is watching.
+        """
+        return False
+
+    def unacquired(self, cleanup_result: CleanupResult | None, /) -> None: ...
+
+    def relinquished(self, cleanup_result: CleanupResult | None, /) -> None: ...
+
     def read_completed(self, returned_rows: Sized, /) -> None: ...
 
     def write_completed(self, affected_rows: int, /) -> None: ...
@@ -685,7 +855,14 @@ class _Publisher:
     concern and this class keeps exactly one Handler.
     """
 
-    __slots__ = ("_activities", "_execution_id", "_handler", "_installed", "_sequence")
+    __slots__ = (
+        "_activities",
+        "_completing",
+        "_execution_id",
+        "_handler",
+        "_installed",
+        "_sequence",
+    )
 
     def __init__(
         self,
@@ -696,6 +873,13 @@ class _Publisher:
         self._execution_id = execution_id
         self._installed = installed
         self._handler: ExecutionLifecycleHandler | None = handler
+        # Resolved once, because whether a Handler can answer for its children
+        # is a property of the composition rather than of an event, and asking
+        # per event would put the question on every delivery to pay for the two
+        # that read the answer.
+        self._completing = (
+            handler.handle_completing if isinstance(handler, CompletingHandler) else None
+        )
         self._sequence = 0
         self._activities = 0
 
@@ -726,14 +910,25 @@ class _Publisher:
         self._activities += 1
         return self._activities
 
-    def deliver(self, event: ExecutionEvent) -> None:
-        """Hand ``event`` to this root's Handler, containing whatever it does.
+    def deliver(self, event: ExecutionEvent) -> bool:
+        """Hand ``event`` to this root's Handler, containing whatever it does,
+        and answer whether a Handler RECEIVED it.
 
         An ordinary failure quarantines the Handler for the remainder of the
         root and is reported to its Provider out of band; execution behavior is
         unchanged. A control-flow or fatal exception deactivates delivery for
         the root and propagates unchanged, producing no Handler Error, so the
         operation aborts and cleans up without further events.
+
+        The answer exists for the transitions carrying a cleanup fact, which has
+        a restricted fallback log waiting for it: reporting it in both places
+        would report it twice and in neither would lose it. Initial acceptance
+        is not enough and neither is invocation — a Handler that raised ON this
+        event received nothing — and a fan-out that contained every one of its
+        children's failures answers ``False`` too, which is exactly the case a
+        composite's own normal return hides. Every other caller ignores the
+        answer, because what a Handler does with an ordinary event is the
+        Handler's business.
 
         Both the delivery and the reporting that may follow it happen inside
         this Handle's lifecycle context, so an operation the Handler starts back
@@ -743,19 +938,24 @@ class _Publisher:
         """
         handler = self._handler
         if handler is None:
-            return
+            return False
+        completing = self._completing
         delivering = self._installed.delivering
         delivering.active = True
         try:
+            if completing is not None:
+                return completing(event)
             handler.handle(event)
         except Exception as failure:
             self._handler = None
             self._report(event, handler, failure)
+            return False
         except BaseException:
             self._handler = None
             raise
         finally:
             delivering.active = False
+        return True
 
     def _report(
         self, event: ExecutionEvent, handler: ExecutionLifecycleHandler, failure: Exception
@@ -913,7 +1113,33 @@ class _LiveActivity:
         return failure
 
 
-class _LiveRead(_LiveActivity):
+class _LiveConnectionOwner(_LiveActivity):
+    """An observed scope that owns one operation's connection.
+
+    The two openers are written once here because a standalone Read, a
+    Transaction Attempt, and a standalone Snapshot Stream answer them
+    identically: an acquisition and a release are the owner's own children
+    whichever of the three is asking, and the difference between the three is
+    the shape of the operation between them rather than either end of it.
+
+    A release is opened only over a hold that was measured. Where it was not,
+    nothing observed the acquisition that opened the hold either — delivery for
+    this root had already stopped — so the release is inert rather than a live
+    scope with no beginning to report.
+    """
+
+    __slots__ = ()
+
+    def acquisition(self) -> _LiveAcquisition:
+        return _LiveAcquisition(self._publisher, self)
+
+    def release(self, held_since_ns: int | None, /) -> ConnectionReleaseActivity:
+        if held_since_ns is None:
+            return INERT
+        return _LiveRelease(self._publisher, self, held_since_ns)
+
+
+class _LiveRead(_LiveConnectionOwner):
     """One observed Read: its Database Calls, and its own bracket.
 
     A root Read states the edition it adopted; a participating one states none,
@@ -1099,6 +1325,183 @@ class _LiveEnforcement:
         self._batch.attribute(exc, self._call_id, diagnostic_for(exc))
 
 
+class _LiveAcquisition(_LiveActivity):
+    """One observed acquisition, timed around the acquisition call alone.
+
+    The clock starts after Started has been delivered and stops before Finished
+    is constructed, exactly as a Database Call's does. The stopping reading is
+    also where the HOLD starts, so everything after it — this activity's own
+    Finished delivery, the Handlers that see it, the work the operation goes on
+    to do — is time the connection was occupied.
+
+    ``duration_ns`` measures a composition-level call rather than physical
+    checkout: what it brackets is asking the adapter for a connection and
+    getting an answer, which for a failed acquisition includes the cleanup the
+    adapter ran over whatever it had taken.
+    """
+
+    __slots__ = ("_cleanup_result", "_held_since_ns", "_reported", "_started_ns")
+
+    def __init__(self, publisher: _Publisher, parent: _LiveActivity) -> None:
+        super().__init__(publisher, parent)
+        self._started_ns = 0
+        self._held_since_ns: int | None = None
+        self._cleanup_result: CleanupResult | None = None
+        self._reported = False
+
+    @property
+    def held_since_ns(self) -> int | None:
+        return self._held_since_ns
+
+    @property
+    def cleanup_reported(self) -> bool:
+        return self._reported
+
+    def unacquired(self, cleanup_result: CleanupResult | None, /) -> None:
+        self._cleanup_result = cleanup_result
+
+    def __enter__(self) -> _LiveAcquisition:
+        publisher = self._publisher
+        if not publisher.active:
+            return self
+        self._open()
+        publisher.deliver(
+            AcquisitionStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+            )
+        )
+        self._started_ns = time.perf_counter_ns()
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        publisher = self._publisher
+        if not publisher.active:
+            return
+        completed_ns = time.perf_counter_ns()
+        self._held_since_ns = completed_ns
+        duration_ns = completed_ns - self._started_ns
+        if exc is None:
+            publisher.deliver(
+                AcquisitionFinished(
+                    publisher.execution_id,
+                    publisher.take_sequence(),
+                    self._activity_id,
+                    self._parent_activity_id,
+                    duration_ns,
+                    ConnectionAcquired(),
+                )
+            )
+            return
+        # Only a failed acquisition carries a cleanup fact, so only a failed one
+        # can have delivered one. The answer comes from the delivery itself
+        # rather than from whether the Handler is still live afterwards: a
+        # Handler that raised ON this event received nothing.
+        cleanup_result = self._cleanup_result
+        delivered = publisher.deliver(
+            AcquisitionFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                duration_ns,
+                AcquisitionFailed(_acquisition_reason(exc), self._propagated(exc), cleanup_result),
+            )
+        )
+        self._reported = delivered and cleanup_result is not None
+
+
+class _LiveRelease(_LiveActivity):
+    """One observed release, timed around the release call alone.
+
+    It reports what letting go established and never anything about the outcome
+    above it: a release problem is a fact about a resource, and the read that
+    published, the stream that exhausted, or the transaction that committed
+    keeps what it established. Its own failure route is therefore not an outcome
+    at all — there is one Finished transition, carrying whatever the adapter
+    reported, including nothing.
+    """
+
+    __slots__ = ("_cleanup_result", "_held_since_ns", "_reported", "_started_ns")
+
+    def __init__(self, publisher: _Publisher, parent: _LiveActivity, held_since_ns: int) -> None:
+        super().__init__(publisher, parent)
+        self._held_since_ns = held_since_ns
+        self._started_ns = 0
+        self._cleanup_result: CleanupResult | None = None
+        self._reported = False
+
+    @property
+    def cleanup_reported(self) -> bool:
+        return self._reported
+
+    def relinquished(self, cleanup_result: CleanupResult | None, /) -> None:
+        self._cleanup_result = cleanup_result
+
+    def __enter__(self) -> _LiveRelease:
+        publisher = self._publisher
+        if not publisher.active:
+            return self
+        self._open()
+        publisher.deliver(
+            ReleaseStarted(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+            )
+        )
+        self._started_ns = time.perf_counter_ns()
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        _traceback: TracebackType | None,
+        /,
+    ) -> None:
+        del exc
+        publisher = self._publisher
+        if not publisher.active:
+            return
+        completed_ns = time.perf_counter_ns()
+        cleanup_result = self._cleanup_result
+        delivered = publisher.deliver(
+            ReleaseFinished(
+                publisher.execution_id,
+                publisher.take_sequence(),
+                self._activity_id,
+                self._parent_activity_id,
+                completed_ns - self._started_ns,
+                completed_ns - self._held_since_ns,
+                cleanup_result,
+            )
+        )
+        self._reported = delivered and cleanup_result is not None
+
+
+def _acquisition_reason(exc: BaseException) -> AcquisitionReason:
+    """Why ``exc`` says no connection was granted.
+
+    An adapter states the reason on its own refusal. Anything else escaping an
+    acquisition — a Provider that failed, an interrupt, a defect in the adapter
+    — took no connection either, and ``preparation_failed`` is the honest
+    reading of it: establishing execution access is what did not happen.
+    """
+    if isinstance(exc, ConnectionAcquisitionError):
+        return exc.reason
+    return "preparation_failed"
+
+
 class _LiveWriteBatch(_LiveActivity):
     """One observed flush: its Database Calls, and the enforcement that follows
     each of them."""
@@ -1219,7 +1622,7 @@ class _LiveStreamBatch(_LiveActivity):
         return _LiveDatabaseCall(self._publisher, self, statement, kind, target)
 
 
-class _LiveSnapshotStream(_LiveActivity):
+class _LiveSnapshotStream(_LiveConnectionOwner):
     """One observed stream: its pages, and the one ending it reached.
 
     The ending is delivered by whichever of the two routes reaches it first —
@@ -1309,7 +1712,7 @@ class _LiveSnapshotStream(_LiveActivity):
         )
 
 
-class _LiveTransactionAttempt(_LiveActivity):
+class _LiveTransactionAttempt(_LiveConnectionOwner):
     """One observed physical attempt, under the edition it adopted.
 
     The scope is entered before the port transaction call it brackets and
@@ -1384,18 +1787,21 @@ class _LiveTransactionAttempt(_LiveActivity):
         """Finish with the boundary's own refusal, told to the invocation as
         the invocation's cause.
 
-        Rendered here rather than through :meth:`_attempt_failure` because
-        there is no phase to locate and no classifier verdict to report: an
-        attempt that never opened its boundary is terminal by rule, and what
-        the invocation above names is this attempt.
+        Attributed through :meth:`_propagated` rather than rendered directly,
+        because the attempt may hold a child for this very failure: an
+        Acquisition that could not produce a connection reports to the attempt
+        under its own Activity ID, so the attempt names it. A boundary that
+        refused to open on a connection this attempt did acquire is the
+        attempt's own direct failure. Either way the invocation above names
+        this attempt, under the ordinary chaining rule.
+
+        It is still not an Attempt Failure: there is no phase inside an attempt
+        that never opened its boundary to locate, and no classifier verdict to
+        report, because it is terminal by rule.
         """
         if not self._publisher.active:
             return
-        diagnostic = diagnostic_for(error)
-        self._outcome = AttemptBeginFailed(diagnostic)
-        parent = self._parent
-        if parent is not None:
-            parent.attribute(error, self._activity_id, diagnostic)
+        self._outcome = AttemptBeginFailed(self._propagated(error))
 
     def committed(self) -> None:
         self._outcome = AttemptCommitted()

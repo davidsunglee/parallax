@@ -4,7 +4,8 @@ What observation costs in time, measured on one machine under stated conditions.
 `docs/adr/0060-execution-observability-is-transient-and-provider-driven.md` asks
 the first implementation to "establish a reproducible baseline" against three
 initial targets and says it "may tighten these provisional ceilings". This is
-that baseline.
+that baseline, its method and the reading it produced — and the reading is
+currently WITHDRAWN, for the reason the next section states.
 
 Nothing here gates. `just python-report-lifecycle-overhead` is a `report`: it
 passes no verdict and belongs to no aggregate, because no number in this
@@ -14,7 +15,31 @@ repository is enforced against elapsed time and every CI job runs the floating
 `tests/unit/test_execution_lifecycle_retention.py`, because references give a
 definite answer and a wall clock does not.
 
-## Conditions
+## The workload this table describes no longer exists
+
+The numbers below were taken against a workload delivering **20 events**. The
+same workload now delivers **28**: every operation brackets the connection it
+holds, so the standalone read and the transaction attempt each add an
+Acquisition and a Release. A per-event figure divided by 20 therefore describes
+neither the numerator nor the denominator this repository now has, and the
+end-to-end ratios describe a run that did four fewer deliveries and read four
+fewer clocks.
+
+They are left standing rather than deleted because the method below is what the
+table is worth, and a reading with its conditions attached is still evidence of
+what the conditions produced. **Nothing here is a current measurement**, and
+nothing that follows should be compared against a fresh run without re-recording
+first.
+
+The re-record did not happen with this change, deliberately. Three consecutive
+runs on the machine available to it disagreed by 40% at p50 on the UNOBSERVED
+arm — against a method whose own rule is that the p50 columns move by a few
+percent between runs of the same code — so a table recorded there would have
+published that machine rather than this change. `just
+python-report-lifecycle-overhead` gates nothing, so nothing was waived to say
+so; what is owed is one run on a machine doing nothing else.
+
+## Conditions the numbers below were taken under
 
 | | |
 |---|---|
@@ -23,7 +48,7 @@ definite answer and a wall clock does not.
 | Interpreter | CPython 3.14.7 |
 | Command | `just python-report-lifecycle-overhead` |
 | Samples | 3000 timed pairs per configuration, 200 discarded first |
-| Workload | one standalone `find`, then one `transact` writing on both flush triggers with a participating read between them — 20 events and 4 statements |
+| Workload | one standalone `find`, then one `transact` writing on both flush triggers with a participating read between them — 20 events and 4 statements, before every operation bracketed its own connection |
 | Port | in memory: one row from each read, one affected row from each write |
 
 ## What the numbers were

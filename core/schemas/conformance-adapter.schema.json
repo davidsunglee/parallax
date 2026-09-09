@@ -342,7 +342,11 @@
         "snapshotStreamStarted": {"$ref": "#/$defs/lifecycleStreamStarted"},
         "snapshotStreamFinished": {"$ref": "#/$defs/lifecycleStreamFinished"},
         "streamBatchStarted": {"$ref": "#/$defs/lifecycleNoFields"},
-        "streamBatchFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"}
+        "streamBatchFinished": {"$ref": "#/$defs/lifecycleActivityOutcome"},
+        "acquisitionStarted": {"$ref": "#/$defs/lifecycleNoFields"},
+        "acquisitionFinished": {"$ref": "#/$defs/lifecycleAcquisitionFinished"},
+        "releaseStarted": {"$ref": "#/$defs/lifecycleNoFields"},
+        "releaseFinished": {"$ref": "#/$defs/lifecycleReleaseFinished"}
       },
       "oneOf": [
         {"required": ["readStarted"]},
@@ -358,7 +362,11 @@
         {"required": ["snapshotStreamStarted"]},
         {"required": ["snapshotStreamFinished"]},
         {"required": ["streamBatchStarted"]},
-        {"required": ["streamBatchFinished"]}
+        {"required": ["streamBatchFinished"]},
+        {"required": ["acquisitionStarted"]},
+        {"required": ["acquisitionFinished"]},
+        {"required": ["releaseStarted"]},
+        {"required": ["releaseFinished"]}
       ],
       "allOf": [
         {
@@ -376,10 +384,77 @@
       ]
     },
     "lifecycleNoFields": {
-      "description": "A transition whose payload is its correlation alone. A Stream Batch names no batch-specific field, because which page of the stream it is reads off the envelope and the size it was requested at was stated by the stream that opened it.",
+      "description": "A transition whose payload is its correlation alone. A Stream Batch names no batch-specific field, because which page of the stream it is reads off the envelope and the size it was requested at was stated by the stream that opened it. An Acquisition or a Release names none either: which activity is asking reads off the envelope, and everything about the connection itself belongs to the adapter and is never observable here.",
       "type": "object",
       "additionalProperties": false,
       "properties": {}
+    },
+    "lifecycleCleanupIssue": {
+      "description": "One condition met while relinquishing a connection (m-db-port): the `phase` of the finite inspect/dispose/return sequence it was met in, and the stable `code` classifying it. A code describes the CONDITION met rather than the disposition reached — a recovered `not-idle` accompanies a successful `invalidated`, while a `handoff-failed` is what makes an otherwise safe disposal `unrelinquished`. The detached diagnostic each issue also carries is the implementation's own native evidence and is not portable, exactly as a failed Database Call's message and native code are not.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "code"],
+      "properties": {
+        "phase": {"enum": ["inspect", "dispose", "return"]},
+        "code": {"enum": ["state-unreadable", "not-idle", "suspect", "close-failed", "handoff-failed"]}
+      }
+    },
+    "lifecycleAcquisitionFinished": {
+      "description": "The acquisition reached its terminal outcome. `acquired` granted the activity exclusive use of a connection and carries nothing else: which connection, and what it is, belong to the adapter. `failed` granted none and names the `m-db-port` `reason` it did not — `timeout` (the cooperative budget ran out, a native success arriving after it included), `queue-rejected` (a bounded waiting queue would hold no more), `closed` (the runtime no longer admits work), or `preparation-failed` (establishing or preparing execution access, a non-idle checkout included). Those are deliberately outside the `m-db-error` categories: no modeled statement ran, so nothing was classified and no retry rule reads them. A failed acquisition also carries the `cleanup` its own partial ownership already ran, ABSENT where it owned nothing to clean up — it rides here rather than on a release because no hold was granted for a release to end — and is followed by NO release. The monotonic duration is not portable and is absent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {"enum": ["acquired", "failed"]},
+        "reason": {"enum": ["timeout", "queue-rejected", "closed", "preparation-failed"]},
+        "cleanup": {"enum": ["returned", "invalidated", "unrelinquished"]},
+        "issues": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleCleanupIssue"}},
+        "attribution": {"enum": ["direct", "caused"]},
+        "cause": {"type": "integer", "minimum": 1},
+        "code": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {"$ref": "#/$defs/lifecycleFailure"},
+        {
+          "description": "Only a failed acquisition names a reason and may carry a cleanup: an acquisition that granted a connection did not refuse it for anything and cleaned up nothing.",
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "failed"}}},
+          "then": {"required": ["reason"]},
+          "else": {
+            "allOf": [
+              {"not": {"required": ["reason"]}},
+              {"not": {"required": ["cleanup"]}},
+              {"not": {"required": ["issues"]}}
+            ]
+          }
+        },
+        {
+          "description": "An acquisition opens no child activity, so it has none to name: its failure is its own.",
+          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "failed"}}},
+          "then": {"properties": {"attribution": {"const": "direct"}}}
+        },
+        {
+          "description": "Issues are the conditions ONE cleanup met, so a record stating them states which cleanup met them.",
+          "if": {"required": ["issues"]},
+          "then": {"required": ["cleanup"]}
+        }
+      ]
+    },
+    "lifecycleReleaseFinished": {
+      "description": "The connection the activity held was let go, and `cleanup` is what that ESTABLISHED (m-db-port): `returned` handed it back and the handoff completed, `invalidated` established physical disposal FIRST and then completed the handoff for accounting, and `unrelinquished` is the honest report of a resource whose fate is unknown — required disposal or the accounting after it failed or could not be confirmed, which is why it always carries at least one issue. `issues` records the conditions the cleanup met on the way and is omitted where it met none, so a deliberate invalidation is legible without being an error. A release has ONE ending: what it established is a value the adapter reports rather than something read off an exception, and it never rewrites the outcome of the activity above it — a read that published, a stream that exhausted, and an attempt that committed each keep what they established whatever the release ran into. Both monotonic durations, the acquisition's own and the whole hold's, are not portable and are absent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cleanup"],
+      "properties": {
+        "cleanup": {"enum": ["returned", "invalidated", "unrelinquished"]},
+        "issues": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/lifecycleCleanupIssue"}}
+      },
+      "allOf": [
+        {
+          "description": "An unrelinquished connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome.",
+          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "unrelinquished"}}},
+          "then": {"required": ["issues"]}
+        }
+      ]
     },
     "lifecycleAttemptStarted": {
       "description": "One physical attempt started, under the Model Edition it adopted. `edition` is the nonempty opaque token the adapter prepared the case's model under — the model descriptor's file stem, `account` for `models/account.yaml` (m-conformance-adapter) — asserted literally because adoption happens per attempt and precedes the boundary: an attempt that goes on to finish `beginFailed` still states the edition it had adopted. Which attempt of the invocation it is reads off the envelope, and the policy it runs under was stated by the invocation that opened it.",
@@ -517,7 +592,7 @@
       "allOf": [{"$ref": "#/$defs/lifecycleFailure"}]
     },
     "lifecycleAttemptFinished": {
-      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency batches included), `pre-commit` (the boundary-owned final batch), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event. `beginFailed` is the boundary that never opened: the attempt had adopted its edition and started, no callback ran, and the failure is terminal by rule — so it carries no `phase` (nothing inside the attempt ran) and no `retryEligible` (no classifier verdict is consulted), and its attribution is always `direct`, because an attempt with no callback has no child to name; the invocation above finishes `failed` caused by it.",
+      "description": "One physical attempt reached its terminal outcome. `committed` ends the invocation. `rolledBack` and `rollbackFailed` carry the Attempt Failure: `phase` locates it inside the attempt — `callback` (the callback and everything it caused, joined invocations and read-dependency batches included), `pre-commit` (the boundary-owned final batch), `commit` (the durability call) — without exposing a stack location or an internal planner stage, and `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `rollbackFailed` additionally admits `rollbackCode`, the stable code of the SECOND live failure, prefixed because two failures collide on one event. `beginFailed` is the boundary that never opened: the attempt had adopted its edition and started, no callback ran, and the failure is terminal by rule — so it carries no `phase` (nothing inside the attempt ran) and no `retryEligible` (no classifier verdict is consulted). Its attribution is the ordinary rule rather than a fixed answer: an attempt whose own Acquisition granted no connection names that Acquisition and is `caused`, while one whose boundary refused to open on a connection it did acquire has no child holding the failure and is `direct`. Either way the invocation above finishes `failed` caused by it.",
       "type": "object",
       "additionalProperties": false,
       "required": ["outcome"],
@@ -537,11 +612,6 @@
           "if": {"required": ["outcome"], "properties": {"outcome": {"enum": ["committed", "beginFailed"]}}},
           "then": {"allOf": [{"not": {"required": ["phase"]}}, {"not": {"required": ["retryEligible"]}}]},
           "else": {"required": ["phase", "retryEligible"]}
-        },
-        {
-          "description": "A `beginFailed` attempt names no cause: its callback never ran, so there is no child activity beneath it.",
-          "if": {"required": ["outcome"], "properties": {"outcome": {"const": "beginFailed"}}},
-          "then": {"properties": {"attribution": {"const": "direct"}}}
         },
         {
           "description": "Only a FAILED rollback names a second failure's code: an attempt whose rollback completed has one live failure and reports one.",

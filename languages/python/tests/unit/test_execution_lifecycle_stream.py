@@ -44,11 +44,13 @@ from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, Row
 from parallax.core.execution_lifecycle import (
+    AcquisitionStarted,
     CausedFailure,
     DirectFailure,
     ExecutionEvent,
     ExecutionLifecycleHandler,
     ExecutionLifecycleHandlerError,
+    ReleaseStarted,
     RootExecution,
     SnapshotStreamFinished,
     SnapshotStreamStarted,
@@ -178,6 +180,8 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
     assert root.execution.kind == "snapshot_stream"
     assert _transitions(root) == [
         "SnapshotStreamStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "StreamBatchStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
@@ -186,23 +190,35 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "StreamBatchFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "SnapshotStreamFinished",
     ]
     # The stream is the root activity — its parent is null and no other event's
     # is — each page is its child, and each page's call is the page's own. A
     # Database Call under a Snapshot Stream directly would mean the batch was not
     # the page-read activity, which is exactly what the batch exists to be.
+    #
+    # The connection is the DELIVERY's rather than any page's: the Acquisition
+    # is the stream's own child and stands in front of the first batch, page two
+    # opens no acquisition of its own, and the Release stands after the last
+    # batch and before the stream finishes — released where the delivery
+    # settled, not where the caller left the block.
     assert _envelope(root) == [
         (1, 1, None),
         (2, 2, 1),
-        (3, 3, 2),
-        (4, 3, 2),
-        (5, 2, 1),
-        (6, 4, 1),
-        (7, 5, 4),
-        (8, 5, 4),
-        (9, 4, 1),
-        (10, 1, None),
+        (3, 2, 1),
+        (4, 3, 1),
+        (5, 4, 3),
+        (6, 4, 3),
+        (7, 3, 1),
+        (8, 5, 1),
+        (9, 6, 5),
+        (10, 6, 5),
+        (11, 5, 1),
+        (12, 7, 1),
+        (13, 7, 1),
+        (14, 1, None),
     ]
     (started,) = _of(root, SnapshotStreamStarted)
     assert (started.target, started.interface, started.batch_size) == (
@@ -283,8 +299,9 @@ def test_a_stream_refused_at_the_gate_opens_no_root() -> None:
 def test_the_event_count_grows_with_pages_and_not_with_roots() -> None:
     # The reason per-root publication is deliberately NOT an activity: two
     # deliveries at one page size cost four events per page plus two for the
-    # stream, whatever each page delivered. Twelve roots in three pages weigh
-    # exactly what three roots in three pages weigh.
+    # stream and four for the one connection it holds across every page,
+    # whatever each page delivered. Twelve roots in three pages weigh exactly
+    # what three roots in three pages weigh.
     def delivered(count: int, *, size: int) -> int:
         recorder = RecordingLifecycleProvider()
         rows = [_order_row(identifier) for identifier in range(1, count + 1)]
@@ -294,7 +311,7 @@ def test_the_event_count_grows_with_pages_and_not_with_roots() -> None:
         (root,) = recorder.roots
         return len(root.events)
 
-    assert delivered(3, size=1) == delivered(12, size=4) == 2 + 3 * 4
+    assert delivered(3, size=1) == delivered(12, size=4) == 2 + 4 + 3 * 4
 
 
 # --------------------------------------------------------------------------- #
@@ -459,6 +476,8 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
     assert _transitions(root) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "SnapshotStreamStarted",
         "StreamBatchStarted",
         "DatabaseCallStarted",
@@ -469,6 +488,8 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
         "DatabaseCallFinished",
         "StreamBatchFinished",
         "SnapshotStreamFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
@@ -478,11 +499,17 @@ def test_a_transactional_stream_is_a_child_of_the_attempt() -> None:
     # A participating stream inherits the attempt's edition and states none of
     # its own: the parent correlation is what relates the two.
     assert started.edition is None
+    # It inherits the attempt's CONNECTION too, and the one Acquisition and one
+    # Release in this root are the attempt's own children rather than the
+    # stream's: a stream inside a transaction is one more thing running on that
+    # transaction's connection, never a second borrower of it.
+    resources = _of(root, AcquisitionStarted) + _of(root, ReleaseStarted)
+    assert [event.parent_activity_id for event in resources] == [attempt.activity_id] * 2
     # Five correlation levels, which is the longest chain the algebra admits:
     # invocation, attempt, stream, page, call.
     page = _of(root, StreamBatchStarted)[0]
     assert page.parent_activity_id == started.activity_id
-    assert root.events[4].parent_activity_id == page.activity_id
+    assert root.events[6].parent_activity_id == page.activity_id
 
 
 def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
@@ -514,6 +541,8 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
     assert _transitions(root) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "SnapshotStreamStarted",
         "StreamBatchStarted",
         "DatabaseCallStarted",
@@ -528,6 +557,8 @@ def test_a_pages_dependency_write_batch_is_that_pages_ordered_sibling() -> None:
         "DatabaseCallFinished",
         "StreamBatchFinished",
         "SnapshotStreamFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
@@ -586,7 +617,7 @@ def test_a_handler_quarantined_mid_delivery_stops_its_events_and_not_the_deliver
 
     assert [type(event).__name__ for event in handler.seen] == [
         "SnapshotStreamStarted",
-        "StreamBatchStarted",
+        "AcquisitionStarted",
     ]
     assert [type(op) for op in port.calls] == [ReadCall, ReadCall]
     (reported,) = provider.reported

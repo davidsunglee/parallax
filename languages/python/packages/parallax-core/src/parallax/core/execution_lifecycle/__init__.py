@@ -65,6 +65,10 @@ from parallax.core.execution_lifecycle._errors import (
     ExecutionLifecycleReentryError,
 )
 from parallax.core.execution_lifecycle._events import (
+    AcquisitionFailed,
+    AcquisitionFinished,
+    AcquisitionOutcome,
+    AcquisitionStarted,
     ActivityFinished,
     ActivityStarted,
     AttemptBeginFailed,
@@ -73,6 +77,7 @@ from parallax.core.execution_lifecycle._events import (
     AttemptPhase,
     AttemptRollbackFailed,
     AttemptRolledBack,
+    ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallKind,
@@ -93,6 +98,8 @@ from parallax.core.execution_lifecycle._events import (
     ReadInterface,
     ReadOutcome,
     ReadStarted,
+    ReleaseFinished,
+    ReleaseStarted,
     RetryPolicy,
     RootExecution,
     RootExecutionKind,
@@ -127,6 +134,10 @@ from parallax.core.execution_lifecycle._logging import (
 )
 
 __all__ = [
+    "AcquisitionFailed",
+    "AcquisitionFinished",
+    "AcquisitionOutcome",
+    "AcquisitionStarted",
     "ActivityFailure",
     "ActivityFinished",
     "ActivityStarted",
@@ -137,6 +148,7 @@ __all__ = [
     "AttemptRollbackFailed",
     "AttemptRolledBack",
     "CausedFailure",
+    "ConnectionAcquired",
     "DatabaseCallFailed",
     "DatabaseCallFinished",
     "DatabaseCallKind",
@@ -167,6 +179,8 @@ __all__ = [
     "ReadInterface",
     "ReadOutcome",
     "ReadStarted",
+    "ReleaseFinished",
+    "ReleaseStarted",
     "RetryPolicy",
     "RootExecution",
     "RootExecutionKind",

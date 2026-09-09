@@ -31,15 +31,25 @@ from _support.db_port import (
     Write,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseAdapter
+from parallax.core.db_port import (
+    CleanupIssue,
+    DatabaseAdapter,
+    Invalidated,
+    Returned,
+    Unrelinquished,
+)
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution_lifecycle import (
+    AcquisitionFailed,
+    AcquisitionFinished,
+    AcquisitionStarted,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
     AttemptRolledBack,
     CausedFailure,
+    ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallStarted,
@@ -60,6 +70,8 @@ from parallax.core.execution_lifecycle import (
     ReadFailed,
     ReadFinished,
     ReadStarted,
+    ReleaseFinished,
+    ReleaseStarted,
     RetryPolicy,
     RootExecution,
     SnapshotStreamFinished,
@@ -433,7 +445,7 @@ def test_a_begin_failure_is_a_debug_record_carrying_the_boundarys_own_diagnostic
     # Terminal, and reported by the failed root above it at ERROR; the attempt's
     # own record states the outcome and the diagnostic of the boundary that
     # never opened, with no phase and no classifier verdict to state.
-    outcome = AttemptBeginFailed(_DATABASE_FAILURE.failure)
+    outcome = AttemptBeginFailed(DirectFailure(_DATABASE_FAILURE.failure))
     (record,) = _records(
         caplog,
         [TransactionAttemptFinished(TRANSACTION.id, 1, 2, 1, outcome)],
@@ -444,6 +456,79 @@ def test_a_begin_failure_is_a_debug_record_carrying_the_boundarys_own_diagnostic
     assert str(record.fields["error_type"]).endswith(".DatabaseError")
     assert "phase" not in record.fields
     assert "retry_eligible" not in record.fields
+
+
+def test_the_resource_records_state_the_classification_and_never_the_native_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The built-in's disclosure rule reaching the two resource activities: a
+    # record states the disposition and one `phase/code` per issue, at either
+    # detail. The rich per-issue diagnostic stays on the event for a Handler
+    # with an application-controlled export path, because a record's key set
+    # here is literal and constant while the issues are a tuple.
+    partial = Invalidated(
+        (
+            CleanupIssue(
+                phase="inspect",
+                code="not-idle",
+                diagnostic=diagnostic_for(RuntimeError("its state was INTRANS")),
+            ),
+        )
+    )
+    unrelinquished = Unrelinquished(
+        (
+            CleanupIssue(
+                phase="return",
+                code="handoff-failed",
+                diagnostic=diagnostic_for(RuntimeError("the pool refused it")),
+            ),
+        )
+    )
+    started, acquired, failed, release_started, released, unheld = _records(
+        caplog,
+        [
+            AcquisitionStarted(EXECUTION.id, 1, 2, 1),
+            AcquisitionFinished(EXECUTION.id, 2, 2, 1, 11, ConnectionAcquired()),
+            AcquisitionFinished(
+                EXECUTION.id,
+                3,
+                3,
+                1,
+                12,
+                AcquisitionFailed("timeout", DirectFailure(_DATABASE_FAILURE.failure), partial),
+            ),
+            ReleaseStarted(EXECUTION.id, 4, 4, 1),
+            ReleaseFinished(EXECUTION.id, 5, 4, 1, 13, 14, unrelinquished),
+            ReleaseFinished(EXECUTION.id, 6, 5, 1, 15, 16, None),
+        ],
+        detail="diagnostic",
+    )
+    assert started.fields["transition"] == "acquisitionStarted"
+    assert acquired.fields["outcome"] == "acquired"
+    assert acquired.fields["duration_ns"] == 11
+    assert failed.fields["outcome"] == "failed"
+    assert failed.fields["reason"] == "timeout"
+    assert failed.fields["cleanup"] == "invalidated"
+    assert failed.fields["cleanup_issues"] == ("inspect/not-idle",)
+    assert release_started.fields["transition"] == "releaseStarted"
+    assert released.fields["cleanup"] == "unrelinquished"
+    assert released.fields["cleanup_issues"] == ("return/handoff-failed",)
+    assert (released.fields["duration_ns"], released.fields["hold_duration_ns"]) == (13, 14)
+    # A context that established nothing on its way out says so rather than
+    # being reported as a clean return; no conforming adapter reaches it.
+    assert (unheld.fields["cleanup"], unheld.fields["cleanup_issues"]) == (None, ())
+    for record in (failed, released):
+        rendered = str(record.fields)
+        assert "INTRANS" not in rendered
+        assert "the pool refused it" not in rendered
+
+
+def test_a_clean_return_is_the_disposition_it_established(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (record,) = _records(caplog, [ReleaseFinished(EXECUTION.id, 1, 2, 1, 3, 4, Returned())])
+    assert record.level == logging.DEBUG
+    assert (record.fields["cleanup"], record.fields["cleanup_issues"]) == ("returned", ())
 
 
 def test_a_failed_rollback_is_an_error_carrying_both_live_failures(
@@ -653,6 +738,10 @@ def test_the_logger_answers_every_transition_the_algebra_admits(
         SnapshotStreamFinished(EXECUTION.id, 12, 6, 1, StreamExhausted()),
         StreamBatchStarted(EXECUTION.id, 13, 7, 6),
         StreamBatchFinished(EXECUTION.id, 14, 7, 6, StreamBatchCompleted()),
+        AcquisitionStarted(EXECUTION.id, 15, 8, 1),
+        AcquisitionFinished(EXECUTION.id, 16, 8, 1, 11, ConnectionAcquired()),
+        ReleaseStarted(EXECUTION.id, 17, 9, 1),
+        ReleaseFinished(EXECUTION.id, 18, 9, 1, 12, 13, Returned()),
     ]
     assert {type(event) for event in every} == _concrete_transitions(ExecutionEvent)
 
@@ -876,8 +965,10 @@ def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record
         return totalled, len(written)
 
     described, every_record = totals(logging.DEBUG)
-    assert described["total_events"] == 14
-    assert every_record == 14
+    # Two attempts, each bracketing its own connection: 14 execution events plus
+    # the four resource transitions each attempt owes.
+    assert described["total_events"] == 22
+    assert every_record == 22
 
     quiet, one_record = totals(logging.ERROR)
     assert one_record == 1, "the failed root is the only record an ERROR Logger keeps"

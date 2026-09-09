@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from parallax.core.db_port import IsolationLevel
+from parallax.core.db_port import AcquisitionReason, CleanupResult, IsolationLevel
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
@@ -365,13 +365,16 @@ class AttemptBeginFailed:
     """The database boundary never opened, so the callback never ran.
 
     Terminal without retry however retriable the error's own category is: no
-    work ran that a re-execution could repeat. It carries a diagnostic rather
-    than an Attempt Failure because the failure is the attempt's own — there is
-    no phase inside it to locate and no child activity to name — so the
-    invocation above finishes caused by this attempt.
+    work ran that a re-execution could repeat. It carries an Activity Failure
+    rather than an Attempt Failure because there is no phase inside the attempt
+    to locate and no classifier verdict to report — but the attribution is a
+    real question rather than a settled one: an attempt whose Acquisition failed
+    holds that child, so its failure is Caused by it, while a boundary that
+    refused to open after a connection was acquired is the attempt's own Direct
+    failure. Either way the invocation above finishes caused by this attempt.
     """
 
-    diagnostic: FailureDiagnostic
+    failure: ActivityFailure
 
 
 type TransactionAttemptOutcome = (
@@ -494,6 +497,101 @@ class StreamBatchFinished(_Event):
     outcome: StreamBatchOutcome
 
 
+@dataclass(frozen=True, slots=True)
+class ConnectionAcquired:
+    """Exclusive use of a connection was granted to the activity that asked.
+
+    It names what was established rather than repeating the activity's name: an
+    acquisition that ends any other way ended without one. It carries nothing —
+    which connection, and what it is, are the adapter's own and never leave it.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionFailed:
+    """No connection was granted, and ``reason`` says which way.
+
+    ``failure`` is the acquisition's own Activity Failure, which is always
+    Direct: an acquisition opens no child, so there is nothing beneath it to
+    name. The activity that asked holds it afterwards, which is what makes that
+    activity's own failure Caused by this one.
+
+    ``cleanup_result`` is what the partial cleanup a failed acquisition already
+    ran ESTABLISHED, and ``None`` where the attempt never reached ownership of
+    anything to clean up. It rides here rather than on a Release, because no
+    scope was granted: a Release would claim a hold that never existed.
+    """
+
+    reason: AcquisitionReason
+    failure: ActivityFailure
+    cleanup_result: CleanupResult | None
+
+
+type AcquisitionOutcome = ConnectionAcquired | AcquisitionFailed
+"""How an Acquisition ended, a closed union of exactly one member."""
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionStarted(_Event):
+    """The activity that owns this operation's connection is asking for one.
+
+    It carries no field: which activity is asking reads off the correlation
+    envelope, and everything about the connection itself — its pool, its
+    identity, its configuration — belongs to the adapter and never becomes
+    observable here.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionFinished(_Event):
+    """The acquisition reached its terminal outcome.
+
+    ``duration_ns`` is monotonic elapsed time around the acquisition call
+    alone: the clock starts after Started has been delivered and stops before
+    this is constructed, so a slow Handler stays outside it. It measures a
+    composition-level call rather than exact physical checkout time, and it
+    includes the cleanup a failed acquisition ran over what it had taken.
+    """
+
+    duration_ns: int
+    outcome: AcquisitionOutcome
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseStarted(_Event):
+    """The connection this activity held is being given back.
+
+    Delivered only for an acquisition that succeeded: a failed one granted no
+    hold to end, and inherited work gives back nothing it never took.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseFinished(_Event):
+    """The connection was let go, and ``cleanup_result`` says what that established.
+
+    ``duration_ns`` brackets the release call alone — revocation, the cleanup
+    sequence, and the handoff — while ``hold_duration_ns`` spans the whole
+    exclusive use, from the moment the acquisition call returned through the
+    moment this release completed. The hold therefore includes the Acquisition
+    Finished delivery, every Handler that ran during the operation, and any
+    pause a stream's consumer took: it is what the operation OCCUPIED, not what
+    it spent on the database.
+
+    ``cleanup_result`` is the same detached value the adapter reports to its
+    caller, never a second disposition vocabulary. It never rewrites the
+    outcome of the activity above: a read that published, a stream that
+    exhausted, and a transaction that committed each keep what they
+    established whatever the release ran into. ``None`` is absence — a context
+    that established nothing on the way out, which a conforming adapter does
+    not do — rather than a successful release.
+    """
+
+    duration_ns: int
+    hold_duration_ns: int
+    cleanup_result: CleanupResult | None
+
+
 type ActivityStarted = (
     ReadStarted
     | WriteBatchStarted
@@ -502,6 +600,8 @@ type ActivityStarted = (
     | TransactionAttemptStarted
     | SnapshotStreamStarted
     | StreamBatchStarted
+    | AcquisitionStarted
+    | ReleaseStarted
 )
 """Every transition that opens an activity and assigns its ``activity_id``."""
 
@@ -513,6 +613,8 @@ type ActivityFinished = (
     | TransactionAttemptFinished
     | SnapshotStreamFinished
     | StreamBatchFinished
+    | AcquisitionFinished
+    | ReleaseFinished
 )
 """Every transition that closes an activity with its terminal outcome."""
 

@@ -7,12 +7,20 @@
 # distinctions ride on that.
 #
 # The first is balance under failure. Every activity the first attempt opened is
-# finished before the second one starts: the failed call (activity 6) finishes
-# at sequence 9, its batch (5) at 10, its attempt (2) at 11, and only then does
-# activity 7 start at 12. A stream where a retry began while a failed activity
-# was still open would describe a tree that never existed — and it is the SCOPE
-# that guarantees this, not any call site's discipline, because a Finished is
-# emitted however the body leaves.
+# finished before the second one starts: the failed call (activity 7) finishes
+# at sequence 11, its batch (6) at 12, its connection goes back at 13-14, its
+# attempt (2) finishes at 15, and only then does activity 9 start at 16. A
+# stream where a retry began while a failed activity was still open would
+# describe a tree that never existed — and it is the SCOPE that guarantees this,
+# not any call site's discipline, because a Finished is emitted however the body
+# leaves.
+#
+# The connection is part of that balance. Each attempt acquires its own (3 and
+# 10) and RELEASES it before finishing (8 and 15), so the first attempt's
+# connection is back before the second asks for one: a retry never runs on a
+# connection an abandoned attempt is still holding, whether or not it is handed
+# the same physical one. A failed attempt releases exactly like a committed one,
+# because what ended the attempt says nothing about the resource it borrowed.
 #
 # The second is that each failure still reports `retryEligible: true`. Retry
 # eligibility is the CLASSIFIER's verdict under the effective policy,
@@ -31,10 +39,13 @@
 # trips across two attempts is therefore two reads plus two failed writes — a
 # total no per-attempt count reconstructs.
 #
-# The invocation's own failure is `caused` by the last attempt (7), which is
-# caused by its batch (10), which is caused by its call (11): three links over
+# The invocation's own failure is `caused` by the last attempt (9), which is
+# caused by its batch (13), which is caused by its call (14): three links over
 # one exception, each naming its own direct child, walkable from the root down
-# to the statement that failed.
+# to the statement that failed. The Release standing between the batch and the
+# attempt's own end takes no part in that chain: a cleanup fact is never a
+# cause, and a release that returned the connection leaves the attempt's failure
+# exactly as the work made it.
 #
 # `lane: api-conformance`: a persistent injected transient and an exhausted
 # bound need a fault a real database cannot be asked to produce, so no golden
@@ -82,36 +93,52 @@ then:
           - sequence: 3
             activity: 3
             parent: 2
-            readStarted: { target: parallax.compatibility.Account, interface: typed }
+            acquisitionStarted: {}
           - sequence: 4
-            activity: 4
-            parent: 3
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
-          - sequence: 5
-            activity: 4
-            parent: 3
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 6
             activity: 3
             parent: 2
-            readFinished: { outcome: completed }
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
           - sequence: 7
             activity: 5
-            parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
           - sequence: 8
-            activity: 6
-            parent: 5
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
           - sequence: 9
             activity: 6
-            parent: 5
-            databaseCallFinished: { outcome: failed, category: deadlock }
-          - sequence: 10
-            activity: 5
             parent: 2
-            writeBatchFinished: { outcome: failed, attribution: caused, cause: 6 }
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
           - sequence: 11
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 7 }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
             activity: 2
             parent: 1
             transactionAttemptFinished:
@@ -119,53 +146,69 @@ then:
               phase: pre-commit
               retryEligible: true
               attribution: caused
-              cause: 5
-          - sequence: 12
-            activity: 7
+              cause: 6
+          - sequence: 16
+            activity: 9
             parent: 1
             transactionAttemptStarted: {edition: account}
-          - sequence: 13
-            activity: 8
-            parent: 7
-            readStarted: { target: parallax.compatibility.Account, interface: typed }
-          - sequence: 14
-            activity: 9
-            parent: 8
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
-          - sequence: 15
-            activity: 9
-            parent: 8
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 16
-            activity: 8
-            parent: 7
-            readFinished: { outcome: completed }
           - sequence: 17
             activity: 10
-            parent: 7
-            writeBatchStarted: { trigger: pre-commit }
+            parent: 9
+            acquisitionStarted: {}
           - sequence: 18
-            activity: 11
-            parent: 10
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+            activity: 10
+            parent: 9
+            acquisitionFinished: { outcome: acquired }
           - sequence: 19
             activity: 11
-            parent: 10
-            databaseCallFinished: { outcome: failed, category: deadlock }
+            parent: 9
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
           - sequence: 20
-            activity: 10
-            parent: 7
-            writeBatchFinished: { outcome: failed, attribution: caused, cause: 11 }
+            activity: 12
+            parent: 11
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
           - sequence: 21
-            activity: 7
+            activity: 12
+            parent: 11
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 22
+            activity: 11
+            parent: 9
+            readFinished: { outcome: completed }
+          - sequence: 23
+            activity: 13
+            parent: 9
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 24
+            activity: 14
+            parent: 13
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 25
+            activity: 14
+            parent: 13
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 26
+            activity: 13
+            parent: 9
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 14 }
+          - sequence: 27
+            activity: 15
+            parent: 9
+            releaseStarted: {}
+          - sequence: 28
+            activity: 15
+            parent: 9
+            releaseFinished: { cleanup: returned }
+          - sequence: 29
+            activity: 9
             parent: 1
             transactionAttemptFinished:
               outcome: rolledBack
               phase: pre-commit
               retryEligible: true
               attribution: caused
-              cause: 10
-          - sequence: 22
+              cause: 13
+          - sequence: 30
             activity: 1
             parent: null
-            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 7 }
+            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 9 }

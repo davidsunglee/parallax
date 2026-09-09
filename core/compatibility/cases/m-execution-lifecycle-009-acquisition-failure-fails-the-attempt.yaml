@@ -1,0 +1,102 @@
+# Boundary case (m-execution-lifecycle x m-db-port): an Acquisition that grants
+# NO connection ends the attempt before its boundary is asked to begin — the
+# attempt finishes `beginFailed` CAUSED by that acquisition, no Release follows
+# it, and the partial cleanup the acquisition already ran rides on the
+# acquisition itself — `api-conformance` lane.
+#
+# This is the pair to m-execution-lifecycle-008, and reading the two together is
+# what the corpus states about `beginFailed` attribution. Both attempts adopt an
+# edition, start, and finish `beginFailed` without a callback. What differs is
+# WHICH child the attempt holds for the failure. In 008 the connection was
+# granted and the session setup that would have opened the boundary failed, so
+# the attempt holds no child for it and finishes `direct`, and the connection it
+# did take goes back through a Release. Here nothing was granted: the
+# Acquisition (activity 3) finishes `failed` and reports that failure up under
+# its own Activity ID, so the attempt finishes `caused` naming it. A
+# `beginFailed` attempt is therefore not always direct, which is the rule this
+# case exists to pin.
+#
+# No Release follows, and that absence is the second assertion. A release ends a
+# hold, and an acquisition that granted nothing began none — a stream showing
+# one here would describe a connection being given back that was never taken.
+# What DID happen is on the acquisition: `cleanup: invalidated` with one
+# `inspect`/`not-idle` issue is the checkout that took a connection, found it
+# was not idle, disposed of it deliberately, and then refused. That is why
+# `reason: preparation-failed` rather than `timeout`: establishing usable
+# execution access is what did not happen, and a non-idle checkout is one of the
+# ways it does not (m-db-port). `invalidated` is a completed cleanup rather than
+# an error — disposal was established and the accounting completed — so the
+# issue records why disposal was CHOSEN rather than a second failure.
+#
+# The acquisition's own attribution is `direct`, and it can be nothing else: an
+# Acquisition opens no child activity, so it has none to name. The chain from
+# the root is then three links, each naming its own direct child — the
+# invocation (1) names the attempt (2), which names the acquisition (3).
+#
+# `roundTrips: 0` is the same fact counted from the other side. No connection
+# was granted, so no modeled statement ran; checkout, the health check a pool
+# may run, and the cleanup that followed are housekeeping and construct no
+# Database Call. The retry bound stands unspent at its default of 10 with one
+# attempt beneath the invocation: an acquisition failure is outside the
+# `m-db-error` categories, so no classifier verdict exists to make it retriable
+# and the outcome is terminal by rule (m-auto-retry).
+#
+# `lane: api-conformance`: an acquisition that refuses is injected at the
+# resource seam and cannot be provoked by authored SQL or by a single-connection
+# harness, so no golden SQL is authored and no Database Call appears at all.
+model: models/account.yaml
+tags: [m-execution-lifecycle, m-unit-work, m-api-conformance, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
+given:
+  fault: connection-acquisition-failure
+when:
+  boundary:
+    - action: read
+      note: the callback never runs, so this observation never happens
+then:
+  outcome: boundary-failed
+  roundTrips: 0
+  executionLifecycle:
+    roots:
+      - execution: 1
+        kind: transaction-invocation
+        events:
+          - sequence: 1
+            activity: 1
+            parent: null
+            transactionInvocationStarted:
+              invocation: outer
+              concurrency: optimistic
+              retries: 10
+              retryOptimisticConflicts: false
+          - sequence: 2
+            activity: 2
+            parent: 1
+            transactionAttemptStarted: { edition: account }
+          - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished:
+              outcome: failed
+              reason: preparation-failed
+              cleanup: invalidated
+              issues:
+                - { phase: inspect, code: not-idle }
+              attribution: direct
+          - sequence: 5
+            activity: 2
+            parent: 1
+            transactionAttemptFinished: { outcome: beginFailed, attribution: caused, cause: 3 }
+          - sequence: 6
+            activity: 1
+            parent: null
+            transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 }

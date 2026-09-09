@@ -49,6 +49,10 @@
     "rel"
   ],
   "parallax.core.execution_lifecycle": [
+    "AcquisitionFailed",
+    "AcquisitionFinished",
+    "AcquisitionOutcome",
+    "AcquisitionStarted",
     "ActivityFailure",
     "ActivityFinished",
     "ActivityStarted",
@@ -59,6 +63,7 @@
     "AttemptRollbackFailed",
     "AttemptRolledBack",
     "CausedFailure",
+    "ConnectionAcquired",
     "DatabaseCallFailed",
     "DatabaseCallFinished",
     "DatabaseCallKind",
@@ -89,6 +94,8 @@
     "ReadInterface",
     "ReadOutcome",
     "ReadStarted",
+    "ReleaseFinished",
+    "ReleaseStarted",
     "RetryPolicy",
     "RootExecution",
     "RootExecutionKind",

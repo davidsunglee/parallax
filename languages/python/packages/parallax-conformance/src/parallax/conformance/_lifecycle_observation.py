@@ -28,7 +28,20 @@ from dataclasses import dataclass
 from typing import Final, Literal, assert_never
 
 from parallax.conformance.case_format import serialized_isolation
+from parallax.core.db_port import (
+    AcquisitionReason,
+    CleanupCode,
+    CleanupIssue,
+    CleanupPhase,
+    CleanupResult,
+    Invalidated,
+    Returned,
+    Unrelinquished,
+)
 from parallax.core.execution_lifecycle import (
+    AcquisitionFailed,
+    AcquisitionFinished,
+    AcquisitionStarted,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
@@ -36,6 +49,7 @@ from parallax.core.execution_lifecycle import (
     AttemptRollbackFailed,
     AttemptRolledBack,
     CausedFailure,
+    ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallKind,
@@ -56,6 +70,8 @@ from parallax.core.execution_lifecycle import (
     ReadFinished,
     ReadInterface,
     ReadStarted,
+    ReleaseFinished,
+    ReleaseStarted,
     RootExecutionKind,
     SnapshotStreamFinished,
     SnapshotStreamStarted,
@@ -110,7 +126,7 @@ class ObservedCall:
     kind: Literal["read", "write"]
 
 
-# The five tables below are the projection from Python's runtime vocabularies to
+# The eight tables below are the projection from Python's runtime vocabularies to
 # the corpus tokens the core spec authors. A member whose two spellings coincide
 # is still written out: the tables are what makes the corpus token independent of
 # the runtime one, so deriving any member — by casing rule or by falling back to
@@ -141,6 +157,27 @@ _ATTEMPT_PHASE: Final[dict[AttemptPhase, str]] = {
     "callback": "callback",
     "pre_commit": "pre-commit",
     "commit": "commit",
+}
+
+_ACQUISITION_REASON: Final[dict[AcquisitionReason, str]] = {
+    "timeout": "timeout",
+    "queue_rejected": "queue-rejected",
+    "closed": "closed",
+    "preparation_failed": "preparation-failed",
+}
+
+_CLEANUP_PHASE: Final[dict[CleanupPhase, str]] = {
+    "inspect": "inspect",
+    "dispose": "dispose",
+    "return": "return",
+}
+
+_CLEANUP_CODE: Final[dict[CleanupCode, str]] = {
+    "state-unreadable": "state-unreadable",
+    "not-idle": "not-idle",
+    "suspect": "suspect",
+    "close-failed": "close-failed",
+    "handoff-failed": "handoff-failed",
 }
 
 
@@ -493,6 +530,14 @@ def _transition(event: ExecutionEvent, indexer: _StatementIndexer) -> dict[str, 
             return {"streamBatchStarted": {}}
         case StreamBatchFinished(outcome=outcome):
             return {"streamBatchFinished": _stream_batch_outcome(outcome)}
+        case AcquisitionStarted():
+            return {"acquisitionStarted": {}}
+        case AcquisitionFinished(outcome=outcome):
+            return {"acquisitionFinished": _acquisition_outcome(outcome)}
+        case ReleaseStarted():
+            return {"releaseStarted": {}}
+        case ReleaseFinished(cleanup_result=cleanup_result):
+            return {"releaseFinished": _cleanup(cleanup_result)}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
 
@@ -617,14 +662,16 @@ def _attempt_outcome(
 
     A boundary that never opened carries no phase and no classifier verdict —
     there is nothing inside the attempt to locate and the failure is terminal
-    by rule — so it states its attribution alone, which is always direct: the
-    attempt has no child to name.
+    by rule — so it states its attribution alone. That attribution is a real
+    question: an attempt whose Acquisition could not produce a connection names
+    that child, while one whose boundary refused to open on a connection it did
+    acquire has none to name and states its failure as its own.
     """
     match outcome:
         case AttemptCommitted():
             return {"outcome": "committed"}
-        case AttemptBeginFailed(diagnostic):
-            return {"outcome": "beginFailed", **_activity_failure(DirectFailure(diagnostic))}
+        case AttemptBeginFailed(failure):
+            return {"outcome": "beginFailed", **_activity_failure(failure)}
         case AttemptRolledBack(failure):
             return {"outcome": "rolledBack", **_attempt_failure(failure)}
         case AttemptRollbackFailed(triggering, rollback):
@@ -651,6 +698,66 @@ def _stream_outcome(
             return {"outcome": "failed", **_activity_failure(failure)}
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
+
+
+def _acquisition_outcome(
+    outcome: ConnectionAcquired | AcquisitionFailed,
+) -> dict[str, object]:
+    """An acquisition's own terminal outcome.
+
+    A failure names WHY no connection was granted and states its attribution,
+    which is always direct: an acquisition opens no child, so it has none to
+    name. The partial cleanup it may have run rides here rather than on a
+    Release, because no hold was granted for a release to end.
+    """
+    match outcome:
+        case ConnectionAcquired():
+            return {"outcome": "acquired"}
+        case AcquisitionFailed(reason=reason, failure=failure, cleanup_result=cleanup_result):
+            failed: dict[str, object] = {
+                "outcome": "failed",
+                "reason": _ACQUISITION_REASON[reason],
+                **_activity_failure(failure),
+            }
+            if cleanup_result is not None:
+                failed.update(_cleanup(cleanup_result))
+            return failed
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+
+
+def _cleanup(result: CleanupResult | None) -> dict[str, object]:
+    """What one cleanup ESTABLISHED, and the conditions it met reaching that.
+
+    The disposition and each issue's `phase`/`code` are the portable half: they
+    are classifications this repository authors, so two implementations can be
+    compared on them. The diagnostic each issue carries is the implementation's
+    own native evidence and stays out, exactly as a Database Call's message and
+    native code do.
+
+    A result is absent only where a context established nothing on its way out,
+    which no conforming adapter does; the observation then states nothing rather
+    than inventing a disposition, and the schema refuses the record.
+    """
+    if result is None:
+        return {}
+    match result:
+        case Returned(issues):
+            disposition = "returned"
+        case Invalidated(issues):
+            disposition = "invalidated"
+        case Unrelinquished(issues):
+            disposition = "unrelinquished"
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+    observed: dict[str, object] = {"cleanup": disposition}
+    if issues:
+        observed["issues"] = [_cleanup_issue(issue) for issue in issues]
+    return observed
+
+
+def _cleanup_issue(issue: CleanupIssue) -> dict[str, object]:
+    return {"phase": _CLEANUP_PHASE[issue.phase], "code": _CLEANUP_CODE[issue.code]}
 
 
 def _stream_batch_outcome(

@@ -28,6 +28,7 @@ from parallax.conformance.boundary_runner import BoundaryAbort, fault_injecting_
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import ConnectionAcquisitionError
 from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import ServingModel, connect, prepare_model
@@ -149,14 +150,25 @@ def test_boundary_case_runs_through_the_shipped_surface(
         )
     elif outcome == "boundary-failed":
         # The boundary never opened, so what surfaces is the error the port made
-        # rather than a classified failure of the work: nothing above may read a
-        # refused session setup as a contention worth retrying. The attempt had
-        # adopted before it asked the boundary to begin, so the failure still
-        # names the edition it ran under.
-        with raises_contextualized(DatabaseError) as unopened:
-            run()
-        assert unopened.value.category is None, (case.case_id, unopened.value)
-        assert unopened.edition == engine.case_edition(case)
+        # rather than a classified failure of the work. WHICH error is the fault's
+        # own: a refused session setup is a database error carrying no category,
+        # because nothing above may read a request the engine would not honor as
+        # a contention worth retrying, while an acquisition that granted no
+        # connection never reached the database at all and surfaces the
+        # acquisition failure itself, which is outside the `m-db-error`
+        # categories by contract. Either way the attempt had adopted before it
+        # asked the boundary to begin, so the failure names the edition it ran
+        # under.
+        if fault == "connection-acquisition-failure":
+            with raises_contextualized(ConnectionAcquisitionError) as unacquired:
+                run()
+            assert unacquired.value.reason == "preparation_failed", case.case_id
+            assert unacquired.edition == engine.case_edition(case)
+        else:
+            with raises_contextualized(DatabaseError) as unopened:
+                run()
+            assert unopened.value.category is None, (case.case_id, unopened.value)
+            assert unopened.edition == engine.case_edition(case)
     else:
         category = _FAILURE_CATEGORY[outcome]
         with raises_contextualized(DatabaseError) as excinfo:
@@ -196,10 +208,10 @@ def test_boundary_case_runs_through_the_shipped_surface(
         )
 
 
-def test_reachable_boundary_cases_cover_the_expected_fifteen() -> None:
+def test_reachable_boundary_cases_cover_the_expected_seventeen() -> None:
     # Grep-verified complete set (the corpus's complete boundary
     # population): `m-auto-retry-001..006`, `m-opt-lock-010/011`,
-    # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, and the four
+    # `m-unit-work-004`, the isolation pair `m-unit-work-035/036`, and the six
     # `m-execution-lifecycle` spine cases whose observables need an injected
     # fault or a joined boundary — never a hand list at the RUNNER level (the
     # corpus itself drives `_CASES` above); this is a coverage assertion only.
@@ -215,6 +227,8 @@ def test_reachable_boundary_cases_cover_the_expected_fifteen() -> None:
         "m-execution-lifecycle-005",
         "m-execution-lifecycle-006",
         "m-execution-lifecycle-008",
+        "m-execution-lifecycle-009",
+        "m-execution-lifecycle-010",
         "m-opt-lock-010",
         "m-opt-lock-011",
         "m-unit-work-004",

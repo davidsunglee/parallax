@@ -1476,6 +1476,17 @@ _EXECUTION_LIFECYCLE_BOUNDARY_RUNNER_REASON: Final[str] = (
     "idiomatic spelling distinct from what that runner already exercises directly"
 )
 
+_EXECUTION_LIFECYCLE_RESOURCE_RUNNER_REASON: Final[str] = (
+    "an m-execution-lifecycle spine case whose stream needs an injected RESOURCE fault — an "
+    "acquisition that grants no connection, or a release that cannot relinquish one — which "
+    "no application call can ask a healthy database for and no single-connection harness can "
+    "provoke, graded end-to-end by the case-driven boundary runner "
+    "(`tests/api/test_boundary_run.py`) against the REAL `db.transact` and the provisioned "
+    "database. The application spelling under test is an ordinary `db.transact`, which every "
+    "transaction story here already shows; what the case pins is what the connection under it "
+    "did, and only an injected fault reaches that"
+)
+
 _ISOLATION_BOUNDARY_RUNNER_REASON: Final[str] = (
     "a portable Isolation Level's own boundary obligation — a joining call refused for "
     "naming a second level, one requested level standing over every attempt of a retried "
@@ -1562,6 +1573,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- the isolation boundary obligations, whichever module states each ---- #
     "m-auto-retry-006": _ISOLATION_BOUNDARY_RUNNER_REASON,
     "m-execution-lifecycle-008": _ISOLATION_BOUNDARY_RUNNER_REASON,
+    # -- m-execution-lifecycle: the two resource-fault cases ------------------ #
+    "m-execution-lifecycle-009": _EXECUTION_LIFECYCLE_RESOURCE_RUNNER_REASON,
+    "m-execution-lifecycle-010": _EXECUTION_LIFECYCLE_RESOURCE_RUNNER_REASON,
     "m-unit-work-035": _ISOLATION_BOUNDARY_RUNNER_REASON,
     "m-unit-work-036": _ISOLATION_BOUNDARY_RUNNER_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #

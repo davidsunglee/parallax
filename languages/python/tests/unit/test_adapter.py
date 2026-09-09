@@ -1415,6 +1415,18 @@ def test_a_case_authoring_the_oracle_gets_the_stream_its_run_delivered() -> None
                         "sequence": 2,
                         "activity": 2,
                         "parent": 1,
+                        "acquisitionStarted": {},
+                    },
+                    {
+                        "sequence": 3,
+                        "activity": 2,
+                        "parent": 1,
+                        "acquisitionFinished": {"outcome": "acquired"},
+                    },
+                    {
+                        "sequence": 4,
+                        "activity": 3,
+                        "parent": 1,
                         "databaseCallStarted": {
                             "target": "parallax.compatibility.Account",
                             "kind": "read",
@@ -1422,13 +1434,25 @@ def test_a_case_authoring_the_oracle_gets_the_stream_its_run_delivered() -> None
                         },
                     },
                     {
-                        "sequence": 3,
-                        "activity": 2,
+                        "sequence": 5,
+                        "activity": 3,
                         "parent": 1,
                         "databaseCallFinished": {"outcome": "readCompleted", "returnedRows": 1},
                     },
                     {
-                        "sequence": 4,
+                        "sequence": 6,
+                        "activity": 4,
+                        "parent": 1,
+                        "releaseStarted": {},
+                    },
+                    {
+                        "sequence": 7,
+                        "activity": 4,
+                        "parent": 1,
+                        "releaseFinished": {"cleanup": "returned"},
+                    },
+                    {
+                        "sequence": 8,
                         "activity": 1,
                         "parent": None,
                         "readFinished": {"outcome": "completed"},

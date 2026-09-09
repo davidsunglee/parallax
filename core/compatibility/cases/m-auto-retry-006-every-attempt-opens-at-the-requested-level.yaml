@@ -71,36 +71,52 @@ then:
           - sequence: 3
             activity: 3
             parent: 2
-            readStarted: { target: parallax.compatibility.Account, interface: typed }
+            acquisitionStarted: {}
           - sequence: 4
-            activity: 4
-            parent: 3
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
-          - sequence: 5
-            activity: 4
-            parent: 3
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 6
             activity: 3
             parent: 2
-            readFinished: { outcome: completed }
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
           - sequence: 7
             activity: 5
-            parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
           - sequence: 8
-            activity: 6
-            parent: 5
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+            activity: 4
+            parent: 2
+            readFinished: { outcome: completed }
           - sequence: 9
             activity: 6
-            parent: 5
-            databaseCallFinished: { outcome: failed, category: deadlock }
-          - sequence: 10
-            activity: 5
             parent: 2
-            writeBatchFinished: { outcome: failed, attribution: caused, cause: 6 }
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 10
+            activity: 7
+            parent: 6
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
           - sequence: 11
+            activity: 7
+            parent: 6
+            databaseCallFinished: { outcome: failed, category: deadlock }
+          - sequence: 12
+            activity: 6
+            parent: 2
+            writeBatchFinished: { outcome: failed, attribution: caused, cause: 7 }
+          - sequence: 13
+            activity: 8
+            parent: 2
+            releaseStarted: {}
+          - sequence: 14
+            activity: 8
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 15
             activity: 2
             parent: 1
             transactionAttemptFinished:
@@ -108,48 +124,64 @@ then:
               phase: pre-commit
               retryEligible: true
               attribution: caused
-              cause: 5
-          - sequence: 12
-            activity: 7
+              cause: 6
+          - sequence: 16
+            activity: 9
             parent: 1
             transactionAttemptStarted: {edition: account}
-          - sequence: 13
-            activity: 8
-            parent: 7
-            readStarted: { target: parallax.compatibility.Account, interface: typed }
-          - sequence: 14
-            activity: 9
-            parent: 8
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
-          - sequence: 15
-            activity: 9
-            parent: 8
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 16
-            activity: 8
-            parent: 7
-            readFinished: { outcome: completed }
           - sequence: 17
             activity: 10
-            parent: 7
-            writeBatchStarted: { trigger: pre-commit }
+            parent: 9
+            acquisitionStarted: {}
           - sequence: 18
-            activity: 11
-            parent: 10
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+            activity: 10
+            parent: 9
+            acquisitionFinished: { outcome: acquired }
           - sequence: 19
             activity: 11
-            parent: 10
-            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+            parent: 9
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
           - sequence: 20
-            activity: 10
-            parent: 7
-            writeBatchFinished: { outcome: completed }
+            activity: 12
+            parent: 11
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
           - sequence: 21
-            activity: 7
+            activity: 12
+            parent: 11
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 22
+            activity: 11
+            parent: 9
+            readFinished: { outcome: completed }
+          - sequence: 23
+            activity: 13
+            parent: 9
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 24
+            activity: 14
+            parent: 13
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
+          - sequence: 25
+            activity: 14
+            parent: 13
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 26
+            activity: 13
+            parent: 9
+            writeBatchFinished: { outcome: completed }
+          - sequence: 27
+            activity: 15
+            parent: 9
+            releaseStarted: {}
+          - sequence: 28
+            activity: 15
+            parent: 9
+            releaseFinished: { cleanup: returned }
+          - sequence: 29
+            activity: 9
             parent: 1
             transactionAttemptFinished: { outcome: committed }
-          - sequence: 22
+          - sequence: 30
             activity: 1
             parent: null
             transactionInvocationFinished: { outcome: committed }

@@ -12,12 +12,13 @@ the number of active Providers.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
 from parallax.core.diagnostics import diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._activity import (
+    CompletingHandler,
     ExecutionLifecycleHandler,
     ExecutionLifecycleProvider,
     report_to,
@@ -36,14 +37,20 @@ class _FanoutChild:
     this Handler, so it is what a Handler Error reports as its nested fan-out
     path. ``provider`` is the Provider that opened ``handler`` and therefore the
     one told when it fails.
+
+    ``completing`` is bound at open time rather than asked for per event: a
+    child that is itself a fan-out answers for ITS children, and whether it can
+    is a property of the composition. A leaf answers by returning, so it binds
+    nothing.
     """
 
     position: tuple[int, ...]
     provider: ExecutionLifecycleProvider
     handler: ExecutionLifecycleHandler
+    completing: Callable[[ExecutionEvent], bool] | None
 
 
-class _CompositeHandler:
+class _CompositeHandler(CompletingHandler):
     """The one Handler a fan-out's root is given, over the children it opened.
 
     Children receive the same event object in declaration order. A child that
@@ -53,6 +60,11 @@ class _CompositeHandler:
     ordering property rather than a best effort. A control-flow or fatal
     exception is not contained here at all: it propagates to the publisher,
     which deactivates the whole root.
+
+    Containing every child's failure is exactly why this answers
+    :meth:`~parallax.core.execution_lifecycle._activity.CompletingHandler.handle_completing`:
+    a composite over children that all failed returns normally, so its own
+    return says nothing about whether the event reached anybody.
     """
 
     __slots__ = ("_children", "_execution_id")
@@ -62,11 +74,27 @@ class _CompositeHandler:
         self._children = tuple(children)
 
     def handle(self, event: ExecutionEvent, /) -> None:
+        self.handle_completing(event)
+
+    def handle_completing(self, event: ExecutionEvent, /) -> bool:
+        """Deliver in declaration order, and answer whether anyone received it.
+
+        A nested fan-out contributes its own answer rather than its return, so
+        the completion is a claim about the LEAVES of the composition tree: a
+        branch every leaf beneath which failed did not receive the event any
+        more than a leaf that raised did.
+        """
         live = self._children
         survivors: list[_FanoutChild] | None = None
+        completed = False
         for index, child in enumerate(live):
+            completing = child.completing
             try:
-                child.handler.handle(event)
+                if completing is None:
+                    child.handler.handle(event)
+                    reached = True
+                else:
+                    reached = completing(event)
             except Exception as failure:
                 # The survivor list is built only once a child has actually
                 # failed, so the path every event takes while nothing fails
@@ -75,10 +103,12 @@ class _CompositeHandler:
                     survivors = list(live[:index])
                 report_to(child.provider, self._error(event, child, failure))
                 continue
+            completed = completed or reached
             if survivors is not None:
                 survivors.append(child)
         if survivors is not None:
             self._children = tuple(survivors)
+        return completed
 
     def _error(
         self, event: ExecutionEvent, child: _FanoutChild, failure: Exception
@@ -163,7 +193,16 @@ class FanoutLifecycleProvider:
                 else provider.open(execution)
             )
             if handler is not None:
-                children.append(_FanoutChild(position, provider, handler))
+                children.append(
+                    _FanoutChild(
+                        position,
+                        provider,
+                        handler,
+                        handler.handle_completing
+                        if isinstance(handler, CompletingHandler)
+                        else None,
+                    )
+                )
         if not children:
             return None
         return _CompositeHandler(execution.id, children)
