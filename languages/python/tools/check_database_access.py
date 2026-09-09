@@ -25,18 +25,37 @@ resolved, so a call the rule cannot type is reported rather than trusted. That
 direction is deliberate — a false report is a loud failure a reader resolves,
 while the state this guard exists to catch is silent on any host with Docker.
 
+An acquisition reached on an INSTANCE is resolved the same way. The shipped
+adapter's ``open`` is an instance method, so a dotted resolution alone reads it
+only where it is written through the class, and ``adapter.open()`` — the ordinary
+spelling — would resolve to nothing. A name bound to a call of a declared
+constructor is therefore tracked as an instance of it, through the same binding
+forms and containers a seam itself is followed through, and a declared member
+read on such a name is the acquisition that member is.
+
 The rule follows a value through this module's own bindings and stops at a call
 boundary: a seam handed to a function or returned out of one is beyond it, because
 deciding whether the callee calls it would take the whole program rather than one
 syntax tree. Reporting an argument regardless would report the sites that hand a
 seam over precisely to keep it from being constructed — patching the class the
 declared profile holds so a construction fails loudly is one of them — so the
-boundary is where a syntactic rule stops being able to tell the two apart.
+boundary is where a syntactic rule stops being able to tell the two apart. An
+instance arriving from a helper's return value is outside it for the same reason.
 
-Four structural facts are checked with it, because the rule is vacuous without
+One call may be waived, on the line it is reported at, by a
+``# database-access: <why>`` marker carrying a reason. The marker exists because
+a rule strong enough to catch a rogue ``adapter.open()`` also catches a test that
+proves what ``open`` delegates to with the delegate stubbed out — an acquisition
+in spelling that reaches no server. Waiving it is a reviewed diff line carrying
+its justification, exactly as ``# noqa`` and ``# pyright: ignore`` are, and a
+marker with no reason after the colon is NOT honored: an escape hatch that could
+be taken silently would be the relaxation this guard exists to refuse.
+
+Five structural facts are checked with it, because the rule is vacuous without
 them: every declared seam must still name an importable callable, every declared
-profile must still hold one on a declared seam member, the designated
-fixture must exist, and the classifier's own designated set must name exactly it.
+instance member must still be a declared seam, every declared profile must still
+hold one on a declared seam member, the designated fixture must exist, and the
+classifier's own designated set must name exactly it.
 
 Usage
 -----
@@ -52,10 +71,14 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib
+import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+
+type Resolver = Callable[[ast.expr, dict[str, str], Bound], str | None]
+"""One question asked of an expression, answered as the string it is reported by."""
 
 _TOOL = "tools/check_database_access.py"
 TESTS_ROOT = Path(__file__).resolve().parents[1] / "tests"
@@ -63,6 +86,9 @@ TESTS_ROOT = Path(__file__).resolve().parents[1] / "tests"
 ENTRY_POINT_MODULE = "conftest.py"
 ENTRY_POINT_FIXTURE = "profile_run"
 CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
+
+WAIVER_MARKER = "database-access"
+_WAIVER = re.compile(rf"#\s*{WAIVER_MARKER}:[ \t]*(?P<why>\S.*?)\s*$")
 
 # Fully qualified callables that acquire a live database. Constructing the
 # provisioner or a container starts a server; every ``open`` seam here opens a
@@ -73,15 +99,9 @@ CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
 # either scoped control is likewise absent, since both take a session somebody
 # else opened — only the ``open`` that opens one for itself acquires anything.
 #
-# The adapter's ``open`` is an instance method, so the dotted resolution below
-# reaches it when it is named through the class rather than through a value: an
-# ``adapter.open()`` on a name this rule cannot type is not reported. What
-# narrows the residue is where a connection string comes from — normally the
-# container's to hand out, so a test that never reaches `PostgresContainer` or
-# `Provisioner` has nothing for an adapter it configured itself to open. That
-# narrows rather than bounds: libpq resolves an environment or service-file
-# target with no string at all, so this declaration catches the spelling it
-# resolves and the residue is untested rather than impossible.
+# The adapter's ``open`` is declared under both the package it is exported from
+# and the module defining it, so importing the defining module is not a way past
+# the dotted resolution. Reaching it on an instance is `INSTANCE_SEAMS` below.
 DATABASE_SEAMS: frozenset[str] = frozenset(
     {
         "parallax.conformance._postgres_control.PostgresControl.open",
@@ -90,10 +110,26 @@ DATABASE_SEAMS: frozenset[str] = frozenset(
         "parallax.conformance.profile.ProvisionedRun",
         "parallax.conformance.provision.Provisioner",
         "parallax.postgres.PostgresAdapter.open",
+        "parallax.postgres.adapter.PostgresAdapter.open",
         "psycopg.connect",
         "testcontainers.community.postgres.PostgresContainer",
     }
 )
+
+# Constructors whose INSTANCES acquire, and the members that do the acquiring.
+# Constructing an adapter is immutable configuration that opens nothing, so the
+# constructor is not itself a seam; what it produces is a value whose `open` is
+# one, and `adapter.open()` is how that is written everywhere except a test
+# naming the class. Declaring the constructor is what lets the rule tell such a
+# value from any other receiver, which is why matching `open` by name — the way
+# `SEAM_MEMBERS` matches a profile's members — is not the rule here: `open` is a
+# common enough member that name-matching it would report scores of calls that
+# reach nothing. `unbacked_instance_seams` keeps each member honest by requiring
+# it to be a declared seam under its own constructor.
+INSTANCE_SEAMS: Mapping[str, frozenset[str]] = {
+    "parallax.postgres.PostgresAdapter": frozenset({"open"}),
+    "parallax.postgres.adapter.PostgresAdapter": frozenset({"open"}),
+}
 
 # Members through which a declared value reaches one of the seams above. A matrix
 # profile names the provisioner it opens and opens it itself, so a database is
@@ -190,6 +226,26 @@ def unresolved_seams() -> tuple[str, ...]:
     return tuple(seam for seam in sorted(DATABASE_SEAMS) if not _resolves_to_callable(seam))
 
 
+def unbacked_instance_seams() -> tuple[str, ...]:
+    """Every :data:`INSTANCE_SEAMS` member that is not a declared seam under its own
+    constructor.
+
+    A member is matched on a receiver the rule typed rather than resolved, so
+    nothing else would notice it being renamed or removed. Requiring it to be a
+    declared seam under its constructor puts it back under
+    :func:`unresolved_seams`, which does resolve it, and keeps the two spellings
+    of one acquisition from drifting apart.
+    """
+    return tuple(
+        sorted(
+            f"{constructor}.{member}"
+            for constructor, members in INSTANCE_SEAMS.items()
+            for member in members
+            if f"{constructor}.{member}" not in DATABASE_SEAMS
+        )
+    )
+
+
 def unbacked_profiles() -> tuple[str, ...]:
     """Every declared profile holding no declared seam on a :data:`SEAM_MEMBERS`
     member.
@@ -216,37 +272,102 @@ def unbacked_profiles() -> tuple[str, ...]:
     return tuple(unbacked)
 
 
-def _acquisition_named(
-    expression: ast.expr, bindings: dict[str, str], aliases: dict[str, str]
-) -> str | None:
+@dataclass(frozen=True)
+class Bound:
+    """What each plain name in one module holds, as far as its syntax says.
+
+    Three questions the rule asks of a name, kept apart because their answers
+    compose: a name may hold an ACQUISITION to call, the CONSTRUCTOR of a class
+    whose instances acquire, or an INSTANCE of one. A name bound to an instance
+    is how ``adapter.open()`` is reached, and one bound to a constructor is what
+    makes rebinding the class first no different from naming it.
+    """
+
+    acquisitions: dict[str, str]
+    constructors: dict[str, str]
+    instances: dict[str, str]
+
+
+def _held_elements(expression: ast.expr) -> Sequence[ast.expr] | None:
+    """The elements *expression* holds as a container, or ``None`` if it is not one.
+
+    Storing a value in a tuple, list, set, or dict and taking it back out is the
+    same value under a longer spelling, so every resolver below looks through a
+    container and answers with the first element that answers: what a call
+    reaches is what the finding names, and one is enough to reach it.
+    """
+    if isinstance(expression, ast.Tuple | ast.List | ast.Set):
+        return expression.elts
+    if isinstance(expression, ast.Dict):
+        return expression.values
+    if isinstance(expression, ast.Subscript | ast.Starred):
+        return [expression.value]
+    return None
+
+
+def _constructor_named(expression: ast.expr, bindings: dict[str, str], bound: Bound) -> str | None:
+    """The :data:`INSTANCE_SEAMS` constructor *expression* names, else ``None``."""
+    if isinstance(expression, ast.Name) and expression.id in bound.constructors:
+        return bound.constructors[expression.id]
+    held = _held_elements(expression)
+    if held is not None:
+        return _first(held, bindings, bound, _constructor_named)
+    target = _resolved_target(expression, bindings)
+    return target if target is not None and target in INSTANCE_SEAMS else None
+
+
+def _instance_named(expression: ast.expr, bindings: dict[str, str], bound: Bound) -> str | None:
+    """The constructor *expression* holds an instance of, else ``None``.
+
+    An instance comes into existence at a call of a declared constructor and
+    travels the way any other value does. It does not come back out of another
+    call: what a helper returns is beyond the same boundary a seam handed to one
+    is, and treating an unrelated call's result as an instance would report
+    receivers this rule cannot type.
+    """
+    if isinstance(expression, ast.Name) and expression.id in bound.instances:
+        return bound.instances[expression.id]
+    if isinstance(expression, ast.Call):
+        return _constructor_named(expression.func, bindings, bound)
+    held = _held_elements(expression)
+    return _first(held, bindings, bound, _instance_named) if held is not None else None
+
+
+def _acquisition_named(expression: ast.expr, bindings: dict[str, str], bound: Bound) -> str | None:
     """How *expression* is reported when it names an acquisition, else ``None``.
 
     An acquisition is named by a dotted path resolving to a declared seam, by a
     declared seam member — which has no importable name of its own for the dotted
-    resolution to reach — by a plain name *aliases* already found to hold one, or by
-    a container holding one, since storing an acquisition in a tuple, list, set, or
-    dict and taking it back out is the same acquisition under a longer spelling. A
-    container is reported by the first acquisition it holds rather than per element:
-    the finding names what a call reaches, and one is enough to reach it.
+    resolution to reach — by a declared member read on a value *bound* holds an
+    instance of, by a plain name *bound* already found to hold an acquisition, or
+    by a container holding any of those.
     """
-    if isinstance(expression, ast.Name) and expression.id in aliases:
-        return aliases[expression.id]
-    if isinstance(expression, ast.Attribute) and expression.attr in SEAM_MEMBERS:
-        return f".{expression.attr}()"
-    held: Sequence[ast.expr]
-    if isinstance(expression, ast.Tuple | ast.List | ast.Set):
-        held = expression.elts
-    elif isinstance(expression, ast.Dict):
-        held = expression.values
-    elif isinstance(expression, ast.Subscript | ast.Starred):
-        held = [expression.value]
-    else:
-        target = _resolved_target(expression, bindings)
-        return target if target is not None and target in DATABASE_SEAMS else None
+    if isinstance(expression, ast.Name) and expression.id in bound.acquisitions:
+        return bound.acquisitions[expression.id]
+    if isinstance(expression, ast.Attribute):
+        if expression.attr in SEAM_MEMBERS:
+            return f".{expression.attr}()"
+        constructor = _instance_named(expression.value, bindings, bound)
+        if constructor is not None and expression.attr in INSTANCE_SEAMS[constructor]:
+            return f"{constructor}.{expression.attr}"
+    held = _held_elements(expression)
+    if held is not None:
+        return _first(held, bindings, bound, _acquisition_named)
+    target = _resolved_target(expression, bindings)
+    return target if target is not None and target in DATABASE_SEAMS else None
+
+
+def _first(
+    held: Sequence[ast.expr],
+    bindings: dict[str, str],
+    bound: Bound,
+    resolve: Resolver,
+) -> str | None:
+    """The first of *held* that *resolve* answers for."""
     for element in held:
-        acquisition = _acquisition_named(element, bindings, aliases)
-        if acquisition is not None:
-            return acquisition
+        answer = resolve(element, bindings, bound)
+        if answer is not None:
+            return answer
     return None
 
 
@@ -318,9 +439,18 @@ def _value_bindings(node: ast.AST) -> list[tuple[list[str], ast.expr]]:
     return []
 
 
-def _local_aliases(tree: ast.Module, bindings: dict[str, str]) -> dict[str, str]:
-    """Every plain name *tree* binds to an acquisition without calling it, including
-    through a chain of such names.
+def _bind(holder: dict[str, str], names: Sequence[str], answer: str | None) -> bool:
+    """Bind each of *names* to *answer*, reporting whether any binding was new."""
+    if answer is None:
+        return False
+    fresh = [name for name in names if name not in holder]
+    holder.update(dict.fromkeys(fresh, answer))
+    return bool(fresh)
+
+
+def _local_bindings(tree: ast.Module, bindings: dict[str, str]) -> Bound:
+    """Every plain name *tree* binds to an acquisition, a declared constructor, or an
+    instance of one, including through a chain of such names.
 
     Calling a seam through a local name is the same acquisition as calling it
     where it is spelled, so a name bound to one is treated as the acquisition it
@@ -331,21 +461,25 @@ def _local_aliases(tree: ast.Module, bindings: dict[str, str]) -> dict[str, str]
     the bindings appear in, and terminating. Over-reporting fails a run loudly, while
     under-reporting is exactly the silent misclassification this guard exists to
     prevent.
+
+    The three answers grow together because they feed each other: a name holding a
+    constructor makes a call of it an instance, and a name holding an instance makes
+    a declared member read on it an acquisition.
     """
-    aliases: dict[str, str] = {}
+    bound = Bound({}, {}, {})
     growing = True
     while growing:
         growing = False
         for node in ast.walk(tree):
             for names, value in _value_bindings(node):
-                acquisition = _acquisition_named(value, bindings, aliases)
-                if acquisition is None:
-                    continue
-                for name in names:
-                    if name not in aliases:
-                        aliases[name] = acquisition
-                        growing = True
-    return aliases
+                answers = (
+                    (bound.acquisitions, _acquisition_named(value, bindings, bound)),
+                    (bound.constructors, _constructor_named(value, bindings, bound)),
+                    (bound.instances, _instance_named(value, bindings, bound)),
+                )
+                for holder, answer in answers:
+                    growing |= _bind(holder, names, answer)
+    return bound
 
 
 def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
@@ -353,8 +487,9 @@ def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
 
     A call is one when its target resolves to a declared seam, when it calls a
     declared seam member — the indirection a scope's recipe reaches a seam through
-    when what names it is a declared value rather than an import — or when it calls
-    a local name the module bound to either, through any of the forms
+    when what names it is a declared value rather than an import — when it calls a
+    declared member on a value the module holds an instance of, or when it calls a
+    local name the module bound to any of those, through any of the forms
     :func:`_value_bindings` enumerates and however many names and containers the
     binding passed through on the way.
 
@@ -364,12 +499,12 @@ def seam_calls(tree: ast.Module) -> list[tuple[int, str]]:
     that replaces it rather than calls it.
     """
     bindings = _imported_names(tree)
-    aliases = _local_aliases(tree, bindings)
+    bound = _local_bindings(tree, bindings)
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        acquisition = _acquisition_named(node.func, bindings, aliases)
+        acquisition = _acquisition_named(node.func, bindings, bound)
         if acquisition is not None:
             found.append((node.lineno, acquisition))
     return sorted(found)
@@ -402,6 +537,18 @@ def _declared_database_fixtures(tree: ast.Module) -> frozenset[str] | None:
             return None
         return frozenset(str(x) for x in literals)
     return None
+
+
+def _waived(line: str) -> bool:
+    """Whether *line* carries a reviewed waiver for the acquisition reported on it.
+
+    The waiver is the line's own, not the file's: it excuses the one call a
+    reader can see beside it. It must carry a reason — a bare
+    ``# database-access:`` is not honored — so that taking the escape hatch costs
+    a justification a reviewer reads, which is the whole of what keeps a guard
+    with an escape hatch worth having.
+    """
+    return _WAIVER.search(line) is not None
 
 
 def audit(tests_root: Path) -> list[Finding]:
@@ -439,8 +586,12 @@ def audit(tests_root: Path) -> list[Finding]:
         if "__pycache__" in path.parts:
             continue
         relative = path.relative_to(tests_root).as_posix()
-        for line, target in seam_calls(ast.parse(path.read_text(encoding="utf-8"))):
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        for line, target in seam_calls(ast.parse(source)):
             if relative == ENTRY_POINT_MODULE and allowed and allowed[0] <= line <= allowed[1]:
+                continue
+            if _waived(lines[line - 1]):
                 continue
             findings.append(
                 Finding(
@@ -463,12 +614,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.parse_args(argv)
 
     stale = unresolved_seams()
+    undeclared = unbacked_instance_seams()
     unbacked = unbacked_profiles()
     findings = audit(TESTS_ROOT)
-    if not stale and not unbacked and not findings:
+    if not stale and not undeclared and not unbacked and not findings:
         print(f"{_TOOL}: live database access is confined to `{ENTRY_POINT_FIXTURE}`")
         return 0
 
+    if undeclared:
+        print(
+            f"{_TOOL}: {len(undeclared)} declared instance member(s) are not declared\n"
+            "  seams under their own constructor. A member matched on a typed receiver is\n"
+            "  resolved by nothing else, so one renamed away would guard nothing quietly.",
+            file=sys.stderr,
+        )
+        for member in undeclared:
+            print(f"    {member}", file=sys.stderr)
     if stale:
         print(
             f"{_TOOL}: {len(stale)} declared seam(s) name nothing importable. A seam\n"
