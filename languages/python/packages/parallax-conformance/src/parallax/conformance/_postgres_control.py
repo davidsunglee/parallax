@@ -632,13 +632,18 @@ class PostgresInterleavedExecution:
 
         The ladder's rungs are native teardowns of the one connection a close or
         a borrower's deferred retirement would also end, so it descends them
-        holding the same claim those paths take. A session already retired is
-        reported terminated without a rung being attempted: what the caller
-        asked for is a session that is gone, and it is.
+        holding the same claim those paths take. Against a session another path
+        already retired there is nothing left to descend, and the report says
+        exactly that: this attempt reached no rung, so it established nothing,
+        and the miss is recorded rather than dressed up as a termination this
+        escalation achieved.
         """
         with self._runtime.retiring() as pending:
             if not pending:
-                return TerminationReport(terminated=True)
+                return TerminationReport(
+                    terminated=False,
+                    failures=("this session had already been retired, so no rung was attempted",),
+                )
             failures: list[str] = []
             connection = self._runtime.native
             try:
