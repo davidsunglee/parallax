@@ -139,20 +139,20 @@ def _index_and_count(cell: str) -> tuple[int, int]:
     return int(index), int(count)
 
 
-def _selection(expression: str, shard: str) -> list[str]:
-    """The items one session selects under ``-m expression --shard shard``, in
-    collection order.
+def _selection(expression: str | None, shard: str) -> list[str]:
+    """The items one session selects under ``--shard shard``, narrowed to
+    ``-m expression`` when one is given, in collection order.
 
-    A shard is a property of a whole session, so it is read off sessions of its
-    own rather than off the one grading it.
+    A shard is a property of a whole session, so it is read off a session of
+    its own rather than off the one grading it.
     """
+    narrowing = [] if expression is None else ["-m", expression]
     collected = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
-            "-m",
-            expression,
+            *narrowing,
             "--shard",
             shard,
             "--collect-only",
@@ -168,7 +168,7 @@ def _selection(expression: str, shard: str) -> list[str]:
     return [line for line in collected.stdout.splitlines() if "::" in line]
 
 
-def _selections(requests: Sequence[tuple[str, str]]) -> list[list[str]]:
+def _selections(requests: Sequence[tuple[str | None, str]]) -> list[list[str]]:
     """One :func:`_selection` per request, the sessions run side by side.
 
     Each session collects the whole tree, so the batch performs one collection
@@ -218,30 +218,37 @@ def test_every_cost_cell_runs_unconditionally_and_gates_on_its_verdict() -> None
 
 
 def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() -> None:
-    # Both claims are read off one batch of sessions built here rather than out
-    # of a fixture: this suite's own gate runs under `-n auto`, where fixture
-    # scope is per xdist worker, so a load schedule that put two tests sharing
-    # one on different workers would build the batch twice, and which schedule
-    # runs is not this module's to choose. That batch is the width of the proof
-    # — one session per deployed cell, plus the whole class as the reference the
-    # cells are measured against, plus the rest of the suite whole and under one
-    # cell.
-    #
     # The cells' selections together hold every cost item exactly once and none
     # of them is empty; with the expansion and the gating pinned above, that is
     # what lets CI run the class as one cell per shard and still own it once
-    # (§9), and a shard mechanism that dropped or doubled an item fails here. The
-    # partition is graded within `-m cost`, where no other class is present, so
-    # what confines `--shard` to the class CI splits is the last claim: a sharded
-    # session still holds the whole of the rest of the suite.
+    # (§9). The shards are computed here from what the hook computes them from —
+    # the whole class in collection order, the stored durations, and the deployed
+    # cell count — through the assignment the hook itself calls, so a shard
+    # mechanism that dropped or doubled an item fails here without a session per
+    # cell. Three sessions, run side by side, supply the class and then pin that
+    # a real session does what this predicts: under one cell its cost items are
+    # that cell's predicted part, and its other items are exactly the unsharded
+    # session's, which is what confines `--shard` to the class CI splits.
     cells = _deployed_cells()
-    requests = [("cost", WHOLE_CLASS), *(("cost", cell) for cell in cells)]
-    requests += [("not cost", WHOLE_CLASS), ("not cost", cells[-1])]
-    whole, *rest = _selections(requests)
-    *shards, others_whole, others_under_one_cell = rest
-    assert all(shards)
-    assert sorted(item for shard in shards for item in shard) == sorted(whole)
-    assert others_under_one_cell == others_whole
+    cost_class, whole, under_one_cell = _selections(
+        [("cost", WHOLE_CLASS), (None, WHOLE_CLASS), (None, cells[-1])]
+    )
+    shard_of = cost_durations.shard_of_each(
+        cost_durations.weights(cost_class, cost_durations.known()), len(cells)
+    )
+    predicted = {
+        cell: [item for item, shard in zip(cost_class, shard_of, strict=True) if shard == index]
+        for cell, (index, _) in zip(cells, map(_index_and_count, cells), strict=True)
+    }
+    assert all(predicted.values())
+    assert sorted(item for part in predicted.values() for item in part) == sorted(cost_class)
+
+    in_class = set(cost_class)
+    assert [item for item in under_one_cell if item in in_class] == predicted[cells[-1]]
+    assert [item for item in under_one_cell if item not in in_class] == [
+        item for item in whole if item not in in_class
+    ]
+    assert [item for item in whole if item in in_class] == list(cost_class)
 
 
 def _malformed_shard_session(shard: str) -> subprocess.CompletedProcess[str]:
@@ -299,11 +306,17 @@ def _load_of_each(halves: Sequence[Sequence[str]], known: Mapping[str, float]) -
 def test_the_shards_are_balanced_by_the_stored_durations() -> None:
     # Two shards make the claim sharpest. The class's items span two orders of
     # magnitude, so halves drawn by position are hundreds of seconds apart while
-    # halves drawn by what each item last cost are a fraction of a second apart:
-    # a mechanism that stopped reading the file would still partition the class
-    # and would fail here.
+    # halves drawn by what each item last cost are a fraction of a second apart.
+    # Graded over the stored items through the assignment the hook calls; that
+    # the hook reads the file at all is what the partition test's real session
+    # pins, since a hook weighing everything alike would predict other cells.
     known = cost_durations.known()
-    halves = [_selection("cost", f"{index}/2") for index in (1, 2)]
+    stored = sorted(known)
+    shard_of = cost_durations.shard_of_each(cost_durations.weights(stored, known), 2)
+    halves = [
+        [item for item, shard in zip(stored, shard_of, strict=True) if shard == index]
+        for index in (1, 2)
+    ]
     balanced = _load_of_each(halves, known)
     positional = _load_of_each([sorted(known)[::2], sorted(known)[1::2]], known)
     assert abs(balanced[0] - balanced[1]) <= max(known.values())

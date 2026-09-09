@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -97,22 +97,6 @@ def _shard(spec: str) -> tuple[int, int]:
     raise pytest.UsageError(f"--shard expects I/N with 1 <= I <= N, not {spec!r}")
 
 
-def _shard_of_each(weights: Sequence[float], count: int) -> list[int]:
-    """The one-based shard each weighted item lands in.
-
-    Heaviest first, each onto the lightest shard so far, ties to the lowest
-    index: deterministic over stable input, and within one item's weight of the
-    best balance.
-    """
-    loads = [0.0] * count
-    shard = [0] * len(weights)
-    for position in sorted(range(len(weights)), key=lambda p: (-weights[p], p)):
-        target = min(range(count), key=lambda i: (loads[i], i))
-        loads[target] += weights[position]
-        shard[position] = target + 1
-    return shard
-
-
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Assign each collected item its scheduling class, then keep the cost
     class's requested shard.
@@ -158,8 +142,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if count > 1:
         cost_items = [item for item in items if item.get_closest_marker("cost") is not None]
         known = cost_durations.known()
-        unknown = sum(known.values()) / len(known)
-        shard_of = _shard_of_each([known.get(item.nodeid, unknown) for item in cost_items], count)
+        shard_of = cost_durations.shard_of_each(
+            cost_durations.weights([item.nodeid for item in cost_items], known), count
+        )
         deselected = [
             item for item, shard in zip(cost_items, shard_of, strict=True) if shard != index
         ]
