@@ -706,7 +706,7 @@ def non_temporal_milestone_refusal(
     that classify differently: the build-time validator raises
     :class:`WriteInstructionError`, the buffering seam refuses before it can
     resolve a materializing target against a real connection, and
-    :mod:`parallax.core.unit_work.write_planner` raises its own planning error as
+    :mod:`parallax.core.unit_work.write_settlement` raises its own planning error as
     the last structural refusal before SQL. One wording, so an ingress cannot
     describe the mismatch differently from the flush that would otherwise settle
     it.
@@ -973,7 +973,7 @@ def _prepare_managed_write(
     the materializing resolve and settles as an ordinary row write, keeping the
     row effect and dropping the bounded-temporal meaning the verb was chosen
     for. Without the second, a plural chain survives to
-    :mod:`parallax.core.unit_work.write_planner`, whose own settle-time refusal
+    :mod:`parallax.core.unit_work.write_settlement`, whose own settle-time refusal
     stays the last structural backstop before SQL but can no longer name the
     ingress that authored it.
 

@@ -150,7 +150,7 @@ from parallax.core.unit_work.instructions import (
     PreparedWrite,
     WriteInstruction,
 )
-from parallax.core.unit_work.write_planner import reject_readless_document_many
+from parallax.core.unit_work.write_settlement import reject_readless_document_many
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
 from parallax.descriptor import (
     DescriptorError,

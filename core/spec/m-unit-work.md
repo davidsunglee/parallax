@@ -417,6 +417,18 @@ Four of those orderings are load-bearing and therefore normative:
 Stages are otherwise private. The stage list is an ordering contract, not an
 interface: nothing outside the planner may name, observe, or invoke a stage.
 
+Stages 1–5 rewrite the buffered sequence: they merge, drop, split, and reorder
+it. Stages 6–9 are **Write Settlement**, and the sequence stops changing shape
+there — settlement reads it once and only Planned Writes come out. Settlement is
+owned by the planner and constructed for the same accepted Metamodel: it reuses
+that model's compiled facets, never observes model publication, and is never
+rebound after one. It is reached through exactly **one** private operation over
+the **complete** dependency-ordered sequence, because packing is a property of
+adjacency and a claim survives by its carrier having reached settlement at all.
+That operation answers the Write Planning Result, which the planner returns
+unchanged: the planner neither wraps nor reconstructs it, so no fact about a
+settled write is decided twice.
+
 ### Write Plan and Planned Steps
 
 ```text

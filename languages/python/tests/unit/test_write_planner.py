@@ -18,8 +18,10 @@ in-place adjacency.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from collections.abc import Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 
 import pytest
@@ -30,6 +32,7 @@ from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import CountingClock, inert_instant, instant_at
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
+from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
@@ -43,6 +46,7 @@ from parallax.core.metamodel import (
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipJoin,
 )
+from parallax.core.opt_lock import CallerAuthoredVersionError
 from parallax.core.unit_work import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -73,10 +77,12 @@ from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
+    SubjectIdentity,
     TemporalObservation,
     TransactionInstant,
     VersionColumns,
     Versioned,
+    VersionedStateKey,
     VersionGate,
     VersionObservation,
     WriteAssignment,
@@ -87,8 +93,9 @@ from parallax.core.unit_work import (
     whole,
 )
 from parallax.core.unit_work import planner as planner_module
-from parallax.core.unit_work import write_planner as write_planner_module
+from parallax.core.unit_work import write_settlement as write_settlement_module
 from parallax.core.unit_work.instructions import (
+    PreparedAssignment,
     PreparedKeyedWrite,
     PreparedPredicateWrite,
     WriteInstructionError,
@@ -96,6 +103,7 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.planned import ValidatedMutationSelection
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
+from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner
 
 _MODELS = corpus_records()
@@ -1455,7 +1463,7 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     # derivation's, and the refusal that names an Entity the model does not
     # declare.
     monkeypatch.setattr(planner_module, "entity_by_name", refuse)
-    monkeypatch.setattr(write_planner_module, "entity_by_name", refuse)
+    monkeypatch.setattr(write_settlement_module, "entity_by_name", refuse)
     plan = (
         build_write_planner(model)
         .finalize(
@@ -1473,3 +1481,223 @@ def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
     assert "close" in kinds
     assert kinds.count("update") == 2  # the addressed Account update and the group's one row
     assert kinds[-1] == "delete"  # the readless predicate write, held at the barrier
+
+
+# --------------------------------------------------------------------------- #
+# Settlement reads the whole ordered sequence: eager runs pack around a        #
+# Materialized Write Group's own segment, provenance reaches the eager steps   #
+# alone, and the claims answered are the surviving carriers' own.              #
+# --------------------------------------------------------------------------- #
+def _wallet_and_account() -> Metamodel:
+    return formed(
+        DescriptorMetamodel(entities=(*_MODELS["wallet"].entities, *_MODELS["account"].entities))
+    )
+
+
+def _eager_group_eager(model: Metamodel) -> list[_TestBufferItem]:
+    """An update, a Materialized Write Group, and an update — one region, one
+    verb bucket, so dependency ordering leaves the three in buffer order."""
+    return [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("2.00")},)),
+        _version_group(
+            "Account",
+            "update",
+            "id",
+            [(9, 1)],
+            [WriteAssignment("Account.balance", Decimal("5.00"))],
+            model=model,
+        ),
+        KeyedWrite("update", "Wallet", ({"id": 2, "balance": Decimal("3.00")},)),
+    ]
+
+
+def test_eager_runs_pack_on_each_side_of_a_groups_own_segment() -> None:
+    # Packing is a property of ADJACENCY, which is why settlement reads the whole
+    # ordered sequence rather than one item at a time: a run of eagerly settled
+    # steps stays one segment, and a Materialized Write Group always occupies its
+    # own, so a group between two eager writes yields three segments rather than
+    # one per input.
+    model = _wallet_and_account()
+    plan = _plan(_eager_group_eager(model), model)
+    assert [len(segment) for segment in plan.steps.segments] == [1, 1, 1]
+    assert _shape(plan) == [("update", "Wallet"), ("update", "Account"), ("update", "Wallet")]
+    # The group's own segment rebuilds its row on demand; the eager ones do not.
+    assert plan.steps[1] == plan.steps[1]
+    assert plan.steps[1] is not plan.steps[1]
+    assert plan.steps[0] is plan.steps[0]
+
+
+@dataclass(frozen=True, slots=True)
+class _CountingAudit:
+    """The neutral strategy, recording each step it was handed."""
+
+    decorated: list[PlannedWrite]
+
+    def decorate(
+        self,
+        step: PlannedWrite,
+        *,
+        subject_identity: SubjectIdentity,
+        transaction_instant: TransactionInstant,
+    ) -> PlannedWrite:
+        self.decorated.append(step)
+        return step
+
+
+def test_provenance_reaches_every_eager_step_once_and_no_materialized_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Decoration follows topology and precedes freezing, and its boundary is the
+    # eager arm: a Materialized Write Group's rows are rebuilt on demand from a
+    # segment holding no strategy and no unevaluated instant, so they cannot be
+    # decorated one at a time and are not (ADR 0037; `m-unit-work`). A neutral
+    # strategy hands back the step it was given, so each eager step of the frozen
+    # plan is the IDENTICAL object settlement produced — decoration sits between
+    # settling a step and packing it, and packing copies nothing.
+    audit = _CountingAudit([])
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    model = _wallet_and_account()
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=_INSTANT,
+                concurrency="locking",
+                buffered_writes=observed_buffer(_eager_group_eager(model), model, None),
+            )
+        )
+        .plan
+    )
+    assert len(plan.steps) == 3
+    assert len(audit.decorated) == 2
+    assert plan.steps[0] is audit.decorated[0]
+    assert plan.steps[2] is audit.decorated[1]
+    assert all(decorated is not plan.steps[1] for decorated in audit.decorated)
+
+
+def test_only_surviving_writes_contribute_claims_and_a_shared_claim_answers_once() -> None:
+    # Consumption records a fact about an observed state, so a flush spends one
+    # claim once however many surviving writes settled against it — here two,
+    # because a destruction and an assignment of one state are a pair no verb
+    # admitted as combinable and both are left standing. A carrier the earlier
+    # stages retire takes its claim out of the flush with it: the key-only update
+    # below is known no-op work, eliminated at stage 2, and never settled, so its
+    # claim is absent by ABSENCE rather than by a second filter.
+    observation = VersionObservation(observed_version=7)
+    shared = RetainedObservation(
+        VersionedStateKey(corpus_object_key("Account", ("id", 1)), 7), observation, None
+    )
+    retired_observation = VersionObservation(observed_version=4)
+    retired = RetainedObservation(
+        VersionedStateKey(corpus_object_key("Account", ("id", 2)), 4), retired_observation, None
+    )
+    buffer = [
+        _observed(KeyedWrite("delete", "Account", ({"id": 1},)), observation, claim=shared),
+        _observed(
+            KeyedWrite("update", "Account", ({"id": 1, "balance": Decimal("9.00")},)),
+            observation,
+            claim=shared,
+        ),
+        _observed(
+            KeyedWrite("update", "Account", ({"id": 2},)), retired_observation, claim=retired
+        ),
+    ]
+    finalized = build_write_planner(_ACCOUNT).finalize(
+        PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=_INSTANT,
+            concurrency="locking",
+            buffered_writes=buffer,
+        )
+    )
+    assert [_step_mutation(step) for step in finalized.plan.steps] == ["update", "delete"]
+    assert finalized.claims == (shared,)
+
+
+# --------------------------------------------------------------------------- #
+# Settlement's structural refusals are TOTAL: this seam is reached straight     #
+# from a deserialized instruction as well as from the developer verbs, so a    #
+# shape an ingress refuses is refused again here rather than settled.          #
+# --------------------------------------------------------------------------- #
+def _derived(write: KeyedWrite, model: Metamodel, **changes: object) -> PreparedKeyedWrite:
+    """A prepared keyed write carrying a shape no ingress would have produced."""
+    return dataclasses.replace(_prepared_keyed(write, model), **changes)
+
+
+def test_a_plural_temporal_instruction_is_refused_at_settlement() -> None:
+    plural = _derived(
+        KeyedWrite("update", "Balance", ({"id": 1, "value": Decimal("1.00")},)),
+        _BALANCE,
+        rows=({"id": 1, "value": Decimal("1.00")}, {"id": 2, "value": Decimal("2.00")}),
+    )
+    with pytest.raises(WritePlanningError, match="multi-row temporal 'update' on 'Balance'"):
+        _plan([plural], _BALANCE)
+
+
+def test_a_keyed_milestone_verb_on_a_non_temporal_target_is_refused_at_settlement() -> None:
+    bounded = _derived(
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("1.00")},)),
+        _WALLET,
+        mutation="updateUntil",
+    )
+    with pytest.raises(WritePlanningError, match="Non-temporal objects like 'Wallet'"):
+        _plan([bounded], _WALLET)
+
+
+def test_a_readless_predicate_milestone_verb_is_refused_at_settlement() -> None:
+    deletion = prepare_typed_write(
+        PredicateWrite(
+            "delete",
+            PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 1)),
+        ),
+        _WALLET,
+    )
+    assert isinstance(deletion, PreparedPredicateWrite)
+    with pytest.raises(WritePlanningError, match="a readless predicate 'terminate'"):
+        _plan([dataclasses.replace(deletion, mutation="terminate")], _WALLET)
+
+
+def test_a_materialized_group_authoring_the_version_is_refused_at_settlement() -> None:
+    group = _version_group(
+        "Account", "update", "id", [(1, 1)], [WriteAssignment("Account.balance", Decimal("5.00"))]
+    )
+    entity = group.mutation.selection.target
+    position = inheritance.view(_ACCOUNT).entity(entity.identity)
+    assert position is not None
+    version = position.applicable_attribute("version")
+    assert version is not None
+    authored = MaterializedWriteGroup(
+        mutation=dataclasses.replace(
+            group.mutation, managed_assignments=(PreparedAssignment(version, 9),)
+        ),
+        key_attributes=group.key_attributes,
+        key_columns=group.key_columns,
+        observations=group.observations,
+    )
+    with pytest.raises(CallerAuthoredVersionError, match="framework-owned"):
+        _plan([authored], _ACCOUNT)
+
+
+def test_a_row_naming_a_member_outside_the_family_is_refused_at_settlement() -> None:
+    stray = _derived(
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),
+        _WALLET,
+        rows=({"id": 1, "owner": "Ada", "balance": Decimal("1.00"), "nickname": "w"},),
+    )
+    with pytest.raises(WritePlanningError, match="names 'nickname', which is not a member"):
+        _plan([stray], _WALLET)
+
+
+def test_a_many_keyed_mapping_cell_is_an_ordinary_literal_not_a_computed_marker() -> None:
+    # A DB-computed marker is classified by SHAPE — a ONE-key mapping naming a
+    # recognized kind — so a mapping carrying more than one key is a value the
+    # row writes rather than an allocation the statement must express.
+    document = {"computed": "maxPlusOne", "note": "not a marker"}
+    carried = _derived(
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),
+        _WALLET,
+        rows=({"id": 1, "owner": document, "balance": Decimal("1.00")},),
+    )
+    (step,) = _plan([carried], _WALLET).steps
+    assert _insert_rows(step)[0]["owner"] == document

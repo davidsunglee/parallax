@@ -557,6 +557,16 @@ surviving writes settled against. A caller with no evidence to spend reads
 `finalize(request).plan`; there is no plan-only projection method.
 _Avoid_: `Finalization`, `plan()`, plan-and-claims tuple
 
+**Write Settlement**:
+`WriteSettlement` in `parallax.core.unit_work.write_settlement`, the planner's
+own module for everything after dependency ordering. `WritePlanner.__init__`
+constructs one over the family-fact reader it holds; `settle(ordered_writes, *,
+concurrency, subject_identity, transaction_instant)` is its whole surface and
+answers the `WritePlanningResult` the planner returns unchanged. Imports run
+`write_planner` to `write_settlement` and never back, so the two symbols both
+files use are defined here.
+_Avoid_: plan assembly, row binding, settlement port, settlement service
+
 ### Transactions
 
 **Principal Protocol**:
