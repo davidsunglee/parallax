@@ -678,6 +678,35 @@ def test_wire_names_are_the_one_value_the_class_was_stamped_with() -> None:
     assert wire_names_of(Order) is wire_names_of(Order)
 
 
+def test_the_wire_names_stamp_is_readable_the_moment_a_subclass_exists() -> None:
+    # An inherited ``__pydantic_init_subclass__`` runs inside class-object
+    # creation, which is the earliest moment any code can observe a subtype and
+    # is before the engine regains control. The merged correspondences are
+    # carried in the namespace the class is built from rather than assigned
+    # afterwards, so that hook reads the subtype's own stamp — including the
+    # member the subtype itself declares — instead of meeting the missing-stamp
+    # refusal.
+    seen: list[frozenset[str]] = []
+
+    class Security(
+        Entity,
+        table="security",
+        inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+    ):
+        id: Attr[int] = attr(primary_key=True)
+        ref: Attr[str] = attr()
+
+        @classmethod
+        def __pydantic_init_subclass__(cls, **kwargs: object) -> None:
+            seen.append(frozenset(wire_names_of(cls).py_to_name))
+
+    class Note(Security, inheritance=ConcreteSubtype(tag_value="note")):
+        coupon: Attr[int] = attr()
+
+    assert seen == [frozenset({"id", "ref", "coupon"})]
+    assert wire_names_of(Note) is vars(Note)["__parallax_wire_names__"]
+
+
 def test_a_subtypes_own_declaration_wins_the_names_it_shares_with_its_root() -> None:
     class Instrument(
         Entity,

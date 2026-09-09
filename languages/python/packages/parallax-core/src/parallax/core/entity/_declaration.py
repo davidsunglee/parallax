@@ -448,19 +448,24 @@ class MemberNames:
     from the same walk the declaration is built from, so neither can drift from
     the declared member it belongs to. Merging a family's maps across the MRO
     belongs to the caller.
+
+    Each map is read-only because the class retains this value for the process's
+    life and a family of one shares these exact maps with its
+    :class:`WireNames`, so one write here would be seen by every later reader of
+    either.
     """
 
-    column_to_py: dict[str, str]
-    name_to_py: dict[str, str]
-    py_to_name: dict[str, str]
-    relationship_py: dict[str, str]
-    relationship_shapes: dict[str, RelationshipAnnotation]
-    members: dict[str, AttributeMetadata | ValueObjectMetadata]
+    column_to_py: Mapping[str, str]
+    name_to_py: Mapping[str, str]
+    py_to_name: Mapping[str, str]
+    relationship_py: Mapping[str, str]
+    relationship_shapes: Mapping[str, RelationshipAnnotation]
+    members: Mapping[str, AttributeMetadata | ValueObjectMetadata]
     """Each Python member name to the accepted Metadata its declaration built —
     the same object the ``Attr`` descriptor installs, so a rule stated over a
     member reaches the identical facts from a name and from an expression."""
     pk_py: frozenset[str]
-    vo_classes: dict[str, type]
+    vo_classes: Mapping[str, type]
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,24 +475,29 @@ class WireNames:
     Built from the same declaration walk the model facts are built from, so the
     two can never drift. A family member's maps include every Parallax ancestor's
     declared members, merged base-first so a descendant's own declaration wins.
+
+    Each map is read-only because the class retains this one value for the
+    process's life and every reader is handed it rather than a copy; a family of
+    one shares its :class:`MemberNames` maps outright, so a write reached through
+    either name would be seen through both.
     """
 
-    column_to_py: dict[str, str]
-    name_to_py: dict[str, str]
-    py_to_name: dict[str, str]
-    relationship_py: dict[str, str]
-    relationship_identities: dict[str, RelationshipIdentity]
+    column_to_py: Mapping[str, str]
+    name_to_py: Mapping[str, str]
+    py_to_name: Mapping[str, str]
+    relationship_py: Mapping[str, str]
+    relationship_identities: Mapping[str, RelationshipIdentity]
     """Each Python relationship name to the Identity its own declaration built,
     so an inherited relationship keeps the declaring Entity a descendant reaches
     it through cannot supply."""
-    members: dict[str, AttributeMetadata | ValueObjectMetadata]
+    members: Mapping[str, AttributeMetadata | ValueObjectMetadata]
     """Each Python member name to the accepted Metadata that decides what may be
     written to it. Which members are assignable is not recorded here as a name
     set: that is :func:`~parallax.core.metamodel.judge_assignment`'s verdict, and
     a second spelling of it here is exactly the drift the single judgement
     exists to prevent."""
     pk_py: frozenset[str]
-    vo_classes: dict[str, type]
+    vo_classes: Mapping[str, type]
 
     @property
     def framework_owned_py(self) -> frozenset[str]:
@@ -1315,15 +1325,14 @@ def _build_entity(
         pk_py=frozenset(pk_py),
         vo_classes=vo_classes,
     )
+    family, ns[_WIRE_NAMES] = _family_facts(bases[0], ns)
     cls = _pydantic_class(mcs, cls_name, bases, ns)
-    family, wire = _family_facts(cls)
     plan = install_publication_plan(
         cls,
         members=family.members,
         occurrences=family.occurrences,
         relationships=family.relationships,
     )
-    setattr(cls, _WIRE_NAMES, wire)
     # Every reference this class hands out is seeded with the Entity's EXACT
     # canonical spelling, so everything downstream that re-emits it — a
     # serialized query, a durable write document — carries an identity two
@@ -1367,22 +1376,29 @@ class _FamilyPublicationFacts:
     """
 
     members: tuple[str, ...]
-    occurrences: dict[str, type]
+    occurrences: Mapping[str, type]
     relationships: tuple[str, ...]
 
 
-def _family_facts(cls: type) -> tuple[_FamilyPublicationFacts, WireNames]:
-    """``cls``'s family-effective published row and its merged correspondences.
+def _family_facts(base: type, ns: dict[str, object]) -> tuple[_FamilyPublicationFacts, WireNames]:
+    """The pending class's family-effective published row and merged correspondences.
 
     One walk answers both, so the row's order and the maps a row is spelled
     through are read off the same contributors in the same base-first order.
+
+    The contributors are read from the single Parallax base and the namespace
+    rather than from a finished class, so the merged maps are already in the
+    namespace the class object is built from: everything that observes the class
+    while it is being created — an inherited ``__pydantic_init_subclass__``
+    above all — sees the same stamp every later reader does.
     """
-    chain = [
-        ancestor
-        for ancestor in cls.__mro__
+    chain: list[Mapping[str, Any]] = [
+        ancestor.__dict__
+        for ancestor in base.__mro__
         if isinstance(ancestor.__dict__.get(_MEMBERS), MemberNames)
     ]
     chain.reverse()
+    chain.append(ns)
     attributes: list[str] = []
     occurrences: list[str] = []
     vo_classes: dict[str, type] = {}
@@ -1394,8 +1410,8 @@ def _family_facts(cls: type) -> tuple[_FamilyPublicationFacts, WireNames]:
     relationship_identities: dict[str, RelationshipIdentity] = {}
     members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
     pk_py: set[str] = set()
-    for ancestor in chain:
-        names = cast("MemberNames", ancestor.__dict__[_MEMBERS])
+    for contributor in chain:
+        names = cast("MemberNames", contributor[_MEMBERS])
         for py_name in names.py_to_name:
             (occurrences if py_name in names.vo_classes else attributes).append(py_name)
         vo_classes.update(names.vo_classes)
@@ -1407,14 +1423,16 @@ def _family_facts(cls: type) -> tuple[_FamilyPublicationFacts, WireNames]:
         relationship_identities.update(
             {
                 names.relationship_py[declaration.identity.name]: declaration.identity
-                for declaration in declaration_of(ancestor).relationships
+                for declaration in cast(
+                    "EntityDeclaration", contributor[_DECLARATION]
+                ).relationships
             }
         )
         members.update(names.members)
         pk_py.update(names.pk_py)
     # A family of one merged nothing, so the class keeps the maps its own body
     # built instead of retaining equal copies of them for the process's life.
-    sole = cast("MemberNames", chain[0].__dict__[_MEMBERS]) if len(chain) == 1 else None
+    sole = cast("MemberNames", chain[0][_MEMBERS]) if len(chain) == 1 else None
     return (
         _FamilyPublicationFacts(
             members=(*attributes, *occurrences),
