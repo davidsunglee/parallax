@@ -214,6 +214,12 @@ def _require_correspondence(layout: EntityLayout, names: WireNames, plan: Public
     between them installs every member after it at the wrong position, and a
     row of the right width cannot express one: width is a count.
 
+    Order alone is not the agreement, because a name is local to an ancestry:
+    two sides can spell one row, one tail, and one Value Object Class at every
+    position and still mean two different sets of declarations. So the accepted
+    declarations behind each position are compared as well as the order they sit
+    in.
+
     Passing is what makes the plan positional afterwards: a member is read off
     ``plan.py_names`` at the layout's own position on the strength of this
     comparison, rather than through a second mapping built beside it.
@@ -234,6 +240,7 @@ def _require_correspondence(layout: EntityLayout, names: WireNames, plan: Public
             cast("type", plan.occurrences.get(position + 1)),
             path=f"{layout.concrete.canonical}.{'.'.join(occurrence.identity.path)}",
         )
+    _require_declared_member_correspondence(layout, names, plan)
 
 
 def _require_member_correspondence(
@@ -275,14 +282,52 @@ def _require_member_correspondence(
             )
 
 
+def _require_declared_member_correspondence(
+    layout: EntityLayout, names: WireNames, plan: PublicationPlan
+) -> None:
+    """Refuse unless each position's two sides are the same declared member.
+
+    A local name addresses a member only within one ancestry. Two Entities of one
+    model may each declare ``payload``, so a class composed under an identity
+    whose ancestry runs through one of them and a layout derived where it runs
+    through the other spell one row and mean two — and a position's value is
+    checked against the *layout's* declared type, so the equal-looking row would
+    admit a value the class's own member cannot hold. Comparing the accepted
+    metadata compares the declaring identity, the declared type, and everything
+    else that decides what may be written there, including an occurrence's whole
+    subtree.
+
+    Last, because every disagreement the checks above name is a metadata
+    disagreement too and each says which one in its own terms; what reaches here
+    is a row that corresponds in spelling, kind, and Value Object Class and still
+    means two different members.
+    """
+    for position, declared in enumerate((*layout.attributes, *layout.occurrences)):
+        py_name = plan.py_names[position]
+        carried = names.members.get(py_name)
+        if carried != declared:
+            raise _correspondence_refusal(
+                layout.concrete,
+                f"the model declares member {position} ({py_name!r}) as {declared} "
+                f"and the class declares it as {carried}",
+                identity=declared.identity,
+            )
+
+
 def _require_relationship_correspondence(
     layout: EntityLayout, names: WireNames, plan: PublicationPlan
 ) -> None:
-    """Refuse unless the class's relationship tail is the model's canonical order.
+    """Refuse unless the class's relationship tail is the model's canonical order,
+    each position naming the direction the model declares there.
 
     The tail carries no presence bit and no name once a row is written, so a
     direction installed at another direction's position is a loaded arm answered
-    for the wrong relationship — silently, and for the life of the graph.
+    for the wrong relationship — silently, and for the life of the graph. A local
+    name is not that direction: an inherited direction keeps the identity of the
+    ancestor that declared it, and two ancestries declaring one name at different
+    levels spell one tail and mean two relationships, whose targets and
+    cardinalities need not agree. Comparing whole identities refuses that pair
+    here, at the Entity whose row it would misdirect.
     """
     tail = tuple(names.relationship_py.get(direction.name) for direction in layout.relationships)
     laid_out = tuple(
@@ -293,6 +338,16 @@ def _require_relationship_correspondence(
             layout.concrete,
             f"the model lays out relationships {tail} and the class is laid out as {laid_out}",
         )
+    for position, direction in enumerate(layout.relationships):
+        py_name = laid_out[position]
+        carried = names.relationship_identities.get(py_name)
+        if carried != direction:
+            raise _correspondence_refusal(
+                layout.concrete,
+                f"the model lays out relationship {position} ({py_name!r}) as "
+                f"{direction} and the class navigates {carried} there",
+                identity=direction,
+            )
 
 
 def _require_occurrence_correspondence(
@@ -344,7 +399,7 @@ def _correspondence_refusal(
     concrete: EntityIdentity,
     detail: str,
     *,
-    identity: EntityIdentity | MemberIdentity | None = None,
+    identity: EntityIdentity | MemberIdentity | RelationshipIdentity | None = None,
 ) -> GraphConstructionError:
     """The one refusal every correspondence disagreement earns, naming both sides."""
     return GraphConstructionError(
