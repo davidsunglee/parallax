@@ -141,10 +141,12 @@ class PostgresRuntime:
         running finishes on the connection it holds and that connection is
         closed when it is returned.
 
-        The metrics source detaches between the two, so no sample can be
-        looking at a pool that is being torn down — and a native close that is
-        slow or that fails delays nothing about that, because detachment has
-        already happened by then.
+        The metrics source detaches between the two, so every sample begun
+        after that reaches nothing — and a native close that is slow or that
+        fails delays nothing about that, because detachment has already happened
+        by then. A sample already inside the native read may complete and report
+        what it measured; that read copies bookkeeping and waits for nothing
+        this close holds.
 
         Problems closing are reported through the restricted resource logger and
         never raised: close is what a caller runs while unwinding, and a handle

@@ -41,6 +41,7 @@ selection carries, and nothing in the package imports it except
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any
@@ -189,6 +190,7 @@ class Database:
         "_observation",
         "_reads",
         "_runtime",
+        "_shutdown",
     )
 
     def __init__(
@@ -258,6 +260,11 @@ class Database:
         self._observation: PoolObservation | None = register_pool_observation(
             lifecycle_provider, runtime.pool_metrics
         )
+        # Held across the whole of close, so the ordering below is the ordering
+        # every caller sees: a second close waits for the first rather than
+        # returning while the runtime is still being torn down. Reentrant
+        # because what runs under it includes application code.
+        self._shutdown = threading.RLock()
 
     @classmethod
     def connect(
@@ -340,14 +347,20 @@ class Database:
         first, and a close that failed must not leave the registration open.
         What is closed is the REGISTRATION — the exporter, queue, or metrics
         client behind it is the application's and outlives this handle.
+
+        Serialized, so that ordering holds for every caller rather than only
+        for the first: a close concurrent with one already running waits for it
+        instead of running the registration's close beside a runtime still
+        being torn down, and the registration is therefore closed exactly once.
         """
-        try:
-            self._runtime.close()
-        finally:
-            observation = self._observation
-            self._observation = None
-            if observation is not None:
-                close_pool_observations((observation,))
+        with self._shutdown:
+            try:
+                self._runtime.close()
+            finally:
+                observation = self._observation
+                self._observation = None
+                if observation is not None:
+                    close_pool_observations((observation,))
 
     def __enter__(self) -> Database:
         return self

@@ -22,16 +22,45 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from _pool_source_support import DetachableSource
 
-from _support.db_port import DetachableSource, Read, ScriptedAdapter, ScriptedRuntime
+from _support.db_port import Read, ScriptedAdapter, ScriptedRuntime
 from parallax.conformance import database_pooling_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL
 from parallax.core.db_port import Bind, DocumentReadOrdinals, Row
 from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandlerError
+from parallax.postgres import OnDemandOptions, PoolOptions
+from parallax.snapshot import ServingModel, prepare_model
 from parallax.snapshot.handle import ExecutionFailure
 
 _ROW = {"id": 1, "owner": "Newton", "balance": Decimal("10.00"), "version": 1}
+
+
+def test_the_documented_retention_forms_are_the_four_the_guide_distinguishes() -> None:
+    # The guide's construction block is a claim about which four policies exist
+    # and what each one retains, so what is graded here is the policy each form
+    # carries rather than that four adapters were built.
+    forms = stories.every_retention_form_is_one_configuration_value("postgresql://localhost/app")
+
+    assert forms.default.pool == PoolOptions()
+    assert forms.tuned.pool == PoolOptions(min_size=2, max_size=20)
+    assert forms.zero_minimum.pool == PoolOptions(min_size=0, max_size=20)
+    assert forms.on_demand.pool == OnDemandOptions(max_size=20)
+
+
+def test_both_model_forms_connect_and_both_closes_give_the_runtime_back() -> None:
+    # Two connections over one adapter, one closed by leaving its scope and one
+    # closed explicitly: two runtimes opened, two closed, and the Serving Model
+    # an application prepared serves what the shorthand does.
+    adapter = ScriptedAdapter(Read(rows=[_ROW], times=2))
+
+    shape = stories.a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
+        adapter, ACCOUNT_MODEL, ServingModel(prepare_model(ACCOUNT_MODEL, edition="published"))
+    )
+
+    assert shape == stories.ClosedBothWays(scoped_rows=1, explicit_rows=1)
+    assert adapter.closes == 2
 
 
 def test_two_handles_over_one_configuration_serve_independently() -> None:

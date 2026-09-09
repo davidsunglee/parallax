@@ -36,8 +36,9 @@ is already waiting for one. Omitting `pool` takes the retaining defaults.
 
 ## Everything else
 
-[`docs/postgresql-lifecycle.md`](../../docs/postgresql-lifecycle.md) is this
-adapter's operational guide, and the one place these facts are written down:
+[PostgreSQL connection lifecycle](https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/postgresql-lifecycle.md)
+is this adapter's operational guide, and the one place these facts are written
+down:
 
 - the full retention settings and their defaults, and what the driver's own
   maintenance settings mean;

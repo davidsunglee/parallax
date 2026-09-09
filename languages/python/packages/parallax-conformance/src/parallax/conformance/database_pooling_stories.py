@@ -45,16 +45,23 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleProvider,
     RootExecution,
 )
-from parallax.snapshot import connect
+from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
+from parallax.snapshot import ServingModel, connect
 from parallax.snapshot.handle import Database
 
 __all__ = [
+    "ClosedBothWays",
     "PoolGauges",
     "PoolReading",
     "PoolWatch",
     "PoolWatchingProvider",
+    "RetentionForms",
     "RetentionShape",
+    "a_handle_is_closed_by_leaving_its_scope_or_by_closing_it",
     "account_balances",
+    "closing_snippet",
+    "construction_snippet",
+    "every_retention_form_is_one_configuration_value",
     "observation_snippet",
     "one_configuration_opens_independent_runtimes",
     "pooled_database",
@@ -66,14 +73,71 @@ __all__ = [
 
 
 # --------------------------------------------------------------------------- #
+# Construction: the retention forms, both model forms, and both closes.        #
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True, slots=True)
+class RetentionForms:
+    default: PostgresAdapter
+    tuned: PostgresAdapter
+    zero_minimum: PostgresAdapter
+    on_demand: PostgresAdapter
+
+
+def every_retention_form_is_one_configuration_value(conninfo: str) -> RetentionForms:
+    """The four ways to configure retention, none of which opens anything.
+
+    Each one parses the connection string, validates the policy, and stops
+    there. ``default`` takes the retaining defaults; ``tuned`` sets them;
+    ``zero_minimum`` retains connections but keeps none until one is asked for;
+    ``on_demand`` retains none at all and closes each connection on release.
+    """
+    return RetentionForms(
+        default=PostgresAdapter(conninfo),
+        tuned=PostgresAdapter(conninfo, pool=PoolOptions(min_size=2, max_size=20)),
+        zero_minimum=PostgresAdapter(conninfo, pool=PoolOptions(min_size=0, max_size=20)),
+        on_demand=PostgresAdapter(conninfo, pool=OnDemandOptions(max_size=20)),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ClosedBothWays:
+    scoped_rows: int
+    explicit_rows: int
+
+
+def a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
+    adapter: DatabaseAdapter, model: DomainModel, serving: ServingModel
+) -> ClosedBothWays:
+    """Both model forms, and the two equivalent ways to give a runtime back.
+
+    ``model`` is the static shorthand, which ``connect`` prepares once into a
+    Serving Model of its own; ``serving`` is one the application prepared and
+    holds, so that publishing a later edition stays its own decision. Either
+    connects, and neither changes what the handle owns.
+
+    Closing is the part that is not optional. The ``with`` block and the
+    explicit ``close`` are the same call, and a handle that gets neither holds a
+    pool and its maintenance threads for the life of the process.
+    """
+    with connect(adapter, model) as scoped:
+        scoped_rows = len(account_balances(scoped))
+    explicit = connect(adapter, serving)
+    try:
+        explicit_rows = len(account_balances(explicit))
+    finally:
+        explicit.close()
+    return ClosedBothWays(scoped_rows, explicit_rows)
+
+
+# --------------------------------------------------------------------------- #
 # Retention: what a configuration is, and what a handle owns.                  #
 # --------------------------------------------------------------------------- #
 
 
 @dataclass(frozen=True, slots=True)
 class RetentionShape:
-    """What two handles over one configuration observed about each other."""
-
     first_rows: int
     second_rows_after_first_closed: int
 
@@ -199,8 +263,6 @@ class PoolWatchingProvider:
 
 @dataclass(frozen=True, slots=True)
 class PoolReading:
-    """What one watch saw across a handle's life."""
-
     at_rest: PoolGauges
     while_working: PoolGauges
     detached_after_close: bool
@@ -246,10 +308,14 @@ async def pooled_database(
     """The application lifespan: one handle for the process, opened and closed.
 
     This is what an ASGI application passes as ``lifespan=``. Everything before
-    the ``yield`` runs at startup and everything after it at shutdown, and the
-    server drains the requests it has accepted before running the second half —
-    which is what makes closing here safe: work already admitted finishes on the
-    connection it holds, and anything needing a new one is refused.
+    the ``yield`` runs at startup and everything after it at shutdown, once the
+    server has drained the requests it accepted — a drain that is the SERVER's
+    and is bounded by its own configuration, since a graceful-shutdown timeout
+    cancels whatever has not finished and cancelling an ``asyncio.to_thread``
+    await ends the await rather than the worker beneath it. Closing here is safe
+    either way, which is Parallax's half of the bargain: work already admitted
+    finishes on the connection it holds, and anything needing a new one is
+    refused.
 
     Both halves are offloaded because both block. Composition opens the pool and
     proves it can execute; closing tears it down. Neither belongs on an event
@@ -281,6 +347,14 @@ async def serve_account_balances(db: Database) -> list[Decimal]:
     number of them that can run at once is the smaller of the two.
     """
     return await asyncio.to_thread(account_balances, db)
+
+
+def construction_snippet() -> str:
+    return _sources(RetentionForms, every_retention_form_is_one_configuration_value)
+
+
+def closing_snippet() -> str:
+    return _sources(a_handle_is_closed_by_leaving_its_scope_or_by_closing_it)
 
 
 def retention_snippet() -> str:

@@ -90,10 +90,12 @@ class PostgresPoolMetrics:
 
     Detachment is a single attribute becoming ``None``, and every sample reads it
     once into a local before touching it. That is the whole concurrency
-    contract: a sample that read the pool before a close carries on and answers
-    with what it measured, and one that reads after answers detached. Neither
-    can reach a pool the runtime has finished closing, and neither takes a lock
-    that a close would have to wait behind.
+    contract, and it is stated in terms of where a sample BEGAN: one that read
+    the pool before a detach carries on and answers with what it measured, one
+    that reads after answers detached. So a sample can still be inside the
+    native read while the pool it read from is being closed. That read copies
+    the pool's own counters and measures and takes no lock, so it neither waits
+    for the teardown nor delays it — which is why this holds none either.
     """
 
     __slots__ = ("_pool",)
@@ -104,14 +106,14 @@ class PostgresPoolMetrics:
     def detach(self) -> None:
         """Give up the pool. Idempotent, and never reversed.
 
-        Called by the runtime BEFORE it closes the pool, so no sample can be
-        looking at a pool being torn down: the reference is gone before the
-        teardown starts, and a slow or failing close does not widen that window.
+        Called by the runtime BEFORE it closes the pool, so every sample begun
+        from here on reaches nothing: the reference is gone before the teardown
+        starts, and a slow or failing close does not widen that window. A sample
+        that took the reference earlier is not revoked by this and may complete.
         """
         self._pool = None
 
     def sample(self) -> PoolSample:
-        """One reading now: measurements, an ordinary failure, or detachment."""
         pool = self._pool
         if pool is None:
             return PoolDetached()

@@ -2464,10 +2464,14 @@ async def pooled_database(
     """The application lifespan: one handle for the process, opened and closed.
 
     This is what an ASGI application passes as ``lifespan=``. Everything before
-    the ``yield`` runs at startup and everything after it at shutdown, and the
-    server drains the requests it has accepted before running the second half —
-    which is what makes closing here safe: work already admitted finishes on the
-    connection it holds, and anything needing a new one is refused.
+    the ``yield`` runs at startup and everything after it at shutdown, once the
+    server has drained the requests it accepted — a drain that is the SERVER's
+    and is bounded by its own configuration, since a graceful-shutdown timeout
+    cancels whatever has not finished and cancelling an ``asyncio.to_thread``
+    await ends the await rather than the worker beneath it. Closing here is safe
+    either way, which is Parallax's half of the bargain: work already admitted
+    finishes on the connection it holds, and anything needing a new one is
+    refused.
 
     Both halves are offloaded because both block. Composition opens the pool and
     proves it can execute; closing tears it down. Neither belongs on an event

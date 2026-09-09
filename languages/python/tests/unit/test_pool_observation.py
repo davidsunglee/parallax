@@ -14,11 +14,13 @@ it: closing gives the interest up and touches nothing else the application built
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 import pytest
+from _pool_source_support import DetachableSource
 
-from _support.db_port import DetachableSource, Read, ScriptedAdapter
+from _support.db_port import Read, ScriptedAdapter
 from parallax.conformance.story_models import ACCOUNT_MODEL
 from parallax.core.db_port import RESOURCE_LOGGER_NAME
 from parallax.core.execution_lifecycle import (
@@ -37,8 +39,6 @@ from parallax.snapshot.handle import Database
 
 
 class _Registration:
-    """One registration, counting its closes and optionally refusing to close."""
-
     def __init__(self, *, refuses: Exception | None = None) -> None:
         self.closes = 0
         self._refuses = refuses
@@ -102,6 +102,10 @@ class _Observes(_Executions):
         if self._raises is not None:
             raise self._raises
         return None if self._declines_pool else self.registration
+
+
+_DEADLINE = 10.0
+"""How long a handshake below waits before failing rather than hanging."""
 
 
 def _adapter(*, metrics: object | None = None, script: Any = ()) -> ScriptedAdapter:
@@ -265,6 +269,89 @@ def test_a_runtime_that_will_not_close_still_gives_up_the_registration() -> None
         db.close()
 
     assert provider.registration.closes == 1
+
+
+class _ParkedRuntime:
+    """A runtime whose close blocks in the middle, so a second close overlaps it."""
+
+    dialect = ScriptedAdapter().dialect
+
+    def __init__(self, log: list[str]) -> None:
+        self.metrics = DetachableSource()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.in_close = False
+        self.log = log
+        self._closing = threading.Lock()
+        self._closed = False
+
+    @property
+    def pool_metrics(self) -> Any:
+        return self.metrics
+
+    def open(self) -> Any:
+        return self
+
+    def connection(self) -> Any:
+        raise AssertionError("no acquisition expected")
+
+    def close(self) -> None:
+        with self._closing:
+            if self._closed:
+                return
+            self._closed = True
+        self.in_close = True
+        self.entered.set()
+        assert self.release.wait(_DEADLINE)
+        self.metrics.detach()
+        self.in_close = False
+        self.log.append("runtime-close-finished")
+
+
+class _ClosesAfterTheRuntime(_Registration):
+    def __init__(self, runtime: _ParkedRuntime) -> None:
+        super().__init__()
+        self._runtime = runtime
+        self.saw_the_runtime_still_closing = False
+
+    def close(self) -> None:
+        self.saw_the_runtime_still_closing = self._runtime.in_close
+        self._runtime.log.append("registration-closed")
+        super().close()
+
+
+def test_two_callers_closing_at_once_give_the_registration_up_once_and_last() -> None:
+    # The second caller starts while the first is parked inside the runtime's
+    # own close, so the two closes overlap. Whatever the scheduler then does,
+    # the registration is given up exactly once and only after the runtime's
+    # close has returned — never beside a runtime still being torn down — and a
+    # caller that closes a handle another thread is closing does not return
+    # before that is true.
+    log: list[str] = []
+    runtime = _ParkedRuntime(log)
+    registration = _ClosesAfterTheRuntime(runtime)
+    provider = _Observes(registration=registration)
+    db = connect(runtime, ACCOUNT_MODEL, lifecycle_provider=provider)
+
+    def close_and_record() -> None:
+        db.close()
+        log.append("second-close-returned")
+
+    first = threading.Thread(target=db.close)
+    first.start()
+    assert runtime.entered.wait(_DEADLINE)
+    second = threading.Thread(target=close_and_record)
+    second.start()
+    runtime.release.set()
+    first.join(_DEADLINE)
+    second.join(_DEADLINE)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert registration.closes == 1
+    assert registration.saw_the_runtime_still_closing is False
+    assert log.index("runtime-close-finished") < log.index("registration-closed")
+    assert log[-1] == "second-close-returned"
 
 
 def test_a_registration_that_will_not_close_is_contained_and_reported_thinly(

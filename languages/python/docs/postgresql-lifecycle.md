@@ -13,29 +13,84 @@ Every Python block below marked as a story is the exact source of an executable
 function in `parallax.conformance.database_pooling_stories`. They are checked for
 drift by `tests/unit/test_postgresql_lifecycle_guide.py` and run against a real
 PostgreSQL server by `tests/api/test_database_pooling.py`, so nothing here is a
-snippet that has never executed.
+snippet that has never executed. Every other block is import lines, whose names
+the same guard resolves. The prose around them has no such guard: where it and a
+specification disagree, the specification is right.
 
 ## What you build, and what owns it
 
 ```python
 from parallax.postgres import OnDemandOptions, PoolOptions, PostgresAdapter
-from parallax.snapshot import connect
-
-ADAPTER = PostgresAdapter("postgresql://localhost/app", pool=PoolOptions(max_size=20))
-
-with connect(ADAPTER, model) as db:
-    ...
+from parallax.snapshot import ServingModel, connect, prepare_model
 ```
 
 `PostgresAdapter` is **configuration**. Constructing one opens no connection, no
 pool, and no thread: it parses the connection string, validates the retention
 policy, and stores both. That is what makes it safe to build at import time, hold
-as a module constant, and share between threads.
+as a module constant, and share between threads — in any of the four retention
+forms.
+
+<!-- story: construction_snippet -->
+
+```python
+@dataclass(frozen=True, slots=True)
+class RetentionForms:
+    default: PostgresAdapter
+    tuned: PostgresAdapter
+    zero_minimum: PostgresAdapter
+    on_demand: PostgresAdapter
+
+
+def every_retention_form_is_one_configuration_value(conninfo: str) -> RetentionForms:
+    """The four ways to configure retention, none of which opens anything.
+
+    Each one parses the connection string, validates the policy, and stops
+    there. ``default`` takes the retaining defaults; ``tuned`` sets them;
+    ``zero_minimum`` retains connections but keeps none until one is asked for;
+    ``on_demand`` retains none at all and closes each connection on release.
+    """
+    return RetentionForms(
+        default=PostgresAdapter(conninfo),
+        tuned=PostgresAdapter(conninfo, pool=PoolOptions(min_size=2, max_size=20)),
+        zero_minimum=PostgresAdapter(conninfo, pool=PoolOptions(min_size=0, max_size=20)),
+        on_demand=PostgresAdapter(conninfo, pool=OnDemandOptions(max_size=20)),
+    )
+```
 
 `connect` is what opens a runtime, and the handle it returns is what owns that
 runtime. **Close it**: `db.close()` and the context manager are equivalent, and
-both are idempotent. Every `connect` over one configuration opens an independent
-runtime, so closing one handle leaves another working.
+both are idempotent. The model it serves is either form — the static shorthand,
+or a `ServingModel` the application prepared and holds.
+
+<!-- story: closing_snippet -->
+
+```python
+def a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
+    adapter: DatabaseAdapter, model: DomainModel, serving: ServingModel
+) -> ClosedBothWays:
+    """Both model forms, and the two equivalent ways to give a runtime back.
+
+    ``model`` is the static shorthand, which ``connect`` prepares once into a
+    Serving Model of its own; ``serving`` is one the application prepared and
+    holds, so that publishing a later edition stays its own decision. Either
+    connects, and neither changes what the handle owns.
+
+    Closing is the part that is not optional. The ``with`` block and the
+    explicit ``close`` are the same call, and a handle that gets neither holds a
+    pool and its maintenance threads for the life of the process.
+    """
+    with connect(adapter, model) as scoped:
+        scoped_rows = len(account_balances(scoped))
+    explicit = connect(adapter, serving)
+    try:
+        explicit_rows = len(account_balances(explicit))
+    finally:
+        explicit.close()
+    return ClosedBothWays(scoped_rows, explicit_rows)
+```
+
+Every `connect` over one configuration opens an independent runtime, so closing
+one handle leaves another working.
 
 <!-- story: retention_snippet -->
 
@@ -191,10 +246,14 @@ async def pooled_database(
     """The application lifespan: one handle for the process, opened and closed.
 
     This is what an ASGI application passes as ``lifespan=``. Everything before
-    the ``yield`` runs at startup and everything after it at shutdown, and the
-    server drains the requests it has accepted before running the second half —
-    which is what makes closing here safe: work already admitted finishes on the
-    connection it holds, and anything needing a new one is refused.
+    the ``yield`` runs at startup and everything after it at shutdown, once the
+    server has drained the requests it accepted — a drain that is the SERVER's
+    and is bounded by its own configuration, since a graceful-shutdown timeout
+    cancels whatever has not finished and cancelling an ``asyncio.to_thread``
+    await ends the await rather than the worker beneath it. Closing here is safe
+    either way, which is Parallax's half of the bargain: work already admitted
+    finishes on the connection it holds, and anything needing a new one is
+    refused.
 
     Both halves are offloaded because both block. Composition opens the pool and
     proves it can execute; closing tears it down. Neither belongs on an event
@@ -231,11 +290,16 @@ async def serve_account_balances(db: Database) -> list[Decimal]:
 FastAPI takes exactly that object as its `lifespan=` argument, and no part of
 this needs FastAPI to be installed: a lifespan is an async context manager and
 FastAPI's own endpoint offloading is a worker thread. The server drains the
-requests it has accepted before running the shutdown half, which is what makes
-closing there safe — Parallax's own part of that bargain is that work already
-admitted finishes on the connection it holds, including statements it has not
-issued yet, while anything needing a new connection is refused from the close
-onward.
+requests it has accepted before running the shutdown half — but that drain is
+the server's own and is bounded by its own configuration. Uvicorn waits for
+`--timeout-graceful-shutdown` and then cancels what has not finished, and
+cancelling an `await asyncio.to_thread(...)` ends the await rather than the
+worker thread running the operation, so a blocking operation can still be
+running when the lifespan closes the handle. Size that timeout for the longest
+operation you offload. What makes closing there survivable regardless is
+Parallax's own part of the bargain: work already admitted finishes on the
+connection it holds, including statements it has not issued yet, while anything
+needing a new connection is refused from the close onward.
 
 **Offload complete operations.** From an async endpoint, what crosses into the
 worker thread must be the WHOLE operation — statements, materialization, and the
@@ -244,8 +308,13 @@ be iterated there, moves part of the operation onto the loop and keeps the
 connection for as long as the loop takes to get around to it. Synchronous
 endpoints need none of this: the server already runs them off the loop.
 
-Parallax adds no async interface, so there is no way to hold a connection across
-an `await` — which is a feature here rather than a gap.
+Parallax adds no async interface, so no Parallax call ever awaits while holding a
+connection. Your own code still can: entering `db.stream(...)` on the event loop,
+reading its first page, and then awaiting anything before the delivery ends holds
+that connection for the whole of the await, and a slow client or a busy loop
+decides how long that is. A delivery is the shape to watch, because it is the one
+that outlives the call that started it — which is what offloading complete
+operations prevents.
 
 **Pool capacity is not HTTP concurrency.** An operation occupies a worker thread
 and a connection for its whole duration, so the number that can run at once is
@@ -428,9 +497,15 @@ measured mid-change, not a broken one.
 
 What is worth watching: `requests_waiting` and `requests_wait_ms` say whether
 callers are queueing, which is the signal that `max_size` is too small for the
-offered load; `connections_num` climbing steadily against a stable `pool_size`
-says connections are being replaced rather than reused; `pool_available` sitting
-at `pool_max` says the opposite.
+offered load; `pool_available` sitting at `pool_max` says the opposite.
+`connections_num` climbing steadily against a stable `pool_size` says
+connections keep being ATTEMPTED, which is not the same as being replaced: the
+counter is incremented before each attempt, so establishment that keeps failing
+climbs it exactly as replacement does, and a connection refused in preparation
+for a wrong `client_encoding` or `DateStyle` counts as an attempt rather than as
+an error. Read it against `connections_errors` and `connections_lost` — errors
+climbing with it is failing establishment, `connections_lost` climbing with it
+is churn, and neither climbing is a session-setting refusal.
 
 ## Session settings
 
@@ -467,7 +542,7 @@ interchangeable and only one of them is yours to redact.
 | Path | Carries | Policy |
 |---|---|---|
 | Lifecycle events (a Handler you installed) | Rich detached diagnostics: bounded message and stack, error type and code, the cleanup a release established | **Yours.** You decide what is exported and what is redacted. Detaching and truncating a native message does not sanitize it |
-| `parallax.resources` (standard `logging`) | The cleanup phase, the cleanup code, and one fixed sentence — nothing else. No credential, SQL, bind, native message, stack, structured extra, or `exc_info` | Parallax's, and deliberately thin: it must be safe to leave on in a deployment that has redacted nothing. It speaks only when something went wrong AND no Handler received it |
+| `parallax.resources` (standard `logging`) | One fixed sentence per occasion, and the cleanup phase and code where a cleanup is what failed — nothing else. No credential, SQL, bind, native message, stack, structured extra, or `exc_info`. A pool observation that would not close is the one record carrying no phase and no code, because nothing was relinquished | Parallax's, and deliberately thin: it must be safe to leave on in a deployment that has redacted nothing. It speaks only when something went wrong AND no Handler received it |
 | `psycopg.pool` (the driver's own logger) | Whatever the driver logs, exception text included | **The driver's.** Parallax's restriction does not reach it. Configure it yourself |
 
 `parallax.resources` is a fixed logger name so an operator silences or routes

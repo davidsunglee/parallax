@@ -54,8 +54,6 @@ _COUNTERS: dict[str, object] = {
 
 
 class _StatsPool:
-    """A native pool that answers ``get_stats`` and counts being asked."""
-
     def __init__(
         self,
         *readings: Mapping[str, object],

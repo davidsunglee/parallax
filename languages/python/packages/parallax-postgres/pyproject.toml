@@ -16,6 +16,10 @@ dependencies = [
     "psycopg-pool>=3.3.1",
 ]
 
+[project.urls]
+Documentation = "https://github.com/davidsunglee/parallax/blob/main/languages/python/docs/postgresql-lifecycle.md"
+Repository = "https://github.com/davidsunglee/parallax"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
