@@ -52,6 +52,7 @@ from typing import Final, cast
 
 from parallax.core import inheritance
 from parallax.core.base import INFINITY_LITERAL, TemporalBound
+from parallax.core.inheritance import InheritanceEntityView
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -65,6 +66,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
     ValueObjectIdentity,
     ValueObjectMetadata,
+    entity_by_name,
 )
 from parallax.core.unit_work.claims import WriteIntent, admits, keyed_intent
 from parallax.core.unit_work.clock import TransactionInstant
@@ -134,10 +136,10 @@ from parallax.core.unit_work.planned import (
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.core.unit_work.planner import (
+    FamilyFacts,
     ObjectKey,
-    Targets,
+    family_facts,
     resolve_object_key,
-    targets,
 )
 from parallax.core.unit_work.retain import RetainedObservation
 from parallax.core.unit_work.strategy import (
@@ -249,7 +251,7 @@ class WritePlanner:
     instant acquisition, or provenance decoration by hand.
     """
 
-    __slots__ = ("_audit", "_batching", "_concurrency", "_model", "_temporal")
+    __slots__ = ("_audit", "_batching", "_concurrency", "_families", "_temporal")
 
     def __init__(
         self,
@@ -260,7 +262,7 @@ class WritePlanner:
         temporal: TemporalStrategy,
         audit: AuditStrategy,
     ) -> None:
-        self._model = model
+        self._families = family_facts(model)
         self._batching = batching
         self._concurrency = concurrency
         self._temporal = temporal
@@ -301,15 +303,15 @@ class WritePlanner:
         object graph merely by being planned. An ordinary (non-materialized)
         run settles eagerly, exactly as before, into one shared segment.
         """
-        resolved = targets(self._model)
-        coalesced = self._coalesce(request.buffered_writes, resolved)
+        families = self._families
+        coalesced = self._coalesce(request.buffered_writes, families)
         survivors = [
             item
-            for item in (_without_noop_rows(item, resolved) for item in coalesced)
+            for item in (_without_noop_rows(item, families) for item in coalesced)
             if item is not None
         ]
-        batched = self._form_batches(survivors, resolved)
-        ordered = self._order(batched, resolved)
+        batched = self._form_batches(survivors, families)
+        ordered = self._order(batched, families)
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
         claims: dict[RetainedObservation, None] = {}
@@ -324,7 +326,7 @@ class WritePlanner:
                 flush_pending()
                 segments.append(
                     self._settle_group(
-                        item, resolved, request.concurrency, request.transaction_instant
+                        item, families, request.concurrency, request.transaction_instant
                     )
                 )
                 continue
@@ -335,7 +337,7 @@ class WritePlanner:
             )
             for step in self._settle(
                 instruction,
-                resolved,
+                families,
                 observation,
                 request.concurrency,
                 request.transaction_instant,
@@ -359,7 +361,7 @@ class WritePlanner:
     # several writes claiming ONE scope combine by the claim algebra      #
     # their verbs already admitted them under.                            #
     # ----------------------------------------------------------------- #
-    def _coalesce(self, buffer: BufferedWrites, resolved: Targets) -> list[_CoalescedItem]:
+    def _coalesce(self, buffer: BufferedWrites, families: FamilyFacts) -> list[_CoalescedItem]:
         result: list[BufferItem | None] = []
         pending_insert: dict[ObjectKey, int] = {}
         # Where each object's still-open claims sit, so a second write claiming
@@ -379,7 +381,7 @@ class WritePlanner:
                 result.append(item)
                 continue
             instruction = buffered_instruction(item)
-            key = resolve_object_key(instruction, resolved)
+            key = resolve_object_key(instruction, families)
             if not isinstance(instruction, PreparedKeyedWrite) or key is None:
                 result.append(item)
                 continue
@@ -394,7 +396,7 @@ class WritePlanner:
                 # always a bare instruction — and folding an update into it
                 # yields an insert, which is why the merged item stays bare.
                 assert isinstance(base, PreparedKeyedWrite)
-                result[index] = _merge_update_into_insert(base, instruction, resolved)
+                result[index] = _merge_update_into_insert(base, instruction, families)
             elif verb in DESTRUCTIVE_MUTATIONS and key in pending_insert:
                 result[pending_insert.pop(key)] = None
             elif isinstance(item, ObservedKeyedWrite | ObjectClaimedWrite):
@@ -416,14 +418,16 @@ class WritePlanner:
     # admitted.                                                           #
     # ----------------------------------------------------------------- #
     def _form_batches(
-        self, buffer: Sequence[_CoalescedItem], resolved: Targets
+        self, buffer: Sequence[_CoalescedItem], families: FamilyFacts
     ) -> list[_CoalescedItem]:
         result: list[_CoalescedItem] = []
         run: list[PreparedKeyedWrite] = []
         run_group: object = None
 
         def group_key(item: PreparedKeyedWrite) -> object:
-            return self._batching.group_key(self._model, item.target, item.mutation, item.rows[0])
+            return self._batching.group_key(
+                families.model, item.target, item.mutation, item.rows[0]
+            )
 
         def flush_run() -> None:
             if not run:
@@ -432,7 +436,7 @@ class WritePlanner:
             rows = [row for w in run for row in w.rows]
             if len(run) == 1:
                 result.extend(run)
-            elif self._batching.collapses(self._model, entity, run[0].mutation, rows):
+            elif self._batching.collapses(families.model, entity, run[0].mutation, rows):
                 result.append(_merge_rows(run))
             else:
                 result.extend(run)
@@ -451,7 +455,7 @@ class WritePlanner:
         # versioned and temporal alike. A carrier is single-row by
         # construction, so the run this skips is the only way its row could
         # have joined a multi-row statement.
-        for item in _decomposed_updates(buffer, resolved):
+        for item in _decomposed_updates(buffer, families):
             if isinstance(item, PreparedKeyedWrite) and len(item.rows) == 1:
                 item_group = group_key(item)
                 if (
@@ -477,8 +481,10 @@ class WritePlanner:
     # predicate write is a hard ordering barrier partitioning the         #
     # sequence into independently reorderable regions.                    #
     # ----------------------------------------------------------------- #
-    def _order(self, items: Sequence[_CoalescedItem], resolved: Targets) -> list[_CoalescedItem]:
-        ranks = _fk_ranks(self._model)
+    def _order(
+        self, items: Sequence[_CoalescedItem], families: FamilyFacts
+    ) -> list[_CoalescedItem]:
+        ranks = _fk_ranks(families.model)
 
         def rank(item: _CoalescedItem) -> int:
             entity = _instruction_target(buffered_instruction(item))
@@ -521,37 +527,37 @@ class WritePlanner:
     def _settle(
         self,
         instruction: PreparedWrite,
-        resolved: Targets,
+        families: FamilyFacts,
         observation: WriteObservation | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> tuple[PlannedStep, ...]:
         if isinstance(instruction, PreparedPredicateWrite):
-            return self._settle_predicate(instruction, resolved)
+            return self._settle_predicate(instruction, families)
         entity = instruction.target
-        declaring_entity = resolved.declaring(entity)
+        declaring_entity = families.declaring(entity)
         if declaring_entity.declared_as_of_axes:
             return self._settle_temporal(
                 entity,
                 declaring_entity,
                 instruction,
-                resolved,
+                families,
                 observation,
                 concurrency,
                 tx_instant,
             )
         _reject_milestone_verb(entity, instruction.mutation, "keyed")
         version_attr = self._concurrency.version_attribute(declaring_entity)
-        members = resolved.applicable_members(entity)
+        view = families.view(entity)
         if instruction.mutation == "insert":
-            return (self._settle_insert(entity, members, instruction, version_attr),)
+            return (self._settle_insert(entity, view, instruction, version_attr),)
         observed_version = self._observed_version(entity, instruction, version_attr, observation)
         settled = _non_temporal_concurrency(
             version_attr,
             observed_version,
             self._concurrency.gates(concurrency, declaring_entity),
         )
-        key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
+        key_attributes = tuple(a.identity for a in families.primary_key(entity))
         target = _key_target(entity, key_attributes, instruction.rows)
         affected_rows = ExactCount(
             expected=len(target.key_values), on_shortfall=shortfall_for(settled)
@@ -570,7 +576,7 @@ class WritePlanner:
                 entity=entity.identity,
                 target=target,
                 assignments=self._update_assignments(
-                    entity, members, instruction, key_attributes, version_attr, observed_version
+                    entity, view, instruction, key_attributes, version_attr, observed_version
                 ),
                 concurrency=settled,
                 affected_rows=affected_rows,
@@ -578,7 +584,7 @@ class WritePlanner:
         )
 
     def _settle_predicate(
-        self, instruction: PreparedPredicateWrite, resolved: Targets
+        self, instruction: PreparedPredicateWrite, families: FamilyFacts
     ) -> tuple[PlannedStep, ...]:
         """One readless predicate-selected write as its single step.
 
@@ -593,7 +599,7 @@ class WritePlanner:
         """
         entity = instruction.selection.target
         inheritance.reject_predicate_write(entity)
-        declaring_entity = resolved.declaring(entity)
+        declaring_entity = families.declaring(entity)
         if (
             declaring_entity.declared_as_of_axes
             or self._concurrency.version_attribute(declaring_entity) is not None
@@ -622,7 +628,7 @@ class WritePlanner:
                     affected_rows=ANY_COUNT,
                 ),
             )
-        members = resolved.applicable_members(entity)
+        view = families.view(entity)
         assignment_row = {
             _assignment_member(assignment.attr): assignment.value
             for assignment in instruction.managed_assignments
@@ -631,7 +637,7 @@ class WritePlanner:
             PlannedUpdate(
                 entity=entity.identity,
                 target=target,
-                assignments=_assignments(entity, members, assignment_row),
+                assignments=_assignments(entity, view, assignment_row),
                 concurrency=UNVERSIONED,
                 affected_rows=ANY_COUNT,
             ),
@@ -640,7 +646,7 @@ class WritePlanner:
     def _settle_insert(
         self,
         entity: EntityMetadata,
-        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+        view: InheritanceEntityView,
         instruction: PreparedKeyedWrite,
         version_attr: AttributeIdentity | None,
     ) -> PlannedInsert:
@@ -648,7 +654,7 @@ class WritePlanner:
             None if version_attr is None else (version_attr, self._concurrency.initial_version())
         )
         entries = tuple(
-            InsertEntry(row=_planned_row(entity, members, row, version), origin=NEW_LINEAGE)
+            InsertEntry(row=_planned_row(entity, view, row, version), origin=NEW_LINEAGE)
             for row in instruction.rows
         )
         return PlannedInsert(entity=entity.identity, entries=entries)
@@ -658,7 +664,7 @@ class WritePlanner:
         entity: EntityMetadata,
         declaring_entity: EntityMetadata,
         instruction: PreparedKeyedWrite,
-        resolved: Targets,
+        families: FamilyFacts,
         observation: WriteObservation | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
@@ -698,7 +704,7 @@ class WritePlanner:
         # instant; the close's new Transaction-Time end and every successor's
         # fresh start derive from that one value.
         instant = tx_instant.value()
-        members = resolved.applicable_members(entity)
+        view = families.view(entity)
         steps: list[PlannedStep] = []
         if topology.closure is not None:
             assert observed is not None  # refused above
@@ -711,7 +717,7 @@ class WritePlanner:
                 _close(
                     entity,
                     declaring_entity,
-                    key_attributes=tuple(a.identity for a in resolved.family_primary_key(entity)),
+                    key_attributes=tuple(a.identity for a in families.primary_key(entity)),
                     identity=instruction.rows[0],
                     observed_valid_end=(
                         None
@@ -728,7 +734,7 @@ class WritePlanner:
                 entity=entity.identity,
                 entries=(
                     InsertEntry(
-                        row=_planned_row(entity, members, milestone.members, None),
+                        row=_planned_row(entity, view, milestone.members, None),
                         origin=milestone.origin,
                     ),
                 ),
@@ -786,7 +792,7 @@ class WritePlanner:
     def _update_assignments(
         self,
         entity: EntityMetadata,
-        members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+        view: InheritanceEntityView,
         instruction: PreparedKeyedWrite,
         key_attributes: tuple[AttributeIdentity, ...],
         version_attr: AttributeIdentity | None,
@@ -808,7 +814,7 @@ class WritePlanner:
         key_names = frozenset(attribute.name for attribute in key_attributes)
         row = instruction.rows[0]
         assigned = {name: value for name, value in row.items() if name not in key_names}
-        assignments = _assignments(entity, members, assigned)
+        assignments = _assignments(entity, view, assigned)
         if version_attr is None or observed_version is None:
             return assignments
         return PlannedAssignments(
@@ -826,7 +832,7 @@ class WritePlanner:
     def _settle_group(
         self,
         group: MaterializedWriteGroup,
-        resolved: Targets,
+        families: FamilyFacts,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> StepSegment:
@@ -842,18 +848,18 @@ class WritePlanner:
         group's own compact columns alone.
         """
         entity = group.mutation.selection.target
-        declaring_entity = resolved.declaring(entity)
+        declaring_entity = families.declaring(entity)
         if declaring_entity.declared_as_of_axes:
             return self._settle_temporal_group(
-                group, entity, declaring_entity, resolved, concurrency, tx_instant
+                group, entity, declaring_entity, families, concurrency, tx_instant
             )
-        return self._settle_versioned_group(group, entity, resolved, concurrency)
+        return self._settle_versioned_group(group, entity, families, concurrency)
 
     def _settle_versioned_group(
         self,
         group: MaterializedWriteGroup,
         entity: EntityMetadata,
-        resolved: Targets,
+        families: FamilyFacts,
         concurrency: Concurrency,
     ) -> StepSegment:
         """A versioned (non-temporal) Materialized Write Group's segment.
@@ -878,11 +884,11 @@ class WritePlanner:
         """
         assert isinstance(group.observations, VersionColumns)
         _reject_milestone_verb(entity, group.mutation.mutation, "predicate")
-        declaring_entity = resolved.declaring(entity)
+        declaring_entity = families.declaring(entity)
         version_attr = self._concurrency.version_attribute(declaring_entity)
         if version_attr is None:
             _require_unobserved(entity, group.mutation.mutation, group.observations)
-        key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
+        key_attributes = tuple(a.identity for a in families.primary_key(entity))
         gated = self._concurrency.gates(concurrency, declaring_entity)
         versions = group.observations.versions
         mutation = group.mutation.mutation
@@ -895,8 +901,8 @@ class WritePlanner:
             }
             if version_attr is not None and version_attr.name in assignment_row:
                 self._concurrency.reject_authored_version(entity.identity, version_attr)
-            members = resolved.applicable_members(entity)
-            base_assignments = _assignments(entity, members, assignment_row)
+            view = families.view(entity)
+            base_assignments = _assignments(entity, view, assignment_row)
             if version_attr is not None:
                 advanced_versions = tuple(self._concurrency.advance(value) for value in versions)
         shortfall = shortfall_for(_non_temporal_concurrency(version_attr, versions[0], gated))
@@ -919,7 +925,7 @@ class WritePlanner:
         group: MaterializedWriteGroup,
         entity: EntityMetadata,
         declaring_entity: EntityMetadata,
-        resolved: Targets,
+        families: FamilyFacts,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> StepSegment:
@@ -968,8 +974,8 @@ class WritePlanner:
         return _MaterializedTemporalSegment(
             entity=entity,
             declaring_entity=declaring_entity,
-            members=resolved.applicable_members(entity),
-            key_attributes=tuple(a.identity for a in resolved.family_primary_key(entity)),
+            view=families.view(entity),
+            key_attributes=tuple(a.identity for a in families.primary_key(entity)),
             key_attribute_names=group.key_attributes,
             key_columns=group.key_columns,
             predecessors=group.observations.predecessors,
@@ -1071,7 +1077,7 @@ class _MaterializedTemporalSegment:
 
     entity: EntityMetadata
     declaring_entity: EntityMetadata
-    members: Mapping[str, AttributeIdentity | ValueObjectIdentity]
+    view: InheritanceEntityView
     key_attributes: tuple[AttributeIdentity, ...]
     key_attribute_names: tuple[str, ...]
     key_columns: tuple[ColumnSlice[object], ...]
@@ -1086,7 +1092,6 @@ class _MaterializedTemporalSegment:
     steps_per_row: int
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "members", MappingProxyType(dict(self.members)))
         object.__setattr__(
             self,
             "assignment_row",
@@ -1136,7 +1141,7 @@ class _MaterializedTemporalSegment:
                 entity=self.entity.identity,
                 entries=(
                     InsertEntry(
-                        row=_planned_row(self.entity, self.members, successor.members, None),
+                        row=_planned_row(self.entity, self.view, successor.members, None),
                         origin=successor.origin,
                     ),
                 ),
@@ -1197,7 +1202,7 @@ def _temporal_gate(
 
 def _planned_row(
     entity: EntityMetadata,
-    members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+    view: InheritanceEntityView,
     row: Mapping[str, object],
     version: tuple[AttributeIdentity, int] | None,
 ) -> PlannedRow:
@@ -1209,7 +1214,7 @@ def _planned_row(
     already resolved is a constant rather than an observation. ``version`` is
     absent for a temporal successor row, which carries no version column.
     """
-    attributes, value_objects = _resolve(entity, members, row, context="insert")
+    attributes, value_objects = _resolve(entity, view, row, context="insert")
     if version is not None:
         attribute, initial_value = version
         attributes[attribute] = initial_value
@@ -1218,34 +1223,40 @@ def _planned_row(
 
 def _assignments(
     entity: EntityMetadata,
-    members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+    view: InheritanceEntityView,
     row: Mapping[str, object],
 ) -> PlannedAssignments:
-    attributes, value_objects = _resolve(entity, members, row, context="update")
+    attributes, value_objects = _resolve(entity, view, row, context="update")
     return PlannedAssignments(attributes=attributes, value_objects=value_objects)
 
 
 def _resolve(
     entity: EntityMetadata,
-    members: Mapping[str, AttributeIdentity | ValueObjectIdentity],
+    view: InheritanceEntityView,
     row: Mapping[str, object],
     *,
     context: str,
 ) -> tuple[dict[AttributeIdentity, PlannedValue], dict[ValueObjectIdentity, object]]:
-    """``row``'s cells under their resolved member identities."""
+    """``row``'s cells under their resolved member identities, read off the
+    family-effective indexes the Inheritance Facet compiled once.
+
+    A Value Object occurrence is consulted FIRST, so an occurrence sharing a
+    name with an applicable Attribute still claims the cell.
+    """
     attributes: dict[AttributeIdentity, PlannedValue] = {}
     value_objects: dict[ValueObjectIdentity, object] = {}
     for name, value in row.items():
-        member = members.get(name)
-        if member is None:
+        occurrence = view.applicable_value_object(name)
+        if occurrence is not None:
+            value_objects[occurrence.identity] = value
+            continue
+        attribute = view.applicable_attribute(name)
+        if attribute is None:
             raise WritePlanningError(
                 f"{entity.identity.name!r}: write row names {name!r}, which is not a member "
                 "of the Entity's family"
             )
-        if isinstance(member, ValueObjectIdentity):
-            value_objects[member] = value
-        else:
-            attributes[member] = _cell(entity, name, value, context)
+        attributes[attribute.identity] = _cell(entity, name, value, context)
     return attributes, value_objects
 
 
@@ -1282,10 +1293,10 @@ def plan_temporal_close(
     production ``WritePlanner`` was constructed with, so the two can never
     disagree about a gate decision.
     """
-    resolved = targets(model)
-    entity = _require_entity(resolved, entity_name)
-    declaring_entity = resolved.declaring(entity)
-    key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
+    families = family_facts(model)
+    entity = _require_entity(model, entity_name)
+    declaring_entity = families.declaring(entity)
+    key_attributes = tuple(a.identity for a in families.primary_key(entity))
     _refuse_unaddressing_identity(entity, key_attributes, identity)
     gate: TemporalConcurrency = UNGATED
     if observed_tx_start is not None and concurrency_strategy.gates(concurrency, declaring_entity):
@@ -1456,8 +1467,8 @@ def assigned_many_path(occurrence: ValueObjectMetadata, authored: object) -> tup
     return None
 
 
-def _require_entity(resolved: Targets, spelling: str) -> EntityMetadata:
-    entity = resolved.entity(spelling)
+def _require_entity(model: Metamodel, spelling: str) -> EntityMetadata:
+    entity = entity_by_name(model, spelling)
     if entity is None:
         raise WritePlanningError(f"{spelling!r}: not a declared Entity of the accepted Metamodel")
     return entity
@@ -1544,7 +1555,7 @@ def _assignment_member(attr: str) -> str:
 
 
 def _merge_update_into_insert(
-    insert: PreparedKeyedWrite, update: PreparedKeyedWrite, resolved: Targets
+    insert: PreparedKeyedWrite, update: PreparedKeyedWrite, families: FamilyFacts
 ) -> PreparedKeyedWrite:
     """Overlay ``update``'s non-key row fields onto ``insert``'s row.
 
@@ -1553,7 +1564,7 @@ def _merge_update_into_insert(
     settling per temporal flavor) but carries the FINAL values — no
     ``INSERT`` + ``UPDATE``.
     """
-    pk_names = {a.identity.name for a in resolved.family_primary_key(insert.target)}
+    pk_names = {a.identity.name for a in families.primary_key(insert.target)}
     merged = dict(insert.rows[0])
     for name, value in update.rows[0].items():
         if name not in pk_names:
@@ -1701,7 +1712,7 @@ def _without_object_claim(item: ClaimedKeyedWrite) -> _CoalescedItem:
 
 
 def _decomposed_updates(
-    buffer: Sequence[_CoalescedItem], resolved: Targets
+    buffer: Sequence[_CoalescedItem], families: FamilyFacts
 ) -> list[_CoalescedItem]:
     """``buffer`` with every PREFORMED multi-row non-temporal keyed update split
     back into one single-row instruction per row.
@@ -1730,7 +1741,7 @@ def _decomposed_updates(
     """
     decomposed: list[_CoalescedItem] = []
     for item in buffer:
-        if not isinstance(item, PreparedKeyedWrite) or not _splits_into_rows(item, resolved):
+        if not isinstance(item, PreparedKeyedWrite) or not _splits_into_rows(item, families):
             decomposed.append(item)
             continue
         decomposed.extend(derive_keyed_write(item, (row,)) for row in item.rows)
@@ -1810,11 +1821,11 @@ def _require_unobserved(entity: EntityMetadata, mutation: str, observation: obje
     )
 
 
-def _splits_into_rows(item: PreparedKeyedWrite, resolved: Targets) -> bool:
+def _splits_into_rows(item: PreparedKeyedWrite, families: FamilyFacts) -> bool:
     if len(item.rows) < 2 or item.mutation not in UPDATE_MUTATIONS:
         return False
     entity = item.target
-    return not resolved.declaring(entity).declared_as_of_axes
+    return not families.declaring(entity).declared_as_of_axes
 
 
 def _merge_rows(run: Sequence[PreparedKeyedWrite]) -> PreparedKeyedWrite:
@@ -1879,7 +1890,7 @@ def _instruction_target(instruction: PreparedWrite) -> EntityMetadata:
     return instruction.selection.target
 
 
-def _without_noop_rows(item: _CoalescedItem, resolved: Targets) -> _CoalescedItem | None:
+def _without_noop_rows(item: _CoalescedItem, families: FamilyFacts) -> _CoalescedItem | None:
     """``item`` with its known no-op rows gone, or ``None`` when none survive.
 
     An update row naming only key members changes nothing: a key ADDRESSES the
@@ -1916,9 +1927,9 @@ def _without_noop_rows(item: _CoalescedItem, resolved: Targets) -> _CoalescedIte
     ):
         return item
     entity = instruction.target
-    if len(instruction.rows) > 1 and resolved.declaring(entity).declared_as_of_axes:
+    if len(instruction.rows) > 1 and families.declaring(entity).declared_as_of_axes:
         return item
-    pk_names = {a.identity.name for a in resolved.family_primary_key(entity)}
+    pk_names = {a.identity.name for a in families.primary_key(entity)}
     kept = tuple(row for row in instruction.rows if not all(name in pk_names for name in row))
     if not kept:
         return None

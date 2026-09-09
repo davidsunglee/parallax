@@ -47,8 +47,13 @@ from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.instructions import DESTRUCTIVE_MUTATIONS, INSERT_MUTATIONS
 from parallax.core.unit_work.materialized import BufferItem, buffered_instruction
 from parallax.core.unit_work.plan import WritePlan
-from parallax.core.unit_work.planner import ObjectKey, ObservedStateKey, Targets, resolve_object_key
-from parallax.core.unit_work.planner import targets as resolved_targets
+from parallax.core.unit_work.planner import (
+    FamilyFacts,
+    ObjectKey,
+    ObservedStateKey,
+    family_facts,
+    resolve_object_key,
+)
 from parallax.core.unit_work.retain import ParticipationToken, RetainedObservation
 from parallax.core.unit_work.strategy import Concurrency
 from parallax.core.unit_work.write_planner import PlanningRequest, SubjectIdentity, WritePlanner
@@ -175,6 +180,7 @@ class UnitOfWork:
         "_buffer",
         "_claims",
         "_closed",
+        "_families",
         "_frame_depth",
         "_observations",
         "_participation",
@@ -183,7 +189,6 @@ class UnitOfWork:
         "_rollback_cause",
         "_rollback_only",
         "_subject_identity",
-        "_targets",
         "_transaction_instant",
         "clock",
         "companion",
@@ -243,10 +248,10 @@ class UnitOfWork:
         # what the flush will do with an insert cannot be told one thing while
         # the flush does another.
         self._pending_inserts: set[ObjectKey] = set()
-        # Key resolution needs the flush context the planner builds per flush;
-        # the Metamodel is fixed for this scope's life, so it is built once, on
-        # the first keyed write, and never for a scope that only reads.
-        self._targets: Targets | None = None
+        # Key resolution reads the same family facts the planner holds; the
+        # Metamodel is fixed for this scope's life, so it is built once, on the
+        # first keyed write, and never for a scope that only reads.
+        self._families: FamilyFacts | None = None
         # The ledger is an INDEX, not an owner: a retained observation lives as
         # long as some source value or buffered write reaches it, and this entry
         # disappears with the last of them (`m-unit-work` "Observation lifetime").
@@ -322,9 +327,9 @@ class UnitOfWork:
         mutation = instruction.mutation
         if mutation not in INSERT_MUTATIONS and mutation not in DESTRUCTIVE_MUTATIONS:
             return
-        if self._targets is None:
-            self._targets = resolved_targets(self.meta)
-        key = resolve_object_key(instruction, self._targets)
+        if self._families is None:
+            self._families = family_facts(self.meta)
+        key = resolve_object_key(instruction, self._families)
         if key is None:
             return
         if mutation in INSERT_MUTATIONS:

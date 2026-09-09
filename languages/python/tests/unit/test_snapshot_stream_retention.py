@@ -415,12 +415,15 @@ class _Namespace(NamedTuple):
     and the adoption it took its selection through), and everything the handle
     prepared whole at connect and retains for the delivery to be served under:
     the selection, the Serving Model holding it, its two projections, the
-    demarcation beside them, and the products preparation derived over every
-    Entity of the model — the cataloged model and its layout catalog with one
-    layout per Entity, the row codec with one row facts per Entity, and the
-    graph construction with one Entity facts per Entity, each binding that
-    Entity's layout to its class's publication plan through three tuples of its
-    own. Those products are sized by the MODEL rather than by the data, which is
+    demarcation beside them, the write planner with the family-fact reader it
+    holds — one reader over the whole model, holding the model and the compiled
+    Inheritance Facet by reference and indexing neither — and the products
+    preparation derived over every Entity of the model: the cataloged model and
+    its layout catalog with one layout per Entity, the row codec with one row
+    facts per Entity, and the graph construction with one Entity facts per
+    Entity, each binding that Entity's layout to its class's publication plan
+    through three tuples of its own. Those products are sized by the MODEL
+    rather than by the data, which is
     what makes them fixed: a model of five Entities derives the same facts
     whether the delivery reads two roots or two thousand.
     ``per_page_node`` is what the sealed page graph holds for each node it
@@ -457,7 +460,7 @@ class _Namespace(NamedTuple):
 
 
 _TYPED: Final = _Namespace(
-    "typed", _typed_stream, fixed=68, per_page_node=2, per_page_root=1, per_published_node=2
+    "typed", _typed_stream, fixed=69, per_page_node=2, per_page_root=1, per_published_node=2
 )
 """The Typed lane. Two objects per page node — the Source Hint a page retains for
 it and the Object Key that hint is filed under — one per page ROOT rather than
@@ -481,7 +484,7 @@ is that a delivery holds exactly one for its whole life however many pages it
 reads."""
 
 _WIRE: Final = _Namespace(
-    "wire", _wire_stream, fixed=69, per_page_node=2, per_page_root=1, per_published_node=1
+    "wire", _wire_stream, fixed=70, per_page_node=2, per_page_root=1, per_published_node=1
 )
 """The Wire lane. The same page terms, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
