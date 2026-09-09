@@ -37,7 +37,7 @@ from _support.db_port import (
     PortCall,
     Read,
     ReadCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -98,11 +98,11 @@ def _accounts() -> Any:
     return mm.Account.where(mm.Account.id >= 1)
 
 
-def _kinds(port: ScriptedPort) -> list[type[PortCall]]:
+def _kinds(port: ScriptedAdapter) -> list[type[PortCall]]:
     return [type(op) for op in port.calls]
 
 
-def _sql(port: ScriptedPort, position: int) -> str:
+def _sql(port: ScriptedAdapter, position: int) -> str:
     call = port.calls[position]
     assert isinstance(call, (ReadCall, WriteCall))
     return call.sql
@@ -134,7 +134,7 @@ def test_a_write_buffered_before_the_delivery_flushes_on_its_first_page() -> Non
     # follows runs the same force-flush every later page runs — which is what
     # makes read-your-own-writes hold from the first root rather than from the
     # second, without a flush at entry to arrange it.
-    port = ScriptedPort(Transact(Write(), Read(rows=[_account_row(2)])))
+    port = ScriptedAdapter(Transact(Write(), Read(rows=[_account_row(2)])))
 
     def fn(tx: Transaction) -> None:
         tx.insert(new_account())
@@ -150,7 +150,7 @@ def test_a_write_buffered_mid_delivery_reaches_the_database_before_the_next_page
     # after a buffered write force-flushes it, so the statement that would
     # observe it runs after it. A flush once at entry would leave the rule
     # holding only when the loop happened to call `find` as well.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[_account_row(1), _account_row(2)]),
             Write(),
@@ -172,7 +172,7 @@ def test_a_write_buffered_mid_delivery_reaches_the_database_before_the_next_page
 def test_a_read_only_delivery_emits_no_dml_at_all() -> None:
     # An empty buffer is one truthiness check, so a loop that writes nothing pays
     # nothing for the per-page flush — no DML, and no Write Batch to open.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(*paged_reads([_account_row(index) for index in (1, 2, 3)], size=2))
     )
 
@@ -190,7 +190,7 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
     # what a loop accumulates is a page's worth, whatever the result's size, so
     # the same dial that sizes a page sizes the buffer.
     rows = [_account_row(account_id) for account_id in range(1, 7)]
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             *(
                 entry
@@ -218,7 +218,7 @@ def test_a_writing_loop_never_holds_more_than_one_pages_writes(size: int) -> Non
 def test_a_streamed_page_locks_the_unversioned_level_and_not_the_versioned_root() -> None:
     # The per-level derivation a participating find already makes, unchanged by
     # the page loop above it: ONE preference, one page, two strategies.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
             Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
@@ -239,7 +239,7 @@ def test_a_streamed_page_locks_the_unversioned_level_and_not_the_versioned_root(
 def test_the_locking_preference_locks_every_level_of_a_streamed_page() -> None:
     # The same delivery under the override, which is what makes the mixed result
     # above a derivation rather than a property of the model.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
             Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
@@ -263,7 +263,7 @@ def test_a_streamed_roots_own_observation_licenses_a_later_keyed_write() -> None
     # The write is settled against the version the DELIVERY observed rather than
     # against a resolving read at write time: the gate binds 1 and the advance
     # writes 2, both derived from the root the stream published.
-    port = ScriptedPort(Transact(Read(rows=[_account_row(1)]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[_account_row(1)]), Write()))
 
     def fn(tx: Transaction) -> None:
         with tx.stream(_accounts(), batch_size=1) as stream:
@@ -281,7 +281,7 @@ def test_a_wire_streamed_value_and_a_typed_find_of_one_row_carry_one_observation
     # flush that spends the evidence from leaving a second copy still licensing.
     # Two result sets, not three: the stream's one page asks for two roots and
     # receives one, which proves exhaustion, so the second belongs to the find.
-    port = ScriptedPort(Transact(Read(rows=[_account_row(1)], times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_account_row(1)], times=2)))
 
     def fn(tx: Transaction) -> tuple[Any, Any]:
         with tx.wire.stream(mm.Account.where(mm.Account.id == 1), batch_size=1) as stream:
@@ -299,7 +299,7 @@ def test_a_retained_streamed_child_outlives_its_released_root_and_page() -> None
     # Liveness is strong reachability, and a page is not a scope evidence hangs
     # on: the claim belongs to the entity node, so a child extracted from a
     # delivered root keeps its own after the root and the page are gone.
-    port = ScriptedPort(Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])))
+    port = ScriptedAdapter(Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])))
 
     def fn(tx: Transaction) -> Any:
         with tx.stream(_POLICY_QUERY, batch_size=1) as stream:
@@ -316,7 +316,7 @@ def test_releasing_every_streamed_source_makes_the_transactions_index_forget_it(
     # The converse, and the reason the page is not a retention scope either: the
     # unit of work holds a WEAK index, so an observed state no delivered value
     # still reaches disappears from it with the last reference to that value.
-    port = ScriptedPort(Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])))
+    port = ScriptedAdapter(Transact(Read(rows=[_POLICY_ROW]), Read(rows=[_COVERAGE_ROW])))
 
     def fn(tx: Transaction) -> tuple[ObservedStateKey, RetainedObservation | None]:
         with tx.stream(_POLICY_QUERY, batch_size=1) as stream:
@@ -342,7 +342,7 @@ def test_a_retried_callback_opens_a_fresh_stream_and_observes_the_roots_again() 
     # stream it opens is a new one: the previous attempt's is closed with its
     # scope and answers nothing further.
     rows = [_account_row(index) for index in (1, 2, 3)]
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(*paged_reads(rows, size=2), commit=deadlock()),
         Transact(*paged_reads(rows, size=2)),
     )
@@ -398,8 +398,8 @@ def test_a_streamed_milestone_root_is_read_only_in_both_namespaces() -> None:
     # carries the edge as its own lifecycle pin, and the Wire node carries no
     # provenance at all, a milestone-set read retaining none — which is exactly
     # what the whole-result read of the same query publishes.
-    typed_port = ScriptedPort(Transact(Read(rows=list(_POSITION_MILESTONES))))
-    wire_port = ScriptedPort(Transact(Read(rows=list(_POSITION_MILESTONES))))
+    typed_port = ScriptedAdapter(Transact(Read(rows=list(_POSITION_MILESTONES))))
+    wire_port = ScriptedAdapter(Transact(Read(rows=list(_POSITION_MILESTONES))))
 
     def typed(tx: Transaction) -> None:
         with tx.stream(_milestone_query(), batch_size=2) as stream:
@@ -434,7 +434,7 @@ def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failu
     failure = DatabaseError(
         category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
     )
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[_account_row(1), _account_row(2)]), Read(raises=failure))
     )
     db = Database.connect(port, serving, clock=FixedClock(FIXED))

@@ -45,7 +45,7 @@ from _support.db_port import (
     Read,
     ReadCall,
     RollbackCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     body_outcome,
@@ -55,7 +55,8 @@ from parallax.core import Attr, DomainModel, Entity, Int32, attr, index
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     ISOLATION_LEVELS,
-    DbPort,
+    DatabaseAdapter,
+    DatabaseConnection,
     IsolationLevel,
     RollbackFailed,
     RolledBack,
@@ -89,7 +90,7 @@ from parallax.snapshot.handle import (
 
 
 def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> str:
         tx.insert(new_account())
@@ -102,7 +103,7 @@ def test_abort_discards_the_buffer_and_withholds_the_value() -> None:
 
 
 def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     escaped: list[Transaction] = []
 
     def fn(tx: Transaction) -> None:
@@ -117,7 +118,7 @@ def test_an_escaped_transaction_reference_raises_after_the_scope_ends() -> None:
 # Join semantics: same Transaction, option conflicts, foreclosure.             #
 # --------------------------------------------------------------------------- #
 def test_join_receives_the_same_transaction_and_returns_immediately() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = account_db(port)
 
     def outer(tx: Transaction) -> int:
@@ -130,7 +131,7 @@ def test_join_receives_the_same_transaction_and_returns_immediately() -> None:
 
 
 def test_join_with_equal_or_omitted_options_inherits() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -167,7 +168,7 @@ _CONFLICTING_JOINS: list[tuple[str, Callable[[Database], object]]] = [
 def test_join_with_a_conflicting_explicit_option_raises(
     option: str, join: Callable[[Database], object]
 ) -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -186,7 +187,7 @@ def test_join_with_a_conflicting_explicit_option_raises(
 def test_an_omitted_isolation_asks_the_port_for_nothing() -> None:
     # The sentinel is a request for nothing rather than a value Parallax would
     # supply, so the boundary opens at whatever the adapter already defaults to.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     account_db(port).transact(lambda _tx: "ok")
     assert port.calls == [BeginCall(None), CommitCall()]
 
@@ -196,7 +197,7 @@ def test_every_level_of_the_vocabulary_reaches_the_port(level: str) -> None:
     # Every member of the closed vocabulary crosses the seam, and crosses it as
     # itself: the handle refuses what is outside the vocabulary and interprets
     # nothing inside it, leaving the mapping to the adapter that owns an engine.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     account_db(port).transact(lambda _tx: "ok", isolation=cast("IsolationLevel", level))
     assert port.calls == [BeginCall(cast("IsolationLevel", level)), CommitCall()]
 
@@ -210,7 +211,7 @@ def test_a_level_outside_the_vocabulary_is_refused_before_the_port_is_asked(leve
     # negative retry bound is, before anything opens. An engine's own spelling of
     # a level Parallax does carry is refused on the same terms as a level it does
     # not — being spelled for one database is what makes it unportable.
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     with pytest.raises(ValueError, match="isolation must be one of"):
         account_db(port).transact(_must_not_run, isolation=cast("Any", level))
     assert port.calls == []
@@ -221,7 +222,7 @@ def test_a_joined_call_naming_a_level_outside_the_vocabulary_is_refused_as_inval
     # the level does not exist — never that it disagrees with the active
     # boundary, which would read as though spelling it correctly would have been
     # accepted when the same level was already active.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -238,13 +239,13 @@ def test_every_retry_of_one_invocation_opens_at_the_requested_isolation() -> Non
     # The level belongs to the invocation rather than to one physical attempt:
     # a re-executed callback that silently ran at the database's default would
     # answer differently from the attempt before it.
-    port = ScriptedPort(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
     assert account_db(port).transact(lambda _tx: "ok", isolation="serializable") == "ok"
     assert port.calls.count(BeginCall("serializable")) == 3
 
 
 def test_a_join_omitting_or_repeating_the_active_isolation_is_accepted() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -257,7 +258,7 @@ def test_a_join_omitting_or_repeating_the_active_isolation_is_accepted() -> None
 
 
 def test_a_join_naming_a_different_isolation_raises_before_its_callback_runs() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -269,7 +270,7 @@ def test_a_join_naming_a_different_isolation_raises_before_its_callback_runs() -
 
 
 def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = account_db(port)
     ran: list[bool] = []
 
@@ -300,13 +301,13 @@ def test_a_non_transactional_find_opens_no_unit_of_work_to_participate_in() -> N
     # unit of work behind it stamps no participation and files into no index,
     # while the values it publishes still retain the state each row observed
     # (`test_transaction_reads.py` pins that half).
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     assert account_db(port).find(mm.Account.where(mm.Account.id == 7)).results() == [read_account()]
     assert [type(op) for op in port.calls] == [ReadCall]
 
 
 def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     db = account_db(port)
 
     def executor(  # pragma: no cover - never flushed
@@ -336,7 +337,7 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
 # that object. Settled BEFORE everything the join section above pins.           #
 # --------------------------------------------------------------------------- #
 def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = account_db(port)
     alias = db  # a second name for one object — the only thing that ever joins
 
@@ -349,7 +350,7 @@ def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() ->
 
 
 def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     owner = account_db(port)
     foreign = account_db(port)  # same model, same adapter, same clock; a different object
 
@@ -392,7 +393,7 @@ def _equal_account_model() -> DomainModel:
 
 
 def test_a_structurally_equal_model_establishes_no_ownership() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     owner = account_db(port)
     foreign = db_for(_equal_account_model(), port)
     # The two accepted models are equal entity for entity, and that buys nothing.
@@ -407,7 +408,7 @@ def test_a_structurally_equal_model_establishes_no_ownership() -> None:
 
 
 def test_the_ownership_refusal_reaches_no_adapter() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     owner = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
     foreign = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
 
@@ -422,7 +423,7 @@ def test_the_ownership_refusal_reaches_no_adapter() -> None:
 
 
 def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     owner = account_db(port)
     foreign = account_db(port)
 
@@ -453,13 +454,13 @@ def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> Non
 # Bounded retry (m-auto-retry through db.transact).                            #
 # --------------------------------------------------------------------------- #
 def test_a_deadlock_is_retried_and_the_reexecution_succeeds() -> None:
-    port = ScriptedPort(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact(commit=deadlock()), Transact())
     assert account_db(port).transact(lambda _tx: "ok") == "ok"
     assert port.calls.count(BeginCall()) == 3
 
 
 def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
-    port = ScriptedPort(*(Transact(commit=deadlock()) for _ in range(3)))
+    port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(3)))
     with raises_contextualized(DatabaseError) as excinfo:
         account_db(port).transact(lambda _tx: "ok", retries=2)
     assert port.calls.count(BeginCall()) == 3
@@ -468,7 +469,7 @@ def test_exhaustion_reraises_the_failure_with_the_attempt_count() -> None:
 
 
 def test_the_default_bound_is_ten_reexecutions() -> None:
-    port = ScriptedPort(*(Transact(commit=deadlock()) for _ in range(11)))
+    port = ScriptedAdapter(*(Transact(commit=deadlock()) for _ in range(11)))
     with raises_contextualized(DatabaseError) as excinfo:
         account_db(port).transact(lambda _tx: "ok")
     assert port.calls.count(BeginCall()) == 11
@@ -480,7 +481,7 @@ def test_the_default_bound_is_ten_reexecutions() -> None:
     [("uniqueViolation", "23505"), ("lockWaitTimeout", "55P03")],
 )
 def test_non_retriable_categories_surface_after_one_attempt(category: str, native: str) -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             commit=DatabaseError(category=category, native_code=native, message=category)  # type: ignore[arg-type] - parametrized str widens the DatabaseError category Literal
         )
@@ -491,14 +492,14 @@ def test_non_retriable_categories_surface_after_one_attempt(category: str, nativ
 
 
 def test_retries_zero_disables_the_loop() -> None:
-    port = ScriptedPort(Transact(commit=deadlock()))
+    port = ScriptedAdapter(Transact(commit=deadlock()))
     with raises_contextualized(DatabaseError):
         account_db(port).transact(lambda _tx: "ok", retries=0)
     assert port.calls.count(BeginCall()) == 1
 
 
 def test_negative_retries_are_rejected_before_any_attempt() -> None:
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     with pytest.raises(ValueError, match="retries must be >= 0"):
         account_db(port).transact(lambda _tx: "ok", retries=-1)
     assert port.calls.count(BeginCall()) == 0
@@ -509,7 +510,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
     # callback catches it and returns normally, the commit refusal preserves the
     # cause's classification — the retry loop re-executes, and the fresh attempt
     # succeeds.
-    port = ScriptedPort(Transact(Read(raises=deadlock())), Transact(Read(rows=[NEW_ROW])))
+    port = ScriptedAdapter(Transact(Read(raises=deadlock())), Transact(Read(rows=[NEW_ROW])))
     db = account_db(port)
 
     def outer(_tx: Transaction) -> str:
@@ -530,7 +531,7 @@ def _must_not_run_callback(_tx: Transaction) -> str:
     raise AssertionError("the callback runs only inside a transaction that began")
 
 
-class _RollbackFailingPort(ScriptedPort):
+class _RollbackFailingPort(ScriptedAdapter):
     """A port whose rollback never completes, however the transaction ended.
 
     The one boundary outcome no in-memory fake reaches by accident: the callback
@@ -546,10 +547,15 @@ class _RollbackFailingPort(ScriptedPort):
         )
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        on: DatabaseConnection | None = None,
     ) -> TransactionOutcome[T]:
+        del isolation
         self.calls.append(BeginCall())
-        outcome = body_outcome(self, body)
+        outcome = body_outcome(on if on is not None else self, body)
         if isinstance(outcome, RolledBack):
             return RollbackFailed(outcome.trigger, self.rollback_error)
         self.calls.append(CommitCall())
@@ -563,7 +569,7 @@ def test_a_boundary_that_never_began_surfaces_its_error_after_one_attempt() -> N
     # and the invocation failed, without retry). The attempt had adopted before
     # it asked the boundary to begin, so the failure names that edition.
     never_began = deadlock()
-    port = ScriptedPort(Transact(begin=never_began))
+    port = ScriptedAdapter(Transact(begin=never_began))
     serving = ServingModel(prepare_model(ACCOUNT, edition="adopted-before-begin"))
     with raises_contextualized(DatabaseError) as excinfo:
         Database.connect(port, serving, clock=FixedClock(FIXED)).transact(_must_not_run_callback)
@@ -617,7 +623,7 @@ def test_a_control_flow_exception_inside_the_callback_surfaces_as_itself() -> No
     def interrupted(_tx: Transaction) -> str:
         raise interrupt
 
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     with pytest.raises(KeyboardInterrupt) as excinfo:
         account_db(port).transact(interrupted)
     assert excinfo.value is interrupt
@@ -634,12 +640,12 @@ _A = prepare_model(ACCOUNT, edition="a")
 _B = prepare_model(ACCOUNT, edition="b")
 
 
-def _serving_db(port: DbPort, serving: ServingModel) -> Database:
+def _serving_db(port: DatabaseAdapter, serving: ServingModel) -> Database:
     return Database.connect(port, serving, clock=FixedClock(FIXED))
 
 
 def test_a_static_connection_reports_one_edition_across_attempts_and_invocations() -> None:
-    port = ScriptedPort(Transact(commit=deadlock()), Transact(), Transact())
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact(), Transact())
     db = account_db(port)
     seen: list[str] = []
 
@@ -656,7 +662,7 @@ def test_a_static_connection_reports_one_edition_across_attempts_and_invocations
 
 def test_a_transaction_retains_the_selection_it_adopted_across_a_publication() -> None:
     serving = ServingModel(_A)
-    port = ScriptedPort(Transact(), Transact())
+    port = ScriptedAdapter(Transact(), Transact())
     db = _serving_db(port, serving)
 
     def body(tx: Transaction) -> tuple[str, str]:
@@ -671,7 +677,7 @@ def test_a_transaction_retains_the_selection_it_adopted_across_a_publication() -
 
 def test_a_join_inherits_the_outer_attempts_selection_without_adopting() -> None:
     serving = ServingModel(_A)
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = _serving_db(port, serving)
 
     def outer(tx: Transaction) -> tuple[str, bool]:
@@ -686,7 +692,7 @@ def test_a_join_inherits_the_outer_attempts_selection_without_adopting() -> None
 
 def test_a_retry_adopts_the_selection_published_since_the_failed_attempt() -> None:
     serving = ServingModel(_A)
-    port = ScriptedPort(Transact(commit=deadlock()), Transact())
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
     db = _serving_db(port, serving)
     seen: list[str] = []
 
@@ -703,7 +709,7 @@ def test_a_retry_adopts_the_selection_published_since_the_failed_attempt() -> No
 
 def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
     serving = ServingModel(_A)
-    port = ScriptedPort(Transact(commit=deadlock()), Transact(commit=deadlock()))
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact(commit=deadlock()))
     db = _serving_db(port, serving)
 
     def body(tx: Transaction) -> None:
@@ -718,7 +724,7 @@ def test_terminal_exhaustion_reports_the_final_attempts_edition() -> None:
 
 def test_a_callback_failure_reports_the_edition_the_attempt_adopted() -> None:
     serving = ServingModel(_A)
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = _serving_db(port, serving)
 
     def body(_tx: Transaction) -> None:
@@ -745,8 +751,8 @@ def test_a_failed_rollback_keeps_both_errors_inside_the_contextualized_cause() -
 
 def test_two_databases_over_one_serving_model_flip_together() -> None:
     serving = ServingModel(_A)
-    first = _serving_db(ScriptedPort(Transact(), Transact()), serving)
-    second = _serving_db(ScriptedPort(Transact(), Transact()), serving)
+    first = _serving_db(ScriptedAdapter(Transact(), Transact()), serving)
+    second = _serving_db(ScriptedAdapter(Transact(), Transact()), serving)
     assert (first.transact(lambda tx: tx.edition), second.transact(lambda tx: tx.edition)) == (
         "a",
         "a",
@@ -762,12 +768,12 @@ def test_the_deterministic_refusals_and_the_provider_opening_keep_their_own_type
     # Everything `db.transact` refuses before adopting is raised as itself:
     # nothing has been adopted that a failure could be reported under.
     serving = ServingModel(_A)
-    db = _serving_db(ScriptedPort(Transact()), serving)
+    db = _serving_db(ScriptedAdapter(Transact()), serving)
     with pytest.raises(ValueError, match="retries must be >= 0"):
         db.transact(_must_not_run, retries=-1)
     with pytest.raises(ValueError, match="isolation must be one of"):
         db.transact(_must_not_run, isolation=cast("Any", "read uncommitted"))
-    foreign = _serving_db(ScriptedPort(), serving)
+    foreign = _serving_db(ScriptedAdapter(), serving)
 
     def outer(_tx: Transaction) -> str:
         with pytest.raises(TransactionOwnershipError):
@@ -793,7 +799,7 @@ def _observe_and_update(tx: Transaction) -> None:
 
 
 def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
             Write(affected=0),
@@ -806,7 +812,7 @@ def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> 
 
 def test_optimistic_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=grace), Write(affected=0)), Transact(Read(rows=grace), Write())
     )
     account_db(port).transact(
@@ -819,7 +825,7 @@ def test_optimistic_conflict_is_auto_retried_to_success_with_the_opt_in() -> Non
 
 def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         *(
             Transact(Read(rows=grace), Write(affected=0)) for _ in range(3)
         )  # every attempt conflicts
@@ -842,7 +848,7 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_transient_failure() -> None:
     # RETRIABLE deadlock is classified retriable by `retriable_failure` alone
     # (the `or`'s left operand), so it never actually reaches the opt-in's own
     # predicate at all — see the NON-retriable sibling below for that.
-    port = ScriptedPort(Transact(commit=deadlock()), Transact())
+    port = ScriptedAdapter(Transact(commit=deadlock()), Transact())
     assert account_db(port).transact(lambda _tx: "ok", retry_optimistic_conflicts=True) == "ok"
     assert port.calls.count(BeginCall()) == 2
 
@@ -855,7 +861,7 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_non_retriable_database_error(
     # is classified non-retriable there too — the opt-in's structural
     # extension never widens the retriable set beyond the optimistic-lock
     # conflict shape itself.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             commit=DatabaseError(category="uniqueViolation", native_code="23505", message="dup")
         )
@@ -870,7 +876,7 @@ def test_optimistic_conflict_opt_in_is_inert_in_locking_mode() -> None:
     # column" — the shared read lock, not a version check, is what makes the
     # write correct), so there is nothing for the opt-in to ever retry: a
     # single-attempt commit, `retry_optimistic_conflicts` notwithstanding.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
             Write(),
@@ -889,7 +895,7 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
     # A locking-mode versioned UPDATE renders no gate, so its zero-row shortfall
     # is the stale write: the shared read lock should have made it impossible,
     # which makes it a consistency failure no re-read resolves.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
             Write(affected=0),
@@ -913,7 +919,7 @@ def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
     # bring them into being. The renamed value comes from this transaction's own
     # read — an unversioned target needs no observation to WRITE, but every
     # keyed update needs a value some read of this store produced.
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write(affected=0)))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write(affected=0)))
     with raises_contextualized(MissingTargetError):
         db_for(PERSON, port).transact(_rename_person, retry_optimistic_conflicts=True)
     assert port.calls.count(BeginCall()) == 1
@@ -923,7 +929,7 @@ def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
     # An EXCESS over the exact count means an accepted identity, storage, or
     # lowering invariant does not hold — an invariant failure rather than a
     # concurrency outcome, so the opt-in never widens to it either.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
             Write(affected=2),
@@ -951,7 +957,7 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
     # category (the conflict, not a `DatabaseError`), retriable here because
     # the opt-in is set.
     grace = [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=grace), Write(affected=0)),
         Transact(Read(rows=grace), Write(), Read(rows=grace)),
     )

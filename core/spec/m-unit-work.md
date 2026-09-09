@@ -50,6 +50,16 @@ writes are coherent. Within one unit of work:
   **finalization** already names the planner stage every batch of either trigger
   goes through.
 
+Where an implementation owns connection lifetimes (`m-db-port`), each **attempt**
+holds one connection. It is acquired after the attempt begins and before the
+physical boundary opens, every read, write batch and participating delivery
+inside the attempt runs on it, and it is released **before the attempt
+finishes** — so a retry acquires afresh rather than replaying over what its
+predecessor left, and the same physical connection coming back is the resource's
+own business rather than the loop's. An attempt that cannot acquire one runs no
+callback and opens no boundary: it is a boundary that never opened, with nothing
+to undo and nothing to replay (`m-auto-retry`).
+
 > **The transaction boundary is user-specified, per-language.** How a unit of
 > work is opened and committed — a closure, a context manager, a decorator, an
 > explicit `begin`/`commit` pair — is an idiomatic, per-language concern and is

@@ -63,13 +63,13 @@ def test_the_container_and_driver_seams_are_found() -> None:
     ) == ["psycopg.connect", "testcontainers.community.postgres.PostgresContainer"]
 
 
-def test_the_adapter_connect_classmethod_is_a_seam_but_its_constructor_is_not() -> None:
+def test_the_adapter_open_is_a_seam_but_its_constructor_is_not() -> None:
     assert _seams(
-        "from parallax.postgres import PostgresAdapter\nPostgresAdapter.connect('')\n"
-    ) == ["parallax.postgres.PostgresAdapter.connect"]
-    # The internal-behavior surface wraps fake connections with the adapter; that
-    # opens nothing.
-    assert _seams("from parallax.postgres import PostgresAdapter\nPostgresAdapter(fake)\n") == []
+        "from parallax.postgres import PostgresAdapter\nPostgresAdapter.open(configured)\n"
+    ) == ["parallax.postgres.PostgresAdapter.open"]
+    # Constructing the adapter is immutable configuration: it opens no
+    # connection, no pool, and no thread, which is the whole point of it.
+    assert _seams("from parallax.postgres import PostgresAdapter\nPostgresAdapter('')\n") == []
 
 
 def test_a_scoped_controls_open_is_a_seam_but_its_constructor_is_not() -> None:
@@ -290,7 +290,7 @@ def test_a_profile_whose_provisioner_is_not_a_declared_seam_is_reported(
 
 
 def test_a_seam_whose_attribute_was_renamed_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    renamed = "parallax.postgres.PostgresAdapter.open"
+    renamed = "parallax.postgres.PostgresAdapter.connect"
     monkeypatch.setattr(access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {renamed})
     assert access.unresolved_seams() == (renamed,)
 
@@ -384,6 +384,8 @@ def test_a_planted_rogue_acquisition_fails(tmp_path: Path, monkeypatch: pytest.M
 
 def test_an_unresolved_seam_fails_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        access, "DATABASE_SEAMS", access.DATABASE_SEAMS | {"parallax.postgres.PostgresAdapter.open"}
+        access,
+        "DATABASE_SEAMS",
+        access.DATABASE_SEAMS | {"parallax.postgres.PostgresAdapter.connect"},
     )
     assert access.main([]) == 1

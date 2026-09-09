@@ -24,8 +24,8 @@ from _support.db_port import (
     CommitCall,
     Read,
     ReadCall,
-    RefusingPort,
-    ScriptedPort,
+    RefusingAdapter,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -39,7 +39,7 @@ from parallax.core import (
     TxTemporal,
     attr,
 )
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity._model import DomainModel as _Fixed
 from parallax.core.entity._model import model_of
 from parallax.core.inheritance import WriteAssignmentError, validate_write_assignment
@@ -88,15 +88,15 @@ class _Source:
 CLASSLESS = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
 
 
-def _db(model: DomainModel, port: DbPort) -> Database:
-    return Database.connect(port, model, clock=FixedClock(FIXED))
+def _db(model: DomainModel, adapter: DatabaseAdapter) -> Database:
+    return Database.connect(adapter, model, clock=FixedClock(FIXED))
 
 
 # --------------------------------------------------------------------------- #
 # One class, several models                                                    #
 # --------------------------------------------------------------------------- #
 def test_one_entity_class_is_queried_through_every_model_that_composed_it() -> None:
-    narrow_port, wide_port = ScriptedPort(Read(rows=[])), ScriptedPort(Read(rows=[]))
+    narrow_port, wide_port = ScriptedAdapter(Read(rows=[])), ScriptedAdapter(Read(rows=[]))
     query = Widget.where(Widget.id == 1)
 
     _db(WIDGETS, narrow_port).find(query)
@@ -108,7 +108,7 @@ def test_one_entity_class_is_queried_through_every_model_that_composed_it() -> N
 
 def test_one_entity_class_is_written_through_every_model_that_composed_it() -> None:
     for model in (WIDGETS, WIDGETS_AND_GIZMOS):
-        port = ScriptedPort(Transact(Write()))
+        port = ScriptedAdapter(Transact(Write()))
 
         def insert(tx: Transaction) -> None:
             tx.insert(Widget(id=1, label="x"))
@@ -118,7 +118,7 @@ def test_one_entity_class_is_written_through_every_model_that_composed_it() -> N
 
 
 def test_one_domain_model_serves_every_database_connected_to_it() -> None:
-    first, second = ScriptedPort(Read(rows=[])), ScriptedPort(Read(rows=[]))
+    first, second = ScriptedAdapter(Read(rows=[])), ScriptedAdapter(Read(rows=[]))
     query = Widget.where(Widget.id == 1)
 
     _db(WIDGETS, first).find(query)
@@ -130,7 +130,7 @@ def test_one_domain_model_serves_every_database_connected_to_it() -> None:
 def test_a_query_whose_target_the_connected_model_does_not_declare_is_refused() -> None:
     # Authoring reaches no model, so the query builds; the connected model is
     # what answers, and it answers before any adapter activity.
-    port = RefusingPort()
+    port = RefusingAdapter()
     database = Database.connect(port, DomainModel(Gizmo), clock=FixedClock(FIXED))
     with pytest.raises(QueryTargetError) as caught:
         database.find(Widget.where(Widget.id == 1))
@@ -146,7 +146,7 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
     # and only the Typed read it cannot materialize is refused — at the read
     # call, before any I/O, which the raising port proves.
     descriptor_backed = _Fixed._from_unresolved(_Source())  # pyright: ignore[reportPrivateUsage] - the model's private descriptor-frontend seam
-    database = Database.connect(RefusingPort(), descriptor_backed, clock=FixedClock(FIXED))
+    database = Database.connect(RefusingAdapter(), descriptor_backed, clock=FixedClock(FIXED))
     with pytest.raises(SnapshotConnectionError) as caught:
         database.find(Gizmo.where(Gizmo.id == 1))
     assert caught.value.code == "snapshot-class-backed-model-required"
@@ -154,7 +154,7 @@ def test_connect_accepts_a_descriptor_backed_model_and_refuses_typed_reads() -> 
     # And the Wire read the same connection DOES serve runs end to end: the
     # capability is an executed read rather than a reachable namespace.
     served = Database.connect(
-        ScriptedPort(Read(rows=[{"id": 1}])), descriptor_backed, clock=FixedClock(FIXED)
+        ScriptedAdapter(Read(rows=[{"id": 1}])), descriptor_backed, clock=FixedClock(FIXED)
     )
     published = served.wire.find({"target": "Gizmo", "predicate": {"all": {}}}).result()
     assert published == {"id": 1}
@@ -167,11 +167,11 @@ def test_both_connection_doors_refuse_a_bare_accepted_metamodel() -> None:
     # and the constructor beneath it refuses the same shape rather than failing
     # on an attribute a Metamodel does not carry.
     with pytest.raises(SnapshotConnectionError) as caught:
-        Database.connect(RefusingPort(), model_of(WIDGETS), clock=FixedClock(FIXED))  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
+        Database.connect(RefusingAdapter(), model_of(WIDGETS), clock=FixedClock(FIXED))  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
     assert caught.value.code == "snapshot-class-backed-model-required"
 
     with pytest.raises(SnapshotConnectionError) as constructed:
-        Database(RefusingPort(), model_of(WIDGETS), clock=FixedClock(FIXED))  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
+        Database(RefusingAdapter(), model_of(WIDGETS), clock=FixedClock(FIXED))  # pyright: ignore[reportArgumentType] - the runtime narrowing is what this proves
     assert constructed.value.code == "snapshot-class-backed-model-required"
 
 
@@ -180,8 +180,8 @@ def test_a_classless_database_refuses_a_read_before_it_resolves_the_target() -> 
     # that cannot materialize a Snapshot answers that first, so a query this
     # model also does not declare still reports the connection rather than the
     # target.
-    port = ScriptedPort()
-    database = Database(port, CLASSLESS, clock=FixedClock(FIXED))
+    port = ScriptedAdapter()
+    database = Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
     with pytest.raises(SnapshotConnectionError) as caught:
         database.find(Widget.where(Widget.id == 1))
     assert caught.value.code == "snapshot-class-backed-model-required"
@@ -193,8 +193,8 @@ def test_a_classless_transaction_writes_and_refuses_a_read_before_it_can_force_f
     # model that composed none; the read that would have to instantiate one is
     # refused before the force-flush its gate stands in front of, so the write
     # buffered beside it is still only buffered when the refusal lands.
-    port = ScriptedPort(Transact(Write()))
-    database = Database(port, CLASSLESS, clock=FixedClock(FIXED))
+    port = ScriptedAdapter(Transact(Write()))
+    database = Database.connect(port, CLASSLESS, clock=FixedClock(FIXED))
 
     def body(tx: Transaction) -> None:
         tx.insert(Gizmo(id=1))
@@ -220,7 +220,7 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
     query = Gizmo.where(Gizmo.id == 1)
     doors: list[SnapshotConnectionError] = []
 
-    standalone = Database(RefusingPort(), CLASSLESS, clock=FixedClock(FIXED))
+    standalone = Database(RefusingAdapter(), CLASSLESS, clock=FixedClock(FIXED))
     with pytest.raises(SnapshotConnectionError) as eager:
         standalone.find(query)
     doors.append(eager.value)
@@ -236,8 +236,8 @@ def test_every_typed_read_door_states_one_classless_refusal() -> None:
             tx.stream(query).__enter__()
         doors.append(participating_stream.value)
 
-    port = ScriptedPort(Transact())
-    Database(port, CLASSLESS, clock=FixedClock(FIXED)).transact(read_inside)
+    port = ScriptedAdapter(Transact())
+    Database.connect(port, CLASSLESS, clock=FixedClock(FIXED)).transact(read_inside)
 
     assert [str(door) for door in doors] == [refusal] * 4
     assert [door.code for door in doors] == ["snapshot-class-backed-model-required"] * 4

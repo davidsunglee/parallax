@@ -41,7 +41,7 @@ import pytest
 
 from _support.adoption import raises_contextualized
 from _support.corpus import case_document, compare_binds
-from _support.db_port import body_outcome
+from _support.db_port import ConnectsAsItself, body_outcome
 from _support.document_reads import fold_mapping_rows
 from _support.query_probes import canonical_document
 from parallax.conformance import case_format, graph_stories
@@ -49,7 +49,14 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order, OrderStatus
 from parallax.core import DomainModel, ObjectQuery
 from parallax.core.base import INFINITY
-from parallax.core.db_port import Bind, DbPort, IsolationLevel, Row, TransactionOutcome
+from parallax.core.db_port import (
+    Bind,
+    DatabaseAdapter,
+    DatabaseConnection,
+    IsolationLevel,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.unit_work import Clock, Concurrency
@@ -187,7 +194,7 @@ _BALANCE_MILESTONE_ROW: Row = {
 }
 
 
-class _CannedPort:
+class _CannedPort(ConnectsAsItself):
     """A fake ``m-db-port`` answering reads from a fixed queue (empty by
     default — an empty root level short-circuits every child level, which is
     all a run-through proof needs).
@@ -212,7 +219,7 @@ class _CannedPort:
         raise AssertionError("a read-only graph story issues no DML")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise AssertionError("a read-only graph story opens no transaction")
 
@@ -223,7 +230,7 @@ class _TransactingCannedPort(_CannedPort):
     guard that matters: the verb rejects the value before anything is buffered."""
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
@@ -570,13 +577,13 @@ class _RecordingDatabase(Database):
 
     def __init__(
         self,
-        port: DbPort,
+        adapter: DatabaseAdapter,
         model: DomainModel,
         *,
         clock: Clock | None = None,
         group_finds: bool = False,
     ) -> None:
-        super().__init__(port, model, clock=clock)
+        super().__init__(adapter.open(), model, clock=clock)
         self.queries: list[ObjectQuery[Any, Any]] = []
         self._group_finds = group_finds
 

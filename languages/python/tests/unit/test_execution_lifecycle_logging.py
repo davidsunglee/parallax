@@ -26,12 +26,13 @@ from _transact_support import ACCOUNT, FIXED, deadlock, new_account
 
 from _support.adoption import raises_contextualized
 from _support.db_port import (
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseAdapter
+from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution_lifecycle import (
     AttemptBeginFailed,
     AttemptCommitted,
@@ -79,10 +80,7 @@ from parallax.core.execution_lifecycle import (
     WriteBatchFinished,
     WriteBatchStarted,
 )
-from parallax.core.execution_lifecycle._diagnostics import (
-    database_diagnostic_for,
-    diagnostic_for,
-)
+from parallax.core.execution_lifecycle._diagnostics import database_diagnostic_for
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
@@ -173,8 +171,8 @@ def _attempt_failure(*, retry_eligible: bool) -> AttemptFailure:
     return AttemptFailure("callback", _failure(), retry_eligible)
 
 
-def _db(port: DbPort, provider: Any) -> Database:
-    return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any) -> Database:
+    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
 def test_a_started_transition_carries_its_correlation_and_its_own_payload(
@@ -858,7 +856,7 @@ def test_the_root_summary_totals_survive_a_level_that_dropped_every_debug_record
         logger = _logger(level)
         collected = _Collecting()
         logger.addHandler(collected)
-        port = ScriptedPort(
+        port = ScriptedAdapter(
             Transact(Write(), commit=deadlock()), Transact(Write(), commit=deadlock())
         )
         db = _db(port, LoggingLifecycleProvider(logger))
@@ -893,7 +891,7 @@ def test_a_whole_transaction_through_connect_reads_as_one_operation(
     # operator would filter on, over a retry that succeeded, from a real
     # ``db.transact``.
     logger = _logger()
-    port = ScriptedPort(Transact(Write(), commit=deadlock()), Transact(Write()))
+    port = ScriptedAdapter(Transact(Write(), commit=deadlock()), Transact(Write()))
     db = _db(port, LoggingLifecycleProvider(logger))
 
     def body(tx: Transaction) -> None:

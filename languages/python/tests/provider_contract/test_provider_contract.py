@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import threading
 from contextlib import closing, suppress
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from parallax.conformance import engine, models, provision
+from parallax.conformance._postgres_control import PostgresControl
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.models import default_models_dir
 from parallax.core.base import SQL_NULL, PresentDocument
@@ -40,7 +41,7 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES
 from parallax.evolution.model_evolution import ABSENT, evolve
 from parallax.evolution.schema_delta import schema_delta
-from parallax.postgres import adapter as adapter_module
+from parallax.postgres import _connection as connection_module
 from parallax.postgres import isolation_spelling
 
 
@@ -88,10 +89,18 @@ def test_live_structured_document_reads_preserve_sql_null_and_json_null(
         "select null::jsonb as sql_null, 'null'::jsonb as json_null", []
     ) == [{"sql_null": None, "json_null": None}]
 
-    for binary in (False, True):
-        with profile_run.port.connection.cursor(binary=binary) as cursor:
-            cursor.execute(b"select 'null'::jsonb")
-            assert cursor.fetchone() == (adapter_module._PRESENT_JSON_NULL,)  # pyright: ignore[reportPrivateUsage]
+    # Both loader slots, reached through a native cursor of the harness's own
+    # session rather than through any pooled application connection: psycopg
+    # keeps separate text and binary loaders for one OID, and only a cursor
+    # asking for each format proves both were installed.
+    session = profile_run.control()
+    try:
+        for binary in (False, True):
+            with cast("PostgresControl", session).native.cursor(binary=binary) as cursor:
+                cursor.execute(b"select 'null'::jsonb")
+                assert cursor.fetchone() == (connection_module._PRESENT_JSON_NULL,)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        session.close()
 
 
 def test_transaction_commits_and_reports_the_body_value(profile_run: Any) -> None:

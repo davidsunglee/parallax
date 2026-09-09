@@ -32,6 +32,7 @@ from _support.corpus import case_document, compare_binds
 from _support.db_port import (
     BeginCall,
     CommitCall,
+    ConnectsAsItself,
     PortCall,
     ReadCall,
     RollbackCall,
@@ -51,7 +52,7 @@ from parallax.conformance.vo_models import (
     Shipment,
 )
 from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.db_port import Bind, Committed, DbPort, Row, TransactionOutcome
+from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
@@ -252,7 +253,7 @@ def _port_for(story: WriteStory) -> _KeyedSeedPort:
 # the reads a story issues would have to be restated here for every case in the
 # corpus — which is the drift this suite exists to catch rather than to encode.
 # The recording is the kit's.
-class _KeyedSeedPort:
+class _KeyedSeedPort(ConnectsAsItself):
     """An in-memory ``m-db-port`` answering a read from a seeded row set.
 
     ``rows`` seeds a small keyed row set, each row's OWN PRIMARY-KEY value
@@ -300,11 +301,11 @@ class _KeyedSeedPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         del isolation
         self.calls.append(BeginCall())
-        outcome = body_outcome(cast("DbPort", self), body)
+        outcome = body_outcome(cast("DatabaseConnection", self), body)
         self.calls.append(CommitCall() if isinstance(outcome, Committed) else RollbackCall())
         return outcome
 

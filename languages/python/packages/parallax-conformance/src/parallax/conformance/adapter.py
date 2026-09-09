@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 from parallax.conformance import case_format, engine
+from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     StatementIndexError,
@@ -23,7 +24,6 @@ from parallax.conformance._lifecycle_observation import (
 )
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
 from parallax.conformance.profile import PROFILES, ProfileRun
-from parallax.core.db_port import DbPort
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -241,7 +241,7 @@ def _compile(case: case_format.Case, dialect: str) -> tuple[list[engine.Emission
 
 
 def _read_observations(
-    case: case_format.Case, port: DbPort, lifecycle: LifecycleRun
+    case: case_format.Case, port: CaseDatabase, lifecycle: LifecycleRun
 ) -> dict[str, Any]:
     """A read case's own observation shape (m-case-format "Read result form"):
     ``then.graphs`` (a milestone-set snapshot read) / ``then.graph`` (a deep
@@ -306,7 +306,7 @@ def _report_execution_lifecycle(
 
 
 def _run(
-    case: case_format.Case, port: DbPort, lifecycle: LifecycleRun
+    case: case_format.Case, port: CaseDatabase, lifecycle: LifecycleRun
 ) -> tuple[list[engine.Emission], dict[str, Any]]:
     """Run a claimed case by shape, returning its emissions and observation envelope.
 

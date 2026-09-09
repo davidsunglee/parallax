@@ -44,6 +44,7 @@ from _support.corpus import (
     instance_graph_node,
     instance_row,
 )
+from _support.db_port import ConnectsAsItself
 from parallax.conformance import case_format, engine
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
@@ -177,9 +178,11 @@ class _CountingDatabase(Database):
     call, in call order, which is the same partition the case's steps draw.
     """
 
-    def __init__(self, port: Any, model: Any, clock: Any = None) -> None:
+    def __init__(self, adapter: Any, model: Any, clock: Any = None) -> None:
         self.observation = LifecycleObservation()
-        super().__init__(port, model, clock=clock, lifecycle_provider=self.observation.provider)
+        super().__init__(
+            adapter.open(), model, clock=clock, lifecycle_provider=self.observation.provider
+        )
         self.round_trips: list[int] = []
 
     def _counted[T](self, run: Callable[[], T]) -> T:
@@ -212,8 +215,8 @@ class _CountingDatabase(Database):
         )
 
 
-def _counting_connect(port: Any, model: Any, *, clock: Any = None) -> _CountingDatabase:
-    return _CountingDatabase(port, model, clock)
+def _counting_connect(adapter: Any, model: Any, *, clock: Any = None) -> _CountingDatabase:
+    return _CountingDatabase(adapter, model, clock)
 
 
 def _kind_runs(db: _CountingDatabase) -> list[tuple[str, int]]:
@@ -1172,7 +1175,7 @@ def test_every_graph_story_mirrors_an_active_case_exactly_once() -> None:
 _READ_STORY_IDS = [story.case_id for story in READ_STORIES]
 
 
-class _StatementCapturePort:
+class _StatementCapturePort(ConnectsAsItself):
     """A pass-through ``m-db-port`` decorator capturing every SQL statement +
     binds a read story's find ACTUALLY executes: `then.rows` alone cannot
     distinguish whether a `m-read-lock` story's runtime developer path emitted

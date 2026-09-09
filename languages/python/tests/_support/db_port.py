@@ -1,12 +1,24 @@
 """The shared ``m-db-port`` doubles: one script, one recording, one refusal.
 
-``ScriptedPort`` answers by POSITION — each call takes the next entry of an
+Each double is an ADAPTER, so it is what a ``Database`` is connected from and
+what owns the runtime, acquisition contexts, and scoped connections underneath.
+Every acquisition yields a FRESH connection facade over the one script, and
+leaving that acquisition revokes the facade — so a suite proves that an
+operation released what it took by watching the facade stop working, exactly as
+it would against a real runtime. The script itself is shared across
+acquisitions, which is what keeps one chronology readable across a retry.
+
+The verbs are also available on the adapter directly, for the suites that drive
+an executor rather than a handle and need a connection without composing one.
+That is a convenience of the double and not a shape any production adapter has.
+
+``ScriptedAdapter`` answers by POSITION — each call takes the next entry of an
 immutable script, and a call the script does not reach is a failure at the call
 rather than a silently different answer. The script is a TREE: a ``Transact``
 entry nests the entries its body may run, so which side of a transaction
 boundary a call landed on is stated by the shape rather than left implicit.
-``RefusingPort`` answers nothing at all, for a path asserted to reach no
-database, so it records nothing either. What ``ScriptedPort`` records is one
+``RefusingAdapter`` answers nothing at all, for a path asserted to reach no
+database, so it records nothing either. What ``ScriptedAdapter`` records is one
 flat chronology of :data:`PortCall` values, where the
 ``begin``/``commit``/``rollback`` markers already carry the scope the script had
 to nest to express.
@@ -33,11 +45,16 @@ from parallax.core.db_port import (
     BeginFailed,
     Bind,
     CallbackRaised,
+    CleanupResult,
     CommitFailed,
     Committed,
-    DbPort,
+    ConnectionAcquisitionError,
+    ConnectionContext,
+    DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    PoolMetricsSource,
+    Returned,
     RollbackFailed,
     RolledBack,
     Row,
@@ -48,21 +65,106 @@ from parallax.core.dialect import POSTGRES, Dialect
 __all__ = [
     "BeginCall",
     "CommitCall",
+    "ConnectsAsItself",
     "PortCall",
     "Read",
     "ReadCall",
-    "RefusingPort",
+    "RefusingAdapter",
     "RollbackCall",
     "ScriptEntry",
-    "ScriptedPort",
+    "ScriptedAdapter",
+    "ScriptedContext",
+    "ScriptedRuntime",
+    "SoleConnectionRuntime",
+    "SoleConnectionScope",
     "Transact",
     "Write",
     "WriteCall",
     "body_outcome",
 ]
 
+_REVOKED = "this scripted connection's scope has ended"
 
-def body_outcome[T](port: DbPort, body: Callable[[DbPort], T]) -> TransactionOutcome[T]:
+
+class SoleConnectionScope:
+    """One acquisition of a double that IS its own connection.
+
+    There is nothing to check out and nothing to give back, so entering yields
+    the double itself and leaving reports no cleanup facts: ``None`` is absence
+    rather than a claim that something was relinquished.
+    """
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: DatabaseConnection) -> None:
+        self._connection = connection
+
+    @property
+    def cleanup_result(self) -> CleanupResult | None:
+        return None
+
+    def __enter__(self) -> DatabaseConnection:
+        return self._connection
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        return
+
+
+class SoleConnectionRuntime:
+    """The minimal runtime around one in-memory connection."""
+
+    __slots__ = ("_connection", "closed")
+
+    def __init__(self, connection: DatabaseConnection) -> None:
+        self._connection = connection
+        self.closed = False
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._connection.dialect
+
+    @property
+    def pool_metrics(self) -> PoolMetricsSource | None:
+        return None
+
+    def connection(self) -> ConnectionContext:
+        if self.closed:
+            raise ConnectionAcquisitionError(
+                "this runtime is closed, so it opens no new connection", reason="closed"
+            )
+        return SoleConnectionScope(self._connection)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class ConnectsAsItself:
+    """A double that is its own configuration as well as its own connection.
+
+    A production adapter is configuration and a connection is what one
+    acquisition of it yields; a double small enough to be both saves every suite
+    that drives an executor directly from composing a resource lifetime it does
+    not care about. What it costs is that such a double proves nothing about
+    acquisition — the suites that grade THAT use ``ScriptedAdapter``, whose
+    every acquisition yields a fresh revocable facade.
+    """
+
+    def open(self) -> SoleConnectionRuntime:
+        return SoleConnectionRuntime(cast("DatabaseConnection", self))
+
+
+_RETURNED: Final[CleanupResult] = Returned()
+
+
+def body_outcome[T](
+    port: DatabaseConnection, body: Callable[[DatabaseConnection], T]
+) -> TransactionOutcome[T]:
     """Run ``body`` on ``port`` and report what the body alone decided.
 
     Committed with its value, or rolled back carrying the exception it raised —
@@ -219,17 +321,144 @@ class _Scope:
         return not remaining or (len(remaining) == 1 and self.used == remaining[0].times)
 
 
-class ScriptedPort:
-    """An ``m-db-port`` answering each call with the next entry of its script.
+class _ScriptedConnection:
+    """One acquisition's execution access over a shared script.
+
+    A fresh one per acquisition, revoked when that acquisition ends: after
+    revocation every verb raises before reaching the script, which is how a
+    suite proves an operation gave its connection back without inspecting a
+    pool.
+    """
+
+    def __init__(self, adapter: ScriptedAdapter) -> None:
+        self._adapter: ScriptedAdapter | None = adapter
+        self.dialect = adapter.dialect
+
+    def revoke(self) -> None:
+        self._adapter = None
+
+    def _script(self) -> ScriptedAdapter:
+        adapter = self._adapter
+        if adapter is None:
+            raise RuntimeError(_REVOKED)
+        return adapter
+
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        return self._script().execute(sql, binds, document_reads)
+
+    def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
+        return self._script().execute_write(sql, binds)
+
+    def transaction[T](
+        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
+    ) -> TransactionOutcome[T]:
+        adapter = self._script()
+        return adapter.transaction(body, isolation=isolation, on=self)
+
+
+class ScriptedContext:
+    """One scripted acquisition, single-use exactly as a real one is."""
+
+    def __init__(self, runtime: ScriptedRuntime) -> None:
+        self._runtime = runtime
+        self._connection: _ScriptedConnection | None = None
+        self._spent = False
+        self._cleanup_result: CleanupResult | None = None
+
+    @property
+    def cleanup_result(self) -> CleanupResult | None:
+        return self._cleanup_result
+
+    def __enter__(self) -> DatabaseConnection:
+        if self._spent:
+            raise RuntimeError("a scripted connection context is entered exactly once")
+        self._spent = True
+        adapter = self._runtime.adapter
+        # Closure first: a runtime that stopped admitting refuses whatever a
+        # script had planned for this acquisition, exactly as a real one does.
+        if self._runtime.closed:
+            raise ConnectionAcquisitionError("this scripted runtime is closed", reason="closed")
+        refusal = adapter.next_acquisition_failure()
+        if refusal is not None:
+            # A scripted acquisition failure reports cleanup facts only where the
+            # script gave it some: absence is the default because a checkout that
+            # never took anything has nothing to have cleaned up.
+            self._cleanup_result = adapter.scripted_cleanup_result()
+            adapter.cleanups.append(self._cleanup_result)
+            raise refusal
+        adapter.acquisitions += 1
+        connection = _ScriptedConnection(adapter)
+        self._connection = connection
+        return connection
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        del exc_type, exc, traceback
+        connection = self._connection
+        self._connection = None
+        if connection is None:
+            return
+        connection.revoke()
+        self._cleanup_result = self._runtime.adapter.next_cleanup_result()
+        self._runtime.adapter.cleanups.append(self._cleanup_result)
+
+
+class ScriptedRuntime:
+    """The runtime a scripted adapter opens: acquisitions over one script."""
+
+    def __init__(self, adapter: ScriptedAdapter) -> None:
+        self.adapter = adapter
+        self.closed = False
+
+    @property
+    def dialect(self) -> Dialect:
+        return self.adapter.dialect
+
+    @property
+    def pool_metrics(self) -> PoolMetricsSource | None:
+        return None
+
+    def connection(self) -> ConnectionContext:
+        return ScriptedContext(self)
+
+    def close(self) -> None:
+        self.closed = True
+        self.adapter.closes += 1
+
+
+class ScriptedAdapter:
+    """An ``m-db-port`` adapter answering each call with the next script entry.
 
     Used as a context manager, leaving the block normally asserts that every
     entry was reached: an unconsumed one means the code under test did less than
     the script said.
+
+    ``acquisition_failures`` and ``cleanup_results`` are consumed positionally by
+    successive acquisitions and releases, with anything past their end
+    succeeding — so a suite names the third acquisition's timeout without
+    writing the two before it. ``acquisitions``, ``cleanups``, and ``closes``
+    record what actually happened.
     """
 
     dialect: Dialect
 
-    def __init__(self, *script: ScriptEntry, dialect: Dialect = POSTGRES) -> None:
+    def __init__(
+        self,
+        *script: ScriptEntry,
+        dialect: Dialect = POSTGRES,
+        acquisition_failures: Sequence[ConnectionAcquisitionError | None] = (),
+        cleanup_results: Sequence[CleanupResult | None] = (),
+    ) -> None:
         seen: dict[int, Exception] = {}
         for failure in _failures(script):
             if id(failure) in seen:
@@ -237,8 +466,34 @@ class ScriptedPort:
             seen[id(failure)] = failure
         self.dialect = dialect
         self.calls: list[PortCall] = []
+        self.acquisitions = 0
+        self.closes = 0
+        self.cleanups: list[CleanupResult | None] = []
+        self._acquisition_failures = list(acquisition_failures)
+        self._cleanup_results = list(cleanup_results)
         self._scopes = [_Scope(script)]
         self._unreached = False
+
+    def open(self) -> ScriptedRuntime:
+        return ScriptedRuntime(self)
+
+    def next_acquisition_failure(self) -> ConnectionAcquisitionError | None:
+        if not self._acquisition_failures:
+            return None
+        return self._acquisition_failures.pop(0)
+
+    def next_cleanup_result(self) -> CleanupResult:
+        """What the next completed release reports, defaulting to a clean return."""
+        if not self._cleanup_results:
+            return _RETURNED
+        scripted = self._cleanup_results.pop(0)
+        return _RETURNED if scripted is None else scripted
+
+    def scripted_cleanup_result(self) -> CleanupResult | None:
+        """What a FAILED entry reports, which is nothing unless a script said so."""
+        if not self._cleanup_results:
+            return None
+        return self._cleanup_results.pop(0)
 
     def __enter__(self) -> Self:
         return self
@@ -273,8 +528,18 @@ class ScriptedPort:
         return entry.affected
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
+        self,
+        body: Callable[[DatabaseConnection], T],
+        *,
+        isolation: IsolationLevel | None = None,
+        on: DatabaseConnection | None = None,
     ) -> TransactionOutcome[T]:
+        """``on`` is the connection the body is handed, defaulting to this adapter.
+
+        A body inside a transaction receives the SAME scoped connection the
+        attempt acquired, so an acquisition passes its own facade here and the
+        direct-execution convenience passes nothing.
+        """
         entry = self._scopes[-1].take(Transact, f"isolation={isolation!r}")
         self.calls.append(BeginCall(isolation))
         if entry.begin is not None:
@@ -282,7 +547,7 @@ class ScriptedPort:
         scope = _Scope(entry.body)
         self._scopes.append(scope)
         try:
-            outcome = body_outcome(cast("DbPort", self), body)
+            outcome = body_outcome(on if on is not None else cast("DatabaseConnection", self), body)
         finally:
             self._scopes.pop()
         self._unreached = self._unreached or not scope.consumed
@@ -320,19 +585,33 @@ def projected_row(sql: str, row: Mapping[str, object]) -> Row:
     return materialized
 
 
-class RefusingPort:
-    """An ``m-db-port`` asserting that no database interaction is permitted.
+class RefusingAdapter:
+    """An adapter asserting that no database interaction is permitted.
 
-    Every statement and every boundary is a failure at the call, which is what
-    a path proven to be rejected before it reaches a database needs. Its dialect
-    stays readable: refusal is about SQL, and dialect metadata must be
-    discoverable without a connection.
+    Every statement and every boundary is a failure at the call, and so is
+    ACQUIRING one at all — which is the stronger proof pooling makes available:
+    a path rejected before it reaches a database now demonstrably takes no
+    connection either. Its dialect stays readable: refusal is about resources
+    and SQL, and dialect metadata must be discoverable without either.
     """
 
     dialect: Dialect
 
     def __init__(self, *, dialect: Dialect = POSTGRES) -> None:
         self.dialect = dialect
+
+    def open(self) -> RefusingAdapter:
+        return self
+
+    @property
+    def pool_metrics(self) -> PoolMetricsSource | None:
+        return None
+
+    def connection(self) -> ConnectionContext:
+        raise AssertionError("no acquisition expected — this adapter refuses the database")
+
+    def close(self) -> None:
+        return
 
     def execute(
         self,
@@ -348,7 +627,7 @@ class RefusingPort:
         raise AssertionError("no write expected — this port refuses the database")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         del body, isolation
         raise AssertionError("no transaction expected — this port refuses the database")

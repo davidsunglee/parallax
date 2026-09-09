@@ -73,13 +73,21 @@ class StreamRead(Protocol):
     advance of the delivery runs under.
 
     A stream begins its read at entry and retains it through every page, so the
-    selection it was opened under, whose activity the stream is, and how a
-    failure escaping the delivery reaches the caller are one answer given once.
-    A standalone delivery is a Root Execution of its own that adopted its
-    selection at entry and names that edition on an ordinary failure escaping
-    an advance; a participating one is a child of the current Transaction
-    Attempt, serves the transaction's fixed selection, and lets a failure
-    propagate to the invocation that contextualizes it once.
+    selection it was opened under, whose activity the stream is, which connection
+    every page runs on, and how a failure escaping the delivery reaches the
+    caller are one answer given once. A standalone delivery is a Root Execution
+    of its own that adopted its selection at entry, acquires its own connection
+    when it reads its first page, and names that edition on an ordinary failure
+    escaping an advance; a participating one is a child of the current
+    Transaction Attempt, serves the transaction's fixed selection, runs on the
+    attempt's connection, and lets a failure propagate to the invocation that
+    contextualizes it once.
+
+    ``release`` is the delivery's end of that connection. The stream calls it
+    where the delivery settles rather than where the caller leaves the scope,
+    so an exhausted or failed delivery stops occupying capacity at the moment it
+    is over. It is idempotent, because the scope exit calls it too — for a
+    caller who simply stopped reading.
     """
 
     @property
@@ -88,6 +96,8 @@ class StreamRead(Protocol):
     def open_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
     ) -> SnapshotStreamActivity: ...
+
+    def release(self, failure: BaseException | None, /) -> None: ...
 
     def advance[T](self, body: Callable[[], T], /) -> T: ...
 
@@ -394,6 +404,14 @@ class SnapshotStream[T]:
         self._state = _CLOSED
         failure = self._failure
         self._failure = None
+        # Released before the observed stream finishes, and released here at all
+        # only for a delivery that stopped without settling: a caller who broke
+        # out of the loop reaches no terminal state, so this is where its
+        # connection goes back. An exhausted or failed delivery already released
+        # at the moment it ended, and this is then a no-op.
+        read = self._read
+        if read is not None:
+            read.release(failure)
         self._activity.__exit__(
             type(failure) if failure is not None else None,
             failure,
@@ -510,7 +528,9 @@ class SnapshotStream[T]:
         Exhaustion finishes the observed stream HERE, where it was discovered,
         rather than at the scope exit that follows it: the outcome is true at
         this point, and settling it here is what leaves a later caller error with
-        nothing to rewrite. A failure is remembered instead, because the scope's
+        nothing to rewrite. The connection goes back here for the same reason —
+        a delivery that is over must not keep capacity until the caller happens
+        to leave its ``with`` block. A failure is remembered instead, because the scope's
         own exit is where a stream announces one — and remembering it is what
         keeps the verdict correct for a caller that caught the failure and left
         the block normally. The reference is dropped at that exit, so a failed
@@ -520,6 +540,9 @@ class SnapshotStream[T]:
         if self._state != _DRAINING:
             return
         self._state = terminal
+        read = self._read
+        if read is not None:
+            read.release(failure)
         if terminal == _EXHAUSTED:
             self._activity.exhausted()
         else:

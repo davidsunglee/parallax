@@ -25,15 +25,21 @@ from _transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
 from _support import mirrored_models as mm
 from _support.adoption import raises_contextualized
 from _support.db_port import (
+    ConnectsAsItself,
     Read,
     ReadCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
 )
 from parallax.conformance import read_models
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row
+from parallax.core.db_port import (
+    Bind,
+    DatabaseAdapter,
+    DocumentReadOrdinals,
+    Row,
+)
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution_lifecycle import (
     CausedFailure,
@@ -89,8 +95,8 @@ class _StaticTarget:
 ACCOUNT_TARGET: Final = _StaticTarget()
 
 
-def _db(port: DbPort, provider: Any, model: Any = ACCOUNT) -> Database:
-    return connect(port, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> Database:
+    return connect(adapter, model, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
 def _transitions(events: tuple[ExecutionEvent, ...]) -> list[str]:
@@ -99,7 +105,7 @@ def _transitions(events: tuple[ExecutionEvent, ...]) -> list[str]:
 
 def test_a_typed_find_brackets_its_one_database_call() -> None:
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots
@@ -130,7 +136,7 @@ def test_a_typed_find_brackets_its_one_database_call() -> None:
 
 def test_the_call_borrows_the_exact_statement_the_port_ran() -> None:
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
     (root,) = recorder.roots
     started, finished = root.events[1], root.events[3 - 1]
@@ -150,7 +156,7 @@ def POSTGRES_DRIVER_SQL(sql: str) -> str:
 
 def test_the_unlocked_standalone_statement_is_what_the_call_names() -> None:
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
     (root,) = recorder.roots
     call = root.events[1]
@@ -181,7 +187,7 @@ def test_a_duration_excludes_the_handler_time_around_it() -> None:
             raise AssertionError("no handler failed")
 
     handler = _SlowHandler()
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, _Provider(handler)).find(mm.Account.where(mm.Account.id == 7)).result()
     finished = handler.events[2]
     assert isinstance(finished, DatabaseCallFinished)
@@ -198,7 +204,7 @@ def _busy_wait_ms(milliseconds: int) -> None:
 
 def test_a_deep_fetch_level_is_a_second_call_under_the_same_read() -> None:
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]))
+    port = ScriptedAdapter(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]))
     _db(port, recorder, ORDERS).wire.find(
         {
             "target": "Order",
@@ -224,7 +230,7 @@ def test_a_deep_fetch_level_is_a_second_call_under_the_same_read() -> None:
 
 def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[NEW_ROW], times=2))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
     db = _db(port, recorder)
     db.wire.find({"target": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 7}}})
     db.read_rows(
@@ -242,7 +248,7 @@ def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
 def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
     recorder = RecordingLifecycleProvider()
     failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
-    port = ScriptedPort(Read(raises=failure))
+    port = ScriptedAdapter(Read(raises=failure))
     with raises_contextualized(DatabaseError):
         _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
@@ -274,7 +280,7 @@ def test_a_failure_after_the_call_completed_is_the_reads_own() -> None:
     # Materialization fails after every call came back, so the Read failed
     # DIRECTLY: proximity to a completed call attributes nothing.
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort(Read(rows=[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]))
+    port = ScriptedAdapter(Read(rows=[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]))
     with raises_contextualized(SnapshotMaterializationError):
         _db(port, recorder, read_models.BALANCE_MODEL).find(
             read_models.Balance.where(read_models.Balance.id == 1)
@@ -293,7 +299,7 @@ def test_a_failure_after_the_call_completed_is_the_reads_own() -> None:
 def test_a_control_flow_exception_still_finishes_every_open_activity() -> None:
     # No call site writes the `BaseException` path by hand; the scope shape is
     # what keeps the transitions balanced through one.
-    class _Interrupting:
+    class _Interrupting(ConnectsAsItself):
         dialect = POSTGRES
 
         def execute(self, sql: str, binds: Any, document_reads: Any = ()) -> list[Any]:
@@ -308,7 +314,7 @@ def test_a_control_flow_exception_still_finishes_every_open_activity() -> None:
 
     recorder = RecordingLifecycleProvider()
     with pytest.raises(KeyboardInterrupt):
-        _db(_Interrupting(), recorder).find(mm.Account.where(mm.Account.id == 7)).result()  # pyright: ignore[reportArgumentType] - a port that only interrupts
+        _db(_Interrupting(), recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots
     assert _transitions(root.events) == [
@@ -323,7 +329,7 @@ def test_a_read_refused_by_preflight_creates_no_root() -> None:
     # Deterministic public preflight precedes the root: an invalid target
     # creates no descriptor, calls no Provider, and reaches no port.
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     with pytest.raises(QueryTargetError):
         _db(port, recorder).wire.find({"target": "NoSuchEntity", "predicate": {"all": {}}})
     assert recorder.roots == ()
@@ -336,7 +342,7 @@ def test_a_typed_read_refused_by_preflight_creates_no_root() -> None:
     # the connected model is what makes the query unanswerable — and it is
     # answered before a root exists and before the port is reached.
     recorder = RecordingLifecycleProvider()
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     with pytest.raises(QueryTargetError):
         _db(port, recorder).find(mm.Person.where(mm.Person.id == 1))
     assert recorder.roots == ()
@@ -359,7 +365,7 @@ def test_the_default_path_constructs_nothing_lifecycle_shaped(
 
         monkeypatch.setattr(activity_module, name, counting)
 
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     connect(port, ACCOUNT, clock=FixedClock(FIXED)).find(
         mm.Account.where(mm.Account.id == 7)
     ).result()
@@ -461,7 +467,7 @@ class _Borrowing:
     def write_completed(self, affected_rows: int, /) -> None: ...
 
 
-class _ReturningPort(ScriptedPort):
+class _ReturningPort(ScriptedAdapter):
     """A port that keeps the exact list object each read returned.
 
     Identity is what the assertion needs — a borrowing activity must hold the
@@ -565,7 +571,7 @@ def test_a_standalone_reads_started_event_carries_the_edition_it_adopted() -> No
     # that edition — the same one the result it publishes retains.
     recorder = RecordingLifecycleProvider()
     serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     snapshot = connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder).find(
         mm.Account.where(mm.Account.id == 7)
     )
@@ -581,7 +587,7 @@ def test_a_participating_reads_started_event_carries_no_edition_of_its_own() -> 
     # correlation, and its own Started event states none.
     recorder = RecordingLifecycleProvider()
     serving = ServingModel(prepare_model(ACCOUNT, edition="ledger-a"))
-    port = ScriptedPort(Transact(Read(rows=[NEW_ROW])))
+    port = ScriptedAdapter(Transact(Read(rows=[NEW_ROW])))
     db = connect(port, serving, clock=FixedClock(FIXED), lifecycle_provider=recorder)
 
     db.transact(lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)).result())

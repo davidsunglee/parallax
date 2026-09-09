@@ -27,7 +27,7 @@ import pytest
 from _transact_support import FIXED, NEW_ROW, new_account
 
 from _support import mirrored_models as mm
-from _support.db_port import Read, ScriptedPort, Transact, Write
+from _support.db_port import Read, ScriptedAdapter, Transact, Write
 from parallax.core.entity import DomainModel, EntityGraphConstruction
 from parallax.core.entity import _graph_construction as graph_construction_module
 from parallax.core.entity import _layout as layout_module
@@ -175,7 +175,7 @@ def test_a_descriptor_backed_model_prepares_with_no_graph_construction() -> None
 
 
 def test_nothing_fallible_remains_after_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
-    port = ScriptedPort(Read(rows=[NEW_ROW]), Transact(Write()))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]), Transact(Write()))
     db = connect(port, _ACCOUNT, clock=FixedClock(FIXED))
     _refuse_every_derivation(monkeypatch)
 
@@ -188,7 +188,7 @@ def test_nothing_fallible_remains_after_preparation(monkeypatch: pytest.MonkeyPa
 
 
 def test_a_descriptor_backed_connection_still_refuses_a_typed_read_before_io() -> None:
-    db = Database.connect(ScriptedPort(), _descriptor_backed(), clock=FixedClock(FIXED))
+    db = Database.connect(ScriptedAdapter(), _descriptor_backed(), clock=FixedClock(FIXED))
     with pytest.raises(SnapshotConnectionError, match="snapshot-class-backed-model-required"):
         db.find(mm.Account.where(mm.Account.id == 7))
 
@@ -515,8 +515,8 @@ def test_two_publishers_racing_one_expectation_leave_exactly_one_holding(
 
 
 def test_a_static_connection_prepares_once_under_a_generated_edition() -> None:
-    first = connect(ScriptedPort(Transact(), Transact()), _ACCOUNT, clock=FixedClock(FIXED))
-    second = connect(ScriptedPort(Transact()), _ACCOUNT, clock=FixedClock(FIXED))
+    first = connect(ScriptedAdapter(Transact(), Transact()), _ACCOUNT, clock=FixedClock(FIXED))
+    second = connect(ScriptedAdapter(Transact()), _ACCOUNT, clock=FixedClock(FIXED))
     editions = {db.transact(lambda tx: tx.edition) for db in (first, second)}
     assert len(editions) == 2
     assert all(edition.startswith("static-") for edition in editions)

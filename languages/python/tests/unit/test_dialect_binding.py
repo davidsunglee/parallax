@@ -19,10 +19,10 @@ from _second_dialect import BACKTICKED
 from _transact_support import ACCOUNT
 
 from _support import mirrored_models as mm
-from _support.db_port import body_outcome
+from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import engine
 from parallax.conformance.boundary_runner import FaultInjectingPort
-from parallax.core.db_port import DbPort, DeclaresDialect, DocumentReadOrdinals, Row
+from parallax.core.db_port import DatabaseConnection, DeclaresDialect, DocumentReadOrdinals, Row
 from parallax.core.db_port import TransactionOutcome as Outcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
@@ -31,7 +31,7 @@ from parallax.snapshot import connect
 _ACCOUNT_ROW: Row = {"id": 7, "owner": "Ada", "balance": Decimal("1.00"), "version": 1}
 
 
-class _SpellingPort:
+class _SpellingPort(ConnectsAsItself):
     """A port answering one canned row and recording the SQL it was handed."""
 
     def __init__(self, dialect: Dialect) -> None:
@@ -54,7 +54,7 @@ class _SpellingPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> Outcome[T]:
         del isolation
         return body_outcome(self, body)

@@ -262,33 +262,37 @@ class JoinedShapeProvider:
 
 
 def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
-    port: DbPort, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel
 ) -> JoinedShape:
     """A joined call is an activity under the OUTER attempt and runs no attempt
     of its own — observed through an installed Provider, while the work runs.
 
-    ``port`` is the shipped adapter over the story database, which holds the
-    seeded account row the joined body bumps. Nothing the transaction returns
-    describes what it did: the callback's value comes back directly, so what the
-    Handler collected while the boundary ran is the whole account of it.
+    ``adapter`` is the shipped adapter's configuration for the story database,
+    which holds the seeded account row the joined body bumps. Connecting opens
+    the runtime this handle owns, and leaving the block closes it — the two
+    transactions below acquire a connection each and give it back, and nothing
+    is still held afterwards. Nothing the transaction returns describes what it
+    did: the callback's value comes back directly, so what the Handler collected
+    while the boundary ran is the whole account of it.
     """
     provider = JoinedShapeProvider()
-    db = connect(port, model, lifecycle_provider=provider)
+    with connect(adapter, model, lifecycle_provider=provider) as db:
 
-    def outer(tx: Transaction) -> Account:
-        current = tx.find(Account.where(Account.id == _TARGET_ID)).result()
+        def outer(tx: Transaction) -> Account:
+            current = tx.find(Account.where(Account.id == _TARGET_ID)).result()
 
-        def joined_body(joined_tx: Transaction) -> Account:
-            # A joined call shares the outer transaction rather than opening a
-            # nested one, so its write buffers on the SAME unit of work and
-            # reaches the database in the outer boundary's pre-commit batch.
-            bumped = current.edit(balance=current.balance + _BUMP)
-            joined_tx.update(bumped)
-            return bumped
+            def joined_body(joined_tx: Transaction) -> Account:
+                # A joined call shares the outer transaction rather than opening
+                # a nested one, so its write buffers on the SAME unit of work,
+                # runs on the SAME connection, and reaches the database in the
+                # outer boundary's pre-commit batch.
+                bumped = current.edit(balance=current.balance + _BUMP)
+                joined_tx.update(bumped)
+                return bumped
 
-        return db.transact(joined_body)
+            return db.transact(joined_body)
 
-    committed = db.transact(outer)
+        committed = db.transact(outer)
 
     handler = provider.handlers[0]
     return JoinedShape(
@@ -2291,7 +2295,7 @@ def unilateral(evolution: Evolution, /) -> UnilateralEvolution:
     )
 
 
-def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> tuple[CreatedIndex, ...]:
+def apply_schema_delta(port: DatabaseConnection, delta: SchemaDelta, /) -> tuple[CreatedIndex, ...]:
     """Apply every statement of ``delta``, in order, in the host's OWN boundary.
 
     Parallax applies no schema change: these statements are the application's to
@@ -2349,17 +2353,24 @@ class PublishedUpdate:
 
 
 def a_running_service_publishes_an_evolved_model_without_restarting(
-    port: DbPort, /
+    adapter: DatabaseAdapter, schema: DatabaseConnection, /
 ) -> PublishedUpdate:
     """Prepare, apply, publish — in that order — with the service still serving.
 
-    ``port`` is the shipped adapter over the story database, already carrying
-    the earlier edition's schema. The handle is connected once, before the
-    update, and never reconnected: what changes under it is the selection its
-    executions adopt, which is what "without restarting" means here.
+    ``adapter`` is the shipped adapter's configuration for the story database,
+    already carrying the earlier edition's schema. The handle is connected once,
+    before the update, and never reconnected: what changes under it is the
+    selection its executions adopt, which is what "without restarting" means
+    here. Its runtime, and every connection an execution acquires from it,
+    belong to that handle until it closes.
+
+    ``schema`` is a connection the DEPLOYMENT owns, not one of the handle's:
+    Parallax applies no schema change, so the delta below runs where the
+    application's own migrations run rather than on a connection borrowed from
+    the pool that is serving traffic.
     """
     serving = ServingModel(prepare_model(ACCOUNT_MODEL, edition="2026-09-a"))
-    db = connect(port, serving)
+    db = connect(adapter, serving)
     before = db.transact(lambda tx: tx.edition)
 
     a = serving.current()
@@ -2376,8 +2387,8 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     # The statements are applied exactly as given — never reordered,
     # deduplicated, or made idempotent — because a delta states what must happen
     # to a database at the earlier edition rather than reconciling an unknown one.
-    delta = schema_delta(evolution, port.dialect)
-    created_indices = apply_schema_delta(port, delta)
+    delta = schema_delta(evolution, schema.dialect)
+    created_indices = apply_schema_delta(schema, delta)
 
     # Only now. Publication ASSERTS that the physical schema already satisfies
     # what is being published, so every execution that adopts B afterwards finds
@@ -2394,6 +2405,9 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
         return tx.edition, named.nickname
 
     after, nickname = db.transact(name_the_account)
+    # The service outlives one update; this story does not, so it closes the
+    # handle it opened. An application closes its own at shutdown instead.
+    db.close()
     return PublishedUpdate(
         before_edition=before,
         statements=delta.statements,

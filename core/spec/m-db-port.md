@@ -1,7 +1,8 @@
 # m-db-port — Database Execution Port
 
 `m-db-port` is the **abstract runtime database port**: the execution interface the
-layers above the seam call to run compiled SQL and demarcate transactions. Each
+layers above the seam call to run compiled SQL and demarcate transactions, and
+the **lifetime** interface a composition root opens that execution from. Each
 language supplies **N concrete adapter artifacts** (one per supported database
 type) that implement this behavioral contract. The module depends on `m-core`
 and on `m-dialect`, whose value it exposes. It is the one **contract-covered** module — no compatibility fixture
@@ -56,6 +57,119 @@ callback value, propagates a triggering error after successful rollback, and
 preserves both triggering and rollback errors when rollback fails. The outcome
 is not public provenance and transaction begin, commit, and rollback remain
 outside Database Call accounting.
+
+## Configuration, runtime, and one connection at a time
+
+The port has a second half, used by a different caller. Query code receives
+EXECUTION alone — the four verbs above — and can neither acquire nor release;
+composition receives the LIFETIME and never executes. That split is what lets a
+connection be held for exactly one operation without any statement being able to
+take or give one back.
+
+```text
+adapter configuration   immutable, resource-free; opens an independent runtime
+  runtime               the running resource one connected handle owns
+    connection context  one single-use acquisition, yielding scoped execution
+```
+
+**Configuration owns nothing.** Constructing it MUST open no connection, no
+pool, and no background worker, and MUST validate what it can locally, so it is
+safe to build before a process forks and to share between threads. It is
+immutable: settings change by constructing another value, never by mutating one
+a runtime was opened from. Every open produces an **independent** runtime — two
+handles built from one configuration own two runtimes, and closing either leaves
+the other working. External inputs a connection string refers to (environment,
+service files, credentials, server defaults) resolve when each physical
+connection is created rather than being frozen at construction.
+
+**A runtime is ready or it is not.** Opening returns only a runtime that has
+proved it can execute: waiting for retained capacity, where a mode retains any,
+is not that proof — with no minimum to wait for it proves nothing at all, and
+even with one it establishes that a connection exists rather than that a
+statement works. Readiness therefore acquires a real connection, proves the
+decoding the read path depends on through it, and requires it back. Readiness
+runs under ONE cooperative budget that is checked between phases and never
+restarted; a budget stops the next phase from starting and makes no claim about
+interrupting a call already in flight. An open that fails releases everything it
+took and publishes nothing.
+
+**One acquisition is single-use.** Creating a connection context takes nothing.
+Entering it acquires, prepares, and admits, or fails having cleaned up whatever
+partial ownership it took. Leaving it revokes the execution it yielded and
+relinquishes the connection exactly once. Re-entering one, entering one that has
+exited, and entering one whose entry failed are each refused without touching
+the resource. Each entry yields FRESH execution access even where the physical
+connection is reused, so a reference kept past the exit executes nothing and
+retains nothing.
+
+Entering opens no transaction and leaving neither commits nor rolls back:
+transaction outcomes stay the execution interface's, authoritative and unchanged.
+
+**Admission decides what may finish.** Starting an acquisition reserves no right
+to execute. Expiry and closure are decided together, once, immediately before
+the connection is handed over. A native success that arrives after the budget is
+spent is relinquished and reported as a timeout rather than admitted. Work
+already admitted may finish everything it was going to do, including statements
+it has not issued yet; anything needing a NEW acquisition after a close — a
+retry, a delivery that has not read its first page — is refused from then on.
+
+**Close is idempotent and permanent.** It stops admission and releases what the
+runtime owns. It neither waits for borrowers nor interrupts their statements.
+Ordinary problems met while closing are diagnostic-only: a handle that refused to
+close would leave a caller unwinding with nothing better to do.
+
+## What relinquishing a connection establishes
+
+Every acquisition — however it ends, including a statement failure, a conversion
+failure, a transaction that could not be undone, an abandoned delivery, an
+observer that raised, and language-native control flow — reaches ONE cleanup
+path, and that path reports what it ESTABLISHED rather than what it attempted:
+
+| Outcome | Confirmed meaning |
+|---|---|
+| Returned | The handoff completed. It promises nothing about retention, idle availability, or later background work |
+| Invalidated | Physical disposal was established BEFORE the handoff, and the handoff then completed for accounting |
+| Unrelinquished | Required disposal or the accounting after it failed, or could not be confirmed |
+
+Reuse is offered only for a connection that is idle and that the execution did
+not declare suspect. Anything else is disposed of FIRST and handed back second:
+disposal alone would leak the capacity, and a handoff alone would offer a
+connection nothing may reuse. Nothing repairs an unexpected state in order to
+reuse it, and idle status alone does not establish arbitrary session
+cleanliness — safety also rests on owned initialization, controlled execution,
+and the absence of raw access to a pooled connection.
+
+Three refusals are required rather than optional. A failed physical disposal
+MUST NOT fall back to returning a still-suspect connection. A failed handoff MUST
+NOT be retried and MUST NOT be followed by a close, because a return that raised
+may still have handed the connection to another borrower. A completed handoff
+MUST NOT be inspected afterwards, for the same reason. Exactly-once handling is
+therefore a guarantee about the SEQUENCE, never a promise of physical
+reclamation when disposal or accounting itself fails.
+
+Cleanup carries a finite, ordered set of issues describing conditions met, not
+the disposition reached: a recovered condition may accompany a safe
+invalidation. An ordinary post-execution cleanup problem is diagnostic-only and
+**preserves what the operation already established** — a successful read, an
+exhausted or closed delivery, a committed value, and an existing exception all
+survive it — and it never authorizes replay. It does not suppress lost-connection
+execution errors, rollback failure, uncertain commit, or fatal and control-flow
+exceptions, whose existing precedence and cleanup rules are unchanged.
+
+## Acquisition and readiness failures are outside the SQL categories
+
+An acquisition that produces no usable connection reports one of four
+driver-neutral reasons: **timeout**, **queue rejected**, **closed**, and
+**preparation failed** — the last covering establishing or preparing execution
+access, including a direct connection attempt that failed, a session
+configuration the codecs cannot execute under, and a checkout that handed over a
+connection which was not idle. No modeled statement ran, so nothing was
+classified: these are not `m-db-error` categories and no retry rule reads them.
+
+A runtime that did not become ready reports which readiness phase stopped it and
+what is known about a connection it had already acquired. An earlier readiness
+failure stays primary; cleanup that follows it reports through the
+implementation's restricted resource reporting rather than replacing it.
 
 ## The dialect is preserved through every port that stands in for another
 
@@ -145,7 +259,10 @@ default is at least Read Committed**. An adapter checks this **once per
 connection, when it takes the connection** — not per boundary and not per attempt
 — and refuses a connection whose default is weaker as a connection error rather
 than silently upgrading it, because a caller who named no level asked for the
-adapter's default and would otherwise get one it did not configure. A default at
+adapter's default and would otherwise get one it did not configure. Where the
+adapter owns the connection's whole life, "when it takes the connection" is that
+connection's own initialization, and the refusal is an acquisition that failed
+preparation rather than a statement that failed. A default at
 or above the floor is kept as it is; an engine that executes Read Uncommitted as
 Read Committed meets the floor.
 

@@ -18,6 +18,7 @@ from collections.abc import Callable, Sequence
 import pytest
 from _second_dialect import BACKTICKED
 
+from _support.db_port import ConnectsAsItself
 from _support.repo import PY_ROOT, canonical_snapshot_claim
 from parallax.conformance.claim import SNAPSHOT_CLAIM
 from parallax.conformance.profile import (
@@ -29,7 +30,7 @@ from parallax.conformance.profile import (
     profile_for,
 )
 from parallax.conformance.provision import Provisioner
-from parallax.core.db_port import DbPort, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
 
@@ -54,7 +55,7 @@ def test_a_profile_reports_its_adapters_dialect_without_a_connection() -> None:
     assert profile.dialect is POSTGRES
 
 
-class _StandInPort:
+class _StandInPort(ConnectsAsItself):
     """An `m-db-port` standing in for a database: it answers a dialect of its own
     and refuses every execution."""
 
@@ -69,7 +70,7 @@ class _StandInPort:
         raise AssertionError(f"the stand-in port executes nothing: {sql!r}")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         raise AssertionError("the stand-in port opens nothing")
 
@@ -225,6 +226,7 @@ def test_naming_a_scoped_control_loads_no_driver() -> None:
         "declared": False,
         "native": True,
         "protocols": [
+            "CaseDatabase",
             "DriverControl",
             "InterleavedExecution",
             "InterleavedExecutionFactory",

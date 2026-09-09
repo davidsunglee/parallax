@@ -44,7 +44,7 @@ from _support.db_port import (
     Read,
     ReadCall,
     RollbackCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -97,7 +97,7 @@ from parallax.snapshot.handle._keyed_writes import (
 # Wiring: buffer -> flush -> stream_lowered -> execute_write on the connection.#
 # --------------------------------------------------------------------------- #
 def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> str:
         tx.insert(new_account())
@@ -117,7 +117,7 @@ def test_keyed_insert_through_the_verb_follows_the_entity_layout_slot_order() ->
     # shared-table slots in canonical Table order — the derived `kind`
     # discriminator at its Discriminator-tier position between the model key and
     # the domain slots, never appended after them and never authored.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     db_for(PAYMENT, port).transact(
         lambda tx: tx.insert(CardPayment(id=10, amount=Decimal("200.00"), card_network="Visa"))
     )
@@ -144,7 +144,7 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     # `Account` declares an explicit version, so the default `optimistic`
     # preference resolves it to the Optimistic strategy: the find takes no
     # shared lock and the update carries the observed-version gate.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
             Write(),
@@ -183,7 +183,7 @@ def test_a_correction_of_stored_state_current_authoring_refuses_reaches_its_dml(
         "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
         "phones": [],
     }
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(stored))}]),
             Write(),
@@ -232,7 +232,7 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
     # shared read lock the `locking` preference this test declares produces.
     # The observation licenses the write; under the Locking strategy it renders
     # no gate, exactly as a keyed update does.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]),
             Write(),
@@ -257,7 +257,7 @@ def test_delete_of_a_versioned_row_no_read_produced_raises() -> None:
     # observed no state and the Optimistic strategy has nothing to gate on — the
     # framework never issues an implicit resolving read on behalf of a keyed
     # write, so the delete raises at the verb, before any DML.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.delete(grace())
@@ -276,7 +276,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
     # than the retriable optimistic conflict — classification follows the gate,
     # uniformly across update, delete, and close. The whole unit of work still
     # rolls back.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
             Write(affected=0),
@@ -299,7 +299,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
     # other direction of the same rule: optimistic mode renders the version
     # gate, so a zero-row shortfall IS a detected lost update and raises the
     # retriable `OptimisticLockConflictError`.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
             Write(affected=0),
@@ -322,8 +322,8 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
 # is `test_transaction_reads.py`'s per-level pair; these two carry it through  #
 # the writes those reads license, graded at the port they reach.               #
 # --------------------------------------------------------------------------- #
-def _mixed_port() -> ScriptedPort:
-    return ScriptedPort(
+def _mixed_port() -> ScriptedAdapter:
+    return ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
             Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
@@ -411,7 +411,7 @@ def test_one_preference_produces_both_behaviors_across_two_entities() -> None:
 # --------------------------------------------------------------------------- #
 def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)  # no placeholder axis values
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     db = db_for(MODELS["branch"], port)
 
     db.transact(lambda tx: tx.insert(branch, valid_from=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)))
@@ -433,7 +433,7 @@ def test_bitemporal_insert_constructs_cleanly_and_stamps_the_valid_from() -> Non
 
 def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     db = db_for(MODELS["branch"], port)
 
     db.transact(
@@ -456,7 +456,7 @@ def test_bitemporal_insert_until_opens_a_single_bounded_rectangle() -> None:
 
 def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
     branch = mm.Branch(id=1, name="Central", address=None)
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = db_for(MODELS["branch"], port)
     same_instant = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
     with raises_contextualized(ValueError, match="valid_from < until"):
@@ -467,7 +467,7 @@ def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
 def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # An `edit()` with no changes carries forward the SAME (empty)
     # Change Record: the sparse-update no-op rule (spec §3/§5).
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]))
     )
 
@@ -510,7 +510,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     # the observation the write carries, never a row-carried value
     # (`m-opt-lock`); the `locking` preference keeps the statement ungated, so
     # what the assertion measures is the sparse row.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]),
             Write(),
@@ -559,7 +559,7 @@ def _position_row_dt() -> Row:
 def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
     # m-bitemp-write-006 "plain-update-split", replayed through the KEYED verb:
     # close + head (old) + new tail.
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -578,7 +578,7 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
 def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
     # m-bitemp-write-007 "plain-terminate", replayed through the KEYED verb:
     # close + head only (no tail).
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -597,7 +597,7 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
 def test_keyed_update_until_lowers_the_rectangle_split() -> None:
     # m-bitemp-write-001 "update-until-rectangle-split", replayed through the
     # KEYED verb: close + head + middle + tail.
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=4)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -626,7 +626,7 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
     # no-op return, for every window verb, never the reverse -- see the
     # sibling equal-bounds pin immediately below for the corrected
     # precedence made visible).
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -650,7 +650,7 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
     # ("all validated at build"): validating the window only after the no-op
     # return would let an equal/reversed window slip through when the change
     # set is empty.
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -674,7 +674,7 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
     # for a naive `valid_from` (never a bare `TypeError` leaked by
     # comparing a naive `until` against an already-aware `valid_from`
     # when comparison runs before normalization).
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     naive_until = dt.datetime(2024, 9, 1)  # NAIVE -- no tzinfo
 
@@ -702,7 +702,7 @@ def test_a_bound_of_no_datetime_type_carries_the_same_refusal_a_naive_one_does()
     # shared window gate the Typed and Wire verbs run answers it with `m-core`'s own
     # class rather than leaking an `AttributeError` out of instant normalization.
     # Either bound reaches that judgement, so both are stated here as strings.
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -736,12 +736,12 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
     # is no instant: a non-temporal target admits no `valid_from` to supply, and a
     # bitemporal one whose `until` is absent hears about `until` rather than about
     # the malformed `valid_from` beside it.
-    account = ScriptedPort(
+    account = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}])
         )
     )
-    position = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    position = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def absent_valid_from(tx: Transaction) -> None:
@@ -777,7 +777,7 @@ def test_a_keyed_bounded_verb_states_its_window_as_a_pair() -> None:
 def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
     # m-bitemp-write-002 "terminate-until", replayed through the KEYED verb:
     # close + head + tail (no middle).
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=3)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -795,7 +795,7 @@ def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
 
 
 def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(
@@ -810,7 +810,7 @@ def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None
 
 
 def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}])
         )
@@ -835,7 +835,7 @@ def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
 # makes all four converge.                                                    #
 # --------------------------------------------------------------------------- #
 def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -855,7 +855,7 @@ def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
 
 
 def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
 
@@ -885,7 +885,7 @@ def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
     # the observing find's shared lock is the ungated close's ONLY protection,
     # and under Optimistic there is no observed `in_z` to gate on. A plainly
     # constructed instance carries no Source Hint, so it proves neither.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = db_for(BALANCE, port)
 
     def fn(tx: Transaction) -> None:
@@ -903,7 +903,7 @@ def test_a_standalone_temporal_source_is_accepted_without_an_in_transaction_rere
     # observed into a later transaction. Under the default preference `Balance`
     # resolves to Optimistic, where the database gate is the authority, so the
     # close binds that retained `in_z` and no reread is issued.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]),
         Transact(Write(times=2)),
     )
@@ -931,7 +931,7 @@ def test_a_standalone_temporal_source_is_refused_under_an_explicit_locking_prefe
     # The Locking strategy's license is the shared row lock a read of THIS
     # transaction holds, and a standalone source proves no such lock however
     # authentic its evidence is. The refusal is at the verb, before any DML.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Transact()
     )
     db = db_for(BALANCE, port)
@@ -952,7 +952,7 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
     # same-transaction coalescing shape) — the value is exempt from the
     # provenance refusal, no observation lookup applies, and the planner folds
     # the pair into the single INSERT carrying the updated value.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     db = db_for(BALANCE, port)
 
     def fn(tx: Transaction) -> None:
@@ -977,7 +977,7 @@ def test_an_update_of_a_value_a_different_object_was_inserted_under_is_refused()
         )
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(ScriptedPort(Transact()), BALANCE, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), BALANCE, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
 
 
@@ -986,7 +986,7 @@ def test_same_transaction_insert_then_terminate_is_licensed() -> None:
     # IS the observation provenance a keyed temporal close needs — no
     # observation lookup applies, and `terminate` derives an identity row alone,
     # so it takes no position on where the value came from.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     db = db_for(BALANCE, port)
 
     def fn(tx: Transaction) -> None:
@@ -1018,7 +1018,7 @@ def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
     # one milestone are one piece of evidence, not two competing ones — the
     # locking-mode close is licensed by the shared read lock the latest read took
     # on the row it closes, and a second read of that same row cannot revoke it.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))], times=2),
             Write(times=2),
@@ -1054,7 +1054,7 @@ def test_a_reread_after_settling_a_write_against_a_classified_row_still_classifi
     # buffered write's read-your-own-writes flush — answers the identical
     # diagnosis rather than one the write repaired, suppressed, or worsened.
     address = {"street": "6 Kastanien Allee", "city": "Berlin", "geo": "unknown"}
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 6, "name": "Rin", "address": PresentDocument(dict(address))}]),
             Write(),
@@ -1116,7 +1116,7 @@ def _find_pinned_position(tx: Transaction, **as_of: Any) -> Any:
 
 
 def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, tx_time=LATEST)
@@ -1131,7 +1131,7 @@ def test_a_latest_transaction_time_pinned_source_stays_writable() -> None:
 def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
     # The writable half of the finite-pin contrast (m-bitemp-write-015): a
     # finite Valid-Time pin is the retroactive correction, never read-only.
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()]), Write(times=2)))
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, valid_time=_VALID_PIN)
@@ -1150,7 +1150,7 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too(
     # becomes writable — nothing is: the Transaction-Time past is never
     # rewritten. Optimistic mode is the mode with no plan-time licensing check
     # of its own, so this is the verb-time refusal answering on its own.
-    port = ScriptedPort(Transact(Read(rows=[_position_row_dt()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row_dt()])))
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, tx_time=_TX_PIN)
@@ -1181,7 +1181,7 @@ def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
         tx.delete(_Elsewhere(id=1))
 
     with raises_contextualized(TypeError, match="_Elsewhere is not an Entity Class of this model"):
-        Database.connect(ScriptedPort(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), PERSON, clock=FixedClock(FIXED)).transact(fn)
 
 
 # Two DISTINCT classes may legitimately declare the same Entity Identity in two
@@ -1205,7 +1205,7 @@ _TWIN_RIGHT = DomainModel(_TwinRight)
 
 
 def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.insert(_TwinLeft(id=1, left_only="x"))
@@ -1222,7 +1222,7 @@ def test_a_foreign_twins_members_are_refused_when_the_row_is_derived() -> None:
 
 
 def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() -> None:
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "left_only": "x"}]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "left_only": "x"}]), Write()))
 
     def fn(tx: Transaction) -> None:
         tx.delete(tx.find(_TwinLeft.where(_TwinLeft.id == 1)).result())
@@ -1273,7 +1273,7 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
         tx.update(new_account().edit(balance=Decimal("9.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
     assert refusal.value.identity == mm.Account.identity
     assert "tx.insert(...)" in refusal.value.message
@@ -1359,7 +1359,7 @@ def test_a_key_member_naming_no_object_reaches_the_provenance_refusal(key: objec
         )
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        account_db(ScriptedPort(Transact())).transact(fn)
+        account_db(ScriptedAdapter(Transact())).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
 
 
@@ -1368,7 +1368,7 @@ def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
     # already stored — rather than reporting a required attribute absent on a
     # plainly populated row, which is what deriving the insert's own row first
     # would report.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]))
     )
 
@@ -1388,7 +1388,7 @@ def test_a_second_insert_of_the_same_instance_is_refused_before_any_dml() -> Non
     # imposes `write-value-already-stored` on a second opening of it. The verb
     # answers, naming the update verb the caller wants, where the database would
     # otherwise refuse the pair at commit as a primary-key violation.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         fresh = new_account()
@@ -1408,7 +1408,7 @@ def test_a_second_insert_of_the_same_object_is_refused_whatever_instance_spells_
     # Keyed by the OBJECT, exactly as the exemption is: two instances of one
     # primary key open one row, so the second is refused whether or not their
     # other members agree.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.insert(mm.Person(id=9, name="Newton"))
@@ -1427,7 +1427,7 @@ def test_the_repeated_insert_advice_carries_the_refused_values_into_the_opened_r
     # would author no change — its members already hold those values — and the
     # transaction would commit the first insert unaltered, which is why the
     # advice cannot be the already-stored refusal's.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         inserted = mm.Person(id=9, name="Newton")
@@ -1445,7 +1445,7 @@ def test_the_repeated_insert_advice_carries_the_refused_values_into_the_opened_r
 def test_an_insert_then_an_update_of_one_object_still_coalesces_into_the_insert() -> None:
     # The other half of the same ledger is untouched by the refusal: the update
     # is licensed by the buffered insert and folds into its one statement.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         fresh = mm.Person(id=9, name="Newton")
@@ -1463,7 +1463,7 @@ def test_an_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again() ->
     # cancels the pair — the flush emits nothing for it — and retires the object
     # from the ledger at the verb, so the third verb is a FIRST opening rather
     # than a repeat: admitted, and the one INSERT the transaction commits.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         fresh = mm.Person(id=9, name="Newton")
@@ -1482,7 +1482,7 @@ def test_an_update_after_a_cancelled_insert_delete_pair_addresses_no_stored_row(
     # cancelled the transaction holds no insert of the object, so an update of
     # it is a write of a row nothing stores and is refused as one — rather than
     # admitted as an UPDATE of a row the store will never hold.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         fresh = mm.Person(id=9, name="Newton")
@@ -1504,7 +1504,9 @@ def test_an_insert_after_a_delete_of_a_flushed_insert_is_still_refused_as_a_repe
     # emits every surviving insert ahead of every delete, so admitting it would
     # send a second INSERT of one primary key to the database ahead of the
     # DELETE that was supposed to clear the way.
-    port = ScriptedPort(Transact(Write(), Read(rows=[{"id": 9, "name": "Newton"}]), Write(times=3)))
+    port = ScriptedAdapter(
+        Transact(Write(), Read(rows=[{"id": 9, "name": "Newton"}]), Write(times=3))
+    )
 
     def fn(tx: Transaction) -> None:
         fresh = mm.Person(id=9, name="Newton")
@@ -1527,7 +1529,7 @@ def test_an_insert_after_a_terminate_until_of_a_pending_insert_opens_the_row_aga
     # no such row: the flush annihilates the pair whole, window-blind, exactly
     # as it does for `delete`. The re-opening is therefore admitted and the
     # transaction commits one INSERT.
-    port = ScriptedPort(Transact(Write(times=6)))
+    port = ScriptedAdapter(Transact(Write(times=6)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
     opened_from = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -1549,7 +1551,7 @@ def test_an_insert_after_a_terminate_until_of_a_flushed_insert_is_still_refused(
     # `[valid_from, until)` and preserves head and tail (m-bitemp-write), so the
     # object is anything but absent — and the ledger keeps it, because the
     # insert it holds is no longer pending. The re-opening is a repeat.
-    port = ScriptedPort(Transact(Write(), Read(rows=[_position_row_dt()]), Write(times=6)))
+    port = ScriptedAdapter(Transact(Write(), Read(rows=[_position_row_dt()]), Write(times=6)))
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
     opened_from = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -1572,7 +1574,7 @@ def test_an_insert_after_a_terminate_until_of_a_flushed_insert_is_still_refused(
 def test_an_insert_after_a_cancelled_insert_terminate_pair_opens_the_milestone_again() -> None:
     # A temporal target spells its removal `terminate`, and the cancellation
     # rule — and so the retirement — is the same one keyed by the object.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
@@ -1600,7 +1602,7 @@ def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb
             tx.update(foreign.edit(balance=Decimal("175.00")))
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-foreign-lifecycle"
 
 
@@ -1616,7 +1618,7 @@ def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
     # the object each value names rather than from a row, so this transaction
     # having an insert to compare against cannot turn a provenance refusal into
     # an `EntityRowError` reported on the value's behalf.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.insert(_TwinRight(id=1, right_only="x"))
@@ -1642,7 +1644,7 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
         tx.update(unkeyed)
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
-        Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-not-stored"
 
 
@@ -1656,7 +1658,7 @@ def test_a_value_short_of_its_own_key_is_still_refused_for_its_provenance() -> N
 # materialized node.                                                           #
 # --------------------------------------------------------------------------- #
 def _person_read_outside_the_writing_transaction(
-    port: ScriptedPort, *, second_handle: bool
+    port: ScriptedAdapter, *, second_handle: bool
 ) -> tuple[Database, Person]:
     """A `Person` a managed read produced, plus the `Database` that will write it.
 
@@ -1670,7 +1672,7 @@ def _person_read_outside_the_writing_transaction(
 
 @pytest.mark.parametrize("second_handle", [True, False], ids=["second-handle", "same-handle"])
 def test_a_read_outside_the_writing_transaction_is_still_this_source(second_handle: bool) -> None:
-    port = ScriptedPort(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
+    port = ScriptedAdapter(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 
     with raises_contextualized(KeyedWriteValueError) as refusal:
@@ -1687,7 +1689,7 @@ def test_an_unversioned_update_of_such_a_value_is_refused_for_its_evidence(
     # arrangement holds one — a second handle's read and this handle's own
     # non-transactional read alike — so the update is refused at the verb,
     # before anything is buffered and before any statement is emitted.
-    port = ScriptedPort(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
+    port = ScriptedAdapter(Read(rows=[{"id": 1, "name": "Ada"}]), Transact())
     writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
 
     with raises_contextualized(WriteEvidenceError) as refusal:
@@ -1702,7 +1704,7 @@ def test_an_unversioned_update_of_a_participating_read_is_addressed_by_its_key()
     # find takes the Locking fallback's shared row lock, and the update it
     # licenses is planned and emitted, addressed by its key alone and gated by
     # nothing.
-    port = ScriptedPort(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[{"id": 1, "name": "Ada"}]), Write()))
 
     def fn(tx: Transaction) -> None:
         node = tx.find(Person.where(Person.id == 1)).result()
@@ -1719,7 +1721,7 @@ def test_update_of_an_unedited_node_buffers_nothing() -> None:
     # The rule the change tracking exists for: writing every value a find
     # returned and editing only some of them is correct code. The unedited one
     # is neither a refusal nor a write.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]))
     )
 
@@ -1734,7 +1736,7 @@ def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:
     # `delete` / `terminate` / `terminateUntil` derive an identity row alone, so
     # the PROVENANCE refusal does not apply to them — what refuses this one is
     # the evidence rule, which finds no observed state behind the value.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.terminate(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))

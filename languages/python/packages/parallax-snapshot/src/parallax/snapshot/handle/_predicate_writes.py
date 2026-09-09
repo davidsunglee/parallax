@@ -51,7 +51,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DatabaseConnection, Row
 from parallax.core.dialect import LockMode
 from parallax.core.document_codec import (
     DocumentShape,
@@ -135,7 +135,7 @@ _ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", 
 def buffer_predicate(
     uow: UnitOfWork,
     model: CatalogedModel,
-    conn: DbPort,
+    conn: DatabaseConnection,
     mutation: PredicateMutation,
     query: ObjectQuery[Any, Any],
     assignments: Sequence[AttributeAssignment[Any]],
@@ -293,7 +293,7 @@ def _reject_uncomposable_assignments(
 def buffer_predicate_instruction(
     uow: UnitOfWork,
     model: CatalogedModel,
-    conn: DbPort,
+    conn: DatabaseConnection,
     instruction: PreparedPredicateWrite,
     attempt: TransactionAttemptActivity,
 ) -> None:
@@ -429,7 +429,7 @@ def _reject_readless_document_many(
 def _materialize_predicate_write(
     uow: UnitOfWork,
     model: CatalogedModel,
-    conn: DbPort,
+    conn: DatabaseConnection,
     instruction: PreparedPredicateWrite,
     entity: EntityMetadata,
     declaring_entity: EntityMetadata,

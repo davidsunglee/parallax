@@ -17,9 +17,10 @@ import jsonschema
 import pytest
 from _second_dialect import BACKTICKED
 
-from _support.db_port import body_outcome, projected_row
+from _support.db_port import ConnectsAsItself, body_outcome, projected_row
 from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
+from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lifecycle_observation import LifecycleRun
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.profile import Profile, profile_for
@@ -27,7 +28,7 @@ from parallax.conformance.provision import Provisioner
 from parallax.core import inheritance
 from parallax.core.base import PresentDocument
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query import AsOfRange, object_query, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
@@ -322,7 +323,7 @@ def test_case_ingress_bounds_missing_inheritance_positions_and_empty_relative_pa
     assert _case_ingress._relative_leaf(None, ()) is None  # pyright: ignore[reportPrivateUsage]
 
 
-class _FakePort:
+class _FakePort(ConnectsAsItself):
     """An in-memory ``m-db-port`` returning canned rows (no Docker)."""
 
     dialect: Dialect = POSTGRES
@@ -336,7 +337,7 @@ class _FakePort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -492,7 +493,7 @@ def test_run_case_ok_through_a_fake_port() -> None:
     assert envelope["observations"]["roundTrips"] == 1
 
 
-class _WritePort:
+class _WritePort(ConnectsAsItself):
     """A port that commits writes and returns canned find rows (no Docker)."""
 
     dialect: Dialect = POSTGRES
@@ -506,7 +507,7 @@ class _WritePort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
@@ -599,7 +600,7 @@ def test_run_case_write_sequence_reports_table_state_and_round_trips() -> None:
     ]
 
 
-class _ManagedPort:
+class _ManagedPort(ConnectsAsItself):
     """A port returning the managed values psycopg decodes for the m-core-001 row."""
 
     dialect: Dialect = POSTGRES
@@ -622,7 +623,7 @@ class _ManagedPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -675,7 +676,7 @@ _ACCESS_WITNESS_CASE = (
 )
 
 
-class _PositionPort:
+class _PositionPort(ConnectsAsItself):
     """A port returning the superseded position milestone the pin-read-only
     contrast's find step selects (no Docker)."""
 
@@ -700,7 +701,7 @@ class _PositionPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -741,7 +742,7 @@ _TX_PAST_READ_ONLY_CLAIM = Claim(
 )
 
 
-class _BalancePort:
+class _BalancePort(ConnectsAsItself):
     """A port returning the superseded balance milestone the finite
     Transaction-Time pin selects (no Docker)."""
 
@@ -764,7 +765,7 @@ class _BalancePort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -871,7 +872,7 @@ _BOUNDARY_CASE = (
 )
 
 
-class _TriggerPort:
+class _TriggerPort(ConnectsAsItself):
     """A port whose Nth `execute_write` raises the scripted failure (no Docker)."""
 
     dialect: Dialect = POSTGRES
@@ -893,7 +894,7 @@ class _TriggerPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -990,7 +991,7 @@ _REJECTED_WRITE_CASE = (
 )
 
 
-class _NeverCalledPort:
+class _NeverCalledPort(ConnectsAsItself):
     """An `m-db-port` that fails loudly if a rejected run ever touches it."""
 
     dialect: Dialect = POSTGRES
@@ -1004,7 +1005,7 @@ class _NeverCalledPort:
         raise AssertionError("a rejected-case run must not execute SQL")
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         raise AssertionError("a rejected-case run must not open a transaction")
 
@@ -1070,7 +1071,7 @@ def test_run_case_rejected_write_reports_the_classified_rule() -> None:
 # `then.rows` are mutually exclusive, so `run_case` must route each read case  #
 # to its own rendering lane, not just the plain-rows fallback.                 #
 # --------------------------------------------------------------------------- #
-class _QueuePort:
+class _QueuePort(ConnectsAsItself):
     """A fake `m-db-port` returning one canned response per `execute()` call,
     in call order (the per-level find executor issues more than one query)."""
 
@@ -1090,7 +1091,7 @@ class _QueuePort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
@@ -1287,7 +1288,7 @@ def test_run_case_graphs_observation_reports_ordered_milestone_pin_graphs() -> N
     assert json.loads(json.dumps(envelope)) == envelope
 
 
-class _WriteAndReadBackPort:
+class _WriteAndReadBackPort(ConnectsAsItself):
     """A no-Docker port that accepts writes (never raising) and answers every
     read with ``rows`` — the resolving read a keyed write's source needs, and
     enough for a writeSequence case's trailing ``read_table_state`` call-back,
@@ -1315,7 +1316,7 @@ class _WriteAndReadBackPort:
         return self._affected.pop(0) if self._affected else 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1370,7 +1371,7 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> No
 # for no other — a case asserting nothing about the stream is handed no        #
 # observed key to explain.                                                     #
 # --------------------------------------------------------------------------- #
-class _AccountPort:
+class _AccountPort(ConnectsAsItself):
     """Returns the one `account.yaml` row `m-execution-lifecycle-001` reads."""
 
     dialect: Dialect = POSTGRES
@@ -1384,7 +1385,7 @@ class _AccountPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 
@@ -1446,7 +1447,7 @@ def test_a_lifecycle_index_naming_a_different_statement_is_an_adapter_error() ->
     real_run = adapter._run  # pyright: ignore[reportPrivateUsage] - the adapter's own dispatch
 
     def _drifted(
-        case: case_format.Case, port: DbPort, lifecycle: LifecycleRun
+        case: case_format.Case, port: CaseDatabase, lifecycle: LifecycleRun
     ) -> tuple[list[engine.Emission], dict[str, Any]]:
         emissions, observations = real_run(case, port, lifecycle)
         drifted = [
@@ -1475,7 +1476,7 @@ _INCLUDE_SCENARIO_CASE = (
 )
 
 
-class _OrderWithItemsPort:
+class _OrderWithItemsPort(ConnectsAsItself):
     """A canned ``m-db-port`` answering the root level then the include level."""
 
     dialect: Dialect = POSTGRES
@@ -1514,7 +1515,7 @@ class _OrderWithItemsPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         return body_outcome(self, body)
 

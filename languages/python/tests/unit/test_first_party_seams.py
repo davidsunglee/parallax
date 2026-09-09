@@ -36,7 +36,7 @@ from _support.db_port import (
     Read,
     ReadCall,
     RollbackCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -45,7 +45,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, TX_TIME
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DatabaseAdapter, Row
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
@@ -118,8 +118,8 @@ def _node(tx: Transaction, query: ObjectQueryNode | None = None) -> WireEntity:
     return tx.wire.find(query if query is not None else _account_query()).result()
 
 
-def _run[T](port: DbPort, fn: Callable[[Transaction], T]) -> T:
-    return account_db(port).transact(fn)
+def _run[T](adapter: DatabaseAdapter, fn: Callable[[Transaction], T]) -> T:
+    return account_db(adapter).transact(fn)
 
 
 # --------------------------------------------------------------------------- #
@@ -128,14 +128,14 @@ def _run[T](port: DbPort, fn: Callable[[Transaction], T]) -> T:
 
 
 def test_a_participating_row_read_publishes_the_rows_it_materialized() -> None:
-    port = ScriptedPort(Transact(Read(rows=[ACCOUNT_ROW])))
+    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW])))
     rows = _run(port, lambda tx: tx.read_rows(_account_query()).rows)
     assert list(rows) == [ACCOUNT_ROW]
     assert port.calls == [BeginCall(), ReadCall(FIND_SQL_UNLOCKED, (3,)), CommitCall()]
 
 
 def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> None:
-    port = ScriptedPort(Read(rows=[dict(ACCOUNT_ROW)]))
+    port = ScriptedAdapter(Read(rows=[dict(ACCOUNT_ROW)]))
     row = account_db(port).read_rows(_account_query()).rows[0]
     assert isinstance(row, Mapping)
     with pytest.raises(TypeError):
@@ -143,13 +143,13 @@ def test_a_published_row_is_detached_from_the_mapping_it_was_built_from() -> Non
 
 
 def test_a_standalone_wire_read_takes_no_lock_and_files_no_record() -> None:
-    port = ScriptedPort(Read(rows=[ACCOUNT_ROW]))
+    port = ScriptedAdapter(Read(rows=[ACCOUNT_ROW]))
     account_db(port).wire.find(_account_query())
     assert port.calls == [ReadCall(FIND_SQL_UNLOCKED, (3,))]
 
 
 def test_a_participating_wire_read_answers_the_state_the_unit_of_work_retained() -> None:
-    port = ScriptedPort(Transact(Read(rows=[ACCOUNT_ROW])))
+    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW])))
 
     def fn(tx: Transaction) -> object:
         claims = published_claims(tx.wire.find(_account_query()))
@@ -167,7 +167,7 @@ def test_a_wire_read_answers_the_claim_of_every_node_it_published() -> None:
     # Every independently writable node carries its own claim, included children
     # among them, so a write against a child settles against the state that
     # child's own row was read at rather than against its root's.
-    port = ScriptedPort(Transact(Read(rows=[_policy_row()]), Read(rows=[_coverage_row()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_policy_row()]), Read(rows=[_coverage_row()])))
     query = object_query_node(
         Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -187,7 +187,7 @@ def test_a_non_hydrating_root_answers_no_claim_for_the_tree_below_it() -> None:
     # nothing and — once the read result is released — no observed state of that
     # row is addressable in the unit of work either. Holding the read's raw
     # sources instead would leave write authority for a row nothing published.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[_policy_row()]), Read(rows=[_coverage_row(amount=None)]))
     )
     query = object_query_node(
@@ -209,7 +209,7 @@ def test_a_non_hydrating_root_answers_no_claim_for_the_tree_below_it() -> None:
 
 
 def test_a_participating_row_read_force_flushes_a_pending_write_first() -> None:
-    port = ScriptedPort(Transact(Read(rows=[ACCOUNT_ROW]), Write(), Read(rows=[ACCOUNT_ROW])))
+    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write(), Read(rows=[ACCOUNT_ROW])))
 
     def fn(tx: Transaction) -> None:
         tx.wire.update(_node(tx), {"balance": "11.00"})
@@ -231,7 +231,7 @@ def test_a_write_eliminated_before_dml_leaves_its_claim_unspent() -> None:
     # the claim it carried is still about stored state — even though the insert
     # beside it in the same flush reached the database and made the plan
     # non-empty.
-    port = ScriptedPort(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
 
     def fn(tx: Transaction) -> RetainedObservation:
         snapshot = tx.wire.find(_account_query())
@@ -255,7 +255,7 @@ def test_a_surviving_write_spends_its_own_claim() -> None:
     # The other half of the same rule: the claim a settled write carried is spent
     # once the executor returns, so a later transaction handed the same still-live
     # evidence is refused rather than writing over what this one wrote.
-    port = ScriptedPort(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
 
     def fn(tx: Transaction) -> RetainedObservation:
         snapshot = tx.wire.find(_account_query())
@@ -277,7 +277,7 @@ def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do(
     # the member-name honesty gate: the payload names nothing undeclared. The
     # Wire verb runs `validate_write` for it, so it is refused with the same
     # classified rule the Typed keyed verbs and the rejected run lane report.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     with raises_contextualized(WriteRejectedError) as raised:
         _run(
             port,
@@ -290,7 +290,7 @@ def test_an_insert_payload_reaches_the_model_aware_validator_the_typed_verbs_do(
 
 
 def test_a_predicate_write_buffers_through_the_shared_predicate_seam() -> None:
-    port = ScriptedPort(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[ACCOUNT_ROW]), Write()))
     _run(port, lambda tx: tx.wire.update_where(_predicate_target(), {"balance": "11.00"}))
     # A versioned target materializes: the resolving read, then one keyed write
     # per resolved row (`m-opt-lock`, ADR 0014) — the readless template is not
@@ -305,14 +305,16 @@ def test_a_predicate_write_buffers_through_the_shared_predicate_seam() -> None:
 
 def test_the_row_read_is_refused_for_an_undeclared_target() -> None:
     with pytest.raises(QueryTargetError):
-        account_db(ScriptedPort()).read_rows(_account_query("parallax.compatibility.NoSuchEntity"))
+        account_db(ScriptedAdapter()).read_rows(
+            _account_query("parallax.compatibility.NoSuchEntity")
+        )
 
 
 def test_a_refused_participating_read_flushes_nothing() -> None:
     # The gate runs BEFORE `uow.read`, whose force-flush would otherwise execute
     # the pending buffer on the way to a read that was going to be refused —
     # turning a refusal into a write. `tx.find` is held to the same ordering.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     query = _account_query("parallax.compatibility.NoSuchEntity")
 
     def fn(tx: Transaction) -> None:
@@ -337,7 +339,7 @@ def test_the_wire_read_reports_a_deferred_feature_by_name() -> None:
         }
     )
     with pytest.raises(DeferredFeatureError) as raised:
-        _policy_db(ScriptedPort()).wire.find(query)
+        _policy_db(ScriptedAdapter()).wire.find(query)
     assert raised.value.features == ("snapshot-history-includes",)
 
 
@@ -345,7 +347,7 @@ def test_a_deferred_participating_read_flushes_nothing() -> None:
     # The classification runs BEFORE `uow.read`, whose force-flush would
     # otherwise execute the pending buffer on the way to a read that was going
     # to be refused — turning a deferral into a write.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Policy",
@@ -378,7 +380,7 @@ def test_a_row_form_read_refuses_the_relationship_levels_it_cannot_materialize()
         }
     )
     with pytest.raises(ValueError, match="row-form read materializes no relationships"):
-        _policy_db(ScriptedPort()).read_rows(query)
+        _policy_db(ScriptedAdapter()).read_rows(query)
 
 
 def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
@@ -386,7 +388,7 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
     # the same side of `uow.read`'s force-flush as the other three: a pending
     # buffered write is still pending when the refusal escapes, and the
     # transaction rolls back having executed no DML.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Order",
@@ -407,7 +409,7 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
 def test_an_ordered_capped_query_carrying_no_includes_still_answers() -> None:
     # The refusal is about a relationship level, not about how many clauses a
     # query fills: ordering and a cap add none.
-    port = ScriptedPort(Read(rows=[_ORDER_ROW]))
+    port = ScriptedAdapter(Read(rows=[_ORDER_ROW]))
     query = deserialize_query(
         {
             "target": "parallax.compatibility.Order",
@@ -419,8 +421,8 @@ def test_an_ordered_capped_query_carrying_no_includes_still_answers() -> None:
     assert db_for(MODELS["orders"], port).read_rows(query).rows == (_ORDER_ROW,)
 
 
-def _policy_db(port: DbPort) -> Database:
-    return db_for(MODELS["policy"], port)
+def _policy_db(adapter: DatabaseAdapter) -> Database:
+    return db_for(MODELS["policy"], adapter)
 
 
 def _insert_policy(tx: Transaction) -> None:
@@ -432,7 +434,7 @@ def _insert_policy(tx: Transaction) -> None:
 
 
 def test_a_milestone_set_wire_read_retains_no_evidence() -> None:
-    port = ScriptedPort(Transact(Read(rows=_balance_history_rows())))
+    port = ScriptedAdapter(Transact(Read(rows=_balance_history_rows())))
     query = object_query_node(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME))
 
     def fn(tx: Transaction) -> object:
@@ -445,7 +447,7 @@ def test_a_milestone_set_wire_read_retains_no_evidence() -> None:
 
 
 def test_a_temporal_record_names_the_state_its_own_milestone_qualifies() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_balance_history_rows()[1]])))
+    port = ScriptedAdapter(Transact(Read(rows=[_balance_history_rows()[1]])))
     query = object_query_node(mm.Balance.where(mm.Balance.id == 1))
 
     def fn(tx: Transaction) -> object:
@@ -460,7 +462,7 @@ def test_a_temporal_record_names_the_state_its_own_milestone_qualifies() -> None
 
 
 def test_an_unversioned_non_temporal_read_retains_no_evidence() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_ORDER_ROW])))
+    port = ScriptedAdapter(Transact(Read(rows=[_ORDER_ROW])))
     query = object_query_node(Order.where(Order.id == 1))
 
     def fn(tx: Transaction) -> object:

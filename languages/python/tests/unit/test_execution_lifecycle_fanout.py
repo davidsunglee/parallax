@@ -24,9 +24,10 @@ from _transact_support import ACCOUNT, FIXED, NEW_ROW
 from _support import mirrored_models as mm
 from _support.db_port import (
     Read,
-    ScriptedPort,
+    ScriptedAdapter,
 )
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseAdapter
+from parallax.core.diagnostics import diagnostic_for
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
     ExecutionLifecycleHandler,
@@ -36,7 +37,6 @@ from parallax.core.execution_lifecycle import (
     ReadStarted,
     RootExecution,
 )
-from parallax.core.execution_lifecycle._diagnostics import diagnostic_for
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database
@@ -107,8 +107,8 @@ def _handler(*children: Any) -> ExecutionLifecycleHandler:
     return opened
 
 
-def _db(port: DbPort, provider: Any) -> Database:
-    return connect(port, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
+def _db(adapter: DatabaseAdapter, provider: Any) -> Database:
+    return connect(adapter, ACCOUNT, clock=FixedClock(FIXED), lifecycle_provider=provider)
 
 
 def test_an_empty_fan_out_is_refused_at_construction() -> None:
@@ -186,7 +186,7 @@ def test_a_child_opening_failure_aborts_the_root_and_discards_what_opened() -> N
     first = _Child("first")
     failing = _Child("second", opening_failure=RuntimeError("the exporter is not configured"))
     later = _Child("third")
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     db = _db(port, FanoutLifecycleProvider([first, failing, later]))
 
     with pytest.raises(ExecutionLifecycleProviderError):
@@ -318,7 +318,7 @@ def test_a_report_about_the_composite_itself_reaches_every_composed_provider() -
 
 def test_a_fan_out_installed_through_connect_observes_a_whole_read() -> None:
     children = [_Child("metrics"), _Child("tracing")]
-    port = ScriptedPort(Read(rows=[NEW_ROW]))
+    port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     db = _db(port, FanoutLifecycleProvider(children))
     db.find(mm.Account.where(mm.Account.id == 7)).result()
 

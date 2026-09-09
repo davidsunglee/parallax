@@ -22,8 +22,8 @@ from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ReadCall,
-    RefusingPort,
-    ScriptedPort,
+    RefusingAdapter,
+    ScriptedAdapter,
     Transact,
     WriteCall,
 )
@@ -31,7 +31,7 @@ from parallax.conformance import case_format, engine, models, vo_models, write_v
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.core.base import SQL_NULL, PresentDocument
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DatabaseAdapter, Row
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect, prepare_model
 from parallax.snapshot.handle import Database, Transaction
@@ -47,8 +47,8 @@ _TARGET_ROW: Row = {
 }
 
 
-def _db(port: DbPort) -> Database:
-    return connect(port, ACCOUNT_MODEL, clock=FixedClock(FIXED))
+def _db(adapter: DatabaseAdapter) -> Database:
+    return connect(adapter, ACCOUNT_MODEL, clock=FixedClock(FIXED))
 
 
 # The second source takes a prepared selection, as the source under test does;
@@ -63,7 +63,7 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     case: case_format.Case,
 ) -> None:
     steps = write_value_runner.write_value_steps(case)
-    port = ScriptedPort(Transact(Read(rows=[_TARGET_ROW], times=len(steps))))
+    port = ScriptedAdapter(Transact(Read(rows=[_TARGET_ROW], times=len(steps))))
     another = AnotherSource(prepare_model(ACCOUNT_MODEL, edition=engine.case_edition(case)), port)
 
     def fn(tx: Transaction) -> list[str | None]:
@@ -99,13 +99,13 @@ def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -
     # `unmanaged` is the one provenance no managed read produces, so arranging it
     # reaches no port at all. The other two are reads, each through the source
     # whose provenance the token names.
-    unreachable = AnotherSource(_ACCOUNT, RefusingPort())
+    unreachable = AnotherSource(_ACCOUNT, RefusingAdapter())
 
     def fn(tx: Transaction) -> Account:
         return write_value_runner.value_of("unmanaged", tx, unreachable)
 
     value = Database.connect(
-        ScriptedPort(Transact()), ACCOUNT_MODEL, clock=FixedClock(FIXED)
+        ScriptedAdapter(Transact()), ACCOUNT_MODEL, clock=FixedClock(FIXED)
     ).transact(fn)
     assert isinstance(value, Account)
 
@@ -116,7 +116,7 @@ def test_the_second_source_materializes_from_a_read_and_recognizes_its_own() -> 
     # recognizes its own. A sibling source over the same store claims nothing of
     # this one's, which is what makes recognition per-source rather than a test
     # for managed-ness in general.
-    port = ScriptedPort(Read(rows=[_TARGET_ROW]))
+    port = ScriptedAdapter(Read(rows=[_TARGET_ROW]))
     another = AnotherSource(_ACCOUNT, port)
 
     (value,) = another.find(Account.where(Account.id == write_value_runner.TARGET_ID))
@@ -138,14 +138,14 @@ def test_the_second_source_takes_only_a_class_backed_selection() -> None:
     # refused where the source is built rather than at its first read.
     descriptor_backed = models.load_domain_model(models.default_models_dir() / "account.yaml")
     with pytest.raises(ValueError, match="class-backed Domain Model"):
-        AnotherSource(prepare_model(descriptor_backed, edition="account"), RefusingPort())
+        AnotherSource(prepare_model(descriptor_backed, edition="account"), RefusingAdapter())
 
 
 def test_the_second_source_refuses_a_deep_fetch_before_reading() -> None:
     # It populates no relationship view, so a query asking for one is refused at
     # the query rather than read and then answered without its levels — and the
     # raising port proves the refusal precedes the read.
-    another = AnotherSource(_ORDERS, RefusingPort())
+    another = AnotherSource(_ORDERS, RefusingAdapter())
 
     with pytest.raises(ValueError, match="flat graphs only"):
         another.find(Order.where(Order.id == 1).include(Order.items))
@@ -194,7 +194,7 @@ def test_a_case_whose_total_disagrees_with_its_steps_is_loud() -> None:
 
 
 def test_an_unrecognized_provenance_token_is_loud() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     another = AnotherSource(_ACCOUNT, port)
 
     def fn(tx: Transaction) -> Account:
@@ -221,7 +221,7 @@ def test_an_unrecognized_provenance_token_is_loud() -> None:
 def test_a_graded_mismatch_is_loud_in_either_direction(
     step: write_value_runner.WriteValueStep, message: str
 ) -> None:
-    port = ScriptedPort(Transact(Read(rows=[_TARGET_ROW])))
+    port = ScriptedAdapter(Transact(Read(rows=[_TARGET_ROW])))
     another = AnotherSource(_ACCOUNT, port)
 
     def fn(tx: Transaction) -> str | None:
@@ -239,7 +239,7 @@ def test_the_second_source_builds_its_own_value_objects_at_every_depth() -> None
     # materializer's private drive. The recursive composite is what states it —
     # a top-level One, a nested One, and a nested Many, each at a depth the walk
     # has to reach on its own.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(
             rows=[
                 {
@@ -274,7 +274,7 @@ def test_the_second_source_leaves_an_unstored_occurrence_out_of_what_it_builds()
     # The complement, and the one the positional row makes worth stating: a
     # column the row holds no document in reads as absence, and absence is an
     # entry the writer never receives rather than a record holding nothing.
-    port = ScriptedPort(Read(rows=[{"id": 8, "name": "Bo", "address": SQL_NULL}]))
+    port = ScriptedAdapter(Read(rows=[{"id": 8, "name": "Bo", "address": SQL_NULL}]))
     another = AnotherSource(_CUSTOMER, port)
 
     (value,) = another.find(vo_models.Customer.where(vo_models.Customer.id == 8))

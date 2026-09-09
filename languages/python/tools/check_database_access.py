@@ -65,19 +65,28 @@ ENTRY_POINT_FIXTURE = "profile_run"
 CLASSIFIER_CONSTANT = "_DATABASE_FIXTURES"
 
 # Fully qualified callables that acquire a live database. Constructing the
-# provisioner or a container starts a server; the ``connect`` and ``open`` seams
-# open a socket to one; constructing a provisioned run opens the profile's own
-# provisioning. Constructing `PostgresAdapter` over an already-open connection is
-# deliberately absent: the internal-behavior surface wraps fakes with it, and so
-# is constructing either scoped control, which likewise takes an adapter already
-# opened — only the ``open`` that opens one for itself acquires anything.
+# provisioner or a container starts a server; every ``open`` seam here opens a
+# socket to one; constructing a provisioned run opens the profile's own
+# provisioning. Constructing `PostgresAdapter` is deliberately absent, and now
+# for a stronger reason than before: it is immutable configuration that opens
+# nothing at all, so what acquires is `PostgresAdapter.open`. Constructing
+# either scoped control is likewise absent, since both take a session somebody
+# else opened — only the ``open`` that opens one for itself acquires anything.
+#
+# The adapter's ``open`` is an instance method, so the dotted resolution below
+# reaches it when it is named through the class rather than through a value. It
+# is declared anyway, because what actually bounds reaching a live SERVER is the
+# container: a connection string is the container's to hand out, so a test that
+# never reaches `PostgresContainer` or `Provisioner` has nothing for an adapter
+# it configured itself to open.
 DATABASE_SEAMS: frozenset[str] = frozenset(
     {
         "parallax.conformance._postgres_control.PostgresControl.open",
         "parallax.conformance._postgres_control.PostgresInterleavedExecution.open",
+        "parallax.conformance._postgres_control.open_session",
         "parallax.conformance.profile.ProvisionedRun",
         "parallax.conformance.provision.Provisioner",
-        "parallax.postgres.PostgresAdapter.connect",
+        "parallax.postgres.PostgresAdapter.open",
         "psycopg.connect",
         "testcontainers.community.postgres.PostgresContainer",
     }

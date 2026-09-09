@@ -41,7 +41,7 @@ from _transact_support import (
 from _support.clock_probes import instant_at
 from _support.db_port import (
     Read,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -842,7 +842,7 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
     # leaves the first read's evidence intact. Driven through the developer verbs
     # rather than a hand-supplied observation because the misresolution is in how
     # the observation is resolved, which a lowering-only probe cannot see.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[_CURRENT_RECTANGLE]), Read(rows=[_RETROACTIVE_RECTANGLE]), Write(times=3)
         )

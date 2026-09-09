@@ -84,7 +84,7 @@ from typing import cast
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import TIMESTAMP
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseConnection
 from parallax.core.execution_lifecycle._activity import (
     TransactionAttemptActivity,
     refuse_reentry,
@@ -182,7 +182,7 @@ class WireWriteLane:
     """
 
     keyed: KeyedWriteContext
-    conn: DbPort
+    conn: DatabaseConnection
     attempt: TransactionAttemptActivity
 
 

@@ -45,7 +45,7 @@ from _support.db_port import (
     CommitCall,
     Read,
     ReadCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -55,7 +55,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME
 from parallax.core.base import SQL_NULL, PresentDocument
-from parallax.core.db_port import DbPort, JsonDocument, Row
+from parallax.core.db_port import DatabaseConnection, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope
@@ -105,7 +105,7 @@ def _recording_find(recorded: list[_RecordedFind]) -> Callable[..., FindResult]:
     def recording(
         query: ValidatedObjectQuery,
         model: CatalogedModel,
-        port: DbPort,
+        port: DatabaseConnection,
         *,
         preference: Concurrency | None = None,
         ledger: ObservationLedger | None = None,
@@ -131,7 +131,7 @@ def test_a_standalone_find_stamps_no_participation_on_the_evidence_it_retains() 
     # value's write evidence belongs to the value. What its sources lack is
     # participation, which is exactly what an effective-Locking write asks for.
     calls: list[_RecordedFind] = []
-    port = ScriptedPort(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
+    port = ScriptedAdapter(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     db = db_for(BALANCE, port)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(read_scope_module, "find", _recording_find(calls))
@@ -148,7 +148,7 @@ def test_a_participating_find_stamps_its_transactions_own_participation() -> Non
     # behind it, so it hands the executor that unit of work as the ledger and
     # every source it produces carries that transaction's participation.
     calls: list[_RecordedFind] = []
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     )
     db = db_for(BALANCE, port)
@@ -166,7 +166,7 @@ def test_a_non_hydrating_find_retains_no_evidence() -> None:
     # root licenses no later write: no conforming value exists for it, so it is
     # observed by nothing and no source stands behind it.
     calls: list[_RecordedFind] = []
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]))
     )
 
@@ -204,7 +204,7 @@ def test_every_attached_level_row_retains_its_own_evidence() -> None:
         "out_z": INFINITY_INSTANT,
     }
     calls: list[_RecordedFind] = []
-    port = ScriptedPort(Transact(Read(rows=[policy_row]), Read(rows=[coverage_row])))
+    port = ScriptedAdapter(Transact(Read(rows=[policy_row]), Read(rows=[coverage_row])))
     db = db_for(POLICY_MODEL, port)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(read_scope_module, "find", _recording_find(calls))
@@ -225,7 +225,7 @@ def test_find_on_a_non_versioned_entity_retains_no_observed_state() -> None:
     # `optimisticLocking` version column (every Payment-family member) observes
     # no state at all, never raising and never retaining evidence a later write
     # could gate on.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[{"id": 1, "amount": Decimal("100.00"), "card_network": "Visa"}]))
     )
 
@@ -239,7 +239,7 @@ def test_find_on_a_non_versioned_entity_retains_no_observed_state() -> None:
 def test_find_force_flushes_pending_writes_first() -> None:
     # Read-your-own-writes: the buffered insert executes BEFORE the dependent
     # read, inside the same still-open transaction (m-unit-work-001's shape).
-    port = ScriptedPort(Transact(Write(), Read(rows=[NEW_ROW])))
+    port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW])))
 
     def fn(tx: Transaction) -> list[mm.Account]:
         tx.insert(new_account())
@@ -262,7 +262,7 @@ def test_find_force_flushes_pending_writes_first() -> None:
 def test_an_explicit_optimistic_preference_reads_a_versioned_entity_lock_free() -> None:
     # Explicit and omitted resolve identically, so this pins the same statement
     # every default-preference find of a versioned Entity above already renders.
-    port = ScriptedPort(Transact(Read()))
+    port = ScriptedAdapter(Transact(Read()))
     account_db(port).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="optimistic"
     )
@@ -272,7 +272,7 @@ def test_an_explicit_optimistic_preference_reads_a_versioned_entity_lock_free() 
 def test_the_locking_preference_reads_a_versioned_entity_under_the_shared_lock() -> None:
     # The workflow-level override: `locking` forces the Locking strategy onto an
     # Entity whose own facet would otherwise supply a gate.
-    port = ScriptedPort(Transact(Read()))
+    port = ScriptedAdapter(Transact(Read()))
     account_db(port).transact(
         lambda tx: tx.find(mm.Account.where(mm.Account.id == 7)), concurrency="locking"
     )
@@ -282,7 +282,7 @@ def test_the_locking_preference_reads_a_versioned_entity_under_the_shared_lock()
 def test_a_default_preference_read_of_an_unversioned_entity_takes_the_shared_lock() -> None:
     # The mandatory Locking fallback: an unversioned Non-Temporal family
     # supplies no gate, so `optimistic` cannot mean lock-free for it.
-    port = ScriptedPort(Transact(Read(rows=[])))
+    port = ScriptedAdapter(Transact(Read(rows=[])))
     db_for(mx.MIXED_STRATEGY_MODEL, port).transact(
         lambda tx: tx.find(mx.ConsignmentLeg.where(mx.ConsignmentLeg.id == 1))
     )
@@ -304,7 +304,7 @@ def test_one_default_transaction_locks_the_unversioned_level_and_not_the_version
     # strategies. The versioned root's statement carries no suffix because its
     # write gate is the authority; the unversioned level's does, because a
     # shared lock is the only correctness mechanism its family has.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
             Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
@@ -331,7 +331,7 @@ def test_the_locking_preference_locks_every_level_of_the_same_deep_fetch() -> No
     # The same read under the override: one preference forcing one strategy
     # onto both Entities, which is what makes the mixed result above a
     # derivation rather than a property of the model alone.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "total": Decimal("10.00"), "version": 1}]),
             Read(rows=[{"id": 5, "consignment_id": 1, "carrier": "Hansa"}]),
@@ -351,7 +351,7 @@ def test_the_locking_preference_locks_every_level_of_the_same_deep_fetch() -> No
 def test_a_standalone_find_never_locks_whatever_the_entity_declares() -> None:
     # `db.find` owns no unit of work, so there is no participation to derive a
     # strategy from and the Locking fallback cannot reach it.
-    port = ScriptedPort(Read(rows=[]))
+    port = ScriptedAdapter(Read(rows=[]))
     db_for(mx.MIXED_STRATEGY_MODEL, port).find(mx.ConsignmentLeg.where(mx.ConsignmentLeg.id == 1))
     assert port.calls == [
         ReadCall(
@@ -369,7 +369,7 @@ def test_db_find_pins_an_explicit_as_of_statement() -> None:
     # `.as_of(tx_time=LATEST)` pin comes back on the returned `Snapshot`.
     from parallax.core import LATEST
 
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(
             rows=[
                 {
@@ -396,7 +396,7 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     from parallax.core import LATEST
     from parallax.snapshot import edge_of
 
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(
             rows=[
                 {
@@ -432,7 +432,7 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
     # (`transaction-time-pin-read-only`), and no concurrency mode is a way past
     # that, because the Transaction-Time past is never rewritten. The mode
     # therefore selects nothing here, which is the point of parametrizing it.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     )
     db = db_for(BALANCE, port)
@@ -456,7 +456,7 @@ def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:
     # An OMITTED axis (the default-latest pin) licenses a locking-mode write:
     # the read observed the CURRENT milestone, so the shared read lock
     # genuinely protects the row the ungated close targets.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write())
     )
     db = db_for(BALANCE, port)
@@ -479,7 +479,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
     # it with the observed payload rather than dropping untouched fields. Balance
     # is Transaction-Time temporal, so the default preference resolves it to the
     # Optimistic strategy and the close binds the observed `in_z` as its gate.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]), Write(times=2)
         )
@@ -525,7 +525,7 @@ def _branch_row(*, address: dict[str, object] | None) -> Row:
 def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> None:
     # Rectangle splitting consumes the observed Valid-Time bounds and full payload.
     # A real find-then-update makes both facts observable in the emitted DML.
-    port = ScriptedPort(Transact(Read(rows=[_branch_row(address=None)]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_branch_row(address=None)]), Write(times=3)))
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
@@ -565,7 +565,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
         "geo": {"country": "FI"},
         "phones": [],
     }
-    port = ScriptedPort(Transact(Read(rows=[_branch_row(address=address)]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_branch_row(address=address)]), Write(times=3)))
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
@@ -588,7 +588,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
 def test_a_materialized_temporal_node_still_populates_real_axis_values() -> None:
     # A materialized read passes every fetched column, so its axis fields contain
     # the row's coordinates rather than fresh-instance defaults.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))]))
     )
     db = db_for(BALANCE, port)
@@ -620,7 +620,7 @@ def _balance_history_rows() -> list[Row]:
 def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
     from parallax.core import Pin
 
-    port = ScriptedPort(Read(rows=_balance_history_rows()))
+    port = ScriptedAdapter(Read(rows=_balance_history_rows()))
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
     # `.limit(...)` after `.history()` also pins that a cap is a SIBLING clause:
     # `scans_an_axis` reads the Temporal Selection map, so no other clause can
@@ -632,7 +632,7 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
 
 def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement() -> None:
-    port = ScriptedPort(Transact(Read(rows=_balance_history_rows())))
+    port = ScriptedAdapter(Transact(Read(rows=_balance_history_rows())))
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
     statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME)
     snapshot = db.transact(lambda tx: tx.find(statement))
@@ -657,7 +657,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
     # root; every root of the `.history()` read carries none, and each stands at
     # its own milestone's from-instant — a finite Transaction-Time coordinate the
     # keyed verbs refuse to write through, so no DML is derived at all.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(Read(rows=[balance_row(in_z=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))])),
         Transact(Read(rows=_balance_history_rows())),
     )
@@ -684,7 +684,7 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
 # --------------------------------------------------------------------------- #
 def test_stale_web_edit_balance_render_then_submit_gates_on_the_observed_edge() -> None:
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[balance_row(in_z=in_z)]),
         Transact(Read(rows=[balance_row(in_z=in_z)]), Write(times=2)),
     )
@@ -719,7 +719,7 @@ def test_stale_web_edit_balance_submit_refuses_a_milestone_superseded_before_the
     # authored — the earlier of the two points staleness surfaces at.
     rendered_in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     superseding_in_z = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[balance_row(in_z=rendered_in_z)]),
         Transact(Read(rows=[balance_row(in_z=superseding_in_z)])),
     )
@@ -741,7 +741,7 @@ def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict(
     # window `optimistic` covers by gating and `locking` covers by holding a
     # shared read lock on the row the comparison passed on.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[balance_row(in_z=in_z)]),
         Transact(Read(rows=[balance_row(in_z=in_z)]), Write(affected=0)),
     )
@@ -771,7 +771,7 @@ def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None
     # is COMPARED against the rectangle's current milestone.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[_branch_milestone_row(from_z=from_z, in_z=in_z)]),
         Transact(Read(rows=[_branch_milestone_row(from_z=from_z, in_z=in_z)]), Write(times=3)),
     )
@@ -811,7 +811,7 @@ def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     rendered_in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
     superseding_in_z = dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[_branch_milestone_row(from_z=from_z, in_z=rendered_in_z)]),
         Transact(Read(rows=[_branch_milestone_row(from_z=from_z, in_z=superseding_in_z)])),
     )
@@ -843,7 +843,7 @@ def test_tx_find_refuses_a_foreign_target_with_no_adapter_activity() -> None:
         tx.find(mm.Person.where(mm.Person.id == 1))
 
     with raises_contextualized(QueryTargetError) as caught:
-        Database.connect(ScriptedPort(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+        Database.connect(ScriptedAdapter(Transact()), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.code == "query-target-not-in-model"
 
 
@@ -860,15 +860,15 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
         )
 
     with raises_contextualized(DeferredFeatureError) as caught:
-        Database.connect(ScriptedPort(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)).transact(
-            fn
-        )
+        Database.connect(
+            ScriptedAdapter(Transact()), POLICY_MODEL, clock=FixedClock(FIXED)
+        ).transact(fn)
     assert caught.value.code == "execution-feature-deferred"
     assert caught.value.features == ("snapshot-history-includes",)
 
 
 def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.insert(new_account())
@@ -921,7 +921,7 @@ def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -
     # is observed under the row's own `Coverage`, which is what
     # `tx.terminate(policy.coverages[0], ...)` looks up.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[_policy_row(from_z)]), Read(rows=[_coverage_row(from_z)]), Write(times=2)
         )
@@ -944,7 +944,7 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
     # the verb: the update's advance and its optimistic gate both come from the
     # included level's own observation, so a lookup that missed it would raise
     # `UnobservedVersionError` before any DML.
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "name": "V-1"}]),
             Read(rows=[{"id": 10, "vault_id": 1, "memo": "before", "version": 4}]),
@@ -970,7 +970,7 @@ def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write()
     # table's tag column. The observation follows the ROW, so the close names
     # `Tug` and still finds it.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(rows=[{"id": 1, "name": "F-1"}]),
             Read(
@@ -1020,7 +1020,7 @@ def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> No
     # the query's target would observe both under `Vessel`, which no keyed write
     # ever names.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Transact(
             Read(
                 rows=[

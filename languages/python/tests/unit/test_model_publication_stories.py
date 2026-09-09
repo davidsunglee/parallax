@@ -17,14 +17,15 @@ from typing import Any
 
 import pytest
 
-from _support.db_port import body_outcome
+from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import model_publication_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL, NICKNAMED_ACCOUNT_MODEL
 from parallax.core.db_port import (
     BeginFailed,
     Bind,
     CallbackRaised,
-    DbPort,
+    DatabaseAdapter,
+    DatabaseConnection,
     RollbackFailed,
     Row,
     TransactionOutcome,
@@ -50,7 +51,7 @@ _ROLLOUT_INDEX = CreatedIndex(
 )
 
 
-class _AccountPort:
+class _AccountPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def __init__(self) -> None:
@@ -74,7 +75,7 @@ class _AccountPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 
@@ -85,7 +86,7 @@ class _UnopenablePort(_AccountPort):
         self.error = error
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         return BeginFailed(self.error)
 
@@ -115,14 +116,14 @@ class _UnrollbackablePort(_AccountPort):
         self.rollback_error = rollback_error
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         return RollbackFailed(CallbackRaised(self.trigger), self.rollback_error)
 
 
 def test_the_documented_update_prepares_applies_then_publishes() -> None:
     port = _AccountPort()
-    update = stories.a_running_service_publishes_an_evolved_model_without_restarting(port)
+    update = stories.a_running_service_publishes_an_evolved_model_without_restarting(port, port)
 
     # One handle, never reconnected: what moved is the selection its executions
     # adopt, and the transaction after the publication adopted the later one.
@@ -169,7 +170,7 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
     port = _AccountPort()
     connected: list[tuple[ServingModel, ModelSelection, Database]] = []
 
-    def connect_and_hold(adapter: DbPort, serving: ServingModel) -> Database:
+    def connect_and_hold(adapter: DatabaseAdapter, serving: ServingModel) -> Database:
         db = connect(adapter, serving)
         connected.append((serving, serving.current(), db))
         return db
@@ -189,7 +190,7 @@ def test_a_candidate_that_cannot_be_prepared_leaves_the_earlier_edition_serving(
     monkeypatch.setattr(graph_construction_module, "_entity_facts", refuse_the_candidate)
 
     with pytest.raises(GraphConstructionError):
-        stories.a_running_service_publishes_an_evolved_model_without_restarting(port)
+        stories.a_running_service_publishes_an_evolved_model_without_restarting(port, port)
 
     ((serving, a, db),) = connected
     assert port.writes == []
@@ -236,7 +237,7 @@ def test_the_generated_delta_that_did_not_apply_publishes_nothing() -> None:
     # the new member — the one an adopted later edition would make — never runs.
     port = _RefusingPort(RuntimeError("relation is locked"))
     with pytest.raises(stories.UnpublishableUpdateError):
-        stories.a_running_service_publishes_an_evolved_model_without_restarting(port)
+        stories.a_running_service_publishes_an_evolved_model_without_restarting(port, port)
 
     assert port.writes == []
 
@@ -301,8 +302,8 @@ def test_the_snippet_the_usage_guide_renders_is_the_source_that_ran() -> None:
     assert "def unilateral" in snippet
     assert "def apply_schema_delta" in snippet
     assert snippet.index("prepare_model(NICKNAMED_ACCOUNT_MODEL") < snippet.index(
-        "apply_schema_delta(port, delta)"
+        "apply_schema_delta(schema, delta)"
     )
-    assert snippet.index("apply_schema_delta(port, delta)") < snippet.index(
+    assert snippet.index("apply_schema_delta(schema, delta)") < snippet.index(
         "serving.publish(b, expected=a)"
     )

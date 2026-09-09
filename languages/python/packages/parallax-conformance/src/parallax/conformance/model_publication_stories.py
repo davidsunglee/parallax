@@ -29,7 +29,8 @@ from parallax.conformance.story_models import (
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
-    DbPort,
+    DatabaseAdapter,
+    DatabaseConnection,
     RollbackFailed,
     RolledBack,
 )
@@ -105,7 +106,7 @@ def unilateral(evolution: Evolution, /) -> UnilateralEvolution:
     )
 
 
-def apply_schema_delta(port: DbPort, delta: SchemaDelta, /) -> tuple[CreatedIndex, ...]:
+def apply_schema_delta(port: DatabaseConnection, delta: SchemaDelta, /) -> tuple[CreatedIndex, ...]:
     """Apply every statement of ``delta``, in order, in the host's OWN boundary.
 
     Parallax applies no schema change: these statements are the application's to
@@ -163,17 +164,24 @@ class PublishedUpdate:
 
 
 def a_running_service_publishes_an_evolved_model_without_restarting(
-    port: DbPort, /
+    adapter: DatabaseAdapter, schema: DatabaseConnection, /
 ) -> PublishedUpdate:
     """Prepare, apply, publish — in that order — with the service still serving.
 
-    ``port`` is the shipped adapter over the story database, already carrying
-    the earlier edition's schema. The handle is connected once, before the
-    update, and never reconnected: what changes under it is the selection its
-    executions adopt, which is what "without restarting" means here.
+    ``adapter`` is the shipped adapter's configuration for the story database,
+    already carrying the earlier edition's schema. The handle is connected once,
+    before the update, and never reconnected: what changes under it is the
+    selection its executions adopt, which is what "without restarting" means
+    here. Its runtime, and every connection an execution acquires from it,
+    belong to that handle until it closes.
+
+    ``schema`` is a connection the DEPLOYMENT owns, not one of the handle's:
+    Parallax applies no schema change, so the delta below runs where the
+    application's own migrations run rather than on a connection borrowed from
+    the pool that is serving traffic.
     """
     serving = ServingModel(prepare_model(ACCOUNT_MODEL, edition="2026-09-a"))
-    db = connect(port, serving)
+    db = connect(adapter, serving)
     before = db.transact(lambda tx: tx.edition)
 
     a = serving.current()
@@ -190,8 +198,8 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
     # The statements are applied exactly as given — never reordered,
     # deduplicated, or made idempotent — because a delta states what must happen
     # to a database at the earlier edition rather than reconciling an unknown one.
-    delta = schema_delta(evolution, port.dialect)
-    created_indices = apply_schema_delta(port, delta)
+    delta = schema_delta(evolution, schema.dialect)
+    created_indices = apply_schema_delta(schema, delta)
 
     # Only now. Publication ASSERTS that the physical schema already satisfies
     # what is being published, so every execution that adopts B afterwards finds
@@ -208,6 +216,9 @@ def a_running_service_publishes_an_evolved_model_without_restarting(
         return tx.edition, named.nickname
 
     after, nickname = db.transact(name_the_account)
+    # The service outlives one update; this story does not, so it closes the
+    # handle it opened. An application closes its own at shutdown instead.
+    db.close()
     return PublishedUpdate(
         before_edition=before,
         statements=delta.statements,

@@ -22,9 +22,10 @@ from _transact_support import ACCOUNT, NEW_ROW, PERSON
 from _support import mirrored_models as mm
 from _support.adoption import raises_contextualized
 from _support.db_port import (
+    ConnectsAsItself,
     Read,
-    RefusingPort,
-    ScriptedPort,
+    RefusingAdapter,
+    ScriptedAdapter,
     Transact,
 )
 from _support.document_reads import fold_mapping_rows
@@ -33,7 +34,7 @@ from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObject, attr, deep_fetch
 from parallax.core.base import INFINITY
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
@@ -171,17 +172,17 @@ def _cataloged(model: Metamodel) -> CatalogedModel:
     return CatalogedModel(model)
 
 
-def _find(query: ObjectQueryNode, model: Metamodel, port: DbPort) -> handle.FindResult:
+def _find(query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection) -> handle.FindResult:
     return handle.find(preflight(query, model=model, form="graph"), _cataloged(model), port)
 
 
 def _find_history(
-    query: ObjectQueryNode, model: Metamodel, port: DbPort
+    query: ObjectQueryNode, model: Metamodel, port: DatabaseConnection
 ) -> handle.HistoryFindResult:
     return handle.find_history(preflight(query, model=model, form="graph"), _cataloged(model), port)
 
 
-class QueuePort:
+class QueuePort(ConnectsAsItself):
     """A fake `m-db-port` returning one canned response per `execute()` call,
     in call order — enough to drive the executor's own per-level loop without
     a real database."""
@@ -205,7 +206,7 @@ class QueuePort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
@@ -646,7 +647,7 @@ def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None
     # RuntimeError and why it names neither the query nor the model. Preflight
     # resolves the target before anything else, so the port is never touched:
     # A refusing port raises on any read or write.
-    db = handle.Database.connect(RefusingPort(), ACCOUNT)
+    db = handle.Database.connect(RefusingAdapter(), ACCOUNT)
     with pytest.raises(QueryTargetError) as caught:
         db.find(mm.Person.where(mm.Person.id == 1))
     assert caught.value.code == "query-target-not-in-model"
@@ -657,7 +658,7 @@ def test_db_find_refuses_a_deferred_execution_feature_by_name() -> None:
     # not built yet, so the refusal names the Feature rather than calling the
     # query wrong. A refusing port raises on any read or write: classification runs
     # before SQL generation, connection acquisition, and adapter access alike.
-    db = handle.Database.connect(RefusingPort(), POLICY_MODEL)
+    db = handle.Database.connect(RefusingAdapter(), POLICY_MODEL)
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -685,7 +686,7 @@ def test_result_shaping_clauses_do_not_hide_a_deferred_feature() -> None:
     # Ordering and a cap are siblings of the two clauses the deferral is read
     # off, so neither can stand between them: a deferral is a property of the
     # read, never of how its rows are shaped afterwards.
-    db = handle.Database.connect(RefusingPort(), POLICY_MODEL)
+    db = handle.Database.connect(RefusingAdapter(), POLICY_MODEL)
     query = (
         Policy.where(Policy.all)
         .history(TX_TIME)
@@ -704,7 +705,7 @@ def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
     # step 3, so the connected model's inability to answer at all is what
     # surfaces — a deferral result is never exposed for a query the model does
     # not even declare a target for.
-    db = handle.Database.connect(RefusingPort(), ACCOUNT)
+    db = handle.Database.connect(RefusingAdapter(), ACCOUNT)
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )
@@ -785,7 +786,7 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
     # The counterpart the single translation exists to keep separate: a refusal
     # raised before any graph was being built is never re-classified as a
     # materialization failure.
-    db = handle.Database.connect(RefusingPort(), ACCOUNT)
+    db = handle.Database.connect(RefusingAdapter(), ACCOUNT)
     with pytest.raises(QueryTargetError):
         db.find(Policy.where(Policy.all).as_of(valid_time=LATEST))
 
@@ -1341,7 +1342,7 @@ def test_a_standalone_find_and_a_transaction_report_one_edition_until_a_publicat
     a = prepare_model(ACCOUNT, edition="ledger-a")
     b = prepare_model(ACCOUNT, edition="ledger-b")
     serving = ServingModel(a)
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[NEW_ROW]),
         Read(rows=[NEW_ROW]),
         Read(rows=[NEW_ROW]),
@@ -1349,7 +1350,7 @@ def test_a_standalone_find_and_a_transaction_report_one_edition_until_a_publicat
         Read(rows=[NEW_ROW]),
         Transact(Read(rows=[NEW_ROW])),
     )
-    db = handle.Database(port, serving)
+    db = handle.Database.connect(port, serving)
 
     found = db.find(_account_query())
     wired = db.wire.find(_account_node())
@@ -1378,8 +1379,8 @@ def test_a_delayed_refusal_from_a_keeps_a_inside_a_transaction_under_b() -> None
     a = prepare_model(ACCOUNT, edition="ledger-a")
     b = prepare_model(ACCOUNT, edition="ledger-b")
     serving = ServingModel(a)
-    port = ScriptedPort(Read(rows=[{**NEW_ROW, "balance": None}]), Transact())
-    db = handle.Database(port, serving)
+    port = ScriptedAdapter(Read(rows=[{**NEW_ROW, "balance": None}]), Transact())
+    db = handle.Database.connect(port, serving)
 
     snapshot = db.find(_account_query())
     serving.publish(b, expected=a)

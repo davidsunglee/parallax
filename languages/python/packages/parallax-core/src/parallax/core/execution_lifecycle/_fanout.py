@@ -16,12 +16,12 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
+from parallax.core.diagnostics import diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._activity import (
     ExecutionLifecycleHandler,
     ExecutionLifecycleProvider,
     report_to,
 )
-from parallax.core.execution_lifecycle._diagnostics import diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._errors import ExecutionLifecycleHandlerError
 from parallax.core.execution_lifecycle._events import ExecutionEvent, RootExecution
 

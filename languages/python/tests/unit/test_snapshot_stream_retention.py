@@ -138,9 +138,9 @@ from memory_instruments import (
     whole_heap,
 )
 
-from _support.db_port import body_outcome, projected_row
+from _support.db_port import ConnectsAsItself, body_outcome, projected_row
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
-from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.snapshot import SnapshotStream
@@ -274,7 +274,7 @@ def _account_row(account_id: int) -> Row:
     }
 
 
-class _GeneratingPort:
+class _GeneratingPort(ConnectsAsItself):
     """A port that answers each page from a counter and retains nothing.
 
     A recording port would grow with the result on its own and swamp the reading
@@ -328,7 +328,7 @@ class _GeneratingPort:
         raise NotImplementedError
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
 
@@ -362,10 +362,10 @@ class _WritingPort(_GeneratingPort):
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         del isolation
-        return body_outcome(cast("DbPort", self), body)
+        return body_outcome(cast("DatabaseConnection", self), body)
 
 
 def _query() -> ObjectQuery[Order, Order]:
@@ -457,7 +457,7 @@ class _Namespace(NamedTuple):
 
 
 _TYPED: Final = _Namespace(
-    "typed", _typed_stream, fixed=69, per_page_node=2, per_page_root=1, per_published_node=2
+    "typed", _typed_stream, fixed=68, per_page_node=2, per_page_root=1, per_published_node=2
 )
 """The Typed lane. Two objects per page node — the Source Hint a page retains for
 it and the Object Key that hint is filed under — one per page ROOT rather than
@@ -470,10 +470,18 @@ rather than in the graph below it: children have no coordinate, and a coordinate
 holds its carriers in one tuple rather than wrapping each cell. The delivery's
 own carried position is one more of them, and is fixed. That the term count `T`
 is a delivery-lifetime cost rather than a per-root one is read on its own grid
-below."""
+below.
+
+One fixed object fewer than before connection lifetimes: a delivery's executor
+inputs are built from the connection the page runs on and dropped with the page,
+where a handle used to retain one for its life. What replaces it is the
+acquisition itself, and neither the context nor the scoped execution is
+Parallax-owned in this instrument — the shipped ones are, and what bounds THEM
+is that a delivery holds exactly one for its whole life however many pages it
+reads."""
 
 _WIRE: Final = _Namespace(
-    "wire", _wire_stream, fixed=70, per_page_node=2, per_page_root=1, per_published_node=1
+    "wire", _wire_stream, fixed=69, per_page_node=2, per_page_root=1, per_published_node=1
 )
 """The Wire lane. The same page terms, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
@@ -494,7 +502,7 @@ def _draining(namespace: _Namespace, total: int, *, retaining: bool) -> Seam:
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(cast("DbPort", _GeneratingPort(total)), ORDERS_MODEL)
+        database = Database.connect(_GeneratingPort(total), ORDERS_MODEL)
         held: list[Any] = []
         with namespace.opener(database, _BATCH) as stream:
             for root in stream:
@@ -518,7 +526,7 @@ def _paused(namespace: _Namespace, total: int, *, batch_size: int, fanout: int, 
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(cast("DbPort", _GeneratingPort(total, fanout)), ORDERS_MODEL)
+        database = Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL)
         with namespace.opener(database, batch_size) as stream:
             for position, _root in enumerate(stream):
                 if position == at:
@@ -533,7 +541,7 @@ def _paused_over(terms: int, total: int, *, batch_size: int, fanout: int, at: in
     authored keys, so the term count varies while everything else holds."""
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(cast("DbPort", _GeneratingPort(total, fanout)), ORDERS_MODEL)
+        database = Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL)
         with database.stream(_ordered(terms), batch_size=batch_size) as stream:
             for position, _root in enumerate(stream):
                 if position == at:
@@ -556,7 +564,7 @@ def _advancing(namespace: _Namespace, total: int, *, batch_size: int, fanout: in
     """
 
     def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
-        database = Database(cast("DbPort", _GeneratingPort(total, fanout)), ORDERS_MODEL)
+        database = Database.connect(_GeneratingPort(total, fanout), ORDERS_MODEL)
         with namespace.opener(database, batch_size) as stream:
             roots = iter(stream)
             for _ in range(at):
@@ -578,7 +586,7 @@ def _writing(total: int, *, batch_size: int, at: int, writes: bool) -> Seam:
     """
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(cast("DbPort", _WritingPort(total)), ACCOUNT_MODEL)
+        database = Database.connect(_WritingPort(total), ACCOUNT_MODEL)
 
         def body(tx: Transaction) -> None:
             with tx.stream(Account.where(Account.id >= 1), batch_size=batch_size) as stream:
@@ -781,7 +789,7 @@ def _published_kinds(namespace: _Namespace) -> frozenset[str]:
     both answer is how many published nodes are alive, which is what the census
     counts over whichever names this returns.
     """
-    database = Database(cast("DbPort", _GeneratingPort(_BATCH)), ORDERS_MODEL)
+    database = Database.connect(_GeneratingPort(_BATCH), ORDERS_MODEL)
     with namespace.opener(database, _BATCH) as stream:
         for root in stream:
             child = _first_child(root)

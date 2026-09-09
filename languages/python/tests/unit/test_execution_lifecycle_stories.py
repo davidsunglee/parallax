@@ -16,19 +16,19 @@ from uuid import uuid4
 
 import pytest
 
-from _support.db_port import body_outcome
+from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import execution_lifecycle_stories
 from parallax.conformance.class_models import MODELS
-from parallax.core.db_port import Bind, DbPort, Row, TransactionOutcome
+from parallax.core.db_port import Bind, DatabaseConnection, Row, TransactionOutcome
+from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandlerError,
-    FailureDiagnostic,
     RootExecution,
 )
 
 
-class _AccountPort:
+class _AccountPort(ConnectsAsItself):
     """The one seeded row the story bumps, and a driver that accepts the write."""
 
     dialect: Dialect = POSTGRES
@@ -46,7 +46,7 @@ class _AccountPort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         return body_outcome(self, body)
 

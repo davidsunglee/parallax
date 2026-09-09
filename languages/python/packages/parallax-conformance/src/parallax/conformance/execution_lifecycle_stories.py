@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from parallax.conformance.story_models import Account
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseAdapter
 from parallax.core.entity import DomainModel
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
@@ -99,33 +99,37 @@ class JoinedShape:
 
 
 def a_joined_unit_of_work_is_observed_inside_the_outer_attempt(
-    port: DbPort, model: DomainModel
+    adapter: DatabaseAdapter, model: DomainModel
 ) -> JoinedShape:
     """A joined call is an activity under the OUTER attempt and runs no attempt
     of its own — observed through an installed Provider, while the work runs.
 
-    ``port`` is the shipped adapter over the story database, which holds the
-    seeded account row the joined body bumps. Nothing the transaction returns
-    describes what it did: the callback's value comes back directly, so what the
-    Handler collected while the boundary ran is the whole account of it.
+    ``adapter`` is the shipped adapter's configuration for the story database,
+    which holds the seeded account row the joined body bumps. Connecting opens
+    the runtime this handle owns, and leaving the block closes it — the two
+    transactions below acquire a connection each and give it back, and nothing
+    is still held afterwards. Nothing the transaction returns describes what it
+    did: the callback's value comes back directly, so what the Handler collected
+    while the boundary ran is the whole account of it.
     """
     provider = JoinedShapeProvider()
-    db = connect(port, model, lifecycle_provider=provider)
+    with connect(adapter, model, lifecycle_provider=provider) as db:
 
-    def outer(tx: Transaction) -> Account:
-        current = tx.find(Account.where(Account.id == _TARGET_ID)).result()
+        def outer(tx: Transaction) -> Account:
+            current = tx.find(Account.where(Account.id == _TARGET_ID)).result()
 
-        def joined_body(joined_tx: Transaction) -> Account:
-            # A joined call shares the outer transaction rather than opening a
-            # nested one, so its write buffers on the SAME unit of work and
-            # reaches the database in the outer boundary's pre-commit batch.
-            bumped = current.edit(balance=current.balance + _BUMP)
-            joined_tx.update(bumped)
-            return bumped
+            def joined_body(joined_tx: Transaction) -> Account:
+                # A joined call shares the outer transaction rather than opening
+                # a nested one, so its write buffers on the SAME unit of work,
+                # runs on the SAME connection, and reaches the database in the
+                # outer boundary's pre-commit batch.
+                bumped = current.edit(balance=current.balance + _BUMP)
+                joined_tx.update(bumped)
+                return bumped
 
-        return db.transact(joined_body)
+            return db.transact(joined_body)
 
-    committed = db.transact(outer)
+        committed = db.transact(outer)
 
     handler = provider.handlers[0]
     return JoinedShape(

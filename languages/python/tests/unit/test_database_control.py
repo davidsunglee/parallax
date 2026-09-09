@@ -4,10 +4,12 @@ A control is the session the conformance harness drives DIRECTLY — the schema
 reset, a case's verbatim golden SQL, a peer holding its own transaction, and the
 dedicated session an interleaved choreography may destroy. What the Docker lanes
 prove is that those sessions do the database work; what is proven here is
-everything around it: that a control forwards rather than reimplements, that
-whoever opens one is told when it is released, that a composition refusing the
-model does not leak the session it had already opened, and that the termination
-ladder escalates rung by rung and RECORDS every rung it had to leave behind.
+everything around it: that a control forwards to the shipped execution rather
+than reimplementing it, that whoever opens one is told when it is released, that
+a composition refusing the model does not leak the session it had already
+opened, that the controlled runtime serves one scope at a time, that a delayed
+control action cannot reach a later scope, and that the termination ladder
+escalates rung by rung and RECORDS every rung it had to leave behind.
 
 The ladder's last rung is a real OS-level socket teardown, so these pins hand it
 real descriptors from ``socket.socketpair`` rather than a fake standing in for
@@ -18,42 +20,105 @@ could only assert.
 from __future__ import annotations
 
 import socket
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from contextlib import ExitStack
+from types import TracebackType
 from typing import Any, cast
 
+import psycopg
 import pytest
+from psycopg.rows import TupleRow
 
 from _support.snapshot_models import SNAP_ORDERS_MODEL
 from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._postgres_control import (
+    ControlledAdapter,
     PostgresControl,
     PostgresInterleavedExecution,
 )
-from parallax.core.db_port import Committed, DbPort, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.postgres import PostgresAdapter
-from parallax.snapshot import handle
+from parallax.core.db_port import ConnectionAcquisitionError, DatabaseConnection, Row
+from parallax.core.dialect import POSTGRES
 from parallax.snapshot.handle import SnapshotConnectionError
 
 
+class _FakeCursor:
+    """One statement's worth of a psycopg cursor: what the shipped execution asks of it."""
+
+    def __init__(self, connection: _FakeConnection) -> None:
+        self._connection = connection
+        self.description: list[Any] | None = None
+        self.rowcount = 1
+
+    def __enter__(self) -> _FakeCursor:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return
+
+    def execute(self, sql: object, binds: Sequence[object] | None = None) -> None:
+        text = sql.decode() if isinstance(sql, bytes) else str(sql)
+        self._connection.statements.append((text, tuple(binds or ())))
+        rows = self._connection.rows
+        self.description = [_Column(name) for name in rows[0]] if rows else None
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return [tuple(row.values()) for row in self._connection.rows]
+
+
+class _Column:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _FakeTransaction:
+    """The driver's transaction context, driven a phase at a time as the port drives it."""
+
+    def __init__(self, connection: _FakeConnection) -> None:
+        self._connection = connection
+
+    def __enter__(self) -> _FakeTransaction:
+        self._connection.begins += 1
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> bool:
+        self._connection.commits += 1
+        return False
+
+
 class _FakeConnection:
-    """The driver connection under a fake adapter: the three seams the ladder,
-    the cancellation rung, and a held transaction's undo reach for."""
+    """A psycopg-connection stand-in: the seams a control, a ladder, and the
+    shipped scoped execution reach for."""
 
     def __init__(
         self,
         *,
+        rows: list[Row] | None = None,
         fd: int | None = None,
         cancel_raises: Exception | None = None,
         close_raises: Exception | None = None,
     ) -> None:
+        self.rows: list[Row] = rows if rows is not None else []
+        self.statements: list[tuple[str, tuple[object, ...]]] = []
         self.rollbacks = 0
         self.cancels = 0
         self.closes = 0
+        self.begins = 0
+        self.commits = 0
         self._fd = fd
         self._cancel_raises = cancel_raises
         self._close_raises = close_raises
+
+    def cursor(self) -> _FakeCursor:
+        return _FakeCursor(self)
+
+    def transaction(self) -> _FakeTransaction:
+        return _FakeTransaction(self)
 
     def rollback(self) -> None:
         self.rollbacks += 1
@@ -74,61 +139,20 @@ class _FakeConnection:
         return self._fd
 
 
-class _FakeAdapter:
-    """A `PostgresAdapter`-shaped session recording what a control asked of it.
-
-    Every verb answers a canned value rather than executing anything: what the
-    control adds to an adapter is a lifetime and an escalation, so these pins
-    grade the forwarding rather than the SQL.
-    """
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(
-        self,
-        *,
-        rows: list[Row] | None = None,
-        connection: _FakeConnection | None = None,
-        close_raises: Exception | None = None,
-    ) -> None:
-        self.connection = connection if connection is not None else _FakeConnection()
-        self.reads: list[tuple[str, tuple[object, ...]]] = []
-        self.writes: list[tuple[str, tuple[object, ...]]] = []
-        self.transactions = 0
-        self.closes = 0
-        self._rows = rows if rows is not None else []
-        self._close_raises = close_raises
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[object] = ()
-    ) -> list[Row]:
-        self.reads.append((sql, tuple(binds)))
-        return self._rows
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        self.writes.append((sql, tuple(binds)))
-        return 1
-
-    def transaction(
-        self, body: Callable[[DbPort], object], *, isolation: str | None = None
-    ) -> TransactionOutcome[object]:
-        self.transactions += 1
-        return Committed(value=body(cast("DbPort", self)))
-
-    def close(self) -> None:
-        self.closes += 1
-        if self._close_raises is not None:
-            raise self._close_raises
+def _native(connection: _FakeConnection) -> psycopg.Connection[TupleRow]:
+    return cast("psycopg.Connection[TupleRow]", connection)
 
 
-def _control(adapter: _FakeAdapter, **kwargs: Any) -> PostgresControl:
-    return PostgresControl(cast("PostgresAdapter", adapter), **kwargs)
+def _control(connection: _FakeConnection, **kwargs: Any) -> PostgresControl:
+    return PostgresControl(_native(connection), **kwargs)
 
 
-def _execution(adapter: _FakeAdapter, **kwargs: Any) -> PostgresInterleavedExecution:
-    return PostgresInterleavedExecution(
-        cast("PostgresAdapter", adapter), SNAP_ORDERS_MODEL, **kwargs
-    )
+def _adapter(connection: _FakeConnection) -> ControlledAdapter:
+    return ControlledAdapter("", session=lambda: _native(connection))
+
+
+def _execution(connection: _FakeConnection, **kwargs: Any) -> PostgresInterleavedExecution:
+    return PostgresInterleavedExecution(_adapter(connection), SNAP_ORDERS_MODEL, **kwargs)
 
 
 def _connected_descriptor(stack: ExitStack) -> int:
@@ -148,58 +172,62 @@ def _connected_descriptor(stack: ExitStack) -> int:
 # --------------------------------------------------------------------------- #
 # The directly driven session.                                                 #
 # --------------------------------------------------------------------------- #
-def test_a_control_forwards_every_verb_to_the_session_it_opened() -> None:
+def test_a_control_forwards_every_verb_to_the_shipped_execution_over_its_session() -> None:
     # A statement the harness runs directly is translated and classified exactly
-    # as an application's own would be, because the same adapter runs it. The
-    # control adds a lifetime, never a second execution path.
-    row: Row = {"n": 1}
-    adapter = _FakeAdapter(rows=[row])
-    control = _control(adapter)
+    # as an application's own would be, because the SAME scoped execution runs
+    # it. The control adds a lifetime, never a second execution path.
+    connection = _FakeConnection(rows=[{"n": 1}])
+    control = _control(connection)
 
     assert control.dialect is POSTGRES
-    assert control.execute("select 1 as n", []) == [row]
+    assert control.execute("select 1 as n", []) == [{"n": 1}]
     assert control.execute_write("update t set a = 1", [2]) == 1
-    outcome = control.transaction(lambda port: port.execute("select 1 as n", []))
+    control.transaction(lambda port: port.execute("select 1 as n", []))
 
-    assert adapter.reads == [("select 1 as n", ()), ("select 1 as n", ())]
-    assert adapter.writes == [("update t set a = 1", (2,))]
-    assert isinstance(outcome, Committed)
+    assert connection.statements == [
+        ("select 1 as n", ()),
+        ("update t set a = 1", (2,)),
+        ("select 1 as n", ()),
+    ]
+    assert (connection.begins, connection.commits) == (1, 1)
 
 
 def test_a_control_undoes_its_own_held_transaction_through_the_driver() -> None:
     # `rollback` is the verb an application's Database has no use for: only a
     # session the harness itself holds open across statements can be told to
     # discard what it has done so far.
-    adapter = _FakeAdapter()
-    _control(adapter).rollback()
-    assert adapter.connection.rollbacks == 1
+    connection = _FakeConnection()
+    _control(connection).rollback()
+    assert connection.rollbacks == 1
 
 
 def test_a_control_ends_another_session_by_asking_the_server() -> None:
     # The one way to make a genuine ROLLBACK fail is to remove the session the
     # undo would run in — which is reached through the SERVER, by backend pid,
     # rather than through the target's own transport, so a transaction-scoped
-    # port is as reachable as any other.
-    executioner = _FakeAdapter()
-    victim = _FakeAdapter(rows=[{"pid": 4271}])
+    # connection is as reachable as any other.
+    executioner = _FakeConnection()
+    victim = _FakeConnection(rows=[{"pid": 4271}])
 
-    _control(executioner).terminate_session(cast("DbPort", victim))
+    _control(executioner).terminate_session(
+        cast("DatabaseConnection", _control(victim)),
+    )
 
-    assert victim.reads == [("select pg_backend_pid() as pid", ())]
-    assert executioner.reads == [("select pg_terminate_backend(%s) as terminated", (4271,))]
+    assert victim.statements == [("select pg_backend_pid() as pid", ())]
+    assert executioner.statements == [("select pg_terminate_backend(%s) as terminated", (4271,))]
 
 
 def test_closing_a_control_releases_the_session_and_reports_it_to_its_opener() -> None:
     # Scoped ownership: the caller closes, and the provisioner that handed the
     # session out is told, so its teardown backstop covers only what a caller
     # really left open.
-    adapter = _FakeAdapter()
+    connection = _FakeConnection()
     released: list[object] = []
-    control = _control(adapter, on_release=released.append)
+    control = _control(connection, on_release=released.append)
 
     control.close()
 
-    assert adapter.closes == 1
+    assert connection.closes == 1
     assert released == [control]
 
 
@@ -207,22 +235,22 @@ def test_a_session_opened_without_a_tracker_releases_itself() -> None:
     # Not every session is handed out by a provisioner tracking it. One opened
     # directly has nobody to report its release to, and closing it is still the
     # whole release.
-    control_adapter = _FakeAdapter()
-    _control(control_adapter).close()
-    assert control_adapter.closes == 1
+    connection = _FakeConnection()
+    _control(connection).close()
+    assert connection.closes == 1
 
-    execution_adapter = _FakeAdapter()
-    _execution(execution_adapter).close()
-    assert execution_adapter.closes == 1
+    execution_connection = _FakeConnection()
+    _execution(execution_connection).close()
+    assert execution_connection.closes == 1
 
 
 def test_a_control_whose_close_fails_stays_on_its_openers_books() -> None:
     # A session that would not close is still alive as far as anyone can tell,
     # so it must not be forgotten: the failure surfaces to the caller AND the
     # backstop still knows about it.
-    adapter = _FakeAdapter(close_raises=RuntimeError("the session would not close"))
+    connection = _FakeConnection(close_raises=RuntimeError("the session would not close"))
     released: list[object] = []
-    control = _control(adapter, on_release=released.append)
+    control = _control(connection, on_release=released.append)
 
     with pytest.raises(RuntimeError, match="would not close"):
         control.close()
@@ -233,85 +261,193 @@ def test_a_control_whose_close_fails_stays_on_its_openers_books() -> None:
 # --------------------------------------------------------------------------- #
 # The dedicated session one interleaved choreography may destroy.              #
 # --------------------------------------------------------------------------- #
-def test_an_execution_composes_its_own_handle_over_the_session_it_owns() -> None:
-    # The Database is composed HERE rather than accepted, so no caller can pair
-    # a handle with a session it does not own — and the dialect it answers is
-    # the one the session under it spells.
-    adapter = _FakeAdapter()
-    execution = _execution(adapter)
+def test_an_execution_composes_its_own_handle_from_its_own_configuration() -> None:
+    # The Database is composed HERE, from configuration, rather than accepted:
+    # no caller can pair a handle with a session it does not own, and the
+    # dialect it answers is the one the session under it spells.
+    execution = _execution(_FakeConnection())
 
-    assert isinstance(execution.database, handle.Database)
     assert execution.dialect is POSTGRES
     assert execution.termination_ladder_trusted is True
+    # A real acquisition through the composed handle's runtime, released again.
+    assert execution.database.transact(lambda tx: tx.edition) is not None
 
 
-def test_a_composition_that_refuses_the_model_releases_the_session_it_opened() -> None:
-    # Setup failure: the session opens before the handle is composed, so a
-    # refusal after the open must release it rather than leak it — and the
-    # refusal itself is what the caller sees.
-    adapter = _FakeAdapter()
+def test_a_composition_that_refuses_the_model_opens_no_session_at_all() -> None:
+    # The model is judged before the configuration is opened, so a value that
+    # could never be served costs no session — and the refusal itself is what
+    # the caller sees.
+    connection = _FakeConnection()
 
     with pytest.raises(SnapshotConnectionError):
-        PostgresInterleavedExecution(cast("PostgresAdapter", adapter), cast("Any", object()))
+        PostgresInterleavedExecution(_adapter(connection), cast("Any", object()))
 
-    assert adapter.closes == 1
+    assert connection.statements == []
+    assert connection.closes == 0
+
+
+def test_closing_a_controlled_runtime_retires_the_session_it_owns() -> None:
+    # A pooled runtime hands its connections back to something that outlives it;
+    # this one has exactly one session and nothing to hand it to, so closing the
+    # runtime is what ends it — which is also what makes a composition that
+    # failed after opening release what it took, since Database closes the
+    # runtime it was handed.
+    connection = _FakeConnection()
+    runtime = _adapter(connection).open()
+
+    runtime.close()
+    runtime.close()
+
+    assert connection.closes == 1
+
+
+def test_closing_the_composed_handle_retires_the_dedicated_session() -> None:
+    connection = _FakeConnection()
+    execution = _execution(connection)
+
+    execution.database.close()
+
+    assert connection.closes == 1
+
+
+def test_a_controlled_runtime_serves_one_scope_at_a_time() -> None:
+    # Exclusive use is enforced rather than assumed: there is ONE session under
+    # this runtime, and two overlapping scopes on it would be the confusion the
+    # choreography it serves is built to avoid.
+    runtime = _adapter(_FakeConnection()).open()
+    first = runtime.connection()
+    with first, pytest.raises(ConnectionAcquisitionError) as refused:
+        runtime.connection().__enter__()
+    assert refused.value.reason == "queue_rejected"
+    # Released again, the next scope is admitted.
+    with runtime.connection():
+        pass
+
+
+def test_a_controlled_scope_is_entered_exactly_once() -> None:
+    runtime = _adapter(_FakeConnection()).open()
+    scope = runtime.connection()
+    with scope:
+        pass
+    with pytest.raises(RuntimeError):
+        scope.__enter__()
+
+
+def test_a_closed_controlled_runtime_admits_no_further_scope() -> None:
+    runtime = _adapter(_FakeConnection()).open()
+    runtime.close()
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        runtime.connection().__enter__()
+    assert refused.value.reason == "closed"
+
+
+def test_leaving_a_controlled_scope_revokes_what_it_yielded() -> None:
+    # The session outlives the scope, so what must not outlive it is ACCESS: a
+    # reference kept past the release executes nothing.
+    connection = _FakeConnection()
+    runtime = _adapter(connection).open()
+    with runtime.connection() as scoped:
+        pass
+    with pytest.raises(RuntimeError):
+        scoped.execute("select 1", [])
+    assert connection.statements == []
 
 
 def test_cancelling_asks_the_driver_and_survives_a_refusal() -> None:
     # The non-destructive rung: a cancellation request is best effort by nature
     # — it can be refused, arrive late, or have nothing to interrupt — so a
     # failure here escalates rather than propagates.
-    adapter = _FakeAdapter()
-    _execution(adapter).cancel_active()
-    assert adapter.connection.cancels == 1
+    connection = _FakeConnection()
+    execution = _execution(connection)
+    with _scope_of(execution):
+        execution.cancel_active()
+    assert connection.cancels == 1
 
     refusing = _FakeConnection(cancel_raises=RuntimeError("the request was refused"))
-    _execution(_FakeAdapter(connection=refusing)).cancel_active()
+    refused = _execution(refusing)
+    with _scope_of(refused):
+        refused.cancel_active()
     assert refusing.cancels == 1
 
 
-def test_terminating_stops_at_the_sessions_own_close() -> None:
+def _scope_of(execution: PostgresInterleavedExecution) -> Any:
+    """One open acquisition of ``execution``'s session, as a control action sees it."""
+    runtime = cast("Any", execution)._runtime
+    scope = runtime.connection()
+    scope.__enter__()
+    return _Releasing(scope)
+
+
+class _Releasing:
+    def __init__(self, scope: Any) -> None:
+        self.scope = scope
+
+    def __enter__(self) -> Any:
+        return self.scope
+
+    def __exit__(self, *exc: object) -> None:
+        self.scope.__exit__(None, None, None)
+
+
+def test_a_cancellation_captured_in_one_scope_does_not_reach_the_next() -> None:
+    # A delayed control action revalidates when it EXECUTES, not only when it
+    # captured its target: by then the scope that was stuck may have finished
+    # and another may hold the session, and interrupting that one's statement is
+    # interrupting work nobody asked to interrupt.
+    connection = _FakeConnection()
+    execution = _execution(connection)
+    with _scope_of(execution):
+        pass  # the captured scope ends here
+    with _scope_of(execution):
+        execution.cancel_active()
+        # The action captured nothing while no scope was open, so it fires for
+        # the scope it can see rather than for the one that has gone.
+        assert connection.cancels == 1
+
+    idle = _execution(_FakeConnection())
+    idle.cancel_active()
+    assert cast("Any", idle)._runtime.native.cancels == 0
+
+
+def test_a_termination_with_no_live_scope_reports_that_it_reached_nothing() -> None:
+    # The descriptor a termination would tear down can be recycled by a later
+    # connection, so a captured target whose scope has ended is refused rather
+    # than destroyed: an honest unterminated report beats an unrelated session.
+    connection = _FakeConnection()
+    execution = _execution(connection)
+
+    report = execution.terminate_active()
+
+    assert report.terminated is False
+    assert report.failures == ("the scope this termination captured had already ended",)
+    assert connection.closes == 0
+
+
+def test_terminating_stops_at_the_driver_connections_own_close() -> None:
     # Rung one is the whole ladder when it works: nothing below it is attempted
     # and there is no failure to record.
-    adapter = _FakeAdapter()
+    connection = _FakeConnection()
+    execution = _execution(connection)
 
-    assert _execution(adapter).terminate_active() == TerminationReport(terminated=True)
-    assert adapter.closes == 1
-    assert adapter.connection.closes == 0
-
-
-def test_terminating_escalates_to_the_driver_connection_and_records_the_rung_it_left() -> None:
-    # Rung two: the session's own close raised, so the connection underneath it
-    # is closed directly — and the rung that failed on the way is REPORTED, not
-    # erased by the rung that worked.
-    adapter = _FakeAdapter(close_raises=RuntimeError("outer close failed"))
-
-    report = _execution(adapter).terminate_active()
-
-    assert report.terminated is True
-    assert adapter.connection.closes == 1
-    assert report.failures == (
-        "the session's own close() raised RuntimeError('outer close failed')",
-    )
+    with _scope_of(execution):
+        assert execution.terminate_active() == TerminationReport(terminated=True)
+    assert connection.closes == 1
 
 
 def test_terminating_escalates_to_os_level_teardown_of_a_real_descriptor() -> None:
-    # Rung three: both closes failed, so the descriptor the blocked call is
-    # waiting on is shut down at the operating system — the guarantee the whole
-    # unbounded post-ladder join rests on. The descriptor is genuinely gone
-    # afterwards, which is what makes it a guarantee rather than a claim.
+    # Rung two: the driver's own close failed, so the descriptor the blocked
+    # call is waiting on is shut down at the operating system — the guarantee
+    # the whole unbounded post-ladder join rests on. The descriptor is genuinely
+    # gone afterwards, which is what makes it a guarantee rather than a claim.
     with ExitStack() as stack:
         fd = _connected_descriptor(stack)
         connection = _FakeConnection(fd=fd, close_raises=RuntimeError("driver close failed"))
-        adapter = _FakeAdapter(
-            connection=connection, close_raises=RuntimeError("outer close failed")
-        )
-
-        report = _execution(adapter).terminate_active()
+        execution = _execution(connection)
+        with _scope_of(execution):
+            report = execution.terminate_active()
 
     assert report.terminated is True
     assert report.failures == (
-        "the session's own close() raised RuntimeError('outer close failed')",
         "the underlying driver connection's close() raised RuntimeError('driver close failed')",
     )
     with pytest.raises(OSError):
@@ -325,9 +461,10 @@ def test_terminating_reports_a_descriptor_the_teardown_could_not_shut_down() -> 
     unconnected = socket.socket()
     fd = unconnected.detach()
     connection = _FakeConnection(fd=fd, close_raises=RuntimeError("driver close failed"))
-    adapter = _FakeAdapter(connection=connection, close_raises=RuntimeError("outer close failed"))
+    execution = _execution(connection)
 
-    report = _execution(adapter).terminate_active()
+    with _scope_of(execution):
+        report = execution.terminate_active()
 
     assert report.terminated is False
     assert any("OS-level shutdown" in failure for failure in report.failures)
@@ -339,9 +476,10 @@ def test_terminating_reports_a_descriptor_no_socket_can_be_made_from() -> None:
     # A connection whose descriptor is not one at all: the rung records it and
     # returns rather than crashing the caller that is already handling a hang.
     connection = _FakeConnection(fd=-1, close_raises=RuntimeError("driver close failed"))
-    adapter = _FakeAdapter(connection=connection, close_raises=RuntimeError("outer close failed"))
+    execution = _execution(connection)
 
-    report = _execution(adapter).terminate_active()
+    with _scope_of(execution):
+        report = execution.terminate_active()
 
     assert report.terminated is False
     assert any("OS-level socket(fileno=-1)" in failure for failure in report.failures)
@@ -351,9 +489,10 @@ def test_terminating_reports_a_connection_that_will_not_answer_its_descriptor() 
     # The last rung needs the descriptor to reach; a connection that will not
     # give one up ends the ladder with an honest, unterminated report.
     connection = _FakeConnection(close_raises=RuntimeError("driver close failed"))
-    adapter = _FakeAdapter(connection=connection, close_raises=RuntimeError("outer close failed"))
+    execution = _execution(connection)
 
-    report = _execution(adapter).terminate_active()
+    with _scope_of(execution):
+        report = execution.terminate_active()
 
     assert report.terminated is False
     assert any("fileno() raised" in failure for failure in report.failures)
@@ -364,10 +503,34 @@ def test_closing_an_execution_is_quiet_about_a_session_the_ladder_condemned() ->
     # included. A condemned session refusing to close again adds nothing to the
     # report the ladder already returned, so it must not displace the timeout
     # error the caller is raising — and its opener is still told.
-    adapter = _FakeAdapter(close_raises=RuntimeError("already condemned"))
+    connection = _FakeConnection(close_raises=RuntimeError("already condemned"))
     released: list[object] = []
-    execution = _execution(adapter, on_release=released.append)
+    execution = _execution(connection, on_release=released.append)
 
     execution.close()
 
     assert released == [execution]
+
+
+def test_a_control_exposes_its_own_session_for_the_harnesss_native_proofs() -> None:
+    # Reachable on a session the harness opened and closes, and nowhere on a
+    # Database: the point of removing the raw accessor is that no application
+    # reaches a connection it did not open, not that the harness cannot.
+    connection = _FakeConnection()
+    assert _control(connection).native is _native(connection)
+
+
+def test_a_controlled_runtime_publishes_no_pool_measurements() -> None:
+    # It manages no pool, so it keeps no bookkeeping — absence rather than a
+    # source that would answer nothing.
+    assert _adapter(_FakeConnection()).open().pool_metrics is None
+
+
+def test_leaving_a_controlled_scope_that_was_never_entered_does_nothing() -> None:
+    runtime = _adapter(_FakeConnection()).open()
+    scope = runtime.connection()
+    scope.__exit__(None, None, None)
+    assert scope.cleanup_result is None
+    # And the runtime never thought a scope was open.
+    with runtime.connection():
+        pass

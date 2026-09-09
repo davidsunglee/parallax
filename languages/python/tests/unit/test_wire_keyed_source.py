@@ -22,7 +22,7 @@ import pytest
 from _transact_support import ACCOUNT, CONTACT, INFINITY_INSTANT, WHERE_POSITION_META, db_for
 
 from _support import mirrored_models as mm
-from _support.db_port import Read, ScriptedPort
+from _support.db_port import Read, ScriptedAdapter
 from _support.model_capabilities import cataloged_for
 from parallax.core import DomainModel
 from parallax.core.base import SQL_NULL
@@ -72,7 +72,7 @@ def _query(entity: str, key: int, temporal: dict[str, object] | None = None) -> 
 def _published(model: DomainModel, row: Row, query: dict[str, object]) -> WireEntity:
     """One frozen Entity mapping as a standalone Wire read of this store
     publishes it, Source Hint and all."""
-    port = ScriptedPort(Read(rows=[dict(row)]))
+    port = ScriptedAdapter(Read(rows=[dict(row)]))
     return db_for(model, port).wire.find(query).result()
 
 

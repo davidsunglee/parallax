@@ -1,25 +1,36 @@
 """``parallax.core.db_port`` enforcement scope (m-db-port).
 
-The abstract runtime database port: the execution interface the layers above the
-seam call to run compiled SQL and demarcate transactions. It names
-``dialect`` (the SQL spelling its statements are written in),
-``execute`` (row-oriented), ``execute_write`` (affected-row count), and
-``transaction`` (callback reporting a :data:`TransactionOutcome`, at an
-optionally requested isolation) — and nothing
+The abstract database seam, in two halves that are used by different callers.
+
+**Execution.** :class:`DatabaseConnection` is what the layers above the seam
+call to run compiled SQL and demarcate transactions. It names ``dialect`` (the
+SQL spelling its statements are written in), ``execute`` (row-oriented),
+``execute_write`` (affected-row count), and ``transaction`` (callback reporting a
+:data:`TransactionOutcome`, at an optionally requested isolation) — and nothing
 more. The portable isolation vocabulary that option is named in lives here too,
-because the port is what carries the value from a caller to an adapter and
-neither end may name a level the other cannot.
-The dialect is the port's because the port is what holds the connection:
-a caller reads it off the port it already has rather than choosing a second
-value beside it. The port still depends on nothing
-application-specific (no driver, no concrete database) — the dialect layer is
-pure — so any layer may hold it without acquiring a database dependency.
-Concrete adapters (`parallax.postgres`)
-implement it at the composition root and carry the normalize-at-boundary contract:
-rows come back as managed values, never raw driver representations. They carry the
-failure-identity contract too: an error the port makes to report a failure — raised
-by a statement call, or carried by a transaction outcome — is an instance shared
-with no other invocation. ``m-db-port`` depends on ``m-core`` and ``m-dialect``.
+because the connection is what carries the value from a caller to an adapter and
+neither end may name a level the other cannot. The dialect is the connection's
+because the connection is what executes: a caller reads it off the value it
+already has rather than choosing a second one beside it.
+
+**Lifetime.** :class:`DatabaseAdapter` is immutable configuration,
+:class:`DatabaseRuntime` is the running resource one connected handle owns, and
+:class:`ConnectionContext` is one single-use acquisition that yields a scoped
+:class:`DatabaseConnection` and reports a :data:`CleanupResult` when it ends.
+Query code receives execution alone; composition receives the lifetime. That
+split is what lets a connection be acquired for exactly one operation without
+any statement being able to acquire or release one.
+
+The seam depends on nothing application-specific (no driver, no pool library, no
+concrete database) — the dialect layer is pure and the diagnostic projection a
+cleanup issue carries is standard-library-only — so any layer may hold either
+half without acquiring a database dependency. Concrete adapters
+(`parallax.postgres`) implement both at the composition root and carry the
+normalize-at-boundary contract: rows come back as managed values, never raw
+driver representations. They carry the failure-identity contract too: an error
+the connection makes to report a failure — raised by a statement call, or carried
+by a transaction outcome — is an instance shared with no other invocation.
+``m-db-port`` depends on ``m-core`` and ``m-dialect``.
 """
 
 from __future__ import annotations
@@ -29,26 +40,66 @@ from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 from parallax.core.base import DocumentReadOrdinals
+from parallax.core.db_port._pool_metrics import PoolMetricsSource
+from parallax.core.db_port._resource_logging import (
+    RESOURCE_LOGGER_NAME,
+    ResourceCondition,
+    report_resource_issues,
+)
+from parallax.core.db_port._resources import (
+    AcquisitionReason,
+    CleanupCode,
+    CleanupIssue,
+    CleanupPhase,
+    CleanupResult,
+    ConnectionAcquisitionError,
+    ConnectionContext,
+    DatabaseAdapter,
+    DatabaseRuntime,
+    DatabaseStartupError,
+    Invalidated,
+    Returned,
+    StartupPhase,
+    Unrelinquished,
+)
 from parallax.core.dialect import Dialect
 
 __all__ = [
     "ISOLATION_LEVELS",
+    "RESOURCE_LOGGER_NAME",
+    "AcquisitionReason",
     "BeginFailed",
     "Bind",
     "CallbackRaised",
+    "CleanupCode",
+    "CleanupIssue",
+    "CleanupPhase",
+    "CleanupResult",
     "CommitFailed",
     "Committed",
-    "DbPort",
+    "ConnectionAcquisitionError",
+    "ConnectionContext",
+    "DatabaseAdapter",
+    "DatabaseConnection",
+    "DatabaseRuntime",
+    "DatabaseStartupError",
     "DeclaresDialect",
     "DocumentReadOrdinals",
+    "Invalidated",
     "IsolationLevel",
     "JsonDocument",
+    "PoolMetricsSource",
+    "ResourceCondition",
+    "Returned",
     "RollbackFailed",
     "RollbackTrigger",
     "RolledBack",
     "Row",
+    "StartupPhase",
     "TransactionOutcome",
+    "Unrelinquished",
     "isolation_level",
+    "report_resource_issues",
 ]
 
 # A neutral bind value (m-core scalars) or the language's managed carriers.
@@ -180,7 +231,7 @@ consumes immediately. It is neither a public return value nor retained provenanc
 
 
 @runtime_checkable
-class DbPort(Protocol):
+class DatabaseConnection(Protocol):
     """The abstract database execution port (m-db-port).
 
     Every error an implementation MAKES ITSELF to report a failure — a statement
@@ -227,7 +278,7 @@ class DbPort(Protocol):
         ...
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
         """Run ``body`` inside one database transaction and report how it ended.
 
@@ -256,7 +307,7 @@ class DeclaresDialect(Protocol):
 
     A composition root selects a concrete adapter and needs the dialect it will
     execute in without building one — nothing here reaches a driver, a socket, or
-    a container. It is a separate protocol because :class:`DbPort` states
+    a container. It is a separate protocol because :class:`DatabaseConnection` states
     ``dialect`` as a read-only property, and a property is unreachable through
     ``type[...]``.
     """

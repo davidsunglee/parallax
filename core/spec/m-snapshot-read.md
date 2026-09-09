@@ -678,6 +678,41 @@ constants are per-language; what is portable is that the three layers are bounde
 as above, that the three exclusions are the only ones, and that a language target
 can demonstrate the independence from `N` rather than assert it.
 
+### The connection a delivery holds
+
+Where an implementation owns connection lifetimes (`m-db-port`), a delivery
+holds ONE connection and holds it for exactly as long as it is delivering.
+
+It is acquired at the **first page**, not at scope entry: entering a delivery
+does its deterministic work and reaches no database, so a delivery a caller
+opened and closed without reading acquires nothing and releases nothing. Every
+later page — and every relationship statement under it — runs on that same
+connection, so a delivery emits no second acquisition and nothing about a page
+boundary reaches the resource.
+
+It is released where the delivery **SETTLES** — at exhaustion, at a failure, or
+at an explicit early close — rather than at the lexical exit that follows. An
+exhausted delivery that kept a connection until its caller happened to leave the
+scope would be occupying capacity nothing is using, and a caller cannot see the
+difference except as work elsewhere waiting. A caller that simply stopped
+reading reaches no terminal state, so its scope exit is where the release
+happens instead; releasing twice is not observable, because the second is a
+no-op.
+
+A delivery that lost its connection **fails**. There is no transparent
+replacement and no resumption: the roots already delivered stand, and continuing
+would be a second read of a database that has moved.
+
+Capacity a delivery is holding is capacity other work waits for. An independent
+operation started inside a consuming loop needs a connection of its own, and
+where a delivery occupies all of them it will wait and may time out — which is
+the one resource consequence a consumer has to design around rather than a
+defect.
+
+A **participating** delivery — one inside a transaction — acquires nothing at
+all: it runs on the attempt's connection, and it is one more thing running on
+that connection rather than a second borrower of it.
+
 ## Round trips
 
 Materialization is `m-deep-fetch`'s contract observed through the graph: **at

@@ -33,10 +33,12 @@ from parallax.conformance import (
 )
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._database_control import (
+    CaseDatabase,
     InterleavedExecution,
     InterleavedExecutionFactory,
     ModeledExecution,
 )
+from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
@@ -71,7 +73,8 @@ from parallax.core.db_port import (
     CallbackRaised,
     CommitFailed,
     Committed,
-    DbPort,
+    DatabaseAdapter,
+    DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
     JsonDocument,
@@ -380,13 +383,18 @@ def case_serving_model(case: case_format.Case) -> ServingModel:
 
 def case_database(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: ExecutionLifecycleProvider,
     *,
     clock: Clock | None = None,
 ) -> handle.Database:
-    """A Handle over ``port`` serving ``case``'s model under the case's edition."""
-    return handle.Database(
+    """A Handle connected from ``port`` serving ``case``'s model under its edition.
+
+    The caller owns what comes back: a Handle opens a runtime of its own, so
+    every lane below composes one inside a ``with`` and the runtime is closed
+    where the case that needed it ends.
+    """
+    return handle.Database.connect(
         port, case_serving_model(case), clock=clock, lifecycle_provider=lifecycle
     )
 
@@ -435,7 +443,9 @@ def _read_query(case: case_format.Case, model: AcceptedMetamodel) -> ObjectQuery
 # given.corrupt: the stored state a read case observes instead of the           #
 # conforming one its fixtures loaded (m-case-format "Corrupting stored state"). #
 # --------------------------------------------------------------------------- #
-def _apply_given_corrupt(case: case_format.Case, model: AcceptedMetamodel, port: DbPort) -> None:
+def _apply_given_corrupt(
+    case: case_format.Case, model: AcceptedMetamodel, port: DatabaseConnection
+) -> None:
     """Write a read case's ``given.corrupt`` entries over its loaded fixtures.
 
     Applied where every read lane already stands — after provisioning, before the
@@ -480,7 +490,10 @@ def _refuse_temporal_corruptions(
 
 
 def _corrupt_stored_state(
-    case: case_format.Case, model: AcceptedMetamodel, port: DbPort, entry: Mapping[str, object]
+    case: case_format.Case,
+    model: AcceptedMetamodel,
+    port: DatabaseConnection,
+    entry: Mapping[str, object],
 ) -> None:
     """Realize one corruption as a whole-document replacement of one row's cell.
 
@@ -750,7 +763,7 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
 
 def run_read_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[Row], int]:
     """Run a row-form read case through the production values lane.
@@ -789,24 +802,24 @@ def run_read_case(
     query = _read_query(case, model)
     observed = lifecycle_run(lifecycle).observation()
     _apply_given_corrupt(case, model, port)
-    db = case_database(case, port, observed.provider)
-    concurrency = _read_case_concurrency(case)
-    try:
-        result = (
-            _underlying(lambda: db.read_rows(query))
-            if concurrency is None
-            else _transact(db, lambda tx: tx.read_rows(query), concurrency=concurrency)
+    with case_database(case, port, observed.provider) as db:
+        concurrency = _read_case_concurrency(case)
+        try:
+            result = (
+                _underlying(lambda: db.read_rows(query))
+                if concurrency is None
+                else _transact(db, lambda tx: tx.read_rows(query), concurrency=concurrency)
+            )
+        except _READ_ERRORS as exc:
+            raise EngineError(f"{case.path.name}: {exc}") from exc
+        return (
+            _read_emissions(observed),
+            [
+                ActualWireProjection(model).published_row(query, _conforming_row(case, row))
+                for row in result.rows
+            ],
+            observed.round_trips,
         )
-    except _READ_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-    return (
-        _read_emissions(observed),
-        [
-            ActualWireProjection(model).published_row(query, _conforming_row(case, row))
-            for row in result.rows
-        ],
-        observed.round_trips,
-    )
 
 
 def _conforming_row(case: case_format.Case, row: handle.PublishedRow) -> Mapping[str, object]:
@@ -841,7 +854,7 @@ def _wire_read(
     case: case_format.Case,
     query: ObjectQueryNode,
     model: AcceptedMetamodel,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun,
 ) -> tuple[handle.Snapshot[handle.WireEntity], LifecycleObservation]:
     """One graph-form Wire read of the case's own Object Query, and what it ran.
@@ -856,16 +869,16 @@ def _wire_read(
     """
     observed = lifecycle.observation()
     _apply_given_corrupt(case, model, port)
-    db = case_database(case, port, observed.provider)
-    try:
-        return _underlying(lambda: db.wire.find(query)), observed
-    except _READ_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
+    with case_database(case, port, observed.provider) as db:
+        try:
+            return _underlying(lambda: db.wire.find(query)), observed
+        except _READ_ERRORS as exc:
+            raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
 def run_graph_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
     """Run a single-graph deep-fetch / snapshot read, reporting the Wire result
@@ -932,7 +945,7 @@ def _stream_batch_size(case: case_format.Case) -> int:
 
 def run_stream_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[Row | None]], int, list[dict[str, object]] | None]:
     """Run a streamed read through ``db.wire.stream`` and report what it delivered.
@@ -974,7 +987,7 @@ def run_stream_case(
 
 def run_streamed_graphs_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
     """Run a streamed milestone-set read and report its per-milestone graphs.
@@ -1008,7 +1021,7 @@ def _wire_delivery(
     case: case_format.Case,
     query: ObjectQueryNode,
     model: AcceptedMetamodel,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None,
 ) -> tuple[list[object], LifecycleObservation]:
     """One streamed Wire delivery of ``query``, drained, and what it ran.
@@ -1019,23 +1032,23 @@ def _wire_delivery(
     """
     observed = lifecycle_run(lifecycle).observation()
     _apply_given_corrupt(case, model, port)
-    db = case_database(case, port, observed.provider)
-    roots: list[object] = []
+    with case_database(case, port, observed.provider) as db:
+        roots: list[object] = []
 
-    def drained() -> None:
-        with db.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
-            roots.extend(delivery.checked())
+        def drained() -> None:
+            with db.wire.stream(query, batch_size=_stream_batch_size(case)) as delivery:
+                roots.extend(delivery.checked())
 
-    try:
-        _underlying(drained)
-    except _STREAM_ERRORS as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-    return roots, observed
+        try:
+            _underlying(drained)
+        except _STREAM_ERRORS as exc:
+            raise EngineError(f"{case.path.name}: {exc}") from exc
+        return roots, observed
 
 
 def run_graphs_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
     """Run a milestone-set (`history` / `asOfRange`) snapshot read, reporting
@@ -1412,7 +1425,7 @@ class _AbortingPort:
     failure record.
     """
 
-    def __init__(self, inner: DbPort) -> None:
+    def __init__(self, inner: DatabaseConnection) -> None:
         self._inner = inner
 
     @property
@@ -1431,18 +1444,34 @@ class _AbortingPort:
         return self._inner.execute_write(sql, binds)
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: IsolationLevel | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
-        def aborting(conn: DbPort) -> T:
+        def aborting(conn: DatabaseConnection) -> T:
             body(conn)
             raise _RollbackStep
 
         return self._inner.transaction(aborting, isolation=isolation)
 
 
-def _write_port(port: DbPort, *, rollback: bool) -> DbPort:
-    """``port`` itself, or the aborting decorator a `rollback: true` step needs."""
+def _write_connection(port: DatabaseConnection, *, rollback: bool) -> DatabaseConnection:
+    """``port`` itself, or the aborting decorator around it.
+
+    The framework-only write lane executes its own plan straight on a session
+    rather than through a Handle (D-78), so what a `rollback: true` step
+    decorates there is that session's execution directly.
+    """
     return _AbortingPort(port) if rollback else port
+
+
+def _write_adapter(port: CaseDatabase, *, rollback: bool) -> DatabaseAdapter:
+    """``port``'s own configuration, or the aborting decorator a `rollback: true` step needs.
+
+    The decoration is applied where a connection is acquired rather than to a
+    handle, because what aborts is one transaction on one connection: a step
+    that rolls back decorates every connection its own Handle acquires and
+    nothing else's.
+    """
+    return DecoratingAdapter(port, _AbortingPort) if rollback else port
 
 
 def _committed[T](outcome: TransactionOutcome[T]) -> T:
@@ -2559,7 +2588,7 @@ def _step_query(step: Mapping[str, object], model: AcceptedMetamodel) -> ObjectQ
 
 
 def _run_standalone_find(
-    port: DbPort,
+    port: CaseDatabase,
     context: _CaseContext,
     step: Mapping[str, object],
     lifecycle: LifecycleRun,
@@ -2575,11 +2604,11 @@ def _run_standalone_find(
     """
     query = _step_query(step, context.model)
     observed = lifecycle.observation()
-    db = handle.Database(port, context.serving, lifecycle_provider=observed.provider)
-    return (
-        _transact(db, lambda tx: tx.wire.find(query), concurrency=context.concurrency),
-        observed,
-    )
+    with handle.Database.connect(port, context.serving, lifecycle_provider=observed.provider) as db:
+        return (
+            _transact(db, lambda tx: tx.wire.find(query), concurrency=context.concurrency),
+            observed,
+        )
 
 
 def _names_one_entity(model: AcceptedMetamodel, left: str, right: str) -> bool:
@@ -3132,7 +3161,7 @@ _NO_SCENARIO_RESULT: Final[_ScenarioStepResult] = _ScenarioStepResult((), None, 
 
 def _run_snapshot_scenario(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     steps: Sequence[Mapping[str, object]],
     lifecycle: LifecycleRun,
 ) -> ScenarioRun:
@@ -3170,68 +3199,70 @@ def _run_snapshot_scenario(
     _seed_shadow_from_fixtures(case, model, context.shadow)
     _apply_given_apply(case, port, context.shadow)
     observation = lifecycle.observation()
-    db = handle.Database(port, serving, lifecycle_provider=observation.provider)
-    emissions: list[Emission] = []
-    round_trips = 0
-    results: list[_ScenarioStepResult] = []
-    errors: list[dict[str, object]] = []
-    step_rows: list[dict[str, object]] = []
-    step_graphs: list[dict[str, object]] = []
-    for index, step in enumerate(steps):
-        match _snapshot_step_kind(step):
-            case "action":
-                _check_action_step(case, step)
-                if step.get("action") == "access":
-                    observed = _access_step_graph(case, model, index, step, results)
+    with handle.Database.connect(port, serving, lifecycle_provider=observation.provider) as db:
+        emissions: list[Emission] = []
+        round_trips = 0
+        results: list[_ScenarioStepResult] = []
+        errors: list[dict[str, object]] = []
+        step_rows: list[dict[str, object]] = []
+        step_graphs: list[dict[str, object]] = []
+        for index, step in enumerate(steps):
+            match _snapshot_step_kind(step):
+                case "action":
+                    _check_action_step(case, step)
+                    if step.get("action") == "access":
+                        observed = _access_step_graph(case, model, index, step, results)
+                        if observed is not None:
+                            step_graphs.append(observed)
+                        results.append(_NO_SCENARIO_RESULT)
+                    else:
+                        error_class, edited = _grade_mutate_step(case, model, step, results)
+                        if error_class is not None:
+                            errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
+                        elif "expectRows" in step:
+                            step_rows.append(
+                                {
+                                    "at": f"/scenario/{index}",
+                                    "rows": [dict(root) for root in edited.roots],
+                                }
+                            )
+                        results.append(edited)
+                case "write":
+                    statements, unit_trips = _run_snapshot_write_step(
+                        case, context, port, step, lifecycle
+                    )
+                    emissions.extend(
+                        Emission(f"/scenario/{index}/write", statement) for statement in statements
+                    )
+                    round_trips += unit_trips
+                    results.append(_NO_SCENARIO_RESULT)
+                case "find":
+                    query = _step_query(step, model)
+                    mark = observation.round_trips
+                    try:
+                        # The case document's own spelling is resolved HERE, where the
+                        # document is read, so no later step carries a spelling into a
+                        # production seam that takes an Entity Identity.
+                        identity = case_entity(model, query.target.canonical).identity
+                        snapshot = _underlying(partial(db.wire.find, query))
+                        pin = _find_step_pin(model, query)
+                    except _READ_ERRORS as exc:
+                        raise EngineError(f"{case.path.name}: {exc}") from exc
+                    emissions.extend(
+                        Emission(f"/scenario/{index}/objectQuery", statement)
+                        for statement in observation.since(mark, "read")
+                    )
+                    round_trips += observation.round_trips - mark
+                    step_rows.append(_step_rows(model, index, query, snapshot.checked().results()))
+                    observed = _read_step_graph(case, model, index, step, query, snapshot)
                     if observed is not None:
                         step_graphs.append(observed)
-                    results.append(_NO_SCENARIO_RESULT)
-                else:
-                    error_class, edited = _grade_mutate_step(case, model, step, results)
-                    if error_class is not None:
-                        errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
-                    elif "expectRows" in step:
-                        step_rows.append(
-                            {
-                                "at": f"/scenario/{index}",
-                                "rows": [dict(root) for root in edited.roots],
-                            }
+                    results.append(
+                        _ScenarioStepResult(
+                            _root_members(snapshot), pin, identity, materialized=True
                         )
-                    results.append(edited)
-            case "write":
-                statements, unit_trips = _run_snapshot_write_step(
-                    case, context, port, step, lifecycle
-                )
-                emissions.extend(
-                    Emission(f"/scenario/{index}/write", statement) for statement in statements
-                )
-                round_trips += unit_trips
-                results.append(_NO_SCENARIO_RESULT)
-            case "find":
-                query = _step_query(step, model)
-                mark = observation.round_trips
-                try:
-                    # The case document's own spelling is resolved HERE, where the
-                    # document is read, so no later step carries a spelling into a
-                    # production seam that takes an Entity Identity.
-                    identity = case_entity(model, query.target.canonical).identity
-                    snapshot = _underlying(partial(db.wire.find, query))
-                    pin = _find_step_pin(model, query)
-                except _READ_ERRORS as exc:
-                    raise EngineError(f"{case.path.name}: {exc}") from exc
-                emissions.extend(
-                    Emission(f"/scenario/{index}/objectQuery", statement)
-                    for statement in observation.since(mark, "read")
-                )
-                round_trips += observation.round_trips - mark
-                step_rows.append(_step_rows(model, index, query, snapshot.checked().results()))
-                observed = _read_step_graph(case, model, index, step, query, snapshot)
-                if observed is not None:
-                    step_graphs.append(observed)
-                results.append(
-                    _ScenarioStepResult(_root_members(snapshot), pin, identity, materialized=True)
-                )
-    return ScenarioRun(emissions, round_trips, errors, step_rows, step_graphs)
+                    )
+        return ScenarioRun(emissions, round_trips, errors, step_rows, step_graphs)
 
 
 def _root_members(
@@ -3252,7 +3283,7 @@ def _root_members(
 def _run_snapshot_write_step(
     case: case_format.Case,
     context: _CaseContext,
-    port: DbPort,
+    port: CaseDatabase,
     step: Mapping[str, object],
     lifecycle: LifecycleRun,
 ) -> tuple[tuple[LoweredStatement, ...], int]:
@@ -3870,7 +3901,7 @@ def _framework_writes(
 
 
 def _execute_framework_write_unit(
-    port: DbPort,
+    port: DatabaseConnection,
     statements: Sequence[LoweredStatement],
     *,
     rollback: bool,
@@ -3900,14 +3931,14 @@ def _execute_framework_write_unit(
     round trips, and the provider then rolls them back.
     """
 
-    def run(conn: DbPort) -> None:
+    def run(conn: DatabaseConnection) -> None:
         for statement in statements:
             conn.execute_write(
                 conn.dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds)
             )
 
     with contextlib.suppress(_RollbackStep):
-        _committed(_write_port(port, rollback=rollback).transaction(run))
+        _committed(_write_connection(port, rollback=rollback).transaction(run))
     return len(statements)
 
 
@@ -4012,7 +4043,7 @@ def _unit_source_reads(
 
 
 def _execute_write_unit(
-    port: DbPort,
+    port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
     concurrency: Concurrency,
@@ -4078,28 +4109,28 @@ def _execute_write_unit(
         return tuple(statements), _execute_framework_write_unit(port, statements, rollback=rollback)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
-    database = handle.Database(
-        _write_port(port, rollback=rollback),
+    with handle.Database.connect(
+        _write_adapter(port, rollback=rollback),
         serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    )
+    ) as database:
 
-    def body(tx: handle.Transaction) -> None:
-        state = _GroupState()
-        with observed.resolving_reads():
-            for query in _unit_source_reads(model, resolved):
-                state.published.extend(_published_nodes(tx.wire.find(query)))
-        for write in resolved:
-            _buffer_wire_write(tx, model, state, write, None)
+        def body(tx: handle.Transaction) -> None:
+            state = _GroupState()
+            with observed.resolving_reads():
+                for query in _unit_source_reads(model, resolved):
+                    state.published.extend(_published_nodes(tx.wire.find(query)))
+            for write in resolved:
+                _buffer_wire_write(tx, model, state, write, None)
 
-    with contextlib.suppress(_RollbackStep):
-        _transact(database, body, concurrency=concurrency)
-    return _delivered(statements, observed.writes, "a keyed write unit"), observed.round_trips
+        with contextlib.suppress(_RollbackStep):
+            _transact(database, body, concurrency=concurrency)
+        return _delivered(statements, observed.writes, "a keyed write unit"), observed.round_trips
 
 
 def _execute_keyed_unit(
-    port: DbPort,
+    port: CaseDatabase,
     context: _CaseContext,
     entries: Sequence[Mapping[str, object]],
     group_observations: GroupObservations,
@@ -4154,7 +4185,7 @@ def _execute_keyed_unit(
 
 
 def _run_readless_predicate_write(
-    port: DbPort,
+    port: CaseDatabase,
     context: _CaseContext,
     instruction: PreparedPredicateWrite,
     statement: LoweredStatement,
@@ -4178,22 +4209,22 @@ def _run_readless_predicate_write(
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
-    database = handle.Database(
-        _write_port(port, rollback=rollback),
+    with handle.Database.connect(
+        _write_adapter(port, rollback=rollback),
         context.serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    )
+    ) as database:
 
-    def body(tx: handle.Transaction) -> None:
-        buffer_prepared_predicate_write(tx, instruction)
+        def body(tx: handle.Transaction) -> None:
+            buffer_prepared_predicate_write(tx, instruction)
 
-    with contextlib.suppress(_RollbackStep):
-        _transact(database, body, concurrency=context.concurrency)
-    return (
-        _delivered((statement,), observed.writes, "a readless predicate write"),
-        observed.round_trips,
-    )
+        with contextlib.suppress(_RollbackStep):
+            _transact(database, body, concurrency=context.concurrency)
+        return (
+            _delivered((statement,), observed.writes, "a readless predicate write"),
+            observed.round_trips,
+        )
 
 
 def _is_materializing_write_step(
@@ -4232,7 +4263,7 @@ def _is_materializing_write_step(
 
 
 def _run_materializing_pair(
-    port: DbPort,
+    port: CaseDatabase,
     context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
     index: int,
@@ -4315,35 +4346,35 @@ def _run_materializing_pair(
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     rollback = write_step.get("rollback") is True
     observed = lifecycle.observation()
-    database = handle.Database(
-        _write_port(port, rollback=rollback),
+    with handle.Database.connect(
+        _write_adapter(port, rollback=rollback),
         context.serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    )
+    ) as database:
 
-    def body(tx: handle.Transaction) -> None:
-        buffer_prepared_predicate_write(tx, instruction)
+        def body(tx: handle.Transaction) -> None:
+            buffer_prepared_predicate_write(tx, instruction)
 
-    with shadow.staged(doomed=rollback):
-        with contextlib.suppress(_RollbackStep):
-            _transact(database, body, concurrency=context.concurrency)
-        shadow.note_materialized_write(case_entity(model, write_target))
-    # The split is the port method each statement ran through rather than a
-    # position in one flat list, so a resolve that issued more than one call, or
-    # a batch the planner split, still lands where the corpus authors it: the
-    # internal resolve against the FIND step's pointer, every DML statement
-    # against the write step's.
-    resolve = observed.reads
-    if not resolve:  # pragma: no cover - zero resolved rows still resolves (1 statement)
-        raise EngineError(
-            f"materializing predicate write at scenario step {index + 1} executed no "
-            "statements at all — even a zero-row resolve issues its own SELECT"
-        )
-    return [
-        _LoweredStep(f"/scenario/{index}/objectQuery", resolve, False, False),
-        _LoweredStep(f"/scenario/{index + 1}/write", observed.writes, True, rollback),
-    ], observed.round_trips
+        with shadow.staged(doomed=rollback):
+            with contextlib.suppress(_RollbackStep):
+                _transact(database, body, concurrency=context.concurrency)
+            shadow.note_materialized_write(case_entity(model, write_target))
+        # The split is the port method each statement ran through rather than a
+        # position in one flat list, so a resolve that issued more than one call, or
+        # a batch the planner split, still lands where the corpus authors it: the
+        # internal resolve against the FIND step's pointer, every DML statement
+        # against the write step's.
+        resolve = observed.reads
+        if not resolve:  # pragma: no cover - zero resolved rows still resolves (1 statement)
+            raise EngineError(
+                f"materializing predicate write at scenario step {index + 1} executed no "
+                "statements at all — even a zero-row resolve issues its own SELECT"
+            )
+        return [
+            _LoweredStep(f"/scenario/{index}/objectQuery", resolve, False, False),
+            _LoweredStep(f"/scenario/{index + 1}/write", observed.writes, True, rollback),
+        ], observed.round_trips
 
 
 def _scenario_group_step_indices(steps: Sequence[Mapping[str, object]]) -> dict[str, list[int]]:
@@ -4805,22 +4836,22 @@ class _GroupSession:
     to some other port, and the pair it holds names one connection.
     """
 
-    port: DbPort
+    adapter: DatabaseAdapter
     database: handle.Database
 
     def __init__(
         self,
-        port: DbPort,
+        adapter: DatabaseAdapter,
         context: _CaseContext,
         instant: dt.datetime,
         observation: LifecycleObservation,
     ) -> None:
-        object.__setattr__(self, "port", port)
+        object.__setattr__(self, "adapter", adapter)
         object.__setattr__(
             self,
             "database",
-            handle.Database(
-                port,
+            handle.Database.connect(
+                adapter,
                 context.serving,
                 clock=FixedClock(instant),
                 lifecycle_provider=observation.provider,
@@ -4829,7 +4860,11 @@ class _GroupSession:
 
     @property
     def dialect(self) -> Dialect:
-        return self.port.dialect
+        return self.adapter.dialect
+
+    def close(self) -> None:
+        """Close the Handle this session opened, and the runtime under it."""
+        self.database.close()
 
 
 def _run_group_step(
@@ -4931,7 +4966,7 @@ def _run_group_step(
 
 def _run_uow_group(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     context: _CaseContext,
     steps: Sequence[Mapping[str, object]],
     start: int,
@@ -4964,44 +4999,49 @@ def _run_uow_group(
     state = _GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observation = lifecycle.observation()
-    session = _GroupSession(_write_port(port, rollback=doomed), context, instant, observation)
-    lowered: list[_LoweredStep] = []
-    step_rows: list[dict[str, object]] = []
-    step_graphs: list[dict[str, object]] = []
+    session = _GroupSession(_write_adapter(port, rollback=doomed), context, instant, observation)
+    try:
+        lowered: list[_LoweredStep] = []
+        step_rows: list[dict[str, object]] = []
+        step_graphs: list[dict[str, object]] = []
 
-    def body(tx: handle.Transaction) -> None:
-        for index in range(start, end + 1):
-            step, read = _run_group_step(
-                tx, session, context, state, steps[index], index, tx_instant, observation
+        def body(tx: handle.Transaction) -> None:
+            for index in range(start, end + 1):
+                step, read = _run_group_step(
+                    tx, session, context, state, steps[index], index, tx_instant, observation
+                )
+                lowered.append(step)
+                if read is None:
+                    continue
+                query = _step_query(steps[index], context.model)
+                step_rows.append(_step_rows(context.model, index, query, read.roots))
+                if read.graph is None:
+                    continue
+                observed = _read_step_graph(
+                    case, context.model, index, steps[index], query, read.graph
+                )
+                if observed is not None:
+                    step_graphs.append(observed)
+
+        with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
+            _transact(
+                session.database, body, concurrency=context.concurrency, isolation=context.isolation
             )
-            lowered.append(step)
-            if read is None:
-                continue
-            query = _step_query(steps[index], context.model)
-            step_rows.append(_step_rows(context.model, index, query, read.roots))
-            if read.graph is None:
-                continue
-            observed = _read_step_graph(case, context.model, index, steps[index], query, read.graph)
-            if observed is not None:
-                step_graphs.append(observed)
-
-    with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
-        _transact(
-            session.database, body, concurrency=context.concurrency, isolation=context.isolation
+        # The group's writes reach the wire in ONE flush at its boundary, so a step's
+        # own plan is reconciled against the group's whole delivery rather than
+        # against a flush of its own: what the transaction wrote is every write
+        # step's DML, in the order those steps buffered it.
+        _delivered(
+            [statement for step in lowered if step.is_write for statement in step.statements],
+            observation.writes,
+            "a held `uow` group",
         )
-    # The group's writes reach the wire in ONE flush at its boundary, so a step's
-    # own plan is reconciled against the group's whole delivery rather than
-    # against a flush of its own: what the transaction wrote is every write
-    # step's DML, in the order those steps buffered it.
-    _delivered(
-        [statement for step in lowered if step.is_write for statement in step.statements],
-        observation.writes,
-        "a held `uow` group",
-    )
-    # Every statement this ONE transaction put on the wire, which is where the
-    # group's round trips come from rather than from a second count this lane
-    # keeps.
-    return _GroupRun(lowered, observation.round_trips, step_rows, step_graphs)
+        # Every statement this ONE transaction put on the wire, which is where the
+        # group's round trips come from rather than from a second count this lane
+        # keeps.
+        return _GroupRun(lowered, observation.round_trips, step_rows, step_graphs)
+    finally:
+        session.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -5322,7 +5362,7 @@ def _await_interleaved_workers(
 
 def run_interleaved_scenario_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     execution_factory: InterleavedExecutionFactory,
 ) -> tuple[list[Emission], int, int | None, list[list[Mapping[str, object]]]]:
     """Run a two-group interleaved-`uow`-group scenario — the optimistic-lock
@@ -5481,7 +5521,7 @@ def run_interleaved_scenario_case(
 
 def run_scenario_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> ScenarioRun:
     """Run a scenario: an UNGROUPED write step commits (or aborts) as its OWN
@@ -5624,7 +5664,7 @@ def run_scenario_case(
 
 def run_write_sequence_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], dict[str, list[Row]], int]:
     """Run a writeSequence: each entry executes as its OWN unit of work through
@@ -5668,7 +5708,7 @@ def run_write_sequence_case(
     return emissions, table_state, round_trips
 
 
-def read_table_state(port: DbPort, model: AcceptedMetamodel) -> dict[str, list[Row]]:
+def read_table_state(port: DatabaseConnection, model: AcceptedMetamodel) -> dict[str, list[Row]]:
     """The committed contents of every model table, in canonical wire form.
 
     Every compiled Table Layout is read back exactly once, projecting its
@@ -5700,7 +5740,9 @@ def read_table_state(port: DbPort, model: AcceptedMetamodel) -> dict[str, list[R
 # conflict case tests ONLY the close, under an address and a gate the case     #
 # names EXPLICITLY rather than derives from an observation.                    #
 # --------------------------------------------------------------------------- #
-def _apply_given_apply(case: case_format.Case, port: DbPort, shadow: TemporalShadow) -> None:
+def _apply_given_apply(
+    case: case_format.Case, port: DatabaseConnection, shadow: TemporalShadow
+) -> None:
     """Apply a case's out-of-band ``given.apply`` naive statements VERBATIM,
     immediately (never inside our own transaction), and tell ``shadow`` they ran.
 
@@ -6022,7 +6064,7 @@ def _conflict_key_predicate(
 
 
 def _conflict_source_nodes(
-    port: DbPort,
+    port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
     target: str,
@@ -6057,22 +6099,22 @@ def _conflict_source_nodes(
     """
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
-    database = handle.Database(
+    with handle.Database.connect(
         port,
         serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    )
-    nodes: dict[ObjectKey, handle.WireEntity] = {}
-    with observed.resolving_reads():
-        snapshot = database.wire.find(
-            {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
-        )
-        for root in snapshot.results():
-            hint = source_hint_of(root)
-            assert hint is not None  # a Wire read files a hint on every published Entity node
-            nodes[hint.object_key] = root
-    return nodes, observed.round_trips
+    ) as database:
+        nodes: dict[ObjectKey, handle.WireEntity] = {}
+        with observed.resolving_reads():
+            snapshot = database.wire.find(
+                {"target": target, "predicate": _conflict_key_predicate(model, target, resolved)}
+            )
+            for root in snapshot.results():
+                hint = source_hint_of(root)
+                assert hint is not None  # a Wire read files a hint on every published Entity node
+                nodes[hint.object_key] = root
+        return nodes, observed.round_trips
 
 
 def _conflict_source_node(
@@ -6122,7 +6164,7 @@ def _refuse_unobserved_conflict_version(
 
 
 def _run_conflict_write(
-    port: DbPort,
+    port: CaseDatabase,
     serving: ServingModel,
     model: AcceptedMetamodel,
     target: str,
@@ -6158,37 +6200,37 @@ def _run_conflict_write(
     statements = _lower_conflict_write(model, port.dialect, concurrency, resolved)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     observed = lifecycle.observation()
-    database = handle.Database(
+    with handle.Database.connect(
         port,
         serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
-    )
-    landed = _landed_conflict_rows(resolved)
-    sources = [_conflict_source_node(target, write, nodes) for write in resolved]
-    for write, node in zip(resolved, sources, strict=True):
-        _refuse_unobserved_conflict_version(target, write, node)
-
-    def body(tx: handle.Transaction) -> int:
+    ) as database:
+        landed = _landed_conflict_rows(resolved)
+        sources = [_conflict_source_node(target, write, nodes) for write in resolved]
         for write, node in zip(resolved, sources, strict=True):
-            if mutation == "delete":
-                assert isinstance(write.instruction, PreparedKeyedWrite)
-                buffer_prepared_wire_keyed_write(tx, write.instruction, node, frozenset())
-            else:
-                assert isinstance(write.instruction, PreparedKeyedWrite)
-                buffer_prepared_wire_keyed_write(
-                    tx,
-                    write.instruction,
-                    node,
-                    frozenset(_conflict_changes(write)),
-                )
-        return landed  # the expectation machinery already verified this on success
+            _refuse_unobserved_conflict_version(target, write, node)
 
-    observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
-    implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
-    affected = _conflict_attempt_affected(database, concurrency, implied, body)
-    ran = _delivered(statements, observed.writes, "a conflict attempt")
-    return ran, affected, observed.round_trips
+        def body(tx: handle.Transaction) -> int:
+            for write, node in zip(resolved, sources, strict=True):
+                if mutation == "delete":
+                    assert isinstance(write.instruction, PreparedKeyedWrite)
+                    buffer_prepared_wire_keyed_write(tx, write.instruction, node, frozenset())
+                else:
+                    assert isinstance(write.instruction, PreparedKeyedWrite)
+                    buffer_prepared_wire_keyed_write(
+                        tx,
+                        write.instruction,
+                        node,
+                        frozenset(_conflict_changes(write)),
+                    )
+            return landed  # the expectation machinery already verified this on success
+
+        observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
+        implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
+        affected = _conflict_attempt_affected(database, concurrency, implied, body)
+        ran = _delivered(statements, observed.writes, "a conflict attempt")
+        return ran, affected, observed.round_trips
 
 
 def _conflict_changes(write: _ConflictWrite) -> dict[str, object]:
@@ -6210,7 +6252,7 @@ _CLOSE_MUTATION: Final[str] = "close"
 
 
 def _run_conflict_close(
-    port: DbPort,
+    port: DatabaseConnection,
     model: AcceptedMetamodel,
     target: str,
     concurrency: Concurrency,
@@ -6319,7 +6361,7 @@ def _run_conflict_close(
     # gate from the milestone its observation names, while a conflict case
     # authors both directly — including the deliberately stale gate whose whole
     # point is that it matches no milestone.
-    def run_close(conn: DbPort) -> int:
+    def run_close(conn: DatabaseConnection) -> int:
         affected = conn.execute_write(
             conn.dialect.to_driver_sql(statement.sql), list(statement.binds)
         )
@@ -6691,7 +6733,7 @@ def _refuse_unentitled_observed_edge(
 
 def run_conflict_case(
     case: case_format.Case,
-    port: DbPort,
+    port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], int, dict[str, list[Row]] | None, int]:
     """Run a `conflict` case (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`):
@@ -6837,7 +6879,7 @@ def _error_trigger(
 
 
 def run_error_case(
-    case: case_format.Case, port: DbPort
+    case: case_format.Case, port: DatabaseConnection
 ) -> tuple[list[Emission], str, str | int, int]:
     """Run an error-shape case and report the raised failure's classification.
 

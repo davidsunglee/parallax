@@ -47,7 +47,7 @@ from _support.adoption import raises_contextualized
 from _support.db_port import (
     Read,
     ReadCall,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
     WriteCall,
@@ -55,7 +55,7 @@ from _support.db_port import (
 from parallax.conformance import vo_models as vo
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import InstantError, PresentDocument
-from parallax.core.db_port import DbPort, JsonDocument, Row
+from parallax.core.db_port import JsonDocument, Row
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
 from parallax.snapshot import InvalidData, connect
@@ -182,11 +182,11 @@ def _position_row() -> Row:
     }
 
 
-def _writes(port: ScriptedPort) -> list[WriteCall]:
+def _writes(port: ScriptedAdapter) -> list[WriteCall]:
     return [op for op in port.calls if isinstance(op, WriteCall)]
 
 
-def _reads(port: ScriptedPort) -> list[ReadCall]:
+def _reads(port: ScriptedAdapter) -> list[ReadCall]:
     return [op for op in port.calls if isinstance(op, ReadCall)]
 
 
@@ -225,7 +225,7 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
         "city": "C",
         "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
     }
-    wire_port = ScriptedPort(Transact(Read(rows=[copy.deepcopy(stored)])))
+    wire_port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(stored)])))
 
     def wire(tx: Transaction) -> None:
         node = tx.wire.find(_CONTACT_QUERY).result()
@@ -234,7 +234,7 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
 
     db_for(CONTACT, wire_port).transact(wire)
 
-    typed_port = ScriptedPort(Transact(Read(rows=[copy.deepcopy(stored)])))
+    typed_port = ScriptedAdapter(Transact(Read(rows=[copy.deepcopy(stored)])))
 
     def typed(tx: Transaction) -> None:
         node = tx.find(vo.Contact.where(vo.Contact.id == 1)).result()
@@ -260,7 +260,7 @@ def test_an_insert_answers_the_nested_many_its_own_buffered_row_stores() -> None
     # node compares its own authored value against what was published, and a key
     # the answer omitted while the row stored it would make the next write differ
     # from the row it addresses.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def body(tx: Transaction) -> None:
         opened = tx.wire.insert(
@@ -290,7 +290,7 @@ def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> N
     # what the node answers has to be the row under either: a caller revising a key
     # the answer omitted while the row stored it would author a change against a
     # value the row does not hold.
-    columns_port = ScriptedPort(Transact(Write()))
+    columns_port = ScriptedAdapter(Transact(Write()))
 
     def columns(tx: Transaction) -> None:
         opened = tx.wire.insert("parallax.compatibility.Roster", {"id": 7})
@@ -299,7 +299,7 @@ def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> N
     db_for(ROSTER_META, columns_port).transact(columns)
     assert _bound_documents(columns_port) == [[]]
 
-    document_port = ScriptedPort(Transact(Write()))
+    document_port = ScriptedAdapter(Transact(Write()))
 
     def document(tx: Transaction) -> None:
         opened = tx.wire.insert("parallax.compatibility.Traveler", {"id": 7})
@@ -309,7 +309,7 @@ def test_an_insert_answers_the_top_level_many_its_own_buffered_row_stores() -> N
     assert _bound_documents(document_port) == [{"tags": []}]
 
 
-def _bound_documents(port: ScriptedPort) -> list[object]:
+def _bound_documents(port: ScriptedAdapter) -> list[object]:
     return [
         bind.value for op in _writes(port) for bind in op.binds if isinstance(bind, JsonDocument)
     ]
@@ -320,7 +320,7 @@ def _address(node: WireEntity) -> Mapping[str, Any]:
 
 
 def test_a_wire_terminate_closes_the_observed_milestone() -> None:
-    port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
     db_for(BALANCE, port).transact(lambda tx: tx.wire.terminate(_node(tx, _BALANCE_QUERY)))
 
     assert len(_writes(port)) == 1
@@ -329,7 +329,7 @@ def test_a_wire_terminate_closes_the_observed_milestone() -> None:
 
 
 def test_a_wire_update_until_splits_the_observed_rectangle() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
         tx.wire.update_until(
@@ -346,7 +346,7 @@ def test_a_wire_update_until_splits_the_observed_rectangle() -> None:
 
 
 def test_a_wire_terminate_until_closes_and_reopens_the_flanks() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=3)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=3)))
 
     def fn(tx: Transaction) -> None:
         tx.wire.terminate_until(_node(tx, _POSITION_QUERY), valid_from=_VALID_FROM, until=_UNTIL)
@@ -358,7 +358,7 @@ def test_a_wire_terminate_until_closes_and_reopens_the_flanks() -> None:
 
 
 def test_a_wire_insert_until_opens_one_bounded_rectangle() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.wire.insert_until(
@@ -374,7 +374,7 @@ def test_a_wire_insert_until_opens_one_bounded_rectangle() -> None:
 
 
 def test_a_wire_predicate_delete_over_an_unversioned_target_is_readless() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     db_for(PERSON, port).transact(lambda tx: tx.wire.delete_where(_PERSON_TARGET))
 
     assert _reads(port) == []
@@ -382,7 +382,7 @@ def test_a_wire_predicate_delete_over_an_unversioned_target_is_readless() -> Non
 
 
 def test_a_wire_predicate_update_lowers_its_assignments_canonically() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     db_for(PERSON, port).transact(
         lambda tx: tx.wire.update_where(_PERSON_TARGET, {"name": "Grace"})
     )
@@ -391,7 +391,7 @@ def test_a_wire_predicate_update_lowers_its_assignments_canonically() -> None:
 
 
 def test_a_wire_predicate_terminate_over_a_temporal_target_materializes() -> None:
-    port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)]), Write()))
     db_for(BALANCE, port).transact(
         lambda tx: tx.wire.terminate_where(
             {
@@ -407,7 +407,7 @@ def test_a_wire_predicate_terminate_over_a_temporal_target_materializes() -> Non
 
 def test_the_bounded_predicate_verbs_reach_the_rectangle_split() -> None:
     for verb, expected in (("update_until_where", 4), ("terminate_until_where", 3)):
-        port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=expected)))
+        port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=expected)))
         target: dict[str, object] = {
             "entity": "parallax.compatibility.WherePosition",
             "predicate": {"eq": {"attr": "parallax.compatibility.WherePosition.id", "value": 1}},
@@ -439,7 +439,7 @@ def _lost_provenance(node: WireEntity) -> list[object]:
 
 
 def test_a_mapping_that_lost_its_provenance_is_no_keyed_source() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -456,7 +456,7 @@ def test_a_mapping_that_lost_its_provenance_is_no_keyed_source() -> None:
 def test_a_copy_of_a_published_node_keeps_its_provenance() -> None:
     # An immutable value's copy IS the value, so the claim travels with it —
     # the Wire counterpart of `Entity.edit` transferring a Typed node's claim.
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -486,7 +486,7 @@ def test_a_hydratable_classified_row_is_a_source_its_own_correction_writes_throu
         "geo": {"country": "NO", "point": {"lat": 1.0, "lon": 2.0}},
         "phones": [],
     }
-    port = ScriptedPort(Transact(Read(rows=[stored]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[stored]), Write()))
 
     def fn(tx: Transaction) -> None:
         published = tx.wire.find(_CONTACT_QUERY).checked().result()
@@ -501,7 +501,7 @@ def test_a_hydratable_classified_row_is_a_source_its_own_correction_writes_throu
 
 
 def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         for candidate in (None, 7, "Account"):
@@ -527,7 +527,7 @@ def test_none_and_a_non_mapping_are_refused_as_keyed_sources() -> None:
 def test_an_illegal_wire_assignment_is_refused_statically(
     changes: dict[str, object], error: type[Exception], match: str
 ) -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(error, match=match):
@@ -538,7 +538,7 @@ def test_an_illegal_wire_assignment_is_refused_statically(
 
 
 def test_a_temporal_axis_member_is_not_assignable() -> None:
-    port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
@@ -554,8 +554,8 @@ def test_a_bounded_verb_states_its_window_as_a_pair() -> None:
     # build is not always downstream: the restoring change set below buffers no
     # instruction at all, so a window this seam waves through is a window nothing
     # else ever judges.
-    account = ScriptedPort(Transact(_ACCOUNT_READ))
-    position = ScriptedPort(Transact(Read(rows=[_position_row()])))
+    account = ScriptedAdapter(Transact(_ACCOUNT_READ))
+    position = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
     def absent_valid_from(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="valid_from is absent"):
@@ -591,7 +591,7 @@ def test_a_bound_carries_the_refusal_of_whichever_rule_it_broke() -> None:
     # module's classification — one input, one classification, at every boundary.
     # A value of no datetime type at all is the same rule as a naive datetime:
     # both are answered rather than left to leak out of instant normalization.
-    port = ScriptedPort(Transact(Read(rows=[_position_row()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _POSITION_QUERY)
@@ -621,9 +621,9 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
     #
     # Serialized values are decoded at Wire ingress, so every shape preserves
     # the typed-literal decoder's exact out-of-space classification.
-    keyed = ScriptedPort(Transact(Read(rows=[dict(_SAMPLE_ROW)])))
-    inserted = ScriptedPort(Transact())
-    selected = ScriptedPort(Transact())
+    keyed = ScriptedAdapter(Transact(Read(rows=[dict(_SAMPLE_ROW)])))
+    inserted = ScriptedAdapter(Transact())
+    selected = ScriptedAdapter(Transact())
 
     def update(tx: Transaction) -> None:
         with pytest.raises(instructions.InstructionRejectedError, match="out-of-space"):
@@ -645,7 +645,7 @@ def test_an_instant_no_canonical_spelling_writes_is_refused_at_every_ingress() -
 
 
 def test_a_non_temporal_target_takes_no_valid_from() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="takes no valid_from"):
@@ -655,7 +655,7 @@ def test_a_non_temporal_target_takes_no_valid_from() -> None:
 
 
 def test_a_predicate_target_carries_exactly_entity_and_predicate() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="exactly `entity`"):
@@ -676,7 +676,7 @@ def test_a_change_set_that_is_not_a_document_is_refused(changes: object) -> None
     # instead of a refusal. No argument states that intent to an update verb —
     # its signature requires the document, and the verbs that name no member are
     # the destructive and close ones, which take no change set at all.
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
@@ -687,7 +687,7 @@ def test_a_change_set_that_is_not_a_document_is_refused(changes: object) -> None
 
 
 def test_every_update_verb_requires_the_change_document_its_signature_states() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()])))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()])))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _POSITION_QUERY)
@@ -711,7 +711,7 @@ def test_a_tuple_is_not_a_wire_array_the_predicate_algebra_accepts() -> None:
     # Capture copies caller input; it does not translate its spellings. A tuple
     # rewritten as a list would make this verb accept an operand list the
     # canonical predicate serde refuses for the identical document.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     operands = (
         {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}},
         {"eq": {"attr": "parallax.compatibility.Person.name", "value": "Ada"}},
@@ -734,7 +734,7 @@ def test_an_insert_payload_that_is_not_a_document_is_refused() -> None:
     # The second call states neither a payload nor an Entity this model declares,
     # and the one answered is the payload: whether a document was stated needs
     # nothing from the model, so it leads the spelling an insert has to resolve.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="document of names"):
@@ -751,7 +751,7 @@ def test_a_malformed_predicate_is_judged_before_anything_the_model_decides() -> 
     # `m-predicate`'s algebra does not admit is that module's refusal rather than
     # whatever the model would have said about the Entity or the assignments
     # standing beside it. The envelope around the node stays the verb's own.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     malformed: dict[str, object] = {"entity": "Unknown", "predicate": {"nonsense": {}}}
 
     def fn(tx: Transaction) -> None:
@@ -770,7 +770,7 @@ def test_a_malformed_predicate_is_judged_before_anything_the_model_decides() -> 
 
 
 def test_predicate_write_rejects_valid_selection_changes_that_name_unknown_members() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="undeclared members"):
@@ -786,8 +786,8 @@ def test_an_empty_change_document_is_a_keyed_no_op_and_a_predicate_refusal() -> 
     # source published, so naming none is the ordinary no-op. A selection has no
     # published values to be a no-op against, and its change set lowers to the
     # canonical assignment algebra, whose list must name at least one assignment.
-    keyed = ScriptedPort(Transact(_ACCOUNT_READ))
-    predicate = ScriptedPort(Transact())
+    keyed = ScriptedAdapter(Transact(_ACCOUNT_READ))
+    predicate = ScriptedAdapter(Transact())
 
     def keyed_fn(tx: Transaction) -> None:
         tx.wire.update(_node(tx, _ACCOUNT_QUERY), {})
@@ -806,7 +806,7 @@ def test_a_document_key_that_is_not_a_name_is_refused() -> None:
     # Every walk downstream reads a document's keys as names — sorting them into
     # a refusal message among them — so a key that is not one is refused at the
     # verb rather than reaching the comparison that cannot order it.
-    port = ScriptedPort(Transact(Read(rows=[dict(_PERSON_ROW)])))
+    port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)])))
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="keyed by names"):
@@ -824,7 +824,7 @@ def test_a_document_key_that_is_not_a_name_is_refused() -> None:
 
 
 def test_a_document_that_contains_itself_is_refused() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
     data: dict[str, Any] = {"id": 9, "name": "Newton"}
     data["self"] = data
     target: dict[str, Any] = dict(_PERSON_TARGET)
@@ -844,7 +844,7 @@ def test_an_insert_refuses_a_value_a_read_published() -> None:
     # The refusal names the verb that DOES accept the value, in the interface the
     # caller typed: the Typed peer of this message advises `value.edit(...)` plus
     # `tx.update(...)`, which is not a spelling a Wire caller has.
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -861,7 +861,7 @@ def test_an_insert_refuses_a_pinned_node_for_its_view_before_its_provenance() ->
     # state the pin: the Transaction-Time past is read-only whatever verb was
     # aimed at it, where the provenance answer names only which verb this
     # particular value belongs to.
-    port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
     pinned: dict[str, object] = {
         **_BALANCE_QUERY,
         "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"}},
@@ -877,7 +877,7 @@ def test_an_insert_refuses_a_pinned_node_for_its_view_before_its_provenance() ->
 
 
 def test_an_insert_refuses_a_framework_owned_member() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="framework-owned"):
@@ -891,7 +891,7 @@ def test_an_insert_refuses_a_framework_owned_member() -> None:
 
 
 def test_an_unresolvable_entity_spelling_is_refused_at_the_verb() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="unknown entity"):
@@ -904,7 +904,7 @@ def test_a_bare_entity_spelling_resolves_when_one_entity_carries_it() -> None:
     # `insert` names its Entity by the reference-position rule every write
     # target resolves through, so an unambiguous bare local name reaches the
     # same Entity the canonical spelling does; a shared one refuses instead.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     db_for(PERSON, port).transact(lambda tx: tx.wire.insert("Person", {"id": 9, "name": "Newton"}))
 
     assert _writes(port) == [
@@ -913,7 +913,7 @@ def test_a_bare_entity_spelling_resolves_when_one_entity_carries_it() -> None:
 
 
 def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
-    port = ScriptedPort(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
+    port = ScriptedAdapter(Transact(Read(rows=[balance_row(in_z=_TX_START)])))
     pinned: dict[str, object] = {
         **_BALANCE_QUERY,
         "temporal": {"transaction-time": {"asOf": "2024-03-01T00:00:00.000000Z"}},
@@ -931,7 +931,7 @@ def test_a_finite_transaction_time_pinned_source_is_read_only() -> None:
 # Evidence: what a Wire source licenses under each Concurrency Strategy.      #
 # --------------------------------------------------------------------------- #
 def test_an_unversioned_participating_wire_source_licenses_an_ungated_write() -> None:
-    port = ScriptedPort(Transact(Read(rows=[dict(_PERSON_ROW)]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)]), Write()))
 
     def fn(tx: Transaction) -> None:
         tx.wire.update(_node(tx, _PERSON_QUERY), {"name": "Grace"})
@@ -943,7 +943,7 @@ def test_an_unversioned_participating_wire_source_licenses_an_ungated_write() ->
 
 
 def test_a_standalone_unversioned_wire_source_has_no_usable_evidence() -> None:
-    port = ScriptedPort(Read(rows=[dict(_PERSON_ROW)]), Transact())
+    port = ScriptedAdapter(Read(rows=[dict(_PERSON_ROW)]), Transact())
     db = db_for(PERSON, port)
     standalone = _standalone(db, _PERSON_QUERY)
 
@@ -957,7 +957,7 @@ def test_a_standalone_unversioned_wire_source_has_no_usable_evidence() -> None:
 
 
 def test_a_standalone_versioned_wire_source_supplies_its_own_gate() -> None:
-    port = ScriptedPort(_ACCOUNT_READ, Transact(Write()))
+    port = ScriptedAdapter(_ACCOUNT_READ, Transact(Write()))
     db = db_for(ACCOUNT, port)
     standalone = _standalone(db, _ACCOUNT_QUERY)
 
@@ -973,7 +973,7 @@ def test_a_standalone_versioned_wire_source_supplies_its_own_gate() -> None:
 
 
 def test_explicit_locking_refuses_a_standalone_versioned_wire_source() -> None:
-    port = ScriptedPort(_ACCOUNT_READ, Transact())
+    port = ScriptedAdapter(_ACCOUNT_READ, Transact())
     db = db_for(ACCOUNT, port)
     standalone = _standalone(db, _ACCOUNT_QUERY)
 
@@ -987,7 +987,7 @@ def test_explicit_locking_refuses_a_standalone_versioned_wire_source() -> None:
 
 
 def test_a_wire_source_whose_evidence_a_flush_spent_is_refused() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write(), _ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -1002,7 +1002,7 @@ def test_a_wire_source_whose_evidence_a_flush_spent_is_refused() -> None:
 
 
 def test_two_wire_intents_over_different_regions_are_refused_synchronously() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_position_row()]), Write(times=4)))
+    port = ScriptedAdapter(Transact(Read(rows=[_position_row()]), Write(times=4)))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _POSITION_QUERY)
@@ -1015,8 +1015,8 @@ def test_two_wire_intents_over_different_regions_are_refused_synchronously() -> 
 
 
 def test_a_wire_verb_refuses_before_any_io() -> None:
-    port = ScriptedPort(Transact())
-    db = Database.connect(cast("DbPort", port), ACCOUNT, clock=FixedClock(FIXED))
+    port = ScriptedAdapter(Transact())
+    db = Database.connect(port, ACCOUNT, clock=FixedClock(FIXED))
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError):
@@ -1029,7 +1029,7 @@ def test_a_wire_verb_refuses_before_any_io() -> None:
 # Coalescing, restoration, and the no-op — including across representations.  #
 # --------------------------------------------------------------------------- #
 def test_two_wire_assignments_of_one_state_merge_with_the_later_value_winning() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -1043,7 +1043,7 @@ def test_two_wire_assignments_of_one_state_merge_with_the_later_value_winning() 
 
 
 def test_a_wire_assignment_equal_to_what_the_read_published_is_a_no_op() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -1054,7 +1054,7 @@ def test_a_wire_assignment_equal_to_what_the_read_published_is_a_no_op() -> None
 
 
 def test_a_wire_restore_chain_across_two_verbs_emits_nothing() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -1069,7 +1069,7 @@ def test_a_typed_assignment_a_wire_verb_restores_emits_nothing() -> None:
     # Both sources are taken BEFORE either write, because a participating read
     # force-flushes: read-your-own-writes is what a mixed chain has to work
     # inside, not around.
-    port = ScriptedPort(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
 
     def fn(tx: Transaction) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -1082,7 +1082,7 @@ def test_a_typed_assignment_a_wire_verb_restores_emits_nothing() -> None:
 
 
 def test_a_wire_assignment_a_typed_verb_restores_emits_nothing() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
+    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2)))
 
     def fn(tx: Transaction) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -1095,7 +1095,7 @@ def test_a_wire_assignment_a_typed_verb_restores_emits_nothing() -> None:
 
 
 def test_a_typed_and_a_wire_assignment_of_one_object_merge_in_authored_order() -> None:
-    port = ScriptedPort(Transact(Read(rows=[_ACCOUNT_ROW], times=2), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[_ACCOUNT_ROW], times=2), Write()))
 
     def fn(tx: Transaction) -> None:
         typed = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -1110,7 +1110,7 @@ def test_a_typed_and_a_wire_assignment_of_one_object_merge_in_authored_order() -
 
 
 def test_a_wire_update_then_delete_of_one_object_emits_one_delete() -> None:
-    port = ScriptedPort(Transact(Read(rows=[dict(_PERSON_ROW)]), Write()))
+    port = ScriptedAdapter(Transact(Read(rows=[dict(_PERSON_ROW)]), Write()))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _PERSON_QUERY)
@@ -1125,7 +1125,7 @@ def test_an_insert_answers_the_frozen_node_it_opened() -> None:
     # The Typed peer leaves its caller holding the instance it passed, so a pure
     # Wire caller must be handed something too. The node publishes the payload's
     # own members in canonical Wire spelling and refuses mutation like any other.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     opened: list[object] = []
 
     def fn(tx: Transaction) -> None:
@@ -1143,7 +1143,7 @@ def test_a_wire_update_of_a_row_the_same_unit_inserted_coalesces_in_place() -> N
     # The parity gap this return closes: with no node to hand back, a pure Wire
     # caller could not revise the row it just opened, and re-reading is not an
     # option — a participating read force-flushes.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
@@ -1156,7 +1156,7 @@ def test_a_wire_update_of_a_row_the_same_unit_inserted_coalesces_in_place() -> N
 
 
 def test_a_wire_delete_of_a_row_the_same_unit_inserted_cancels_to_no_dml() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.wire.delete(tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "N"}))
@@ -1170,7 +1170,7 @@ def test_a_wire_insert_after_a_cancelled_insert_delete_pair_opens_the_row_again(
     # buffer, so it retires the object from the one ledger and the payload stated
     # again is a first opening rather than the repeat the ledger refuses: one
     # INSERT, and it is the second one's values.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
@@ -1187,7 +1187,7 @@ def test_writing_back_what_an_insert_published_is_the_ordinary_no_op() -> None:
     # The node is rendered through the SAME canonical encoding a read publishes,
     # so a member written back off it restores rather than assigns — which is
     # what makes the returned value interchangeable with a read result.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
@@ -1204,7 +1204,7 @@ def test_an_insert_refuses_the_node_a_previous_insert_answered() -> None:
     # store published, and the verb for one is `tx.wire.update` — under the same
     # code the ledger refuses the repeated payload with (below), so a caller
     # repeating an insert hears one answer whichever value spells the repeat.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         opened = tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
@@ -1221,7 +1221,7 @@ def test_an_insert_refuses_the_payload_a_previous_insert_opened_a_row_with() -> 
     # object it names is one this unit of work already opened. The advice points
     # at the node the first insert answered, the only value a Wire caller can
     # revise the row through.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
@@ -1242,7 +1242,7 @@ def test_a_wire_insert_of_an_object_a_typed_insert_opened_is_refused() -> None:
     # update verb over the carrier the first insert produced and only the opener
     # has one — `tx.insert` answers nothing, so there is no Wire node to name.
     # Following it commits the recovered value as the one INSERT.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     refused: list[str] = []
 
     def fn(tx: Transaction) -> None:
@@ -1266,7 +1266,7 @@ def test_a_typed_insert_of_an_object_a_wire_insert_opened_is_refused() -> None:
     # so the refused Typed caller is sent to `tx.wire.update` over it — the
     # payload the first insert took is a mapping with no `.edit`. Following the
     # advice commits the recovered value as the one INSERT.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     refused: list[str] = []
 
     def fn(tx: Transaction) -> None:
@@ -1289,7 +1289,7 @@ def test_a_typed_update_of_a_row_a_wire_insert_opened_coalesces_in_place() -> No
     # exempts a value naming an object the WIRE verb inserted, so the pair
     # coalesces into a single INSERT carrying the final value rather than being
     # refused as a write of a row no read produced.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
 
     def fn(tx: Transaction) -> None:
         tx.wire.insert("parallax.compatibility.Person", {"id": 9, "name": "Newton"})
@@ -1305,7 +1305,7 @@ def test_a_typed_update_of_a_row_a_wire_insert_opened_coalesces_in_place() -> No
 # Input capture: what a verb buffered is its own from the moment it returns.  #
 # --------------------------------------------------------------------------- #
 def test_mutating_the_changes_mapping_after_the_verb_returns_changes_nothing() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
     changes: dict[str, object] = {"balance": "125.00"}
 
     def fn(tx: Transaction) -> None:
@@ -1323,7 +1323,7 @@ def test_mutating_the_changes_mapping_after_the_verb_returns_changes_nothing() -
 
 
 def test_mutating_insert_data_after_the_verb_returns_changes_nothing() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     data: dict[str, Any] = {"id": 9, "name": "Newton"}
 
     def fn(tx: Transaction) -> None:
@@ -1337,7 +1337,7 @@ def test_mutating_insert_data_after_the_verb_returns_changes_nothing() -> None:
 
 
 def test_mutating_a_predicate_target_after_the_verb_returns_changes_nothing() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     predicate: dict[str, Any] = {"eq": {"attr": "parallax.compatibility.Person.id", "value": 1}}
     target: dict[str, Any] = {"entity": "parallax.compatibility.Person", "predicate": predicate}
 
@@ -1350,7 +1350,7 @@ def test_mutating_a_predicate_target_after_the_verb_returns_changes_nothing() ->
 
 
 def test_a_returned_wire_mapping_still_refuses_mutation_after_a_write() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
 
     def fn(tx: Transaction) -> None:
         node = _node(tx, _ACCOUNT_QUERY)
@@ -1363,7 +1363,7 @@ def test_a_returned_wire_mapping_still_refuses_mutation_after_a_write() -> None:
 
 
 def test_the_wire_view_is_reachable_from_the_module_level_connect() -> None:
-    port = ScriptedPort(Transact(_ACCOUNT_READ, Write()))
+    port = ScriptedAdapter(Transact(_ACCOUNT_READ, Write()))
     connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(
         lambda tx: tx.wire.delete(_node(tx, _ACCOUNT_QUERY))
     )
@@ -1373,7 +1373,7 @@ def test_the_wire_view_is_reachable_from_the_module_level_connect() -> None:
 # --------------------------------------------------------------------------- #
 # Value Object documents: an authored occurrence crosses the serde seam whole. #
 # --------------------------------------------------------------------------- #
-def _bound_address(port: ScriptedPort) -> dict[str, Any]:
+def _bound_address(port: ScriptedAdapter) -> dict[str, Any]:
     """The address document the insert actually bound, as ordinary data.
 
     A Document-layout occurrence binds through a canonical JSON carrier, so the
@@ -1398,7 +1398,7 @@ def test_an_authored_occurrence_decodes_at_every_depth() -> None:
     # so a verb that skipped the crossing would refuse this document rather than
     # bind it. What reaches storage is the canonical spelling of the whole
     # subtree, nested `one` and `many` alike.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     data: dict[str, Any] = {"id": 1, "name": "Ada", "address": copy.deepcopy(_ADDRESS)}
 
     db_for(CONTACT, port).transact(
@@ -1414,7 +1414,7 @@ def test_an_authored_occurrence_decodes_at_every_depth() -> None:
 
 
 def test_an_authored_occurrence_is_captured_at_the_call() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     address: dict[str, Any] = copy.deepcopy(_ADDRESS)
     data: dict[str, Any] = {"id": 1, "name": "Ada", "address": address}
 
@@ -1434,7 +1434,7 @@ def test_two_positions_sharing_one_document_are_captured_rather_than_refused() -
     # Sharing is not a cycle: the capture refuses only a container reachable
     # from itself, so a caller reusing one subdocument at two positions has it
     # copied at each and mutating the original reaches neither.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     phone: dict[str, Any] = {"type": "home", "number": "555"}
     address: dict[str, Any] = {**copy.deepcopy(_ADDRESS), "phones": [phone, phone]}
 
@@ -1454,7 +1454,7 @@ def test_two_positions_sharing_one_document_are_captured_rather_than_refused() -
 
 
 def test_a_nullable_occurrence_may_be_authored_absent() -> None:
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     db_for(CONTACT, port).transact(
         lambda tx: tx.wire.insert(
             "parallax.compatibility.Contact", {"id": 1, "name": "Ada", "address": None}
@@ -1477,7 +1477,7 @@ def test_a_malformed_occurrence_document_is_refused_by_the_judgement(address: ob
     # verdict is the normative payload rule's own, which is why it carries that
     # rule's class rather than the verb's: one input, one classification, at
     # every ingress that accepts it.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(WriteRejectedError, match=r"Contact\.address"):
@@ -1491,7 +1491,7 @@ def test_a_malformed_occurrence_document_is_refused_by_the_judgement(address: ob
 
 
 def test_a_predicate_target_that_is_not_a_document_is_refused() -> None:
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="canonical"):
@@ -1504,7 +1504,7 @@ def test_an_insert_naming_an_undeclared_member_reaches_the_honesty_gate() -> Non
     # Decoding leaves a key the model declares no member for exactly as authored,
     # so what names it is the member-name honesty gate rather than a decoding
     # failure standing in for one.
-    port = ScriptedPort(Transact())
+    port = ScriptedAdapter(Transact())
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="undeclared member"):
@@ -1519,7 +1519,7 @@ def test_an_insert_of_a_family_subtype_answers_a_node_carrying_its_variant() -> 
     # it, which for a family participant includes the variant tag: a caller that
     # revises the row it just opened, or that grades what the verb answered, sees
     # the concrete subtype rather than having to infer it from the members.
-    port = ScriptedPort(Transact(Write()))
+    port = ScriptedAdapter(Transact(Write()))
     opened: list[WireEntity] = []
 
     def fn(tx: Transaction) -> None:

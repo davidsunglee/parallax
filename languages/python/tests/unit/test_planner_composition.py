@@ -61,7 +61,7 @@ from _transact_support import NEW_ROW, account_db, new_account
 from _support import mirrored_models as mm
 from _support.db_port import (
     Read,
-    ScriptedPort,
+    ScriptedAdapter,
     Transact,
     Write,
 )
@@ -268,7 +268,7 @@ def test_the_database_lane_plans_every_ingress_through_one_factory_planner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen = _watch("Database", monkeypatch)
-    port = ScriptedPort(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
+    port = ScriptedAdapter(Transact(Write(), Read(rows=[NEW_ROW]), Write()))
     database = account_db(port)
 
     def body(tx: Transaction) -> None:
@@ -324,7 +324,7 @@ def test_the_composition_root_wires_the_audit_port_to_the_neutral_strategy(
     # assertions cover, and a stamp that never varies survives every comparison
     # of two writes to each other.
     seen = _watch("Database", monkeypatch)
-    account_db(ScriptedPort())
+    account_db(ScriptedAdapter())
 
     assert seen.built, "connecting built no planner, so this grades no wiring"
     assert all(built.audit is NO_AUDIT for built in seen.built)
@@ -373,7 +373,7 @@ def test_the_conformance_conflict_lane_plans_through_planners_the_factory_built(
     case = case_format.load_case(_CASES / "m-opt-lock-006-success.yaml")
     emissions, _affected, _state, _round_trips = engine.run_conflict_case(
         case,
-        ScriptedPort(
+        ScriptedAdapter(
             Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]),
             Transact(Write()),
             Read(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]),

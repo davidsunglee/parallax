@@ -19,13 +19,13 @@ import logging
 from collections.abc import Callable
 from typing import Any, Final, Literal, NamedTuple, assert_never, cast
 
+from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._activity import ExecutionLifecycleHandler
 from parallax.core.execution_lifecycle._diagnostics import (
     ActivityFailure,
     CausedFailure,
     DatabaseFailureDiagnostic,
     DirectFailure,
-    FailureDiagnostic,
 )
 from parallax.core.execution_lifecycle._errors import ExecutionLifecycleHandlerError
 from parallax.core.execution_lifecycle._events import (

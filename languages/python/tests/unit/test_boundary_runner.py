@@ -20,16 +20,17 @@ from typing import Any
 import pytest
 
 from _support.adoption import raises_contextualized
-from _support.db_port import body_outcome
+from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import boundary_runner, case_format
-from parallax.conformance.boundary_runner import FaultInjectingPort
+from parallax.conformance.boundary_runner import FaultInjectingPort, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
     Bind,
     Committed,
-    DbPort,
+    DatabaseAdapter,
+    DatabaseConnection,
     DocumentReadOrdinals,
     Row,
     TransactionOutcome,
@@ -180,7 +181,7 @@ def test_translated_isolation_setup_failure_classifies_to_no_category() -> None:
 # run_boundary_actions: the action -> verb mapping, incl. branches no         #
 # reachable corpus case reaches.                                              #
 # --------------------------------------------------------------------------- #
-class _FakePort:
+class _FakePort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def __init__(self, *, rows: list[Row]) -> None:
@@ -208,14 +209,19 @@ class _FakePort:
         return 1
 
     def transaction[T](
-        self, body: Callable[[DbPort], T], *, isolation: str | None = None
+        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:
         self.boundaries += 1
         return body_outcome(self, body)
 
 
-def _db(port: DbPort) -> Database:
-    return Database.connect(port, _ACCOUNT, clock=FixedClock(_FIXED))
+def _faulted(adapter: DatabaseAdapter, *, fault: str | None, persistent: bool) -> DatabaseAdapter:
+    """``adapter`` with ``fault`` armed on every connection it acquires."""
+    return fault_injecting_adapter(adapter, fault=fault, persistent=persistent)
+
+
+def _db(adapter: DatabaseAdapter) -> Database:
+    return Database.connect(adapter, _ACCOUNT, clock=FixedClock(_FIXED))
 
 
 def test_run_boundary_actions_read_then_update() -> None:
@@ -391,7 +397,7 @@ def test_fault_injecting_port_answers_a_setup_failure_as_a_boundary_never_opened
     port = FaultInjectingPort(inner, fault="isolation-setup-failure", persistent=False)
     ran: list[str] = []
 
-    def body(_conn: DbPort) -> str:
+    def body(_conn: DatabaseConnection) -> str:
         ran.append("body")  # pragma: no cover - the body must never run
         return "unreachable"
 
@@ -417,13 +423,14 @@ def test_a_setup_failure_surfaces_terminally_after_one_attempt() -> None:
     # the port's own error rather than retrying it, however the loop is
     # configured.
     inner = _FakePort(rows=[])
-    port = FaultInjectingPort(inner, fault="isolation-setup-failure", persistent=False)
 
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read"))
 
     with raises_contextualized(DatabaseError) as unopened:
-        _db(port).transact(fn, isolation="serializable")
+        _db(_faulted(inner, fault="isolation-setup-failure", persistent=False)).transact(
+            fn, isolation="serializable"
+        )
     assert unopened.value.category is None
     assert inner.boundaries == 0
 
@@ -439,7 +446,7 @@ def test_fault_injecting_port_delegates_every_transaction_call() -> None:
     inner = _FakePort(rows=[])
     port = FaultInjectingPort(inner, fault=None, persistent=False)
 
-    def body(_conn: DbPort) -> str:
+    def body(_conn: DatabaseConnection) -> str:
         return "ok"
 
     assert port.transaction(body) == Committed("ok")
@@ -453,8 +460,7 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
     inner = _FakePort(
         rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}]
     )
-    port = FaultInjectingPort(inner, fault="deadlock", persistent=False)
-    db = _db(port)
+    db = _db(_faulted(inner, fault="deadlock", persistent=False))
 
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, _steps("read", "update"))
@@ -543,3 +549,21 @@ def test_reachable_boundary_cases_defaults_to_the_loaded_corpus() -> None:
     cases = boundary_runner.reachable_boundary_cases()
     assert cases
     assert all(case.shape == "boundary" for case in cases)
+
+
+def test_a_fault_injecting_adapter_stands_in_for_the_configuration_it_decorates() -> None:
+    # A decorator reports the dialect of the thing it stands in for and authors
+    # none of its own (`m-db-port`), and that rule reaches the lifetime half for
+    # the same reason it reaches the execution half: what a caller lowers SQL in
+    # must be what executes it. Everything else about the resource is the inner
+    # runtime's, measurements included.
+    inner = _FakePort(rows=[])
+    faulted = _faulted(inner, fault=None, persistent=False)
+    runtime = faulted.open()
+
+    assert faulted.dialect is inner.dialect
+    assert runtime.dialect is inner.dialect
+    assert runtime.pool_metrics is None
+    with runtime.connection() as scoped:
+        assert isinstance(scoped, FaultInjectingPort)
+    runtime.close()

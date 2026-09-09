@@ -1,11 +1,14 @@
-"""Postgres adapter internal-seam unit tests (Docker-free).
+"""Postgres scoped-execution internal-seam unit tests (Docker-free).
 
-The public exports are ``PostgresAdapter`` and ``isolation_spelling`` (§8
-topology); psycopg bind mechanics stay internal. The bind-adaptation seam — the
+The public exports are ``PostgresAdapter``, the two retention policies, and
+``isolation_spelling`` (§8 topology); psycopg bind mechanics and the scoped
+connection under an acquisition stay internal. The bind-adaptation seam — the
 neutral ``JsonDocument`` carrier becoming a psycopg ``Jsonb`` at the adapter
-boundary — and the `m-db-error` port-boundary re-raise (every psycopg exception
-translated to a neutral ``DatabaseError``) are both pure and proven here without
-a container; the end-to-end deadlock witness lives in the provider lane.
+boundary — the `m-db-error` port-boundary re-raise (every psycopg exception
+translated to a neutral ``DatabaseError``), and the per-connection setup and
+transaction phases are all provable over a fake connection here; the
+end-to-end deadlock witness lives in the provider lane and the resource
+lifetimes in ``test_postgres_pool.py``.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from psycopg.sql import Composable
 from psycopg.types.json import Jsonb
 
 import parallax.postgres
-import parallax.postgres.adapter as adapter_module
+import parallax.postgres._connection as connection_module
 from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -38,9 +41,13 @@ from parallax.core.db_port import (
 )
 from parallax.core.dialect import PhysicalIndexName
 from parallax.postgres import PostgresAdapter, isolation_spelling
-from parallax.postgres.adapter import (
+from parallax.postgres._connection import (
+    ConnectionPreparation,
+    IncompatibleSessionError,
+    PostgresConnection,
     adapt_binds,
     fold_document_reads,
+    initialize_connection,
     translate_driver_error,
     translating_driver_errors,
 )
@@ -51,8 +58,13 @@ from parallax.postgres.adapter import (
 _DIALECT = PostgresAdapter.dialect
 
 
-def test_public_surface_is_the_adapter_and_this_engines_isolation_spelling() -> None:
-    assert parallax.postgres.__all__ == ["PostgresAdapter", "isolation_spelling"]
+def test_public_surface_is_the_adapter_its_options_and_this_engines_isolation_spelling() -> None:
+    assert parallax.postgres.__all__ == [
+        "OnDemandOptions",
+        "PoolOptions",
+        "PostgresAdapter",
+        "isolation_spelling",
+    ]
     assert not hasattr(parallax.postgres, "Json")
     assert not hasattr(parallax.postgres, "Jsonb")
 
@@ -222,6 +234,22 @@ class _FakeAdapters:
         self.registered.append((name, loader))
 
 
+class _FakeInfo:
+    """A ``connection.info`` stand-in answering the two settings initialization checks.
+
+    Both are read off established connection parameters rather than by running
+    SQL, so a stand-in supplies them as values and the check costs no statement
+    here either.
+    """
+
+    def __init__(self, *, encoding: str = "utf-8", date_style: str | None = "ISO, MDY") -> None:
+        self.encoding = encoding
+        self._date_style = date_style
+
+    def parameter_status(self, name: str) -> str | None:
+        return self._date_style if name == "DateStyle" else None
+
+
 class _FakeConnection:
     """A minimal psycopg-connection stand-in for the boundary tests.
 
@@ -240,7 +268,10 @@ class _FakeConnection:
         begin_error: psycopg.Error | None = None,
         commit_error: psycopg.Error | None = None,
         rollback_error: psycopg.Error | None = None,
+        encoding: str = "utf-8",
+        date_style: str | None = "ISO, MDY",
     ) -> None:
+        self.info = _FakeInfo(encoding=encoding, date_style=date_style)
         self.cursor_error = cursor_error
         self.begin_error = begin_error
         self.commit_error = commit_error
@@ -267,8 +298,15 @@ class _FakeConnection:
         self.closed = True
 
 
-def _adapter(connection: _FakeConnection) -> PostgresAdapter:
-    return PostgresAdapter(cast("psycopg.Connection[TupleRow]", connection))
+def _adapter(connection: _FakeConnection) -> PostgresConnection:
+    """The scoped execution an acquisition of ``connection`` would yield.
+
+    Initialization is applied first, exactly as a runtime applies it to every
+    physical connection before anything may use it.
+    """
+    native = cast("psycopg.Connection[TupleRow]", connection)
+    initialize_connection(native)
+    return PostgresConnection(native)
 
 
 def _sent(connection: _FakeConnection) -> list[str]:
@@ -299,7 +337,7 @@ def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> 
         ("id", "doc_present", "doc"),
         (
             (1, False, None),
-            (2, True, adapter_module._PRESENT_JSON_NULL),  # pyright: ignore[reportPrivateUsage]
+            (2, True, connection_module._PRESENT_JSON_NULL),  # pyright: ignore[reportPrivateUsage]
         ),
         ((1, 2),),
     )
@@ -310,8 +348,8 @@ def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> 
 
 
 def test_json_loader_preserves_only_present_json_null() -> None:
-    load = adapter_module._load_json_preserving_null  # pyright: ignore[reportPrivateUsage]
-    assert load("null") is adapter_module._PRESENT_JSON_NULL  # pyright: ignore[reportPrivateUsage]
+    load = connection_module._load_json_preserving_null  # pyright: ignore[reportPrivateUsage]
+    assert load("null") is connection_module._PRESENT_JSON_NULL  # pyright: ignore[reportPrivateUsage]
     assert load(b'{"answer": 42}') == {"answer": 42}
 
 
@@ -327,10 +365,10 @@ def test_fold_document_reads_rejects_invalid_projection_metadata_and_row_width()
 class _JsonNullCursor(_FakeCursor):
     def __init__(self) -> None:
         super().__init__(None, [])
-        self.description = object()
+        self.description = (SimpleNamespace(name="id"), SimpleNamespace(name="doc"))
 
     def fetchall(self) -> list[object]:
-        return [{"id": 1, "doc": adapter_module._PRESENT_JSON_NULL}]  # pyright: ignore[reportPrivateUsage]
+        return [(1, connection_module._PRESENT_JSON_NULL)]  # pyright: ignore[reportPrivateUsage]
 
 
 class _JsonNullConnection(_FakeConnection):
@@ -516,18 +554,22 @@ def test_a_refused_isolation_reports_a_boundary_that_never_opened() -> None:
     assert _sent(connection)[-1] == "select 1"
 
 
-def test_a_connection_that_cannot_undo_a_refused_isolation_is_discarded() -> None:
-    # The undo is the last thing this adapter can do about a boundary it could
-    # not open as asked. When even that fails, what the connection would run next
-    # is unknown, so it is dropped rather than handed back.
+def test_a_connection_that_cannot_undo_a_refused_isolation_is_marked_suspect() -> None:
+    # The undo is the last thing scoped execution can do about a boundary it
+    # could not open as asked. When even that fails, what the connection would
+    # run next is unknown — so it is reported as suspect and the acquisition's
+    # own cleanup disposes of it, which is the one place that can also settle
+    # the accounting for it. Execution closes nothing itself.
     connection = _FakeConnection(
         cursor_error=errors.InvalidParameterValue("invalid value for parameter"),
         rollback_error=errors.OperationalError("the connection is closed"),
     )
-    outcome = _adapter(connection).transaction(lambda _port: None, isolation="serializable")
+    execution = _adapter(connection)
+    outcome = execution.transaction(lambda _port: None, isolation="serializable")
     assert isinstance(outcome, BeginFailed)
     assert _translated(outcome.error).native_code == "22023"
-    assert connection.closed
+    assert execution.suspect
+    assert not connection.closed
 
 
 def test_transaction_reports_a_commit_time_driver_error_as_rolled_back() -> None:
@@ -598,13 +640,15 @@ def test_transaction_reports_a_rollback_failure_beside_the_body_error_that_trigg
         raise raised_by_the_body
 
     connection = _FakeConnection(rollback_error=errors.UniqueViolation("dup"))
-    outcome = _adapter(connection).transaction(body)
+    execution = _adapter(connection)
+    outcome = execution.transaction(body)
     assert isinstance(outcome, RollbackFailed)
     assert outcome.trigger == CallbackRaised(raised_by_the_body)
     assert _translated(outcome.rollback_error).violates_unique_index
     assert _translated(outcome.rollback_error).native_code == "23505"
-    # The transaction's outcome is unknown, so the connection is not reused.
-    assert connection.closed
+    # The transaction's outcome is unknown, so the connection is not offered for
+    # reuse; disposing of it belongs to the acquisition that will end next.
+    assert execution.suspect
 
 
 def test_transaction_separates_a_rollback_failure_raised_as_the_bodys_own_object() -> None:
@@ -636,13 +680,14 @@ def test_transaction_reports_a_rollback_failure_after_a_failed_commit() -> None:
         commit_error=errors.SerializationFailure("serialize"),
         rollback_error=errors.OperationalError("the connection is lost"),
     )
-    outcome = _adapter(connection).transaction(lambda _port: None)
+    execution = _adapter(connection)
+    outcome = execution.transaction(lambda _port: None)
     assert isinstance(outcome, RollbackFailed)
     trigger = outcome.trigger
     assert isinstance(trigger, CommitFailed)
     assert _translated(trigger.error).native_code == "40001"
     assert _translated(outcome.rollback_error).category is None
-    assert connection.closed
+    assert execution.suspect
 
 
 def test_transaction_reports_a_body_raised_base_exception_unchanged() -> None:
@@ -660,3 +705,42 @@ def test_transaction_reports_a_body_raised_base_exception_unchanged() -> None:
     trigger = outcome.trigger
     assert isinstance(trigger, CallbackRaised)
     assert trigger.error is raised_by_the_body
+
+
+def test_a_connection_whose_client_encoding_is_not_utf_8_is_refused() -> None:
+    # SQL crosses this boundary as UTF-8 bytes and a stored document is decoded
+    # as UTF-8 text, so another encoding corrupts both. The refusal names the
+    # setting and its effective value, which are session configuration rather
+    # than credentials.
+    connection = _FakeConnection(encoding="latin1")
+    with pytest.raises(IncompatibleSessionError, match="client encoding"):
+        initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
+
+
+def test_a_connection_whose_date_style_is_not_iso_is_refused() -> None:
+    # A finite `timestamptz` is decoded from its text form, which psycopg's
+    # loader reads in ISO order; the field order WITHIN ISO does not affect that
+    # and is left alone.
+    connection = _FakeConnection(date_style="German, DMY")
+    with pytest.raises(IncompatibleSessionError, match="DateStyle"):
+        initialize_connection(cast("psycopg.Connection[TupleRow]", connection))
+
+    for accepted in ("ISO, MDY", "ISO, DMY", "ISO, YMD"):
+        initialize_connection(
+            cast("psycopg.Connection[TupleRow]", _FakeConnection(date_style=accepted))
+        )
+
+
+def test_the_per_connection_setup_records_a_refusal_and_reraises_it() -> None:
+    # A pool creates most of its connections on its own background path, where a
+    # refusal is retried and logged where a caller waiting for one never sees
+    # it; the record is what lets the eventual timeout say what is wrong.
+    preparation = ConnectionPreparation()
+    refused = _FakeConnection(encoding="latin1")
+
+    with pytest.raises(IncompatibleSessionError) as raised:
+        preparation(cast("psycopg.Connection[TupleRow]", refused))
+
+    assert preparation.last_refusal is raised.value
+    preparation(cast("psycopg.Connection[TupleRow]", _FakeConnection()))
+    assert preparation.last_refusal is None

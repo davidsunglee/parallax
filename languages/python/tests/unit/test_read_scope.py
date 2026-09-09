@@ -36,10 +36,10 @@ import pytest
 from _transact_support import ACCOUNT, BALANCE, NEW_ROW, balance_row
 
 from _support import mirrored_models as mm
-from _support.db_port import Read, ReadCall, RefusingPort, ScriptedPort
+from _support.db_port import Read, ReadCall, RefusingAdapter, ScriptedAdapter
 from _support.model_capabilities import cataloged_for, graph_construction_for
 from parallax.core import LATEST, TX_TIME
-from parallax.core.db_port import DbPort
+from parallax.core.db_port import DatabaseConnection
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ExecutionLifecycleReentryError, ReadInterface
 from parallax.core.execution_lifecycle._activity import (
@@ -152,6 +152,7 @@ class _Recording:
         self.eager_calls: list[tuple[ActivityTarget, ReadInterface]] = []
         self.stream_calls: list[tuple[ActivityTarget, ReadInterface, int]] = []
         self.advances = 0
+        self.releases = 0
 
     def begin(self) -> _Recording:
         self.calls.append("begin")
@@ -189,6 +190,16 @@ class _Recording:
         self.calls.append("page")
         return body(INERT, self._inputs)
 
+    def release(self, failure: BaseException | None, /) -> None:
+        """The delivery's release, counted apart from the capability calls.
+
+        A settlement releases and so does the scope exit after it, neither of
+        which is a capability the scope chose — so counting them here keeps
+        ``calls`` the record of what the SCOPE did.
+        """
+        del failure
+        self.releases += 1
+
     @property
     def interfaces(self) -> list[ReadInterface]:
         return [interface for _, interface in self.eager_calls]
@@ -199,7 +210,7 @@ class _Executed:
     """One executor call the scope's body made, by name and by what it threaded."""
 
     executor: str
-    port: DbPort
+    port: DatabaseConnection
     preference: Concurrency | None
     ledger: ObservationLedger | None
 
@@ -216,7 +227,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
     def recording_find(
         query: ValidatedObjectQuery,
         model: CatalogedModel,
-        port: DbPort,
+        port: DatabaseConnection,
         *,
         preference: Concurrency | None = None,
         ledger: ObservationLedger | None = None,
@@ -230,7 +241,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
     def recording_find_history(
         query: ValidatedObjectQuery,
         model: CatalogedModel,
-        port: DbPort,
+        port: DatabaseConnection,
         *,
         read: ReadActivity = INERT,
     ) -> HistoryFindResult:
@@ -240,7 +251,7 @@ def _recorded(patch: pytest.MonkeyPatch) -> list[_Executed]:
     def recording_find_rows(
         query: ValidatedObjectQuery,
         model: CatalogedModel,
-        port: DbPort,
+        port: DatabaseConnection,
         *,
         edition: str,
         preference: Concurrency | None = None,
@@ -262,7 +273,7 @@ class _PageRead:
     """One page the scope's own body read, and what it read it under."""
 
     model: CatalogedModel
-    port: DbPort
+    port: DatabaseConnection
     preference: Concurrency | None
     ledger: ObservationLedger | None
 
@@ -277,7 +288,7 @@ def _recorded_pages(patch: pytest.MonkeyPatch) -> list[_PageRead]:
         page_plan: PagePlan,
         at: At,
         model: CatalogedModel,
-        port: DbPort,
+        port: DatabaseConnection,
         *,
         preference: Concurrency | None = None,
         ledger: ObservationLedger | None = None,
@@ -301,7 +312,7 @@ def _delivering() -> InstalledLifecycle:
 
 
 def _scope(
-    port: DbPort,
+    port: DatabaseConnection,
     *,
     selected: SelectedReadModel | None = None,
     lifecycle: InstalledLifecycle | None = None,
@@ -320,7 +331,7 @@ def test_every_verb_refuses_re_entry_before_it_asks_its_policy_for_anything() ->
     # The refusal precedes model selection, the classless check, the query's own
     # judgement, and every capability — which is what makes re-entry
     # completeness a property of this module rather than of a matrix.
-    port = RefusingPort()
+    port = RefusingAdapter()
     scope, execution = _scope(port, lifecycle=_delivering())
 
     for verb in (
@@ -344,8 +355,8 @@ def test_a_wire_verb_refuses_re_entry_before_it_lowers_what_it_was_handed() -> N
     # executes. Outside the context the selection is already made when the
     # lowering fails, which is what orders those two rungs.
     malformed: Any = {"target": "Account"}
-    delivering, refusing = _scope(RefusingPort(), lifecycle=_delivering())
-    quiet, lowering = _scope(RefusingPort())
+    delivering, refusing = _scope(RefusingAdapter(), lifecycle=_delivering())
+    quiet, lowering = _scope(RefusingAdapter())
 
     for refused in (
         lambda: delivering.wire_find(malformed),
@@ -374,7 +385,7 @@ def test_find_selects_its_model_before_it_refuses_a_classless_one() -> None:
     # The record the policy answers is what carries the refusal, so selection
     # has to have happened for the refusal to be possible at all — and nothing
     # below `begin` runs once it fires.
-    port = ScriptedPort()
+    port = ScriptedAdapter()
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
     with pytest.raises(SnapshotConnectionError) as caught:
@@ -399,7 +410,7 @@ def test_find_refuses_a_classless_model_before_it_lowers_its_query(
         raise _LoweringReached
 
     monkeypatch.setattr(read_scope_module, "object_query_node", refusing_lowering)
-    port = RefusingPort()
+    port = RefusingAdapter()
     classless, execution = _scope(port, selected=_selection(materializing=False))
     class_backed, _ = _scope(port)
 
@@ -417,7 +428,7 @@ def test_the_wire_and_row_form_verbs_cross_no_classless_refusal() -> None:
     # Neither publishes an Entity Class instance, so neither needs the graph
     # construction the Typed lane refuses without — and both run to completion
     # under the same selection `find` was refused under.
-    port = ScriptedPort(Read(rows=list(_ACCOUNT_ROWS)), Read(rows=list(_ACCOUNT_ROWS)))
+    port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)), Read(rows=list(_ACCOUNT_ROWS)))
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
     published = scope.wire_find(_wire_node()).result()
@@ -440,7 +451,7 @@ def test_a_query_the_gate_refuses_reaches_no_execution_capability(verb_name: str
     # participating one's buffer untouched: the flush lives inside `eager`, and
     # `eager` is never reached.
     unknown = deserialize_query({"target": "Balance", "predicate": {"all": {}}})
-    port = RefusingPort()
+    port = RefusingAdapter()
     scope, execution = _scope(port)
     verbs: dict[str, Callable[[], object]] = {
         "find": lambda: scope.find(mm.Balance.where(mm.Balance.id == 1)),
@@ -462,7 +473,7 @@ def test_one_scope_chooses_its_publication_per_call() -> None:
     # Three reads through ONE scope, published three ways: the publication is
     # built after the refusal each time and is never retained, so a Handle and
     # its Wire view sharing one scope is not a Handle sharing one result format.
-    port = ScriptedPort(*[Read(rows=list(_ACCOUNT_ROWS)) for _ in range(3)])
+    port = ScriptedAdapter(*[Read(rows=list(_ACCOUNT_ROWS)) for _ in range(3)])
     scope, execution = _scope(port)
 
     scope.find(_typed_query()).result()
@@ -501,7 +512,7 @@ def test_the_graph_tail_dispatches_the_milestone_set_read_for_both_interfaces(
     # caller — which is what keeps "a milestone-set read retains no evidence" a
     # property of one dispatch rather than of four call sites.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    port = ScriptedPort(*[Read(rows=[balance_row(in_z=in_z)]) for _ in range(4)])
+    port = ScriptedAdapter(*[Read(rows=[balance_row(in_z=in_z)]) for _ in range(4)])
     scope, _ = _scope(port, selected=_selection(BALANCE))
     executed = _recorded(monkeypatch)
 
@@ -527,8 +538,8 @@ def test_every_body_threads_the_port_preference_and_ledger_it_was_handed(
     # The scope holds no port, no preference, and no ledger: all three arrive
     # with the body's own invocation, which is what lets one ladder serve a
     # standalone read and a participating one without a mode flag between them.
-    standalone_port = ScriptedPort(Read(rows=list(_ACCOUNT_ROWS)))
-    participating_port = ScriptedPort(Read(rows=list(_ACCOUNT_ROWS)))
+    standalone_port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)))
+    participating_port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)))
     ledger = _Ledger()
     standalone, _ = _scope(standalone_port)
     participating, _ = _scope(participating_port, preference="locking", ledger=ledger)
@@ -549,7 +560,7 @@ def test_the_row_form_body_threads_the_preference_and_files_into_no_ledger(
     # The values lane locks like the graph lane and observes nothing: its
     # executor takes no ledger at all, so a preference reaching it while no
     # evidence does is a property of the one body that calls it.
-    port = ScriptedPort(Read(rows=list(_ACCOUNT_ROWS)))
+    port = ScriptedAdapter(Read(rows=list(_ACCOUNT_ROWS)))
     ledger = _Ledger()
     scope, _ = _scope(port, preference="locking", ledger=ledger)
     executed = _recorded(monkeypatch)
@@ -570,7 +581,7 @@ def test_a_stream_judges_its_page_size_at_the_call_and_begins_no_read_there() ->
     # — and nothing model-dependent: no read is begun at the call, so a
     # classless selection is not consulted there at all, and an invalid page
     # size is refused with the same selection still unasked.
-    port = RefusingPort()
+    port = RefusingAdapter()
     classless, execution = _scope(port, selected=_selection(materializing=False))
     class_backed, class_backed_execution = _scope(port)
 
@@ -587,7 +598,7 @@ def test_a_typed_stream_refuses_a_classless_selection_at_entry_before_the_gate()
     # Entry is where the read begins, so entry is where a selection that can
     # materialize no Snapshot at all refuses a Typed delivery — after `begin`
     # and before the query is gated, so nothing that executes is reached.
-    port = RefusingPort()
+    port = RefusingAdapter()
     scope, execution = _scope(port, selected=_selection(materializing=False))
     stream = scope.stream(_typed_query(), _VALID_BATCH_SIZE)
     assert execution.calls == []
@@ -603,7 +614,7 @@ def test_the_wire_stream_verb_crosses_no_classless_refusal_at_entry() -> None:
     # A Wire delivery publishes no Entity Class instance, so it needs no graph
     # construction — and enters, under exactly the selection the Typed stream
     # was refused under, as far as its own activity.
-    port = ScriptedPort(Read(rows=[_account_row(1)]))
+    port = ScriptedAdapter(Read(rows=[_account_row(1)]))
     scope, execution = _scope(port, selected=_selection(materializing=False))
 
     with scope.wire_stream(_wire_node(), _VALID_BATCH_SIZE) as stream:
@@ -627,7 +638,7 @@ def test_constructing_a_stream_opens_no_activity_and_entering_it_opens_one(
     # is opened through THIS scope when the caller enters it. Which activity that is stays the
     # execution policy's, so the scope passes the target, the interface, and the
     # page size and decides nothing.
-    port = ScriptedPort(Read(rows=[_account_row(1)]))
+    port = ScriptedAdapter(Read(rows=[_account_row(1)]))
     scope, execution = _scope(port)
     verbs: dict[str, Callable[[], Any]] = {
         "stream": lambda: scope.stream(_typed_query(), _VALID_BATCH_SIZE),
@@ -660,7 +671,7 @@ def test_every_page_of_a_delivery_is_read_under_the_one_selection_it_opened_with
     # which is what "no scope or adapter per page" is, stated as recorded calls
     # rather than as a byte count.
     selected = _selection()
-    port = ScriptedPort(
+    port = ScriptedAdapter(
         Read(rows=[_account_row(1), _account_row(2)]),
         Read(rows=[_account_row(2), _account_row(3)]),
         Read(rows=[_account_row(3)]),
@@ -688,8 +699,8 @@ def test_every_page_threads_the_port_preference_and_ledger_it_was_handed(
     # three and a participating delivery differs from a standalone one in what
     # its policy hands each page, never in what the loop above asks for.
     ledger = _Ledger()
-    standalone_port = ScriptedPort(Read(rows=[_account_row(1)]))
-    participating_port = ScriptedPort(Read(rows=[_account_row(1)]))
+    standalone_port = ScriptedAdapter(Read(rows=[_account_row(1)]))
+    participating_port = ScriptedAdapter(Read(rows=[_account_row(1)]))
     standalone, _ = _scope(standalone_port)
     participating, _ = _scope(participating_port, preference="locking", ledger=ledger)
     page_reads = _recorded_pages(monkeypatch)
