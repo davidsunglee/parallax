@@ -53,7 +53,11 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    PoolAvailable,
+    PoolDetached,
+    PoolMeasurements,
     PoolMetricsSource,
+    PoolSample,
     Returned,
     RollbackFailed,
     RolledBack,
@@ -66,6 +70,7 @@ __all__ = [
     "BeginCall",
     "CommitCall",
     "ConnectsAsItself",
+    "DetachableSource",
     "PortCall",
     "Read",
     "ReadCall",
@@ -417,6 +422,35 @@ class ScriptedContext:
         self._runtime.adapter.cleanups.append(self._cleanup_result)
 
 
+class DetachableSource:
+    """A pool source over one fixed reading, detached by its runtime's close.
+
+    A script says nothing about a pool, so what a sample answers here is a
+    constant. What is NOT constant is the thing worth doubling: a source is
+    stable for its runtime's life and stops answering when that runtime closes,
+    so a suite watching a pool across a handle's whole life can do it without a
+    driver.
+    """
+
+    def __init__(self, measurements: PoolMeasurements | None = None) -> None:
+        self.measurements = (
+            measurements
+            if measurements is not None
+            else PoolMeasurements(
+                pool_min=1, pool_max=2, pool_size=1, pool_available=1, requests_waiting=0
+            )
+        )
+        self.attached = True
+        self.samples = 0
+
+    def sample(self) -> PoolSample:
+        self.samples += 1
+        return PoolAvailable(self.measurements) if self.attached else PoolDetached()
+
+    def detach(self) -> None:
+        self.attached = False
+
+
 class ScriptedRuntime:
     """The runtime a scripted adapter opens: acquisitions over one script."""
 
@@ -430,12 +464,27 @@ class ScriptedRuntime:
 
     @property
     def pool_metrics(self) -> PoolMetricsSource | None:
-        return None
+        """Whatever the adapter was configured with, and nothing by default.
+
+        A script says what statements answer, not what a pool holds, so a
+        suite proving pool observation supplies the source it wants observed
+        and every other suite composes a runtime that publishes none.
+        """
+        return self.adapter.metrics
 
     def connection(self) -> ConnectionContext:
         return ScriptedContext(self)
 
     def close(self) -> None:
+        """Close, detaching the metrics source first, as a real runtime does.
+
+        The order is the contract's: nothing may be reading a resource that is
+        being torn down, so detachment precedes the teardown rather than
+        following it.
+        """
+        metrics = self.adapter.metrics
+        if isinstance(metrics, DetachableSource):
+            metrics.detach()
         self.closed = True
         self.adapter.closes += 1
 
@@ -451,7 +500,9 @@ class ScriptedAdapter:
     successive acquisitions and releases, with anything past their end
     succeeding — so a suite names the third acquisition's timeout without
     writing the two before it. ``acquisitions``, ``cleanups``, and ``closes``
-    record what actually happened.
+    record what actually happened. ``metrics`` is the pool source the runtime
+    this opens publishes, absent by default because a script describes
+    statements rather than a pool.
     """
 
     dialect: Dialect
@@ -462,6 +513,7 @@ class ScriptedAdapter:
         dialect: Dialect = POSTGRES,
         acquisition_failures: Sequence[ConnectionAcquisitionError | None] = (),
         cleanup_results: Sequence[CleanupResult | None] = (),
+        metrics: PoolMetricsSource | None = None,
     ) -> None:
         seen: dict[int, Exception] = {}
         for failure in _failures(script):
@@ -469,6 +521,7 @@ class ScriptedAdapter:
                 raise ValueError("one failure instance cannot be reported by two calls")
             seen[id(failure)] = failure
         self.dialect = dialect
+        self.metrics = metrics
         self.calls: list[PortCall] = []
         self.acquisitions = 0
         self.closes = 0

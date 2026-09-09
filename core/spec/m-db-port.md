@@ -117,10 +117,13 @@ already admitted may finish everything it was going to do, including statements
 it has not issued yet; anything needing a NEW acquisition after a close — a
 retry, a delivery that has not read its first page — is refused from then on.
 
-**Close is idempotent and permanent.** It stops admission and releases what the
+**Close is idempotent and permanent.** It stops admission, detaches the metrics
+source described below where it published one, and then releases what the
 runtime owns. It neither waits for borrowers nor interrupts their statements.
-Ordinary problems met while closing are diagnostic-only: a handle that refused to
-close would leave a caller unwinding with nothing better to do.
+Detachment precedes the release so that no reading can be looking at a resource
+being torn down, and so a release that is slow or that fails does not widen that
+window. Ordinary problems met while closing are diagnostic-only: a handle that
+refused to close would leave a caller unwinding with nothing better to do.
 
 ## What relinquishing a connection establishes
 
@@ -174,6 +177,56 @@ A runtime that did not become ready reports which readiness phase stopped it and
 what is known about a connection it had already acquired. An earlier readiness
 failure stays primary; cleanup that follows it reports through the
 implementation's restricted resource reporting rather than replacing it.
+
+## A pooling runtime publishes what it measures about itself
+
+A runtime that manages a pool keeps bookkeeping an operator wants and MAY
+publish a read-only **Pool Metrics Source** for it. One that manages no pool
+publishes none, and absence is an honest answer rather than a source that
+reports nothing.
+
+The source is **stable**: one object for the runtime's whole life, shutdown
+included, so a holder keeps what it was given and what a close changes is the
+ANSWER rather than which object answers. Reading through it runs no statement,
+takes no connection, and exposes no credential or native connection — it reads
+what the runtime already maintains.
+
+Sampling is a question asked on the reader's own cadence, never a subscription.
+It answers exactly one of three:
+
+| Sample | Meaning |
+|---|---|
+| Available | These are the measurements, as read |
+| Unavailable | The reading did not happen, and the source is still attached |
+| Detached | The runtime has closed; there is nothing to read and nothing was tried |
+
+Unavailable carries the implementation's detached failure projection and stays
+ATTACHED: the runtime is alive and a later sample may succeed. What must not
+follow is a substituted zero, a stale reading reported as current, or an
+immediate retry — a reading nobody took is not a value, and the cadence is the
+reader's. An ordinary failure to read is Unavailable rather than a raise; a
+control-flow or fatal exception is neither and propagates. A sample already in
+progress when the runtime closes MAY complete and report what it measured; every
+sample begun after that reports Detached.
+
+Measurements are five required **gauges** — configured minimum and maximum,
+managed size, idle availability, and queue length — and the **counters** the
+implementation's pool instruments, each a nonnegative integer. They mean what
+the pool means by them and MUST NOT be strengthened: managed size includes
+capacity reserved before it is ready, a queue length MAY include entries whose
+own wait has already expired, counters include the pool's own housekeeping and
+MAY reset, and accumulated milliseconds are whole units rather than averages.
+The reading is not atomic, so two fields MAY describe instants a moment apart
+and no relationship between them is checked. There is no pool-wide count of
+connections actively executing: managed size minus idle availability is not one,
+and the hold duration a Release reports is one operation's rather than a
+pool-wide total.
+
+A counter absent from a successful reading is zero, which is what a pool means
+by omitting a counter it has never incremented. A missing gauge, a value that is
+not a nonnegative integer, and a measurement that cannot be read at all are each
+Unavailable instead. Measurements the contract does not name are ignored, so a
+pool that instruments something new is still readable.
 
 ## The dialect is preserved through every port that stands in for another
 

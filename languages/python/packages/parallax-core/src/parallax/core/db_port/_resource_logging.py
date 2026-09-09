@@ -24,15 +24,21 @@ from typing import Final, Literal
 from parallax.core.db_port._resources import CleanupCode, CleanupIssue, CleanupResult
 from parallax.core.diagnostics import guarded
 
-__all__ = ["RESOURCE_LOGGER_NAME", "ResourceCondition", "report_resource_issues"]
+__all__ = [
+    "RESOURCE_LOGGER_NAME",
+    "ResourceCondition",
+    "report_resource_issues",
+    "report_unregistration_failure",
+]
 
-type ResourceCondition = Literal["startup", "operation", "shutdown"]
+type ResourceCondition = Literal["startup", "operation", "shutdown", "unregistration"]
 """The occasions on which this logger speaks at all.
 
-Two of them are outside any execution: startup unwinds before observation
-exists and shutdown runs after it is gone, which is why neither could be
-reported as an event even in principle. ``operation`` is the one that can be
-observed, and it reports here whenever nothing else received it.
+Three of them are outside any execution: startup unwinds before observation
+exists, and shutdown and the unregistration after it run once it is gone, which
+is why none of them could be reported as an event even in principle.
+``operation`` is the one that can be observed, and it reports here whenever
+nothing else received it.
 """
 
 RESOURCE_LOGGER_NAME: Final = "parallax.resources"
@@ -65,6 +71,7 @@ _CONDITIONS: Final[dict[ResourceCondition, str]] = {
     "startup": "a database runtime that failed to start could not release everything it took",
     "operation": "a database operation could not release the connection it held",
     "shutdown": "a database runtime being closed could not release everything it held",
+    "unregistration": "a pool observation registered at composition could not be closed",
 }
 """The fixed sentence each occasion is reported under."""
 
@@ -87,6 +94,19 @@ def report_resource_issues(condition: ResourceCondition, result: CleanupResult |
     if result is None or not result.issues:
         return
     guarded(lambda: _emit(condition, result), None)
+
+
+def report_unregistration_failure() -> None:
+    """Report that a pool observation would not close, and never raise.
+
+    Deliberately parameterless. There is no cleanup phase or code here — nothing
+    was relinquished — and what raised is the application's own observer holding
+    the application's own state, so a message assembled from it would be exactly
+    the unaudited disclosure this logger exists to prevent. The one fact worth
+    stating is that an interest registered at composition outlived the handle
+    that registered it.
+    """
+    guarded(lambda: _LOGGER.warning("%s", _CONDITIONS["unregistration"]), None)
 
 
 def _emit(condition: ResourceCondition, result: CleanupResult) -> None:

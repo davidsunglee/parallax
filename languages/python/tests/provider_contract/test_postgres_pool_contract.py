@@ -20,7 +20,12 @@ from typing import Any
 import pytest
 
 from parallax.core.base import INFINITY
-from parallax.core.db_port import ConnectionAcquisitionError
+from parallax.core.db_port import (
+    ConnectionAcquisitionError,
+    PoolAvailable,
+    PoolDetached,
+    PoolUnavailable,
+)
 from parallax.postgres import OnDemandOptions, PoolOptions
 
 _BACKEND = "select pg_backend_pid() as pid"
@@ -228,13 +233,16 @@ def _wait_until_queued(runtime: Any) -> None:
     pool admitted first. Reading takes no connection, occupies no slot, and
     changes nothing.
 
-    It reads the driver pool directly because nothing neutral publishes queue
-    depth: a runtime's ``pool_metrics`` is ``None`` by design until there is a
-    sampling contract to publish through.
+    It reads through the runtime's own ``pool_metrics`` source, which is the
+    neutral publication of exactly this: queue depth, taken without a
+    connection and without a statement.
     """
+    source = runtime.pool_metrics
+    assert source is not None
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
-        if runtime._pool.get_stats().get("requests_waiting", 0) > 0:
+        sample = source.sample()
+        if isinstance(sample, PoolAvailable) and sample.measurements.requests_waiting > 0:
             return
         time.sleep(0.01)
     raise AssertionError("no borrower ever queued")
@@ -492,3 +500,155 @@ def _grade_model() -> tuple[Any, Any]:
 
     case = load_case(default_cases_dir() / "m-descriptor-001-quoted-reserved-identifier.yaml")
     return engine.load_case_metamodel(case), provision.load_fixtures(str(case.document["model"]))
+
+
+# --------------------------------------------------------------------------- #
+# What the pool says about itself, against a real pool.                        #
+# --------------------------------------------------------------------------- #
+
+
+def _measurements(runtime: Any) -> Any:
+    source = runtime.pool_metrics
+    assert source is not None
+    sample = source.sample()
+    assert isinstance(sample, PoolAvailable), sample
+    return sample.measurements
+
+
+@pytest.mark.adapter_smoke
+def test_a_ready_runtime_reports_the_capacity_it_was_configured_with(profile_run: Any) -> None:
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=2, max_size=4))
+    try:
+        measurements = _measurements(runtime)
+    finally:
+        runtime.close()
+
+    assert measurements.pool_min == 2
+    assert measurements.pool_max == 4
+    # Readiness waited for the minimum and gave its probe connection back, so
+    # there is real managed capacity and it is idle.
+    assert measurements.pool_size >= 2
+    assert measurements.pool_available >= 1
+    assert measurements.requests_waiting == 0
+    # Startup itself is a caller, so the checkout counter is not zero on a
+    # runtime no application has used yet.
+    assert measurements.connections_num >= 2
+
+
+@pytest.mark.adapter_smoke
+def test_sampling_takes_no_connection_and_runs_no_statement(profile_run: Any) -> None:
+    # Two proofs in one arrangement. A runtime with exactly one slot, with that
+    # slot HELD, still answers — so the reading took no connection, since there
+    # was none to take. And the checkout counter is unchanged across the
+    # reading — so the reading was not itself a caller.
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=1.0))
+    try:
+        with runtime.connection() as held:
+            assert _pid(held)
+            before = _measurements(runtime)
+            after = _measurements(runtime)
+            assert before.pool_available == 0
+            assert after.requests_num == before.requests_num
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_the_counters_follow_the_work_the_runtime_actually_did(profile_run: Any) -> None:
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=2))
+    try:
+        before = _measurements(runtime)
+        for _ in range(3):
+            with runtime.connection() as scoped:
+                assert _pid(scoped)
+        after = _measurements(runtime)
+    finally:
+        runtime.close()
+
+    assert after.requests_num == before.requests_num + 3
+    # A counter is what the pool counted, not a Parallax gauge derived from it:
+    # nothing here claims how many of those checkouts were concurrent.
+    assert after.requests_errors == before.requests_errors
+
+
+@pytest.mark.adapter_smoke
+def test_an_on_demand_runtime_keeps_no_idle_inventory_to_report(profile_run: Any) -> None:
+    # Zero available is the honest reading for a pool that retains nothing, even
+    # while it is serving perfectly well — which is exactly the native fact an
+    # exporter must not read as "exhausted".
+    runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=2))
+    try:
+        with runtime.connection() as scoped:
+            assert _pid(scoped)
+        measurements = _measurements(runtime)
+    finally:
+        runtime.close()
+
+    assert measurements.pool_min == 0
+    assert measurements.pool_max == 2
+    assert measurements.pool_available == 0
+
+
+@pytest.mark.adapter_smoke
+def test_a_closed_runtime_answers_detached_through_the_same_source(profile_run: Any) -> None:
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    source = runtime.pool_metrics
+    assert source is not None
+    assert isinstance(source.sample(), PoolAvailable)
+
+    runtime.close()
+
+    assert runtime.pool_metrics is source
+    assert isinstance(source.sample(), PoolDetached)
+
+
+@pytest.mark.adapter_smoke
+def test_a_queued_borrower_is_visible_as_queue_depth(profile_run: Any) -> None:
+    # The gauge an operator watches for saturation, read from a real queue: one
+    # slot, one holder, and one contender that has actually reached the queue.
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1, acquire_timeout=5.0))
+    contended: list[str] = []
+    try:
+        with runtime.connection() as held:
+            assert _pid(held)
+
+            def contend() -> None:
+                with runtime.connection() as second:
+                    contended.append(str(_pid(second)))
+
+            waiter = threading.Thread(target=contend)
+            waiter.start()
+            _wait_until_queued(runtime)
+            assert _measurements(runtime).requests_waiting == 1
+        waiter.join(timeout=10.0)
+        assert contended
+        assert _measurements(runtime).requests_waiting == 0
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_a_sample_is_unavailable_rather_than_raising_when_the_pool_will_not_answer(
+    profile_run: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A real runtime, with only the native statistics call made to fail: an
+    # exporter sampling on its own cadence gets an answer it can record rather
+    # than an exception it has to defend against, and the source stays attached.
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=1))
+    try:
+        source = runtime.pool_metrics
+        assert source is not None
+
+        def refuse() -> dict[str, int]:
+            raise RuntimeError("the pool refuses to be measured")
+
+        # The native pool is the runtime's own and its statistics call is the
+        # one seam this failure can come from.
+        monkeypatch.setattr(runtime._pool, "get_stats", refuse)
+        unavailable = source.sample()
+        monkeypatch.undo()
+
+        assert isinstance(unavailable, PoolUnavailable)
+        assert isinstance(source.sample(), PoolAvailable)
+    finally:
+        runtime.close()

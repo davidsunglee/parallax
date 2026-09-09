@@ -12,13 +12,14 @@ around.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
-from parallax.conformance import engine, provision
+from parallax.conformance import database_pooling_stories, engine, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
@@ -244,3 +245,130 @@ def test_a_committed_transaction_keeps_its_value_across_the_release(profile_run:
 
         assert db.transact(body) == new_id
         assert any(int(account.id) == new_id for account in _accounts(db))
+
+
+# --------------------------------------------------------------------------- #
+# Pool observation, through the shipped composition seam.                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_provider_observes_the_pool_across_the_whole_life_of_a_handle(
+    profile_run: Any,
+) -> None:
+    # The executable story, against the real pool it describes: registered
+    # before the handle is published, read while a delivery is holding the only
+    # slot, and detached once the handle closes.
+    _seeded(profile_run)
+    configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=1))
+
+    reading = (
+        database_pooling_stories.the_pool_reports_its_own_capacity_and_stops_when_the_handle_closes(
+            configured, _ACCOUNT
+        )
+    )
+
+    assert reading.at_rest.managed == 1
+    assert reading.at_rest.idle == 1
+    # The delivery holds the runtime's one slot, and the reading still happens:
+    # sampling takes no connection, so it could not have queued behind it.
+    assert reading.while_working.idle == 0
+    assert reading.while_working.checkouts > reading.at_rest.checkouts
+    assert reading.while_working.waiting == 0
+    assert reading.detached_after_close
+    assert reading.registration_closed
+
+
+def test_one_configuration_serves_two_independent_handles(profile_run: Any) -> None:
+    _seeded(profile_run)
+    configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=2))
+
+    shape = database_pooling_stories.one_configuration_opens_independent_runtimes(
+        configured, _ACCOUNT
+    )
+
+    assert shape.first_rows > 0
+    assert shape.second_rows_after_first_closed == shape.first_rows
+
+
+# --------------------------------------------------------------------------- #
+# The application lifespan and the offload boundary.                           #
+# --------------------------------------------------------------------------- #
+
+
+class _ThreadWitness:
+    """Records which thread each lifecycle event was delivered on."""
+
+    def __init__(self) -> None:
+        self.threads: set[int] = set()
+        self.transitions: list[str] = []
+
+    def open(self, execution: Any, /) -> Any:
+        del execution
+        return self
+
+    def report_handler_error(self, error: Any, /) -> None:
+        raise AssertionError(f"no handler failure expected: {error.diagnostic.message}")
+
+    def handle(self, event: Any, /) -> None:
+        self.threads.add(threading.get_ident())
+        self.transitions.append(type(event).__name__)
+
+
+def test_the_lifespan_pattern_opens_one_handle_and_closes_it_at_shutdown(
+    profile_run: Any,
+) -> None:
+    # The ASGI lifespan an application passes as `lifespan=`, without importing
+    # one: an async context manager whose first half runs at startup and whose
+    # second runs at shutdown. What is proven is the SHUTDOWN — the handle it
+    # yielded is closed by the time the block is left, so the next operation
+    # through it is refused rather than served by a runtime nobody closed.
+    _seeded(profile_run)
+    configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=2))
+    escaped: list[Any] = []
+
+    async def scenario() -> list[Decimal]:
+        async with database_pooling_stories.pooled_database(configured, _ACCOUNT) as db:
+            escaped.append(db)
+            return await database_pooling_stories.serve_account_balances(db)
+
+    balances = asyncio.run(scenario())
+
+    assert balances
+    with pytest.raises(ExecutionFailure) as refused:
+        database_pooling_stories.account_balances(escaped[0])
+    assert isinstance(refused.value.__cause__, ConnectionAcquisitionError)
+    assert refused.value.__cause__.reason == "closed"
+
+
+def test_a_complete_operation_offloaded_from_an_async_endpoint_never_touches_the_loop(
+    profile_run: Any,
+) -> None:
+    # The boundary, not the offload. Every event of the operation — its
+    # acquisition, its statements, its release — is delivered on the worker
+    # thread, so the whole operation happened there and the loop thread was
+    # never holding a connection. What comes back is plain values, which is
+    # what makes that possible: a result still needing the database would have
+    # dragged part of the operation back onto the loop.
+    _seeded(profile_run)
+    configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=2))
+    witness = _ThreadWitness()
+
+    async def scenario() -> tuple[int, list[Decimal]]:
+        async with database_pooling_stories.pooled_database(
+            configured, _ACCOUNT, lifecycle_provider=witness
+        ) as db:
+            balances = await database_pooling_stories.serve_account_balances(db)
+            return threading.get_ident(), balances
+
+    loop_thread, balances = asyncio.run(scenario())
+
+    assert balances and all(isinstance(balance, Decimal) for balance in balances)
+    assert witness.threads
+    assert loop_thread not in witness.threads
+    # A whole operation, not just its beginning: the read opened, acquired,
+    # ran, released, and finished, all on the one worker thread.
+    assert witness.transitions[0] == "ReadStarted"
+    assert witness.transitions[1] == "AcquisitionStarted"
+    assert witness.transitions[-2] == "ReleaseFinished"
+    assert witness.transitions[-1] == "ReadFinished"
+    assert len(witness.threads) == 1

@@ -480,6 +480,58 @@ implementation still reports without a Provider is a cleanup fact no Handler
 received, which reaches the restricted failure-only resource log described
 below.
 
+## Pool observation is registered once and belongs to no root
+
+Every event above describes ONE operation. A pool describes none of them —
+capacity, idleness, and queue depth belong to the resource the operations share
+— so an interest in it is REGISTERED at composition rather than delivered as
+events to a Handler that would have to be retained for a root that never ends.
+
+The seam is the Provider already named at composition. A Provider that also
+implements the optional **pool observation** method is offered the runtime's
+Pool Metrics Source (`m-db-port`) once, before the connected handle is
+published, and answers with a **Pool Observation** — a registration whose only
+verb is closing it — or with nothing, which declines. Implementing the method is
+the whole declaration of interest: there is no capability flag and no second
+composition argument.
+
+Both halves are required and neither is inferred. A runtime that publishes no
+source offers nothing to any Provider, and a Provider that does not implement
+the method is asked nothing. Interest in the pool is INDEPENDENT of accepting
+roots: a Provider may decline every root and observe the pool, or accept every
+root and ignore it.
+
+```text
+compose
+  prepare model -> open ready runtime
+  offer the source to an interested provider -> registration or decline
+  publish the handle
+
+close
+  close the runtime, which detaches the source
+  then close every registration, whatever the close before it did
+```
+
+Registration happens BEFORE publication, so a registration that fails ordinarily
+fails the composition: no handle is published, the runtime that was opened is
+closed, and the exception keeps its own identity rather than being wrapped or
+reinterpreted as a decline. Where several Providers are composed, the ones that
+already registered are closed on the way out — a registration nobody holds could
+never be closed — and every one of those closes is attempted.
+
+The handle owns the REGISTRATION and nothing behind it. Closing gives the
+interest up; it never closes the exporter, queue, or client the application
+built, which outlive the handle. Closing the runtime comes first, because the
+runtime is what the interest was in, and the registrations are closed afterwards
+in every case, including one where closing the runtime itself failed. An
+ordinary failure to close a registration is contained and reaches the restricted
+failure-only resource log, which states that a registration would not close and
+nothing about why: what raised is application code holding application state.
+
+Sampling itself is the reader's, on its own cadence, and is described by
+`m-db-port`. Nothing here polls, schedules, caches a reading, or retains a
+sample: an interest is a lifetime, not a channel.
+
 ## Handler failures, re-entry, and fan-out
 
 A Handler ordinary exception quarantines that Handler for the remainder of its

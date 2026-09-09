@@ -211,7 +211,9 @@ def test_startup_probes_a_real_connection_and_gives_it_back(
 
     assert pool.waits and pool.checkouts
     assert pool.returned and pool.returned[0].statements == [PROBE_SQL]
-    assert runtime.pool_metrics is None
+    # A ready runtime publishes its measurements; what one answers is
+    # `test_pool_metrics.py`'s.
+    assert runtime.pool_metrics is not None
 
 
 def test_a_zero_minimum_and_on_demand_wait_for_nothing_and_still_probe(

@@ -8,6 +8,11 @@ the other and the containment rules stay written once each.
 One event object reaches every child. Nothing is cloned per child, which is what
 keeps the borrowed Lowered Statement a single value and delivery work linear in
 the number of active Providers.
+
+Pool observation composes the same way and for the same reason: the optional
+interest is per Provider, so the fan-out offers the source to each child and
+holds the one registration a handle closes. What it adds there is unwinding —
+a child whose registration raises leaves no sibling registered behind it.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
+from parallax.core.db_port import PoolMetricsSource
 from parallax.core.diagnostics import diagnostic_for, qualified_type
 from parallax.core.execution_lifecycle._activity import (
     CompletingHandler,
@@ -25,6 +31,11 @@ from parallax.core.execution_lifecycle._activity import (
 )
 from parallax.core.execution_lifecycle._errors import ExecutionLifecycleHandlerError
 from parallax.core.execution_lifecycle._events import ExecutionEvent, RootExecution
+from parallax.core.execution_lifecycle._pool_observation import (
+    PoolObservation,
+    close_pool_observations,
+    register_pool_observation,
+)
 
 __all__ = ["FanoutLifecycleProvider"]
 
@@ -123,6 +134,21 @@ class _CompositeHandler(CompletingHandler):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _CompositeObservation:
+    """The one registration a fan-out answers, over the children that took one.
+
+    Closing it closes every child registration, whatever any of them does about
+    it: a composition is one interest from the handle's point of view, and a
+    child that refuses to close must not leave its siblings registered.
+    """
+
+    registered: tuple[PoolObservation, ...]
+
+    def close(self) -> None:
+        close_pool_observations(self.registered)
+
+
 class FanoutLifecycleProvider:
     """Several Providers behind the one ``lifecycle_provider`` seam.
 
@@ -159,6 +185,35 @@ class FanoutLifecycleProvider:
 
     def open(self, execution: RootExecution, /) -> ExecutionLifecycleHandler | None:
         return self._opened_at(execution, ())
+
+    def observe_pool(self, source: PoolMetricsSource, /) -> PoolObservation | None:
+        """Offer ``source`` to every composed Provider that observes a pool.
+
+        Interest is per child and independent of accepting roots, so a
+        composition registers as many observations as its children want and
+        answers ``None`` only when none of them wanted any. A nested fan-out is
+        offered the source through this same method, so the tree registers
+        depth-first exactly as it opens.
+
+        A child that RAISES fails the whole composition, and the ones already
+        registered are closed on the way out: a registration nobody holds could
+        never be closed, and half a composition observing a runtime no handle
+        was published for is worse than none of it. Every unwind close is
+        attempted and the exception that stopped the registration is the one
+        that leaves, with its identity intact.
+        """
+        registered: list[PoolObservation] = []
+        try:
+            for provider in self._providers:
+                observation = register_pool_observation(provider, source)
+                if observation is not None:
+                    registered.append(observation)
+        except BaseException:
+            close_pool_observations(registered)
+            raise
+        if not registered:
+            return None
+        return _CompositeObservation(tuple(registered))
 
     def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
         """Tell every composed Provider about a failure of the composite itself.
