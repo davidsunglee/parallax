@@ -12,22 +12,25 @@ model's Entity count, to resolve a spelling no prepared input carries.
 that reaches the spelling scan at all. This prices the same claim from the other
 side, where a lookup that stopped being a dictionary and became something else
 sized the same way would still be caught, and where a per-flush index REPLACED by
-a per-planner one — the shape the ticket's memory contract forbids specifically —
-is the difference between the two readings taken here.
+a per-planner one — a removal that only moves what it costs — is the difference
+between the readings taken here.
 
-Three readings, because the cost has three places to hide. What one key
-derivation allocates, which is where the dictionaries were built. What a
-model-scoped planner KEEPS, which is where a cache would move them to rather than
-remove them. And what one flush allocates over what an empty flush already
-allocated, which is where a per-write derivation would sit.
+Four readings, because the cost has four places to hide. What one key derivation
+allocates, which is where the dictionaries were built. What a model-scoped
+planner KEEPS when it is built, which is where a cache filled up front would move
+them to rather than remove them. What that planner keeps once it has settled a
+write against every Entity the model declares, which is where a cache filled one
+Entity at a time would show instead. And what one flush allocates over what an
+empty flush already allocated, which is where a per-write derivation would sit.
 
 The flush reading is a DIFFERENCE rather than a flat line, and the reason is
 named rather than absorbed: dependency ordering builds one topological rank per
-Entity on every flush, empty or not, and that stage is outside this ticket. So
-the flush reading grades what SETTLING a write adds to a flush that already paid
-for ordering, and it is read at an entity count a repeated measurement of a
-quadratic ordering stage can afford, while the key derivation — the seam the
-index was removed from — is read at a hundred times as many Entities.
+Entity on every flush, empty or not, and that structure is not what is graded
+here. So the flush reading grades what SETTLING a write adds to a flush that
+already paid for ordering, and it is read at an entity count a repeated
+measurement of a quadratic ordering stage can afford, while the key derivation —
+the seam the index was removed from — is read at a hundred times as many
+Entities.
 """
 
 from __future__ import annotations
@@ -173,6 +176,41 @@ def _planner_over(entities: int) -> Seam:
     return run
 
 
+def _planner_having_settled_every_entity(entities: int) -> Seam:
+    """One planner that has settled a write against EVERY Entity of a model of
+    ``entities``, sampled while the planner is alive and its plan is not.
+
+    The model and the request are built before the window for the same reason
+    they are at the flush reading. What the sample can still reach is what the
+    planner kept of the writes it settled: the plan it answered is dropped
+    unbound, and the collection the sample takes reclaims it.
+    """
+    model = _model(entities)
+    request = PlanningRequest(
+        subject_identity=TEST_SUBJECT_IDENTITY,
+        transaction_instant=INSTANT,
+        concurrency="optimistic",
+        buffered_writes=tuple(
+            observed_buffer(
+                [
+                    KeyedWrite("update", f"Entity{index}", ({"id": 1, "value": index},))
+                    for index in range(entities)
+                ],
+                model,
+                None,
+            )
+        ),
+    )
+
+    def run(sample: Callable[[], None]) -> None:
+        planner = build_write_planner(model)
+        planner.finalize(request)
+        sample()
+        del planner
+
+    return run
+
+
 @in_a_child_interpreter
 def test_a_key_derivation_costs_the_same_whatever_else_the_model_declares() -> None:
     # The reading the removed dictionaries would fail outright: they were built
@@ -213,12 +251,31 @@ def test_a_model_scoped_planner_keeps_nothing_per_entity() -> None:
 
 
 @in_a_child_interpreter
+def test_a_planner_keeps_nothing_per_entity_it_has_settled() -> None:
+    # The one shape the two readings above share a blind spot for: a per-Entity
+    # structure filled LAZILY, as each Entity is first settled, is empty in a
+    # planner that has never flushed and constant across a flush that settles the
+    # same target however many Entities the model declares. Settling every Entity
+    # of the model once is what makes such a structure visible, and what the
+    # planner keeps after doing so is the same bytes for sixteen times as many
+    # Entities.
+    tracemalloc.start()
+    try:
+        few = retained(_planner_having_settled_every_entity(FEW))
+        many = retained(_planner_having_settled_every_entity(ORDERED_MANY))
+    finally:
+        tracemalloc.stop()
+    assert few > 0, "a planner that has settled a flush is not free, or nothing is measured"
+    assert many == few
+
+
+@in_a_child_interpreter
 def test_settling_a_write_adds_nothing_per_entity_to_a_flush() -> None:
     # An empty flush is the control because it runs every stage a flush runs and
     # settles nothing: whatever it pays per Entity is dependency ordering's rank
-    # map, which this ticket does not own. Subtracting it leaves what SETTLING
-    # one write costs per Entity, and settlement reads its target through the
-    # Metadata the write already carries, so the two grow by the same bytes.
+    # map, which is not what this reading grades. Subtracting it leaves what
+    # SETTLING one write costs per Entity, and settlement reads its target through
+    # the Metadata the write already carries, so the two grow by the same bytes.
     tracemalloc.start()
     try:
         settled_few = allocation(_flush_of(FEW, 1))
