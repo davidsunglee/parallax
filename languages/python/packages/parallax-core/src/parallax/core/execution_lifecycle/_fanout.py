@@ -195,8 +195,9 @@ class FanoutLifecycleProvider:
         offered the source through this same method, so the tree registers
         depth-first exactly as it opens.
 
-        A child that RAISES fails the whole composition, and the ones already
-        registered are closed on the way out: a registration nobody holds could
+        A child that RAISES fails the whole composition, and every registration
+        already taken is closed on the way out — including where the composite
+        holding them is what could not be built: a registration nobody holds could
         never be closed, and half a composition observing a runtime no handle
         was published for is worse than none of it. Every unwind close is
         attempted and the exception that stopped the registration is the one
@@ -208,12 +209,12 @@ class FanoutLifecycleProvider:
                 observation = register_pool_observation(provider, source)
                 if observation is not None:
                     registered.append(observation)
+            if not registered:
+                return None
+            return _CompositeObservation(tuple(registered))
         except BaseException:
             close_pool_observations(registered)
             raise
-        if not registered:
-            return None
-        return _CompositeObservation(tuple(registered))
 
     def report_handler_error(self, error: ExecutionLifecycleHandlerError, /) -> None:
         """Tell every composed Provider about a failure of the composite itself.

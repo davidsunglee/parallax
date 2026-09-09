@@ -6,8 +6,8 @@ lifecycle Handler receives and exports on its own terms. Some do not. Startup
 unwinds before any Handler exists, and shutdown runs after the last one is gone.
 
 Those go here, and what goes out is deliberately thin: one fixed sentence per
-condition, and the cleanup phase and code with it where a cleanup is what
-failed. Never the rich diagnostic,
+condition, and — where a cleanup is what failed — the cleanup phase, the cleanup
+code, and the one fixed sentence that code stands for. Never the rich diagnostic,
 never a native message or stack, never SQL, binds, credentials, a live
 traceback, structured extras, or ``exc_info``. The rich value stays available to
 whoever holds the result; this log is the floor, not a second export path, and

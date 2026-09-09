@@ -505,7 +505,9 @@ climbs it exactly as replacement does, and a connection refused in preparation
 for a wrong `client_encoding` or `DateStyle` counts as an attempt rather than as
 an error. Read it against `connections_errors` and `connections_lost` — errors
 climbing with it is failing establishment, `connections_lost` climbing with it
-is churn, and neither climbing is a session-setting refusal.
+is churn, and neither climbing narrows it to the attempts no counter records:
+a connection refused in preparation, and the ordinary retirement of a healthy
+connection at `max_lifetime`, which closes it and attempts a replacement.
 
 ## Session settings
 
@@ -542,7 +544,7 @@ interchangeable and only one of them is yours to redact.
 | Path | Carries | Policy |
 |---|---|---|
 | Lifecycle events (a Handler you installed) | Rich detached diagnostics: bounded message and stack, error type and code, the cleanup a release established | **Yours.** You decide what is exported and what is redacted. Detaching and truncating a native message does not sanitize it |
-| `parallax.resources` (standard `logging`) | One fixed sentence per occasion, and the cleanup phase and code where a cleanup is what failed — nothing else. No credential, SQL, bind, native message, stack, structured extra, or `exc_info`. A pool observation that would not close is the one record carrying no phase and no code, because nothing was relinquished | Parallax's, and deliberately thin: it must be safe to leave on in a deployment that has redacted nothing. It speaks only when something went wrong AND no Handler received it |
+| `parallax.resources` (standard `logging`) | One fixed sentence per occasion, and — where a cleanup is what failed — the cleanup phase, the cleanup code, and the one fixed sentence that code stands for. Nothing else. No credential, SQL, bind, native message, stack, structured extra, or `exc_info`. A pool observation that would not close is the one record carrying no phase and no code, because nothing was relinquished | Parallax's, and deliberately thin: it must be safe to leave on in a deployment that has redacted nothing. It speaks only when something went wrong AND no Handler received it |
 | `psycopg.pool` (the driver's own logger) | Whatever the driver logs, exception text included | **The driver's.** Parallax's restriction does not reach it. Configure it yourself |
 
 `parallax.resources` is a fixed logger name so an operator silences or routes

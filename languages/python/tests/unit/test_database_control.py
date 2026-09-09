@@ -24,10 +24,11 @@ import threading
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from types import TracebackType
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 import psycopg
 import pytest
+from _contention_support import observing
 from psycopg.rows import TupleRow
 
 from _support.snapshot_models import SNAP_ORDERS_MODEL
@@ -177,49 +178,6 @@ def _connected_descriptor(stack: ExitStack) -> int:
     near, far = socket.socketpair()
     stack.enter_context(far)
     return near.detach()
-
-
-class _Claim(Protocol):
-    def acquire(self, blocking: bool = ..., timeout: float = ...) -> bool: ...
-    def release(self) -> None: ...
-
-
-class _ObservedClaim:
-    """One of the runtime's own claims, announcing the thread that FINDS IT HELD.
-
-    What a contention pin needs and a timed negative wait cannot give it. That a
-    contender has not finished within some interval is also true of a contender
-    the scheduler has not started, so a pin resting on one can pass while the
-    overlap it exists for never happens — and the implementations these pins
-    condemn behave correctly for threads that never overlap. Failing to take the
-    claim is the contender ARRIVING while the first holder still has it, which
-    is that overlap itself: the pin waits for it rather than for time to pass.
-    """
-
-    def __init__(self, claim: _Claim) -> None:
-        self._claim = claim
-        self.contended = threading.Event()
-
-    def __enter__(self) -> None:
-        if not self._claim.acquire(blocking=False):
-            self.contended.set()
-            self._claim.acquire()
-
-    def __exit__(self, *exc: object) -> None:
-        self._claim.release()
-
-
-def _observing(runtime: object, claim: str) -> _ObservedClaim:
-    """Wrap a live runtime's named claim, leaving the claim itself the same object.
-
-    Installed while a thread already holds it: that holder entered through the
-    original lock and leaves through it, so only arrivals after this call are
-    observed — which are exactly the contenders a pin is proving something about.
-    """
-    private = cast("Any", runtime)
-    observed = _ObservedClaim(getattr(private, claim))
-    setattr(private, claim, observed)
-    return observed
 
 
 # --------------------------------------------------------------------------- #
@@ -597,7 +555,7 @@ def test_no_scope_is_admitted_while_a_validated_control_action_is_in_flight(acti
     # The captured scope ends without waiting for the action, and the next scope
     # asks for the session while the action is still running.
     captured.__exit__(None, None, None)
-    admission = _observing(runtime, "_admission")
+    admission = observing(runtime, "_admission")
     settled = threading.Event()
     outcome: list[str] = []
 
@@ -888,7 +846,7 @@ def test_a_deferred_retirement_and_a_second_close_end_the_session_exactly_once()
     borrower.start()
     assert closing.wait(timeout=5.0)
 
-    retirement = _observing(runtime, "_retirement")
+    retirement = observing(runtime, "_retirement")
     closed_again = threading.Event()
 
     def close_again() -> None:
