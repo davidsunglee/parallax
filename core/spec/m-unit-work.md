@@ -735,16 +735,13 @@ An assigned member the classification answers as **restored** contributes nothin
 to the write, and a write every assigned member of which is restored is
 **eliminated**: it issues no DML, advances no version, consults no clock, and for
 a temporal entity performs no close and chains no row. That holds however the
-codec reached the answer — a null assigned where the row's document carries the
-same observed null, an occurrence differing from the stored one only in keys no
-member declares, an occurrence short of a `many` against a stored empty
-collection.
+codec reached the answer.
 
-Elimination is deliberately the conservative direction wherever the codec's rule
-makes equal what a stored document spells differently. The undeclared key is
-where that bites: eliminating the write leaves the key standing where issuing it
-would have replaced the subtree and removed it. An assignment cannot name such a
-key, so a write with nothing declared to say is not the place to destroy one.
+Elimination is deliberately the conservative direction wherever that answer makes
+equal two documents a store spells differently: eliminating the write leaves the
+stored spelling standing where issuing it would have replaced the assigned
+subtree whole. A write the codec finds nothing changed in is not the place to
+destroy stored state no assignment can name.
 
 ### Write Gate and the concurrency decision
 

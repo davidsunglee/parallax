@@ -248,6 +248,7 @@ predicate write path reaches no Entity value to derive a row from.
 
 The comparison rule the two amendments above settled is unchanged, and it is now
 stated once where it is applied: `core/spec/m-document-codec.md` *Managed
-documents and the effective change set*. What changed is that the peer-interface
+documents and the effective change set*, which is where their references to
+`m-unit-work`'s equality rules now resolve. What changed is that the peer-interface
 obligation the COR-85 amendment recorded is now structural: the Typed and Wire
 keyed verbs ask one operation rather than matching each other's answers.
