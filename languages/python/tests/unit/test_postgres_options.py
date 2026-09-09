@@ -171,7 +171,7 @@ def test_prepared_statement_tuning_is_a_nonnegative_int_or_none() -> None:
 def test_configuration_is_frozen_and_changed_by_constructing_another() -> None:
     options = PoolOptions(max_size=20)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        options.max_size = 30  # pyright: ignore[reportAttributeAccessIssue]
+        options.max_size = 30  # pyright: ignore[reportAttributeAccessIssue] - the frozen record's refusal at runtime is what this proves
     # `replace` revalidates rather than bypassing the constructor, so a
     # derived configuration cannot hold a value the original would have refused.
     assert dataclasses.replace(options, max_size=30).max_size == 30
@@ -182,7 +182,7 @@ def test_configuration_is_frozen_and_changed_by_constructing_another() -> None:
 def test_an_adapter_is_frozen_and_equal_by_value() -> None:
     adapter = PostgresAdapter("host=localhost dbname=app", pool=PoolOptions(max_size=4))
     with pytest.raises(dataclasses.FrozenInstanceError):
-        adapter.connection_string = "host=other"  # pyright: ignore[reportAttributeAccessIssue]
+        adapter.connection_string = "host=other"  # pyright: ignore[reportAttributeAccessIssue] - the frozen record's refusal at runtime is what this proves
     assert adapter == PostgresAdapter("host=localhost dbname=app", pool=PoolOptions(max_size=4))
 
 

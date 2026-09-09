@@ -188,10 +188,21 @@ class ProvisionedRun(ProfileRun):
         return self._provisioner.adapter_for_session_default(level)
 
     def configured(  # pragma: no cover - Docker
-        self, *, pool: Any = None, prepare_threshold: int | None = None
+        self,
+        *,
+        pool: Any = None,
+        prepare_threshold: int | None = None,
+        settings: Mapping[str, str] | None = None,
     ) -> Any:
-        """This run's database as configuration tuned for one pool proof."""
-        return self._provisioner.configured(pool=pool, prepare_threshold=prepare_threshold)
+        """This run's database as configuration tuned for one pool proof.
+
+        ``settings`` are session settings a deployment would configure its
+        connections with, carried so every connection this configuration opens
+        already has them.
+        """
+        return self._provisioner.configured(
+            pool=pool, prepare_threshold=prepare_threshold, settings=settings
+        )
 
     def release_case_runtimes(self) -> None:  # pragma: no cover - Docker
         """Close every runtime a case composed a Database over and left open."""

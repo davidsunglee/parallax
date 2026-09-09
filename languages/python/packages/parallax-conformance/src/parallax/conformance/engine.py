@@ -1457,8 +1457,9 @@ def _write_connection(port: DatabaseConnection, *, rollback: bool) -> DatabaseCo
     """``port`` itself, or the aborting decorator around it.
 
     The framework-only write lane executes its own plan straight on a session
-    rather than through a Handle (D-78), so what a `rollback: true` step
-    decorates there is that session's execution directly.
+    rather than through a Handle, because no public verb expresses it, so what
+    a `rollback: true` step decorates there is that session's execution
+    directly.
     """
     return _AbortingPort(port) if rollback else port
 

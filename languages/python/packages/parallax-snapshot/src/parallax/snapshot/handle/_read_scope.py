@@ -566,11 +566,19 @@ class _StandaloneRead:
         return connection
 
     def release(self, failure: BaseException | None, /) -> None:
+        # Cleared after the release rather than before it, so nothing between
+        # the two can leave this holding a connection it has already stopped
+        # remembering. A second release is still a no-op: the context it forwards
+        # to is total on every exit and reports the facts of the first one.
         resource = self._resource
-        self._resource = None
-        self._connection = None
-        if resource is not None:
+        if resource is None:
+            self._connection = None
+            return
+        try:
             exit_connection(resource, failure)
+        finally:
+            self._resource = None
+            self._connection = None
 
     def page[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /

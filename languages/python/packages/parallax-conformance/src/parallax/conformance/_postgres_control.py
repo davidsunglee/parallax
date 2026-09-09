@@ -52,7 +52,7 @@ from parallax.postgres._connection import PostgresConnection, initialize_connect
 from parallax.snapshot import handle
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Generator, Sequence
     from types import TracebackType
 
     from parallax.core.db_port import (
@@ -76,10 +76,10 @@ _TERMINATE_BACKEND: Final[str] = "select pg_terminate_backend(%s) as terminated"
 _RELINQUISHED: Final[CleanupResult] = Returned()
 
 
-def open_session(  # pragma: no cover - opens a real session; the Docker lanes exercise it
-    conninfo: str, *, autocommit: bool = True, prepare_threshold: int | None = 5
+def initialized_session(
+    connection: psycopg.Connection[TupleRow],
 ) -> psycopg.Connection[TupleRow]:
-    """Open one dedicated driver session, initialized exactly as an owned one is.
+    """``connection`` after the setup every owned connection gets, or closed and re-raised.
 
     The same codecs and the same session-compatibility refusal the shipped
     adapter applies to every connection it creates, because a harness session
@@ -87,14 +87,10 @@ def open_session(  # pragma: no cover - opens a real session; the Docker lanes e
     a database nobody runs.
 
     A refusal closes what it opened: a connection nothing may execute on is not
-    one to hand back to a caller that would then have to remember it.
+    one to hand back to a caller that would then have to remember it. It takes a
+    connection somebody else opened and so acquires nothing itself, which is what
+    lets the refusal be proven without a server.
     """
-    connection = psycopg.connect(
-        conninfo,
-        autocommit=autocommit,
-        prepare_threshold=prepare_threshold,
-        row_factory=tuple_row,
-    )
     try:
         initialize_connection(connection)
     except BaseException:
@@ -102,6 +98,20 @@ def open_session(  # pragma: no cover - opens a real session; the Docker lanes e
             connection.close()
         raise
     return connection
+
+
+def open_session(  # pragma: no cover - opens a real session; the Docker lanes exercise it
+    conninfo: str, *, autocommit: bool = True, prepare_threshold: int | None = 5
+) -> psycopg.Connection[TupleRow]:
+    """Open one dedicated driver session, initialized exactly as an owned one is."""
+    return initialized_session(
+        psycopg.connect(
+            conninfo,
+            autocommit=autocommit,
+            prepare_threshold=prepare_threshold,
+            row_factory=tuple_row,
+        )
+    )
 
 
 class PostgresControl:
@@ -238,14 +248,20 @@ class ControlledScope:
     ) -> None:
         del exc_type, exc, traceback
         execution = self._execution
-        self._execution = None
         if execution is None:
             return
-        execution.revoke()
-        self._runtime.relinquish(self)
-        # The dedicated session is not returned anywhere: it is this runtime's
-        # for its whole life, so what ended is the exclusive use of it.
-        self._cleanup_result = _RELINQUISHED
+        # Relinquished even if revocation does not complete: the runtime serves
+        # one scope at a time, so a scope that failed to give the session back
+        # would leave it refusing every later acquisition.
+        try:
+            execution.revoke()
+        finally:
+            self._execution = None
+            self._runtime.relinquish(self)
+            # The dedicated session is not returned anywhere: it is this
+            # runtime's for its whole life, so what ended is the exclusive use
+            # of it.
+            self._cleanup_result = _RELINQUISHED
 
 
 class ControlledRuntime:
@@ -267,9 +283,19 @@ class ControlledRuntime:
 
     def __init__(self, connection: psycopg.Connection[TupleRow]) -> None:
         self._connection = connection
-        self._lock = threading.Lock()
+        self._state = threading.Lock()
+        # Held for the whole of a control action, and taken BEFORE the state
+        # lock by anything that admits a scope. Revalidating a captured scope
+        # and acting on it have to be one step: between a check and an act, a
+        # scope admitted on this session would be reached by an action nobody
+        # validated against it. Ending a scope needs the state lock only, so a
+        # worker that finishes while an action is in flight is never held up by
+        # it — what is excluded is the NEXT scope, which is what the action
+        # must not reach.
+        self._admission = threading.Lock()
         self._active: ControlledScope | None = None
         self._closed = False
+        self._retired = False
 
     @property
     def pool_metrics(self) -> PoolMetricsSource | None:
@@ -289,7 +315,7 @@ class ControlledRuntime:
         return ControlledScope(self)
 
     def admit(self, scope: ControlledScope) -> PostgresConnection:
-        with self._lock:
+        with self._admission, self._state:
             if self._closed:
                 raise ConnectionAcquisitionError(
                     "this controlled runtime is closed, so it opens no new scope",
@@ -301,26 +327,41 @@ class ControlledRuntime:
                     reason="queue_rejected",
                 )
             self._active = scope
-        return PostgresConnection(self._connection)
+            return PostgresConnection(self._connection)
 
     def relinquish(self, scope: ControlledScope) -> None:
-        with self._lock:
+        with self._state:
             if self._active is scope:
                 self._active = None
+            deferred = self._closed and self._active is None
+        if deferred:
+            # A close arrived while this scope held the session, so retirement
+            # waited for the borrower exactly as a pooled connection's close
+            # waits for it to come back. Nothing here can be raised at — the
+            # caller is leaving a scope, not closing a runtime — so a refusal is
+            # dropped and stays readable as an unretired runtime.
+            with contextlib.suppress(Exception):
+                self._retire_session()
 
-    def holds(self, scope: ControlledScope | None) -> bool:
-        """Whether ``scope`` is the acquisition this runtime is serving right now.
+    @contextlib.contextmanager
+    def holding(self, scope: ControlledScope | None) -> Generator[bool]:
+        """Whether ``scope`` is the acquisition being served — answered for the whole block.
 
-        What a delayed control action asks before it acts. Capturing a target is
-        not permission to destroy it later: by then the scope that was stuck may
-        have finished and another may hold the session, and acting on the
-        captured native connection would reach that later scope's work.
+        What a delayed control action asks before it acts, and it asks for as
+        long as it acts. Capturing a target is not permission to destroy it
+        later: by then the scope that was stuck may have finished and another
+        may hold the session, and acting on the captured native connection would
+        reach that later scope's work. Answering and acting are therefore one
+        step, with admission held shut across it, so there is no window for a
+        next scope to arrive into.
         """
-        with self._lock:
-            return scope is not None and self._active is scope
+        with self._admission:
+            with self._state:
+                held = scope is not None and self._active is scope
+            yield held
 
     def active_scope(self) -> ControlledScope | None:
-        with self._lock:
+        with self._state:
             return self._active
 
     def close(self) -> None:
@@ -328,16 +369,52 @@ class ControlledRuntime:
 
         A pooled runtime hands its connections back to something that outlives
         it; this one has exactly one session and nothing to hand it to, so
-        closing the runtime is what ends it. Quiet about a session the
-        termination ladder already condemned: closing an already-closed
-        connection establishes nothing new.
+        closing the runtime is what ends it. It does NOT end it under a
+        borrower: a scope admitted before this close finishes everything it was
+        going to do, and the session is retired when that scope relinquishes —
+        which is what a pool does when a checked-out connection comes back.
+
+        Never raises, because a runtime is closed by a caller that is unwinding.
+        What a caller may ask afterwards is :attr:`retired`.
         """
-        with self._lock:
+        with self._state:
             already, self._closed = self._closed, True
-        if already:
+            deferred = self._active is not None
+        if already or deferred:
             return
         with contextlib.suppress(Exception):
-            self._connection.close()
+            self._retire_session()
+
+    @property
+    def retired(self) -> bool:
+        """Whether this runtime's session is known to be gone.
+
+        False while a borrower still holds it, and false after a close the
+        driver refused: a session nobody can show is dead is still this
+        runtime's, which is what its opener needs in order to decide whether to
+        forget it.
+        """
+        with self._state:
+            return self._retired
+
+    def condemn(self) -> None:
+        """Record that the termination ladder destroyed this session.
+
+        Termination is not a close and does not go through one, but what it
+        leaves behind is a retired runtime: closing that session again would
+        establish nothing new, and its opener may forget it.
+        """
+        with self._state:
+            self._closed = True
+            self._retired = True
+
+    def _retire_session(self) -> None:
+        with self._state:
+            if self._retired:
+                return
+        self._connection.close()
+        with self._state:
+            self._retired = True
 
 
 class ControlledAdapter:
@@ -452,8 +529,8 @@ class PostgresInterleavedExecution:
         interrupted then is a statement nobody asked to interrupt.
         """
         scope = self._runtime.active_scope()
-        with contextlib.suppress(Exception):
-            if self._runtime.holds(scope):
+        with contextlib.suppress(Exception), self._runtime.holding(scope) as still_serving:
+            if still_serving:
                 self._runtime.native.cancel_safe()
 
     def terminate_active(self) -> TerminationReport:
@@ -470,12 +547,13 @@ class PostgresInterleavedExecution:
         unrelated session that now answers to the same number.
         """
         scope = self._runtime.active_scope()
-        if not self._runtime.holds(scope):
-            return TerminationReport(
-                terminated=False,
-                failures=("the scope this termination captured had already ended",),
-            )
-        return self._retire()
+        with self._runtime.holding(scope) as still_serving:
+            if not still_serving:
+                return TerminationReport(
+                    terminated=False,
+                    failures=("the scope this termination captured had already ended",),
+                )
+            return self._retire()
 
     def _retire(self) -> TerminationReport:
         failures: list[str] = []
@@ -485,10 +563,13 @@ class PostgresInterleavedExecution:
         except Exception as exc:
             failures.append(f"the underlying driver connection's close() raised {exc!r}")
         else:
+            self._runtime.condemn()
             return TerminationReport(terminated=True)
 
         socket_failures = _teardown_socket(connection)
         failures.extend(socket_failures)
+        if not socket_failures:
+            self._runtime.condemn()
         return TerminationReport(terminated=not socket_failures, failures=tuple(failures))
 
     def close(self) -> None:
@@ -498,12 +579,18 @@ class PostgresInterleavedExecution:
         out, including one the termination ladder already condemned, and a
         condemned session refusing to close again adds nothing to the report that
         ladder already returned.
+
+        The release is reported to the opener only once the session is gone —
+        because the ladder condemned it or because this close retired it. A
+        session that would not close, or one a borrower still holds, is still
+        this execution's as far as anyone can tell, so it stays on its opener's
+        books for the teardown backstop rather than being forgotten while alive.
         """
         with contextlib.suppress(Exception):
             self._database.close()
         with contextlib.suppress(Exception):
             self._runtime.close()
-        if self._on_release is not None:
+        if self._runtime.retired and self._on_release is not None:
             self._on_release(self)
 
 

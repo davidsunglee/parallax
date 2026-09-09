@@ -132,6 +132,40 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
     )
 
 
+_CONNECT_REFUSAL = (
+    "connect() takes a Domain Model — one composed from Entity Classes, or one a descriptor "
+    "produced — or a ServingModel holding a prepared one "
+    "(snapshot-class-backed-model-required); a bare accepted Metamodel is a form no "
+    "application holds"
+)
+
+_CONSTRUCTOR_REFUSAL = (
+    "a Database connects to a Domain Model — one composed from Entity Classes, or one a "
+    "descriptor produced — or to a ServingModel holding a prepared one; a bare accepted "
+    "Metamodel names no model a connection can serve (snapshot-class-backed-model-required)"
+)
+
+
+def served_model(model: DomainModel | ServingModel, refusal: str) -> ServingModel:
+    """``model`` as the Serving Model a connection would serve, or ``refusal``.
+
+    Resource-free and total, which is what lets composition run it BEFORE it
+    opens anything: a Serving Model is held as itself, a Domain Model is
+    prepared whole under a generated opaque edition that stays fixed for the
+    connection's life, and any other value is refused. A model that could never
+    be served — a shape no connection takes, or one preparation itself
+    refuses — therefore costs no runtime.
+
+    Two independent connections over one Domain Model carry two generated
+    editions; sharing one selection is explicit preparation's job.
+    """
+    if isinstance(model, ServingModel):
+        return model
+    if not isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the annotation, so an untyped caller is named rather than failing on a missing attribute
+        raise SnapshotConnectionError(refusal)
+    return ServingModel(prepare_model(model, edition=f"static-{uuid4().hex}"))
+
+
 class Database:
     """A connected Parallax database handle: one runtime, one Serving Model (spec §5).
 
@@ -166,7 +200,7 @@ class Database:
         entry point that opens one and owns both halves, and is what an
         application uses.
 
-        A Domain Model is prepared once, here, under a generated opaque edition
+        A Domain Model is prepared once, under a generated opaque edition
         that stays fixed for this connection's life, and held in a private
         Serving Model nothing else can publish to; a Serving Model handed in is
         held as itself, so two connections over one flip together when it
@@ -179,20 +213,7 @@ class Database:
         classes — and refuses every modeled read where that read reaches its
         selection: an eager ``find`` at the call, a stream at scope entry.
         """
-        if isinstance(model, ServingModel):
-            serving = model
-        elif isinstance(model, DomainModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, so an untyped caller is named rather than failing on a missing attribute
-            # One static selection, prepared whole before this handle can
-            # serve. Two independent connections over one model carry two
-            # generated editions; sharing one is explicit preparation's job.
-            serving = ServingModel(prepare_model(model, edition=f"static-{uuid4().hex}"))
-        else:
-            raise SnapshotConnectionError(
-                "a Database connects to a Domain Model — one composed from Entity Classes, or "
-                "one a descriptor produced — or to a ServingModel holding a prepared one; a "
-                "bare accepted Metamodel names no model a connection can serve "
-                "(snapshot-class-backed-model-required)"
-            )
+        serving = served_model(model, _CONSTRUCTOR_REFUSAL)
         self._runtime = runtime
         self._clock: Clock = clock if clock is not None else SystemClock()
         # Absent by default, and absence is the whole default path: every
@@ -236,11 +257,14 @@ class Database:
         ``adapter`` is CONFIGURATION rather than a live resource. This call is
         what opens a runtime from it and what the returned handle then owns: two
         handles connected from one configuration own two independent runtimes,
-        and closing either leaves the other working. The model is judged FIRST,
-        so a value that could never be served costs no resource at all; a
-        composition that fails after the runtime opened closes it again before
-        the failure leaves, so no half-composed handle and no orphaned runtime
-        escapes.
+        and closing either leaves the other working. The model is PREPARED
+        first, so a value that could never be served — a shape no connection
+        takes, or one whose preparation refuses it — costs no resource at all.
+        A composition that fails after the runtime opened closes that runtime
+        before the failure leaves: no half-composed handle is published, and the
+        runtime is not left to a caller who never received one. What closing
+        establishes is closing's own to report, exactly as it is for a handle a
+        caller closes itself.
 
         Every handle this returns must be closed — through :meth:`close`, or by
         using it as a context manager, which are equivalent.
@@ -259,16 +283,10 @@ class Database:
         shape one level down. One model connects to any number of Databases, and
         one Entity Class participates in any number of models.
         """
-        if not isinstance(model, DomainModel | ServingModel):  # pyright: ignore[reportUnnecessaryIsInstance] - the runtime half of the same narrowing, kept here so the developer entry point diagnoses in its own words
-            raise SnapshotConnectionError(
-                "connect() takes a Domain Model — one composed from Entity Classes, or one "
-                "a descriptor produced — or a ServingModel holding a prepared one "
-                "(snapshot-class-backed-model-required); a bare accepted Metamodel is a "
-                "form no application holds"
-            )
+        serving = served_model(model, _CONNECT_REFUSAL)
         runtime = adapter.open()
         try:
-            return cls(runtime, model, clock=clock, lifecycle_provider=lifecycle_provider)
+            return cls(runtime, serving, clock=clock, lifecycle_provider=lifecycle_provider)
         except BaseException:
             runtime.close()
             raise

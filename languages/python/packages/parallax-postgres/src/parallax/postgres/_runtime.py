@@ -142,7 +142,7 @@ class PostgresRuntime:
             self._closed = True
         try:
             self._pool.close()
-        except Exception as exc:  # pragma: no cover - native close reports nothing ordinary
+        except Exception as exc:
             report_resource_issues("shutdown", _shutdown_issue(exc))
 
     def _admit(self, deadline: float) -> None:
@@ -168,11 +168,13 @@ class PostgresRuntime:
 def open_runtime(
     conninfo: str, options: RetentionOptions, prepare_threshold: int | None
 ) -> PostgresRuntime:
-    """Open one ready runtime over ``conninfo``, or raise having released everything.
+    """Open one ready runtime over ``conninfo``, or raise having released what it took.
 
-    Every failure below leaves nothing behind: the native pool is closed on the
+    Every failure below publishes no runtime: the native pool is closed on the
     way out, and a startup connection that was already acquired is relinquished
-    through the same cleanup path an ordinary operation uses.
+    through the same cleanup path an ordinary operation uses — which reports
+    what it established, so a disposal or handoff that itself failed is stated
+    rather than assumed away.
     """
     deadline = monotonic() + options.startup_timeout
     preparation = ConnectionPreparation()
@@ -311,6 +313,13 @@ def _probe(runtime: PostgresRuntime, deadline: float) -> None:
     except BaseException as exc:
         resource.__exit__(type(exc), exc, exc.__traceback__)
         report_resource_issues("startup", resource.cleanup_result)
+        if not isinstance(exc, Exception):
+            # The connection is released either way, but a fatal or
+            # control-flow exception keeps its own propagation: an interpreter
+            # being torn down is not a runtime that failed to become ready, and
+            # a caller unwinding must not have that turned into an ordinary
+            # startup error it might handle.
+            raise
         raise DatabaseStartupError(
             "the database runtime's startup probe did not return what it asked for",
             phase="probe",
@@ -355,7 +364,7 @@ def _remaining(deadline: float, phase: StartupPhase) -> float:
     return remaining
 
 
-def _shutdown_issue(exc: Exception) -> Unrelinquished:  # pragma: no cover - see close()
+def _shutdown_issue(exc: Exception) -> Unrelinquished:
     return Unrelinquished(
         (CleanupIssue(phase="return", code="handoff-failed", diagnostic=diagnostic_for(exc)),)
     )

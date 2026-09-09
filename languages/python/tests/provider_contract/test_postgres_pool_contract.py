@@ -14,6 +14,7 @@ it opens is closed by the scope that opened it.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -171,7 +172,10 @@ def test_on_demand_establishment_takes_its_limit_from_the_acquisition_budget(
     # checkout budget, overriding one the connection string carries for that
     # creation. A connection string asking for a two-second establishment limit
     # therefore does not get one — the acquisition budget is the control that
-    # matters here, and the two do not compose as independent limits.
+    # matters here, and the two do not compose as independent limits. What the
+    # override IS, exactly, is pinned against the installed pool release in
+    # `tests/unit/test_postgres_pool.py`; here it is proven not to prevent an
+    # establishment against a real server.
     from psycopg.conninfo import conninfo_to_dict
 
     configured = profile_run.configured(pool=OnDemandOptions(max_size=1, acquire_timeout=5.0))
@@ -182,6 +186,53 @@ def test_on_demand_establishment_takes_its_limit_from_the_acquisition_budget(
             assert _pid(scoped)
     finally:
         runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_an_on_demand_release_goes_straight_to_a_borrower_already_waiting(
+    profile_run: Any,
+) -> None:
+    # Keeping no inventory is not the same as closing every connection: a
+    # release with a caller already queued hands the connection straight on.
+    # The queue is bounded to one so the handoff is deterministic — a third
+    # acquisition is refused outright exactly while the waiter is queued, which
+    # is what says the waiter really is there before capacity is released.
+    runtime = _runtime(
+        profile_run, pool=OnDemandOptions(max_size=1, max_waiting=1, acquire_timeout=10.0)
+    )
+    handed: list[int] = []
+
+    def wait_for_the_handoff() -> None:
+        with runtime.connection() as scoped:
+            handed.append(_pid(scoped))
+
+    try:
+        waiter = threading.Thread(target=wait_for_the_handoff)
+        with runtime.connection() as held:
+            held_pid = _pid(held)
+            waiter.start()
+            _wait_until_queued(runtime)
+        waiter.join(timeout=15.0)
+        assert handed == [held_pid]
+    finally:
+        runtime.close()
+
+
+def _wait_until_queued(runtime: Any) -> None:
+    """Block until one borrower is queued on ``runtime``, or fail the test.
+
+    A bounded queue answers the question directly: a further acquisition is
+    refused as ``queue_rejected`` exactly while the queue is full, so this is a
+    positive signal rather than a sleep long enough to hope.
+    """
+    for _ in range(200):
+        try:
+            runtime.connection().__enter__()
+        except ConnectionAcquisitionError as refused:
+            if refused.reason == "queue_rejected":
+                return
+        time.sleep(0.05)
+    raise AssertionError("no borrower ever queued")
 
 
 # --------------------------------------------------------------------------- #
@@ -219,6 +270,55 @@ def test_every_connection_a_runtime_creates_decodes_the_same_way(profile_run: An
                 assert row["number"] == 42
         finally:
             runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_a_grown_connection_decodes_exactly_as_the_first_one_does(profile_run: Any) -> None:
+    # Growth, proven by HOLDING the scopes rather than taking them in turn: a
+    # retaining runtime reuses one connection for sequential acquisitions, so
+    # only overlapping ones make it create the second and third — and a codec
+    # installed on the first connection and not on those is a decoding bug that
+    # appears under load and nowhere else.
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=3))
+    try:
+        with (
+            runtime.connection() as first,
+            runtime.connection() as second,
+            runtime.connection() as third,
+        ):
+            grown = [first, second, third]
+            assert len({_pid(scoped) for scoped in grown}) == 3
+            for scoped in grown:
+                (row,) = scoped.execute(_CODEC_PROBE, [])
+                assert row["unbounded"] is INFINITY
+                assert row["document"] == {"present": None}
+                assert row["stored_null"] is None
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_a_connection_the_server_ended_is_replaced_at_checkout(profile_run: Any) -> None:
+    # The checkout health check spends a round trip proving a connection still
+    # works, which is what turns one the server closed while it was idle into a
+    # REPLACEMENT rather than a failed statement. The replacement is a physical
+    # connection the runtime created on its own, so it also has to decode.
+    runtime = _runtime(profile_run, pool=PoolOptions(min_size=1, max_size=1))
+    executioner = _runtime(profile_run, pool=PoolOptions(min_size=0, max_size=1))
+    try:
+        with runtime.connection() as first:
+            retained = _pid(first)
+        with executioner.connection() as killer:
+            killer.execute("select pg_terminate_backend(%s) as ended", [retained])
+
+        with runtime.connection() as replacement:
+            assert _pid(replacement) != retained
+            (row,) = replacement.execute(_CODEC_PROBE, [])
+        assert row["unbounded"] is INFINITY
+        assert row["document"] == {"present": None}
+    finally:
+        executioner.close()
+        runtime.close()
 
 
 @pytest.mark.adapter_smoke
@@ -294,6 +394,71 @@ def test_a_scope_leaves_no_transaction_open_behind_it(profile_run: Any) -> None:
         assert row["tx"] is None
     finally:
         runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_indirect_connection_inputs_resolve_at_each_physical_connection(
+    profile_run: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `m-db-port`: what a connection string REFERS to — environment, service
+    # files, credentials, server defaults — resolves when each physical
+    # connection is created, not when the configuration is constructed. One
+    # configuration, two acquisitions, two different resolutions of the same
+    # environment variable is the proof; on-demand retention is what makes each
+    # acquisition a fresh physical connection.
+    configured = profile_run.configured(pool=OnDemandOptions(max_size=1))
+
+    def resolved_application_name(runtime: Any) -> str:
+        with runtime.connection() as scoped:
+            (row,) = scoped.execute("select current_setting('application_name') as name", [])
+        return str(row["name"])
+
+    monkeypatch.setenv("PGAPPNAME", "parallax-before")
+    runtime = configured.open()
+    try:
+        assert resolved_application_name(runtime) == "parallax-before"
+        monkeypatch.setenv("PGAPPNAME", "parallax-after")
+        assert resolved_application_name(runtime) == "parallax-after"
+    finally:
+        runtime.close()
+
+
+@pytest.mark.adapter_smoke
+def test_settings_a_deployment_configured_survive_initialization(profile_run: Any) -> None:
+    # Initialization installs the loaders the read path depends on and checks
+    # the two settings those loaders cannot work without. It configures nothing
+    # else, so every other setting a deployment asked its connections for is
+    # what its statements run under.
+    runtime = _runtime(
+        profile_run,
+        pool=OnDemandOptions(max_size=1),
+        settings={
+            "timezone": "UTC",
+            "default_transaction_read_only": "on",
+            "search_path": "public",
+            "statement_timeout": "7s",
+        },
+    )
+    try:
+        with runtime.connection() as scoped:
+            (row,) = scoped.execute(
+                "select current_setting('timezone') as timezone, "
+                "current_setting('default_transaction_read_only') as read_only, "
+                "current_setting('search_path') as search_path, "
+                "current_setting('statement_timeout') as statement_timeout, "
+                "current_setting('client_encoding') as encoding, "
+                "current_setting('datestyle') as datestyle",
+                [],
+            )
+    finally:
+        runtime.close()
+    assert row["timezone"] == "UTC"
+    assert row["read_only"] == "on"
+    assert row["search_path"] == "public"
+    assert row["statement_timeout"] == "7s"
+    # And the two it does own are the ones it checked for.
+    assert row["encoding"] == "UTF8"
+    assert row["datestyle"].startswith("ISO")
 
 
 @pytest.mark.adapter_smoke

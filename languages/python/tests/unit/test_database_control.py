@@ -20,7 +20,8 @@ could only assert.
 from __future__ import annotations
 
 import socket
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from types import TracebackType
 from typing import Any, cast
@@ -35,6 +36,7 @@ from parallax.conformance._postgres_control import (
     ControlledAdapter,
     PostgresControl,
     PostgresInterleavedExecution,
+    initialized_session,
 )
 from parallax.core.db_port import ConnectionAcquisitionError, DatabaseConnection, Row
 from parallax.core.dialect import POSTGRES
@@ -102,6 +104,7 @@ class _FakeConnection:
         fd: int | None = None,
         cancel_raises: Exception | None = None,
         close_raises: Exception | None = None,
+        parked: Callable[[], None] | None = None,
     ) -> None:
         self.rows: list[Row] = rows if rows is not None else []
         self.statements: list[tuple[str, tuple[object, ...]]] = []
@@ -113,6 +116,9 @@ class _FakeConnection:
         self._fd = fd
         self._cancel_raises = cancel_raises
         self._close_raises = close_raises
+        # What a control action does while it is in flight, for the pins that
+        # need to observe the runtime WHILE one is running rather than after.
+        self._parked = parked if parked is not None else lambda: None
 
     def cursor(self) -> _FakeCursor:
         return _FakeCursor(self)
@@ -125,11 +131,13 @@ class _FakeConnection:
 
     def cancel_safe(self) -> None:
         self.cancels += 1
+        self._parked()
         if self._cancel_raises is not None:
             raise self._cancel_raises
 
     def close(self) -> None:
         self.closes += 1
+        self._parked()
         if self._close_raises is not None:
             raise self._close_raises
 
@@ -229,6 +237,42 @@ def test_closing_a_control_releases_the_session_and_reports_it_to_its_opener() -
 
     assert connection.closes == 1
     assert released == [control]
+
+
+def test_a_session_whose_initialization_is_refused_is_closed_before_the_refusal_leaves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Setup failure, proven without a server: a connection nothing may execute
+    # on is not one to hand back to a caller that would then have to remember
+    # it, so the refusal leaves with the session already closed.
+    from parallax.conformance import _postgres_control as control_module
+
+    def refuse(_connection: object) -> None:
+        raise RuntimeError("this session cannot be initialized")
+
+    monkeypatch.setattr(control_module, "initialize_connection", refuse)
+    connection = _FakeConnection()
+
+    with pytest.raises(RuntimeError, match="cannot be initialized"):
+        initialized_session(_native(connection))
+
+    assert connection.closes == 1
+
+
+def test_an_initialized_session_is_handed_over_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The other half of the same decision: what initialization accepted is
+    # handed to the caller as it stands, and closing it is the caller's from
+    # there on.
+    from parallax.conformance import _postgres_control as control_module
+
+    initialized: list[object] = []
+    monkeypatch.setattr(control_module, "initialize_connection", initialized.append)
+    connection = _FakeConnection()
+
+    assert initialized_session(_native(connection)) is _native(connection)
+
+    assert initialized == [_native(connection)]
+    assert connection.closes == 0
 
 
 def test_a_session_opened_without_a_tracker_releases_itself() -> None:
@@ -409,6 +453,84 @@ def test_a_cancellation_captured_in_one_scope_does_not_reach_the_next() -> None:
     assert cast("Any", idle)._runtime.native.cancels == 0
 
 
+@pytest.mark.parametrize("action", ["cancel", "terminate"])
+def test_no_scope_is_admitted_while_a_validated_control_action_is_in_flight(action: str) -> None:
+    # Revalidation is not a check followed by an act. Between the two, the scope
+    # that was stuck can finish and the next one can take the session, and the
+    # request would then reach a statement nobody asked to interrupt — or tear
+    # down a descriptor a later connection answers to. So the answer is held for
+    # as long as the action runs: the captured scope may still END while it is
+    # in flight, and the NEXT one waits for it.
+    running = threading.Event()
+    finish = threading.Event()
+
+    def park() -> None:
+        running.set()
+        assert finish.wait(timeout=5.0)
+
+    connection = _FakeConnection(parked=park)
+    execution = _execution(connection)
+    runtime = cast("Any", execution)._runtime
+    captured = runtime.connection()
+    captured.__enter__()
+
+    acting = threading.Thread(
+        target=execution.cancel_active if action == "cancel" else execution.terminate_active
+    )
+    acting.start()
+    assert running.wait(timeout=5.0)
+
+    # The captured scope ends without waiting for the action, and the next scope
+    # asks for the session while the action is still running.
+    captured.__exit__(None, None, None)
+    settled = threading.Event()
+    outcome: list[str] = []
+
+    def take_the_session() -> None:
+        try:
+            with runtime.connection():
+                outcome.append("admitted")
+        except ConnectionAcquisitionError:
+            outcome.append("refused")
+        settled.set()
+
+    waiting = threading.Thread(target=take_the_session)
+    waiting.start()
+    assert not settled.wait(timeout=0.25)
+
+    finish.set()
+    acting.join(timeout=5.0)
+    waiting.join(timeout=5.0)
+    # Only once the action is done is the question even answered — and a
+    # termination answers it by refusing, because the session it destroyed is
+    # the only one this runtime has.
+    assert outcome == (["admitted"] if action == "cancel" else ["refused"])
+
+
+def test_a_controlled_scope_gives_the_session_back_even_if_revocation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The runtime serves one scope at a time, so a scope that failed to hand the
+    # session back would leave it refusing every later acquisition. Relinquishing
+    # is therefore what the exit does last and unconditionally.
+    from parallax.postgres._connection import PostgresConnection
+
+    def refuse(_self: object) -> bool:
+        raise RuntimeError("the scope could not be revoked")
+
+    monkeypatch.setattr(PostgresConnection, "revoke", refuse)
+    runtime = _adapter(_FakeConnection()).open()
+    scope = runtime.connection()
+
+    with pytest.raises(RuntimeError), scope:
+        pass
+
+    assert runtime.active_scope() is None
+    monkeypatch.undo()
+    with runtime.connection():
+        pass
+
+
 def test_a_termination_with_no_live_scope_reports_that_it_reached_nothing() -> None:
     # The descriptor a termination would tear down can be recycled by a later
     # connection, so a captured target whose scope has ended is refused rather
@@ -500,16 +622,59 @@ def test_terminating_reports_a_connection_that_will_not_answer_its_descriptor() 
 
 def test_closing_an_execution_is_quiet_about_a_session_the_ladder_condemned() -> None:
     # The lane closes every execution it opened on the way out, terminated ones
-    # included. A condemned session refusing to close again adds nothing to the
-    # report the ladder already returned, so it must not displace the timeout
-    # error the caller is raising — and its opener is still told.
-    connection = _FakeConnection(close_raises=RuntimeError("already condemned"))
+    # included. A condemned session is already gone, so it is not closed a second
+    # time and nothing the ladder already reported is repeated — and its opener
+    # IS told, because what it was tracking really has been released.
+    connection = _FakeConnection()
+    released: list[object] = []
+    execution = _execution(connection, on_release=released.append)
+    with _scope_of(execution):
+        assert execution.terminate_active().terminated is True
+
+    execution.close()
+
+    assert connection.closes == 1
+    assert released == [execution]
+
+
+def test_an_execution_whose_session_would_not_close_stays_on_its_openers_books() -> None:
+    # Symmetric with a directly driven control: a session nobody can show is
+    # dead is still this execution's, so it stays on the provisioner's books for
+    # the teardown backstop rather than being forgotten while alive. The close
+    # itself is still quiet — it runs while a caller is unwinding.
+    connection = _FakeConnection(close_raises=RuntimeError("the session would not close"))
     released: list[object] = []
     execution = _execution(connection, on_release=released.append)
 
     execution.close()
 
-    assert released == [execution]
+    assert released == []
+
+
+def test_closing_a_controlled_runtime_under_a_borrower_waits_for_the_scope_to_end() -> None:
+    # `m-db-port`: a close stops admission and neither waits for borrowers nor
+    # interrupts their statements. This runtime has one session and nothing to
+    # hand it back to, so what would otherwise be "closed when it comes back" is
+    # "retired when the scope that held it relinquishes".
+    connection = _FakeConnection()
+    runtime = _adapter(connection).open()
+    scope = runtime.connection()
+    scoped = scope.__enter__()
+
+    runtime.close()
+
+    assert connection.closes == 0
+    assert runtime.retired is False
+    # Admitted before the close, so it finishes what it was going to do.
+    assert scoped.execute("select 1 as n", []) == []
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        runtime.connection().__enter__()
+    assert refused.value.reason == "closed"
+
+    scope.__exit__(None, None, None)
+
+    assert connection.closes == 1
+    assert runtime.retired is True
 
 
 def test_a_control_exposes_its_own_session_for_the_harnesss_native_proofs() -> None:

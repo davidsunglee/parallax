@@ -420,8 +420,9 @@ class Demarcation:
                             # No boundary opened and no callback ran, so this is
                             # the same terminal outcome a refused BEGIN reaches:
                             # there is nothing to undo and nothing to replay.
-                            # There is also nothing to release — a failed entry
-                            # already cleaned up whatever it took.
+                            # There is also nothing left to release here — a
+                            # failed entry already ran its own cleanup and
+                            # reported what that established.
                             physical.begin_failed(unacquired)
                             raise _BeginFailure(unacquired) from unacquired
                         try:
