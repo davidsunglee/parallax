@@ -78,7 +78,9 @@ from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
     prepare_typed_write,
 )
-from parallax.core.unit_work.planner import Targets  # forbidden-plan-context regression only
+from parallax.core.unit_work.planner import (
+    FamilyFacts,  # forbidden-plan-context regression only
+)
 from parallax.snapshot.handle import Database, Transaction, build_write_planner
 
 _MODELS = models.load_models()
@@ -536,7 +538,7 @@ _FORBIDDEN_PLAN_CONTEXT = (
     MaterializedWriteGroup,
     TransactionInstant,
     WritePlanner,
-    Targets,
+    FamilyFacts,
     MilestoneTopology,
 )
 

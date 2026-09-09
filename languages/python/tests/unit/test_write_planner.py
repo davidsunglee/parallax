@@ -86,6 +86,8 @@ from parallax.core.unit_work import (
     object_key,
     whole,
 )
+from parallax.core.unit_work import planner as planner_module
+from parallax.core.unit_work import write_planner as write_planner_module
 from parallax.core.unit_work.instructions import (
     PreparedKeyedWrite,
     PreparedPredicateWrite,
@@ -210,6 +212,7 @@ def _version_group(
     key_name: str,
     rows: Sequence[tuple[object, int]],
     assignments: Sequence[WriteAssignment] = (),
+    model: Metamodel | None = None,
 ) -> MaterializedWriteGroup:
     """A minimal Materialized Write Group for planner-seam tests.
 
@@ -239,8 +242,9 @@ def _version_group(
             for assignment in assignments
         ),
     )
-    model = _WALLET if entity == "Wallet" else _ACCOUNT
-    prepared = prepare_typed_write(predicate, model)
+    prepared = prepare_typed_write(
+        predicate, model if model is not None else (_WALLET if entity == "Wallet" else _ACCOUNT)
+    )
     assert isinstance(prepared, PreparedPredicateWrite)
     return MaterializedWriteGroup(
         mutation=prepared,
@@ -1384,3 +1388,88 @@ def _bitemporal_observation() -> WriteObservation:
             }
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# The prepared path resolves its targets by reference: every write reaching   #
+# `finalize` carries exact target Metadata, so no flush pays an entity-       #
+# spelling scan.                                                              #
+# --------------------------------------------------------------------------- #
+def test_a_prepared_finalize_resolves_targets_without_any_entity_spelling_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Spelling resolution is raw authored input's own branch, and the buffer a
+    # flush plans holds none: every arm settlement forks on is driven here —
+    # keyed insert, observed versioned update, readless predicate write,
+    # Materialized Write Group, and a bitemporal mutation — with the scan wired
+    # to fail, so reaching it at all is the failure rather than a slow path.
+    model = formed(
+        DescriptorMetamodel(
+            entities=(
+                *_MODELS["wallet"].entities,
+                *_MODELS["account"].entities,
+                *_MODELS["position"].entities,
+            )
+        )
+    )
+    account_update = KeyedWrite("update", "Account", ({"id": 3, "balance": Decimal("7.00")},))
+    position_update = KeyedWrite(
+        "update",
+        "Position",
+        ({"id": 5, "value": Decimal("42.0")},),
+        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+    )
+    account_key = object_key(account_update, model)
+    position_key = object_key(position_update, model)
+    assert account_key is not None and position_key is not None
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("insert", "Wallet", ({"id": 1, "owner": "Ada", "balance": Decimal("1.00")},)),
+        account_update,
+        position_update,
+        _version_group(
+            "Account",
+            "update",
+            "id",
+            [(9, 1)],
+            [WriteAssignment("Account.balance", Decimal("5.00"))],
+            model=model,
+        ),
+        PredicateWrite(
+            "delete",
+            PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 2)),
+        ),
+    ]
+    prepared = observed_buffer(
+        buffer,
+        model,
+        {
+            account_key: VersionObservation(observed_version=4),
+            position_key: _bitemporal_observation(),
+        },
+    )
+
+    def refuse(_model: Metamodel, spelling: str) -> None:
+        raise AssertionError(f"the prepared path resolved {spelling!r} by scanning the model")
+
+    # Both bindings a flush could reach the model's spelling rule through: key
+    # derivation's, and the refusal that names an Entity the model does not
+    # declare.
+    monkeypatch.setattr(planner_module, "entity_by_name", refuse)
+    monkeypatch.setattr(write_planner_module, "entity_by_name", refuse)
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=instant_at("2024-06-01T00:00:00+00:00"),
+                concurrency="optimistic",
+                buffered_writes=prepared,
+            )
+        )
+        .plan
+    )
+    kinds = [_step_mutation(step) for step in plan.steps]
+    assert kinds.count("insert") >= 2  # the Wallet insert, plus the bitemporal successors
+    assert "close" in kinds
+    assert kinds.count("update") == 2  # the addressed Account update and the group's one row
+    assert kinds[-1] == "delete"  # the readless predicate write, held at the barrier
