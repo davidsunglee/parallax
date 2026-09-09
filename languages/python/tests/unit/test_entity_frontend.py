@@ -11,6 +11,7 @@ import inspect
 import sys
 from collections.abc import Callable
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
@@ -47,7 +48,7 @@ from parallax.core.entity import (
 )
 from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
-from parallax.core.entity._declaration import wire_names_of
+from parallax.core.entity._declaration import members_of, wire_names_of
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 from parallax.core.entity._errors import EditError
 from parallax.core.metamodel import (
@@ -676,6 +677,34 @@ def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:
 
 def test_wire_names_are_the_one_value_the_class_was_stamped_with() -> None:
     assert wire_names_of(Order) is wire_names_of(Order)
+
+
+def test_the_retained_correspondences_refuse_a_write_rather_than_being_corrupted() -> None:
+    # Every reader is handed the one stamped value rather than a copy, so a
+    # single write would corrupt every later derivation for the process's life.
+    # The maps refuse it at runtime, not only under a type checker.
+    class Ledger(Entity, table="ledger"):
+        id: Attr[int] = attr(primary_key=True)
+        memo: Attr[str] = attr(name="memoText", column="MEMO")
+
+    class Root(
+        Entity,
+        table="ledger_root",
+        inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+    ):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Branch(Root, inheritance=ConcreteSubtype(tag_value="branch")):
+        memo: Attr[str] = attr(name="memoText", column="MEMO")
+
+    for names in (wire_names_of(Ledger), wire_names_of(Branch), members_of(Ledger)):
+        with pytest.raises(TypeError):
+            cast("dict[str, str]", names.name_to_py)["memoText"] = "corrupted"
+
+    # A family of one shares its own maps with its merged value outright, so the
+    # refusal has to hold through both names of the identical object.
+    assert wire_names_of(Ledger).name_to_py is members_of(Ledger).name_to_py
+    assert wire_names_of(Ledger).name_to_py["memoText"] == "memo"
 
 
 def test_the_wire_names_stamp_is_readable_the_moment_a_subclass_exists() -> None:

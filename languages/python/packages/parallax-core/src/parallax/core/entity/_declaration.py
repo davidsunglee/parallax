@@ -1316,14 +1316,16 @@ def _build_entity(
         ),
     )
     ns[_MEMBERS] = MemberNames(
-        column_to_py=column_to_py,
-        name_to_py=name_to_py,
-        py_to_name=py_to_name,
-        relationship_py=relationship_py,
-        relationship_shapes=relationship_shapes,
-        members={py_name: members[canonical] for py_name, canonical in py_to_name.items()},
+        column_to_py=MappingProxyType(column_to_py),
+        name_to_py=MappingProxyType(name_to_py),
+        py_to_name=MappingProxyType(py_to_name),
+        relationship_py=MappingProxyType(relationship_py),
+        relationship_shapes=MappingProxyType(relationship_shapes),
+        members=MappingProxyType(
+            {py_name: members[canonical] for py_name, canonical in py_to_name.items()}
+        ),
         pk_py=frozenset(pk_py),
-        vo_classes=vo_classes,
+        vo_classes=MappingProxyType(vo_classes),
     )
     family, ns[_WIRE_NAMES] = _family_facts(bases[0], ns)
     cls = _pydantic_class(mcs, cls_name, bases, ns)
@@ -1433,21 +1435,24 @@ def _family_facts(base: type, ns: dict[str, object]) -> tuple[_FamilyPublication
     # A family of one merged nothing, so the class keeps the maps its own body
     # built instead of retaining equal copies of them for the process's life.
     sole = cast("MemberNames", chain[0][_MEMBERS]) if len(chain) == 1 else None
+    merged_vo_classes = MappingProxyType(vo_classes)
     return (
         _FamilyPublicationFacts(
             members=(*attributes, *occurrences),
-            occurrences=vo_classes,
+            occurrences=merged_vo_classes,
             relationships=tuple(relationships),
         ),
         WireNames(
-            column_to_py=column_to_py if sole is None else sole.column_to_py,
-            name_to_py=name_to_py if sole is None else sole.name_to_py,
-            py_to_name=py_to_name if sole is None else sole.py_to_name,
-            relationship_py=relationship_py if sole is None else sole.relationship_py,
-            relationship_identities=relationship_identities,
-            members=members if sole is None else sole.members,
+            column_to_py=MappingProxyType(column_to_py) if sole is None else sole.column_to_py,
+            name_to_py=MappingProxyType(name_to_py) if sole is None else sole.name_to_py,
+            py_to_name=MappingProxyType(py_to_name) if sole is None else sole.py_to_name,
+            relationship_py=(
+                MappingProxyType(relationship_py) if sole is None else sole.relationship_py
+            ),
+            relationship_identities=MappingProxyType(relationship_identities),
+            members=MappingProxyType(members) if sole is None else sole.members,
             pk_py=frozenset(pk_py) if sole is None else sole.pk_py,
-            vo_classes=vo_classes if sole is None else sole.vo_classes,
+            vo_classes=merged_vo_classes if sole is None else sole.vo_classes,
         ),
     )
 
