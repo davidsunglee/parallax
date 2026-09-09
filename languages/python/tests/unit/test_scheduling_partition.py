@@ -315,18 +315,24 @@ def test_the_stored_durations_are_the_contract_the_shards_read_them_under() -> N
     assert cost_durations.known()
 
 
-def test_a_missing_durations_file_is_a_usage_error(tmp_path: Path) -> None:
-    # Absent, the shards would fall back to equal weights, still partition the
-    # class, and balance it by nothing — green, and no longer doing the one thing
-    # the file exists for.
-    with pytest.raises(pytest.UsageError, match=r"never-stored\.json"):
-        cost_durations.known(tmp_path / "never-stored.json")
+def test_durations_that_do_not_arrive_at_all_are_a_usage_error(tmp_path: Path) -> None:
+    # Without them the shards would weigh every item the same, still partition
+    # the class, and balance it by nothing — green, and no longer doing the one
+    # thing the file exists for. A session cannot tell the ways of not arriving
+    # apart, so a file that is absent, one whose bytes are not text, and a path
+    # that is not a readable file are one answer.
+    undecodable = tmp_path / "undecodable.json"
+    undecodable.write_bytes(b'{"a::b": 1.0}\xff')
+    for path in (tmp_path / "never-stored.json", undecodable, tmp_path):
+        with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
+            cost_durations.known(path)
 
 
 @pytest.mark.parametrize(
     "payload",
     [
         pytest.param("[1.0, 2.0]", id="not-an-object"),
+        pytest.param("{}", id="no-durations"),
         pytest.param('{"a::b": ', id="truncated"),
         pytest.param('{"a::b": "1.0"}', id="string"),
         pytest.param('{"a::b": true}', id="boolean"),
@@ -335,29 +341,74 @@ def test_a_missing_durations_file_is_a_usage_error(tmp_path: Path) -> None:
         pytest.param('{"a::b": Infinity}', id="infinite"),
     ],
 )
-def test_a_duration_that_is_not_a_finite_non_negative_number_is_a_usage_error(
+def test_a_payload_that_is_not_a_mapping_of_durations_is_a_usage_error(
     payload: str, tmp_path: Path
 ) -> None:
-    # `float` accepts every one of these, and a `NaN` among them would poison the
-    # mean an unknown item weighs and collapse the choice of lightest shard,
-    # leaving the balance decided by nothing while the partition stayed intact.
+    # A payload can arrive and still be no durations: a list, an object naming
+    # none, a document that stops. `float` accepts each malformed value among
+    # these, and a `NaN` would poison the mean an unknown item weighs and
+    # collapse the choice of lightest shard, leaving the balance decided by
+    # nothing while the partition stayed intact.
     path = tmp_path / "cost_durations.json"
     path.write_text(payload, encoding="utf-8")
     with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
         cost_durations.known(path)
 
 
-def test_a_whole_class_store_replaces_and_a_shard_merges(tmp_path: Path) -> None:
-    # A whole-class run measured every item there is, so an entry it did not
-    # observe names an item that no longer exists; a shard measured its own part
-    # of the class, so the entries it did not observe are the only record of the
-    # items the other shards run.
-    path = tmp_path / "cost_durations.json"
+def _stored_over_two_entries(
+    path: Path, *, selected_the_whole_class: bool, collected: Sequence[str], succeeded: bool
+) -> dict[str, float]:
+    """A file holding a renamed and a kept item after a session with those facts
+    stores its one observation of the kept one over it."""
     path.write_text('{"a::renamed": 5.0, "a::kept": 2.0}\n', encoding="utf-8")
-    cost_durations.store({"a::kept": 3.04}, whole_class=False, path=path)
-    assert cost_durations.known(path) == {"a::renamed": 5.0, "a::kept": 3.0}
-    cost_durations.store({"a::kept": 3.04}, whole_class=True, path=path)
-    assert cost_durations.known(path) == {"a::kept": 3.0}
+    cost_durations.store(
+        {"a::kept": 3.04},
+        selected_the_whole_class=selected_the_whole_class,
+        collected=collected,
+        succeeded=succeeded,
+        path=path,
+    )
+    return cost_durations.known(path)
+
+
+def test_a_session_that_measured_the_whole_class_replaces_the_stored_durations(
+    tmp_path: Path,
+) -> None:
+    # Such a session measured every item there is, so an entry it did not observe
+    # names an item that has been deleted or renamed and would otherwise go on
+    # weighing a shard that will never run it again.
+    stored = _stored_over_two_entries(
+        tmp_path / "cost_durations.json",
+        selected_the_whole_class=True,
+        collected=["a::kept"],
+        succeeded=True,
+    )
+    assert stored == {"a::kept": 3.0}
+
+
+@pytest.mark.parametrize(
+    ("selected_the_whole_class", "collected", "succeeded"),
+    [
+        pytest.param(False, ["a::kept"], True, id="a-narrower-selection"),
+        pytest.param(True, ["a::kept", "a::unreached"], True, id="an-item-never-reached"),
+        pytest.param(True, ["a::kept"], False, id="an-unsuccessful-session"),
+    ],
+)
+def test_a_session_that_measured_less_than_the_whole_class_merges(
+    selected_the_whole_class: bool, collected: Sequence[str], succeeded: bool, tmp_path: Path
+) -> None:
+    # Asking for the whole class is not measuring it: a session narrowed after
+    # collection reports a call for fewer items than it was handed, and one that
+    # ends badly may report none at all. Either way the entries it did not
+    # observe are the only record of the items it did not run, so each of the
+    # three conditions alone decides between replacing the file and merging.
+    stored = _stored_over_two_entries(
+        tmp_path / "cost_durations.json",
+        selected_the_whole_class=selected_the_whole_class,
+        collected=collected,
+        succeeded=succeeded,
+    )
+    assert stored == {"a::renamed": 5.0, "a::kept": 3.0}
 
 
 def test_the_marker_catalog_is_the_partition_plus_the_orthogonal_selectors() -> None:

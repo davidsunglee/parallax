@@ -198,17 +198,19 @@ heaviest first and places each onto the lightest shard so far, so the N shards
 partition the class however the file is populated, and an item the file does not
 know weighs the mean of the ones it does. Only the balance depends on the file's
 currency, never the partition. The file is a required input to a sharded session
-all the same: missing, or holding anything but finite non-negative numbers of
-seconds, it is that session's usage error naming the file, because the balance
-falling back to equal weights is a shard mechanism doing nothing while every
-partition check stays green.
+all the same: unreadable for any reason, holding no durations at all, or holding
+anything but finite non-negative numbers of seconds, it is that session's usage
+error naming the file, because weighing every item the same is a shard mechanism
+doing nothing while every partition check stays green.
 
 Refresh it after the class changes shape with the recipe-less step
 [`AGENTS.md`](AGENTS.md) names, then commit the result.
 
-That run measures the whole class, so what it measured becomes the file and an
-item deleted or renamed since the last refresh leaves no entry behind to weigh a
-shard that will never run it. A run measuring less than the whole class — one
-cell's `--shard I/N`, or a selection narrowed to some of the class — stores what
-it ran and keeps every other entry, because those entries are the only record of
-the items it did not run.
+A store replaces the file only when the session both selected the whole cost
+class and ran it to completion: a call report for every cost item it collected,
+and a successful exit status. Then what it measured is the file, and an item
+deleted or renamed since the last refresh leaves no entry behind to weigh a shard
+that will never run it. Every other session — one cell's `--shard I/N`, a
+narrower selection, a run that failed, was interrupted, or never reached part of
+what it collected — stores what it measured and keeps every other entry, because
+those entries are the only record of the items it did not run.

@@ -10,7 +10,7 @@ import subprocess
 from collections.abc import Iterator, Sequence
 from contextlib import ExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -37,6 +37,10 @@ _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
 
 _WHOLE_CLASS = "1/1"
 
+# The key an xdist worker hands its collected cost items up under.
+_COLLECTED_COST_ITEMS = "parallax_collected_cost_items"
+
+_collected_cost_items: set[str] = set()
 _recorded_durations: dict[str, float] = {}
 _store_durations = False
 
@@ -53,8 +57,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         help=(
             f"after the run, record every cost item's call duration in "
-            f"{cost_durations.COST_DURATIONS.name}: a whole-class run replaces what is stored, "
-            f"a shard merges into it"
+            f"{cost_durations.COST_DURATIONS.name}: a run that measured the whole class replaces "
+            f"what is stored, and every narrower or unfinished run merges into it"
         ),
     )
 
@@ -151,17 +155,25 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(pytest.mark.dbfree)
 
     index, count = _shard(str(config.getoption("--shard")))
-    if count == 1:
-        return
-    cost_items = [item for item in items if item.get_closest_marker("cost") is not None]
-    known = cost_durations.known()
-    unknown = sum(known.values()) / len(known) if known else 1.0
-    shard_of = _shard_of_each([known.get(item.nodeid, unknown) for item in cost_items], count)
-    deselected = [item for item, shard in zip(cost_items, shard_of, strict=True) if shard != index]
-    if deselected:
-        config.hook.pytest_deselected(items=deselected)
-        excluded = set(deselected)
-        items[:] = [item for item in items if item not in excluded]
+    if count > 1:
+        cost_items = [item for item in items if item.get_closest_marker("cost") is not None]
+        known = cost_durations.known()
+        unknown = sum(known.values()) / len(known)
+        shard_of = _shard_of_each([known.get(item.nodeid, unknown) for item in cost_items], count)
+        deselected = [
+            item for item, shard in zip(cost_items, shard_of, strict=True) if shard != index
+        ]
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+            excluded = set(deselected)
+            items[:] = [item for item in items if item not in excluded]
+
+    # Recorded here rather than read off the finished session because pytest's
+    # own deselection — `--deselect`, `-k`, `--lf` — runs after this hook, and
+    # what a store compares against is the class this session was handed.
+    _collected_cost_items.update(
+        item.nodeid for item in items if item.get_closest_marker("cost") is not None
+    )
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
@@ -169,31 +181,70 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
         _recorded_durations[report.nodeid] = report.duration
 
 
-def _measured_the_whole_class(config: pytest.Config) -> bool:
-    """Whether this session's selection was the cost class entire.
+def _selected_the_whole_class(config: pytest.Config) -> bool:
+    """Whether this session was asked for the cost class entire.
 
-    Only such a session can say a stored item is gone rather than merely
-    unselected, so anything this cannot recognize as the whole class is treated
-    as part of it: merging keeps a measurement the session did not take, while
-    replacing on a narrowed run would discard every item it did not run.
-
-    A shard, a path, or a keyword each narrow the selection. A marker expression
-    narrows it only when it is neither the class itself nor the absent one that
-    selects every class; a wider expression selects the class whole.
+    What is asked for is not what is measured, and this answers only for the
+    narrowing that happens before collection, where nothing is left to observe: a
+    shard, a path argument, an ignored path or glob, a keyword. A marker
+    expression narrows the selection only when it is neither the class itself nor
+    the absent one that selects every class; a wider expression selects the class
+    whole. Everything that narrows a session after collection is caught by
+    :func:`pytest_sessionfinish` instead, which is what makes this necessary
+    rather than sufficient.
     """
     _, count = _shard(str(config.getoption("--shard")))
     return (
         count == 1
         and config.args_source is not pytest.Config.ArgsSource.ARGS
+        and not config.option.ignore
+        and not config.option.ignore_glob
         and not config.option.keyword
         and config.option.markexpr in {"", "cost"}
     )
 
 
-def pytest_sessionfinish(session: pytest.Session) -> None:
-    if not _store_durations or not _recorded_durations:
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Record what the cost items this session ran cost, and how completely it
+    measured the class.
+
+    A store replaces the file only for a session that measured the whole class,
+    which takes more than asking for it: the run must also have reached a call
+    report for every cost item it collected and ended successfully, or an
+    interruption, a failure, or a late deselection would delete the entries of
+    items it merely never reached.
+
+    A distributed session collects in its workers and never in the process that
+    writes the file, so each worker hands its collection up rather than storing
+    anything itself.
+    """
+    if not session.config.getoption("--store-cost-durations"):
         return
-    cost_durations.store(_recorded_durations, whole_class=_measured_the_whole_class(session.config))
+    worker_output: dict[str, object] | None = getattr(session.config, "workeroutput", None)
+    if worker_output is not None:
+        worker_output[_COLLECTED_COST_ITEMS] = sorted(_collected_cost_items)
+        return
+    if not _recorded_durations:
+        return
+    cost_durations.store(
+        _recorded_durations,
+        selected_the_whole_class=_selected_the_whole_class(session.config),
+        collected=_collected_cost_items,
+        succeeded=exitstatus == pytest.ExitCode.OK,
+    )
+
+
+def pytest_testnodedown(node: Any) -> None:
+    """Take the finished xdist worker's collection as part of this session's.
+
+    The workers collect and the process holding this one does not, so what a
+    store measures its observations against arrives here or nowhere. A worker
+    that went down without handing anything up leaves the collection short of
+    what ran, which is a session that did not measure the class entire.
+    """
+    _collected_cost_items.update(
+        cast("list[str]", getattr(node, "workeroutput", {}).get(_COLLECTED_COST_ITEMS, []))
+    )
 
 
 def record_db_skip(reason: str) -> None:
