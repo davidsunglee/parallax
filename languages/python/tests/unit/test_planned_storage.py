@@ -28,7 +28,7 @@ from _transact_support import WHERE_POSITION_META, WherePosition, db_for
 # The module itself, not a name from it: the call-count regression below
 # monkeypatches `resolve_successors` where `_settle_temporal_group` looks it
 # up, which is this module's own namespace rather than `unit_work.temporal`'s.
-import parallax.core.unit_work.write_planner as write_planner
+import parallax.core.unit_work.write_settlement as write_settlement
 from _support import mirrored_models as mm
 from _support.clock_probes import CountingClock, inert_instant
 from _support.db_port import (
@@ -40,16 +40,20 @@ from _support.db_port import (
 )
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
+from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
+    AuditStrategy,
+    BatchingStrategy,
     ChangedFrom,
     ChunkedColumn,
     ChunkedColumnBuilder,
     ColumnSlice,
+    ConcurrencyStrategy,
     FixedClock,
     MaterializedWriteGroup,
     MilestoneTopology,
@@ -63,6 +67,7 @@ from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWrite,
     TemporalColumns,
+    TemporalStrategy,
     TransactionInstant,
     VersionColumns,
     WriteAssignment,
@@ -80,6 +85,9 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.planner import (
     FamilyFacts,  # forbidden-plan-context regression only
+)
+from parallax.core.unit_work.write_settlement import (
+    WriteSettlement,  # forbidden-plan-context regression only
 )
 from parallax.snapshot.handle import Database, Transaction, build_write_planner
 
@@ -529,17 +537,28 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
 
 # --------------------------------------------------------------------------- #
 # Finalizing: a Materialized Write Group's segment carries no group,          #
-# Transaction Instant, Write Planner, entity-resolution context, or           #
-# temporal-strategy answer past `finalize()`, and a temporal group's          #
-# topology and instant are both resolved during `finalize()`, never on        #
-# step access.                                                                #
+# Transaction Instant, Write Planner, settlement module, model, facet,        #
+# strategy, entity-resolution context, or temporal-strategy answer past       #
+# `finalize()`, and a temporal group's topology and instant are both          #
+# resolved during `finalize()`, never on step access.                         #
 # --------------------------------------------------------------------------- #
+# A segment may retain what a producer PRODUCED for one settled write and
+# never the producer. The accepted Metamodel and its compiled Inheritance
+# Facet are structural Protocols, so they are named by the concrete classes a
+# live accepted model answers with.
 _FORBIDDEN_PLAN_CONTEXT = (
     MaterializedWriteGroup,
     TransactionInstant,
     WritePlanner,
+    WriteSettlement,
     FamilyFacts,
     MilestoneTopology,
+    BatchingStrategy,
+    ConcurrencyStrategy,
+    TemporalStrategy,
+    AuditStrategy,
+    type(_BALANCE),
+    type(inheritance.view(_BALANCE)),
 )
 
 
@@ -660,13 +679,13 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
     # decision at consumption is the same defect as re-capturing the instant
     # there.
     calls: list[object] = []
-    original = write_planner.resolve_successors  # pyright: ignore[reportPrivateImportUsage]
+    original = write_settlement.resolve_successors  # pyright: ignore[reportPrivateImportUsage]
 
     def counting_resolve(*args: object, **kwargs: object) -> object:
         calls.append(None)
         return original(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(write_planner, "resolve_successors", counting_resolve)
+    monkeypatch.setattr(write_settlement, "resolve_successors", counting_resolve)
     rows = [
         (
             row_id,

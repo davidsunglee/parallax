@@ -937,6 +937,14 @@ def test_bitemporal_close_addresses_both_axis_ends_then_gates_on_in_z_last() -> 
     assert isinstance(step.concurrency, TemporalGate)
 
 
+def test_a_probe_naming_an_undeclared_entity_is_refused() -> None:
+    # The probe is the one settlement entry reached with an Entity SPELLING
+    # rather than resolved target Metadata, so it is also the one that can be
+    # handed a name the accepted model does not declare.
+    with pytest.raises(WritePlanningError, match="not a declared Entity"):
+        _probe("optimistic", entity="Nowhere")
+
+
 def test_a_probe_identity_naming_more_than_the_address_is_refused() -> None:
     # The probe's `identity` IS the address, unlike the pipeline's own close,
     # whose `identity` is the full durable row the surrounding mutation revises.

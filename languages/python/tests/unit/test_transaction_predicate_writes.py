@@ -87,7 +87,7 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
-from parallax.core.unit_work.write_planner import assigned_many_path
+from parallax.core.unit_work.write_settlement import assigned_many_path
 from parallax.snapshot import QueryTargetError, SnapshotDecodingError
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from parallax.snapshot.handle._family import comparison_shape

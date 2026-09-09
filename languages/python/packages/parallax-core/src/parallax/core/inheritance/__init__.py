@@ -300,7 +300,7 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     Two callers stand behind it, each covering a route that call
     cannot: ``parallax.snapshot.handle``'s directly reachable buffering seam,
     before it can resolve a materializing family target against a real
-    connection, and :mod:`~parallax.core.unit_work.write_planner` at flush, as
+    connection, and :mod:`~parallax.core.unit_work.write_settlement` at flush, as
     the structural refusal before SQL for whatever was buffered. A
     no-op for a non-participant ``entity`` (every entity outside an
     inheritance family accepts a predicate-selected write, subject to every

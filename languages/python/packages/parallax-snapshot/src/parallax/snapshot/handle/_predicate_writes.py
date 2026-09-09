@@ -103,7 +103,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import (
     PreparedPredicateWrite,
 )
-from parallax.core.unit_work.write_planner import assigned_many_path
+from parallax.core.unit_work.write_settlement import assigned_many_path
 from parallax.snapshot.handle._family import (
     assignment_member,
     comparison_shape,
@@ -351,7 +351,7 @@ def buffer_predicate_instruction(
     :func:`_materialize_predicate_write`'s resolving read — real SQL on the
     caller's connection — and, when that read matches no row, buffers nothing
     for the flush-time
-    :mod:`~parallax.core.unit_work.write_planner` to refuse, so nothing refuses
+    :mod:`~parallax.core.unit_work.write_settlement` to refuse, so nothing refuses
     it at all. The planner's own structural refusal is the last line before SQL
     for what IS buffered; this one is the first line before the resolve.
 
