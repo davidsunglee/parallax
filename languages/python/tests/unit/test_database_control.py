@@ -24,7 +24,7 @@ import threading
 from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from types import TracebackType
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import psycopg
 import pytest
@@ -177,6 +177,49 @@ def _connected_descriptor(stack: ExitStack) -> int:
     near, far = socket.socketpair()
     stack.enter_context(far)
     return near.detach()
+
+
+class _Claim(Protocol):
+    def acquire(self, blocking: bool = ..., timeout: float = ...) -> bool: ...
+    def release(self) -> None: ...
+
+
+class _ObservedClaim:
+    """One of the runtime's own claims, announcing the thread that FINDS IT HELD.
+
+    What a contention pin needs and a timed negative wait cannot give it. That a
+    contender has not finished within some interval is also true of a contender
+    the scheduler has not started, so a pin resting on one can pass while the
+    overlap it exists for never happens — and the implementations these pins
+    condemn behave correctly for threads that never overlap. Failing to take the
+    claim is the contender ARRIVING while the first holder still has it, which
+    is that overlap itself: the pin waits for it rather than for time to pass.
+    """
+
+    def __init__(self, claim: _Claim) -> None:
+        self._claim = claim
+        self.contended = threading.Event()
+
+    def __enter__(self) -> None:
+        if not self._claim.acquire(blocking=False):
+            self.contended.set()
+            self._claim.acquire()
+
+    def __exit__(self, *exc: object) -> None:
+        self._claim.release()
+
+
+def _observing(runtime: object, claim: str) -> _ObservedClaim:
+    """Wrap a live runtime's named claim, leaving the claim itself the same object.
+
+    Installed while a thread already holds it: that holder entered through the
+    original lock and leaves through it, so only arrivals after this call are
+    observed — which are exactly the contenders a pin is proving something about.
+    """
+    private = cast("Any", runtime)
+    observed = _ObservedClaim(getattr(private, claim))
+    setattr(private, claim, observed)
+    return observed
 
 
 # --------------------------------------------------------------------------- #
@@ -485,6 +528,7 @@ def test_no_scope_is_admitted_while_a_validated_control_action_is_in_flight(acti
     # The captured scope ends without waiting for the action, and the next scope
     # asks for the session while the action is still running.
     captured.__exit__(None, None, None)
+    admission = _observing(runtime, "_admission")
     settled = threading.Event()
     outcome: list[str] = []
 
@@ -498,6 +542,9 @@ def test_no_scope_is_admitted_while_a_validated_control_action_is_in_flight(acti
 
     waiting = threading.Thread(target=take_the_session)
     waiting.start()
+    # The overlap itself: the next scope has reached admission and found the
+    # in-flight action holding it shut. Only now is not finishing meaningful.
+    assert admission.contended.wait(timeout=5.0)
     assert not settled.wait(timeout=0.25)
 
     finish.set()
@@ -560,15 +607,21 @@ def test_terminating_stops_at_the_driver_connections_own_close() -> None:
 
 def test_terminating_a_session_the_ladder_already_destroyed_attempts_no_rung() -> None:
     # A condemned session stays the scope's until that scope ends, so a second
-    # escalation can still capture it. What the caller asked for — a session
-    # that is gone — is already true, and descending the ladder again would
-    # close a driver connection that has been closed.
+    # escalation can still capture it — and descending the ladder again would
+    # close a driver connection that has been closed. What the report says of
+    # that second escalation is what it established, which is nothing: the
+    # session was gone before it started, and a caller reading `terminated`
+    # learns whether ITS attempt is what ended the session, not whether some
+    # earlier one did.
     connection = _FakeConnection()
     execution = _execution(connection)
 
     with _scope_of(execution):
         assert execution.terminate_active() == TerminationReport(terminated=True)
-        assert execution.terminate_active() == TerminationReport(terminated=True)
+        assert execution.terminate_active() == TerminationReport(
+            terminated=False,
+            failures=("this session had already been retired, so no rung was attempted",),
+        )
 
     assert connection.closes == 1
 
@@ -765,6 +818,7 @@ def test_a_deferred_retirement_and_a_second_close_end_the_session_exactly_once()
     borrower.start()
     assert closing.wait(timeout=5.0)
 
+    retirement = _observing(runtime, "_retirement")
     closed_again = threading.Event()
 
     def close_again() -> None:
@@ -773,6 +827,12 @@ def test_a_deferred_retirement_and_a_second_close_end_the_session_exactly_once()
 
     closer = threading.Thread(target=close_again)
     closer.start()
+    # The race itself, and the only way to run it: the second closer has reached
+    # the claim on ending this session while the deferred retirement is still
+    # inside the native close. A closer that arrived afterwards would find the
+    # session retired and do nothing — which the implementation this pin
+    # condemns also does, so the pin waits for the overlap rather than for time.
+    assert retirement.contended.wait(timeout=5.0)
     assert not closed_again.wait(timeout=0.25)
 
     proceed.set()
