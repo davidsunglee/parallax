@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -13,6 +13,29 @@ import pytest
 from _support.repo import PY_ROOT
 
 COST_DURATIONS = PY_ROOT / "tests" / "_support" / "cost_durations.json"
+
+
+def weights(nodeids: Sequence[str], known: Mapping[str, float]) -> list[float]:
+    """What each item weighs: its stored duration, or the mean of the stored
+    ones for an item the store does not know."""
+    unknown = sum(known.values()) / len(known)
+    return [known.get(nodeid, unknown) for nodeid in nodeids]
+
+
+def shard_of_each(weights: Sequence[float], count: int) -> list[int]:
+    """The one-based shard each weighted item lands in.
+
+    Heaviest first, each onto the lightest shard so far, ties to the lowest
+    index: deterministic over stable input, and within one item's weight of the
+    best balance.
+    """
+    loads = [0.0] * count
+    shard = [0] * len(weights)
+    for position in sorted(range(len(weights)), key=lambda p: (-weights[p], p)):
+        target = min(range(count), key=lambda i: (loads[i], i))
+        loads[target] += weights[position]
+        shard[position] = target + 1
+    return shard
 
 
 def _seconds(duration: object) -> float | None:
