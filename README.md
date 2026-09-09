@@ -68,6 +68,10 @@ tooling. Start with the document that matches what you want to learn:
 
 - [Python Usage Guide](languages/python/docs/usage-guide.md) — tested examples
   of the public API, generated from the API Conformance Suite.
+- [PostgreSQL connection lifecycle](languages/python/docs/postgresql-lifecycle.md)
+  — how connections are pooled, held and released, and what a deployment has to
+  decide because of it: retention, timeouts, process and application-server
+  lifetime, connection budgeting, and pool observation.
 - [Completed Python language spec](languages/python/spec/python.md) — exact API,
   lifecycle, packaging, database, and quality-toolchain decisions.
 - [Python testing map](languages/python/TESTING.md) — where each test surface

@@ -21,6 +21,12 @@ Query code receives execution alone; composition receives the lifetime. That
 split is what lets a connection be acquired for exactly one operation without
 any statement being able to acquire or release one.
 
+A runtime that manages a pool also publishes a :class:`PoolMetricsSource`, whose
+:data:`PoolSample` answers with :class:`PoolMeasurements`, with an ordinary
+failure to read them, or with the runtime having closed. That is the whole
+pool-wide contract here: what may be measured belongs to the resource, and who
+is interested belongs to `m-execution-lifecycle`.
+
 The seam depends on nothing application-specific (no driver, no pool library, no
 concrete database) — the dialect layer is pure and the diagnostic projection a
 cleanup issue carries is standard-library-only — so any layer may hold either
@@ -40,11 +46,19 @@ from dataclasses import dataclass
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
 from parallax.core.base import DocumentReadOrdinals
-from parallax.core.db_port._pool_metrics import PoolMetricsSource
+from parallax.core.db_port._pool_metrics import (
+    PoolAvailable,
+    PoolDetached,
+    PoolMeasurements,
+    PoolMetricsSource,
+    PoolSample,
+    PoolUnavailable,
+)
 from parallax.core.db_port._resource_logging import (
     RESOURCE_LOGGER_NAME,
     ResourceCondition,
     report_resource_issues,
+    report_unregistration_failure,
 )
 from parallax.core.db_port._resources import (
     AcquisitionReason,
@@ -88,7 +102,12 @@ __all__ = [
     "Invalidated",
     "IsolationLevel",
     "JsonDocument",
+    "PoolAvailable",
+    "PoolDetached",
+    "PoolMeasurements",
     "PoolMetricsSource",
+    "PoolSample",
+    "PoolUnavailable",
     "ResourceCondition",
     "Returned",
     "RollbackFailed",
@@ -100,6 +119,7 @@ __all__ = [
     "Unrelinquished",
     "isolation_level",
     "report_resource_issues",
+    "report_unregistration_failure",
 ]
 
 # A neutral bind value (m-core scalars) or the language's managed carriers.

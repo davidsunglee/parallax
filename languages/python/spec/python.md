@@ -2308,6 +2308,14 @@ never on one borrowed from the handle. Acquisition failures reach a caller as
 a runtime that never became ready raises `DatabaseStartupError` instead of
 publishing a handle.
 
+A `PostgresAdapter` runtime also publishes one stable `pool_metrics` source, and
+`connect` offers it to a `lifecycle_provider` that implements
+`PoolMetricsObserver` — before the handle is published, so a registration that
+raises fails composition and closes the runtime rather than leaving a handle to
+explain itself. `db.close()` closes the runtime, which detaches that source, and
+then closes the registration; what it never closes is the exporter behind the
+registration, which is the application's and outlives the handle.
+
 **Static shorthand and the Serving Model at connect.**
 `Database.connect(adapter, model)` keeps its existing positional and keyword
 arguments, and its model argument accepts a Domain Model or a `ServingModel`.
@@ -3917,6 +3925,49 @@ than a parallel lifecycle disposition, and `ReleaseFinished` types it
 property admits — a conforming context establishes one on every completed exit,
 so the conformance observation refuses a release that states none.
 
+`PoolMetricsObserver` is the optional second half of the Provider seam, and the
+only lifecycle contract that is not an event:
+
+```python
+class PoolMetricsObserver(Protocol):
+    def observe_pool(self, source: PoolMetricsSource, /) -> PoolObservation | None: ...
+
+
+class PoolObservation(Protocol):
+    def close(self) -> None: ...
+```
+
+An application implements it on the Provider object it already passes, which is
+what keeps `connect` to one lifecycle argument; implementing it is the whole
+declaration of interest, and interest in the pool is independent of accepting
+roots. `register_pool_observation` composes only where the runtime published a
+source AND the Provider is an instance of the protocol, so a runtime managing no
+pool offers nothing and a Provider observing only executions is asked nothing.
+`FanoutLifecycleProvider` implements it too: it offers the source to each
+composed Provider in declaration order, answers one registration closing all of
+them, and — where a child's registration raises — closes the ones already
+registered, attempts every one of those closes, and lets the original exception
+leave with its identity. An ordinary failure to close a registration is
+contained and reports one fixed line through the restricted `parallax.resources`
+log, which names nothing about the observer that refused.
+
+`parallax.core.db_port` owns what a sample IS: `PoolMetricsSource.sample()`
+answers `PoolAvailable(measurements)`, `PoolUnavailable(diagnostic)` while still
+attached, or `PoolDetached()` once the runtime has closed. `PoolMeasurements` is
+a frozen, slotted, keyword-only record of fourteen integers — the five required
+gauges `pool_min`, `pool_max`, `pool_size`, `pool_available` and
+`requests_waiting`, and nine counters defaulting to zero, which is what the
+driver's pool means by omitting a counter it never incremented. The Postgres
+implementation reads `psycopg_pool`'s own statistics non-destructively, ignores
+keys the record does not name (`usage_ms` among them, since the checkout context
+that populates it is not the one this adapter uses), and answers unavailable for
+a missing gauge or a measurement that is not an exact nonnegative `int` — `bool`
+included. It imposes no relationship between fields, because the native reading
+is not atomic. An ordinary failure to read is unavailable; a control-flow or
+fatal exception propagates. Detachment is the runtime's own, taken before the
+native close, and a sample already inside the native call when it happens
+completes with what it measured.
+
 The shared entry and release helpers in
 `parallax.snapshot.handle._connection_lifecycle` own both ends, and the
 completion fact that selects between a Handler and the restricted
@@ -5359,6 +5410,18 @@ remains observable rather than making Python its own oracle.
   `languages/python/docs/usage-guide.md`; CI runs `--check` and fails on
   drift. The guide and suite are additive to conformance-adapter proof, never
   substitutes.
+- **PostgreSQL lifecycle guide.** `languages/python/docs/postgresql-lifecycle.md`
+  is the operational companion: construction and retention, what each operation
+  holds, process and application-server lifetime, connection budgeting, pool
+  observation, the disclosure policies of the three reporting paths, and the
+  migration table from the pre-pooling surface. It is hand-written rather than
+  generated, and every Python block in it that shows an application composing or
+  serving through a handle is the exact source of an executable story in
+  `parallax.conformance.database_pooling_stories`, guarded against drift by
+  `tests/unit/test_postgresql_lifecycle_guide.py` and executed against real
+  Postgres by `tests/api/test_database_pooling.py`. The two package READMEs and
+  the repository README link it; it restates no normative rule these
+  specifications own.
 - **Edited-value derivation.** `parallax.conformance.edit_runner` reads every
   `shape: edit` oracle from its case document and grades the native Entity or
   Value Object result, shallow auxiliary identity with independent bindings,
@@ -6099,7 +6162,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContext`, the transaction outcomes, `IsolationLevel`, `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `Unrelinquished`, `CleanupIssue`, and `PoolMetricsSource`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors; `parallax.core.wire`: `WireValue`, `WireDecodingReason`, `WireDecodingError`, `WireEncodingError`, `loads`, `decode_wire`, `decode_canonical_wire`, and `encode_wire`; `parallax.core.sql_gen`: `LoweredStatement` and `SqlGenError`; `parallax.core.diagnostics`: `FailureDiagnostic`, `MESSAGE_LIMIT_BYTES`, and `STACK_LIMIT_BYTES` — the one import home for the detached exception projection three scopes share; `parallax.core.db_port`: `DatabaseConnection`, `DatabaseAdapter`, `DatabaseRuntime`, `ConnectionContext`, the transaction outcomes, `IsolationLevel`, `ConnectionAcquisitionError`, `DatabaseStartupError`, `Returned`, `Invalidated`, `Unrelinquished`, `CleanupIssue`, and the pool-sample contract — `PoolMetricsSource`, `PoolMeasurements`, `PoolAvailable`, `PoolUnavailable`, `PoolDetached`, `PoolSample`; `parallax.core.execution_lifecycle`: the Provider/Handler protocols, root and event values, outcomes and diagnostics, lifecycle errors, `PoolMetricsObserver`, `PoolObservation`, `FanoutLifecycleProvider`, `LoggingLifecycleProvider`, and `LifecycleLogDetail` |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-evolution` (model evolution and schema deltas) | production, optional | `parallax.evolution.*` (`model_evolution`, `schema_delta`) | (none beyond core) | `parallax-core` | `parallax.evolution`: `evolve`, `ABSENT`, `UnilateralEvolution`, `CoordinatedEvolution`, and the closed Evolution Operation, field-delta, Behavioral Impact, and coordination vocabularies those two results carry; `schema_delta`, `SchemaDelta`, `CreatedIndex`, `UnsupportedSchemaEvolutionError`, `UnsupportedSchemaOperation`, `PhysicalIndexNameCollisionError`, `CollisionGroup`, `CollidingIndex`, `IndexPresence`, and `PhysicalLocation` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `prepare_model()`, `ModelSelection`, `ServingModel`, `PublicationConflictError`, `ExecutionFailure`, `Snapshot[T]`, `CheckedSnapshot[T]`, `WireEntity`, `InvalidData[T]`, `StoredDataIssue`, `MISSING_STORED_VALUE`, `ObjectKey`, `InvalidDataError`, `NoResultFound`, `TooManyResultsFound`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError`, `KeyedWriteValueError`, `KEYED_WRITE_VALUE_CODES`, `WriteEvidenceError`, `WriteEvidenceErrorCode`, `WRITE_EVIDENCE_CODES`, `WriteInstructionError` |

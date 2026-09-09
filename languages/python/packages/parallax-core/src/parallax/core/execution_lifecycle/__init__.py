@@ -33,6 +33,9 @@ The private modules split by change rate rather than by tidiness:
   per-thread state a re-entrant call is refused by.
 * ``_errors`` — the opening and re-entry refusals, and the Handler failure a
   Provider is told about out of band.
+* ``_pool_observation`` — the optional pool-wide half of the Provider seam: the
+  interest an application registers at composition, and the registration it
+  keeps until the handle closes.
 * ``_fanout`` — several Providers behind one seam, and the composite Handler
   that owns their ordering and their per-child quarantine.
 * ``_logging`` — the standard-library logging built-in, and the only place this
@@ -132,6 +135,10 @@ from parallax.core.execution_lifecycle._logging import (
     LifecycleLogDetail,
     LoggingLifecycleProvider,
 )
+from parallax.core.execution_lifecycle._pool_observation import (
+    PoolMetricsObserver,
+    PoolObservation,
+)
 
 __all__ = [
     "AcquisitionFailed",
@@ -173,6 +180,8 @@ __all__ = [
     "OuterInvocation",
     "OuterInvocationCommitted",
     "OuterInvocationFailed",
+    "PoolMetricsObserver",
+    "PoolObservation",
     "ReadCompleted",
     "ReadFailed",
     "ReadFinished",

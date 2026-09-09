@@ -69,6 +69,11 @@ from parallax.core.execution_lifecycle._activity import (
     installed_lifecycle,
     refuse_reentry,
 )
+from parallax.core.execution_lifecycle._pool_observation import (
+    PoolObservation,
+    close_pool_observations,
+    register_pool_observation,
+)
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.unit_work import Clock, Concurrency, SystemClock
@@ -173,12 +178,15 @@ class Database:
     That ownership is why the handle is a context manager and why
     :meth:`close` exists at all: the connections an application's operations run
     on belong to this object's lifetime, and nothing above it can release them.
+    A pool observation an application registered at composition has the same
+    lifetime for the same reason: the runtime it observes is this handle's.
     """
 
     __slots__ = (
         "_clock",
         "_demarcation",
         "_lifecycle",
+        "_observation",
         "_reads",
         "_runtime",
     )
@@ -199,6 +207,14 @@ class Database:
         below leaves it to the caller that opened it. :meth:`connect` is the
         entry point that opens one and owns both halves, and is what an
         application uses.
+
+        If ``runtime`` publishes pool measurements and ``lifecycle_provider``
+        implements
+        :class:`~parallax.core.execution_lifecycle.PoolMetricsObserver`, the
+        source is offered to it here and the registration it answers with is
+        held until :meth:`close`. Both halves are required and neither is
+        inferred: a runtime managing no pool has nothing to offer, and a
+        Provider that observes only executions is asked nothing.
 
         A Domain Model is prepared once, under a generated opaque edition
         that stays fixed for this connection's life, and held in a private
@@ -233,6 +249,15 @@ class Database:
             lifecycle=self._lifecycle, serving=serving, runtime=runtime
         )
         self._demarcation = Demarcation(runtime, self._clock, self._lifecycle, serving)
+        # Last, and outside the execution seam above: pool observation is an
+        # interest in the RUNTIME rather than in any operation, so it is offered
+        # only where the runtime publishes measurements and the Provider asked
+        # for them. Registering here is what makes it precede publication — a
+        # Provider whose registration raises leaves no handle behind, and the
+        # caller that opened the runtime closes it.
+        self._observation: PoolObservation | None = register_pool_observation(
+            lifecycle_provider, runtime.pool_metrics
+        )
 
     @classmethod
     def connect(
@@ -264,7 +289,11 @@ class Database:
         before the failure leaves: no half-composed handle is published, and the
         runtime is not left to a caller who never received one. What closing
         establishes is closing's own to report, exactly as it is for a handle a
-        caller closes itself.
+        caller closes itself. A ``lifecycle_provider`` that also observes the
+        pool is offered this runtime's measurements as part of that composition,
+        before any handle exists to publish — so a registration that raises is
+        one of the failures above rather than something a published handle then
+        has to explain.
 
         Every handle this returns must be closed — through :meth:`close`, or by
         using it as a context manager, which are equivalent.
@@ -305,8 +334,20 @@ class Database:
 
         A retry after this therefore fails rather than replaying: the attempt
         that would have run it cannot acquire a connection.
+
+        A pool observation registered at composition is closed afterwards, and
+        in every case: the runtime is what the interest was in, so it goes
+        first, and a close that failed must not leave the registration open.
+        What is closed is the REGISTRATION — the exporter, queue, or metrics
+        client behind it is the application's and outlives this handle.
         """
-        self._runtime.close()
+        try:
+            self._runtime.close()
+        finally:
+            observation = self._observation
+            self._observation = None
+            if observation is not None:
+                close_pool_observations((observation,))
 
     def __enter__(self) -> Database:
         return self

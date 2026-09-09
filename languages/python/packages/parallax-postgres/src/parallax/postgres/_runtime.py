@@ -22,9 +22,15 @@ may finish everything it was going to do, including statements it has not issued
 yet; anything needing a NEW acquisition after that close is refused.
 
 **Shutdown.** :meth:`PostgresRuntime.close` is idempotent and permanent. It stops
-admission, then closes the native pool, which fails waiting and future
-acquisitions, closes idle connections, and closes checked-out connections as they
-come back. It does not wait for borrowers and does not interrupt their SQL.
+admission, detaches the metrics source, then closes the native pool, which fails
+waiting and future acquisitions, closes idle connections, and closes checked-out
+connections as they come back. It does not wait for borrowers and does not
+interrupt their SQL.
+
+The runtime also publishes that source — one stable object for its whole life,
+created with it and detached before the pool is torn down — so an exporter reads
+capacity, idleness and queue depth without taking a connection or running a
+statement.
 """
 
 from __future__ import annotations
@@ -53,6 +59,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres._connection import CONNECT_KWARGS, ConnectionPreparation
 from parallax.postgres._context import NativePool, PostgresConnectionContext
 from parallax.postgres._options import PoolOptions, RetentionOptions
+from parallax.postgres._pool_metrics import PostgresPoolMetrics
 
 __all__ = ["PROBE_SQL", "PostgresRuntime", "open_runtime"]
 
@@ -82,7 +89,7 @@ class PostgresRuntime:
 
     dialect: Dialect = POSTGRES
 
-    __slots__ = ("_admission", "_closed", "_options", "_pool", "_preparation")
+    __slots__ = ("_admission", "_closed", "_metrics", "_options", "_pool", "_preparation")
 
     def __init__(
         self,
@@ -93,6 +100,7 @@ class PostgresRuntime:
         self._pool = pool
         self._options = options
         self._preparation = preparation
+        self._metrics = PostgresPoolMetrics(pool)
         self._closed = False
         # Held only across the two field reads that decide admission, never
         # across a checkout, a statement, or a callback: an acquisition that
@@ -101,13 +109,14 @@ class PostgresRuntime:
 
     @property
     def pool_metrics(self) -> PoolMetricsSource | None:
-        """No measurements are published yet, which is stated as absence.
+        """This runtime's one source, the same object for its whole life.
 
-        Absence rather than a source answering nothing: a holder composes
-        observation only where there is something to observe, and a source that
-        exists but reports nothing would be indistinguishable from a broken one.
+        A pool is what this runtime manages, so there is always something to
+        measure and this is never absent. It stays the same object across the
+        close as well: an exporter holding it keeps a handle that answers
+        detached rather than a handle that has gone stale.
         """
-        return None
+        return self._metrics
 
     def connection(self) -> ConnectionContext:
         """A fresh single-use acquisition under this runtime's acquisition budget."""
@@ -132,6 +141,11 @@ class PostgresRuntime:
         running finishes on the connection it holds and that connection is
         closed when it is returned.
 
+        The metrics source detaches between the two, so no sample can be
+        looking at a pool that is being torn down — and a native close that is
+        slow or that fails delays nothing about that, because detachment has
+        already happened by then.
+
         Problems closing are reported through the restricted resource logger and
         never raised: close is what a caller runs while unwinding, and a handle
         that refused to close would leave them nothing better to do.
@@ -140,6 +154,7 @@ class PostgresRuntime:
             if self._closed:
                 return
             self._closed = True
+        self._metrics.detach()
         try:
             self._pool.close()
         except Exception as exc:

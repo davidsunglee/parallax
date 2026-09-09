@@ -88,6 +88,8 @@
     "OuterInvocation",
     "OuterInvocationCommitted",
     "OuterInvocationFailed",
+    "PoolMetricsObserver",
+    "PoolObservation",
     "ReadCompleted",
     "ReadFailed",
     "ReadFinished",
@@ -151,7 +153,12 @@
     "Invalidated",
     "IsolationLevel",
     "JsonDocument",
+    "PoolAvailable",
+    "PoolDetached",
+    "PoolMeasurements",
     "PoolMetricsSource",
+    "PoolSample",
+    "PoolUnavailable",
     "RESOURCE_LOGGER_NAME",
     "ResourceCondition",
     "Returned",
@@ -163,7 +170,8 @@
     "TransactionOutcome",
     "Unrelinquished",
     "isolation_level",
-    "report_resource_issues"
+    "report_resource_issues",
+    "report_unregistration_failure"
   ],
   "parallax.core.entity": [
     "AbstractRoot",

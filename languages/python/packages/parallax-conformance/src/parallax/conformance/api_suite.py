@@ -23,6 +23,7 @@ from typing import Final
 
 from parallax.conformance import (
     case_format,
+    database_pooling_stories,
     edit_runner,
     execution_lifecycle_stories,
     model_publication_stories,
@@ -304,6 +305,53 @@ RECIPES: Final[list[Recipe]] = [
             "publishes."
         ),
         snippet=model_publication_stories.publication_snippet(),
+    ),
+    Recipe(
+        title="Serving a pooled database from an application, and watching its pool",
+        spec=(
+            "`python.md` §2 (*A connected handle owns its runtime*), §3 "
+            "(*Execution lifecycle observability*: `PoolMetricsObserver` and the "
+            "sample contract) and `m-db-port` (configuration, runtime and "
+            "acquisition, and what a pooling runtime publishes about itself)"
+        ),
+        graded_by=(
+            "`tests/api/test_database_pooling.py` (real Postgres: two handles over "
+            "one configuration serving independently, the pool watched from "
+            "composition through a delivery that holds the only slot to the "
+            "detachment a close causes, the lifespan closing the handle it "
+            "yielded, and every event of an offloaded operation delivered on the "
+            "worker thread rather than the event loop) and "
+            "`tests/unit/test_postgresql_lifecycle_guide.py` (the deployment "
+            "guide's blocks are these functions' own source)"
+        ),
+        notes=(
+            "Three lifetimes, and the guide "
+            "`languages/python/docs/postgresql-lifecycle.md` is written out of "
+            "these functions. **Configuration** is a value: build it once, share "
+            "it, and open a runtime per `connect`. **The handle** owns the runtime "
+            "and must be closed, which is why an application composes it in a "
+            "lifespan rather than at import — a forking server would otherwise "
+            "hand one pool's sockets to every worker. **The registration** a "
+            "`observe_pool` answers with is closed when the handle closes; the "
+            "exporter behind it is the application's and outlives both. What "
+            "crosses into a worker thread is one COMPLETE operation, release "
+            "included: handing a `Snapshot` back to be walked on the event loop "
+            "would move part of the operation onto it and keep the connection for "
+            "as long as the loop took to get there. No web framework is imported "
+            "here or needed — a lifespan is an async context manager and the "
+            "offload is a worker thread, which is exactly what FastAPI's "
+            "`lifespan=` and its own endpoint threadpool are. Sampling runs no "
+            "statement and takes no connection, which is why the reading below "
+            "succeeds from inside a streaming loop that is holding the runtime's "
+            "only slot."
+        ),
+        snippet=(
+            database_pooling_stories.retention_snippet()
+            + "\n\n\n"
+            + database_pooling_stories.serving_snippet()
+            + "\n\n\n"
+            + database_pooling_stories.observation_snippet()
+        ),
     ),
 ]
 
