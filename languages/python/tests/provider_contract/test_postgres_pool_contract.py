@@ -78,11 +78,9 @@ def test_a_bounded_queue_refuses_a_further_waiter_rather_than_holding_it(
         profile_run,
         pool=PoolOptions(min_size=0, max_size=1, max_waiting=1, acquire_timeout=2.0),
     )
-    waiting = threading.Event()
     refusals: list[str] = []
 
     def wait_for_capacity() -> None:
-        waiting.set()
         try:
             with runtime.connection():
                 pass
@@ -93,9 +91,12 @@ def test_a_bounded_queue_refuses_a_further_waiter_rather_than_holding_it(
         with runtime.connection():
             queued = threading.Thread(target=wait_for_capacity)
             queued.start()
-            waiting.wait(timeout=5.0)
-            # The queue holds one waiter; the next is refused outright rather
-            # than waiting for a slot that is already spoken for.
+            # The waiter is really queued before the next acquisition asks —
+            # read off the pool rather than inferred from a thread having
+            # started — so what that acquisition meets is a full queue, and it
+            # is refused outright rather than waiting for a slot already spoken
+            # for.
+            _wait_until_queued(runtime)
             with pytest.raises(ConnectionAcquisitionError) as rejected:
                 runtime.connection().__enter__()
             assert rejected.value.reason == "queue_rejected"
@@ -194,12 +195,10 @@ def test_an_on_demand_release_goes_straight_to_a_borrower_already_waiting(
 ) -> None:
     # Keeping no inventory is not the same as closing every connection: a
     # release with a caller already queued hands the connection straight on.
-    # The queue is bounded to one so the handoff is deterministic — a third
-    # acquisition is refused outright exactly while the waiter is queued, which
-    # is what says the waiter really is there before capacity is released.
-    runtime = _runtime(
-        profile_run, pool=OnDemandOptions(max_size=1, max_waiting=1, acquire_timeout=10.0)
-    )
+    # What makes it deterministic is the ordering: capacity is released only
+    # once the borrower is queued, so the connection it gets can only be the one
+    # released rather than one established for it afterwards.
+    runtime = _runtime(profile_run, pool=OnDemandOptions(max_size=1, acquire_timeout=10.0))
     handed: list[int] = []
 
     def wait_for_the_handoff() -> None:
@@ -219,19 +218,25 @@ def test_an_on_demand_release_goes_straight_to_a_borrower_already_waiting(
 
 
 def _wait_until_queued(runtime: Any) -> None:
-    """Block until one borrower is queued on ``runtime``, or fail the test.
+    """Block until a borrower is queued on ``runtime``, or fail the test.
 
-    A bounded queue answers the question directly: a further acquisition is
-    refused as ``queue_rejected`` exactly while the queue is full, so this is a
-    positive signal rather than a sleep long enough to hope.
+    Read from the pool's own bookkeeping rather than probed by taking a further
+    acquisition. A probe is itself a caller: it can reach the queue before the
+    borrower it is watching for and take the slot that borrower was about to
+    take, which then rejects the borrower or parks the probe for a whole
+    acquisition budget — so the proof would turn on which of two threads the
+    pool admitted first. Reading takes no connection, occupies no slot, and
+    changes nothing.
+
+    It reads the driver pool directly because nothing neutral publishes queue
+    depth: a runtime's ``pool_metrics`` is ``None`` by design until there is a
+    sampling contract to publish through.
     """
-    for _ in range(200):
-        try:
-            runtime.connection().__enter__()
-        except ConnectionAcquisitionError as refused:
-            if refused.reason == "queue_rejected":
-                return
-        time.sleep(0.05)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if runtime._pool.get_stats().get("requests_waiting", 0) > 0:
+            return
+        time.sleep(0.01)
     raise AssertionError("no borrower ever queued")
 
 

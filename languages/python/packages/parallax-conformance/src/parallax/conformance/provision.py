@@ -502,9 +502,11 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
             self._conninfo, autocommit=True, prepare_threshold=None
         )
         self._database = ContainerDatabase(self._configuration(), self._session)
-        # Every scoped session still open. A control removes itself as it closes,
-        # so this is empty whenever every caller has released what it opened, and
-        # `close` below is the backstop for one that did not.
+        # Every scoped session that may still be alive. One removes itself as
+        # soon as its session is gone — which is its close, or, for a close that
+        # waited on a borrower, the relinquishment that completed it. What
+        # remains is what a caller never closed and what would not close, and
+        # `close` below is the backstop that ends both.
         self._open: set[PostgresControl | PostgresInterleavedExecution] = set()
 
     def _configuration(self, **conninfo_options: str) -> PostgresAdapter:
@@ -557,8 +559,9 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
 
         The session belongs to the caller for exactly as long as the choreography
         that asked for it: closing it is the caller's, on every exit including a
-        refusal to start. What is tracked here is only the backstop for one a
-        caller never closed at all.
+        refusal to start. What is tracked here is only the backstop — for one a
+        caller never closed at all, and for one whose close left the session
+        alive.
         """
         control = self._control().open(
             self._conninfo,

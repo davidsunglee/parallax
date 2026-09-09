@@ -296,6 +296,7 @@ class ControlledRuntime:
         self._active: ControlledScope | None = None
         self._closed = False
         self._retired = False
+        self._on_retired: Callable[[], None] | None = None
 
     @property
     def pool_metrics(self) -> PoolMetricsSource | None:
@@ -376,11 +377,17 @@ class ControlledRuntime:
 
         Never raises, because a runtime is closed by a caller that is unwinding.
         What a caller may ask afterwards is :attr:`retired`.
+
+        Repeatable rather than once-only: a close the driver refused leaves the
+        session alive and still this runtime's, so a later close tries again —
+        which is the whole of what an opener's teardown backstop can do about
+        one. A close after retirement reaches no driver call, so trying again
+        costs nothing where there is nothing left to end.
         """
         with self._state:
-            already, self._closed = self._closed, True
+            self._closed = True
             deferred = self._active is not None
-        if already or deferred:
+        if deferred:
             return
         with contextlib.suppress(Exception):
             self._retire_session()
@@ -406,15 +413,49 @@ class ControlledRuntime:
         """
         with self._state:
             self._closed = True
-            self._retired = True
+        self._complete_retirement()
+
+    def report_retirement_to(self, observer: Callable[[], None]) -> None:
+        """Call *observer* once this session is gone, immediately if it already is.
+
+        Retirement is not always finished by the caller that asked for it: a
+        close under a borrower completes on the thread that relinquishes, which
+        can be long afterwards and is never the closer's own. An opener deciding
+        whether it may forget this runtime therefore cannot learn the answer by
+        asking :attr:`retired` once, and this is how it is told instead.
+
+        The observer runs once and is dropped; a runtime whose session never
+        retires never runs it, which is what keeps a live session on its opener's
+        books.
+        """
+        with self._state:
+            retired = self._retired
+            if not retired:
+                self._on_retired = observer
+        if retired:
+            observer()
 
     def _retire_session(self) -> None:
         with self._state:
             if self._retired:
                 return
         self._connection.close()
+        self._complete_retirement()
+
+    def _complete_retirement(self) -> None:
+        """Record the session as gone and tell whoever asked to be told.
+
+        The one completion of retirement, whichever path reached it: a close,
+        the relinquishment that a deferred close was waiting for, or the
+        termination ladder. Retirement and the notification that ends the
+        opener's bookkeeping are the same transition, so nothing can complete
+        one without the other.
+        """
         with self._state:
             self._retired = True
+            observer, self._on_retired = self._on_retired, None
+        if observer is not None:
+            observer()
 
 
 class ControlledAdapter:
@@ -580,18 +621,26 @@ class PostgresInterleavedExecution:
         condemned session refusing to close again adds nothing to the report that
         ladder already returned.
 
-        The release is reported to the opener only once the session is gone —
-        because the ladder condemned it or because this close retired it. A
-        session that would not close, or one a borrower still holds, is still
-        this execution's as far as anyone can tell, so it stays on its opener's
-        books for the teardown backstop rather than being forgotten while alive.
+        The release is reported to the opener once the session is gone — because
+        the ladder condemned it, because this close retired it, or because the
+        borrower that was holding it relinquished afterwards and the deferred
+        retirement completed then. That last one arrives on the borrower's
+        thread, which is why the report is asked for rather than tested here: a
+        close that only looked once would leave a dead execution on its opener's
+        books until teardown. A session that would not close at all is still this
+        execution's as far as anyone can tell, and stays on those books for the
+        teardown backstop rather than being forgotten while alive.
         """
         with contextlib.suppress(Exception):
             self._database.close()
         with contextlib.suppress(Exception):
             self._runtime.close()
-        if self._runtime.retired and self._on_release is not None:
-            self._on_release(self)
+        self._runtime.report_retirement_to(self._report_release)
+
+    def _report_release(self) -> None:
+        released, self._on_release = self._on_release, None
+        if released is not None:
+            released(self)
 
 
 def _teardown_socket(connection: psycopg.Connection[TupleRow]) -> tuple[str, ...]:

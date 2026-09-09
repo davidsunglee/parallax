@@ -115,7 +115,9 @@ class _FakeConnection:
         self.commits = 0
         self._fd = fd
         self._cancel_raises = cancel_raises
-        self._close_raises = close_raises
+        # Public and mutable: a session that refused one close and answers the
+        # next is the state a retried teardown is proven against.
+        self.close_raises = close_raises
         # What a control action does while it is in flight, for the pins that
         # need to observe the runtime WHILE one is running rather than after.
         self._parked = parked if parked is not None else lambda: None
@@ -138,8 +140,8 @@ class _FakeConnection:
     def close(self) -> None:
         self.closes += 1
         self._parked()
-        if self._close_raises is not None:
-            raise self._close_raises
+        if self.close_raises is not None:
+            raise self.close_raises
 
     def fileno(self) -> int:
         if self._fd is None:
@@ -649,6 +651,45 @@ def test_an_execution_whose_session_would_not_close_stays_on_its_openers_books()
     execution.close()
 
     assert released == []
+
+
+def test_a_session_that_refused_one_close_is_retired_by_the_next() -> None:
+    # What being kept on those books is FOR. The backstop closes what it still
+    # tracks, so a refused close must leave a runtime that tries again rather
+    # than one that has recorded itself closed and does nothing — and the opener
+    # is told when the retry succeeds, which is what takes it off the books.
+    connection = _FakeConnection(close_raises=RuntimeError("the session would not close"))
+    released: list[object] = []
+    execution = _execution(connection, on_release=released.append)
+    execution.close()
+
+    connection.close_raises = None
+    execution.close()
+
+    assert released == [execution]
+    # And a retired session is not closed again: the retry costs a driver call
+    # only while there is something left to end.
+    retired_after = connection.closes
+    execution.close()
+    assert connection.closes == retired_after
+
+
+def test_an_execution_closed_under_a_borrower_reports_its_release_when_the_scope_ends() -> None:
+    # Retirement deferred to the borrower completes on the borrower's thread,
+    # long after the close that asked for it returned. The opener has to be told
+    # THEN: a session really gone that stayed on the books would be closed a
+    # second time by a teardown that had nothing left to end.
+    connection = _FakeConnection()
+    released: list[object] = []
+    execution = _execution(connection, on_release=released.append)
+
+    with _scope_of(execution):
+        execution.close()
+        assert connection.closes == 0
+        assert released == []
+
+    assert connection.closes == 1
+    assert released == [execution]
 
 
 def test_closing_a_controlled_runtime_under_a_borrower_waits_for_the_scope_to_end() -> None:
