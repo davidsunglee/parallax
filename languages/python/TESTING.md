@@ -108,12 +108,18 @@ to do.
 `profile_run` is what the profile provisions for itself, so a test never names a
 port: it resets through the run, executes through `run.port`, and hands the run
 itself to `adapter.run_case`, which reports the profile that opened the database it
-executed against. It is the only sanctioned route to a live database, and
-`tools/check_database_access.py` is what holds the suite to it: it fails when
-any module under `tests/` calls a seam that starts a container or opens a
-connection anywhere but inside that fixture. The rule is syntactic, so what it
-enforces is the spellings it can resolve — its own module comment states which
-those are. When Docker or the provider cannot be brought
+executed against. It is the only route to a live database, and
+`tools/check_database_access.py` is what keeps it so: it fails when any module
+under `tests/` calls a seam that starts a container or opens a connection
+anywhere but inside that fixture. It reads an acquisition on a value as well as
+on a class, so `adapter.open()` is caught as surely as `PostgresAdapter.open`,
+and it follows either through the bindings and containers a test might pass it
+along. One call may be waived on its own line with a
+`# database-access: <why>` marker; a marker carrying no reason is not honored,
+so every waiver is a diff line with its justification on it — the same bargain
+`# noqa` and `# pyright: ignore` are reviewed under. There is one in the tree,
+on the unit test that proves what `open` delegates to with the delegate
+stubbed. When Docker or the provider cannot be brought
 up the fixture records the reason and skips, and the terminal summary prints
 every recorded reason; `PARALLAX_REQUIRE_DB=1` turns any such skip into a
 failure. Docker setup — including the one-time `~/.testcontainers.properties` fix

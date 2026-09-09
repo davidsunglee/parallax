@@ -72,6 +72,56 @@ def test_the_adapter_open_is_a_seam_but_its_constructor_is_not() -> None:
     assert _seams("from parallax.postgres import PostgresAdapter\nPostgresAdapter('')\n") == []
 
 
+def test_the_adapter_open_is_a_seam_on_an_instance_as_much_as_on_the_class() -> None:
+    # `open` is an instance method, so the class spelling is the unnatural one and
+    # every ordinary way of writing the acquisition goes through a value. A rule
+    # reading only the dotted form would have declared a seam nobody spells.
+    assert _seams(
+        "from parallax.postgres import PostgresAdapter\nPostgresAdapter('').open()\n"
+    ) == ["parallax.postgres.PostgresAdapter.open"]
+    assert _seams(
+        "from parallax.postgres import PostgresAdapter\n"
+        "adapter = PostgresAdapter('')\n"
+        "adapter.open()\n"
+    ) == ["parallax.postgres.PostgresAdapter.open"]
+    # Importing the module that defines it rather than the package that exports
+    # it is not a way past the resolution either.
+    assert _seams(
+        "from parallax.postgres import adapter as adapter_module\n"
+        "adapter_module.PostgresAdapter('').open()\n"
+    ) == ["parallax.postgres.adapter.PostgresAdapter.open"]
+
+
+def test_an_adapter_instance_is_followed_the_way_a_seam_itself_is() -> None:
+    # The instance travels through the same bindings and containers a seam does,
+    # so neither rebinding the class first nor parking the adapter in a container
+    # is a spelling the rule loses.
+    assert _seams(
+        "from parallax.postgres import PostgresAdapter\n"
+        "cls = PostgresAdapter\n"
+        "first = cls('')\n"
+        "second = first\n"
+        "second.open()\n"
+    ) == ["parallax.postgres.PostgresAdapter.open"]
+    assert _seams(
+        "from parallax.postgres import PostgresAdapter\n"
+        "holder = {'adapter': PostgresAdapter('')}\n"
+        "holder['adapter'].open()\n"
+    ) == ["parallax.postgres.PostgresAdapter.open"]
+
+
+def test_open_on_anything_but_a_declared_instance_is_not_a_seam() -> None:
+    # The member is matched on a receiver the rule TYPED, not by name: `open` is
+    # common enough that name-matching it would report scores of calls reaching
+    # nothing, and reports a reader learns to skip are reports nobody reads.
+    assert _seams("tarfile.open(path)\n") == []
+    assert _seams("adapter = ScriptedAdapter()\nadapter.open()\n") == []
+    assert _seams("from parallax.postgres import PostgresAdapter\nPostgresAdapter('').pool\n") == []
+    # And an instance arriving out of a helper is past the same call boundary a
+    # seam handed to one is: what a callee returns is not this tree's to decide.
+    assert _seams("_configured().open()\n") == []
+
+
 def test_a_scoped_controls_open_is_a_seam_but_its_constructor_is_not() -> None:
     # A control the harness hands out opens a session of its own, so its `open`
     # acquires a database exactly as the shipped adapter's own `open` does.
@@ -275,6 +325,23 @@ def test_every_declared_profile_holds_a_seam_on_a_declared_member() -> None:
     assert access.unbacked_profiles() == ()
 
 
+def test_every_declared_instance_member_is_a_declared_seam() -> None:
+    assert access.unbacked_instance_seams() == ()
+
+
+def test_an_instance_member_that_is_not_a_declared_seam_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A member matched on a typed receiver is resolved by nothing else, so one
+    # renamed away would go on guarding a spelling that no longer exists. Holding
+    # it to being a declared seam puts it back under the resolution check.
+    monkeypatch.setattr(
+        access, "INSTANCE_SEAMS", {"parallax.postgres.PostgresAdapter": frozenset({"start"})}
+    )
+    assert access.unbacked_instance_seams() == ("parallax.postgres.PostgresAdapter.start",)
+    assert access.main([]) == 1
+
+
 def test_a_profile_whose_provisioner_is_not_a_declared_seam_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,6 +390,57 @@ def test_a_seam_call_outside_the_designated_fixture_is_a_violation(tmp_path: Pat
     assert finding.path == "test_rogue.py"
     assert finding.line == 5
     assert access.ENTRY_POINT_FIXTURE in finding.message
+
+
+def _rogue(root: Path, call: str) -> None:
+    """A module whose only statement is *call*, on line 5 of a minimal tree."""
+    (root / "test_rogue.py").write_text(
+        "from parallax.conformance.provision import Provisioner\n"
+        "\n"
+        "\n"
+        "def test_rogue():\n"
+        f"    {call}\n"
+    )
+
+
+# --------------------------------------------------------------------------
+# The waiver: reviewed, one line at a time, and never silent
+# --------------------------------------------------------------------------
+def test_a_waiver_carrying_a_reason_excuses_the_call_beside_it(tmp_path: Path) -> None:
+    # The hatch exists because a rule strong enough to catch a rogue acquisition
+    # also catches a test that proves what an acquisition delegates to with the
+    # delegate stubbed out. What it costs is a reason on the diff line.
+    _minimal_tree(tmp_path)
+    _rogue(tmp_path, "Provisioner()  # database-access: the container is faked in this test")
+    assert access.audit(tmp_path) == []
+
+
+def test_a_waiver_carrying_no_reason_is_not_honored(tmp_path: Path) -> None:
+    # The load-bearing half. A marker that excused a call without saying why would
+    # be a relaxation nobody reviews, and this guard's worth is that it cannot be
+    # relaxed quietly — so the bare marker, the marker padded with nothing, and the
+    # marker without its colon all leave the finding standing.
+    _minimal_tree(tmp_path)
+    for unjustified in ("# database-access:", "# database-access:   ", "# database-access"):
+        _rogue(tmp_path, f"Provisioner()  {unjustified}")
+        (finding,) = access.audit(tmp_path)
+        assert finding.line == 5
+
+
+def test_a_waiver_excuses_only_the_line_it_was_written_on(tmp_path: Path) -> None:
+    # A waiver is the line's, not the file's: the call a reader can see beside it
+    # is the one it speaks for, so a second acquisition elsewhere still reports.
+    _minimal_tree(tmp_path)
+    (tmp_path / "test_rogue.py").write_text(
+        "from parallax.conformance.provision import Provisioner\n"
+        "\n"
+        "\n"
+        "def test_rogue():\n"
+        "    Provisioner()  # database-access: this one is faked\n"
+        "    return Provisioner()\n"
+    )
+    (finding,) = access.audit(tmp_path)
+    assert finding.line == 6
 
 
 def test_a_seam_call_elsewhere_in_the_designated_module_is_a_violation(tmp_path: Path) -> None:

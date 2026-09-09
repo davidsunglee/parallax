@@ -816,6 +816,9 @@ def test_a_budget_already_spent_refuses_to_begin_the_next_phase(
 
 
 def test_configuration_opens_the_runtime_it_describes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # What `open` delegates to, and with what, is only observable by calling it,
+    # so this is the one place the suite spells the acquisition the access guard
+    # exists to refuse — over a stub, reaching no server.
     from parallax.postgres import adapter as adapter_module
 
     opened: list[tuple[str, object, object]] = []
@@ -827,7 +830,7 @@ def test_configuration_opens_the_runtime_it_describes(monkeypatch: pytest.Monkey
     monkeypatch.setattr(adapter_module, "open_runtime", open_runtime_stub)
     configured = adapter_module.PostgresAdapter("host=localhost", prepare_threshold=None)
 
-    assert configured.open() == "the runtime"
+    assert configured.open() == "the runtime"  # database-access: open_runtime is stubbed above
     assert opened == [("host=localhost", configured.pool, None)]
 
 
