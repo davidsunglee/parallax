@@ -251,6 +251,13 @@ class Database:
             lifecycle=self._lifecycle, serving=serving, runtime=runtime
         )
         self._demarcation = Demarcation(runtime, self._clock, self._lifecycle, serving)
+        # Held across the whole of close, so the ordering below is the ordering
+        # every caller sees: a second close waits for the first rather than
+        # returning while the runtime is still being torn down. Reentrant
+        # because what runs under it includes application code. Built before the
+        # registration, so nothing this handle would have to give up can be
+        # taken while a failure here could still leave it with no way to.
+        self._shutdown = threading.RLock()
         # Last, and outside the execution seam above: pool observation is an
         # interest in the RUNTIME rather than in any operation, so it is offered
         # only where the runtime publishes measurements and the Provider asked
@@ -260,11 +267,6 @@ class Database:
         self._observation: PoolObservation | None = register_pool_observation(
             lifecycle_provider, runtime.pool_metrics
         )
-        # Held across the whole of close, so the ordering below is the ordering
-        # every caller sees: a second close waits for the first rather than
-        # returning while the runtime is still being torn down. Reentrant
-        # because what runs under it includes application code.
-        self._shutdown = threading.RLock()
 
     @classmethod
     def connect(

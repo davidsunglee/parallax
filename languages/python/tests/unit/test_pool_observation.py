@@ -18,6 +18,7 @@ import threading
 from typing import Any
 
 import pytest
+from _contention_support import observing
 from _pool_source_support import DetachableSource
 
 from _support.db_port import Read, ScriptedAdapter
@@ -321,12 +322,13 @@ class _ClosesAfterTheRuntime(_Registration):
 
 
 def test_two_callers_closing_at_once_give_the_registration_up_once_and_last() -> None:
-    # The second caller starts while the first is parked inside the runtime's
-    # own close, so the two closes overlap. Whatever the scheduler then does,
-    # the registration is given up exactly once and only after the runtime's
-    # close has returned — never beside a runtime still being torn down — and a
-    # caller that closes a handle another thread is closing does not return
-    # before that is true.
+    # The second caller reaches the handle's shutdown claim and finds the first
+    # caller holding it, parked inside the runtime's own close: that arrival is
+    # the overlap itself, and the first caller is released only once it has
+    # happened. The registration is then given up exactly once and only after
+    # the runtime's close has returned — never beside a runtime still being torn
+    # down — and the caller that closed a handle another thread was closing does
+    # not return before that is true.
     log: list[str] = []
     runtime = _ParkedRuntime(log)
     registration = _ClosesAfterTheRuntime(runtime)
@@ -340,8 +342,10 @@ def test_two_callers_closing_at_once_give_the_registration_up_once_and_last() ->
     first = threading.Thread(target=db.close)
     first.start()
     assert runtime.entered.wait(_DEADLINE)
+    shutdown = observing(db, "_shutdown")
     second = threading.Thread(target=close_and_record)
     second.start()
+    assert shutdown.contended.wait(_DEADLINE)
     runtime.release.set()
     first.join(_DEADLINE)
     second.join(_DEADLINE)
