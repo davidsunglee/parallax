@@ -1148,9 +1148,20 @@ _Avoid_: list of observed writes, result collection, public plan group, Atomic U
 The model-scoped, stateless Unit Work module whose single pure planning
 operation converts one flush's boundary-captured Subject Identity, lazy
 Transaction Instant, Concurrency Preference, buffered writes, and observations into a
-Write Plan. Its planning strategies are wired at construction; it retains no
+Write Planning Result. Its planning strategies are wired at construction; it retains no
 attempt state and performs no database, clock, SQL, dialect, or driver work.
 _Avoid_: flush coordinator, SQL planner, mutable transaction planner, Final Write Planner
+
+**Write Settlement**:
+The portion of write finalization that turns dependency-ordered surviving intent
+into Planned Writes by deciding their targets, topology, concurrency, expected
+effects, and provenance while preserving the claims successful execution spends.
+_Avoid_: plan assembly, row binding, SQL planning
+
+**Write Planning Result**:
+The result of one write finalization: its execution-ordered Write Plan together
+with the deduplicated retained claims its surviving writes settled against.
+_Avoid_: Finalization, Finalized Writes, plan-and-claims tuple
 
 **Planned Write**:
 One semantic execution step within a Write Plan: a planned insert, update,
