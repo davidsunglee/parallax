@@ -331,11 +331,7 @@ class _DoctoredEntity:
 
 
 def _key_attribute(layout: EntityLayout) -> Any:
-    (position,) = [
-        index
-        for index, attribute in enumerate(layout.attributes)
-        if isinstance(attribute.primary_key, PrimaryKey)
-    ]
+    (position,) = layout.primary_key
     return layout.attributes[position].identity
 
 
