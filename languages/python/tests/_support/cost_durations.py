@@ -1,4 +1,6 @@
-"""What each cost item last cost, and the tracked file recording it."""
+"""How the cost class is split: the ``I/N`` spelling a cell names its shard with,
+the assignment that balances the class over those shards, and the tracked file of
+what each item last cost that the balance is drawn from."""
 
 from __future__ import annotations
 
@@ -15,10 +17,51 @@ from _support.repo import PY_ROOT
 COST_DURATIONS = PY_ROOT / "tests" / "_support" / "cost_durations.json"
 
 
+def _cardinal(digits: str) -> int | None:
+    """The number an ASCII digit string names, or ``None`` when it names none.
+
+    ``str.isdigit`` answers for spellings Python's own parser then rejects, such
+    as ``'²'`` and a run of more digits than the interpreter will convert.
+    """
+    if not (digits.isascii() and digits.isdigit()):
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def index_and_count(spec: str) -> tuple[int, int]:
+    """The ``(index, count)`` a ``--shard I/N`` spelling names, one-based.
+
+    Every other spelling is the option's usage error rather than a failure
+    partway through the session that read it.
+    """
+    index, separator, count = spec.partition("/")
+    first, total = _cardinal(index), _cardinal(count)
+    if separator and first is not None and total is not None and 1 <= first <= total:
+        return first, total
+    raise pytest.UsageError(f"--shard expects I/N with 1 <= I <= N, not {spec!r}")
+
+
+def _mean(values: Collection[float]) -> float:
+    """The mean of *values*, summed exactly and rounded once.
+
+    Durations a float carries one at a time can still total more than one holds;
+    that answers infinite here rather than raising out of the arithmetic, so the
+    reader below can reject the mapping as the file's usage error.
+    """
+    try:
+        total = math.fsum(values)
+    except OverflowError:
+        return math.inf
+    return total / len(values)
+
+
 def weights(nodeids: Sequence[str], known: Mapping[str, float]) -> list[float]:
     """What each item weighs: its stored duration, or the mean of the stored
     ones for an item the store does not know."""
-    unknown = sum(known.values()) / len(known)
+    unknown = _mean(known.values())
     return [known.get(nodeid, unknown) for nodeid in nodeids]
 
 
@@ -68,7 +111,9 @@ def known(path: Path = COST_DURATIONS) -> dict[str, float]:
     boolean, a negative, a non-finite one, or one too large for a float would
     weigh a shard or poison the mean the unknown items weigh. An object holding
     nothing at all reads as durations while naming none, which is those equal
-    weights spelled as data.
+    weights spelled as data. Values a float holds one at a time can still total
+    more than one holds, and their mean is what every item the file does not know
+    weighs, so the aggregate is answered for here as well as each value.
     """
     try:
         payload: object = json.loads(path.read_text(encoding="utf-8"))
@@ -91,6 +136,11 @@ def known(path: Path = COST_DURATIONS) -> dict[str, float]:
                 f"number of seconds a float holds finitely"
             )
         durations[node_id] = seconds
+    if not math.isfinite(_mean(durations.values())):
+        raise pytest.UsageError(
+            f"{path} holds durations a float cannot average finitely; that mean is what "
+            f"an item the file does not know weighs"
+        )
     return durations
 
 
@@ -108,9 +158,9 @@ def store(
     collected the class entire, reported a call for every cost item it collected,
     and ended successfully. Only then is an unobserved entry an item that has
     been deleted or renamed, which must leave no record behind to weigh a shard
-    that will never run it again. Every other session measured part of the class
-    and merges, because the entries it did not observe are the only record of the
-    items it never ran.
+    that will never run it again. Every other session merges: whatever it did
+    measure, it cannot establish that the file is a complete refresh, and an
+    entry it left unobserved may be the only record of an item it never ran.
     """
     measured = {node_id: round(duration, 1) for node_id, duration in observed.items()}
     whole_class = collected_the_whole_class and succeeded and set(collected) == set(observed)

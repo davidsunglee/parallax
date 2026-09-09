@@ -221,17 +221,23 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     # The cells' selections together hold every cost item exactly once and none
     # of them is empty; with the expansion and the gating pinned above, that is
     # what lets CI run the class as one cell per shard and still own it once
-    # (§9). The shards are computed here from what the hook computes them from —
-    # the whole class in collection order, the stored durations, and the deployed
-    # cell count — through the assignment the hook itself calls, so a shard
-    # mechanism that dropped or doubled an item fails here without a session per
-    # cell. Three sessions, run side by side, supply the class and then pin that
-    # a real session does what this predicts: under one cell its cost items are
-    # that cell's predicted part, and its other items are exactly the unsharded
-    # session's, which is what confines `--shard` to the class CI splits.
+    # (§9). Proved in process, for every cell: its part, computed from what the
+    # hook computes it from — the whole class in collection order, the stored
+    # durations, and the deployed cell count — through the same assignment the
+    # hook calls, with the cell spellings parsed by the same parse it reads
+    # `--shard` through and graded above, so a mechanism that dropped, doubled,
+    # or misnumbered a part fails without a session per cell. Pinned by the three
+    # sessions, and by nothing else: that a real sharded run selects what this
+    # predicts for it — its cost items are the spot-checked cell's part, and its
+    # other items are exactly the unsharded session's, which is what confines
+    # `--shard` to the class CI splits.
     cells = _deployed_cells()
+    # Halfway along the vector: over the deployed cells that is neither the first
+    # nor the last, so a hook that ran one end of the vector whatever cell it was
+    # given fails here.
+    spot_checked = cells[len(cells) // 2]
     cost_class, whole, under_one_cell = _selections(
-        [("cost", WHOLE_CLASS), (None, WHOLE_CLASS), (None, cells[-1])]
+        [("cost", WHOLE_CLASS), (None, WHOLE_CLASS), (None, spot_checked)]
     )
     shard_of = cost_durations.shard_of_each(
         cost_durations.weights(cost_class, cost_durations.known()), len(cells)
@@ -244,11 +250,23 @@ def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() 
     assert sorted(item for part in predicted.values() for item in part) == sorted(cost_class)
 
     in_class = set(cost_class)
-    assert [item for item in under_one_cell if item in in_class] == predicted[cells[-1]]
+    assert [item for item in under_one_cell if item in in_class] == predicted[spot_checked]
     assert [item for item in under_one_cell if item not in in_class] == [
         item for item in whole if item not in in_class
     ]
     assert [item for item in whole if item in in_class] == list(cost_class)
+
+
+def test_every_deployed_cell_names_the_index_and_count_it_spells() -> None:
+    # The hook reads `--shard` through this parse, so a regression answering the
+    # same pair for every valid spelling would run one part of the class in every
+    # cell while the malformed spellings below stayed rejected and the partition
+    # above stayed green. Each deployed cell is graded against what it spells.
+    cells = _deployed_cells()
+    assert [cost_durations.index_and_count(cell) for cell in cells] == [
+        _index_and_count(cell) for cell in cells
+    ]
+    assert cost_durations.index_and_count(WHOLE_CLASS) == (1, 1)
 
 
 def _malformed_shard_session(shard: str) -> subprocess.CompletedProcess[str]:
@@ -323,6 +341,15 @@ def test_the_shards_are_balanced_by_the_stored_durations() -> None:
     assert abs(balanced[0] - balanced[1]) <= abs(positional[0] - positional[1])
 
 
+def test_an_item_weighs_its_stored_duration_and_an_unknown_one_the_mean() -> None:
+    # The assignment sees these numbers and nothing else, so this is where the
+    # balance is claimed: weights that regressed to one value for every item
+    # would still partition the class, and still leave every cell's predicted
+    # part matching what the hook produced from the same regression.
+    known = {"a::light": 1.0, "a::heavy": 4.0, "a::middling": 4.0}
+    assert cost_durations.weights(["a::heavy", "a::light", "a::unstored"], known) == [4.0, 1.0, 3.0]
+
+
 def test_the_stored_durations_are_the_contract_the_shards_read_them_under() -> None:
     # The tracked file is an input to every sharded session, so what it holds is
     # graded here rather than only where a malformed entry would silently skew a
@@ -371,6 +398,19 @@ def test_a_payload_that_is_not_a_mapping_of_durations_is_a_usage_error(
     # rather than an exception raised out of the session that read it.
     path = tmp_path / "cost_durations.json"
     path.write_text(payload, encoding="utf-8")
+    with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
+        cost_durations.known(path)
+
+
+def test_durations_with_no_mean_between_them_are_a_usage_error(tmp_path: Path) -> None:
+    # Each of these is a duration a float holds; together they total more than
+    # one holds. Their mean is what every item the file does not know weighs, and
+    # an infinite weight makes every shard's load infinite, leaving the choice of
+    # lightest shard to its tie-breaker — balanced by nothing, with the partition
+    # intact and nothing reporting the aggregate the values are individually
+    # valid under.
+    path = tmp_path / "cost_durations.json"
+    path.write_text('{"a::b": 1e308, "a::c": 1e308}', encoding="utf-8")
     with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
         cost_durations.known(path)
 
