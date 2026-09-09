@@ -1576,6 +1576,37 @@ def test_provenance_reaches_every_eager_step_once_and_no_materialized_row(
     assert all(decorated is not plan.steps[1] for decorated in audit.decorated)
 
 
+def test_provenance_decorates_the_topology_temporal_expansion_produced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Decoration follows TOPOLOGY, so what a temporal mutation hands the strategy
+    # is the run stage 7 expanded it into rather than the one update the buffer
+    # carried: the close reaches the strategy first, its chained successors reach
+    # it in their already-decided order, and no step of the frozen plan reaches it
+    # twice or not at all.
+    audit = _CountingAudit([])
+    monkeypatch.setattr(planning_composition, "NO_AUDIT", audit)
+    update = KeyedWrite(
+        "update",
+        "Position",
+        ({"id": 5, "value": Decimal("42.0")},),
+        valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+    )
+    key_ = object_key(update, _POSITION)
+    assert key_ is not None
+    plan = _plan(
+        [update],
+        _POSITION,
+        observations={key_: _bitemporal_observation()},
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    steps = list(plan.steps)
+    assert isinstance(steps[0], PlannedClose)
+    assert len(steps) >= 2
+    assert all(isinstance(step, PlannedInsert) for step in steps[1:])
+    assert all(step is decorated for step, decorated in zip(steps, audit.decorated, strict=True))
+
+
 def test_only_surviving_writes_contribute_claims_and_a_shared_claim_answers_once() -> None:
     # Consumption records a fact about an observed state, so a flush spends one
     # claim once however many surviving writes settled against it — here two,
@@ -1616,9 +1647,11 @@ def test_only_surviving_writes_contribute_claims_and_a_shared_claim_answers_once
 
 
 # --------------------------------------------------------------------------- #
-# Settlement's structural refusals are TOTAL: this seam is reached straight     #
-# from a deserialized instruction as well as from the developer verbs, so a    #
-# shape an ingress refuses is refused again here rather than settled.          #
+# Settlement's structural refusals are TOTAL: they judge the prepared         #
+# carrier handed across the seam rather than the ingress that built one, so   #
+# a shape no preparation path produces is refused here rather than settled.   #
+# Each carrier below is derived from a prepared write, which is the only      #
+# input settlement takes.                                                     #
 # --------------------------------------------------------------------------- #
 def _derived(write: KeyedWrite, model: Metamodel, **changes: object) -> PreparedKeyedWrite:
     """A prepared keyed write carrying a shape no ingress would have produced."""

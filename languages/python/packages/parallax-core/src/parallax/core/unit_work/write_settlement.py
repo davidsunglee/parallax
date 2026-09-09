@@ -357,8 +357,9 @@ class WriteSettlement:
         or temporal target has no readless template at all — it materializes
         to keyed writes at buffer time, so reaching this stage is a
         caller wiring defect. Both guards are total rather than upstream-only:
-        this seam is reached straight from a deserialized instruction as well
-        as from the developer verbs.
+        settlement judges the prepared carrier it is handed and never which door
+        prepared it, so a shape buffering would have refused or materialized is
+        refused here rather than settled.
         """
         entity = instruction.selection.target
         inheritance.reject_predicate_write(entity)

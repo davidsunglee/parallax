@@ -1299,9 +1299,9 @@ def _member_path(member: MemberIdentity) -> str:
 # through the PUBLIC ``tx.wire`` verb each mutation names against the value the
 # unit's own read published (never the typed instance verbs, which this engine's
 # case-driven metamodel has no compiled classes for). The COMPILE lane still
-# lowers PURELY (no database,
-# ``build_write_planner(...).plan`` / ``stream_lowered``) — that pure lowering is
-# ALSO what the RUN lane's emissions/round-trips observation grades against,
+# lowers PURELY (no database, ``build_write_planner(...).finalize(...).plan`` /
+# ``stream_lowered``) — that pure lowering is ALSO what the RUN lane's
+# emissions/round-trips observation grades against,
 # since both are the SAME deterministic computation over the SAME
 # instructions/observations/instant (`_resolve_entries` / `_lower_resolved`
 # below are the shared core).
