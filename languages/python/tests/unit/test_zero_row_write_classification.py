@@ -77,13 +77,17 @@ def _locking_policy(
     observations = (
         None if observed is None else {key: VersionObservation(observed_version=observed)}
     )
-    plan = build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="locking",
-            buffered_writes=observed_buffer([write], model, observations),
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="locking",
+                buffered_writes=observed_buffer([write], model, observations),
+            )
         )
+        .plan
     )
     (step,) = plan.steps
     assert isinstance(step, PlannedUpdate | PlannedDelete)  # neither write opens a row

@@ -425,13 +425,17 @@ def _version_group(
 
 def test_a_materialized_groups_steps_are_equal_but_not_identity_stable_on_repeat_access() -> None:
     group = _version_group("Account", "id", [(1, 1), (2, 1), (3, 1)], assigned=0.00)
-    plan = build_write_planner(_ACCOUNT).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[group],
+    plan = (
+        build_write_planner(_ACCOUNT)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[group],
+            )
         )
+        .plan
     )
     assert len(plan.steps) == 3
     first_access = plan.steps[0]
@@ -494,13 +498,17 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
         for row_id in (1, 2)
     ]
     group = _temporal_group("Balance", "id", rows)
-    plan = build_write_planner(_BALANCE).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[group],
+    plan = (
+        build_write_planner(_BALANCE)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[group],
+            )
         )
+        .plan
     )
     # A plain terminate over Balance (Transaction-Time-Only) closes with no
     # chained successor, so each row settles to exactly one Planned Close.
@@ -518,10 +526,11 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
 
 
 # --------------------------------------------------------------------------- #
-# Finalization: a Materialized Write Group's segment carries no group,        #
-# Transaction Instant, Write Planner, entity-resolution context, or          #
-# temporal-strategy answer past `plan()`, and a temporal group's topology     #
-# and instant are both resolved during `plan()`, never on step access.        #
+# Finalizing: a Materialized Write Group's segment carries no group,          #
+# Transaction Instant, Write Planner, entity-resolution context, or           #
+# temporal-strategy answer past `finalize()`, and a temporal group's          #
+# topology and instant are both resolved during `finalize()`, never on        #
+# step access.                                                                #
 # --------------------------------------------------------------------------- #
 _FORBIDDEN_PLAN_CONTEXT = (
     MaterializedWriteGroup,
@@ -561,7 +570,7 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
     # to re-derive a step from live planning machinery: no segment field (nor
     # any closure a callable field captures) may be the group itself, the
     # attempt's Transaction Instant, or the Write Planner — every semantic
-    # fact a step needs is already decided by the time `plan()` returns
+    # fact a step needs is already decided by the time `finalize()` returns
     # (`m-unit-work` "The Write Plan ... MUST NOT retain ... a private
     # group").
     rows = [
@@ -577,13 +586,17 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
         )
         for row_id in (1, 2)
     ]
-    plan = build_write_planner(_BALANCE).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[_temporal_group("Balance", "id", rows)],
+    plan = (
+        build_write_planner(_BALANCE)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[_temporal_group("Balance", "id", rows)],
+            )
         )
+        .plan
     )
     for segment in plan.steps.segments:
         for value in _segment_field_values(segment):
@@ -592,7 +605,7 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
 
 def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step_access() -> None:
     # Reaching a temporal Materialized Write Group is what makes the attempt
-    # capture its instant (ADR 0010), and the capture happens while `plan()`
+    # capture its instant (ADR 0010), and the capture happens while `finalize()`
     # runs rather than lazily on a later `steps[i]` access, so the group, the
     # concurrency mode, and the instant itself are never reachable from the
     # plan. Three rows would settle to three closes if the instant were
@@ -611,13 +624,17 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
         )
         for row_id in (1, 2, 3)
     ]
-    plan = build_write_planner(_BALANCE).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=TransactionInstant(clock),
-            concurrency="optimistic",
-            buffered_writes=[_temporal_group("Balance", "id", rows)],
+    plan = (
+        build_write_planner(_BALANCE)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=TransactionInstant(clock),
+                concurrency="optimistic",
+                buffered_writes=[_temporal_group("Balance", "id", rows)],
+            )
         )
+        .plan
     )
     assert clock.calls == 1
     _ = plan.steps[0]
@@ -635,7 +652,7 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
     # represented-state kind, and which Valid-Time bound expression applies —
     # the semantic content of temporal expansion (`m-unit-work` stage 7) —
     # from the group's own topology alone, before any row is in hand. It must
-    # run once, while `plan()` settles the segment, and never again on a
+    # run once, while `finalize()` settles the segment, and never again on a
     # later `steps[i]` access, however many times or in what order that
     # access repeats: a Write Plan is frozen, and re-running a planning
     # decision at consumption is the same defect as re-capturing the instant
@@ -661,13 +678,17 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
         )
         for row_id in (1, 2, 3)
     ]
-    plan = build_write_planner(_BALANCE).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[_temporal_group("Balance", "id", rows)],
+    plan = (
+        build_write_planner(_BALANCE)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[_temporal_group("Balance", "id", rows)],
+            )
         )
+        .plan
     )
     assert len(calls) == 1
     _ = plan.steps[0]
@@ -681,13 +702,17 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
     # Any mapping stored on a Step Segment is retained across later `step()`
     # calls rather than copied afresh. It must therefore be read-only so every
     # subsequent access observes the same planned values.
-    versioned_plan = build_write_planner(_ACCOUNT).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[_version_group("Account", "id", [(1, 1)], assigned=9.0)],
+    versioned_plan = (
+        build_write_planner(_ACCOUNT)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[_version_group("Account", "id", [(1, 1)], assigned=9.0)],
+            )
         )
+        .plan
     )
     rows = [
         (
@@ -701,13 +726,17 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
             },
         )
     ]
-    temporal_plan = build_write_planner(_BALANCE).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[_temporal_group("Balance", "id", rows)],
+    temporal_plan = (
+        build_write_planner(_BALANCE)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[_temporal_group("Balance", "id", rows)],
+            )
         )
+        .plan
     )
     for plan in (versioned_plan, temporal_plan):
         for segment in plan.steps.segments:
@@ -758,13 +787,17 @@ def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected()
             predecessors=_predecessor_columns([members for _key, members in rows])
         ),
     )
-    plan = build_write_planner(_BALANCE).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[group],
+    plan = (
+        build_write_planner(_BALANCE)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[group],
+            )
         )
+        .plan
     )
     before = plan.steps[1]
     assert isinstance(before, PlannedInsert)
@@ -820,13 +853,17 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
             predecessors=_predecessor_columns(rows, value_objects=("address",))
         ),
     )
-    plan = build_write_planner(_BRANCH).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[group],
+    plan = (
+        build_write_planner(_BRANCH)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[group],
+            )
         )
+        .plan
     )
     changed = cast("PlannedInsert", plan.steps[2])
     (entry,) = changed.entries
@@ -874,7 +911,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
 def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # `plan()` settles a Materialized Write Group's group-wide facts once and
+    # `finalize()` settles a Materialized Write Group's group-wide facts once and
     # keeps the per-row data as compact columns; it must not construct one
     # `PlannedUpdate` per resolved row while doing so — that would reintroduce
     # exactly the "million output wrappers" the compact representation exists
@@ -890,15 +927,19 @@ def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_acces
     monkeypatch.setattr(PlannedUpdate, "__init__", counting_init)
 
     group = _version_group("Account", "id", [(row_id, 1) for row_id in range(500)], assigned=0.00)
-    plan = build_write_planner(_ACCOUNT).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[group],
+    plan = (
+        build_write_planner(_ACCOUNT)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[group],
+            )
         )
+        .plan
     )
-    assert len(constructed) == 0  # `plan()` alone constructs none
+    assert len(constructed) == 0  # `finalize()` alone constructs none
     assert len(plan.steps) == 500
     for step in plan.steps:
         assert isinstance(step, PlannedUpdate)
@@ -906,21 +947,29 @@ def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_acces
 
 
 def test_repeated_planning_of_an_equal_materialized_group_yields_equal_plans() -> None:
-    first_plan = build_write_planner(_ACCOUNT).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
+    first_plan = (
+        build_write_planner(_ACCOUNT)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
+            )
         )
+        .plan
     )
-    second_plan = build_write_planner(_ACCOUNT).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=inert_instant(),
-            concurrency="optimistic",
-            buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
+    second_plan = (
+        build_write_planner(_ACCOUNT)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
+            )
         )
+        .plan
     )
     assert first_plan == second_plan
     assert first_plan.steps == second_plan.steps

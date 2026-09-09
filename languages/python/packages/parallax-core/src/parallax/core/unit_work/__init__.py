@@ -215,11 +215,11 @@ from parallax.core.unit_work.uow import (
     run_unit_of_work,
 )
 from parallax.core.unit_work.write_planner import (
-    Finalization,
     PlanningRequest,
     SubjectIdentity,
     WritePlanner,
     WritePlanningError,
+    WritePlanningResult,
     plan_temporal_close,
 )
 from parallax.core.unit_work.write_validate import WriteRejectedError, validate_write
@@ -279,7 +279,6 @@ __all__ = [
     "ConcurrencyStrategy",
     "EscapedTransactionError",
     "ExactCount",
-    "Finalization",
     "Finite",
     "FixedClock",
     "FlushExecutor",
@@ -378,6 +377,7 @@ __all__ = [
     "WritePlan",
     "WritePlanner",
     "WritePlanningError",
+    "WritePlanningResult",
     "WriteRejectedError",
     "WriteTarget",
     "active_unit_of_work",

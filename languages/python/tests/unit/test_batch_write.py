@@ -51,13 +51,17 @@ def _flush_and_lower(
 ) -> list[LoweredStatement]:
     """Plan ``buffer`` with the production wiring, then lower the plan."""
     instant = inert_instant()
-    plan = build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=instant,
-            concurrency="locking",
-            buffered_writes=observed_buffer(buffer, model, None),
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=instant,
+                concurrency="locking",
+                buffered_writes=observed_buffer(buffer, model, None),
+            )
         )
+        .plan
     )
     return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
 

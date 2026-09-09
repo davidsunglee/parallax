@@ -71,12 +71,18 @@ def _stream(
     observation: WriteObservation | None,
 ) -> list[tuple[PlannedStep, LoweredStatement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
-    plan = build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=instant,
-            concurrency=concurrency,
-            buffered_writes=[buffered_write(prepare_typed_write(instruction, model), observation)],
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=instant,
+                concurrency=concurrency,
+                buffered_writes=[
+                    buffered_write(prepare_typed_write(instruction, model), observation)
+                ],
+            )
         )
+        .plan
     )
     return list(stream_lowered(plan, model, dialect))

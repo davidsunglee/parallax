@@ -550,6 +550,13 @@ value differs from the original), emitting the canonical sparse row of primary
 key plus changed attributes, or no DML at all when the set is empty.
 _Avoid_: dirty set, touched-name set, change tracking, diff log
 
+**Write Planning Result**:
+`WritePlanningResult`, the frozen value `WritePlanner.finalize` answers and the
+planner's only result type: the flush's `WritePlan` together with the claims its
+surviving writes settled against. A caller with no evidence to spend reads
+`finalize(request).plan`; there is no plan-only projection method.
+_Avoid_: `Finalization`, `plan()`, plan-and-claims tuple
+
 ### Transactions
 
 **Principal Protocol**:

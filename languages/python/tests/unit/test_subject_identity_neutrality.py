@@ -76,13 +76,17 @@ def _plan_under(
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
-    return build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=subject,
-            transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
-            concurrency=concurrency,
-            buffered_writes=observed_buffer(buffer, model, observations),
+    return (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=subject,
+                transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
+                concurrency=concurrency,
+                buffered_writes=observed_buffer(buffer, model, observations),
+            )
         )
+        .plan
     )
 
 

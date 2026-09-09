@@ -9,10 +9,9 @@ the planner resolves no evidence of its own; a write addressing several rows
 claims at neither grain and arrives bare. It is model-scoped, constructed once
 per accepted Metamodel with its batching, concurrency,
 temporal, and audit strategies already wired, and it exposes exactly one
-planning pipeline in two shapes: :meth:`WritePlanner.finalize`, which answers
-the plan together with the retained claims its surviving writes settled against,
-and :meth:`WritePlanner.plan`, that result's plan alone for a caller with no
-evidence to spend.
+planning operation: :meth:`WritePlanner.finalize`, which answers the plan
+together with the retained claims its surviving writes settled against. A caller
+with no evidence to spend reads that result's plan alone.
 
 **It emits no SQL.** The module DAG pins ``m-unit-work -> m-predicate``,
 ``m-unit-work -> m-db-port``, and ``m-unit-work -> m-temporal-read`` (the Edge a
@@ -33,8 +32,9 @@ timestamp is captured; a required observation is validated before the gate
 decision that consumes it, inside the same :meth:`_settle` call; a surviving
 temporal mutation stays one indivisible unit through batching and ordering and
 expands only after :meth:`_order` has fixed its position; and provenance
-decoration (:meth:`plan`'s own trailing pass) runs after every step's topology
-is settled and before the Write Plan freezes. :meth:`plan` therefore runs
+decoration (:meth:`finalize`'s own trailing pass) runs after every step's
+topology is settled and before the Write Plan freezes. :meth:`finalize`
+therefore runs
 coalesce, eliminate no-ops, form batches, order, settle, in that order —
 eliminating a no-op ahead of batching is what lets two writes a no-op
 separates in the buffer still merge into one batch, and combining writes of one
@@ -158,10 +158,10 @@ from parallax.core.unit_work.temporal import (
 from parallax.core.unit_work.write_validate import WriteRejectedError
 
 __all__ = [
-    "Finalization",
     "PlanningRequest",
     "SubjectIdentity",
     "WritePlanner",
+    "WritePlanningResult",
     "plan_temporal_close",
 ]
 
@@ -198,7 +198,7 @@ class WritePlanningError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class Finalization:
+class WritePlanningResult:
     """One flush's finalized plan, and the claims its SURVIVING writes settled
     against.
 
@@ -243,10 +243,10 @@ class WritePlanner:
     """The model-scoped, stateless Write Planner (`m-unit-work`).
 
     Constructed once per accepted Metamodel with its strategy adapters already
-    wired; :meth:`finalize` and its plan-only projection :meth:`plan` are its
-    entire caller-visible surface. No caller
-    sequences coalescing, batching, ordering, temporal expansion, observation
-    validation, instant acquisition, or provenance decoration by hand.
+    wired; :meth:`finalize` is its entire caller-visible surface. A caller with
+    no evidence to spend reads ``finalize(request).plan``. No caller sequences
+    coalescing, batching, ordering, temporal expansion, observation validation,
+    instant acquisition, or provenance decoration by hand.
     """
 
     __slots__ = ("_audit", "_batching", "_concurrency", "_model", "_temporal")
@@ -266,16 +266,7 @@ class WritePlanner:
         self._temporal = temporal
         self._audit = audit
 
-    def plan(self, request: PlanningRequest) -> WritePlan:
-        """One flush's Write Plan — :meth:`finalize`'s plan alone.
-
-        The projection a caller with no evidence to spend uses: a pure lowering,
-        a probe, or any consumer that holds its observations as values rather
-        than as a read's retained claims.
-        """
-        return self.finalize(request).plan
-
-    def finalize(self, request: PlanningRequest) -> Finalization:
+    def finalize(self, request: PlanningRequest) -> WritePlanningResult:
         """Plan one flush: coalesce, eliminate no-ops, batch, order, settle
         every surviving item, decorate the eagerly settled steps, and freeze —
         answering the plan and the claims the settled writes carried.
@@ -301,7 +292,7 @@ class WritePlanner:
         temporal topology, the gate/concurrency decision, the affected-row
         policy, the assignment shape, and the resolved instant if the group
         needs one — into its own segment (:meth:`_settle_group`) before
-        ``plan`` returns; the segment itself, and the ``WritePlan`` it becomes
+        ``finalize`` returns; the segment itself, and the ``WritePlan`` it becomes
         part of, retain no group, concurrency mode, Transaction Instant, or
         strategy object. Only the PER-ROW data stays as the group's own
         compact columns, and a row's ``PlannedWrite`` is rebuilt from those
@@ -359,7 +350,7 @@ class WritePlanner:
             if isinstance(item, ObservedKeyedWrite) and item.claim is not None:
                 claims.setdefault(item.claim, None)
         flush_pending()
-        return Finalization(WritePlan(steps=PlannedSteps(tuple(segments))), tuple(claims))
+        return WritePlanningResult(WritePlan(steps=PlannedSteps(tuple(segments))), tuple(claims))
 
     # ----------------------------------------------------------------- #
     # Stage 1: resolve identities and coalesce buffered intent.          #
@@ -1284,7 +1275,7 @@ def plan_temporal_close(
     supersession — what a real mutation's own close performs, and whose
     successors the probe deliberately does not run.
 
-    Structurally separate from :meth:`WritePlanner.plan` (which stays the
+    Structurally separate from :meth:`WritePlanner.finalize` (which stays the
     entire caller-visible *pipeline* surface): this is one atomic close
     settlement with no coalescing, batching, or ordering to do, callable
     without a full flush. ``concurrency_strategy`` is the SAME adapter a

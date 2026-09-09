@@ -2426,13 +2426,17 @@ def _lower_resolved(
     """
     buffer = [_buffered(write.instruction, write.oracle_observation, model) for write in resolved]
     instant = _pinned_instant(tx_instant)
-    plan = build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=_PLANNING_SUBJECT,
-            transaction_instant=instant,
-            concurrency=concurrency,
-            buffered_writes=buffer,
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=_PLANNING_SUBJECT,
+                transaction_instant=instant,
+                concurrency=concurrency,
+                buffered_writes=buffer,
+            )
         )
+        .plan
     )
     statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
     _check_statement_count_consistency(entries, len(statements))
@@ -2495,13 +2499,17 @@ def _lower_predicate_write_step(
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
     instant = _pinned_instant(_INERT_CLOCK_INSTANT)
-    plan = build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=_PLANNING_SUBJECT,
-            transaction_instant=instant,
-            concurrency=concurrency,
-            buffered_writes=[prepared],
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=_PLANNING_SUBJECT,
+                transaction_instant=instant,
+                concurrency=concurrency,
+                buffered_writes=[prepared],
+            )
         )
+        .plan
     )
     statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
     assert len(statements) == 1  # a readless predicate write is always exactly one statement
@@ -5953,15 +5961,19 @@ def _lower_conflict_write(
     uncollapsed plan would have rendered.
     """
     instant = _pinned_instant(_INERT_CLOCK_INSTANT)
-    plan = build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=_PLANNING_SUBJECT,
-            transaction_instant=instant,
-            concurrency=concurrency,
-            buffered_writes=[
-                _buffered(write.instruction, write.observation, model) for write in resolved
-            ],
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=_PLANNING_SUBJECT,
+                transaction_instant=instant,
+                concurrency=concurrency,
+                buffered_writes=[
+                    _buffered(write.instruction, write.observation, model) for write in resolved
+                ],
+            )
         )
+        .plan
     )
     return tuple(statement for _step, statement in stream_lowered(plan, model, dialect))
 

@@ -1,6 +1,6 @@
-"""``WritePlanner.plan`` — the primary neutral seam (m-unit-work, Docker-free).
+"""``WritePlanner.finalize`` — the primary neutral seam (m-unit-work, Docker-free).
 
-``WritePlanner.plan(PlanningRequest) -> WritePlan`` is the entire
+``WritePlanner.finalize(PlanningRequest) -> WritePlanningResult`` is the entire
 caller-visible planning surface: no caller sequences coalescing, batching,
 ordering, temporal expansion, observation validation, instant acquisition, or
 provenance decoration by hand. A caller does resolve the observation a write
@@ -126,13 +126,17 @@ def _plan(
     concurrency: Concurrency = "locking",
     tx_instant: TransactionInstant | None = None,
 ) -> WritePlan:
-    return build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
-            concurrency=concurrency,
-            buffered_writes=observed_buffer(buffer, model, observations),
+    return (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
+                concurrency=concurrency,
+                buffered_writes=observed_buffer(buffer, model, observations),
+            )
         )
+        .plan
     )
 
 
