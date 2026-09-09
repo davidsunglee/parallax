@@ -293,6 +293,16 @@ class ControlledRuntime:
         # it — what is excluded is the NEXT scope, which is what the action
         # must not reach.
         self._admission = threading.Lock()
+        # Held across every native end of this session and the completion it
+        # publishes, and taken BEFORE the state lock. Retirement is reached from
+        # paths that run on different threads — a close, the relinquishment a
+        # deferred close waits for, and the termination ladder — and two of them
+        # that each observed a live session would otherwise both close the same
+        # driver connection, which is libpq finishing a connection another
+        # thread is already finishing. Reentrant so that the observer retirement
+        # notifies may reach this runtime again without deadlocking against the
+        # claim its own retirement holds.
+        self._retirement = threading.RLock()
         self._active: ControlledScope | None = None
         self._closed = False
         self._retired = False
@@ -411,9 +421,29 @@ class ControlledRuntime:
         leaves behind is a retired runtime: closing that session again would
         establish nothing new, and its opener may forget it.
         """
-        with self._state:
-            self._closed = True
-        self._complete_retirement()
+        with self._retirement:
+            with self._state:
+                self._closed = True
+            self._complete_retirement()
+
+    @contextlib.contextmanager
+    def retiring(self) -> Generator[bool]:
+        """The claim on ending this session — true while there is still a session to end.
+
+        What every path that destroys this session enters: it holds the claim
+        across the native teardown and the completion that publishes it, so
+        exactly one path ends the session and every other one finds it already
+        ended. Without that, two paths could each read an unretired runtime and
+        both close the one driver connection.
+
+        The claim is released whether or not retirement was reached, which is
+        what keeps a refused close retryable: what a later attempt observes is
+        the retirement flag, not a claim somebody once took.
+        """
+        with self._retirement:
+            with self._state:
+                pending = not self._retired
+            yield pending
 
     def report_retirement_to(self, observer: Callable[[], None]) -> None:
         """Call *observer* once this session is gone, immediately if it already is.
@@ -436,11 +466,11 @@ class ControlledRuntime:
             observer()
 
     def _retire_session(self) -> None:
-        with self._state:
-            if self._retired:
+        with self.retiring() as pending:
+            if not pending:
                 return
-        self._connection.close()
-        self._complete_retirement()
+            self._connection.close()
+            self._complete_retirement()
 
     def _complete_retirement(self) -> None:
         """Record the session as gone and tell whoever asked to be told.
@@ -449,7 +479,8 @@ class ControlledRuntime:
         the relinquishment that a deferred close was waiting for, or the
         termination ladder. Retirement and the notification that ends the
         opener's bookkeeping are the same transition, so nothing can complete
-        one without the other.
+        one without the other. Called under :meth:`retiring`, which is what
+        makes it the transition the whole teardown it completes was claimed for.
         """
         with self._state:
             self._retired = True
@@ -597,21 +628,32 @@ class PostgresInterleavedExecution:
             return self._retire()
 
     def _retire(self) -> TerminationReport:
-        failures: list[str] = []
-        connection = self._runtime.native
-        try:
-            connection.close()
-        except Exception as exc:
-            failures.append(f"the underlying driver connection's close() raised {exc!r}")
-        else:
-            self._runtime.condemn()
-            return TerminationReport(terminated=True)
+        """Destroy this execution's session, under the runtime's claim on ending it.
 
-        socket_failures = _teardown_socket(connection)
-        failures.extend(socket_failures)
-        if not socket_failures:
-            self._runtime.condemn()
-        return TerminationReport(terminated=not socket_failures, failures=tuple(failures))
+        The ladder's rungs are native teardowns of the one connection a close or
+        a borrower's deferred retirement would also end, so it descends them
+        holding the same claim those paths take. A session already retired is
+        reported terminated without a rung being attempted: what the caller
+        asked for is a session that is gone, and it is.
+        """
+        with self._runtime.retiring() as pending:
+            if not pending:
+                return TerminationReport(terminated=True)
+            failures: list[str] = []
+            connection = self._runtime.native
+            try:
+                connection.close()
+            except Exception as exc:
+                failures.append(f"the underlying driver connection's close() raised {exc!r}")
+            else:
+                self._runtime.condemn()
+                return TerminationReport(terminated=True)
+
+            socket_failures = _teardown_socket(connection)
+            failures.extend(socket_failures)
+            if not socket_failures:
+                self._runtime.condemn()
+            return TerminationReport(terminated=not socket_failures, failures=tuple(failures))
 
     def close(self) -> None:
         """Release this execution: its Database first, then its session.
