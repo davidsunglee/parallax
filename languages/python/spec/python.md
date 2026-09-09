@@ -4388,17 +4388,13 @@ These feature tests do not claim the deferred `benchmark` command or general
   compares by is `classify_effective_change`'s, stated once in `m-document-codec`
   *Managed documents and the effective change set*, whose consequences for a
   write `m-unit-work` *Comparing an assigned member with its persisted value*
-  carries. The Typed and Wire
-  keyed verbs agree on it **structurally** rather than by two implementations
-  happening to match: the ingress asks that one operation over one shape for
-  both, and the originals it weighs are the same observed value on both sides —
-  the hydrated value's populated members on the Typed lane, the node its source
-  published on the Wire lane, which is that same materialization's own document
-  (§4). One authored value therefore earns one answer from both peer interfaces,
-  including where the answer turns on presence: against a row storing an
-  occurrence short of a declared member, authoring that member's explicit null is
-  an effective change through either and the two emit the same DML, while
-  authoring the occurrence short of a nested Many is DML through neither.
+  carries. The Typed and Wire keyed verbs agree on it **structurally** rather
+  than by two implementations happening to match: the ingress asks that one
+  operation over one shape for both, and the originals it weighs are the same
+  observed value on both sides — the hydrated value's populated members on the
+  Typed lane, the node its source published on the Wire lane, which is that same
+  materialization's own document (§4). One authored value therefore earns one
+  answer from both peer interfaces, and the DML the two emit for it is the same.
 
   **The codec is an authoring codec, never a provenance decorator.** It emits
   only caller-authored identity and domain values in canonical Attribute-keyed
