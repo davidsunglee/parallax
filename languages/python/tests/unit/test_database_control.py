@@ -558,6 +558,21 @@ def test_terminating_stops_at_the_driver_connections_own_close() -> None:
     assert connection.closes == 1
 
 
+def test_terminating_a_session_the_ladder_already_destroyed_attempts_no_rung() -> None:
+    # A condemned session stays the scope's until that scope ends, so a second
+    # escalation can still capture it. What the caller asked for — a session
+    # that is gone — is already true, and descending the ladder again would
+    # close a driver connection that has been closed.
+    connection = _FakeConnection()
+    execution = _execution(connection)
+
+    with _scope_of(execution):
+        assert execution.terminate_active() == TerminationReport(terminated=True)
+        assert execution.terminate_active() == TerminationReport(terminated=True)
+
+    assert connection.closes == 1
+
+
 def test_terminating_escalates_to_os_level_teardown_of_a_real_descriptor() -> None:
     # Rung two: the driver's own close failed, so the descriptor the blocked
     # call is waiting on is shut down at the operating system — the guarantee
@@ -713,6 +728,56 @@ def test_closing_a_controlled_runtime_under_a_borrower_waits_for_the_scope_to_en
     assert refused.value.reason == "closed"
 
     scope.__exit__(None, None, None)
+
+    assert connection.closes == 1
+    assert runtime.retired is True
+
+
+def test_a_deferred_retirement_and_a_second_close_end_the_session_exactly_once() -> None:
+    # The shutdown race the interleaved lane really runs: a close arrives while
+    # a borrower holds the session, so retirement waits for it and completes on
+    # the borrower's thread — while the closer, seeing the borrower gone, comes
+    # back for the session itself. Both would read a runtime nobody has retired
+    # yet, and a driver connection closed by two threads at once is libpq
+    # finishing a connection the other is already finishing. So the second path
+    # waits for the first and then finds nothing left to end.
+    guard = threading.Lock()
+    entered = 0
+    closing = threading.Event()
+    proceed = threading.Event()
+
+    def park_the_first_close() -> None:
+        nonlocal entered
+        with guard:
+            entered += 1
+            first = entered == 1
+        if first:
+            closing.set()
+            assert proceed.wait(timeout=5.0)
+
+    connection = _FakeConnection(parked=park_the_first_close)
+    runtime = _adapter(connection).open()
+    scope = runtime.connection()
+    scope.__enter__()
+    runtime.close()
+
+    borrower = threading.Thread(target=scope.__exit__, args=(None, None, None))
+    borrower.start()
+    assert closing.wait(timeout=5.0)
+
+    closed_again = threading.Event()
+
+    def close_again() -> None:
+        runtime.close()
+        closed_again.set()
+
+    closer = threading.Thread(target=close_again)
+    closer.start()
+    assert not closed_again.wait(timeout=0.25)
+
+    proceed.set()
+    borrower.join(timeout=5.0)
+    closer.join(timeout=5.0)
 
     assert connection.closes == 1
     assert runtime.retired is True
