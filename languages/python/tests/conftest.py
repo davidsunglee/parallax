@@ -181,17 +181,18 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
         _recorded_durations[report.nodeid] = report.duration
 
 
-def _selected_the_whole_class(config: pytest.Config) -> bool:
-    """Whether this session was asked for the cost class entire.
+def _collected_the_whole_class(config: pytest.Config) -> bool:
+    """Whether this session collected every cost item there is.
 
-    What is asked for is not what is measured, and this answers only for the
-    narrowing that happens before collection, where nothing is left to observe: a
-    shard, a path argument, an ignored path or glob, a keyword. A marker
-    expression narrows the selection only when it is neither the class itself nor
-    the absent one that selects every class; a wider expression selects the class
-    whole. Everything that narrows a session after collection is caught by
-    :func:`pytest_sessionfinish` instead, which is what makes this necessary
-    rather than sufficient.
+    Only the narrowing that happens before collection is answered for here,
+    because it is the narrowing that leaves nothing to observe: a shard, a path
+    argument, an ignored path or glob. A marker expression and a keyword deselect
+    after the collection hook above has recorded the class, so an item either one
+    drops stays counted as collected and unobserved. That is what tells an
+    expression holding the class whole — `cost`, or any wider one — from an
+    expression cutting into it, without reading either. Everything that narrows a
+    session after collection is caught by :func:`pytest_sessionfinish` instead,
+    which is what makes this necessary rather than sufficient.
     """
     _, count = _shard(str(config.getoption("--shard")))
     return (
@@ -199,8 +200,6 @@ def _selected_the_whole_class(config: pytest.Config) -> bool:
         and config.args_source is not pytest.Config.ArgsSource.ARGS
         and not config.option.ignore
         and not config.option.ignore_glob
-        and not config.option.keyword
-        and config.option.markexpr in {"", "cost"}
     )
 
 
@@ -209,7 +208,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     measured the class.
 
     A store replaces the file only for a session that measured the whole class,
-    which takes more than asking for it: the run must also have reached a call
+    which takes more than collecting it: the run must also have reached a call
     report for every cost item it collected and ended successfully, or an
     interruption, a failure, or a late deselection would delete the entries of
     items it merely never reached.
@@ -228,7 +227,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         return
     cost_durations.store(
         _recorded_durations,
-        selected_the_whole_class=_selected_the_whole_class(session.config),
+        collected_the_whole_class=_collected_the_whole_class(session.config),
         collected=_collected_cost_items,
         succeeded=exitstatus == pytest.ExitCode.OK,
     )
@@ -238,9 +237,11 @@ def pytest_testnodedown(node: Any) -> None:
     """Take the finished xdist worker's collection as part of this session's.
 
     The workers collect and the process holding this one does not, so what a
-    store measures its observations against arrives here or nowhere. A worker
-    that went down without handing anything up leaves the collection short of
-    what ran, which is a session that did not measure the class entire.
+    store measures its observations against arrives here or nowhere. Each worker
+    collects the whole selection, so a worker that goes down without handing
+    anything up leaves the collection short only when no other worker handed the
+    same set up; after a crash it is the unsuccessful exit status that keeps the
+    session from replacing the file.
     """
     _collected_cost_items.update(
         cast("list[str]", getattr(node, "workeroutput", {}).get(_COLLECTED_COST_ITEMS, []))
