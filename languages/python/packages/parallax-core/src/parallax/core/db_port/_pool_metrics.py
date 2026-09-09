@@ -89,8 +89,6 @@ class PoolMeasurements:
 
 @dataclass(frozen=True, slots=True)
 class PoolAvailable:
-    """The source read its pool and these are the measurements."""
-
     measurements: PoolMeasurements
 
 
@@ -120,10 +118,10 @@ class PoolDetached:
 
 
 type PoolSample = PoolAvailable | PoolUnavailable | PoolDetached
-"""What one :meth:`PoolMetricsSource.sample` answered: a closed union of three.
+"""Exhaustive and mutually exclusive.
 
-The three are exhaustive and mutually exclusive, so an exporter that handles all
-three has handled everything, and none of them is a degraded form of another.
+An exporter that handles all three has handled everything, and none of them is a
+degraded form of another.
 """
 
 

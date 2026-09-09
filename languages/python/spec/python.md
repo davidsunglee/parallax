@@ -2314,7 +2314,10 @@ A `PostgresAdapter` runtime also publishes one stable `pool_metrics` source, and
 raises fails composition and closes the runtime rather than leaving a handle to
 explain itself. `db.close()` closes the runtime, which detaches that source, and
 then closes the registration; what it never closes is the exporter behind the
-registration, which is the application's and outlives the handle.
+registration, which is the application's and outlives the handle. Closing is
+serialized, so a close concurrent with one already running waits for it rather
+than giving the registration up beside a runtime still being torn down, and the
+registration is closed exactly once however many callers close the handle.
 
 **Static shorthand and the Serving Model at connect.**
 `Database.connect(adapter, model)` keeps its existing positional and keyword
@@ -5415,13 +5418,16 @@ remains observable rather than making Python its own oracle.
   holds, process and application-server lifetime, connection budgeting, pool
   observation, the disclosure policies of the three reporting paths, and the
   migration table from the pre-pooling surface. It is hand-written rather than
-  generated, and every Python block in it that shows an application composing or
-  serving through a handle is the exact source of an executable story in
-  `parallax.conformance.database_pooling_stories`, guarded against drift by
-  `tests/unit/test_postgresql_lifecycle_guide.py` and executed against real
-  Postgres by `tests/api/test_database_pooling.py`. The two package READMEs and
-  the repository README link it; it restates no normative rule these
-  specifications own.
+  generated, and every Python block in it that shows an application configuring,
+  composing or serving through a handle is the exact source of an executable
+  story in `parallax.conformance.database_pooling_stories`, guarded against
+  drift by `tests/unit/test_postgresql_lifecycle_guide.py` and executed against
+  real Postgres by `tests/api/test_database_pooling.py`. The same guard holds
+  every remaining block to being import lines whose every name resolves, so no
+  block in the guide is unchecked. The `parallax-postgres`
+  README links it by absolute URL, because that file is also published package
+  metadata, and the repository README links it by path; it restates no normative
+  rule these specifications own.
 - **Edited-value derivation.** `parallax.conformance.edit_runner` reads every
   `shape: edit` oracle from its case document and grades the native Entity or
   Value Object result, shallow auxiliary identity with independent bindings,

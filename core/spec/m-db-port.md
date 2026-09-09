@@ -120,9 +120,10 @@ retry, a delivery that has not read its first page — is refused from then on.
 **Close is idempotent and permanent.** It stops admission, detaches the metrics
 source described below where it published one, and then releases what the
 runtime owns. It neither waits for borrowers nor interrupts their statements.
-Detachment precedes the release so that no reading can be looking at a resource
-being torn down, and so a release that is slow or that fails does not widen that
-window. Ordinary problems met while closing are diagnostic-only: a handle that
+Detachment precedes the release, so a reading BEGUN after it reports detachment
+rather than reaching a resource being torn down, and a release that is slow or
+that fails does not widen that window. A reading already in progress is not
+revoked by detachment and MAY complete, as the source section below states. Ordinary problems met while closing are diagnostic-only: a handle that
 refused to close would leave a caller unwinding with nothing better to do.
 
 ## What relinquishing a connection establishes

@@ -25,7 +25,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.core.db_port import ConnectionAcquisitionError
 from parallax.postgres import OnDemandOptions, PoolOptions
-from parallax.snapshot import connect
+from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import ExecutionFailure, Transaction
 
 _ACCOUNT = MODELS["account"]
@@ -278,6 +278,33 @@ def test_a_provider_observes_the_pool_across_the_whole_life_of_a_handle(
     assert reading.registration_closed
 
 
+def test_every_documented_retention_form_opens_against_a_real_server(profile_run: Any) -> None:
+    # The guide's construction block builds four configurations over one
+    # connection string. What a real server adds to the unit proof of their
+    # policies is that each spelling opens a runtime that reads.
+    _seeded(profile_run)
+    conninfo = profile_run.configured().connection_string
+    forms = database_pooling_stories.every_retention_form_is_one_configuration_value(conninfo)
+
+    for adapter in (forms.default, forms.tuned, forms.zero_minimum, forms.on_demand):
+        with connect(adapter, _ACCOUNT) as db:
+            assert _accounts(db)
+
+
+def test_both_model_forms_connect_and_both_closes_give_the_runtime_back(
+    profile_run: Any,
+) -> None:
+    _seeded(profile_run)
+    configured = profile_run.configured(pool=PoolOptions(min_size=0, max_size=2))
+
+    shape = database_pooling_stories.a_handle_is_closed_by_leaving_its_scope_or_by_closing_it(
+        configured, _ACCOUNT, ServingModel(prepare_model(_ACCOUNT, edition="published"))
+    )
+
+    assert shape.scoped_rows > 0
+    assert shape.explicit_rows == shape.scoped_rows
+
+
 def test_one_configuration_serves_two_independent_handles(profile_run: Any) -> None:
     _seeded(profile_run)
     configured = profile_run.configured(pool=PoolOptions(min_size=1, max_size=2))
@@ -296,8 +323,6 @@ def test_one_configuration_serves_two_independent_handles(profile_run: Any) -> N
 
 
 class _ThreadWitness:
-    """Records which thread each lifecycle event was delivered on."""
-
     def __init__(self) -> None:
         self.threads: set[int] = set()
         self.transitions: list[str] = []
