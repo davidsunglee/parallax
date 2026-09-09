@@ -58,17 +58,17 @@ _SHARED_ANALYSER = (
     "_pattern_names",
     "_resolved_target",
     "_resolves_to_callable",
+    "_unwaived",
     "_value_bindings",
-    "_waived",
     "seam_calls",
     "unbacked_instance_seams",
     "unresolved_seams",
 )
 """Every definition deciding what the rule computes: the finding it reports, the
 import bindings, binding forms, local bindings, instances, and call targets it
-resolves a violation from, the waiver it honors and refuses, the fixture
-declarations it reads out of a classifier, and the two declaration checks that keep
-it from matching nothing."""
+resolves a violation from, the waiver it honors and refuses and the message each
+violation is reported by, the fixture declarations it reads out of a classifier,
+and the two declaration checks that keep it from matching nothing."""
 
 _SCOPE_OWNED = {
     "audit": (

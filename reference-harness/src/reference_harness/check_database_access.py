@@ -45,6 +45,14 @@ line carrying its justification, exactly as ``# noqa`` and ``# pyright: ignore``
 are, and a marker with no reason after the colon is NOT honored: an escape hatch
 that could be taken silently would be the relaxation this guard exists to refuse.
 
+The marker is recognized as a COMMENT the tokenizer sees, and it speaks for
+exactly one call. Text spelling it inside a string literal — a connection string,
+a message a test asserts on — is not a waiver, and a line reporting two
+acquisitions is reported however it is annotated, since one reason cannot say
+which of the two it was written for. Both follow from the same thing that makes
+the hatch worth having: the waiver a reviewer reads beside a call has to be the
+waiver the rule honored.
+
 Four structural facts are checked with it, because the rule is vacuous without
 them: every declared seam must still name an importable callable, every declared
 instance member must still be a declared seam, the designated fixture must exist,
@@ -55,8 +63,11 @@ from __future__ import annotations
 
 import ast
 import importlib
+import io
 import re
 import sys
+import tokenize
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -490,16 +501,49 @@ def _declared_database_fixtures(tree: ast.Module) -> frozenset[str] | None:
     return None
 
 
-def _waived(line: str) -> bool:
-    """Whether *line* carries a reviewed waiver for the acquisition reported on it.
+def _unwaived(source: str, acquisitions: Sequence[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Every one of *acquisitions* no waiver in *source* excuses, with the message
+    it is reported by.
 
-    The waiver is the line's own, not the file's: it excuses the one call a
-    reader can see beside it. It must carry a reason — a bare
-    ``# database-access:`` is not honored — so that taking the escape hatch costs
-    a justification a reviewer reads, which is the whole of what keeps a guard
-    with an escape hatch worth having.
+    A waiver is the line's own, not the file's: it excuses the one call a reader
+    can see beside it. It must carry a reason — a bare ``# database-access:`` is
+    not honored — so that taking the escape hatch costs a justification a
+    reviewer reads, which is the whole of what keeps a guard with an escape hatch
+    worth having.
+
+    Two things follow from that, and both are decided here. The marker is a
+    COMMENT the tokenizer reports, so text spelling it inside a string literal is
+    not a waiver: a rule reading raw lines would let an acquisition's own
+    argument waive it, silently and with no line a reviewer reads as a waiver.
+    And it speaks for one call, so a line reporting more than one acquisition is
+    reported whatever is written beside it — a single reason cannot say which of
+    them it was written for.
     """
-    return _WAIVER.search(line) is not None
+    waived = {
+        token.start[0]
+        for token in tokenize.generate_tokens(io.StringIO(source).readline)
+        if token.type == tokenize.COMMENT and _WAIVER.search(token.string) is not None
+    }
+    reported_on = Counter(line for line, _ in acquisitions)
+    unwaived: list[tuple[int, str]] = []
+    for line, target in acquisitions:
+        if line not in waived:
+            unwaived.append(
+                (
+                    line,
+                    f"calls `{target}`, which acquires a live database; only the "
+                    f"`{ENTRY_POINT_FIXTURE}` fixture in {ENTRY_POINT_MODULE} may",
+                )
+            )
+        elif reported_on[line] > 1:
+            unwaived.append(
+                (
+                    line,
+                    f"calls `{target}`, one of {reported_on[line]} acquisitions written on this "
+                    f"line; a waiver speaks for the single call beside it, so give each its own",
+                )
+            )
+    return unwaived
 
 
 def audit(tests_root: Path) -> list[Finding]:
@@ -544,20 +588,15 @@ def audit(tests_root: Path) -> list[Finding]:
             continue
         relative = path.relative_to(tests_root).as_posix()
         source = path.read_text(encoding="utf-8")
-        lines = source.splitlines()
-        for line, target in seam_calls(ast.parse(source)):
-            if relative == ENTRY_POINT_MODULE and allowed and allowed[0] <= line <= allowed[1]:
-                continue
-            if _waived(lines[line - 1]):
-                continue
-            findings.append(
-                Finding(
-                    relative,
-                    line,
-                    f"calls `{target}`, which acquires a live database; only the "
-                    f"`{ENTRY_POINT_FIXTURE}` fixture in {ENTRY_POINT_MODULE} may",
-                )
-            )
+        permitted = allowed if relative == ENTRY_POINT_MODULE else None
+        acquisitions = [
+            (line, target)
+            for line, target in seam_calls(ast.parse(source))
+            if permitted is None or not permitted[0] <= line <= permitted[1]
+        ]
+        findings.extend(
+            Finding(relative, line, message) for line, message in _unwaived(source, acquisitions)
+        )
     return findings
 
 

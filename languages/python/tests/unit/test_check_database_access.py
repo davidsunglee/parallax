@@ -443,6 +443,34 @@ def test_a_waiver_excuses_only_the_line_it_was_written_on(tmp_path: Path) -> Non
     assert finding.line == 6
 
 
+def test_a_marker_spelled_inside_a_string_is_not_a_waiver(tmp_path: Path) -> None:
+    # The other load-bearing half. A rule reading raw source text would let an
+    # acquisition's own argument waive it — a connection string, or a message a
+    # test asserts on, carrying the marker — which is a silent bypass of a
+    # blocking guard rather than the reviewed diff line the hatch is.
+    _minimal_tree(tmp_path)
+    for spelled in (
+        "'# database-access: inside a literal'",
+        "'application_name=# database-access: bypass'",
+    ):
+        _rogue(tmp_path, f"Provisioner({spelled})")
+        (finding,) = access.audit(tmp_path)
+        assert finding.line == 5
+
+
+def test_a_waiver_speaks_for_one_call_rather_than_for_a_whole_line(tmp_path: Path) -> None:
+    # One reason cannot say which of two acquisitions it was written for, so a
+    # line carrying both is reported however it is annotated — otherwise a
+    # reviewed waiver for one call would silently cover a second beside it.
+    _minimal_tree(tmp_path)
+    _rogue(tmp_path, "Provisioner(); Provisioner()  # database-access: only one is faked")
+
+    first, second = access.audit(tmp_path)
+
+    assert (first.line, second.line) == (5, 5)
+    assert "2 acquisitions" in first.message
+
+
 def test_a_seam_call_elsewhere_in_the_designated_module_is_a_violation(tmp_path: Path) -> None:
     _minimal_tree(tmp_path)
     conftest = tmp_path / "conftest.py"
