@@ -478,21 +478,90 @@ class _Releasing:
         self.scope.__exit__(None, None, None)
 
 
-def test_a_cancellation_captured_in_one_scope_does_not_reach_the_next() -> None:
-    # A delayed control action revalidates when it EXECUTES, not only when it
-    # captured its target: by then the scope that was stuck may have finished
-    # and another may hold the session, and interrupting that one's statement is
-    # interrupting work nobody asked to interrupt.
-    connection = _FakeConnection()
-    execution = _execution(connection)
-    with _scope_of(execution):
-        pass  # the captured scope ends here
-    with _scope_of(execution):
-        execution.cancel_active()
-        # The action captured nothing while no scope was open, so it fires for
-        # the scope it can see rather than for the one that has gone.
-        assert connection.cancels == 1
+class _PausedCapture:
+    """A runtime's own capture, held open between capturing a target and revalidating it.
 
+    The seam a delayed control action turns on is inside the action: it captures
+    the scope being served, and the request goes out only once the runtime has
+    been asked AGAIN whether that scope is still the one being served. A delay
+    anywhere else proves something weaker — parking inside the native call is
+    already past the revalidation — so the capture itself waits here, on the
+    acting thread, while the test ends the captured scope and opens the next one.
+    """
+
+    def __init__(self, runtime: Any) -> None:
+        self._capture = runtime.active_scope
+        self.captured = threading.Event()
+        self.resume = threading.Event()
+        runtime.active_scope = self
+
+    def __call__(self) -> Any:
+        scope = self._capture()
+        self.captured.set()
+        assert self.resume.wait(timeout=5.0)
+        return scope
+
+
+@pytest.mark.parametrize("action", ["cancel", "terminate"])
+def test_an_action_captured_in_one_scope_reaches_neither_the_next_nor_its_descriptor(
+    action: str,
+) -> None:
+    # A delayed control action revalidates when it EXECUTES, not only when it
+    # captured its target. This is that gap itself: the action captures the
+    # scope it was asked about and is then held there while that scope ends and
+    # another takes the session. What it must not do on resuming is act on the
+    # target it captured — interrupting a statement nobody asked to interrupt,
+    # or tearing down a descriptor a later connection can be answering to. So
+    # the request never goes out, the descriptor is still open, and the scope
+    # that arrived meanwhile runs its own work. The driver's own close is set to
+    # fail, which is what puts that descriptor within reach: a termination that
+    # acted on its stale target would find rung one refused and destroy the
+    # descriptor at the operating system on rung two.
+    with ExitStack() as stack:
+        descriptor = _connected_descriptor(stack)
+        connection = _FakeConnection(fd=descriptor, close_raises=RuntimeError("close failed"))
+        execution = _execution(connection)
+        runtime = cast("Any", execution)._runtime
+        captured = runtime.connection()
+        captured.__enter__()
+
+        paused = _PausedCapture(runtime)
+        reports: list[TerminationReport] = []
+
+        def act() -> None:
+            if action == "cancel":
+                execution.cancel_active()
+            else:
+                reports.append(execution.terminate_active())
+
+        acting = threading.Thread(target=act)
+        acting.start()
+        assert paused.captured.wait(timeout=5.0)
+
+        captured.__exit__(None, None, None)
+        with runtime.connection() as replacement:
+            paused.resume.set()
+            acting.join(timeout=5.0)
+            assert not acting.is_alive()
+            assert (connection.cancels, connection.closes) == (0, 0)
+            replacement.execute("select 1", [])
+
+        assert connection.statements == [("select 1", ())]
+        with socket.socket(fileno=descriptor):
+            pass
+
+    if action == "terminate":
+        assert reports == [
+            TerminationReport(
+                terminated=False,
+                failures=("the scope this termination captured had already ended",),
+            )
+        ]
+
+
+def test_a_cancellation_with_no_scope_open_asks_the_driver_for_nothing() -> None:
+    # Nothing is being served, so there is no statement anyone asked to
+    # interrupt and the request is not made at all.
     idle = _execution(_FakeConnection())
     idle.cancel_active()
     assert cast("Any", idle)._runtime.native.cancels == 0
@@ -500,12 +569,12 @@ def test_a_cancellation_captured_in_one_scope_does_not_reach_the_next() -> None:
 
 @pytest.mark.parametrize("action", ["cancel", "terminate"])
 def test_no_scope_is_admitted_while_a_validated_control_action_is_in_flight(action: str) -> None:
-    # Revalidation is not a check followed by an act. Between the two, the scope
-    # that was stuck can finish and the next one can take the session, and the
-    # request would then reach a statement nobody asked to interrupt — or tear
-    # down a descriptor a later connection answers to. So the answer is held for
-    # as long as the action runs: the captured scope may still END while it is
-    # in flight, and the NEXT one waits for it.
+    # An action that HAS revalidated is still mid-flight, and the answer it
+    # validated has to keep holding while it acts: a scope admitted between the
+    # check and the native call would be reached by a request nobody validated
+    # against it. So admission stays shut for the whole of the action, and the
+    # cost of that is bounded to the next scope — the captured one still ends
+    # without waiting for the action, which is what this parks to observe.
     running = threading.Event()
     finish = threading.Event()
 
@@ -581,9 +650,10 @@ def test_a_controlled_scope_gives_the_session_back_even_if_revocation_fails(
 
 
 def test_a_termination_with_no_live_scope_reports_that_it_reached_nothing() -> None:
-    # The descriptor a termination would tear down can be recycled by a later
-    # connection, so a captured target whose scope has ended is refused rather
-    # than destroyed: an honest unterminated report beats an unrelated session.
+    # Nothing is being served, so there is no scope this termination could have
+    # captured and no rung it may descend. What it owes its caller then is an
+    # honest report of having reached nothing, not a session destroyed on the
+    # strength of a target it never had.
     connection = _FakeConnection()
     execution = _execution(connection)
 
