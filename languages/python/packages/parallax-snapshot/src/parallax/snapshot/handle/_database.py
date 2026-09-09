@@ -118,11 +118,7 @@ def prepare_model(model: DomainModel, *, edition: str) -> ModelSelection:
         model,
         edition=edition,
         catalog=catalog,
-        construction=(
-            None
-            if classes is None
-            else EntityGraphConstruction(catalog.meta, classes, catalog.layouts)
-        ),
+        construction=(None if classes is None else EntityGraphConstruction(catalog, classes)),
         codec=EntityRowCodec(catalog),
         planner=build_write_planner(catalog.meta),
     )

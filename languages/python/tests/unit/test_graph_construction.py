@@ -13,8 +13,6 @@ Every row here is written as a literal tuple against the exact Entity's member
 layout, rather than assembled from that layout by name. A row assembled from the
 layout would agree with the writer however either end drifted; a literal one is
 what makes the alignment between the two a thing this suite can be wrong about.
-`test_the_writers_relationship_order_is_the_layouts_own` closes the same gap for
-the two derivations of the canonical relationship order.
 """
 
 from __future__ import annotations
@@ -41,8 +39,7 @@ from parallax.core.entity import (
     relationship_value_of,
 )
 from parallax.core.entity._construction_input import ABSENT
-from parallax.core.entity._layout import LayoutCatalog
-from parallax.core.entity._model import DomainModel, model_of
+from parallax.core.entity._model import DomainModel
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -486,21 +483,6 @@ def test_a_value_that_is_no_relationship_arm_at_all_is_refused() -> None:
     with pytest.raises(GraphConstructionError) as refusal:
         _construct(build)
     assert refusal.value.code == "entity-graph-invalid-value"
-
-
-def test_the_writers_relationship_order_is_the_layouts_own() -> None:
-    # The broad-relationship row is built by a caller against the member layout's
-    # canonical order and read by the writer against its own derivation of that
-    # same rule. Two derivations that disagreed would install every arm at the
-    # wrong direction silently, which is the one hazard a positional row adds and
-    # the sparse algebra's identities used to rule out.
-    catalog = LayoutCatalog(model_of(_ORDERS))
-    construction = graph_construction_for(_ORDERS)
-    for entity in (_ORDER, _ITEM, sm.SnapOrderStatus.identity):
-        facts = construction.facts_for(entity)
-        assert tuple(direction.identity for direction in facts.relationships) == (
-            catalog.entity(entity).relationships
-        )
 
 
 # --------------------------------------------------------------------------- #

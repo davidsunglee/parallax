@@ -14,11 +14,11 @@ agree about**: a positional row is written against the model's member layout and
 read back through the class's own publication plan, and the two are derived from
 different material, so the pair is compared once and refused when it disagrees.
 
-The correspondence refusals are reached by pairing one model's accepted metadata
-with another's composed classes, which is a state only a test can build: a
-composition root always takes both facts off one Domain Model. Each pair below is
-two class declarations under one Entity Identity that disagree in exactly one
-way.
+The correspondence refusals are reached through the constructor a composition
+root uses, by binding one Domain Model's composed classes to another Domain
+Model's cataloged metadata — the two halves a composition root always takes off
+one model. Each pair below is two class declarations under one Entity Identity
+that disagree in exactly one way.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ from parallax.core.entity._graph_construction import (
     _CallScope,  # pyright: ignore[reportPrivateUsage] - the scope the memo's life is a fact about
 )
 from parallax.core.entity._instance_state import COMPACT_STATE_SLOT, plan_of
-from parallax.core.entity._layout import LayoutCatalog
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import DomainModel, class_index, model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity, ValueObjectIdentity
 
@@ -508,19 +508,19 @@ _CORR: EntityIdentity = _Composed.identity
 
 
 def _disagreeing(composed: type[Entity], variant: type[Entity]) -> GraphConstructionError:
-    """The refusal one construction earns when the model it derives its layout
-    from is ``variant``'s and the class it publishes is ``composed``'s.
+    """The refusal one construction earns when the model it lays its rows out
+    against is ``variant``'s and the class it publishes is ``composed``'s.
 
-    Only a test can hand a construction that pair: a composition root always
-    takes the accepted metadata and the composed classes off one Domain Model,
-    so the two halves are handed in disagreeing here, and the constructor —
-    which derives every Entity's facts as it is built — refuses there.
+    Only a test hands a construction that pair: a composition root takes the
+    cataloged metadata and the composed classes off one Domain Model, so the two
+    halves are handed in disagreeing here, through the constructor a composition
+    root itself calls — which derives every Entity's facts as it is built and
+    refuses there.
     """
     classes = class_index(DomainModel(composed, CorrPeer))
     assert classes is not None
-    meta = model_of(DomainModel(variant, CorrPeer))
     with pytest.raises(GraphConstructionError) as refusal:
-        EntityGraphConstruction(meta, classes, LayoutCatalog(meta))
+        EntityGraphConstruction(CatalogedModel(model_of(DomainModel(variant, CorrPeer))), classes)
     assert refusal.value.code == "entity-graph-layout-mismatch"
     return refusal.value
 
@@ -528,15 +528,18 @@ def _disagreeing(composed: type[Entity], variant: type[Entity]) -> GraphConstruc
 def test_the_pair_that_agrees_is_not_refused() -> None:
     # The control: `_Composed` against its own model is the shape every other
     # case is one deviation from, so a refusal below is that deviation rather
-    # than the check refusing everything.
-    facts = graph_construction_for(DomainModel(_Composed, CorrPeer)).facts_for(_CORR)
-    assert tuple(attribute.py_name for attribute in facts.attributes) == (
-        "id",
-        "label",
-        "note",
-        "left_id",
-        "right_id",
-    )
+    # than the check refusing everything. Read back through a published node,
+    # since what the correspondence buys is that each of the model's row
+    # positions lands on the member the class carries at it.
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        handle = writer.allocate(_CORR)
+        writer.populate(handle, (1, "north", None, 2, 3, ("head", "tail")), (UNLOADED, UNLOADED))
+        return (handle,)
+
+    (published,) = graph_construction_for(DomainModel(_Composed, CorrPeer)).construct(build)
+    corr = cast("_Composed", published)
+    assert (corr.id, corr.label, corr.note, corr.left_id, corr.right_id) == (1, "north", None, 2, 3)
+    assert (cast("_Doc", corr.doc).first, cast("_Doc", corr.doc).second) == ("head", "tail")
 
 
 def test_a_member_row_the_class_lays_out_differently_is_refused() -> None:
@@ -578,24 +581,6 @@ def test_a_nested_occurrence_the_class_maps_as_a_leaf_is_refused() -> None:
     refusal = _disagreeing(_DeepScalar, _DeepNested)
     assert "calls member 1 ('inner') a nested occurrence" in refusal.message
     assert "_OuterScalar holds None there" in refusal.message
-
-
-def test_a_row_laid_out_against_another_models_layout_is_refused() -> None:
-    # The other half of the correspondence, and the one that does not involve a
-    # class at all: the member layout a row is written against and the runs this
-    # collaboration reads it back with are two derivations of the model's own
-    # order, neither derived from the other. A row laid out against a different
-    # model's layout is what a disagreement between them would install, member by
-    # member, with nothing left to notice it.
-    own = DomainModel(_Composed, CorrPeer)
-    classes = class_index(own)
-    assert classes is not None
-    foreign = model_of(DomainModel(_ReorderedMembers, CorrPeer))
-    with pytest.raises(GraphConstructionError) as refusal:
-        EntityGraphConstruction(model_of(own), classes, LayoutCatalog(foreign))
-    assert refusal.value.code == "entity-graph-layout-mismatch"
-    assert "the member layout lays out" in refusal.value.message
-    assert "this collaboration reads" in refusal.value.message
 
 
 def test_a_value_object_path_layout_the_class_lays_out_differently_is_refused() -> None:

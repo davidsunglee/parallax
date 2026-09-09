@@ -31,5 +31,4 @@ def graph_construction_for(model: DomainModel) -> EntityGraphConstruction:
     classes = class_index(model)
     if classes is None:
         raise ValueError("a descriptor-backed Domain Model composed no class to construct with")
-    cataloged = cataloged_for(model)
-    return EntityGraphConstruction(cataloged.meta, classes, cataloged.layouts)
+    return EntityGraphConstruction(cataloged_for(model), classes)
