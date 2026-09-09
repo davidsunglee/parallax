@@ -76,12 +76,12 @@ from parallax.core.unit_work import (
     AuditStrategy,
     BatchingStrategy,
     ConcurrencyStrategy,
-    Finalization,
     PlannedWrite,
     PlanningRequest,
     TemporalStrategy,
     WritePlan,
     WritePlanner,
+    WritePlanningResult,
 )
 from parallax.snapshot import handle
 from parallax.snapshot.handle import Transaction, _planning
@@ -200,7 +200,7 @@ def _watch(lane: str, monkeypatch: pytest.MonkeyPatch) -> _Composition:
         seen.built.append(_Built(planner=planner, audit=audit))
         return planner
 
-    def finalize(self: WritePlanner, request: PlanningRequest) -> Finalization:
+    def finalize(self: WritePlanner, request: PlanningRequest) -> WritePlanningResult:
         finalized = finalizing(self, request)
         seen.planned.append(_Planning(planner=self, request=request, plan=finalized.plan))
         return finalized

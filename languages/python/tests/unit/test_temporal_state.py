@@ -291,13 +291,17 @@ def _planned(
         {"mutation": "insert", "entity": entity_name, "rows": [members], "validFrom": valid_from}
     )
     prepared = instructions.prepare_wire_write(instruction, POSITION)
-    return build_write_planner(POSITION).plan(
-        PlanningRequest(
-            subject_identity=SubjectIdentity("unattributed"),
-            transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
-            concurrency="locking",
-            buffered_writes=[buffered_write(prepared, None)],
+    return (
+        build_write_planner(POSITION)
+        .finalize(
+            PlanningRequest(
+                subject_identity=SubjectIdentity("unattributed"),
+                transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
+                concurrency="locking",
+                buffered_writes=[buffered_write(prepared, None)],
+            )
         )
+        .plan
     )
 
 
@@ -394,15 +398,19 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
     )
     account = models.load_models()["account"]
     prepared = instructions.prepare_wire_write(instruction, account)
-    plan = build_write_planner(account).plan(
-        PlanningRequest(
-            subject_identity=SubjectIdentity("unattributed"),
-            transaction_instant=TransactionInstant(
-                FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
-            ),
-            concurrency="locking",
-            buffered_writes=[buffered_write(prepared, None)],
+    plan = (
+        build_write_planner(account)
+        .finalize(
+            PlanningRequest(
+                subject_identity=SubjectIdentity("unattributed"),
+                transaction_instant=TransactionInstant(
+                    FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+                ),
+                concurrency="locking",
+                buffered_writes=[buffered_write(prepared, None)],
+            )
         )
+        .plan
     )
     shadow.track_opened(account, plan)
     entity = account.entity(EntityIdentity("parallax.compatibility", "Account"))

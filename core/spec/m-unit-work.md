@@ -328,15 +328,29 @@ immutable batching, concurrency, temporal, and provenance strategies already
 wired, and it exposes exactly **one** planning operation:
 
 ```text
-plan(
+finalize(
     PlanningRequest(
         subject_identity:     SubjectIdentity,
         transaction_instant:  TransactionInstant,
         concurrency_preference: ConcurrencyPreference,
         buffered_writes:      BufferedWrites,
     )
-) -> WritePlan
+) -> WritePlanningResult(
+        plan:   WritePlan,
+        claims: RetainedObservations,
+     )
 ```
+
+A **Write Planning Result** carries the execution-ordered Write Plan together
+with the deduplicated retained claims its **surviving** writes settled against,
+in first-settlement order. Work the earlier stages retired — folded into a
+pending insert, cancelled against one, or eliminated as a known no-op —
+contributes no claim, so what the result names is exactly what a successful
+flush spends. Each claim appears **once**, because consumption records a fact
+about one observed state rather than about one statement.
+
+A caller that holds no evidence to spend reads the plan off that same result;
+no second planning operation exists to project it.
 
 A caller **MUST NOT** be required — or able — to sequence coalescing,
 cancellation, no-op elimination, batching, dependency ordering, Transaction

@@ -1,7 +1,7 @@
 """The compile-only recipe, and the runtime Write Plan that is never published.
 
 Two halves of one contract. The compile lane reaches production's planning path
-DIRECTLY — ``buffered_write`` into ``build_write_planner(model).plan(...)`` into
+DIRECTLY — ``buffered_write`` into ``build_write_planner(model).finalize(...)`` into
 ``stream_lowered(...)`` — so the emission oracle and the executed SQL are one
 computation rather than two that agree. And runtime returns and retains no
 ``WritePlan``: there is no ``plan_neutral``, no ``compile_neutral``, no
@@ -30,7 +30,12 @@ from _support.db_port import (
 from _support.repo import REPO_ROOT
 from parallax.conformance import case_format, engine
 from parallax.core.dialect import POSTGRES
-from parallax.core.unit_work import PlanningRequest, WritePlan, WritePlanner
+from parallax.core.unit_work import (
+    PlanningRequest,
+    WritePlan,
+    WritePlanner,
+    WritePlanningResult,
+)
 from parallax.snapshot import handle
 from parallax.snapshot.handle import Transaction
 
@@ -61,14 +66,14 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
     the first plan would emit.
     """
     planned: list[WritePlan] = []
-    original_plan = WritePlanner.plan
+    original_finalize = WritePlanner.finalize
 
-    def plan(self: WritePlanner, request: PlanningRequest) -> WritePlan:
-        result = original_plan(self, request)
-        planned.append(result)
+    def finalize(self: WritePlanner, request: PlanningRequest) -> WritePlanningResult:
+        result = original_finalize(self, request)
+        planned.append(result.plan)
         return result
 
-    monkeypatch.setattr(WritePlanner, "plan", plan)
+    monkeypatch.setattr(WritePlanner, "finalize", finalize)
     case = case_format.load_case(_CASE)
     emissions, _round_trips = engine.compile_write_sequence_case(case, "postgres")
 

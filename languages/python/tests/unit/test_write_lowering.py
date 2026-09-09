@@ -143,13 +143,17 @@ def _flush_and_lower(
     observations: Mapping[ObjectKey, WriteObservation] | None = None,
 ) -> list[LoweredStatement]:
     instant = inert_instant()
-    plan = build_write_planner(model).plan(
-        PlanningRequest(
-            subject_identity=TEST_SUBJECT_IDENTITY,
-            transaction_instant=instant,
-            concurrency=concurrency,
-            buffered_writes=observed_buffer(buffer, model, observations),
+    plan = (
+        build_write_planner(model)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=instant,
+                concurrency=concurrency,
+                buffered_writes=observed_buffer(buffer, model, observations),
+            )
         )
+        .plan
     )
     return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
 

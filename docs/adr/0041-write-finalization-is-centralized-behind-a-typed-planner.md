@@ -240,3 +240,14 @@ a bare Write Instruction; a materialized predicate input uses the existing
 Materialized Write Group. The runtime path may resolve an Observed State Key before
 constructing that same Buffer Item, so lookup remains transaction-owned while
 planning remains store-free.
+
+## Amendment (2026-09): the plan-only projection is retired
+
+The compile-only amendment above spells the advanced path
+`build_write_planner(model).plan(PlanningRequest(...))`.
+
+**Superseding decision:** `plan()` no longer exists. The planner exposes one
+operation, `finalize(PlanningRequest) -> WritePlanningResult`, and the same path
+is `build_write_planner(model).finalize(PlanningRequest(...)).plan`. This is a
+spelling change only: `plan()` was already a projection over `finalize()`, so no
+caller plans differently or does more work than before.
