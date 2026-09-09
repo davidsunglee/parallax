@@ -22,6 +22,7 @@ what an application would see.
 from __future__ import annotations
 
 import datetime as dt
+import gc
 import logging
 from decimal import Decimal
 from typing import Any, Final
@@ -70,6 +71,7 @@ from parallax.core.execution_lifecycle import (
     TransactionAttemptStarted,
 )
 from parallax.core.execution_lifecycle import _activity as activity_module
+from parallax.core.execution_lifecycle import _fanout as fanout_module
 from parallax.core.execution_lifecycle.testing import RecordedRoot, RecordingLifecycleProvider
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
@@ -561,6 +563,49 @@ def test_a_fanout_whose_every_leaf_failed_stops_observing_the_root(
     # Execution is untouched by any of it: the connection was taken, used and
     # given back while nothing was observing.
     assert (adapter.acquisitions, adapter.cleanups) == (1, [Returned()])
+
+
+class _RaisingOn:
+    """A Handler raising a FRESH exception on the first event of one kind.
+
+    The freshness is what keeps this usable in a reference test: an exception
+    object a Handler holds holds the traceback of every raise, and through it
+    the frames of whatever delivered to it.
+    """
+
+    def __init__(self, kind: type[ExecutionEvent]) -> None:
+        self._kind = kind
+
+    def handle(self, event: ExecutionEvent, /) -> None:
+        if isinstance(event, self._kind):
+            raise RuntimeError("the exporter died")
+
+
+def test_a_root_that_quarantined_a_fanout_keeps_no_part_of_it_alive() -> None:
+    # A quarantined root has no Handler AT ALL, which is a claim about
+    # references, and a paused stream is where it bites: the root stays open for
+    # as long as the consumer wants it. The nesting is what makes the claim
+    # observable — an inner fan-out that went quiet by ANSWERING rather than by
+    # raising is never dropped from its parent's children, so a root still
+    # pointing at the outer composite would hold that whole branch.
+    inner = _Provider(_RaisingOn(AcquisitionStarted))
+    provider = FanoutLifecycleProvider([FanoutLifecycleProvider([inner])])
+    adapter = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
+
+    with (
+        _db(adapter, provider, ORDERS_MODEL) as db,
+        db.stream(_active_orders(), batch_size=2) as stream,
+    ):
+        for root in stream:
+            del root
+            gc.collect()
+            alive = [
+                obj for obj in gc.get_objects() if type(obj).__module__ == fanout_module.__name__
+            ]
+            assert {type(obj) for obj in alive} == {FanoutLifecycleProvider}
+            break
+
+    assert len(inner.reported) == 1
 
 
 def test_a_fatal_exception_on_the_acquisitions_started_leaves_nothing_acquired() -> None:

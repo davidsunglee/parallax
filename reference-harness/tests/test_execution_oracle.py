@@ -843,6 +843,100 @@ def test_an_owner_failing_of_its_own_accord_after_a_refusal_is_flagged() -> None
     assert any("under the ordinary Holding rule" in problem for problem in problems)
 
 
+def _read_root(*children: dict[str, Any]) -> dict[str, Any]:
+    """One standalone Read root, holding whatever *children* it was given."""
+    events = [
+        _event(
+            1,
+            1,
+            None,
+            readStarted={"target": "Account", "interface": "typed", "edition": "account"},
+        ),
+        *children,
+        _event(1, 1, None, readFinished={"outcome": "completed"}),
+    ]
+    for position, event in enumerate(events):
+        event["sequence"] = position + 1
+    return _root("read", events)
+
+
+def _stream_root(finish: dict[str, Any], *children: dict[str, Any]) -> dict[str, Any]:
+    """One standalone Snapshot Stream root reaching *finish*."""
+    events = [
+        _event(
+            1,
+            1,
+            None,
+            snapshotStreamStarted={
+                "target": "Account",
+                "interface": "typed",
+                "batchSize": 2,
+                "edition": "account",
+            },
+        ),
+        *children,
+        _event(1, 1, None, snapshotStreamFinished=finish),
+    ]
+    for position, event in enumerate(events):
+        event["sequence"] = position + 1
+    return _root("snapshot-stream", events)
+
+
+def _acquired_pair(owner: int, acquisition: int, release: int) -> list[dict[str, Any]]:
+    return [
+        _event(1, acquisition, owner, acquisitionStarted={}),
+        _event(1, acquisition, owner, acquisitionFinished={"outcome": "acquired"}),
+        _event(1, release, owner, releaseStarted={}),
+        _event(1, release, owner, releaseFinished={"cleanup": "returned"}),
+    ]
+
+
+def test_a_read_that_asked_for_no_connection_at_all_is_flagged() -> None:
+    """An empty Read is one that took a connection and ran nothing on it, not one
+    that reached the database without one."""
+    problems = validate_execution(_retry_case(_read_root()))
+    assert any("opens no Acquisition" in problem for problem in problems)
+
+
+def test_an_attempt_that_asked_for_no_connection_at_all_is_flagged() -> None:
+    """An attempt acquires before its boundary is asked to begin, so even one
+    that opened nothing and failed to begin asked for a connection first."""
+    root = _begin_failed_root()
+    del root["events"][2:6]
+    for position, event in enumerate(root["events"]):
+        event["sequence"] = position + 1
+    problems = validate_execution(_retry_case(root))
+    assert any("opens no Acquisition" in problem for problem in problems)
+
+
+def test_a_stream_that_exhausted_without_acquiring_is_flagged() -> None:
+    """Exhaustion is discovered by READING a page, and a page runs on the
+    connection the stream took before opening it."""
+    problems = validate_execution(_retry_case(_stream_root({"outcome": "exhausted"})))
+    assert any("opens no Acquisition" in problem for problem in problems)
+
+
+def test_a_stream_that_failed_without_acquiring_is_flagged() -> None:
+    """A stream fails over delivery work, which starts at its first page."""
+    problems = validate_execution(
+        _retry_case(_stream_root({"outcome": "failed", "attribution": "direct"}))
+    )
+    assert any("opens no Acquisition" in problem for problem in problems)
+
+
+def test_a_stream_closed_before_its_first_page_opens_neither_end() -> None:
+    """The one owner that may open no Acquisition: a caller who closed the stream
+    before asking for a page left it never having reached a connection."""
+    assert validate_execution(_retry_case(_stream_root({"outcome": "closedEarly"}))) == []
+
+
+def test_a_stream_that_read_a_page_holds_the_connection_it_read_it_on() -> None:
+    """The positive control beside it, and the boundary of the exception: a
+    stream that DID ask closes the pair however early the caller left."""
+    root = _stream_root({"outcome": "closedEarly"}, *_acquired_pair(1, 2, 3))
+    assert validate_execution(_retry_case(root)) == []
+
+
 def test_a_begin_failure_caused_by_an_acquisition_that_granted_is_flagged() -> None:
     """A boundary that refused to open on a connection the attempt DID acquire
     has no child holding that failure, so it is `direct`."""
@@ -1094,7 +1188,8 @@ def test_a_record_disagreeing_with_the_case_round_trips_is_flagged() -> None:
 
 
 def _retry_root(outcomes: list[dict[str, Any]], retries: int) -> dict[str, Any]:
-    """One invocation with one attempt per entry of *outcomes* and no calls at all."""
+    """One invocation with one attempt per entry of *outcomes*, each taking and
+    giving a connection back and running nothing at all on it."""
     events = [
         _event(
             1,
@@ -1108,12 +1203,26 @@ def _retry_root(outcomes: list[dict[str, Any]], retries: int) -> dict[str, Any]:
             },
         )
     ]
-    for index, outcome in enumerate(outcomes):
-        activity = index + 2
+    activity = 1
+    attempts: list[int] = []
+    for outcome in outcomes:
+        activity += 1
+        attempt = activity
+        attempts.append(attempt)
         events.append(
-            _event(len(events) + 1, activity, 1, transactionAttemptStarted={"edition": "account"})
+            _event(len(events) + 1, attempt, 1, transactionAttemptStarted={"edition": "account"})
         )
-        events.append(_event(len(events) + 1, activity, 1, transactionAttemptFinished=outcome))
+        activity += 1
+        events.append(_event(len(events) + 1, activity, attempt, acquisitionStarted={}))
+        events.append(
+            _event(len(events) + 1, activity, attempt, acquisitionFinished={"outcome": "acquired"})
+        )
+        activity += 1
+        events.append(_event(len(events) + 1, activity, attempt, releaseStarted={}))
+        events.append(
+            _event(len(events) + 1, activity, attempt, releaseFinished={"cleanup": "returned"})
+        )
+        events.append(_event(len(events) + 1, attempt, 1, transactionAttemptFinished=outcome))
     committed = outcomes[-1].get("outcome") == "committed"
     events.append(
         _event(
@@ -1123,7 +1232,7 @@ def _retry_root(outcomes: list[dict[str, Any]], retries: int) -> dict[str, Any]:
             transactionInvocationFinished=(
                 {"outcome": "committed"}
                 if committed
-                else {"outcome": "failed", "attribution": "caused", "cause": len(outcomes) + 1}
+                else {"outcome": "failed", "attribution": "caused", "cause": attempts[-1]}
             ),
         )
     )
@@ -1201,7 +1310,7 @@ def test_a_final_rollback_failure_with_budget_left_is_accepted() -> None:
 def test_an_attempt_that_had_not_finished_when_the_next_one_started_is_flagged() -> None:
     root = _retry_root([_rolled(True), {"outcome": "committed"}], 1)
     events = root["events"]
-    events[2], events[3] = events[3], events[2]
+    events[6], events[7] = events[7], events[6]
     for position, event in enumerate(events):
         event["sequence"] = position + 1
     problems = validate_execution(_retry_case(root))
@@ -1232,7 +1341,12 @@ def _beginless_root(outcome: dict[str, Any]) -> dict[str, Any]:
 
 
 def _begin_failed_root() -> dict[str, Any]:
-    """One invocation whose only attempt never opened its boundary."""
+    """One invocation whose only attempt never opened its boundary.
+
+    Its acquisition granted: an attempt takes a connection before its boundary
+    is asked to begin, so a begin failure this attempt answers for `direct`ly is
+    one the boundary raised on a connection the attempt is still holding.
+    """
     return _root(
         "transaction-invocation",
         [
@@ -1248,14 +1362,18 @@ def _begin_failed_root() -> dict[str, Any]:
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
+            _event(3, 3, 2, acquisitionStarted={}),
+            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(5, 4, 2, releaseStarted={}),
+            _event(6, 4, 2, releaseFinished={"cleanup": "returned"}),
             _event(
-                3,
+                7,
                 2,
                 1,
                 transactionAttemptFinished={"outcome": "beginFailed", "attribution": "direct"},
             ),
             _event(
-                4,
+                8,
                 1,
                 None,
                 transactionInvocationFinished={
@@ -1287,11 +1405,15 @@ def test_a_begin_failed_attempt_is_never_followed_by_another() -> None:
     """A boundary that never opened is terminal by rule, however retriable the
     error's own category: no callback ran that a re-execution could repeat."""
     root = _begin_failed_root()
-    root["events"][3:3] = [
-        _event(4, 3, 1, transactionAttemptStarted={"edition": "account"}),
-        _event(5, 3, 1, transactionAttemptFinished={"outcome": "committed"}),
+    root["events"][7:7] = [
+        _event(8, 5, 1, transactionAttemptStarted={"edition": "account"}),
+        _event(9, 6, 5, acquisitionStarted={}),
+        _event(10, 6, 5, acquisitionFinished={"outcome": "acquired"}),
+        _event(11, 7, 5, releaseStarted={}),
+        _event(12, 7, 5, releaseFinished={"cleanup": "returned"}),
+        _event(13, 5, 1, transactionAttemptFinished={"outcome": "committed"}),
     ]
-    root["events"][-1] = _event(6, 1, None, transactionInvocationFinished={"outcome": "committed"})
+    root["events"][-1] = _event(14, 1, None, transactionInvocationFinished={"outcome": "committed"})
     problems = validate_execution(_retry_case(root))
     assert any("never opened its boundary" in problem for problem in problems)
 
