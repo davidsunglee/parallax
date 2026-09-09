@@ -220,10 +220,12 @@ def test_every_cost_cell_runs_unconditionally_and_gates_on_its_verdict() -> None
 def test_the_deployed_cells_partition_the_cost_class_and_leave_the_rest_whole() -> None:
     # Both claims are read off one batch of sessions built here rather than out
     # of a fixture: this suite's own gate runs under `-n auto`, where fixture
-    # scope is per xdist worker, so two tests sharing one would build the batch
-    # twice on different workers. That batch is the width of the proof — one
-    # session per deployed cell, plus the whole class as the reference the cells
-    # are measured against, plus the rest of the suite whole and under one cell.
+    # scope is per xdist worker, so a load schedule that put two tests sharing
+    # one on different workers would build the batch twice, and which schedule
+    # runs is not this module's to choose. That batch is the width of the proof
+    # — one session per deployed cell, plus the whole class as the reference the
+    # cells are measured against, plus the rest of the suite whole and under one
+    # cell.
     #
     # The cells' selections together hold every cost item exactly once and none
     # of them is empty; with the expansion and the gating pinned above, that is
@@ -339,16 +341,21 @@ def test_durations_that_do_not_arrive_at_all_are_a_usage_error(tmp_path: Path) -
         pytest.param('{"a::b": -1.0}', id="negative"),
         pytest.param('{"a::b": NaN}', id="nan"),
         pytest.param('{"a::b": Infinity}', id="infinite"),
+        pytest.param('{"a::b": ' + "9" * 500 + "}", id="wider-than-a-float"),
+        pytest.param('{"a::b": ' + "9" * 5000 + "}", id="more-digits-than-json-parses"),
     ],
 )
 def test_a_payload_that_is_not_a_mapping_of_durations_is_a_usage_error(
     payload: str, tmp_path: Path
 ) -> None:
     # A payload can arrive and still be no durations: a list, an object naming
-    # none, a document that stops. `float` accepts each malformed value among
-    # these, and a `NaN` would poison the mean an unknown item weighs and
-    # collapse the choice of lightest shard, leaving the balance decided by
-    # nothing while the partition stayed intact.
+    # none, a document that stops. A `NaN` would poison the mean an unknown item
+    # weighs and collapse the choice of lightest shard, leaving the balance
+    # decided by nothing while the partition stayed intact. The last two are
+    # numbers Python declines to hold as one: an integer past the float range
+    # answers neither `float` nor `math.isfinite`, and a longer digit run is one
+    # `json` itself refuses to parse. Every one of them is the file's usage error
+    # rather than an exception raised out of the session that read it.
     path = tmp_path / "cost_durations.json"
     path.write_text(payload, encoding="utf-8")
     with pytest.raises(pytest.UsageError, match=re.escape(str(path))):
@@ -356,14 +363,14 @@ def test_a_payload_that_is_not_a_mapping_of_durations_is_a_usage_error(
 
 
 def _stored_over_two_entries(
-    path: Path, *, selected_the_whole_class: bool, collected: Sequence[str], succeeded: bool
+    path: Path, *, collected_the_whole_class: bool, collected: Sequence[str], succeeded: bool
 ) -> dict[str, float]:
     """A file holding a renamed and a kept item after a session with those facts
     stores its one observation of the kept one over it."""
     path.write_text('{"a::renamed": 5.0, "a::kept": 2.0}\n', encoding="utf-8")
     cost_durations.store(
         {"a::kept": 3.04},
-        selected_the_whole_class=selected_the_whole_class,
+        collected_the_whole_class=collected_the_whole_class,
         collected=collected,
         succeeded=succeeded,
         path=path,
@@ -379,7 +386,7 @@ def test_a_session_that_measured_the_whole_class_replaces_the_stored_durations(
     # weighing a shard that will never run it again.
     stored = _stored_over_two_entries(
         tmp_path / "cost_durations.json",
-        selected_the_whole_class=True,
+        collected_the_whole_class=True,
         collected=["a::kept"],
         succeeded=True,
     )
@@ -387,7 +394,7 @@ def test_a_session_that_measured_the_whole_class_replaces_the_stored_durations(
 
 
 @pytest.mark.parametrize(
-    ("selected_the_whole_class", "collected", "succeeded"),
+    ("collected_the_whole_class", "collected", "succeeded"),
     [
         pytest.param(False, ["a::kept"], True, id="a-narrower-selection"),
         pytest.param(True, ["a::kept", "a::unreached"], True, id="an-item-never-reached"),
@@ -395,16 +402,16 @@ def test_a_session_that_measured_the_whole_class_replaces_the_stored_durations(
     ],
 )
 def test_a_session_that_measured_less_than_the_whole_class_merges(
-    selected_the_whole_class: bool, collected: Sequence[str], succeeded: bool, tmp_path: Path
+    collected_the_whole_class: bool, collected: Sequence[str], succeeded: bool, tmp_path: Path
 ) -> None:
-    # Asking for the whole class is not measuring it: a session narrowed after
+    # Collecting the whole class is not measuring it: a session narrowed after
     # collection reports a call for fewer items than it was handed, and one that
     # ends badly may report none at all. Either way the entries it did not
     # observe are the only record of the items it did not run, so each of the
     # three conditions alone decides between replacing the file and merging.
     stored = _stored_over_two_entries(
         tmp_path / "cost_durations.json",
-        selected_the_whole_class=selected_the_whole_class,
+        collected_the_whole_class=collected_the_whole_class,
         collected=collected,
         succeeded=succeeded,
     )
