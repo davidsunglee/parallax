@@ -46,7 +46,6 @@ from parallax.core.auto_retry import check_retry_bound, run_with_retry
 from parallax.core.db_port import (
     BeginFailed,
     Committed,
-    ConnectionAcquisitionError,
     DatabaseConnection,
     DatabaseRuntime,
     IsolationLevel,
@@ -416,13 +415,19 @@ class Demarcation:
                         resource = self._runtime.connection()
                         try:
                             conn, held_since_ns = enter_connection(resource, physical)
-                        except ConnectionAcquisitionError as unacquired:
+                        except Exception as unacquired:
                             # No boundary opened and no callback ran, so this is
                             # the same terminal outcome a refused BEGIN reaches:
                             # there is nothing to undo and nothing to replay.
                             # There is also nothing left to release here — a
                             # failed entry already ran its own cleanup and
                             # reported what that established.
+                            #
+                            # Every ordinary failure of the acquisition takes
+                            # this route, not just the adapter's own refusal: an
+                            # attempt that never got a connection never opened a
+                            # boundary, whatever the reason the Acquisition
+                            # derived for it.
                             physical.begin_failed(unacquired)
                             raise _BeginFailure(unacquired) from unacquired
                         try:

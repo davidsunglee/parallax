@@ -436,6 +436,11 @@
           "description": "Issues are the conditions ONE cleanup met, so a record stating them states which cleanup met them.",
           "if": {"required": ["issues"]},
           "then": {"required": ["cleanup"]}
+        },
+        {
+          "description": "An unrelinquished connection reports at least one issue: something has to have gone wrong to reach it, and stating which step is the whole value of the outcome. The partial cleanup a failed acquisition ran is the same cleanup a release runs and reaches the same outcomes under the same rule.",
+          "if": {"required": ["cleanup"], "properties": {"cleanup": {"const": "unrelinquished"}}},
+          "then": {"required": ["issues"]}
         }
       ]
     },

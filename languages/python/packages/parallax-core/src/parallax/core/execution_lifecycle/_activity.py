@@ -401,6 +401,17 @@ class ConnectionAcquisitionActivity(Protocol):
         /,
     ) -> None: ...
 
+    def call_returned(self) -> None:
+        """The acquisition call has come back, one way or the other.
+
+        This is the endpoint the duration is measured to and the moment the hold
+        begins, and it is announced rather than read off the way the scope is
+        left because what a caller does between the two is not the call: reading
+        a failed acquisition's cleanup fact off the resource is the caller's own
+        work and belongs to neither interval.
+        """
+        ...
+
     def unacquired(self, cleanup_result: CleanupResult | None, /) -> None:
         """What the cleanup a failed acquisition already ran ESTABLISHED, or
         ``None`` where it never owned anything to clean up."""
@@ -449,6 +460,15 @@ class ConnectionReleaseActivity(Protocol):
         _traceback: TracebackType | None,
         /,
     ) -> None: ...
+
+    def call_returned(self) -> None:
+        """The release call has come back, one way or the other.
+
+        The endpoint of both the release's own duration and the hold it ends,
+        announced for the same reason the acquisition's is: reading what the
+        release established off the resource happens after the release.
+        """
+        ...
 
     def relinquished(self, cleanup_result: CleanupResult | None, /) -> None:
         """What letting the connection go ESTABLISHED."""
@@ -782,6 +802,8 @@ class _InertActivity:
         """
         return False
 
+    def call_returned(self) -> None: ...
+
     def unacquired(self, cleanup_result: CleanupResult | None, /) -> None: ...
 
     def relinquished(self, cleanup_result: CleanupResult | None, /) -> None: ...
@@ -930,6 +952,12 @@ class _Publisher:
         answer, because what a Handler does with an ordinary event is the
         Handler's business.
 
+        A composite that answers ``False`` has no live leaf left and can never
+        gain one, so it is quarantined here exactly as a Handler that raised is:
+        the rest of the root would otherwise take Activity IDs, sequences and
+        clock readings for events with no receiver, which is the very work
+        quarantine exists to stop.
+
         Both the delivery and the reporting that may follow it happen inside
         this Handle's lifecycle context, so an operation the Handler starts back
         through the originating Handle is refused rather than observed. The flag
@@ -944,7 +972,10 @@ class _Publisher:
         delivering.active = True
         try:
             if completing is not None:
-                return completing(event)
+                received = completing(event)
+                if not received:
+                    self._handler = None
+                return received
             handler.handle(event)
         except Exception as failure:
             self._handler = None
@@ -1250,7 +1281,8 @@ class _LiveDatabaseCall(_LiveActivity):
                 self._statement,
             )
         )
-        self._started_ns = time.perf_counter_ns()
+        if publisher.active:
+            self._started_ns = time.perf_counter_ns()
         return self
 
     def __exit__(
@@ -1328,11 +1360,14 @@ class _LiveEnforcement:
 class _LiveAcquisition(_LiveActivity):
     """One observed acquisition, timed around the acquisition call alone.
 
-    The clock starts after Started has been delivered and stops before Finished
-    is constructed, exactly as a Database Call's does. The stopping reading is
-    also where the HOLD starts, so everything after it — this activity's own
-    Finished delivery, the Handlers that see it, the work the operation goes on
-    to do — is time the connection was occupied.
+    The clock starts after Started has been delivered and stops where the
+    acquisition call comes back, exactly as a Database Call's does. Both
+    endpoints are taken at the call rather than at the scope's own boundaries,
+    so neither this activity's deliveries nor the caller's reading of a failed
+    acquisition's cleanup fact is inside what the duration reports. The stopping
+    reading is also where the HOLD starts, so everything after it — this
+    activity's own Finished delivery, the Handlers that see it, the work the
+    operation goes on to do — is time the connection was occupied.
 
     ``duration_ns`` measures a composition-level call rather than physical
     checkout: what it brackets is asking the adapter for a connection and
@@ -1340,11 +1375,12 @@ class _LiveAcquisition(_LiveActivity):
     adapter ran over whatever it had taken.
     """
 
-    __slots__ = ("_cleanup_result", "_held_since_ns", "_reported", "_started_ns")
+    __slots__ = ("_cleanup_result", "_completed_ns", "_held_since_ns", "_reported", "_started_ns")
 
     def __init__(self, publisher: _Publisher, parent: _LiveActivity) -> None:
         super().__init__(publisher, parent)
         self._started_ns = 0
+        self._completed_ns = 0
         self._held_since_ns: int | None = None
         self._cleanup_result: CleanupResult | None = None
         self._reported = False
@@ -1356,6 +1392,10 @@ class _LiveAcquisition(_LiveActivity):
     @property
     def cleanup_reported(self) -> bool:
         return self._reported
+
+    def call_returned(self) -> None:
+        if self._publisher.active:
+            self._completed_ns = time.perf_counter_ns()
 
     def unacquired(self, cleanup_result: CleanupResult | None, /) -> None:
         self._cleanup_result = cleanup_result
@@ -1373,7 +1413,8 @@ class _LiveAcquisition(_LiveActivity):
                 self._parent_activity_id,
             )
         )
-        self._started_ns = time.perf_counter_ns()
+        if publisher.active:
+            self._started_ns = time.perf_counter_ns()
         return self
 
     def __exit__(
@@ -1386,7 +1427,7 @@ class _LiveAcquisition(_LiveActivity):
         publisher = self._publisher
         if not publisher.active:
             return
-        completed_ns = time.perf_counter_ns()
+        completed_ns = self._completed_ns
         self._held_since_ns = completed_ns
         duration_ns = completed_ns - self._started_ns
         if exc is None:
@@ -1430,18 +1471,23 @@ class _LiveRelease(_LiveActivity):
     reported, including nothing.
     """
 
-    __slots__ = ("_cleanup_result", "_held_since_ns", "_reported", "_started_ns")
+    __slots__ = ("_cleanup_result", "_completed_ns", "_held_since_ns", "_reported", "_started_ns")
 
     def __init__(self, publisher: _Publisher, parent: _LiveActivity, held_since_ns: int) -> None:
         super().__init__(publisher, parent)
         self._held_since_ns = held_since_ns
         self._started_ns = 0
+        self._completed_ns = 0
         self._cleanup_result: CleanupResult | None = None
         self._reported = False
 
     @property
     def cleanup_reported(self) -> bool:
         return self._reported
+
+    def call_returned(self) -> None:
+        if self._publisher.active:
+            self._completed_ns = time.perf_counter_ns()
 
     def relinquished(self, cleanup_result: CleanupResult | None, /) -> None:
         self._cleanup_result = cleanup_result
@@ -1459,7 +1505,8 @@ class _LiveRelease(_LiveActivity):
                 self._parent_activity_id,
             )
         )
-        self._started_ns = time.perf_counter_ns()
+        if publisher.active:
+            self._started_ns = time.perf_counter_ns()
         return self
 
     def __exit__(
@@ -1473,7 +1520,7 @@ class _LiveRelease(_LiveActivity):
         publisher = self._publisher
         if not publisher.active:
             return
-        completed_ns = time.perf_counter_ns()
+        completed_ns = self._completed_ns
         cleanup_result = self._cleanup_result
         delivered = publisher.deliver(
             ReleaseFinished(

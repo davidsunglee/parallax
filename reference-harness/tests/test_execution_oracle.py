@@ -56,8 +56,20 @@ def _lifecycle(*roots: dict[str, Any]) -> dict[str, Any]:
     return {"roots": list(roots)}
 
 
+def _renumbered(root: dict[str, Any], released: int) -> None:
+    """Close the gaps an insertion opened: sequences run again from one, and the
+    Release, whose ID was taken before the inserted activity existed, takes
+    ``released``."""
+    for event in root["events"]:
+        if "releaseStarted" in event or "releaseFinished" in event:
+            event["activity"] = released
+    for position, event in enumerate(root["events"]):
+        event["sequence"] = position + 1
+
+
 def _write_root(**attempt_finish: Any) -> dict[str, Any]:
-    """One transaction root: an invocation, an attempt, a pre-commit batch, one write."""
+    """One transaction root: an invocation, an attempt that takes and gives back a
+    connection, a pre-commit batch, one write."""
     finish = attempt_finish or {"outcome": "committed"}
     return _root(
         "transaction-invocation",
@@ -74,17 +86,21 @@ def _write_root(**attempt_finish: Any) -> dict[str, Any]:
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, writeBatchStarted={"trigger": "pre-commit"}),
+            _event(3, 3, 2, acquisitionStarted={}),
+            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(5, 4, 2, writeBatchStarted={"trigger": "pre-commit"}),
             _event(
+                6,
+                5,
                 4,
-                4,
-                3,
                 databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
             ),
-            _event(5, 4, 3, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
-            _event(6, 3, 2, writeBatchFinished={"outcome": "completed"}),
-            _event(7, 2, 1, transactionAttemptFinished=finish),
-            _event(8, 1, None, transactionInvocationFinished={"outcome": "committed"}),
+            _event(7, 5, 4, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            _event(8, 4, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(9, 6, 2, releaseStarted={}),
+            _event(10, 6, 2, releaseFinished={"cleanup": "returned"}),
+            _event(11, 2, 1, transactionAttemptFinished=finish),
+            _event(12, 1, None, transactionInvocationFinished={"outcome": "committed"}),
         ],
     )
 
@@ -178,7 +194,7 @@ def test_an_event_omitting_its_parent_is_refused_by_both_schemas() -> None:
 
 def test_a_row_count_beside_a_failed_call_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][4]["databaseCallFinished"] = {
+    root["events"][6]["databaseCallFinished"] = {
         "outcome": "failed",
         "category": "deadlock",
         "affectedRows": 0,
@@ -189,7 +205,7 @@ def test_a_row_count_beside_a_failed_call_is_refused_by_both_schemas() -> None:
 
 def test_a_completed_call_omitting_its_count_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][4]["databaseCallFinished"] = {"outcome": "writeCompleted"}
+    root["events"][6]["databaseCallFinished"] = {"outcome": "writeCompleted"}
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
@@ -200,7 +216,7 @@ def test_a_completed_call_omitting_its_count_is_refused_by_both_schemas() -> Non
 def test_a_target_that_is_no_entity_name_is_refused_by_both_schemas() -> None:
     for spelling in ("not-an-entity", "   ", "account", "Account."):
         root = _write_root()
-        root["events"][3]["databaseCallStarted"]["target"] = spelling
+        root["events"][5]["databaseCallStarted"]["target"] = spelling
         assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root))), (
             spelling
         )
@@ -230,28 +246,28 @@ def test_both_mirrors_pin_the_canonical_entity_name_grammar() -> None:
 
 def test_an_attribution_on_a_completed_activity_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][5]["writeBatchFinished"] = {"outcome": "completed", "attribution": "direct"}
+    root["events"][7]["writeBatchFinished"] = {"outcome": "completed", "attribution": "direct"}
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
 def test_a_failing_activity_omitting_its_attribution_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][5]["writeBatchFinished"] = {"outcome": "failed"}
+    root["events"][7]["writeBatchFinished"] = {"outcome": "failed"}
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
 def test_a_caused_failure_naming_no_cause_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][5]["writeBatchFinished"] = {"outcome": "failed", "attribution": "caused"}
+    root["events"][7]["writeBatchFinished"] = {"outcome": "failed", "attribution": "caused"}
     assert not _valid_against("compatibility-case.schema.json", _case(_lifecycle(root)))
     assert not _valid_against("conformance-adapter.schema.json", _run_envelope(_lifecycle(root)))
 
 
 def test_a_direct_failure_naming_a_cause_is_refused_by_both_schemas() -> None:
     root = _write_root()
-    root["events"][5]["writeBatchFinished"] = {
+    root["events"][7]["writeBatchFinished"] = {
         "outcome": "failed",
         "attribution": "direct",
         "cause": 4,
@@ -344,43 +360,46 @@ def test_an_invocation_naming_an_unportable_level_is_refused_by_both_schemas() -
 
 def test_a_sequence_disagreeing_with_its_delivery_position_is_flagged() -> None:
     root = _write_root()
-    root["events"][3]["sequence"] = 9
+    root["events"][5]["sequence"] = 9
     assert validate_execution(_case(_lifecycle(root)))
 
 
 def test_a_started_taking_an_id_out_of_order_is_flagged() -> None:
     root = _write_root()
-    root["events"][3]["activity"] = 9
-    root["events"][4]["activity"] = 9
+    root["events"][5]["activity"] = 9
+    root["events"][6]["activity"] = 9
     assert validate_execution(_case(_lifecycle(root)))
 
 
 def test_a_parent_no_started_ever_assigned_is_flagged() -> None:
     root = _write_root()
-    root["events"][3]["parent"] = 99
-    root["events"][4]["parent"] = 99
+    root["events"][5]["parent"] = 99
+    root["events"][6]["parent"] = 99
     assert validate_execution(_case(_lifecycle(root)))
 
 
 def test_a_parent_that_had_already_finished_is_flagged() -> None:
     events = _write_root()["events"]
-    events[3]["parent"] = 4
     reordered = _root(
         "transaction-invocation",
         [
             events[0],
             events[1],
             events[2],
-            _event(3, 3, 2, writeBatchFinished={"outcome": "completed"}),
+            events[3],
+            events[4],
+            _event(6, 4, 2, writeBatchFinished={"outcome": "completed"}),
             _event(
+                7,
+                5,
                 4,
-                4,
-                3,
                 databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
             ),
-            _event(5, 4, 3, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
-            events[6],
-            events[7],
+            _event(8, 5, 4, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            events[8],
+            events[9],
+            events[10],
+            events[11],
         ],
     )
     problems = validate_execution(_case(_lifecycle(reordered)))
@@ -390,7 +409,7 @@ def test_a_parent_that_had_already_finished_is_flagged() -> None:
 def test_a_second_activity_without_a_parent_is_flagged() -> None:
     root = _write_root()
     root["events"][1]["parent"] = None
-    root["events"][6]["parent"] = None
+    root["events"][10]["parent"] = None
     assert validate_execution(_case(_lifecycle(root)))
 
 
@@ -403,21 +422,21 @@ def test_a_root_kind_disagreeing_with_its_own_root_activity_is_flagged() -> None
 
 def test_a_finished_naming_a_different_parent_than_its_started_is_flagged() -> None:
     root = _write_root()
-    root["events"][5]["parent"] = 1
+    root["events"][7]["parent"] = 1
     assert validate_execution(_case(_lifecycle(root)))
 
 
 def test_a_finished_of_a_different_kind_than_its_started_is_flagged() -> None:
     root = _write_root()
-    root["events"][5] = _event(6, 3, 2, readFinished={"outcome": "completed"})
+    root["events"][7] = _event(8, 4, 2, readFinished={"outcome": "completed"})
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("same activity KIND" in problem for problem in problems)
 
 
 def test_an_activity_finished_twice_is_flagged() -> None:
     root = _write_root()
-    root["events"][5] = _event(
-        6, 4, 3, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}
+    root["events"][7] = _event(
+        8, 5, 4, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}
     )
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("already finished" in problem for problem in problems)
@@ -425,24 +444,24 @@ def test_an_activity_finished_twice_is_flagged() -> None:
 
 def test_a_finished_naming_an_activity_no_started_assigned_is_flagged() -> None:
     root = _write_root()
-    root["events"][5] = _event(6, 9, 2, writeBatchFinished={"outcome": "completed"})
+    root["events"][7] = _event(8, 9, 2, writeBatchFinished={"outcome": "completed"})
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("no Started assigned" in problem for problem in problems)
 
 
 def test_a_root_left_with_an_open_activity_is_flagged() -> None:
     root = _write_root()
-    del root["events"][5]
-    root["events"][5]["sequence"] = 6
-    root["events"][6]["sequence"] = 7
+    del root["events"][7]
+    for position, event in enumerate(root["events"]):
+        event["sequence"] = position + 1
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("still open" in problem for problem in problems)
 
 
 def test_a_root_ending_on_something_other_than_its_root_activity_is_flagged() -> None:
     root = _write_root()
-    root["events"].append(_event(9, 5, 1, transactionAttemptStarted={"edition": "account"}))
-    root["events"].append(_event(10, 5, 1, transactionAttemptFinished={"outcome": "committed"}))
+    root["events"].append(_event(13, 7, 1, transactionAttemptStarted={"edition": "account"}))
+    root["events"].append(_event(14, 7, 1, transactionAttemptFinished={"outcome": "committed"}))
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("last event delivered" in problem for problem in problems)
 
@@ -548,8 +567,8 @@ def test_a_second_outer_invocation_nested_in_the_first_is_flagged() -> None:
 
 def test_a_database_call_owned_by_no_read_or_batch_is_flagged() -> None:
     root = _write_root()
-    root["events"][3]["parent"] = 2
-    root["events"][4]["parent"] = 2
+    root["events"][5]["parent"] = 2
+    root["events"][6]["parent"] = 2
     problems = validate_execution(_case(_lifecycle(root)))
     assert any(
         "databaseCallStarted is contained by readStarted or writeBatchStarted or streamBatchStarted"
@@ -560,7 +579,7 @@ def test_a_database_call_owned_by_no_read_or_batch_is_flagged() -> None:
 
 def test_an_outer_invocation_finishing_in_the_joined_vocabulary_is_flagged() -> None:
     root = _write_root()
-    root["events"][7]["transactionInvocationFinished"] = {"outcome": "returned"}
+    root["events"][11]["transactionInvocationFinished"] = {"outcome": "returned"}
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("finishes transactionInvocationStarted:outer" in problem for problem in problems)
 
@@ -606,9 +625,9 @@ def test_a_committed_invocation_after_a_final_attempt_that_rolled_back_is_flagge
 def test_a_scope_finishing_while_a_child_is_still_open_is_flagged() -> None:
     """The batch closes before the call it holds does, which no runtime can do."""
     root = _write_root()
-    root["events"][4], root["events"][5] = root["events"][5], root["events"][4]
-    root["events"][4]["sequence"] = 5
-    root["events"][5]["sequence"] = 6
+    root["events"][6], root["events"][7] = root["events"][7], root["events"][6]
+    root["events"][6]["sequence"] = 7
+    root["events"][7]["sequence"] = 8
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("it contains are still open" in problem for problem in problems)
 
@@ -616,13 +635,12 @@ def test_a_scope_finishing_while_a_child_is_still_open_is_flagged() -> None:
 def test_a_read_dependency_batch_still_open_when_its_read_starts_is_flagged() -> None:
     """Opening first is not the claim: the read WAITS on the flush it forced."""
     root = _write_root()
-    root["events"][2]["writeBatchStarted"] = {"trigger": "read-dependency"}
-    root["events"].insert(
-        5, _event(6, 5, 2, readStarted={"target": "Account", "interface": "typed"})
-    )
-    root["events"].insert(6, _event(7, 5, 2, readFinished={"outcome": "completed"}))
-    for position, event in enumerate(root["events"]):
-        event["sequence"] = position + 1
+    root["events"][4]["writeBatchStarted"] = {"trigger": "read-dependency"}
+    root["events"][7:7] = [
+        _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
+        _event(0, 6, 2, readFinished={"outcome": "completed"}),
+    ]
+    _renumbered(root, released=7)
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("had not finished when" in problem for problem in problems)
 
@@ -632,9 +650,9 @@ def test_a_read_dependency_batch_still_open_when_its_read_starts_is_flagged() ->
 
 def test_a_cause_naming_something_other_than_a_direct_child_is_flagged() -> None:
     root = _write_root(
-        outcome="rolledBack", phase="pre-commit", retryEligible=False, attribution="caused", cause=4
+        outcome="rolledBack", phase="pre-commit", retryEligible=False, attribution="caused", cause=5
     )
-    root["events"][7]["transactionInvocationFinished"] = {
+    root["events"][11]["transactionInvocationFinished"] = {
         "outcome": "failed",
         "attribution": "caused",
         "cause": 2,
@@ -683,33 +701,157 @@ def test_a_cause_naming_a_child_that_had_not_finished_is_flagged() -> None:
 
 def test_a_pre_commit_batch_followed_by_more_attempt_work_is_flagged() -> None:
     root = _write_root()
-    root["events"].insert(
-        6, _event(7, 5, 2, readStarted={"target": "Account", "interface": "typed"})
-    )
-    root["events"].insert(7, _event(8, 5, 2, readFinished={"outcome": "completed"}))
-    root["events"][8]["sequence"] = 9
-    root["events"][9]["sequence"] = 10
+    root["events"][8:8] = [
+        _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
+        _event(0, 6, 2, readFinished={"outcome": "completed"}),
+    ]
+    _renumbered(root, released=7)
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("boundary owns the FINAL batch" in problem for problem in problems)
 
 
 def test_a_read_dependency_batch_with_no_read_after_it_is_flagged() -> None:
     root = _write_root()
-    root["events"][2]["writeBatchStarted"] = {"trigger": "read-dependency"}
+    root["events"][4]["writeBatchStarted"] = {"trigger": "read-dependency"}
     problems = validate_execution(_case(_lifecycle(root)))
     assert any("in front of the read it enabled" in problem for problem in problems)
 
 
 def test_a_read_dependency_batch_standing_before_its_read_is_accepted() -> None:
     root = _write_root()
-    root["events"][2]["writeBatchStarted"] = {"trigger": "read-dependency"}
-    root["events"].insert(
-        6, _event(7, 5, 2, readStarted={"target": "Account", "interface": "typed"})
-    )
-    root["events"].insert(7, _event(8, 5, 2, readFinished={"outcome": "completed"}))
-    root["events"][8]["sequence"] = 9
-    root["events"][9]["sequence"] = 10
+    root["events"][4]["writeBatchStarted"] = {"trigger": "read-dependency"}
+    root["events"][8:8] = [
+        _event(0, 6, 2, readStarted={"target": "Account", "interface": "typed"}),
+        _event(0, 6, 2, readFinished={"outcome": "completed"}),
+    ]
+    _renumbered(root, released=7)
     assert validate_execution(_case(_lifecycle(root))) == []
+
+
+# --- the two ends of the connection an operation holds ------------------------
+
+_OUTER_POLICY: dict[str, Any] = {
+    "invocation": "outer",
+    "concurrency": "locking",
+    "retries": 10,
+    "retryOptimisticConflicts": False,
+}
+
+
+def _refused_root(**attempt_finish: Any) -> dict[str, Any]:
+    """One attempt whose Acquisition granted it no connection."""
+    finish = attempt_finish or {"outcome": "beginFailed", "attribution": "caused", "cause": 3}
+    return _root(
+        "transaction-invocation",
+        [
+            _event(1, 1, None, transactionInvocationStarted=_OUTER_POLICY),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
+            _event(3, 3, 2, acquisitionStarted={}),
+            _event(
+                4,
+                3,
+                2,
+                acquisitionFinished={
+                    "outcome": "failed",
+                    "reason": "timeout",
+                    "attribution": "direct",
+                },
+            ),
+            _event(5, 2, 1, transactionAttemptFinished=finish),
+            _event(
+                6,
+                1,
+                None,
+                transactionInvocationFinished={
+                    "outcome": "failed",
+                    "attribution": "caused",
+                    "cause": 2,
+                },
+            ),
+        ],
+    )
+
+
+def test_an_attempt_refused_a_connection_finishes_begin_failed_caused_by_it() -> None:
+    """The positive control for every refusal below: an Acquisition that granted
+    nothing, no Release, and the attempt naming it."""
+    assert validate_execution(_retry_case(_refused_root())) == []
+
+
+def test_a_participating_read_taking_a_connection_of_its_own_is_flagged() -> None:
+    """Work that INHERITS a connection emits neither end of one.
+
+    A Read under an attempt runs on the attempt's connection, so an Acquisition
+    beneath it describes a second borrower of the transaction it is inside.
+    """
+    root = _root(
+        "transaction-invocation",
+        [
+            _event(1, 1, None, transactionInvocationStarted=_OUTER_POLICY),
+            _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
+            _event(3, 3, 2, acquisitionStarted={}),
+            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(5, 4, 2, readStarted={"target": "Account", "interface": "typed"}),
+            _event(6, 5, 4, acquisitionStarted={}),
+            _event(7, 5, 4, acquisitionFinished={"outcome": "acquired"}),
+            _event(8, 4, 2, readFinished={"outcome": "completed"}),
+            _event(9, 6, 2, releaseStarted={}),
+            _event(10, 6, 2, releaseFinished={"cleanup": "returned"}),
+            _event(11, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
+            _event(12, 1, None, transactionInvocationFinished={"outcome": "committed"}),
+        ],
+    )
+    problems = validate_execution(_retry_case(root))
+    assert any("which is participating work" in problem for problem in problems)
+
+
+def test_an_acquired_connection_the_record_never_releases_is_flagged() -> None:
+    """A hold this record shows beginning is one it shows ending."""
+    root = _write_root()
+    del root["events"][8:10]
+    for position, event in enumerate(root["events"]):
+        event["sequence"] = position + 1
+    problems = validate_execution(_case(_lifecycle(root)))
+    assert any("never released it" in problem for problem in problems)
+
+
+def test_work_under_an_owner_granted_no_connection_is_flagged() -> None:
+    """A batch runs on the connection its attempt holds, so an attempt that ran
+    one was granted one."""
+    root = _write_root()
+    root["events"][3]["acquisitionFinished"] = {
+        "outcome": "failed",
+        "reason": "timeout",
+        "attribution": "direct",
+    }
+    problems = validate_execution(_case(_lifecycle(root)))
+    assert any("so an owner that ran any opened one first" in problem for problem in problems)
+
+
+def test_an_owner_that_succeeded_after_a_refused_acquisition_is_flagged() -> None:
+    """An operation refused a connection never ran, so it cannot have
+    committed."""
+    problems = validate_execution(_retry_case(_refused_root(outcome="committed")))
+    assert any("never ran, so its owner fails" in problem for problem in problems)
+
+
+def test_an_owner_failing_of_its_own_accord_after_a_refusal_is_flagged() -> None:
+    """The owner HOLDS the Acquisition's failure, so its own failure names it."""
+    problems = validate_execution(
+        _retry_case(_refused_root(outcome="beginFailed", attribution="direct"))
+    )
+    assert any("under the ordinary Holding rule" in problem for problem in problems)
+
+
+def test_a_begin_failure_caused_by_an_acquisition_that_granted_is_flagged() -> None:
+    """A boundary that refused to open on a connection the attempt DID acquire
+    has no child holding that failure, so it is `direct`."""
+    root = _refused_root()
+    root["events"][3]["acquisitionFinished"] = {"outcome": "acquired"}
+    problems = validate_execution(_retry_case(root))
+    assert any(
+        "a begin failure is caused only by an Acquisition" in problem for problem in problems
+    )
 
 
 # --- indexes that name something ---------------------------------------------
@@ -717,7 +859,7 @@ def test_a_read_dependency_batch_standing_before_its_read_is_accepted() -> None:
 
 def test_a_call_naming_an_unauthored_golden_statement_is_flagged() -> None:
     root = _write_root()
-    root["events"][3]["databaseCallStarted"]["statement"] = 999
+    root["events"][5]["databaseCallStarted"]["statement"] = 999
     assert validate_execution(_case(_lifecycle(root)))
 
 
@@ -729,7 +871,7 @@ def test_a_call_index_on_a_lane_authoring_no_golden_is_flagged() -> None:
 
 def test_a_golden_bearing_call_omitting_its_statement_is_flagged() -> None:
     root = _write_root()
-    del root["events"][3]["databaseCallStarted"]["statement"]
+    del root["events"][5]["databaseCallStarted"]["statement"]
     assert validate_execution(_case(_lifecycle(root)))
 
 
@@ -757,21 +899,25 @@ def _read_then_write_root(read_statement: int | None = None) -> dict[str, Any]:
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, readStarted={"target": "Account", "interface": "wire"}),
-            _event(4, 4, 3, databaseCallStarted=started),
-            _event(5, 4, 3, databaseCallFinished={"outcome": "readCompleted", "returnedRows": 1}),
-            _event(6, 3, 2, readFinished={"outcome": "completed"}),
-            _event(7, 5, 2, writeBatchStarted={"trigger": "pre-commit"}),
+            _event(3, 3, 2, acquisitionStarted={}),
+            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(5, 4, 2, readStarted={"target": "Account", "interface": "wire"}),
+            _event(6, 5, 4, databaseCallStarted=started),
+            _event(7, 5, 4, databaseCallFinished={"outcome": "readCompleted", "returnedRows": 1}),
+            _event(8, 4, 2, readFinished={"outcome": "completed"}),
+            _event(9, 6, 2, writeBatchStarted={"trigger": "pre-commit"}),
             _event(
-                8,
+                10,
+                7,
                 6,
-                5,
                 databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
             ),
-            _event(9, 6, 5, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
-            _event(10, 5, 2, writeBatchFinished={"outcome": "completed"}),
-            _event(11, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
-            _event(12, 1, None, transactionInvocationFinished={"outcome": "committed"}),
+            _event(11, 7, 6, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            _event(12, 6, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(13, 8, 2, releaseStarted={}),
+            _event(14, 8, 2, releaseFinished={"cleanup": "returned"}),
+            _event(15, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
+            _event(16, 1, None, transactionInvocationFinished={"outcome": "committed"}),
         ],
     )
 
@@ -797,7 +943,7 @@ def test_a_resolving_read_taking_the_index_its_write_owes_is_flagged() -> None:
     and still describes the wrong call running the authored statement.
     """
     root = _read_then_write_root(read_statement=0)
-    del root["events"][7]["databaseCallStarted"]["statement"]
+    del root["events"][9]["databaseCallStarted"]["statement"]
     case = _case(_lifecycle(root))
     case["then"]["roundTrips"] = 2
     problems = validate_execution(case)
@@ -819,12 +965,11 @@ def test_a_read_owning_a_dml_index_with_no_write_call_at_all_is_flagged() -> Non
     apart.
     """
     root = _read_then_write_root(read_statement=0)
-    del root["events"][6:10]
-    for position, event in enumerate(root["events"][6:], start=7):
-        event["sequence"] = position
+    del root["events"][8:12]
+    _renumbered(root, released=6)
     problems = validate_execution(_case(_lifecycle(root)))
     assert problems == [
-        "roots[0].events[3] is a read call naming statement 0, which the case authors as DML; a "
+        "roots[0].events[5] is a read call naming statement 0, which the case authors as DML; a "
         "call names the statement IT ran, so an index belongs to a call of the kind its own "
         "statement is"
     ]
@@ -867,28 +1012,32 @@ def _two_write_root(second_statement: int) -> dict[str, Any]:
                 },
             ),
             _event(2, 2, 1, transactionAttemptStarted={"edition": "account"}),
-            _event(3, 3, 2, writeBatchStarted={"trigger": "pre-commit"}),
-            _event(
-                4,
-                4,
-                3,
-                databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
-            ),
-            _event(5, 4, 3, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            _event(3, 3, 2, acquisitionStarted={}),
+            _event(4, 3, 2, acquisitionFinished={"outcome": "acquired"}),
+            _event(5, 4, 2, writeBatchStarted={"trigger": "pre-commit"}),
             _event(
                 6,
                 5,
-                3,
+                4,
+                databaseCallStarted={"target": "Account", "kind": "write", "statement": 0},
+            ),
+            _event(7, 5, 4, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            _event(
+                8,
+                6,
+                4,
                 databaseCallStarted={
                     "target": "Account",
                     "kind": "write",
                     "statement": second_statement,
                 },
             ),
-            _event(7, 5, 3, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
-            _event(8, 3, 2, writeBatchFinished={"outcome": "completed"}),
-            _event(9, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
-            _event(10, 1, None, transactionInvocationFinished={"outcome": "committed"}),
+            _event(9, 6, 4, databaseCallFinished={"outcome": "writeCompleted", "affectedRows": 1}),
+            _event(10, 4, 2, writeBatchFinished={"outcome": "completed"}),
+            _event(11, 7, 2, releaseStarted={}),
+            _event(12, 7, 2, releaseFinished={"cleanup": "returned"}),
+            _event(13, 2, 1, transactionAttemptFinished={"outcome": "committed"}),
+            _event(14, 1, None, transactionInvocationFinished={"outcome": "committed"}),
         ],
     )
 
@@ -1160,7 +1309,7 @@ def test_the_envelope_observation_is_walked_against_its_own_emissions() -> None:
 
 def test_an_observed_call_omitting_its_statement_beside_emissions_is_flagged() -> None:
     root = _write_root()
-    del root["events"][3]["databaseCallStarted"]["statement"]
+    del root["events"][5]["databaseCallStarted"]["statement"]
     assert validate_execution_observation(_run_envelope(_lifecycle(root)))
 
 

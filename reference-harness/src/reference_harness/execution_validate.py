@@ -103,6 +103,10 @@ _OWNS_CONNECTION: tuple[str, ...] = (
     "snapshotStreamStarted",
 )
 
+_RESOURCE_KINDS: tuple[str, ...] = ("acquisitionStarted", "releaseStarted")
+
+_OWNER_FAILED: frozenset[str] = frozenset({"failed", "beginFailed"})
+
 _CONTAINED_BY: dict[str, tuple[str, ...]] = {
     "readStarted": ("transactionAttemptStarted",),
     "writeBatchStarted": ("transactionAttemptStarted",),
@@ -387,6 +391,28 @@ def _check_containment(
             f"{where} opens {kind} under activity {parent}, which started as {holder.kind}; "
             f"{kind} is contained by {' or '.join(allowed)}"
         )
+        return
+    if kind in _RESOURCE_KINDS and holder is not None and not _owns_connection(holder):
+        problems.append(
+            f"{where} opens {kind} under activity {parent}, which is participating work; a "
+            f"connection is held by a STANDALONE Read, a Transaction Attempt, or a STANDALONE "
+            f"Snapshot Stream, and work that inherits one emits neither an Acquisition nor a "
+            f"Release"
+        )
+
+
+def _owns_connection(activity: _Activity) -> bool:
+    """Whether ``activity`` holds a connection of its own rather than inheriting one.
+
+    Three activities do, and two of them are distinguished from their
+    participating namesakes by being their root's outermost activity: a
+    standalone Read and a standalone Snapshot Stream own what they take, while a
+    Read or a stream running under an attempt is one more thing running on the
+    attempt's connection.
+    """
+    if activity.started == "transactionAttemptStarted":
+        return True
+    return activity.started in ("readStarted", "snapshotStreamStarted") and activity.parent is None
 
 
 def _check_root_activity(
@@ -560,18 +586,25 @@ def _check_pre_commit(
 def _check_resources(activities: dict[int, _Activity], problems: list[str]) -> None:
     """The Acquisition and Release an activity that owns a connection may open.
 
-    Four claims, and each of them is a claim the correlation rules cannot make.
-    An owner opens AT MOST ONE of each, because one operation holds one
-    connection rather than a series of them. The Acquisition is its owner's
-    FIRST child and the Release its LAST, which is what "held for the
-    operation's own lifetime" means read off a stream. A Release exists only
-    where the Acquisition GRANTED something, so a record showing a hold ending
-    that never began is refused. And neither opens a child: they are siblings of
-    the execution work rather than a lease around it, so a Database Call under
-    one would describe a statement running inside a checkout.
+    Each claim here is one the correlation rules cannot make. An owner opens AT
+    MOST ONE of each, because one operation holds one connection rather than a
+    series of them. The Acquisition is its owner's FIRST child and the Release
+    its LAST, which is what "held for the operation's own lifetime" means read
+    off a stream. And neither opens a child: they are siblings of the execution
+    work rather than a lease around it, so a Database Call under one would
+    describe a statement running inside a checkout.
+
+    The rest is the relation between the two ends and the operation between
+    them, read in BOTH directions rather than one. A Release exists exactly
+    where the Acquisition granted something and the owner finished, so neither a
+    hold that ends without beginning nor one that begins without ending
+    validates. Work runs on a connection, so an owner with any child besides its
+    own two ends took one. And an acquisition that granted nothing is the
+    owner's own failure, named as its cause — so a record cannot show an
+    operation succeeding, or running statements, on a connection it never got.
     """
     for owner in activities.values():
-        if owner.started not in _OWNS_CONNECTION:
+        if not _owns_connection(owner):
             continue
         children = [activities[child] for child in owner.children]
         acquisitions = [child for child in children if child.started == "acquisitionStarted"]
@@ -598,8 +631,17 @@ def _check_resources(activities: dict[int, _Activity], problems: list[str]) -> N
                 f"{owner.activity} opens a Release without an Acquisition that granted a "
                 f"connection, and an acquisition that granted none has nothing to release"
             )
+        if _granted(acquisitions) and not releases:
+            problems.append(
+                f"activity {owner.activity} acquired a connection and never released it; an "
+                f"operation holds one for its OWN lifetime, so a hold this record shows "
+                f"beginning is one it shows ending"
+            )
+        _check_work_acquired(owner, children, acquisitions, problems)
+        _check_refusal(owner, acquisitions, problems)
+        _check_begin_attribution(owner, acquisitions, problems)
     for activity in activities.values():
-        if activity.started in ("acquisitionStarted", "releaseStarted") and activity.children:
+        if activity.started in _RESOURCE_KINDS and activity.children:
             problems.append(
                 f"{activity.label} opens activity {activity.children[0]} under "
                 f"{activity.started}; an Acquisition and a Release are siblings of the work "
@@ -611,6 +653,92 @@ def _granted(acquisitions: list[_Activity]) -> bool:
     return any(
         acquisition.finished_payload.get("outcome") == "acquired" for acquisition in acquisitions
     )
+
+
+def _refused(acquisitions: list[_Activity]) -> _Activity | None:
+    """The Acquisition this owner opened that granted no connection, if it did."""
+    for acquisition in acquisitions:
+        if acquisition.finished_payload.get("outcome") == "failed":
+            return acquisition
+    return None
+
+
+def _check_work_acquired(
+    owner: _Activity,
+    children: list[_Activity],
+    acquisitions: list[_Activity],
+    problems: list[str],
+) -> None:
+    """An owner that did anything did it on a connection it was granted.
+
+    The Acquisition and the Release are the ends of the hold rather than work
+    inside it, so any OTHER child is a statement, a flush, a page, or a nested
+    boundary — and every one of those runs on the connection this activity took.
+    An owner that opened one without an Acquisition that granted describes work
+    on nothing, which is the shape a record with the pair omitted would take.
+    """
+    work = [child for child in children if child.started not in _RESOURCE_KINDS]
+    if not work or _granted(acquisitions):
+        return
+    problems.append(
+        f"{work[0].label} opens activity {work[0].activity} under activity {owner.activity}, "
+        f"which was granted no connection; work reaches the database through the connection "
+        f"its owner holds, so an owner that ran any opened one first"
+    )
+
+
+def _check_refusal(owner: _Activity, acquisitions: list[_Activity], problems: list[str]) -> None:
+    """An acquisition that granted nothing is the failure of the owner above it.
+
+    The owner holds that failure under the ordinary Holding rule, so it finishes
+    failed and names the Acquisition as its cause. A record showing an owner
+    that succeeded, or that failed of its own accord, after being refused a
+    connection describes an operation that ran without one.
+    """
+    refused = _refused(acquisitions)
+    if refused is None:
+        return
+    payload = owner.finished_payload
+    outcome = payload.get("outcome")
+    if outcome not in _OWNER_FAILED:
+        problems.append(
+            f"activity {owner.activity} finishes {outcome!r} after activity {refused.activity} "
+            f"granted it no connection; an operation refused a connection never ran, so its "
+            f"owner fails"
+        )
+        return
+    if payload.get("attribution") != "caused" or payload.get("cause") != refused.activity:
+        problems.append(
+            f"activity {owner.activity} fails without naming activity {refused.activity}, the "
+            f"Acquisition that granted it no connection; the owner holds that failure under "
+            f"the ordinary Holding rule, so its own failure is caused by it"
+        )
+
+
+def _check_begin_attribution(
+    owner: _Activity, acquisitions: list[_Activity], problems: list[str]
+) -> None:
+    """A `beginFailed` attempt is `caused` exactly by a refused Acquisition.
+
+    An attempt whose boundary refused to open on a connection it DID acquire has
+    no child holding that failure, so it is `direct`. `caused` therefore names
+    the one child a begin failure can have — the Acquisition that granted
+    nothing — and naming any other child claims an attribution no begin failure
+    can reach.
+    """
+    payload = owner.finished_payload
+    if owner.started != "transactionAttemptStarted" or payload.get("outcome") != "beginFailed":
+        return
+    if payload.get("attribution") != "caused":
+        return
+    refused = _refused(acquisitions)
+    if refused is None or payload.get("cause") != refused.activity:
+        problems.append(
+            f"activity {owner.activity} finishes `beginFailed` caused by activity "
+            f"{payload.get('cause')}; a begin failure is caused only by an Acquisition of its "
+            f"own that granted no connection, and every other one is the attempt's own direct "
+            f"refusal"
+        )
 
 
 def _check_resource_count(

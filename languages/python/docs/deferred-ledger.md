@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-94**.
+Entry numbering is continuous and never reused. The next new number is **D-95**.
 
 ## Entries
 
@@ -888,6 +888,31 @@ hint comes from is incomplete.
 
 **When.** With the next decision record that touches the write surface, or as a
 note on 0057 when one is authored.
+
+### D-94 — The execution lifecycle overhead baseline publishes no current reading
+
+*Low — a report-only document states its method and its conditions but no
+measurement.* Relates to
+`languages/python/docs/execution-lifecycle-baseline.md`,
+`docs/adr/0060-execution-observability-is-transient-and-provider-driven.md`,
+`just python-report-lifecycle-overhead`. Owner: this target.
+
+**What.** Every operation now brackets the connection it holds, so the workload
+the recorded table describes delivers 28 events where it delivered 20. The table
+is kept for its method and its stated conditions and is explicitly marked as no
+current measurement, which leaves ADR 0060's "reproducible baseline" standing on
+a reading taken against a workload that no longer exists.
+
+**Why it is deferred rather than fixed.** Three consecutive runs on the machine
+available disagreed by 40% at p50 on the unobserved arm, against a method whose
+own rule is a few percent between runs of the same code. A table recorded there
+would publish that machine rather than this change, and republishing a number
+under conditions the method rejects is worse than publishing none. Nothing was
+waived: the recipe is a `report`, gates nothing, and belongs to no aggregate.
+
+**When.** One run of `just python-report-lifecycle-overhead` on a quiet machine,
+re-recording the conditions table and the five configurations with it. Closing
+this means replacing the withdrawal section rather than adding to it.
 
 ## Forwarding pointers
 
