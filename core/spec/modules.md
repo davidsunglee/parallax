@@ -428,17 +428,18 @@ construction it may reference any behavioral module it harnesses.
   when a write distinguishes authored assignments from the source state they
   carry forward. The direction stays one-way: `m-edit` names neither lifecycle,
   transactions, reads, nor persistence.
-- **`m-unit-work --> m-document-codec`.** A prepared keyed row's documents carry
-  the canonical form the codec's shape rules give them, and whether an assigned
-  member restores the value a read observed is the codec's one effective-change
-  classification, so both rules have one owner rather than a restatement in the
-  module that prepares and eliminates writes. The edge reaches those two
-  managed-document operations: unit work hands the classification the members a
-  write assigns and the originals observed under those names, and consumes the
-  answer, but encodes nothing through the codec and decodes nothing through it,
-  since a prepared write's leaves are already managed values. The direction
-  stays one-way — `m-document-codec` names no write, instruction, or transaction
-  construct.
+- **`m-unit-work --> m-document-codec`.** A write asks the codec for every rule
+  about the form of the documents it moves, so each has one owner rather than a
+  restatement in the module that prepares and eliminates writes: a prepared
+  keyed row's documents carry the canonical form the codec's shape rules give
+  them; an encoded occurrence assignment becomes the managed document a
+  comparison is stated over through the codec's declared-member reduction, which
+  decodes that assignment's leaves; and whether an assigned member restores the
+  value a read observed is the codec's one effective-change classification. What
+  unit work keeps is which members it hands each operation and what it does with
+  the answer, and nothing it holds is encoded back through the codec. The
+  direction stays one-way — `m-document-codec` names no write, instruction, or
+  transaction construct.
 - **`m-unit-work --> m-wire`.** Serialized keyed rows, assignments, and
   predicate-selected writes decode resolved scalar leaves once before they become
   buffered prepared-write products. Managed-object mutation remains developer
