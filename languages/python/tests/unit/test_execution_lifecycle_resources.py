@@ -24,7 +24,9 @@ from __future__ import annotations
 import datetime as dt
 import gc
 import logging
+from collections.abc import Iterator
 from decimal import Decimal
+from types import ModuleType
 from typing import Any, Final
 
 import pytest
@@ -581,13 +583,35 @@ class _RaisingOn:
             raise RuntimeError("the exporter died")
 
 
+def _reachable(start: object) -> Iterator[object]:
+    """Every VALUE reachable from ``start`` through the collector's own view.
+
+    Classes and modules are not followed: every instance refers to its own type,
+    and a type reaches its defining module's globals, so following one would make
+    the whole interpreter reachable from anything.
+    """
+    seen = {id(start)}
+    pending = [start]
+    while pending:
+        current = pending.pop()
+        yield current
+        for referent in gc.get_referents(current):
+            if isinstance(referent, (type, ModuleType)) or id(referent) in seen:
+                continue
+            seen.add(id(referent))
+            pending.append(referent)
+
+
 def test_a_root_that_quarantined_a_fanout_keeps_no_part_of_it_alive() -> None:
     # A quarantined root has no Handler AT ALL, which is a claim about
     # references, and a paused stream is where it bites: the root stays open for
     # as long as the consumer wants it. The nesting is what makes the claim
     # observable — an inner fan-out that went quiet by ANSWERING rather than by
     # raising is never dropped from its parent's children, so a root still
-    # pointing at the outer composite would hold that whole branch.
+    # pointing at the outer composite would hold that whole branch. What the open
+    # stream reaches is the whole of the claim, so the walk starts there rather
+    # than over the heap: the installed Provider is still reachable through it,
+    # and nothing the fan-out builds per root is.
     inner = _Provider(_RaisingOn(AcquisitionStarted))
     provider = FanoutLifecycleProvider([FanoutLifecycleProvider([inner])])
     adapter = ScriptedAdapter(*paged_reads([_order_row(index) for index in (1, 2, 3)], size=2))
@@ -596,13 +620,14 @@ def test_a_root_that_quarantined_a_fanout_keeps_no_part_of_it_alive() -> None:
         _db(adapter, provider, ORDERS_MODEL) as db,
         db.stream(_active_orders(), batch_size=2) as stream,
     ):
-        for root in stream:
-            del root
-            gc.collect()
-            alive = [
-                obj for obj in gc.get_objects() if type(obj).__module__ == fanout_module.__name__
-            ]
-            assert {type(obj) for obj in alive} == {FanoutLifecycleProvider}
+        for order in stream:
+            del order
+            held = {
+                type(value)
+                for value in _reachable(stream)
+                if type(value).__module__ == fanout_module.__name__
+            }
+            assert held == {FanoutLifecycleProvider}
             break
 
     assert len(inner.reported) == 1
