@@ -20,6 +20,7 @@ from parallax.core import (
     ONE_TO_MANY,
     ONE_TO_ONE,
     READ_ONLY,
+    AbstractRoot,
     Attr,
     Bitemporal,
     ConcreteSubtype,
@@ -28,6 +29,7 @@ from parallax.core import (
     EntityDefinitionError,
     QueryDefinitionError,
     Rel,
+    TablePerHierarchy,
     TxTemporal,
     asc,
     attr,
@@ -45,7 +47,8 @@ from parallax.core.entity import (
 )
 from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT, wire_names_of
+from parallax.core.entity._declaration import wire_names_of
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 from parallax.core.entity._errors import EditError
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -669,6 +672,32 @@ def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:
     assert wire_names_of(Episode).framework_owned_py == frozenset(
         {"valid_start", "valid_end", "tx_start", "tx_end"}
     )
+
+
+def test_wire_names_are_the_one_value_the_class_was_stamped_with() -> None:
+    assert wire_names_of(Order) is wire_names_of(Order)
+
+
+def test_a_subtypes_own_declaration_wins_the_names_it_shares_with_its_root() -> None:
+    class Instrument(
+        Entity,
+        table="instrument",
+        inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+    ):
+        id: Attr[int] = attr(primary_key=True)
+        root_ref: Attr[str] = attr(name="ref", column="REF")
+
+    class Bond(Instrument, inheritance=ConcreteSubtype(tag_value="bond")):
+        bond_ref: Attr[str] = attr(name="ref", column="REF")
+
+    root = wire_names_of(Instrument)
+    assert root.name_to_py["ref"] == "root_ref"
+    assert root.column_to_py["REF"] == "root_ref"
+
+    subtype = wire_names_of(Bond)
+    assert subtype.name_to_py["ref"] == "bond_ref"
+    assert subtype.column_to_py["REF"] == "bond_ref"
+    assert set(subtype.py_to_name) == {"id", "root_ref", "bond_ref"}
 
 
 @pytest.mark.skipif(

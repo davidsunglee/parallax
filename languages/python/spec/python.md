@@ -5256,11 +5256,10 @@ The enforcement unit is the **scope**, not a package's `__all__`: an importer
 granted `parallax.core.entity` reaches every module that scope owns, private
 ones included. Three Snapshot modules use that grant for six names the Entity
 frontend deliberately does not export — `parallax.snapshot._inspection` and
-`parallax.snapshot.handle._write_inputs` read declarations from
+`parallax.snapshot.handle._write_inputs` read what a class carries from
 `parallax.core.entity._declaration` (`declaration_of`, `is_entity_class`,
-`members_of`), `parallax.snapshot.handle._write_inputs` reads the merged
-member-name correspondences from `parallax.core.entity._entity`
-(`wire_names_of`), and `parallax.snapshot.handle._database` reads the accepted
+`members_of`, and the family-merged member-name correspondences
+`wire_names_of`), and `parallax.snapshot.handle._database` reads the accepted
 Metamodel and the class index from `parallax.core.entity._model` (`model_of`,
 `class_index`), the two facts it prepares a selection over.
 Each is a seam between two first-party packages that a developer

@@ -70,7 +70,11 @@ def test_each_frontend_builds_one_resolution_per_exact_class_after_warmup(
 ) -> None:
     entity_builds: list[type] = []
     value_object_builds: list[type] = []
-    original_wire_names_of = entity_frontend.wire_names_of
+    # The Entity frontend imports its name merge rather than defining it, and
+    # what `_resolution_of` calls is this module's own binding of it.
+    original_wire_names_of = cast(
+        "Callable[[type], object]", vars(entity_frontend)["wire_names_of"]
+    )
     original_shape_of = value_object_frontend.shape_of
 
     def counted_wire_names_of(cls: type) -> object:

@@ -54,13 +54,10 @@ from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
     FRAMEWORK_NAME_PREFIX,
     LIFECYCLE_STATE_SLOT,
-)
-from parallax.core.entity._entity import (
-    CHANGE_RECORD_SLOT,
     WireNames,
-    lifecycle_state,
     wire_names_of,
 )
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT, lifecycle_state
 from parallax.core.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     CARRIED_LAYOUT_ATTRIBUTE,

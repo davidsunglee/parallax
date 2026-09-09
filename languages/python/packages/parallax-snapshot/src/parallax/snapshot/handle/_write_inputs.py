@@ -71,8 +71,7 @@ from typing import Final, Literal, Protocol
 from parallax.core import opt_lock
 from parallax.core.base import InstantError, normalize_instant
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._declaration import declaration_of
-from parallax.core.entity._entity import wire_names_of
+from parallax.core.entity._declaration import declaration_of, wire_names_of
 from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,

@@ -115,6 +115,7 @@ __all__ = [
     "MemberNames",
     "RelationshipAnnotation",
     "ValueObjectShape",
+    "WireNames",
     "build_class",
     "declaration_of",
     "inherited_axes",
@@ -123,6 +124,7 @@ __all__ = [
     "members_of",
     "shape_of",
     "snake_to_camel",
+    "wire_names_of",
 ]
 
 
@@ -178,6 +180,7 @@ _KIND: Final = "__parallax_kind__"
 _AXES: Final = "__parallax_framework_axes__"
 _DECLARATION: Final = "__parallax_declaration__"
 _MEMBERS: Final = "__parallax_members__"
+_WIRE_NAMES: Final = "__parallax_wire_names__"
 _SHAPE: Final = "__parallax_shape__"
 
 LIFECYCLE_STATE_SLOT: Final = "__parallax_lifecycle__"
@@ -461,6 +464,44 @@ class MemberNames:
 
 
 @dataclass(frozen=True, slots=True)
+class WireNames:
+    """One Entity Class's family-merged Python-name correspondences.
+
+    Built from the same declaration walk the model facts are built from, so the
+    two can never drift. A family member's maps include every Parallax ancestor's
+    declared members, merged base-first so a descendant's own declaration wins.
+    """
+
+    column_to_py: dict[str, str]
+    name_to_py: dict[str, str]
+    py_to_name: dict[str, str]
+    relationship_py: dict[str, str]
+    relationship_identities: dict[str, RelationshipIdentity]
+    """Each Python relationship name to the Identity its own declaration built,
+    so an inherited relationship keeps the declaring Entity a descendant reaches
+    it through cannot supply."""
+    members: dict[str, AttributeMetadata | ValueObjectMetadata]
+    """Each Python member name to the accepted Metadata that decides what may be
+    written to it. Which members are assignable is not recorded here as a name
+    set: that is :func:`~parallax.core.metamodel.judge_assignment`'s verdict, and
+    a second spelling of it here is exactly the drift the single judgement
+    exists to prevent."""
+    pk_py: frozenset[str]
+    vo_classes: dict[str, type]
+
+    @property
+    def framework_owned_py(self) -> frozenset[str]:
+        """The members whose values the framework supplies and the caller never
+        authors, read off :attr:`members` rather than recorded beside it — one
+        designation, projected where a Python-name question needs it."""
+        return frozenset(
+            py_name
+            for py_name, member in self.members.items()
+            if isinstance(member, AttributeMetadata) and member.framework_owned
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ValueObjectShape:
     """One Value Object Class's reusable shape and its member correspondences.
 
@@ -491,6 +532,17 @@ def members_of(cls: type) -> MemberNames:
     """``cls``'s own declared member correspondences (never an ancestor's)."""
     names = cls.__dict__.get(_MEMBERS)
     if not isinstance(names, MemberNames):
+        raise EntityDefinitionError(
+            code="entity-base-invalid",
+            message=f"{cls.__name__} is not a Parallax Entity Class",
+        )
+    return names
+
+
+def wire_names_of(cls: type) -> WireNames:
+    """``cls``'s family-merged member correspondences, stamped at class creation."""
+    names = cls.__dict__.get(_WIRE_NAMES)
+    if not isinstance(names, WireNames):
         raise EntityDefinitionError(
             code="entity-base-invalid",
             message=f"{cls.__name__} is not a Parallax Entity Class",
@@ -1264,13 +1316,14 @@ def _build_entity(
         vo_classes=vo_classes,
     )
     cls = _pydantic_class(mcs, cls_name, bases, ns)
-    family = _family_publication_facts(cls)
+    family, wire = _family_facts(cls)
     plan = install_publication_plan(
         cls,
         members=family.members,
         occurrences=family.occurrences,
         relationships=family.relationships,
     )
+    setattr(cls, _WIRE_NAMES, wire)
     # Every reference this class hands out is seeded with the Entity's EXACT
     # canonical spelling, so everything downstream that re-emits it — a
     # serialized query, a durable write document — carries an identity two
@@ -1318,8 +1371,12 @@ class _FamilyPublicationFacts:
     relationships: tuple[str, ...]
 
 
-def _family_publication_facts(cls: type) -> _FamilyPublicationFacts:
-    """``cls``'s family-effective members and relationships, root-first."""
+def _family_facts(cls: type) -> tuple[_FamilyPublicationFacts, WireNames]:
+    """``cls``'s family-effective published row and its merged correspondences.
+
+    One walk answers both, so the row's order and the maps a row is spelled
+    through are read off the same contributors in the same base-first order.
+    """
     chain = [
         ancestor
         for ancestor in cls.__mro__
@@ -1330,16 +1387,50 @@ def _family_publication_facts(cls: type) -> _FamilyPublicationFacts:
     occurrences: list[str] = []
     vo_classes: dict[str, type] = {}
     relationships: list[str] = []
+    column_to_py: dict[str, str] = {}
+    name_to_py: dict[str, str] = {}
+    py_to_name: dict[str, str] = {}
+    relationship_py: dict[str, str] = {}
+    relationship_identities: dict[str, RelationshipIdentity] = {}
+    members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
+    pk_py: set[str] = set()
     for ancestor in chain:
         names = cast("MemberNames", ancestor.__dict__[_MEMBERS])
         for py_name in names.py_to_name:
             (occurrences if py_name in names.vo_classes else attributes).append(py_name)
         vo_classes.update(names.vo_classes)
         relationships.extend(names.relationship_py.values())
-    return _FamilyPublicationFacts(
-        members=(*attributes, *occurrences),
-        occurrences=vo_classes,
-        relationships=tuple(relationships),
+        column_to_py.update(names.column_to_py)
+        name_to_py.update(names.name_to_py)
+        py_to_name.update(names.py_to_name)
+        relationship_py.update(names.relationship_py)
+        relationship_identities.update(
+            {
+                names.relationship_py[declaration.identity.name]: declaration.identity
+                for declaration in declaration_of(ancestor).relationships
+            }
+        )
+        members.update(names.members)
+        pk_py.update(names.pk_py)
+    # A family of one merged nothing, so the class keeps the maps its own body
+    # built instead of retaining equal copies of them for the process's life.
+    sole = cast("MemberNames", chain[0].__dict__[_MEMBERS]) if len(chain) == 1 else None
+    return (
+        _FamilyPublicationFacts(
+            members=(*attributes, *occurrences),
+            occurrences=vo_classes,
+            relationships=tuple(relationships),
+        ),
+        WireNames(
+            column_to_py=column_to_py if sole is None else sole.column_to_py,
+            name_to_py=name_to_py if sole is None else sole.name_to_py,
+            py_to_name=py_to_name if sole is None else sole.py_to_name,
+            relationship_py=relationship_py if sole is None else sole.relationship_py,
+            relationship_identities=relationship_identities,
+            members=members if sole is None else sole.members,
+            pk_py=frozenset(pk_py) if sole is None else sole.pk_py,
+            vo_classes=vo_classes if sole is None else sole.vo_classes,
+        ),
     )
 
 

@@ -46,14 +46,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, cast
 
-from parallax.core.entity._declaration import declaration_of, is_entity_class
-from parallax.core.entity._entity import (
-    CHANGE_RECORD_SLOT,
-    ChangeRecord,
-    Entity,
+from parallax.core.entity._declaration import (
     WireNames,
+    declaration_of,
+    is_entity_class,
     wire_names_of,
 )
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord, Entity
 from parallax.core.entity._errors import (
     ENTITY_ROW_MALFORMED_PROVENANCE,
     ENTITY_ROW_MEMBER_MISSING,
