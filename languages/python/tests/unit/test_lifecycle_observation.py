@@ -4,7 +4,7 @@
 projections of ONE delivery (`m-execution-lifecycle`), and this is where each is
 pinned against events built by hand rather than against events a run happened to
 produce: the corpus exercises the transitions its own six cases reach, and the
-algebra has fourteen. What the adapter must be able to spell is all of them, so
+algebra has eighteen. What the adapter must be able to spell is all of them, so
 a transition landing in the union without a portable spelling is a failure here
 rather than the day a case first reaches it.
 """
@@ -26,14 +26,19 @@ from parallax.conformance._lifecycle_observation import (
     execution_lifecycle_observation,
     lifecycle_run,
 )
+from parallax.core.db_port import CleanupIssue, Invalidated, Returned, Unrelinquished
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle import (
+    AcquisitionFailed,
+    AcquisitionFinished,
+    AcquisitionStarted,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
     AttemptRolledBack,
     CausedFailure,
+    ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallStarted,
@@ -51,6 +56,8 @@ from parallax.core.execution_lifecycle import (
     ReadFailed,
     ReadFinished,
     ReadStarted,
+    ReleaseFinished,
+    ReleaseStarted,
     RetryPolicy,
     RootExecution,
     SnapshotStreamFinished,
@@ -307,14 +314,26 @@ def test_an_attempt_states_its_phase_and_the_classifier_verdict() -> None:
     )
     finished = _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, commit_phase))
     assert finished["transactionAttemptFinished"]["phase"] == "commit"
-    # A boundary that never opened: no phase to locate and no verdict to
-    # report, and the attribution is direct because no child ever ran.
-    begin_failed = AttemptBeginFailed(_diagnostic("setup-refused"))
+    # A boundary that never opened on a connection the attempt DID acquire: no
+    # phase to locate and no verdict to report, and the attribution is direct
+    # because no child of this attempt reported the refusal.
+    begin_failed = AttemptBeginFailed(DirectFailure(_diagnostic("setup-refused")))
     assert _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, begin_failed)) == {
         "transactionAttemptFinished": {
             "outcome": "beginFailed",
             "attribution": "direct",
             "code": "setup-refused",
+        }
+    }
+    # And one whose own Acquisition granted nothing: the same terminal outcome,
+    # naming the child that reported it.
+    unacquired = AttemptBeginFailed(CausedFailure(_diagnostic("no-connection"), 3))
+    assert _transition(TransactionAttemptFinished(_EXECUTION, 2, 1, None, unacquired)) == {
+        "transactionAttemptFinished": {
+            "outcome": "beginFailed",
+            "attribution": "caused",
+            "cause": 3,
+            "code": "no-connection",
         }
     }
 
@@ -351,6 +370,112 @@ def test_a_stream_batch_names_no_page_of_its_own() -> None:
     assert _transition(StreamBatchFinished(_EXECUTION, 2, 1, None, failed)) == {
         "streamBatchFinished": {"outcome": "failed", "attribution": "caused", "cause": 9}
     }
+
+
+def test_an_acquisition_names_what_it_granted_or_why_it_granted_nothing() -> None:
+    assert _transition(AcquisitionStarted(_EXECUTION, 1, 1, None)) == {"acquisitionStarted": {}}
+    granted = AcquisitionFinished(_EXECUTION, 2, 1, None, 11, ConnectionAcquired())
+    assert _transition(granted) == {"acquisitionFinished": {"outcome": "acquired"}}
+    # The monotonic duration is not portable and is absent, exactly as a
+    # Database Call's is.
+    refused = AcquisitionFinished(
+        _EXECUTION,
+        2,
+        1,
+        None,
+        12,
+        AcquisitionFailed("queue_rejected", DirectFailure(_diagnostic()), None),
+    )
+    assert _transition(refused) == {
+        "acquisitionFinished": {
+            "outcome": "failed",
+            "reason": "queue-rejected",
+            "attribution": "direct",
+        }
+    }
+
+
+def test_a_failed_acquisitions_reason_is_projected_member_by_member() -> None:
+    # The `m-db-port` vocabulary is a Python runtime one and the corpus token is
+    # core-authored, so the two are stated side by side rather than derived —
+    # a rename on either side has to be written down.
+    for member, token in (
+        ("timeout", "timeout"),
+        ("queue_rejected", "queue-rejected"),
+        ("closed", "closed"),
+        ("preparation_failed", "preparation-failed"),
+    ):
+        outcome = AcquisitionFailed(member, DirectFailure(_diagnostic()), None)  # pyright: ignore[reportArgumentType] - the loop parametrizes over the reasons the literal spells one at a time
+        finished = AcquisitionFinished(_EXECUTION, 1, 1, None, 1, outcome)
+        assert _transition(finished)["acquisitionFinished"]["reason"] == token
+
+
+def test_a_failed_acquisition_carries_the_partial_cleanup_it_ran() -> None:
+    # It rides on the acquisition rather than on a release, because no hold was
+    # granted for a release to end.
+    partial = Invalidated(
+        (CleanupIssue(phase="inspect", code="not-idle", diagnostic=_diagnostic()),)
+    )
+    outcome = AcquisitionFailed("preparation_failed", DirectFailure(_diagnostic()), partial)
+    finished = AcquisitionFinished(_EXECUTION, 1, 1, None, 1, outcome)
+    assert _transition(finished) == {
+        "acquisitionFinished": {
+            "outcome": "failed",
+            "reason": "preparation-failed",
+            "attribution": "direct",
+            "cleanup": "invalidated",
+            "issues": [{"phase": "inspect", "code": "not-idle"}],
+        }
+    }
+
+
+def test_a_release_states_what_letting_go_established() -> None:
+    assert _transition(ReleaseStarted(_EXECUTION, 1, 1, None)) == {"releaseStarted": {}}
+    for result, expected in (
+        (Returned(), {"cleanup": "returned"}),
+        (
+            Unrelinquished(
+                (CleanupIssue(phase="return", code="handoff-failed", diagnostic=_diagnostic()),)
+            ),
+            {
+                "cleanup": "unrelinquished",
+                "issues": [{"phase": "return", "code": "handoff-failed"}],
+            },
+        ),
+        (
+            Invalidated(
+                (CleanupIssue(phase="dispose", code="close-failed", diagnostic=_diagnostic()),)
+            ),
+            {"cleanup": "invalidated", "issues": [{"phase": "dispose", "code": "close-failed"}]},
+        ),
+    ):
+        finished = ReleaseFinished(_EXECUTION, 1, 1, None, 3, 4, result)
+        assert _transition(finished) == {"releaseFinished": expected}
+
+
+def test_a_release_that_established_nothing_states_nothing_rather_than_a_disposition() -> None:
+    # No conforming context reaches this: `cleanup_result` is absence before
+    # entry and during use, and a completed exit establishes one. The
+    # observation refuses to invent a disposition for it, and the envelope
+    # schema then refuses the record — which is the honest report of an adapter
+    # that broke its own contract.
+    finished = ReleaseFinished(_EXECUTION, 1, 1, None, 3, 4, None)
+    assert _transition(finished) == {"releaseFinished": {}}
+
+
+def test_every_cleanup_condition_is_projected_member_by_member() -> None:
+    for phase, code in (
+        ("inspect", "state-unreadable"),
+        ("inspect", "not-idle"),
+        ("inspect", "suspect"),
+        ("dispose", "close-failed"),
+        ("return", "handoff-failed"),
+    ):
+        result = Unrelinquished((CleanupIssue(phase=phase, code=code, diagnostic=_diagnostic()),))  # pyright: ignore[reportArgumentType] - the loop parametrizes over the members each literal spells one at a time
+        finished = ReleaseFinished(_EXECUTION, 1, 1, None, 3, 4, result)
+        assert _transition(finished)["releaseFinished"]["issues"] == [
+            {"phase": phase, "code": code}
+        ]
 
 
 # --- the statement index reconciles two independently built orders -------------

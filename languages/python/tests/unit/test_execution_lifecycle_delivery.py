@@ -245,7 +245,10 @@ def test_a_handler_error_carries_no_event_statement_or_bind() -> None:
     # The bind is supplied by this query alone and spelled so that nothing else
     # in a report — a file path, a class name, a timestamp — can contain it.
     bind = "no-bind-survives-a-handler-error"
-    handler = _FailingHandler(fail_at=2, failure=RuntimeError("boom"))
+    # The fourth event is the Database Call's Started: the read takes its
+    # connection first, and the two transitions that reports come before any
+    # statement.
+    handler = _FailingHandler(fail_at=4, failure=RuntimeError("boom"))
     provider = _Provider(handler)
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, provider).find(mm.Account.where(mm.Account.owner == bind)).result()
@@ -419,7 +422,7 @@ def test_the_recorder_groups_its_roots_and_keeps_what_it_is_told() -> None:
 
     first, second = recorder.roots
     assert first.execution.id != second.execution.id
-    assert [event.sequence for event in first.events] == [1, 2, 3, 4]
+    assert [event.sequence for event in first.events] == [1, 2, 3, 4, 5, 6, 7, 8]
     assert recorder.handler_errors == ()
 
     reported = ExecutionLifecycleHandlerError(

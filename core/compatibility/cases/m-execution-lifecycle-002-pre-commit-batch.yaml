@@ -10,10 +10,17 @@
 # early by a dependent read and the batch carries `read-dependency` instead.
 #
 # Two statements inside one batch is the point: a batch is a FLUSH, not a
-# statement, so activity 3 opens once and holds two Database Calls (activities 4
-# and 5) rather than appearing twice. Both name activity 3 as their `parent`,
+# statement, so activity 4 opens once and holds two Database Calls (activities 5
+# and 6) rather than appearing twice. Both name activity 4 as their `parent`,
 # and both finish before it does — a batch spans planning, lowering, every call
 # it issues, and affected-row enforcement, so nothing it caused outlives it.
+#
+# One connection serves the whole attempt. The attempt acquires (activity 3)
+# before its boundary is asked to begin and releases (activity 7) after the
+# batch has finished and before the attempt does, and the two writes run on that
+# one connection without either of them acquiring anything: a Write Batch and
+# its calls INHERIT the attempt's connection, so no resource activity appears
+# beneath them.
 #
 # The steps must share one unit of work for that to be observable at all: an
 # ordered write SEQUENCE is a sequence of independent units of work, and two
@@ -83,38 +90,54 @@ then:
           - sequence: 3
             activity: 3
             parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            acquisitionStarted: {}
           - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
             activity: 4
-            parent: 3
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 6
+            activity: 5
+            parent: 4
             databaseCallStarted:
               target: parallax.compatibility.Order
               kind: write
               statement: 0
-          - sequence: 5
-            activity: 4
-            parent: 3
-            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
-          - sequence: 6
+          - sequence: 7
             activity: 5
-            parent: 3
+            parent: 4
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 8
+            activity: 6
+            parent: 4
             databaseCallStarted:
               target: parallax.compatibility.OrderItem
               kind: write
               statement: 1
-          - sequence: 7
-            activity: 5
-            parent: 3
+          - sequence: 9
+            activity: 6
+            parent: 4
             databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
-          - sequence: 8
-            activity: 3
+          - sequence: 10
+            activity: 4
             parent: 2
             writeBatchFinished: { outcome: completed }
-          - sequence: 9
+          - sequence: 11
+            activity: 7
+            parent: 2
+            releaseStarted: {}
+          - sequence: 12
+            activity: 7
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 13
             activity: 2
             parent: 1
             transactionAttemptFinished: { outcome: committed }
-          - sequence: 10
+          - sequence: 14
             activity: 1
             parent: null
             transactionInvocationFinished: { outcome: committed }

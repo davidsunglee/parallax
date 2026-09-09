@@ -161,18 +161,22 @@ def test_one_invocation_roots_its_attempt_its_batches_and_its_read() -> None:
     assert _tree(root.events) == [
         ("TransactionInvocationStarted", 1, None),
         ("TransactionAttemptStarted", 2, 1),
-        ("WriteBatchStarted", 3, 2),
-        ("DatabaseCallStarted", 4, 3),
-        ("DatabaseCallFinished", 4, 3),
-        ("WriteBatchFinished", 3, 2),
-        ("ReadStarted", 5, 2),
-        ("DatabaseCallStarted", 6, 5),
-        ("DatabaseCallFinished", 6, 5),
-        ("ReadFinished", 5, 2),
-        ("WriteBatchStarted", 7, 2),
-        ("DatabaseCallStarted", 8, 7),
-        ("DatabaseCallFinished", 8, 7),
-        ("WriteBatchFinished", 7, 2),
+        ("AcquisitionStarted", 3, 2),
+        ("AcquisitionFinished", 3, 2),
+        ("WriteBatchStarted", 4, 2),
+        ("DatabaseCallStarted", 5, 4),
+        ("DatabaseCallFinished", 5, 4),
+        ("WriteBatchFinished", 4, 2),
+        ("ReadStarted", 6, 2),
+        ("DatabaseCallStarted", 7, 6),
+        ("DatabaseCallFinished", 7, 6),
+        ("ReadFinished", 6, 2),
+        ("WriteBatchStarted", 8, 2),
+        ("DatabaseCallStarted", 9, 8),
+        ("DatabaseCallFinished", 9, 8),
+        ("WriteBatchFinished", 8, 2),
+        ("ReleaseStarted", 10, 2),
+        ("ReleaseFinished", 10, 2),
         ("TransactionAttemptFinished", 2, 1),
         ("TransactionInvocationFinished", 1, None),
     ]
@@ -277,10 +281,14 @@ def test_an_empty_buffer_opens_no_write_batch_at_all() -> None:
     assert _transitions(root.events) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "ReadStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "ReadFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
@@ -296,7 +304,7 @@ def test_a_row_form_read_is_a_child_of_the_attempt_under_the_rows_interface() ->
     _db(port, recorder).transact(lambda tx: tx.read_rows(query))
 
     root = _only(recorder)
-    read = root.events[2]
+    read = root.events[4]
     assert isinstance(read, ReadStarted)
     assert (read.parent_activity_id, read.interface) == (2, "rows")
 
@@ -314,16 +322,24 @@ def test_a_retried_invocation_holds_both_attempts_under_one_root() -> None:
     assert _transitions(root.events) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "WriteBatchStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "WriteBatchFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "WriteBatchStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "WriteBatchFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
@@ -357,7 +373,15 @@ def test_exhaustion_still_reports_the_classifier_truth_on_the_last_attempt() -> 
     # one invocation are ever open at the same time.
     assert _transitions(root.events) == [
         "TransactionInvocationStarted",
-        *["TransactionAttemptStarted", "TransactionAttemptFinished"] * 3,
+        *[
+            "TransactionAttemptStarted",
+            "AcquisitionStarted",
+            "AcquisitionFinished",
+            "ReleaseStarted",
+            "ReleaseFinished",
+            "TransactionAttemptFinished",
+        ]
+        * 3,
         "TransactionInvocationFinished",
     ]
     failed = _finished(root)
@@ -410,6 +434,10 @@ def test_a_begin_failure_finishes_the_attempt_that_adopted_and_fails_the_invocat
     assert _tree(root.events) == [
         ("TransactionInvocationStarted", 1, None),
         ("TransactionAttemptStarted", 2, 1),
+        ("AcquisitionStarted", 3, 2),
+        ("AcquisitionFinished", 3, 2),
+        ("ReleaseStarted", 4, 2),
+        ("ReleaseFinished", 4, 2),
         ("TransactionAttemptFinished", 2, 1),
         ("TransactionInvocationFinished", 1, None),
     ]
@@ -418,14 +446,19 @@ def test_a_begin_failure_finishes_the_attempt_that_adopted_and_fails_the_invocat
     assert started.edition == failed_under.edition
     (begin_failed,) = _attempt_outcomes(root)
     assert isinstance(begin_failed, AttemptBeginFailed)
-    assert begin_failed.diagnostic.qualified_type == "parallax.core.db_error.DatabaseError"
+    # The boundary refused on a connection this attempt DID acquire, so the
+    # attempt holds no child for that refusal and answers with its own direct
+    # failure — the Acquisition beside it granted a connection and reported
+    # nothing.
+    assert isinstance(begin_failed.failure, DirectFailure)
+    assert begin_failed.failure.diagnostic.qualified_type == "parallax.core.db_error.DatabaseError"
     failed = _finished(root)
     assert isinstance(failed, OuterInvocationFailed)
     # Caused by the attempt, under the ordinary chaining rule: the attempt
     # reported the boundary's refusal up under its own Activity ID, and the
     # diagnostic is that one object rendered once. A retriable CATEGORY does not
     # make a boundary that never opened retriable.
-    assert failed.failure == CausedFailure(begin_failed.diagnostic, 2)
+    assert failed.failure == CausedFailure(begin_failed.failure.diagnostic, 2)
     assert port.calls.count(BeginCall()) == 1
 
 
@@ -538,6 +571,10 @@ def test_a_control_flow_escape_still_finishes_every_activity_it_left() -> None:
     assert _transitions(root.events) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
@@ -564,19 +601,23 @@ def test_a_joined_call_is_a_child_of_the_attempt_and_opens_no_attempt() -> None:
     assert _tree(root.events) == [
         ("TransactionInvocationStarted", 1, None),
         ("TransactionAttemptStarted", 2, 1),
-        ("TransactionInvocationStarted", 3, 2),
-        ("TransactionInvocationFinished", 3, 2),
-        ("WriteBatchStarted", 4, 2),
-        ("DatabaseCallStarted", 5, 4),
-        ("DatabaseCallFinished", 5, 4),
-        ("WriteBatchFinished", 4, 2),
+        ("AcquisitionStarted", 3, 2),
+        ("AcquisitionFinished", 3, 2),
+        ("TransactionInvocationStarted", 4, 2),
+        ("TransactionInvocationFinished", 4, 2),
+        ("WriteBatchStarted", 5, 2),
+        ("DatabaseCallStarted", 6, 5),
+        ("DatabaseCallFinished", 6, 5),
+        ("WriteBatchFinished", 5, 2),
+        ("ReleaseStarted", 7, 2),
+        ("ReleaseFinished", 7, 2),
         ("TransactionAttemptFinished", 2, 1),
         ("TransactionInvocationFinished", 1, None),
     ]
-    joined_started = root.events[2]
+    joined_started = root.events[4]
     assert isinstance(joined_started, TransactionInvocationStarted)
     assert joined_started.invocation == JoinedInvocation()
-    joined_finished = root.events[3]
+    joined_finished = root.events[5]
     assert isinstance(joined_finished, TransactionInvocationFinished)
     assert joined_finished.outcome == JoinedInvocationReturned()
     assert port.calls.count(BeginCall()) == 1
@@ -596,7 +637,7 @@ def test_a_joined_callback_that_raises_is_reported_as_raising_and_nothing_more()
         db.transact(lambda _outer: db.transact(inner))
 
     root = _only(recorder)
-    joined = root.events[3]
+    joined = root.events[5]
     assert isinstance(joined, TransactionInvocationFinished)
     assert isinstance(joined.outcome, JoinedInvocationRaised)
     assert joined.outcome.failure.diagnostic.qualified_type == "builtins.ValueError"
@@ -642,7 +683,7 @@ def test_a_read_that_failed_is_what_its_attempt_names() -> None:
         )
 
     root = _only(recorder)
-    read_finished = root.events[5]
+    read_finished = root.events[7]
     assert isinstance(read_finished, ReadFinished)
     assert isinstance(read_finished.outcome, ReadFailed)
     (rolled_back,) = _attempt_outcomes(root)
@@ -705,22 +746,26 @@ def test_a_join_reporting_a_value_after_the_read_it_encloses_does_not_displace_i
     assert _tree(root.events) == [
         ("TransactionInvocationStarted", 1, None),
         ("TransactionAttemptStarted", 2, 1),
-        ("TransactionInvocationStarted", 3, 2),
-        ("ReadStarted", 4, 2),
-        ("DatabaseCallStarted", 5, 4),
-        ("DatabaseCallFinished", 5, 4),
-        ("ReadFinished", 4, 2),
-        ("TransactionInvocationFinished", 3, 2),
+        ("AcquisitionStarted", 3, 2),
+        ("AcquisitionFinished", 3, 2),
+        ("TransactionInvocationStarted", 4, 2),
+        ("ReadStarted", 5, 2),
+        ("DatabaseCallStarted", 6, 5),
+        ("DatabaseCallFinished", 6, 5),
+        ("ReadFinished", 5, 2),
+        ("TransactionInvocationFinished", 4, 2),
+        ("ReleaseStarted", 7, 2),
+        ("ReleaseFinished", 7, 2),
         ("TransactionAttemptFinished", 2, 1),
         ("TransactionInvocationFinished", 1, None),
     ]
-    read_finished = root.events[6]
+    read_finished = root.events[8]
     assert isinstance(read_finished, ReadFinished)
     assert isinstance(read_finished.outcome, ReadFailed)
     read_failure = read_finished.outcome.failure
     assert isinstance(read_failure, CausedFailure)
-    assert read_failure.cause_activity_id == 5
-    joined = root.events[7]
+    assert read_failure.cause_activity_id == 6
+    joined = root.events[9]
     assert isinstance(joined, TransactionInvocationFinished)
     assert isinstance(joined.outcome, JoinedInvocationRaised)
     # The join has no child of its own to name — the read it encloses is its
@@ -1109,6 +1154,10 @@ def test_an_attempt_is_finished_even_when_the_port_reports_no_outcome() -> None:
     assert _transitions(root.events) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
@@ -1167,7 +1216,10 @@ def test_the_attempt_started_transition_is_what_assigns_the_next_activity_id() -
         _db(port, recorder).transact(lambda _tx: None)
 
     root = _only(recorder)
-    assert [event.activity_id for event in root.events] == [1, 2, 2, 1]
+    # The attempt (2) takes its ID before it asks for anything, its Acquisition
+    # (3) and Release (4) take the next two, and the invocation's own Finished
+    # closes over 1 with no gap between them.
+    assert [event.activity_id for event in root.events] == [1, 2, 3, 3, 4, 4, 2, 1]
 
 
 def test_the_first_transition_a_joined_activity_makes_is_its_own_started() -> None:
@@ -1176,7 +1228,7 @@ def test_the_first_transition_a_joined_activity_makes_is_its_own_started() -> No
     db.transact(lambda _outer: db.transact(lambda _inner: None))
 
     root = _only(recorder)
-    assert [event.activity_id for event in root.events] == [1, 2, 3, 3, 2, 1]
+    assert [event.activity_id for event in root.events] == [1, 2, 3, 3, 4, 4, 5, 5, 2, 1]
 
 
 def test_a_refused_join_opens_no_activity_at_all() -> None:
@@ -1193,6 +1245,10 @@ def test_a_refused_join_opens_no_activity_at_all() -> None:
     assert _transitions(root.events) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "TransactionAttemptFinished",
         "TransactionInvocationFinished",
     ]
@@ -1311,7 +1367,9 @@ def test_a_handler_quarantined_at_the_root_leaves_every_later_scope_silent() -> 
 
 
 def test_a_handler_quarantined_inside_a_batch_still_leaves_the_batch() -> None:
-    handler, provider = _quarantined_at(3)  # invocation, attempt, then the batch
+    # The attempt's connection stands between the attempt and its first work, so
+    # the batch is the fifth event rather than the third.
+    handler, provider = _quarantined_at(5)  # invocation, attempt, acquisition, then the batch
     port = ScriptedAdapter(Transact(Write()))
 
     _db(port, provider).transact(lambda tx: tx.insert(new_account()))
@@ -1319,13 +1377,15 @@ def test_a_handler_quarantined_inside_a_batch_still_leaves_the_batch() -> None:
     assert _transitions(handler.seen) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "WriteBatchStarted",
     ]
     assert port.calls[-1] == CommitCall()
 
 
 def test_a_handler_quarantined_inside_a_joined_call_still_leaves_it() -> None:
-    handler, provider = _quarantined_at(3)  # invocation, attempt, then the join
+    handler, provider = _quarantined_at(5)  # invocation, attempt, acquisition, then the join
     port = ScriptedAdapter(Transact())
     db = _db(port, provider)
 
@@ -1334,6 +1394,8 @@ def test_a_handler_quarantined_inside_a_joined_call_still_leaves_it() -> None:
     assert _transitions(handler.seen) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "TransactionInvocationStarted",
     ]
     assert port.calls == [BeginCall(), CommitCall()]
@@ -1346,6 +1408,9 @@ def test_a_join_that_opens_after_quarantine_opens_nothing() -> None:
 
     db.transact(lambda _outer: db.transact(lambda _inner: None))
 
+    # The attempt's own Acquisition is the first scope to find delivery dead, and
+    # it opens no more than the join does: resource handling still happens, and
+    # none of it is observed.
     assert _transitions(handler.seen) == [
         "TransactionInvocationStarted",
         "TransactionAttemptStarted",

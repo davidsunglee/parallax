@@ -22,18 +22,26 @@ import pytest
 from _support.adoption import raises_contextualized
 from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import boundary_runner, case_format
-from parallax.conformance.boundary_runner import FaultInjectingPort, fault_injecting_adapter
+from parallax.conformance.boundary_runner import (
+    FaultInjectingPort,
+    ResourceFaultingContext,
+    fault_injecting_adapter,
+)
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
     Bind,
     Committed,
+    ConnectionAcquisitionError,
     DatabaseAdapter,
     DatabaseConnection,
     DocumentReadOrdinals,
+    Invalidated,
+    Returned,
     Row,
     TransactionOutcome,
+    Unrelinquished,
 )
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import FixedClock
@@ -513,6 +521,14 @@ _ATTEMPTS_CASES: list[_AttemptsCase] = [
     # and it is terminal however the loop is configured.
     _AttemptsCase("isolation-setup-failure", "boundary-failed", None, False, 1),
     _AttemptsCase("isolation-setup-failure", "boundary-failed", 5, True, 1),
+    # m-execution-lifecycle-009: an acquisition that granted nothing is the same
+    # terminal begin failure reached one step earlier, and m-execution-lifecycle-010:
+    # a release that could not relinquish changes no outcome at all, so the
+    # attempt it followed commits and there is nothing to retry.
+    _AttemptsCase("connection-acquisition-failure", "boundary-failed", None, False, 1),
+    _AttemptsCase("connection-acquisition-failure", "boundary-failed", 5, True, 1),
+    _AttemptsCase("connection-cleanup-failure", "committed", None, False, 1),
+    _AttemptsCase("connection-cleanup-failure", "committed", 5, True, 1),
 ]
 
 
@@ -527,6 +543,98 @@ def test_expected_attempts(case: _AttemptsCase) -> None:
         )
         == case.expected
     )
+
+
+# --------------------------------------------------------------------------- #
+# The two RESOURCE seams: an acquisition that grants nothing, and a release    #
+# that cannot relinquish.                                                     #
+# --------------------------------------------------------------------------- #
+def test_an_acquisition_fault_refuses_before_it_takes_anything() -> None:
+    # It never enters the inner context, so no real connection is taken and none
+    # can leak. What it reports is the shape a non-idle checkout reaches: a
+    # connection taken, found unusable, disposed of deliberately, and refused.
+    inner = _FakePort(rows=[])
+    faulted = _faulted(inner, fault="connection-acquisition-failure", persistent=False)
+    context = faulted.open().connection()
+
+    before = context.cleanup_result
+    assert before is None, "a context nobody entered has established nothing"
+    with pytest.raises(ConnectionAcquisitionError) as refused:
+        context.__enter__()
+
+    assert refused.value.reason == "preparation_failed"
+    established = context.cleanup_result
+    assert isinstance(established, Invalidated)
+    assert [(issue.phase, issue.code) for issue in established.issues] == [("inspect", "not-idle")]
+
+
+def test_a_one_shot_acquisition_fault_lets_the_next_acquisition_through() -> None:
+    # One `_FaultState` is closed over per configuration, so a one-shot
+    # injection stays one-shot across a whole retry loop even though every
+    # attempt acquires a connection of its own.
+    inner = _FakePort(rows=[])
+    runtime = _faulted(inner, fault="connection-acquisition-failure", persistent=False).open()
+
+    with pytest.raises(ConnectionAcquisitionError):
+        runtime.connection().__enter__()
+    with runtime.connection() as scoped:
+        assert scoped is inner
+
+
+def test_a_persistent_acquisition_fault_refuses_every_acquisition() -> None:
+    inner = _FakePort(rows=[])
+    runtime = _faulted(inner, fault="connection-acquisition-failure", persistent=True).open()
+
+    for _ in range(2):
+        with pytest.raises(ConnectionAcquisitionError):
+            runtime.connection().__enter__()
+
+
+def test_a_cleanup_fault_lets_the_connection_go_back_and_reports_that_it_did_not() -> None:
+    # The inner context does its whole job first, so the real connection
+    # genuinely goes back; only the REPORT is simulated. A suite that actually
+    # stranded a connection per case would exhaust the server long before the
+    # corpus ran out of cases.
+    inner = _FakePort(rows=[])
+    runtime = _faulted(inner, fault="connection-cleanup-failure", persistent=False).open()
+
+    context = runtime.connection()
+    with context as scoped:
+        assert scoped is inner
+    established = context.cleanup_result
+    assert isinstance(established, Unrelinquished)
+    assert [(issue.phase, issue.code) for issue in established.issues] == [
+        ("return", "handoff-failed")
+    ]
+
+
+def test_a_spent_cleanup_fault_reports_what_the_inner_context_established() -> None:
+    inner = _FakePort(rows=[])
+    runtime = _faulted(inner, fault="connection-cleanup-failure", persistent=False).open()
+
+    first = runtime.connection()
+    with first:
+        pass
+    second = runtime.connection()
+    with second:
+        pass
+
+    assert isinstance(first.cleanup_result, Unrelinquished)
+    # The inner double reclaims nothing and says so as a completed return, which
+    # is what a spent one-shot injection then passes straight through.
+    assert second.cleanup_result == Returned()
+
+
+def test_a_resource_faulting_adapter_stands_in_for_the_configuration_it_decorates() -> None:
+    inner = _FakePort(rows=[])
+    faulted = _faulted(inner, fault="connection-cleanup-failure", persistent=False)
+    runtime = faulted.open()
+
+    assert faulted.dialect is inner.dialect
+    assert runtime.dialect is inner.dialect
+    assert runtime.pool_metrics is None
+    assert isinstance(runtime.connection(), ResourceFaultingContext)
+    runtime.close()
 
 
 # --------------------------------------------------------------------------- #

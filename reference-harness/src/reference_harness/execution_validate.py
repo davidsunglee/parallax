@@ -45,7 +45,12 @@ observation alike (`m-execution-lifecycle`):
   batch is the one a dependent read forced, so the sibling after it is the Read
   it enabled and it has already FINISHED when that Read starts, and a
   ``pre-commit`` batch is the boundary's own last one, so nothing its attempt
-  does follows it;
+  does after it but give its connection back;
+- **resources.** An activity that owns a connection opens at most one
+  Acquisition and at most one Release, the Acquisition FIRST among its children
+  and the Release LAST, a Release only where the Acquisition granted something,
+  and neither containing anything: they are siblings of the work beside them
+  rather than a lease around it;
 - **history.** A transaction root is TERMINAL, so a commit ends the invocation:
   attempts run one after another rather than overlapping, at most one commits and
   it is the last, the invocation's own outcome agrees with that last attempt, an
@@ -75,6 +80,8 @@ _STARTED_FINISHED: dict[str, str] = {
     "transactionAttemptStarted": "transactionAttemptFinished",
     "snapshotStreamStarted": "snapshotStreamFinished",
     "streamBatchStarted": "streamBatchFinished",
+    "acquisitionStarted": "acquisitionFinished",
+    "releaseStarted": "releaseFinished",
 }
 
 _FINISHED_STARTED: dict[str, str] = {
@@ -90,6 +97,12 @@ _ROOT_ACTIVITY: dict[str, str] = {
 _OUTER: str = "transactionInvocationStarted:outer"
 _JOINED: str = "transactionInvocationStarted:joined"
 
+_OWNS_CONNECTION: tuple[str, ...] = (
+    "readStarted",
+    "transactionAttemptStarted",
+    "snapshotStreamStarted",
+)
+
 _CONTAINED_BY: dict[str, tuple[str, ...]] = {
     "readStarted": ("transactionAttemptStarted",),
     "writeBatchStarted": ("transactionAttemptStarted",),
@@ -97,6 +110,8 @@ _CONTAINED_BY: dict[str, tuple[str, ...]] = {
     "transactionAttemptStarted": (_OUTER,),
     "snapshotStreamStarted": ("transactionAttemptStarted",),
     "streamBatchStarted": ("snapshotStreamStarted",),
+    "acquisitionStarted": _OWNS_CONNECTION,
+    "releaseStarted": _OWNS_CONNECTION,
     _OUTER: (),
     _JOINED: ("transactionAttemptStarted",),
 }
@@ -277,6 +292,7 @@ def _check_root(root: dict[str, Any], label: str, problems: list[str]) -> list[_
             _check_finished(event, transition, payload, where, position, activities, problems)
     _check_balance(events, activities, root_activity, label, problems)
     _check_triggers(activities, problems)
+    _check_resources(activities, problems)
     _check_history(activities, root_activity, label, problems)
     return calls
 
@@ -515,12 +531,97 @@ def _check_triggers(activities: dict[int, _Activity], problems: list[str]) -> No
         following = siblings[position + 1 :]
         if trigger == "read-dependency":
             _check_read_dependency(batch, following, activities, problems)
-        if trigger == "pre-commit" and following:
+        if trigger == "pre-commit":
+            _check_pre_commit(batch, following, activities, problems)
+
+
+def _check_pre_commit(
+    batch: _Activity,
+    following: list[int],
+    activities: dict[int, _Activity],
+    problems: list[str],
+) -> None:
+    """Nothing the attempt's WORK does follows the boundary's own last batch.
+
+    Its Release does, and only its Release: giving the connection back is what
+    an attempt does once its work is over, so the batch is still the final thing
+    written and the resource activity after it is the end of the borrowing
+    rather than more work.
+    """
+    trailing = [child for child in following if activities[child].started != "releaseStarted"]
+    if trailing:
+        problems.append(
+            f"{batch.label} carries the `pre-commit` trigger but its attempt opened "
+            f"activity {trailing[0]} after it; the boundary owns the FINAL batch, so "
+            f"nothing the attempt does follows it but giving its connection back"
+        )
+
+
+def _check_resources(activities: dict[int, _Activity], problems: list[str]) -> None:
+    """The Acquisition and Release an activity that owns a connection may open.
+
+    Four claims, and each of them is a claim the correlation rules cannot make.
+    An owner opens AT MOST ONE of each, because one operation holds one
+    connection rather than a series of them. The Acquisition is its owner's
+    FIRST child and the Release its LAST, which is what "held for the
+    operation's own lifetime" means read off a stream. A Release exists only
+    where the Acquisition GRANTED something, so a record showing a hold ending
+    that never began is refused. And neither opens a child: they are siblings of
+    the execution work rather than a lease around it, so a Database Call under
+    one would describe a statement running inside a checkout.
+    """
+    for owner in activities.values():
+        if owner.started not in _OWNS_CONNECTION:
+            continue
+        children = [activities[child] for child in owner.children]
+        acquisitions = [child for child in children if child.started == "acquisitionStarted"]
+        releases = [child for child in children if child.started == "releaseStarted"]
+        _check_resource_count(owner, acquisitions, "acquisition", problems)
+        _check_resource_count(owner, releases, "release", problems)
+        if acquisitions and children[0] is not acquisitions[0]:
             problems.append(
-                f"{batch.label} carries the `pre-commit` trigger but its attempt opened "
-                f"activity {following[0]} after it; the boundary owns the FINAL batch, so "
-                f"nothing the attempt does follows it"
+                f"{acquisitions[0].label} opens activity {acquisitions[0].activity} after "
+                f"activity {children[0].activity}, which its owner opened first; a connection "
+                f"is taken before the work that runs on it, so an Acquisition is its owner's "
+                f"first child"
             )
+        if releases and children[-1] is not releases[0]:
+            problems.append(
+                f"{releases[0].label} opens activity {releases[0].activity} before activity "
+                f"{children[-1].activity}, which its owner opened after it; a connection is "
+                f"given back once the work that ran on it is over, so a Release is its "
+                f"owner's last child"
+            )
+        if releases and not _granted(acquisitions):
+            problems.append(
+                f"{releases[0].label} ends a hold its owner never began: activity "
+                f"{owner.activity} opens a Release without an Acquisition that granted a "
+                f"connection, and an acquisition that granted none has nothing to release"
+            )
+    for activity in activities.values():
+        if activity.started in ("acquisitionStarted", "releaseStarted") and activity.children:
+            problems.append(
+                f"{activity.label} opens activity {activity.children[0]} under "
+                f"{activity.started}; an Acquisition and a Release are siblings of the work "
+                f"beside them rather than scopes it runs inside, so neither contains anything"
+            )
+
+
+def _granted(acquisitions: list[_Activity]) -> bool:
+    return any(
+        acquisition.finished_payload.get("outcome") == "acquired" for acquisition in acquisitions
+    )
+
+
+def _check_resource_count(
+    owner: _Activity, opened: list[_Activity], noun: str, problems: list[str]
+) -> None:
+    if len(opened) > 1:
+        problems.append(
+            f"{opened[1].label} opens a second {noun} under activity {owner.activity}; one "
+            f"operation holds ONE connection for its own lifetime, so it takes it once and "
+            f"gives it back once"
+        )
 
 
 def _check_read_dependency(

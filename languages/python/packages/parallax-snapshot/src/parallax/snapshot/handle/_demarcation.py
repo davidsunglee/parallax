@@ -415,7 +415,7 @@ class Demarcation:
                         # its business rather than this loop's.
                         resource = self._runtime.connection()
                         try:
-                            conn = enter_connection(resource)
+                            conn, held_since_ns = enter_connection(resource, physical)
                         except ConnectionAcquisitionError as unacquired:
                             # No boundary opened and no callback ran, so this is
                             # the same terminal outcome a refused BEGIN reaches:
@@ -430,9 +430,9 @@ class Demarcation:
                                 conn.transaction(in_txn, isolation=options.isolation), physical
                             )
                         except BaseException as failure:
-                            exit_connection(resource, failure)
+                            exit_connection(resource, physical, held_since_ns, failure)
                             raise
-                        exit_connection(resource, None)
+                        exit_connection(resource, physical, held_since_ns, None)
                         return settled
 
                 try:

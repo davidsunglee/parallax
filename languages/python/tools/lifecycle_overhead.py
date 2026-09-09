@@ -80,8 +80,10 @@ from parallax.core.base import DocumentReadOrdinals
 from parallax.core.db_port import (
     Bind,
     CallbackRaised,
+    CleanupResult,
     Committed,
     DatabaseConnection,
+    Returned,
     RolledBack,
     Row,
     TransactionOutcome,
@@ -161,17 +163,33 @@ class _SoleRuntime:
         return
 
 
-class _SoleScope:
-    """One acquisition of the sole connection, reporting no cleanup facts."""
+_RELINQUISHED: Final[CleanupResult] = Returned()
+"""What a completed relinquishment establishes where nothing had to be reclaimed.
 
-    __slots__ = ("_connection",)
+One shared immutable value rather than one per release: an instrument that
+allocated a result per acquisition would be measuring itself.
+"""
+
+
+class _SoleScope:
+    """One acquisition of the sole connection, which reclaims nothing."""
+
+    __slots__ = ("_connection", "_left")
 
     def __init__(self, connection: DatabaseConnection) -> None:
         self._connection = connection
+        self._left = False
 
     @property
-    def cleanup_result(self) -> None:
-        return None
+    def cleanup_result(self) -> CleanupResult | None:
+        """What letting go established, once it has happened.
+
+        A double that IS its own connection reclaims nothing, but reclaiming
+        nothing is a completed relinquishment rather than an absent one — and it
+        is a shared immutable value, so an instrument reporting it still records
+        nothing per acquisition.
+        """
+        return _RELINQUISHED if self._left else None
 
     def __enter__(self) -> DatabaseConnection:
         return self._connection
@@ -183,7 +201,7 @@ class _SoleScope:
         traceback: TracebackType | None,
         /,
     ) -> None:
-        return
+        self._left = True
 
 
 class _MemoryPort:

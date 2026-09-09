@@ -15,14 +15,21 @@
 # current selection and starts BEFORE the boundary is asked to begin, so a
 # boundary that never opened is an attempt that ran and finished rather than no
 # attempt at all. That attempt finishes `beginFailed` with `attribution: direct`,
-# naming no cause, because there is no child activity beneath it to name — no
-# callback ran, so no read, batch, or call could have. And the invocation
-# finishes `failed` with `attribution: caused`, naming the attempt, under the
-# ordinary chaining rule: the attempt reported its failure up under its own
-# Activity ID, so the invocation names it rather than claiming the failure as
-# its own. A `beginFailed` attempt is a different fact from an attempt that ran
-# and was undone: it carries no phase, because nothing inside it ran, and no
-# classifier verdict, because it is terminal by rule.
+# naming no cause: it HAS children — it acquired a connection and gave it back —
+# but neither of them reported this failure, because the connection was granted
+# and the setup that failed is boundary mechanics the attempt owns itself. And
+# the invocation finishes `failed` with `attribution: caused`, naming the
+# attempt, under the ordinary chaining rule: the attempt reported its failure up
+# under its own Activity ID, so the invocation names it rather than claiming the
+# failure as its own. A `beginFailed` attempt is a different fact from an
+# attempt that ran and was undone: it carries no phase, because nothing inside
+# it ran, and no classifier verdict, because it is terminal by rule.
+#
+# The Acquisition/Release pair is what separates this case from its sibling
+# m-execution-lifecycle-009, where the acquisition itself grants nothing: there
+# the attempt's `beginFailed` is `caused` by the Acquisition and no Release
+# follows. Here the connection was real, so it goes back — a boundary that never
+# opened still borrowed something, and the release is what returns it.
 #
 # `roundTrips: 0` is the same fact counted. Setting the level is boundary
 # mechanics like begin, commit, and rollback and constructs no Database Call, so
@@ -78,10 +85,26 @@ then:
             parent: 1
             transactionAttemptStarted: { edition: account }
           - sequence: 3
+            activity: 3
+            parent: 2
+            acquisitionStarted: {}
+          - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            releaseStarted: {}
+          - sequence: 6
+            activity: 4
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 7
             activity: 2
             parent: 1
             transactionAttemptFinished: { outcome: beginFailed, attribution: direct }
-          - sequence: 4
+          - sequence: 8
             activity: 1
             parent: null
             transactionInvocationFinished: { outcome: failed, attribution: caused, cause: 2 }

@@ -53,12 +53,28 @@ then:
           - sequence: 2
             activity: 2
             parent: 1
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+            acquisitionStarted: {}
           - sequence: 3
             activity: 2
             parent: 1
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+            acquisitionFinished: { outcome: acquired }
           - sequence: 4
+            activity: 3
+            parent: 1
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
+          - sequence: 5
+            activity: 3
+            parent: 1
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 6
+            activity: 4
+            parent: 1
+            releaseStarted: {}
+          - sequence: 7
+            activity: 4
+            parent: 1
+            releaseFinished: { cleanup: returned }
+          - sequence: 8
             activity: 1
             parent: null
             readFinished: { outcome: completed }
@@ -80,27 +96,43 @@ then:
           - sequence: 3
             activity: 3
             parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            acquisitionStarted: {}
           - sequence: 4
+            activity: 3
+            parent: 2
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
             activity: 4
-            parent: 3
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 6
+            activity: 5
+            parent: 4
             databaseCallStarted:
               target: parallax.compatibility.Account
               kind: write
               statement: 0
-          - sequence: 5
-            activity: 4
-            parent: 3
+          - sequence: 7
+            activity: 5
+            parent: 4
             databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
-          - sequence: 6
-            activity: 3
+          - sequence: 8
+            activity: 4
             parent: 2
             writeBatchFinished: { outcome: completed }
-          - sequence: 7
+          - sequence: 9
+            activity: 6
+            parent: 2
+            releaseStarted: {}
+          - sequence: 10
+            activity: 6
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 11
             activity: 2
             parent: 1
             transactionAttemptFinished: { outcome: committed }
-          - sequence: 8
+          - sequence: 12
             activity: 1
             parent: null
             transactionInvocationFinished: { outcome: committed }

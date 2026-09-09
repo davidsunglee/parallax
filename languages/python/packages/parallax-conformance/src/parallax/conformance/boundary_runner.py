@@ -23,6 +23,11 @@ exists to end):
   classification / retry-loop / optimistic-gate machinery does the classifying,
   never this module, and how many attempts ran is read off the delivered
   lifecycle events rather than counted here.
+- :class:`ResourceFaultingContext` is its counterpart one layer down, for the
+  two kinds that are about the CONNECTION rather than about what runs on it: an
+  acquisition that grants none, and a release that cannot relinquish. Those
+  decorate the acquisition itself, because a connection decorator has no
+  lifetime to fail.
 - :func:`expected_attempts` derives the authored attempt count from the
   SAME fields `m-auto-retry.md` / `m-opt-lock.md` fix the retriability rules
   from (never a per-case hand table).
@@ -38,6 +43,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from types import TracebackType
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance import case_format, sweep
@@ -46,13 +52,22 @@ from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
+    CleanupIssue,
+    CleanupResult,
+    ConnectionAcquisitionError,
+    ConnectionContext,
     DatabaseAdapter,
     DatabaseConnection,
+    DatabaseRuntime,
     DocumentReadOrdinals,
+    Invalidated,
     IsolationLevel,
+    PoolMetricsSource,
     Row,
     TransactionOutcome,
+    Unrelinquished,
 )
+from parallax.core.diagnostics import diagnostic_for
 from parallax.core.dialect import Dialect
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot.handle import Database, Transaction
@@ -63,6 +78,7 @@ __all__ = [
     "BoundaryStep",
     "BoundaryUow",
     "FaultInjectingPort",
+    "ResourceFaultingContext",
     "boundary_steps",
     "boundary_uow",
     "expected_attempts",
@@ -282,21 +298,27 @@ class _Fault:
     """One `given.fault` kind, in the three terms this module ever asks about it.
 
     ``seam`` is where the kind is simulated, and it settles the attempt count
-    too: a ``work`` fault is a failure the work meets at the write seam, inside
-    an attempt whose callback ran, while a ``boundary`` fault stops the boundary
-    from opening, so the one attempt that adopted and started finishes
-    begin-failed before any callback and is never retried. ``retriable`` is `m-auto-retry` /
-    `m-opt-lock`'s verdict on the kind, ``opt_in`` where
-    `retryOptimisticConflicts` decides it. ``error`` builds the translated
-    :class:`DatabaseError` the real adapter's own classification would produce,
-    and is ``None`` for the one kind that raises nothing: an optimistic conflict
-    is simulated as the gated update's zero-row shortfall.
+    too. A ``work`` fault is a failure the work meets at the write seam, inside
+    an attempt whose callback ran. The other three are not failures of the work
+    and each ends the invocation after ONE attempt: a ``boundary`` fault stops
+    the boundary from opening, so the attempt that adopted and started finishes
+    begin-failed before any callback; an ``acquisition`` fault grants the
+    attempt no connection at all, which is the same terminal begin failure
+    reached one step earlier; and a ``release`` fault is a connection that
+    cannot be relinquished after the attempt settled, which changes no outcome
+    at all. ``retriable`` is `m-auto-retry` / `m-opt-lock`'s verdict on the kind,
+    ``opt_in`` where `retryOptimisticConflicts` decides it. ``error`` builds the
+    translated :class:`DatabaseError` the real adapter's own classification would
+    produce, and is ``None`` for the kinds that raise no database error at all:
+    an optimistic conflict is simulated as the gated update's zero-row
+    shortfall, and the two resource kinds raise an acquisition failure or
+    nothing.
 
     Every seam reads this record rather than testing the kind itself, so a kind
     added here is injected, classified, and counted from one declaration.
     """
 
-    seam: Literal["work", "boundary"]
+    seam: Literal["work", "boundary", "acquisition", "release"]
     retriable: Literal["always", "never", "opt_in"]
     error: Callable[[], DatabaseError] | None
 
@@ -334,6 +356,12 @@ _FAULTS: Final[Mapping[str, _Fault]] = {
             category=None, native_code="22023", message="invalid isolation level request"
         ),
     ),
+    # The two resource kinds raise no DatabaseError, because neither is a
+    # failure of a statement: an acquisition failure is outside the `m-db-error`
+    # categories by contract, and a cleanup problem is reported as a value
+    # rather than raised at all.
+    "connection-acquisition-failure": _Fault(seam="acquisition", retriable="never", error=None),
+    "connection-cleanup-failure": _Fault(seam="release", retriable="never", error=None),
 }
 
 
@@ -465,18 +493,190 @@ class FaultInjectingPort:
         return armed if armed.seam == seam else None
 
 
+type _ResourceSeam = Literal["acquisition", "release"]
+"""The two seams a resource fault fires at: taking a connection, and giving it back."""
+
+
+class ResourceFaultingContext:
+    """One acquisition of ``inner``, with a RESOURCE fault armed on it.
+
+    The other two seams decorate what a connection executes; these two decorate
+    the connection's own lifetime, which is why they live here rather than in a
+    connection decorator. Each fires once per armed acquisition and simulates
+    exactly what the shipped adapter would have reported:
+
+    An ``acquisition`` fault never enters the inner context at all, so no real
+    connection is taken and none can leak. What it reports is the shape a
+    non-idle checkout reaches — a connection was taken, found unusable, disposed
+    of deliberately, and then refused — so it answers ``Invalidated`` on
+    :attr:`cleanup_result` and raises the ``preparation_failed`` acquisition
+    error the real path raises.
+
+    A ``release`` fault lets the inner context do its whole job first, so the
+    real connection genuinely goes back, and then reports ``Unrelinquished``
+    over the handoff instead of what the inner context established. Simulating
+    the REPORT rather than the reclamation is deliberate: a suite that actually
+    stranded a connection per case would exhaust the server long before the
+    corpus ran out of cases.
+    """
+
+    def __init__(
+        self,
+        inner: ConnectionContext,
+        *,
+        seam: _ResourceSeam,
+        persistent: bool,
+        state: _FaultState,
+    ) -> None:
+        self._inner = inner
+        self._seam: _ResourceSeam = seam
+        self._persistent = persistent
+        self._state = state
+        self._injected: CleanupResult | None = None
+
+    @property
+    def cleanup_result(self) -> CleanupResult | None:
+        injected = self._injected
+        return self._inner.cleanup_result if injected is None else injected
+
+    def __enter__(self) -> DatabaseConnection:
+        if self._seam == "acquisition" and self._armed():
+            self._state.fired = True
+            self._injected = Invalidated(
+                (
+                    CleanupIssue(
+                        phase="inspect",
+                        code="not-idle",
+                        diagnostic=diagnostic_for(
+                            _Refused("its state was INTRANS when it was handed over")
+                        ),
+                    ),
+                )
+            )
+            raise ConnectionAcquisitionError(
+                "the database runtime handed over a connection whose state is INTRANS rather "
+                "than idle, so no statement was run on it",
+                reason="preparation_failed",
+            )
+        return self._inner.__enter__()
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> None:
+        self._inner.__exit__(exc_type, exc, traceback)
+        if self._seam == "release" and self._armed():
+            self._state.fired = True
+            self._injected = Unrelinquished(
+                (
+                    CleanupIssue(
+                        phase="return",
+                        code="handoff-failed",
+                        diagnostic=diagnostic_for(_Refused("the pool refused the connection")),
+                    ),
+                )
+            )
+
+    def _armed(self) -> bool:
+        return self._persistent or not self._state.fired
+
+
+class _Refused(Exception):
+    """The condition a simulated cleanup issue is projected from.
+
+    A :class:`~parallax.core.db_port.CleanupIssue` carries a detached diagnostic
+    of the exception behind it, and a simulated condition has none — so one is
+    raised nowhere and projected here, exactly as the shipped adapter projects
+    the conditions it OBSERVES rather than catches.
+    """
+
+
+class _ResourceFaultingRuntime:
+    def __init__(
+        self,
+        inner: DatabaseRuntime,
+        *,
+        seam: _ResourceSeam,
+        persistent: bool,
+        state: _FaultState,
+    ) -> None:
+        self._inner = inner
+        self._seam: _ResourceSeam = seam
+        self._persistent = persistent
+        self._state = state
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._inner.dialect
+
+    @property
+    def pool_metrics(self) -> PoolMetricsSource | None:
+        return self._inner.pool_metrics
+
+    def connection(self) -> ConnectionContext:
+        return ResourceFaultingContext(
+            self._inner.connection(),
+            seam=self._seam,
+            persistent=self._persistent,
+            state=self._state,
+        )
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+class _ResourceFaultingAdapter:
+    def __init__(
+        self,
+        inner: DatabaseAdapter,
+        *,
+        seam: _ResourceSeam,
+        persistent: bool,
+        state: _FaultState,
+    ) -> None:
+        self._inner = inner
+        self._seam: _ResourceSeam = seam
+        self._persistent = persistent
+        self._state = state
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._inner.dialect
+
+    def open(self) -> DatabaseRuntime:
+        return _ResourceFaultingRuntime(
+            self._inner.open(),
+            seam=self._seam,
+            persistent=self._persistent,
+            state=self._state,
+        )
+
+
 def fault_injecting_adapter(
     adapter: DatabaseAdapter, *, fault: str | None, persistent: bool
 ) -> DatabaseAdapter:
-    """``adapter``'s configuration with ``fault`` armed on every connection it acquires.
+    """``adapter``'s configuration with ``fault`` armed at the seam it belongs to.
 
     One :class:`_FaultState` is closed over here, so a one-shot injection stays
     one-shot across the whole ``db.transact`` retry loop even though every
     attempt acquires a connection of its own. A state per acquisition would fire
     once per attempt instead, which is the persistent behavior wearing the
     one-shot spelling.
+
+    A ``work`` or ``boundary`` kind arms an execution decorator on each
+    connection an acquisition yields; a resource kind arms the acquisition
+    itself. Which one a kind takes is its own declaration, so nothing here tests
+    the kind by name.
     """
     state = _FaultState()
+    seam = _fault(fault).seam if fault is not None else None
+    # Compared arm by arm rather than against a tuple, because that is what
+    # narrows the seam to the alias the wrapper's constructor declares.
+    if seam == "acquisition" or seam == "release":
+        return _ResourceFaultingAdapter(adapter, seam=seam, persistent=persistent, state=state)
 
     def decorate(connection: DatabaseConnection) -> DatabaseConnection:
         return FaultInjectingPort(connection, fault=fault, persistent=persistent, state=state)
@@ -501,11 +701,13 @@ def expected_attempts(
     a retriable fault that PERSISTS to a failure-kind outcome exhausts the
     bound (`retries` re-executions, so ``bound + 1`` total attempts).
 
-    A BOUNDARY-seam fault answers ONE: the attempt adopts and starts before the
-    boundary is asked to open, so a boundary that never opened is one attempt
-    that finished begin-failed — terminal however the loop is configured, and
-    distinguished from an attempt that ran and was undone by its outcome rather
-    than by its absence.
+    Every seam but the WORK one answers ONE, for three different reasons. A
+    boundary that never opened is one attempt that finished begin-failed —
+    terminal however the loop is configured, and distinguished from an attempt
+    that ran and was undone by its outcome rather than by its absence. An
+    acquisition that granted nothing is the same terminal begin failure reached
+    one step earlier. And a release that could not relinquish changes no outcome
+    at all, so the attempt it followed commits and there is nothing to retry.
 
     Which seam a kind belongs to and whether it is retriable are read off
     :data:`_FAULTS` rather than tested here, so one kind's declaration answers
@@ -519,7 +721,7 @@ def expected_attempts(
     if fault is None:
         return 1
     kind = _fault(fault)
-    if kind.seam == "boundary":
+    if kind.seam != "work":
         return 1
     retriable = (
         bool(retry_optimistic_conflicts)

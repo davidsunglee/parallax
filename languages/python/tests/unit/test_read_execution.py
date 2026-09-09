@@ -273,10 +273,18 @@ def test_a_standalone_eager_read_runs_inside_a_read_root_of_its_own() -> None:
 
     (root,) = provider.roots
     assert root.execution.kind == "read"
-    # The body ran with the Read open and nothing else around it: no flush, no
-    # batch, and no second activity.
-    assert body.only.transitions == ("ReadStarted",)
-    assert _events(root) == ["ReadStarted", "ReadFinished"]
+    # The body ran with the Read open and its connection already taken, and
+    # nothing else around it: no flush, no batch, and no activity but the two
+    # ends of that connection.
+    assert body.only.transitions == ("ReadStarted", "AcquisitionStarted", "AcquisitionFinished")
+    assert _events(root) == [
+        "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
+        "ReadFinished",
+    ]
     started = root.events[0]
     assert isinstance(started, ReadStarted)
     assert started.edition == "test"
@@ -322,7 +330,16 @@ def test_a_standalone_read_names_its_edition_on_a_failure_and_the_root_sees_the_
     else:  # pragma: no cover - the assertion is the except arm
         raise AssertionError("a standalone read's failure was not contextualized")
     (root,) = provider.roots
-    assert _events(root) == ["ReadStarted", "ReadFinished"]
+    # The connection is acquired before the body and released after it however
+    # the body left, so a read whose executor raised still gives it back.
+    assert _events(root) == [
+        "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
+        "ReadFinished",
+    ]
 
     def run(execution: Any, _uow: UnitOfWork) -> None:
         try:
@@ -474,13 +491,21 @@ def test_a_standalone_page_enters_its_batch_around_the_body_and_flushes_nothing(
         assert read.page(stream.batch(), body) is _ANSWER
 
     (root,) = provider.roots
-    # Nothing precedes the batch: it opens where the page begins, and the body
-    # runs inside it.
-    assert body.only.transitions == ("SnapshotStreamStarted", "StreamBatchStarted")
+    # Nothing precedes the batch but the delivery taking its connection: the
+    # Acquisition is the stream's own child and stands in front of the first
+    # page, the batch opens where the page begins, and the body runs inside it.
+    assert body.only.transitions == (
+        "SnapshotStreamStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "StreamBatchStarted",
+    )
     assert _parentage(root) == [
         ("SnapshotStreamStarted", 1, None),
-        ("StreamBatchStarted", 2, 1),
-        ("StreamBatchFinished", 2, 1),
+        ("AcquisitionStarted", 2, 1),
+        ("AcquisitionFinished", 2, 1),
+        ("StreamBatchStarted", 3, 1),
+        ("StreamBatchFinished", 3, 1),
         ("SnapshotStreamFinished", 1, None),
     ]
     handed = body.only.inputs

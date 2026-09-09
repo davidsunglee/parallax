@@ -55,7 +55,7 @@ belong to the Handler.
 ## Activities, correlation, and delivery
 
 An **Execution Activity** starts once and finishes once with a terminal outcome
-defined by its kind. The seven kinds are:
+defined by its kind. The nine kinds are:
 
 - Read;
 - Write Batch;
@@ -63,7 +63,9 @@ defined by its kind. The seven kinds are:
 - Transaction Invocation;
 - Transaction Attempt;
 - Snapshot Stream;
-- Stream Batch.
+- Stream Batch;
+- Acquisition;
+- Release.
 
 Every event carries this correlation envelope:
 
@@ -79,7 +81,7 @@ sequence is assigned immediately before delivery. Fan-out children receive the
 same event object with the same sequence; delivery does not clone an event per
 child.
 
-The event algebra is the closed union of these fourteen concrete transitions:
+The event algebra is the closed union of these eighteen concrete transitions:
 
 ```text
 ReadStarted                       ReadFinished
@@ -89,6 +91,8 @@ TransactionInvocationStarted      TransactionInvocationFinished
 TransactionAttemptStarted         TransactionAttemptFinished
 SnapshotStreamStarted             SnapshotStreamFinished
 StreamBatchStarted                StreamBatchFinished
+AcquisitionStarted                AcquisitionFinished
+ReleaseStarted                    ReleaseFinished
 ```
 
 `ActivityStarted` and `ActivityFinished` are parent interfaces or unions, not
@@ -285,15 +289,19 @@ transition is exactly one of:
 AttemptCommitted()
 AttemptRolledBack(failure)
 AttemptRollbackFailed(triggeringFailure, rollbackFailure)
-AttemptBeginFailed(diagnostic)
+AttemptBeginFailed(failure)
 ```
 
 `AttemptBeginFailed` is the boundary that never opened: the callback did not
-run, no child activity exists, and the outcome is terminal without retry
-however retriable the error's own category is. It carries a Failure Diagnostic
-rather than an Attempt Failure, because there is no phase inside the attempt
-to locate and no classifier verdict to report; the attempt's failure is always
-direct, and the invocation above finishes failed caused by that attempt under
+run, no child activity of the callback exists, and the outcome is terminal
+without retry however retriable the error's own category is. It carries an
+Activity Failure rather than an Attempt Failure, because there is no phase
+inside the attempt to locate and no classifier verdict to report. Its
+attribution is the ordinary rule rather than a fixed answer: the attempt's own
+Acquisition is a child it may hold, so a boundary that never opened because no
+connection was granted finishes `caused` naming that Acquisition, while one
+that refused to open on a connection the attempt did acquire finishes `direct`.
+Either way the invocation above finishes failed caused by that attempt under
 the ordinary chaining rule. A successful begin continues within the same
 attempt with no second Started transition.
 
@@ -313,13 +321,17 @@ The transaction topology is:
 
 1. Outer Invocation starts.
 2. One Transaction Attempt adopts an edition and starts.
-3. A begin failure finishes that attempt `beginFailed` and the invocation
-   failed, caused by the attempt, without retry; the callback never runs.
-4. Successful begin continues the same attempt: callback and pre-commit work
+3. The attempt acquires the connection its boundary will open on.
+4. A begin failure — including an acquisition that granted none — finishes that
+   attempt `beginFailed` and the invocation failed, caused by the attempt,
+   without retry; the callback never runs.
+5. Successful begin continues the same attempt: callback and pre-commit work
    run inside it.
-5. Commit or rollback finishes the attempt.
-6. A retry starts another attempt under the same invocation, adopting afresh.
-7. Commit or terminal failure finishes the invocation.
+6. Commit or rollback settles the attempt, which then releases its connection
+   before finishing.
+7. A retry starts another attempt under the same invocation, adopting afresh and
+   acquiring afresh.
+8. Commit or terminal failure finishes the invocation.
 
 Rollback failure preserves both diagnostics. An ordinary triggering error plus
 rollback failure surfaces through a language-idiomatic Transaction Rollback
@@ -392,6 +404,82 @@ after batch completion. A failed batch finishes before the stream fails and is
 the stream failure's cause. Stream Batch is the page-read activity; it never
 nests a duplicate Read activity.
 
+## Resource events
+
+An operation reaches the database through a connection it holds for its own
+lifetime, and how long it held one is observable. Three activities own one: a
+standalone Read, a Transaction Attempt, and a standalone Snapshot Stream — the
+same three that adopt a Model Edition, because a connection and a selection are
+held for exactly one operation (`m-db-port`). Each of them opens at most one
+**Acquisition** and at most one **Release**, both as its own direct children:
+
+```text
+AcquisitionStarted()
+AcquisitionFinished(durationNs, Acquired | AcquisitionFailed(reason, failure, cleanupResult))
+
+ReleaseStarted()
+ReleaseFinished(durationNs, holdDurationNs, cleanupResult)
+```
+
+They are SIBLINGS of the execution activities beside them rather than a lease
+enclosing them. An eager Read's Database Calls stay its own direct children, an
+attempt keeps its Reads, Write Batches, joined invocations, and streams, and a
+standalone stream keeps its Stream Batches: what an operation asked the adapter
+for is one more thing it did, not a scope the rest of it runs inside. Nothing
+opens under an Acquisition or a Release, and no Read, Stream Batch, or Database
+Call is duplicated to carry one.
+
+The Acquisition is its owner's FIRST child and the Release its LAST. A
+standalone Read acquires before its first statement; an attempt acquires before
+its boundary is asked to begin, so an acquisition that granted nothing is the
+begin failure above; a standalone stream acquires when it reads its first page,
+before that page's Stream Batch opens, and releases where the delivery SETTLES
+rather than where the caller leaves its scope. Work that INHERITS a connection
+emits neither: a participating read, write batch, stream, or joined invocation
+runs on the attempt's connection, and a stream's later pages run on the one its
+first page took.
+
+`reason` is the `m-db-port` acquisition-failure vocabulary — `timeout`,
+`queue-rejected`, `closed`, `preparation-failed` — and is outside the
+`m-db-error` categories, because no modeled statement ran to be classified.
+`failure` is an ordinary Activity Failure and is always `direct`: an Acquisition
+opens no child, so it has none to name. The owner holds it afterwards under the
+ordinary Holding rule, which is what makes the owner's own failure `caused` by
+it.
+
+`cleanupResult` is the `m-db-port` cleanup outcome — `returned`, `invalidated`,
+or `unrelinquished`, each with the finite conditions it met on the way. On a
+failed Acquisition it is the partial cleanup that acquisition already ran over
+whatever it had taken, and is absent where it owned nothing to clean up; it
+rides there rather than on a Release because no hold was granted for a release
+to end. A failed Acquisition therefore emits NO Release.
+
+A cleanup fact never rewrites the outcome of the activity above it. A Read that
+published, a stream that exhausted or closed early, and an attempt that
+committed each keep what they established whatever the release ran into, and a
+Release is never the cause named by another activity's failure. This is the
+`m-db-port` rule that an ordinary post-execution cleanup problem is diagnostic
+rather than an outcome, stated where the events state it.
+
+`durationNs` follows the Database Call convention: monotonic elapsed time around
+the resource call alone, with the activity's own Started and Finished deliveries
+outside it. An Acquisition brackets asking the adapter for a connection and
+getting an answer, the cleanup a failed acquisition runs included; a Release
+brackets giving it back. `holdDurationNs` spans the whole exclusive use, from
+the moment the acquisition call answered to the moment the release completed, so
+it includes the Acquisition Finished delivery, every Handler that ran during the
+operation, and any pause a stream's consumer took. These measure
+composition-level calls: none of them claims exact physical occupancy, pure
+adapter time, or anything the adapter finishes in the background afterwards.
+
+Acquisition and release still happen where no Provider is installed, where one
+declined, and after a Handler was quarantined — resource handling is execution
+rather than observation. What does not happen there is the observation: no
+event, no Activity ID, and no lifecycle clock read. The one thing an
+implementation still reports without a Provider is a cleanup fact no Handler
+received, which reaches the restricted failure-only resource log described
+below.
+
 ## Handler failures, re-entry, and fan-out
 
 A Handler ordinary exception quarantines that Handler for the remainder of its
@@ -415,6 +503,19 @@ state, clocks, or database work. Re-entry during opening becomes the Provider
 Error's cause; re-entry escaping a Handler is an ordinary handler failure and
 causes quarantine. Unrelated handles remain usable.
 
+An event carrying a cleanup fact — a failed Acquisition's partial cleanup, and
+every Release — additionally has a **delivery completion**: whether at least one
+Handler RETURNED from receiving it. A Handler that accepted the root, a delivery
+that was merely attempted, and a Fan-out that contained every one of its
+children's failures and then returned are each NOT a completion. A cleanup fact
+no Handler completed reaches the implementation's restricted failure-only
+resource log instead, which states the cleanup phase and code and fixed
+explanatory text and nothing else (`m-db-port`). Reporting it in both places
+would report it twice, and in neither would lose it, so exactly one of the two
+happens. A normal return acknowledges DELIVERY rather than durable export: a
+Handler that exports and then raises may cause duplicate reporting elsewhere,
+which is the Handler's own trade.
+
 An **Execution Lifecycle Fan-out** is an ordered, nonempty list of Providers. It
 opens children in declaration order, omits deliberate declines, and declines if
 all children decline. A child open failure aborts the root and discards handlers
@@ -433,7 +534,13 @@ work: no UUID, descriptor, publisher, Handler, event, outcome, diagnostic,
 counter, or lifecycle clock is created, and no allocation, clock read, or I/O
 occurs. A shared immutable inert activity MAY stand in for the activity seam.
 A declining Provider costs only the UUID, descriptor, and opening call; after
-decline it has the same event-, counter-, diagnostic-, and clock-free path.
+decline it has the same event-, counter-, diagnostic-, and clock-free path. The
+resource clocks are lifecycle clocks and follow that rule: an unobserved
+operation acquires and releases without reading one, and the deadline clocks
+resource management needs for its own budgets are independent of observation and
+are taken either way. The restricted resource log is the one deliberate
+exception, and a failure-only one: it speaks where a cleanup fact reached no
+Handler and stays silent on every path where nothing went wrong.
 
 With `N` concurrent accepted roots, `P` active Providers, and maximum activity
 depth `D`, core live lifecycle memory is `O(N × (P + D))` and independent of
@@ -464,18 +571,20 @@ write. The adapter observation uses the identical shape and indexes its own
 emissions. The shape is a case assertion format, not a public serialization
 contract.
 
-This module owns eight cases:
+This module owns ten cases:
 
 | Case | Observable distinction |
 |---|---|
-| standalone read | one Read brackets its Database Call outside a transaction |
+| standalone read | one Read brackets its Acquisition, its Database Call, and its Release outside a transaction |
 | pre-commit batch | one nonempty boundary batch brackets two ordered writes |
 | read dependency | the dependency batch finishes before its sibling Read starts |
-| retry then commit | one invocation contains a rolled-back attempt and a later committed attempt; zero-row enforcement is attributed to the completed call |
+| retry then commit | one invocation contains a rolled-back attempt and a later committed attempt, each acquiring and releasing its own connection, and the first releases before the second acquires; zero-row enforcement is attributed to the completed call |
 | retry exhaustion | every failed call, batch, and attempt finishes before the next attempt; classifier truth remains retry-eligible when the budget ends |
-| joined invocation | the joined activity has no attempt and its buffered write reaches the outer attempt's pre-commit batch |
-| streamed delivery | a Snapshot Stream root brackets one Stream Batch per page, each page's Database Calls are that batch's own, and the delivery finishes exhausted |
-| isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin and finishes `beginFailed` with no callback, no child, and no retry; the invocation finishes failed caused by it |
+| joined invocation | the joined activity has no attempt of its own and no Acquisition, and its buffered write reaches the outer attempt's pre-commit batch |
+| streamed delivery | a Snapshot Stream root acquires once before its first page, brackets one Stream Batch per page, each page's Database Calls are that batch's own, and it releases where the delivery finishes exhausted |
+| isolation setup failure | the attempt that adopted its edition starts before the boundary is asked to begin, acquires a connection, finishes `beginFailed` `direct` with no callback and no retry, and releases what it took; the invocation finishes failed caused by it |
+| acquisition failure | the attempt's Acquisition grants nothing, carries the partial cleanup it ran and is followed by no Release, and the attempt finishes `beginFailed` caused by it |
+| cleanup after commit | a Release reporting an unrelinquished connection leaves the attempt committed and the invocation committed |
 
 Every Started transition of an adoption-owning activity in those cases — a
 standalone Read, a standalone Snapshot Stream, and every Transaction Attempt —

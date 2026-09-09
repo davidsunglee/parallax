@@ -3833,7 +3833,11 @@ class ExecutionLifecycleHandler(Protocol):
 
 Five `Literal` aliases classify what the observation describes. Each is a
 Python runtime vocabulary under the representation-spelling rule of §2, so its
-members are lowercase snake_case:
+members are lowercase snake_case. Resource observation adds no sixth: an
+Acquisition reports the `m-db-port` `AcquisitionReason` and a Release the
+`m-db-port` cleanup values, both of which are that module's vocabularies rather
+than the lifecycle's, and the conformance observation projects them member by
+member exactly as it projects these.
 
 | Alias | Members |
 |---|---|
@@ -3886,8 +3890,10 @@ escapes. Unrelated Handles remain usable.
 `DatabaseCallStarted`/`DatabaseCallFinished`,
 `TransactionInvocationStarted`/`TransactionInvocationFinished`,
 `TransactionAttemptStarted`/`TransactionAttemptFinished`,
-`SnapshotStreamStarted`/`SnapshotStreamFinished`, and
-`StreamBatchStarted`/`StreamBatchFinished`. `ActivityStarted` and
+`SnapshotStreamStarted`/`SnapshotStreamFinished`,
+`StreamBatchStarted`/`StreamBatchFinished`,
+`AcquisitionStarted`/`AcquisitionFinished`, and
+`ReleaseStarted`/`ReleaseFinished`. `ActivityStarted` and
 `ActivityFinished` are union aliases or parent interfaces, not constructible
 kind-plus-payload records. Every event carries `execution_id`, one-based
 contiguous `sequence`, one-based contiguous `activity_id`, and
@@ -3898,6 +3904,24 @@ The concrete payloads and closed outcomes follow `m-execution-lifecycle`.
 Database Call Started and Finished borrow the exact deeply immutable
 `LoweredStatement`; a Handler must not retain it. Finished carries integer
 `duration_ns` measured by `time.perf_counter_ns` around the port call only.
+
+`AcquisitionFinished` and `ReleaseFinished` carry integer nanosecond durations
+measured the same way, around the acquisition and the release call
+respectively, plus a `hold_duration_ns` spanning the two. `AcquisitionFailed`
+and `ReleaseFinished` carry the `m-db-port` `CleanupResult` directly rather
+than a parallel lifecycle disposition, and `ReleaseFinished` types it
+`CleanupResult | None` because that is what the port's own `cleanup_result`
+property admits — a conforming context establishes one on every completed exit,
+so the conformance observation refuses a release that states none.
+
+The shared entry and release helpers in
+`parallax.snapshot.handle._connection_lifecycle` own both ends, and the
+completion fact that selects between a Handler and the restricted
+`parallax.resources` log is answered by the activity scope rather than read off
+quarantine or fan-out internals. A Handler that composes children answers it
+through the package-private `CompletingHandler`, because a fan-out contains its
+children's ordinary failures and its own normal return therefore says nothing
+about whether anyone received the event.
 `FailureDiagnostic` is detached, deeply immutable, total to construct, bounded
 to 8 KiB of message and 64 KiB of chained stack without locals, and carries
 qualified type, optional safely readable string code, and truncation flags.

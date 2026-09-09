@@ -85,23 +85,30 @@ __all__ = [
 
 _REVOKED = "this scripted connection's scope has ended"
 
+_RETURNED: Final[CleanupResult] = Returned()
+"""What a completed relinquishment establishes where nothing had to be reclaimed."""
+
 
 class SoleConnectionScope:
     """One acquisition of a double that IS its own connection.
 
-    There is nothing to check out and nothing to give back, so entering yields
-    the double itself and leaving reports no cleanup facts: ``None`` is absence
-    rather than a claim that something was relinquished.
+    There is nothing to check out and nothing to give back, but "nothing to give
+    back" is still a completed relinquishment rather than an absent one: the
+    contract is that an acquisition which was entered reports what its exit
+    ESTABLISHED, and ``None`` is reserved for a context nobody entered or one
+    whose entry never reached ownership. So this reports :class:`Returned` from
+    the moment it is left, and nothing before that.
     """
 
-    __slots__ = ("_connection",)
+    __slots__ = ("_connection", "_left")
 
     def __init__(self, connection: DatabaseConnection) -> None:
         self._connection = connection
+        self._left = False
 
     @property
     def cleanup_result(self) -> CleanupResult | None:
-        return None
+        return _RETURNED if self._left else None
 
     def __enter__(self) -> DatabaseConnection:
         return self._connection
@@ -113,7 +120,7 @@ class SoleConnectionScope:
         traceback: TracebackType | None,
         /,
     ) -> None:
-        return
+        self._left = True
 
 
 class SoleConnectionRuntime:
@@ -157,9 +164,6 @@ class ConnectsAsItself:
 
     def open(self) -> SoleConnectionRuntime:
         return SoleConnectionRuntime(cast("DatabaseConnection", self))
-
-
-_RETURNED: Final[CleanupResult] = Returned()
 
 
 def body_outcome[T](

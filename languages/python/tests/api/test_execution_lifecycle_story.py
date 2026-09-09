@@ -24,7 +24,11 @@ from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine, execution_lifecycle_stories
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
+from parallax.core.db_port import Returned
 from parallax.core.execution_lifecycle import (
+    AcquisitionFinished,
+    AcquisitionStarted,
+    ConnectionAcquired,
     DatabaseCallFinished,
     DatabaseCallStarted,
     DatabaseReadCompleted,
@@ -33,6 +37,8 @@ from parallax.core.execution_lifecycle import (
     ReadCompleted,
     ReadFinished,
     ReadStarted,
+    ReleaseFinished,
+    ReleaseStarted,
     RootExecution,
 )
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
@@ -71,9 +77,25 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
 
     (root,) = recorder.roots
     assert root.execution.kind == "read"
-    started, call_started, call_finished, finished = root.events
+    (
+        started,
+        acquisition_started,
+        acquisition_finished,
+        call_started,
+        call_finished,
+        release_started,
+        release_finished,
+        finished,
+    ) = root.events
     assert isinstance(started, ReadStarted)
     assert started.interface == "typed"
+    # The connection is a real one out of a real pool at both ends: the
+    # acquisition brackets a checkout that genuinely happened, and the release
+    # reports the handoff that genuinely completed.
+    assert isinstance(acquisition_started, AcquisitionStarted)
+    assert isinstance(acquisition_finished, AcquisitionFinished)
+    assert acquisition_finished.outcome == ConnectionAcquired()
+    assert acquisition_finished.duration_ns > 0
     assert isinstance(call_started, DatabaseCallStarted)
     assert call_started.kind == "read"
     assert isinstance(call_finished, DatabaseCallFinished)
@@ -81,6 +103,12 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
     # that genuinely happened.
     assert call_finished.outcome == DatabaseReadCompleted(1)
     assert call_finished.duration_ns > 0
+    assert isinstance(release_started, ReleaseStarted)
+    assert isinstance(release_finished, ReleaseFinished)
+    assert release_finished.cleanup_result == Returned()
+    # The hold spans the whole operation, so it is longer than either end of it.
+    assert release_finished.hold_duration_ns > release_finished.duration_ns
+    assert release_finished.hold_duration_ns > acquisition_finished.duration_ns
     assert isinstance(finished, ReadFinished)
     assert finished.outcome == ReadCompleted()
 
@@ -99,8 +127,8 @@ def test_two_reads_through_one_handle_are_two_independent_roots(profile_run: Any
     assert first.execution.id != second.execution.id
     # Independent sequences: the second root starts over at one rather than
     # continuing the first, and neither implies an order over the other.
-    assert [event.sequence for event in first.events] == [1, 2, 3, 4]
-    assert [event.sequence for event in second.events] == [1, 2, 3, 4]
+    assert [event.sequence for event in first.events] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [event.sequence for event in second.events] == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_a_declining_provider_changes_nothing_about_the_query(profile_run: Any) -> None:

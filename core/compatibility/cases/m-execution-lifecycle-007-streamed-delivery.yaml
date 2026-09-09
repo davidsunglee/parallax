@@ -14,13 +14,24 @@
 #
 # Two pages over three orders at `batchSize: 2`, with one include level, so the
 # tree has every relation the module states about a stream. Activity 1 is the
-# stream and spans the whole delivery. Activities 2 and 5 are its pages, each
+# stream and spans the whole delivery. Activities 3 and 6 are its pages, each
 # bracketing that page's own two Database Calls and nothing else: a Stream Batch
 # IS the page-read activity, so no Read activity appears anywhere in this stream
 # even though a page runs the same executor an eager deep fetch runs.
 #
+# One connection serves both pages, and the two ends of it are where the
+# delivery's own boundaries are. The Acquisition (activity 2) is the stream's
+# first child and stands in FRONT of page 1's batch: a stream adopts its edition
+# when its scope is entered but takes no connection until it reads a page, and
+# the connection then belongs to the delivery rather than to the page that asked
+# first — page 2 runs on it and acquires nothing. The Release (activity 9)
+# stands after page 2's batch and before the stream's own end, because a
+# delivery releases where it SETTLES: exhaustion was discovered inside page 2,
+# so the connection goes back there rather than being held until the caller
+# leaves its scope.
+#
 # What the sequence pins down is the batch BOUNDARY. Page 1's batch finishes
-# (sequence 7) before page 2's opens (sequence 8), so no batch spans another and
+# (sequence 9) before page 2's opens (sequence 10), so no batch spans another and
 # none of them spans the caller consuming the roots it delivered: a batch
 # completes once the page's converted result is ready rather than once the caller
 # is done with it. Delivering a root to the caller emits no event of its own, so
@@ -123,64 +134,80 @@ then:
           - sequence: 2
             activity: 2
             parent: 1
-            streamBatchStarted: {}
+            acquisitionStarted: {}
           - sequence: 3
+            activity: 2
+            parent: 1
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 4
             activity: 3
-            parent: 2
+            parent: 1
+            streamBatchStarted: {}
+          - sequence: 5
+            activity: 4
+            parent: 3
             databaseCallStarted:
               target: parallax.compatibility.Order
               kind: read
               statement: 0
-          - sequence: 4
-            activity: 3
-            parent: 2
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 3 }
-          - sequence: 5
+          - sequence: 6
             activity: 4
-            parent: 2
+            parent: 3
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 3 }
+          - sequence: 7
+            activity: 5
+            parent: 3
             databaseCallStarted:
               target: parallax.compatibility.OrderItem
               kind: read
               statement: 1
-          - sequence: 6
-            activity: 4
-            parent: 2
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 3 }
-          - sequence: 7
-            activity: 2
-            parent: 1
-            streamBatchFinished: { outcome: completed }
           - sequence: 8
             activity: 5
+            parent: 3
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 3 }
+          - sequence: 9
+            activity: 3
+            parent: 1
+            streamBatchFinished: { outcome: completed }
+          - sequence: 10
+            activity: 6
             parent: 1
             streamBatchStarted: {}
-          - sequence: 9
-            activity: 6
-            parent: 5
+          - sequence: 11
+            activity: 7
+            parent: 6
             databaseCallStarted:
               target: parallax.compatibility.Order
               kind: read
               statement: 2
-          - sequence: 10
-            activity: 6
-            parent: 5
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 11
+          - sequence: 12
             activity: 7
-            parent: 5
+            parent: 6
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
+          - sequence: 13
+            activity: 8
+            parent: 6
             databaseCallStarted:
               target: parallax.compatibility.OrderItem
               kind: read
               statement: 3
-          - sequence: 12
-            activity: 7
-            parent: 5
+          - sequence: 14
+            activity: 8
+            parent: 6
             databaseCallFinished: { outcome: readCompleted, returnedRows: 0 }
-          - sequence: 13
-            activity: 5
+          - sequence: 15
+            activity: 6
             parent: 1
             streamBatchFinished: { outcome: completed }
-          - sequence: 14
+          - sequence: 16
+            activity: 9
+            parent: 1
+            releaseStarted: {}
+          - sequence: 17
+            activity: 9
+            parent: 1
+            releaseFinished: { cleanup: returned }
+          - sequence: 18
             activity: 1
             parent: null
             snapshotStreamFinished: { outcome: exhausted }

@@ -19,6 +19,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, Final, Literal, NamedTuple, assert_never, cast
 
+from parallax.core.db_port import CleanupResult, Invalidated, Returned, Unrelinquished
 from parallax.core.diagnostics import FailureDiagnostic
 from parallax.core.execution_lifecycle._activity import ExecutionLifecycleHandler
 from parallax.core.execution_lifecycle._diagnostics import (
@@ -29,12 +30,16 @@ from parallax.core.execution_lifecycle._diagnostics import (
 )
 from parallax.core.execution_lifecycle._errors import ExecutionLifecycleHandlerError
 from parallax.core.execution_lifecycle._events import (
+    AcquisitionFailed,
+    AcquisitionFinished,
+    AcquisitionStarted,
     ActivityFinished,
     AttemptBeginFailed,
     AttemptCommitted,
     AttemptFailure,
     AttemptRollbackFailed,
     AttemptRolledBack,
+    ConnectionAcquired,
     DatabaseCallFailed,
     DatabaseCallFinished,
     DatabaseCallStarted,
@@ -51,6 +56,8 @@ from parallax.core.execution_lifecycle._events import (
     ReadFailed,
     ReadFinished,
     ReadStarted,
+    ReleaseFinished,
+    ReleaseStarted,
     RootExecution,
     SnapshotStreamFinished,
     SnapshotStreamStarted,
@@ -243,7 +250,7 @@ def _attempt_failure_fields(
     return fields
 
 
-type _NoPayload = StreamBatchStarted
+type _NoPayload = StreamBatchStarted | AcquisitionStarted | ReleaseStarted
 type _Completed = ReadCompleted | WriteBatchCompleted | StreamBatchCompleted
 type _Committed = OuterInvocationCommitted | AttemptCommitted
 type _ActivityFailed = (
@@ -389,6 +396,60 @@ def _database_call_failed_fields(
     }
 
 
+def _cleanup_fields(result: CleanupResult | None) -> dict[str, object]:
+    """What a cleanup ESTABLISHED, and the conditions it met on the way.
+
+    Classification only, at either detail: the disposition, and one
+    ``phase/code`` per issue. The rich per-issue diagnostic stays on the event
+    for a Handler that has an application-controlled export path for it, because
+    a record's key set here is literal and constant while the issues are a
+    tuple, and because a bounded native message reaching a standard log is the
+    disclosure the restricted resource logger exists to avoid.
+    """
+    match result:
+        case None:
+            return {"cleanup": None, "cleanup_issues": ()}
+        case Returned(issues):
+            disposition = "returned"
+        case Invalidated(issues):
+            disposition = "invalidated"
+        case Unrelinquished(issues):
+            disposition = "unrelinquished"
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+    return {
+        "cleanup": disposition,
+        "cleanup_issues": tuple(f"{issue.phase}/{issue.code}" for issue in issues),
+    }
+
+
+def _acquired_fields(event: AcquisitionFinished, _detail: LifecycleLogDetail) -> dict[str, object]:
+    return {"outcome": "acquired", "duration_ns": event.duration_ns}
+
+
+def _acquisition_failed_fields(
+    event: AcquisitionFinished, detail: LifecycleLogDetail
+) -> dict[str, object]:
+    outcome = cast(AcquisitionFailed, event.outcome)
+    return {
+        "outcome": "failed",
+        "reason": outcome.reason,
+        **_failure_fields(outcome.failure, detail),
+        **_cleanup_fields(outcome.cleanup_result),
+        "duration_ns": event.duration_ns,
+    }
+
+
+def _release_fields(event: ReleaseFinished, _detail: LifecycleLogDetail) -> dict[str, object]:
+    """A release has one ending, so it reports what it established rather than
+    which of several endings it reached."""
+    return {
+        **_cleanup_fields(event.cleanup_result),
+        "duration_ns": event.duration_ns,
+        "hold_duration_ns": event.hold_duration_ns,
+    }
+
+
 def _rolled_back_fields(
     outcome: AttemptRolledBack, detail: LifecycleLogDetail
 ) -> dict[str, object]:
@@ -398,7 +459,7 @@ def _rolled_back_fields(
 def _begin_failed_fields(
     outcome: AttemptBeginFailed, detail: LifecycleLogDetail
 ) -> dict[str, object]:
-    return {"outcome": "beginFailed", **_diagnostic_fields(outcome.diagnostic, detail)}
+    return {"outcome": "beginFailed", **_failure_fields(outcome.failure, detail)}
 
 
 def _rollback_failed_fields(
@@ -561,6 +622,24 @@ def _stream_projection(event: SnapshotStreamFinished, transition: str) -> _Proje
             assert_never(unreachable)
 
 
+def _acquisition_projection(event: AcquisitionFinished, transition: str) -> _Projected[Any]:
+    """An acquisition's ending, which like a Database Call's reports a duration
+    living outside the outcome that says which ending it was."""
+    match event.outcome:
+        case ConnectionAcquired():
+            projected = _Projected(
+                _finished_level(event, False), transition, True, event, _acquired_fields
+            )
+            return projected
+        case AcquisitionFailed():
+            projected = _Projected(
+                _finished_level(event, True), transition, True, event, _acquisition_failed_fields
+            )
+            return projected
+        case _ as unreachable:  # pragma: no cover - exhaustiveness guard
+            assert_never(unreachable)
+
+
 def _stream_batch_projection(event: StreamBatchFinished, transition: str) -> _Projected[Any]:
     match event.outcome:
         case StreamBatchCompleted() as outcome:
@@ -642,6 +721,19 @@ def _projected(event: ExecutionEvent) -> _Projected[Any]:
             return projected
         case StreamBatchFinished():
             return _stream_batch_projection(event, "streamBatchFinished")
+        case AcquisitionStarted():
+            projected = _Projected(logging.DEBUG, "acquisitionStarted", False, event, _no_fields)
+            return projected
+        case AcquisitionFinished():
+            return _acquisition_projection(event, "acquisitionFinished")
+        case ReleaseStarted():
+            projected = _Projected(logging.DEBUG, "releaseStarted", False, event, _no_fields)
+            return projected
+        case ReleaseFinished():
+            projected = _Projected(
+                _finished_level(event, False), "releaseFinished", True, event, _release_fields
+            )
+            return projected
         case _ as unreachable:  # pragma: no cover - exhaustiveness guard
             assert_never(unreachable)
 

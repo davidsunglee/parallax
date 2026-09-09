@@ -325,8 +325,12 @@ def test_a_fan_out_installed_through_connect_observes_a_whole_read() -> None:
     transitions = [type(event).__name__ for event in children[0].seen]
     assert transitions == [
         "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "ReadFinished",
     ]
     assert children[1].seen == children[0].seen

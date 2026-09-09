@@ -110,18 +110,33 @@ def test_a_typed_find_brackets_its_one_database_call() -> None:
 
     (root,) = recorder.roots
     assert root.execution.kind == "read"
-    started, call_started, call_finished, finished = root.events
+    started, _, _, call_started, call_finished, _, _, finished = root.events
     assert _transitions(root.events) == [
         "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "ReadFinished",
     ]
     # The correlation envelope: one-based and contiguous on both counters, and
-    # the call is a child of the Read rather than a sibling of it.
-    assert [event.sequence for event in root.events] == [1, 2, 3, 4]
-    assert [event.activity_id for event in root.events] == [1, 2, 2, 1]
-    assert [event.parent_activity_id for event in root.events] == [None, 1, 1, None]
+    # every one of the three is a child of the Read rather than a sibling of it
+    # — the connection the read holds is bracketed BESIDE the statement that
+    # runs on it, never around it.
+    assert [event.sequence for event in root.events] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [event.activity_id for event in root.events] == [1, 2, 2, 3, 3, 4, 4, 1]
+    assert [event.parent_activity_id for event in root.events] == [
+        None,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        None,
+    ]
     assert {event.execution_id for event in root.events} == {root.execution.id}
 
     assert isinstance(started, ReadStarted)
@@ -139,7 +154,7 @@ def test_the_call_borrows_the_exact_statement_the_port_ran() -> None:
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
     (root,) = recorder.roots
-    started, finished = root.events[1], root.events[3 - 1]
+    started, finished = root.events[3], root.events[4]
     assert isinstance(started, DatabaseCallStarted)
     assert isinstance(finished, DatabaseCallFinished)
     # Started and Finished repeat ONE borrowed value — neither its text nor its
@@ -159,7 +174,7 @@ def test_the_unlocked_standalone_statement_is_what_the_call_names() -> None:
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, recorder).find(mm.Account.where(mm.Account.id == 7)).result()
     (root,) = recorder.roots
-    call = root.events[1]
+    call = root.events[3]
     assert isinstance(call, DatabaseCallStarted)
     assert POSTGRES_DRIVER_SQL(call.statement.sql) == FIND_SQL_UNLOCKED
 
@@ -189,7 +204,7 @@ def test_a_duration_excludes_the_handler_time_around_it() -> None:
     handler = _SlowHandler()
     port = ScriptedAdapter(Read(rows=[NEW_ROW]))
     _db(port, _Provider(handler)).find(mm.Account.where(mm.Account.id == 7)).result()
-    finished = handler.events[2]
+    finished = handler.events[4]
     assert isinstance(finished, DatabaseCallFinished)
     assert finished.duration_ns < 5_000_000
 
@@ -216,16 +231,23 @@ def test_a_deep_fetch_level_is_a_second_call_under_the_same_read() -> None:
     (root,) = recorder.roots
     assert _transitions(root.events) == [
         "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "ReadFinished",
     ]
     # Every level is a child of the ONE Read the operation opened: a deep fetch
-    # is one Read with many calls, never one Read per level.
-    assert [event.activity_id for event in root.events] == [1, 2, 2, 3, 3, 1]
-    assert [event.parent_activity_id for event in root.events] == [None, 1, 1, 1, 1, None]
+    # is one Read with many calls, never one Read per level — and both levels
+    # run on the ONE connection the read acquired before either of them and
+    # released after both, which is what "a read holds its connection through
+    # publication" looks like read off the stream.
+    assert [event.activity_id for event in root.events] == [1, 2, 2, 3, 3, 4, 4, 5, 5, 1]
+    assert [event.parent_activity_id for event in root.events] == [None] + [1] * 8 + [None]
 
 
 def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
@@ -255,11 +277,15 @@ def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
     (root,) = recorder.roots
     assert _transitions(root.events) == [
         "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "ReadFinished",
     ]
-    call_finished, read_finished = root.events[2], root.events[3]
+    call_finished, read_finished = root.events[4], root.events[7]
     assert isinstance(call_finished, DatabaseCallFinished)
     outcome = call_finished.outcome
     assert isinstance(outcome, DatabaseCallFailed)
@@ -287,7 +313,7 @@ def test_a_failure_after_the_call_completed_is_the_reads_own() -> None:
         )
 
     (root,) = recorder.roots
-    call_finished, read_finished = root.events[2], root.events[3]
+    call_finished, read_finished = root.events[4], root.events[7]
     assert isinstance(call_finished, DatabaseCallFinished)
     assert call_finished.outcome == DatabaseReadCompleted(1)
     assert isinstance(read_finished, ReadFinished)
@@ -317,10 +343,17 @@ def test_a_control_flow_exception_still_finishes_every_open_activity() -> None:
         _db(_Interrupting(), recorder).find(mm.Account.where(mm.Account.id == 7)).result()
 
     (root,) = recorder.roots
+    # The release is in the list for the same reason the call's Finished is: a
+    # scope emits its end however its body leaves, so the connection an
+    # interrupt escaped through is still given back and still observed.
     assert _transitions(root.events) == [
         "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
         "ReadFinished",
     ]
 
@@ -460,6 +493,24 @@ class _Borrowing:
     ) -> _Borrowing:
         self.calls.append((statement, kind, target))
         return self
+
+    def acquisition(self) -> _Borrowing:
+        return self
+
+    def release(self, held_since_ns: int | None, /) -> _Borrowing:
+        return self
+
+    @property
+    def held_since_ns(self) -> None:
+        return None
+
+    @property
+    def cleanup_reported(self) -> bool:
+        return False
+
+    def unacquired(self, cleanup_result: object, /) -> None: ...
+
+    def relinquished(self, cleanup_result: object, /) -> None: ...
 
     def read_completed(self, returned_rows: object, /) -> None:
         self.rows = returned_rows

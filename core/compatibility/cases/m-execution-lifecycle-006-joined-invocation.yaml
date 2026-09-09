@@ -6,7 +6,7 @@
 # inside it. A joined boundary shares the outer transaction rather than opening
 # a nested one (m-unit-work), and the stream says exactly that in three ways.
 #
-# It is a child of the ATTEMPT, not of the invocation: activity 5's `parent` is
+# It is a child of the ATTEMPT, not of the invocation: activity 6's `parent` is
 # 2, so the joined call is inside the physical attempt that was running when it
 # was made. It runs no attempt of its own: no `transactionAttemptStarted`
 # follows it, and there is exactly one in the whole root. And it carries no
@@ -14,15 +14,22 @@
 # because both were resolved by the invocation it joined and a joined boundary
 # may not renegotiate them.
 #
+# It acquires nothing either, which is the resource half of the same sharing.
+# The one Acquisition and the one Release in this root belong to the attempt (3
+# and 9), and everything under it — the read, the joined invocation, the
+# pre-commit batch and its write — INHERITS that connection. A joined boundary
+# that took a second connection would be a second borrower of the transaction it
+# claims to share.
+#
 # `returned` is likewise narrower than `committed`. A joined invocation finishes
 # as `returned` or `raised`, which describes the nested CALLBACK only and never
-# claims the physical transaction did anything: sequence 8 says the joined body
+# claims the physical transaction did anything: sequence 10 says the joined body
 # came back, while the transaction it joined is still open and does not commit
-# until sequence 13.
+# until sequence 17.
 #
-# The write it buffered proves the sharing. It appears at sequence 10, after the
+# The write it buffered proves the sharing. It appears at sequence 12, after the
 # joined invocation already finished, inside the OUTER boundary's own
-# `pre-commit` batch (activity 6, `parent: 2`) — because that boundary is the
+# `pre-commit` batch (activity 7, `parent: 2`) — because that boundary is the
 # one that finalizes the shared buffer. A stream showing two attempts, or two
 # roots, would describe a nested transaction that never existed physically.
 #
@@ -70,48 +77,64 @@ then:
           - sequence: 3
             activity: 3
             parent: 2
-            readStarted: { target: parallax.compatibility.Account, interface: typed }
+            acquisitionStarted: {}
           - sequence: 4
-            activity: 4
-            parent: 3
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
-          - sequence: 5
-            activity: 4
-            parent: 3
-            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
-          - sequence: 6
             activity: 3
             parent: 2
-            readFinished: { outcome: completed }
+            acquisitionFinished: { outcome: acquired }
+          - sequence: 5
+            activity: 4
+            parent: 2
+            readStarted: { target: parallax.compatibility.Account, interface: typed }
+          - sequence: 6
+            activity: 5
+            parent: 4
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: read }
           - sequence: 7
             activity: 5
-            parent: 2
-            transactionInvocationStarted: { invocation: joined }
+            parent: 4
+            databaseCallFinished: { outcome: readCompleted, returnedRows: 1 }
           - sequence: 8
-            activity: 5
+            activity: 4
             parent: 2
-            transactionInvocationFinished: { outcome: returned }
+            readFinished: { outcome: completed }
           - sequence: 9
             activity: 6
             parent: 2
-            writeBatchStarted: { trigger: pre-commit }
+            transactionInvocationStarted: { invocation: joined }
           - sequence: 10
-            activity: 7
-            parent: 6
-            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
-          - sequence: 11
-            activity: 7
-            parent: 6
-            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
-          - sequence: 12
             activity: 6
             parent: 2
-            writeBatchFinished: { outcome: completed }
+            transactionInvocationFinished: { outcome: returned }
+          - sequence: 11
+            activity: 7
+            parent: 2
+            writeBatchStarted: { trigger: pre-commit }
+          - sequence: 12
+            activity: 8
+            parent: 7
+            databaseCallStarted: { target: parallax.compatibility.Account, kind: write }
           - sequence: 13
+            activity: 8
+            parent: 7
+            databaseCallFinished: { outcome: writeCompleted, affectedRows: 1 }
+          - sequence: 14
+            activity: 7
+            parent: 2
+            writeBatchFinished: { outcome: completed }
+          - sequence: 15
+            activity: 9
+            parent: 2
+            releaseStarted: {}
+          - sequence: 16
+            activity: 9
+            parent: 2
+            releaseFinished: { cleanup: returned }
+          - sequence: 17
             activity: 2
             parent: 1
             transactionAttemptFinished: { outcome: committed }
-          - sequence: 14
+          - sequence: 18
             activity: 1
             parent: null
             transactionInvocationFinished: { outcome: committed }

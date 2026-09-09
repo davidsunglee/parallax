@@ -356,7 +356,7 @@ values.
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.corrupt` | `given` | no | an ordered list of stored-state corruptions applied after the model's conforming fixtures load and before the action, admitted on `read` cases; each entry addresses one occurrence by `entity` + primary `key` + logical `member` path and states the raw stored `value` that replaces it (see *Corrupting stored state*, below) |
-| `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop, or `isolation-setup-failure` — the session setup opening the boundary at its requested level failing, so the boundary never opens and the one attempt that adopted before it finishes `beginFailed` |
+| `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop, or one of the three that are not failures of the work: `isolation-setup-failure` — the session setup opening the boundary at its requested level failing, so the boundary never opens and the one attempt that adopted before it finishes `beginFailed`; `connection-acquisition-failure` — the attempt's Acquisition granting no connection, so the attempt finishes `beginFailed` caused by it; `connection-cleanup-failure` — the attempt's Release failing to relinquish the connection, which is diagnostic and leaves the boundary committed |
 | `given.sessionDefault` | `given` | boundary | the Isolation Level the connection ALREADY defaults to when the adapter takes it (`read-uncommitted`), established before intake — the seam `m-db-port` puts the once-per-connection floor check at |
 | `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
@@ -1976,7 +1976,8 @@ harness cannot provoke, because it needs an **injected failure**, a re-executed
 closure, or a connection configured before the adapter took it. It carries a
 portable `when.boundary` (the ordered unit-of-work actions), an OPTIONAL
 `given.fault` (a portable fault kind — `serialization-failure` / `deadlock` /
-`lock-wait-timeout` / `optimistic-lock-conflict` / `isolation-setup-failure`, the
+`lock-wait-timeout` / `optimistic-lock-conflict` / `isolation-setup-failure` /
+`connection-acquisition-failure` / `connection-cleanup-failure`, the
 first four aligned with the `m-db-error` `errorClass` vocabulary), an OPTIONAL
 `given.sessionDefault`, a `then.outcome` (the portable outcome — `committed`, a
 surfaced error kind, or a refused boundary option), and its unit-of-work
@@ -2006,6 +2007,21 @@ above the wire (`m-db-port` *Mapping obligations*), and all four are portable:
   boundary at a level failing, so the boundary **never opens**: the one attempt
   that adopted its edition and started before it finishes `beginFailed`, and
   the callback is never called.
+
+Two further kinds are resource faults rather than isolation ones, and both are
+about the connection an attempt holds rather than about the work it does
+(`m-db-port`, `m-execution-lifecycle`):
+
+- `given.fault: connection-acquisition-failure` is the Acquisition an attempt
+  runs before its boundary granting **no connection**. The attempt finishes
+  `beginFailed` **caused by** that Acquisition, the callback never runs, and no
+  Release follows: nothing was granted for a release to end. It is terminal
+  whatever the retry configuration says, because an acquisition failure is
+  outside the `m-db-error` categories and no retry rule reads it.
+- `given.fault: connection-cleanup-failure` is the Release an attempt runs after
+  settling **failing to relinquish**. It is diagnostic rather than an outcome:
+  the attempt commits, the invocation commits, and what the release established
+  is reported on the Release alone.
 - `then.outcome` adds `option-conflict` (a joining call named an option the
   boundary it joined was not opened with, refused before the joined callback
   runs), `boundary-failed` (the boundary never opened), and `connection-refused`
@@ -2080,6 +2096,19 @@ optional there because a boundary may name no level, and forbidden on a `joined`
 invocation for the reason the other three are: a joined boundary renegotiates
 none of them. It is stated once, above every Transaction Attempt, because every
 attempt of one invocation opens at the same requested level.
+
+An operation's connection is observable as two more activities. A standalone
+Read, a Transaction Attempt, and a standalone Snapshot Stream each carry an
+`acquisitionStarted`/`acquisitionFinished` pair as their FIRST child and — where
+that acquisition granted a connection — a `releaseStarted`/`releaseFinished`
+pair as their LAST. They are siblings of the execution activities between them
+and contain nothing; work that inherits a connection carries neither pair.
+`acquisitionFinished` names the `m-db-port` `reason` it failed for and the
+partial cleanup it ran, and a failed acquisition is followed by no release.
+`releaseFinished` names the `m-db-port` disposition its cleanup established and
+the finite conditions it met, and never rewrites the outcome of the activity
+above it. Both omit their monotonic durations for the reason a Database Call
+does.
 
 The shape is a case assertion format, not a public serialization contract. The
 compatibility harness validates `then.executionLifecycle` without producing

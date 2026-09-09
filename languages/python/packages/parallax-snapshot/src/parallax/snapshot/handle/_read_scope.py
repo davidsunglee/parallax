@@ -59,6 +59,7 @@ from parallax.core.db_port import ConnectionContext, DatabaseConnection, Databas
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
+    INERT,
     ActivityTarget,
     DatabaseCallScope,
     InstalledLifecycle,
@@ -477,7 +478,16 @@ class _StandaloneRead:
     is the one object both shapes of standalone operation have exactly one of.
     """
 
-    __slots__ = ("_connection", "_resource", "adopted", "lifecycle", "runtime", "selected")
+    __slots__ = (
+        "_connection",
+        "_held_since_ns",
+        "_resource",
+        "_stream",
+        "adopted",
+        "lifecycle",
+        "runtime",
+        "selected",
+    )
 
     def __init__(
         self,
@@ -492,6 +502,12 @@ class _StandaloneRead:
         self.runtime = runtime
         self._resource: ConnectionContext | None = None
         self._connection: DatabaseConnection | None = None
+        self._held_since_ns: int | None = None
+        # The delivery's own activity, retained because a stream's connection is
+        # acquired and released under it rather than under whichever page
+        # happened to ask first. An eager read reaches its activity directly and
+        # never touches this.
+        self._stream: SnapshotStreamActivity = INERT
 
     def eager[T](
         self,
@@ -519,13 +535,13 @@ class _StandaloneRead:
                 # materialized into. Held until the result exists, because a
                 # graph half-built from rows is not a result anything may return.
                 resource = self.runtime.connection()
-                connection = enter_connection(resource)
+                connection, held_since_ns = enter_connection(resource, read)
                 try:
                     published = body(read, ReadInputs(connection, None, None))
                 except BaseException as failure:
-                    exit_connection(resource, failure)
+                    exit_connection(resource, read, held_since_ns, failure)
                     raise
-                exit_connection(resource, None)
+                exit_connection(resource, read, held_since_ns, None)
                 return published
 
         return self.adopted.contextualized(inside)
@@ -533,13 +549,15 @@ class _StandaloneRead:
     def open_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
     ) -> SnapshotStreamActivity:
-        return open_snapshot_stream_root(
+        stream = open_snapshot_stream_root(
             self.lifecycle,
             target=target,
             interface=interface,
             batch_size=batch_size,
             edition=self.selected.edition,
         )
+        self._stream = stream
+        return stream
 
     def _acquired(self) -> DatabaseConnection:
         """The connection every page of this delivery runs on.
@@ -558,11 +576,12 @@ class _StandaloneRead:
         # retry through.
         self._resource = resource
         try:
-            connection = enter_connection(resource)
+            connection, held_since_ns = enter_connection(resource, self._stream)
         except BaseException:
             self._resource = None
             raise
         self._connection = connection
+        self._held_since_ns = held_since_ns
         return connection
 
     def release(self, failure: BaseException | None, /) -> None:
@@ -575,10 +594,11 @@ class _StandaloneRead:
             self._connection = None
             return
         try:
-            exit_connection(resource, failure)
+            exit_connection(resource, self._stream, self._held_since_ns, failure)
         finally:
             self._resource = None
             self._connection = None
+            self._held_since_ns = None
 
     def page[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
@@ -587,8 +607,15 @@ class _StandaloneRead:
         # — so it opens where the page begins. The page is not bracketed on its
         # own: the batch and the stream above it report the underlying failure,
         # and the advance that reached this page names the edition once.
+        #
+        # The connection is taken BEFORE the batch opens, because it belongs to
+        # the delivery rather than to the page that happened to be first: the
+        # Acquisition is the stream's own child and stands in front of every
+        # batch, and a first page that could not get a connection ran no page at
+        # all.
+        connection = self._acquired()
         with batch as calls:
-            return body(calls, ReadInputs(self._acquired(), None, None))
+            return body(calls, ReadInputs(connection, None, None))
 
     def advance[T](self, body: Callable[[], T], /) -> T:
         return self.adopted.contextualized(body)
