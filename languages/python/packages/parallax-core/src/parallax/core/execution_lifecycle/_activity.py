@@ -974,19 +974,30 @@ class _Publisher:
             if completing is not None:
                 received = completing(event)
                 if not received:
-                    self._handler = None
+                    self._quarantine()
                 return received
             handler.handle(event)
         except Exception as failure:
-            self._handler = None
+            self._quarantine()
             self._report(event, handler, failure)
             return False
         except BaseException:
-            self._handler = None
+            self._quarantine()
             raise
         finally:
             delivering.active = False
         return True
+
+    def _quarantine(self) -> None:
+        """Drop every reference this root holds to its Handler.
+
+        ``_completing`` is a bound method, so leaving it set would keep a
+        composition and the whole provider tree under it alive for the rest of a
+        root that may pause arbitrarily long, for a delivery that can never
+        happen again.
+        """
+        self._handler = None
+        self._completing = None
 
     def _report(
         self, event: ExecutionEvent, handler: ExecutionLifecycleHandler, failure: Exception

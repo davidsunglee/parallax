@@ -595,13 +595,16 @@ def _check_resources(activities: dict[int, _Activity], problems: list[str]) -> N
     describe a statement running inside a checkout.
 
     The rest is the relation between the two ends and the operation between
-    them, read in BOTH directions rather than one. A Release exists exactly
-    where the Acquisition granted something and the owner finished, so neither a
-    hold that ends without beginning nor one that begins without ending
-    validates. Work runs on a connection, so an owner with any child besides its
-    own two ends took one. And an acquisition that granted nothing is the
-    owner's own failure, named as its cause — so a record cannot show an
-    operation succeeding, or running statements, on a connection it never got.
+    them, read in BOTH directions rather than one. An owner opens an Acquisition
+    unless it is a stream closed before its first page, so the pair cannot be
+    omitted by a record that simply declines to mention it. A Release exists
+    exactly where the Acquisition granted something and the owner finished, so
+    neither a hold that ends without beginning nor one that begins without
+    ending validates. Work runs on a connection, so an owner with any child
+    besides its own two ends was GRANTED one. And an acquisition that granted
+    nothing is the owner's own failure, named as its cause — so a record cannot
+    show an operation succeeding, or running statements, on a connection it
+    never got.
     """
     for owner in activities.values():
         if not _owns_connection(owner):
@@ -637,6 +640,7 @@ def _check_resources(activities: dict[int, _Activity], problems: list[str]) -> N
                 f"operation holds one for its OWN lifetime, so a hold this record shows "
                 f"beginning is one it shows ending"
             )
+        _check_acquired(owner, acquisitions, problems)
         _check_work_acquired(owner, children, acquisitions, problems)
         _check_refusal(owner, acquisitions, problems)
         _check_begin_attribution(owner, acquisitions, problems)
@@ -663,6 +667,35 @@ def _refused(acquisitions: list[_Activity]) -> _Activity | None:
     return None
 
 
+def _check_acquired(owner: _Activity, acquisitions: list[_Activity], problems: list[str]) -> None:
+    """An owner that reached the point of needing a connection asked for one.
+
+    A standalone Read acquires before its first statement and an attempt before
+    its boundary is asked to begin, so each opens an Acquisition whatever it
+    goes on to report: a begin failure is an attempt that ASKED, refused either
+    the connection or the boundary it opened on, and an empty Read is one that
+    took a connection and ran nothing on it.
+
+    A standalone Snapshot Stream is the one owner that may open none, because it
+    acquires where it reads its FIRST PAGE: a caller who closed the stream
+    before asking for one left it never having reached the connection. Every
+    other outcome did reach it — exhaustion is discovered by reading a page, and
+    a stream fails only over delivery work that starts there.
+    """
+    if acquisitions:
+        return
+    if (
+        owner.started == "snapshotStreamStarted"
+        and owner.finished_payload.get("outcome") == "closedEarly"
+    ):
+        return
+    problems.append(
+        f"{owner.label} opens no Acquisition; an operation reaches the database through a "
+        f"connection of its own, and only a Snapshot Stream closed before its first page "
+        f"finishes without having asked for one"
+    )
+
+
 def _check_work_acquired(
     owner: _Activity,
     children: list[_Activity],
@@ -675,7 +708,8 @@ def _check_work_acquired(
     inside it, so any OTHER child is a statement, a flush, a page, or a nested
     boundary — and every one of those runs on the connection this activity took.
     An owner that opened one without an Acquisition that granted describes work
-    on nothing, which is the shape a record with the pair omitted would take.
+    on nothing, which is the shape a record whose acquisition was REFUSED would
+    take.
     """
     work = [child for child in children if child.started not in _RESOURCE_KINDS]
     if not work or _granted(acquisitions):

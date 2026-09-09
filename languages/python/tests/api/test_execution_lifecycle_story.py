@@ -90,12 +90,13 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
     assert isinstance(started, ReadStarted)
     assert started.interface == "typed"
     # The connection is a real one out of a real pool at both ends: the
-    # acquisition brackets a checkout that genuinely happened, and the release
-    # reports the handoff that genuinely completed.
+    # acquisition granted what a real checkout answered, and the release reports
+    # the handoff that genuinely completed. What the endpoints measure is graded
+    # against a stepped clock in the unit suites instead, because an elapsed
+    # time read off a live machine grades the machine.
     assert isinstance(acquisition_started, AcquisitionStarted)
     assert isinstance(acquisition_finished, AcquisitionFinished)
     assert acquisition_finished.outcome == ConnectionAcquired()
-    assert acquisition_finished.duration_ns > 0
     assert isinstance(call_started, DatabaseCallStarted)
     assert call_started.kind == "read"
     assert isinstance(call_finished, DatabaseCallFinished)
@@ -106,9 +107,6 @@ def test_a_provider_observes_one_read_root_against_a_real_database(profile_run: 
     assert isinstance(release_started, ReleaseStarted)
     assert isinstance(release_finished, ReleaseFinished)
     assert release_finished.cleanup_result == Returned()
-    # The hold spans the whole operation, so it is longer than either end of it.
-    assert release_finished.hold_duration_ns > release_finished.duration_ns
-    assert release_finished.hold_duration_ns > acquisition_finished.duration_ns
     assert isinstance(finished, ReadFinished)
     assert finished.outcome == ReadCompleted()
 
