@@ -615,10 +615,17 @@ def _is_producer(value: object) -> bool:
 
 
 def _reachable_from(segment: object) -> list[object]:
-    """Every value one Step Segment's step access can reach: its own fields,
-    everything nested inside them through further values' own state and through
-    tuples, mappings, and other containers, and — for a callable — every channel
-    a Python callable can carry a captured value on.
+    """Every value one Step Segment CAPTURED: its own fields, everything nested
+    inside them through further values' own state and through tuples, mappings,
+    and other containers, and — for a callable — every channel a Python callable
+    can carry a captured value on.
+
+    Captured rather than reachable by any route at all, because that is what the
+    rule is about: a plan must not retain what settling was handed, and a class
+    attribute or a module global holds what it holds whether or not a plan was
+    ever built, so neither is followed. A class body that closes over a value is
+    captured state — a class made while a plan is settled captures per plan —
+    and its ``__call__`` is walked for exactly that.
 
     A segment holds its settled facts as one nested value rather than as copied
     fields, and a producer smuggled into a plan sits one container deep as
@@ -627,9 +634,10 @@ def _reachable_from(segment: object) -> list[object]:
     is what keeps the rule a claim about everything a step access can reach.
     Every value's own attribute state is walked rather than only a dataclass's
     declared fields, because a plain object is as capable of holding a producer
-    as a frozen one, in ``__dict__`` or in a slot. Each object is visited once,
-    by identity, so a shared subgraph is walked once and a cyclic one
-    terminates.
+    as a frozen one, in ``__dict__`` or in a slot — including a private slot,
+    whose descriptor carries the name the declaring class body mangled it to
+    rather than the name ``__slots__`` spells. Each object is visited once, by
+    identity, so a shared subgraph is walked once and a cyclic one terminates.
 
     A segment that defers to a callable over live planning machinery (rather
     than holding already-settled data) hides in whichever channel that callable
@@ -638,10 +646,10 @@ def _reachable_from(segment: object) -> list[object]:
     ``lambda p=planner: p`` and ``lambda *, p=planner: p`` capture positional
     and keyword defaults that neither of the first two carry,
     ``partial(f, planner)`` holds its own function and arguments, and a callable
-    OBJECT carries none of those — it holds the producer as instance state, or
-    its class's ``__call__`` closes over one. All of them are walked, because a
-    claim about a captured producer that only one of them would catch is not a
-    claim about the segment.
+    OBJECT carries none of those — it holds the producer as instance state, in a
+    slot public or private, or its class's ``__call__`` closes over one. All of
+    them are walked, because a claim about a captured producer that only one of
+    them would catch is not a claim about the segment.
     """
     reached: list[object] = []
     seen: set[int] = set()
@@ -655,7 +663,7 @@ def _reachable_from(segment: object) -> list[object]:
             declared = cast("Any", getattr(owner, "__slots__", ()))
             names = (declared,) if isinstance(declared, str) else cast("Sequence[str]", declared)
             for name in names:
-                walk(getattr(value, name, None))
+                walk(getattr(value, _slot_of(owner, name), None))
 
     def walk_captures(value: Any) -> None:
         self_obj = getattr(value, "__self__", None)
@@ -713,6 +721,17 @@ def _reachable_from(segment: object) -> list[object]:
     return reached
 
 
+def _slot_of(owner: type, declared: str) -> str:
+    """The attribute name ``owner``'s ``__slots__`` entry ``declared`` is read under.
+
+    A class body mangles a private name, and ``__slots__`` is a class body: an
+    entry spelled ``__held`` becomes the descriptor ``_Owner__held``, so reading
+    the declared spelling finds nothing at all.
+    """
+    private = declared.startswith("__") and not declared.endswith("__")
+    return f"_{owner.__name__.lstrip('_')}{declared}" if private else declared
+
+
 def _binds_anything(*values: object, **held: object) -> tuple[object, ...]:
     return (*values, *held.values())
 
@@ -733,6 +752,16 @@ class _SlottedCallable:
 
     def __call__(self) -> object:
         return self.held
+
+
+class _PrivateSlottedCallable:
+    __slots__ = ("__held",)
+
+    def __init__(self, held: object) -> None:
+        self.__held = held
+
+    def __call__(self) -> object:
+        return self.__held
 
 
 def _callable_closing_over(held: object) -> object:
@@ -756,6 +785,7 @@ class _CapturingSegment:
     partial_keyword: object
     instance_state: object
     slot_state: object
+    private_slot_state: object
     call_closure: object
 
 
@@ -765,7 +795,7 @@ def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> 
     # capture channel it skipped would leave a segment deferring to live
     # planning machinery passing them, so each channel is graded here against a
     # value only that channel carries.
-    captured = [object() for _ in range(9)]
+    captured = [object() for _ in range(10)]
     (
         closure_value,
         bound_value,
@@ -775,6 +805,7 @@ def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> 
         keyword,
         attribute_value,
         slot_value,
+        private_slot_value,
         call_closure_value,
     ) = captured
     segment = _CapturingSegment(
@@ -786,6 +817,7 @@ def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> 
         partial_keyword=functools.partial(_binds_anything, held=keyword),
         instance_state=_HoldingCallable(attribute_value),
         slot_state=_SlottedCallable(slot_value),
+        private_slot_state=_PrivateSlottedCallable(private_slot_value),
         call_closure=_callable_closing_over(call_closure_value),
     )
 
