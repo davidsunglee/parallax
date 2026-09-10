@@ -50,10 +50,18 @@ beyond the group's own columns is the same bytes at a hundred times the rows.
 Three times over, because a per-row structure is forbidden even transiently and
 what a byte reading can see shrinks as the structure's life does. Beside what the
 plan KEEPS, the settlement window is read as a high-water mark, which prices a
-row-sized structure built and released inside the call. And beside that, the
-Planned Writes settlement constructs are counted, because a loop that builds one
-wrapper per row and releases it before building the next never raises the level
-at all — a census sees it where no byte reading can.
+row-sized structure built and released inside the call. And beside that, what
+settling DOES is counted rather than weighed: a loop that builds one wrapper per
+row and releases it before building the next leaves the level unmoved, so neither
+byte reading can see it, while it cannot avoid instantiating the class and
+running the loop. The census counts every class instantiated and every bytecode
+instruction executed, naming no class of its own, so an intermediary introduced
+under any name — a binding, an adapter, a frame, a tuple built inline — is
+counted the round it appears.
+
+All three are read of both materialized shapes, a versioned group settling into
+updates and a temporal one settling into closes, because the prohibition is on
+the resolved row rather than on the arm that addresses it.
 """
 
 from __future__ import annotations
@@ -62,9 +70,10 @@ import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Final, cast
+from typing import Final, NamedTuple
 
 from _metamodel_support import Declaration, attribute, identity, key, source
+from _metamodel_support import instant as timestamp
 from memory_instruments import (
     REPEATS,
     Seam,
@@ -76,11 +85,16 @@ from memory_instruments import (
     serve_one_measurement,
 )
 
-import parallax.core.unit_work.write_settlement as write_settlement
 from _support.clock_probes import inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.metamodel import Metamodel, Table
+from parallax.core.metamodel import (
+    AsOfAxisMetadata,
+    AttributeIdentity,
+    Metamodel,
+    Table,
+    TemporalDimension,
+)
 from parallax.core.predicate import Comparison
 from parallax.core.unit_work import (
     BufferItem,
@@ -88,10 +102,14 @@ from parallax.core.unit_work import (
     KeyedWrite,
     MaterializedWriteGroup,
     PlanningRequest,
+    PredecessorColumns,
+    PredecessorShape,
     PredicateSelection,
     PredicateWrite,
+    TemporalColumns,
     VersionColumns,
     WriteAssignment,
+    WritePlanner,
     object_key,
     whole,
 )
@@ -182,6 +200,81 @@ def _versioned_model() -> Metamodel:
                 ),
             )
         )
+    )
+
+
+def _temporal_model() -> Metamodel:
+    """An accepted model of one Entity with a Transaction-Time as-of axis.
+
+    The other arm a Materialized Write Group settles into: its rows close
+    against a resolved instant rather than assign an advanced version, and it
+    carries the same single Entity for the same reason the versioned model does.
+    """
+    entity = identity("Entity0")
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=entity,
+                container=Table("entity0"),
+                attributes=(
+                    key(entity),
+                    attribute(entity, "value"),
+                    timestamp(entity, "txStart"),
+                    timestamp(entity, "txEnd"),
+                ),
+                as_of_axes=(
+                    AsOfAxisMetadata(
+                        TemporalDimension.TRANSACTION_TIME,
+                        AttributeIdentity(entity, "txStart"),
+                        AttributeIdentity(entity, "txEnd"),
+                    ),
+                ),
+            )
+        )
+    )
+
+
+_PREDECESSOR_MEMBERS: Final = ("id", "value", "txStart", "txEnd")
+
+
+def _temporal_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
+    """A temporal Materialized Write Group of ``rows`` observed predecessors.
+
+    What a materializing terminate buffers: the key columns beside the whole
+    predecessor state each close is derived from, all of it aligned storage the
+    group already owns.
+    """
+    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+    members: dict[str, ChunkedColumnBuilder[object]] = {
+        name: ChunkedColumnBuilder() for name in _PREDECESSOR_MEMBERS
+    }
+    for row in range(rows):
+        keys.append(row + 1)
+        members["id"].append(row + 1)
+        members["value"].append(row)
+        members["txStart"].append("2024-01-01T00:00:00+00:00")
+        members["txEnd"].append("infinity")
+    prepared = prepare_typed_write(
+        PredicateWrite(
+            "terminate",
+            PredicateSelection("Entity0", Comparison("lessThan", "Entity0.value", 1_000_000)),
+        ),
+        model,
+    )
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return MaterializedWriteGroup(
+        mutation=prepared,
+        key_attributes=("id",),
+        key_columns=(whole(keys.build()),),
+        observations=TemporalColumns(
+            predecessors=PredecessorColumns(
+                shape=PredecessorShape(attributes=_PREDECESSOR_MEMBERS, value_objects=()),
+                attribute_columns=tuple(
+                    whole(members[name].build()) for name in _PREDECESSOR_MEMBERS
+                ),
+                value_object_columns=(),
+            )
+        ),
     )
 
 
@@ -319,9 +412,69 @@ def _planner_having_settled_every_entity(entities: int) -> Seam:
     return run
 
 
-def _settled_group_plan(rows: int) -> Seam:
-    """One ``finalize`` over a versioned group of ``rows``, sampled while the
-    plan it answered is alive.
+class _Settlement(NamedTuple):
+    """One materialized shape, ready to settle: the planner and the request.
+
+    Both are built before any window opens, which is where a caller builds them:
+    a planner is model-scoped and a Planning Request is the value a unit of work
+    hands across the seam.
+    """
+
+    planner: WritePlanner
+    request: PlanningRequest
+
+
+def _versioned_settlement(rows: int) -> _Settlement:
+    """Settling a versioned group of ``rows`` resolved rows.
+
+    Its key and observation columns are the compact aligned storage a
+    materializing predicate write buffers, so a plan settled from it reaches
+    every per-row value by reference.
+    """
+    model = _versioned_model()
+    return _Settlement(
+        planner=build_write_planner(model),
+        request=PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=INSTANT,
+            concurrency="optimistic",
+            buffered_writes=(_version_group(model, rows),),
+        ),
+    )
+
+
+def _temporal_settlement(rows: int) -> _Settlement:
+    """Settling a temporal group of ``rows`` observed predecessors.
+
+    Its own Transaction Instant rather than the shared holder, because closing a
+    predecessor resolves one — a holder resolved by an earlier settlement would
+    put that resolution in one reading and not the other.
+    """
+    model = _temporal_model()
+    return _Settlement(
+        planner=build_write_planner(model),
+        request=PlanningRequest(
+            subject_identity=TEST_SUBJECT_IDENTITY,
+            transaction_instant=inert_instant(),
+            concurrency="optimistic",
+            buffered_writes=(_temporal_group(model, rows),),
+        ),
+    )
+
+
+_MATERIALIZED_SHAPES: Final = (
+    ("a versioned group", _versioned_settlement),
+    ("a temporal group", _temporal_settlement),
+)
+"""Both arms a Materialized Write Group settles into, under the same readings.
+
+A resolved row is a resolved row whether its step assigns an advanced version or
+closes a predecessor, so a reading taken of one arm says nothing about the other.
+"""
+
+
+def _settled_group_plan(settlement: _Settlement) -> Seam:
+    """One ``finalize``, sampled while the plan it answered is alive.
 
     The model, the planner, the group, and its columns are all built before the
     window, so every byte still reachable at the sample is a byte the PLAN
@@ -329,24 +482,16 @@ def _settled_group_plan(rows: int) -> Seam:
     nothing here, and a second structure sized by the resolved rows weighs
     everything.
     """
-    model = _versioned_model()
-    planner = build_write_planner(model)
-    request = PlanningRequest(
-        subject_identity=TEST_SUBJECT_IDENTITY,
-        transaction_instant=INSTANT,
-        concurrency="optimistic",
-        buffered_writes=(_version_group(model, rows),),
-    )
 
     def run(sample: Callable[[], None]) -> None:
-        plan = planner.finalize(request).plan
+        plan = settlement.planner.finalize(settlement.request).plan
         sample()
         del plan
 
     return run
 
 
-def _settling_a_group(rows: int) -> Span:
+def _settling_a_group(settlement: _Settlement) -> Span:
     """The same ``finalize`` with the region opened around the call itself.
 
     Everything the call reads is built before the region opens, and the plan it
@@ -356,88 +501,76 @@ def _settling_a_group(rows: int) -> Span:
     a comprehension over the resolved rows — is invisible to every reading taken
     at a point afterwards and is inside this one.
     """
-    model = _versioned_model()
-    planner = build_write_planner(model)
-    request = PlanningRequest(
-        subject_identity=TEST_SUBJECT_IDENTITY,
-        transaction_instant=INSTANT,
-        concurrency="optimistic",
-        buffered_writes=(_version_group(model, rows),),
-    )
 
     def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
         opened()
-        plan = planner.finalize(request).plan
+        plan = settlement.planner.finalize(settlement.request).plan
         closed()
         del plan
 
     return span
 
 
-_PER_ROW_CONSTRUCTS: Final = (
-    "PlannedUpdate",
-    "PlannedDelete",
-    "PlannedInsert",
-    "PlannedRow",
-    "PlannedAssignments",
-    "InsertEntry",
-    "KeyTarget",
-    "ExactCount",
-    "Versioned",
-    "VersionGate",
-)
-"""What a materialized row's own Planned Write is made of.
+class _Census(NamedTuple):
+    """What a run DID, counted where a byte reading can only weigh what survives.
 
-These are write planning's counterpart to the frames, sources, adapters, and
-bindings the memory contract forbids per row: the concrete objects that address
-one row, say what it assigns, and gate it. A group's segment builds them when a
-row's step is ASKED for, so ``finalize`` building any number of them that the
-resolved rows decide is the defect, whether or not it keeps them.
-"""
-
-
-def _constructions_during(run: Callable[[], None]) -> int:
-    """How many of :data:`_PER_ROW_CONSTRUCTS` ``run`` constructs.
-
-    A census rather than a measurement, and it is the one reading here that
-    does not depend on a byte surviving: a wrapper built and released inside a
-    loop leaves the level it was allocated at unmoved, so neither what a plan
-    keeps nor how far settling rose can see one made per row and dropped again.
-    Counting them where settlement names them can.
+    ``constructions`` is every class a monitored run instantiated, whatever its
+    name and whichever module defines it, so a wrapper settlement does not have
+    yet is counted as readily as one it does. ``instructions`` is every
+    bytecode instruction the run executed, which closes the one gap the first
+    leaves: a tuple, a mapping, or a slice built inline is an intermediary no
+    class call announces, and building one per row cannot be done without
+    executing the instructions that build it.
     """
-    counted = 0
 
-    def census(constructor: Callable[..., object]) -> Callable[..., object]:
-        def construct(*args: object, **kwargs: object) -> object:
-            nonlocal counted
-            counted += 1
-            return constructor(*args, **kwargs)
-
-        return construct
-
-    original = {name: getattr(write_settlement, name) for name in _PER_ROW_CONSTRUCTS}
-    for name, constructor in original.items():
-        setattr(write_settlement, name, census(cast("Callable[..., object]", constructor)))
-    try:
-        run()
-    finally:
-        for name, constructor in original.items():
-            setattr(write_settlement, name, constructor)
-    return counted
+    constructions: int
+    instructions: int
 
 
-def _settle_and_read(rows: int, *, every_step: bool) -> Callable[[], None]:
-    model = _versioned_model()
-    planner = build_write_planner(model)
-    request = PlanningRequest(
-        subject_identity=TEST_SUBJECT_IDENTITY,
-        transaction_instant=INSTANT,
-        concurrency="optimistic",
-        buffered_writes=(_version_group(model, rows),),
+_MONITORING_TOOL_IDS: Final = range(6)
+"""Every id :mod:`sys.monitoring` admits a tool under."""
+
+
+def _census_of(run: Callable[[], None]) -> _Census:
+    """Count what ``run`` constructs and executes.
+
+    ``run`` is warmed first, so a module imported or a cache filled on first
+    reach is counted in neither reading. The counting tool takes whichever
+    monitoring id is free, because a profiler or a coverage backend may already
+    hold one.
+    """
+    constructions = 0
+    instructions = 0
+    monitoring = sys.monitoring
+
+    def on_call(_code: object, _offset: int, called: object, _argument: object) -> None:
+        nonlocal constructions
+        if isinstance(called, type):
+            constructions += 1
+
+    def on_instruction(_code: object, _offset: int) -> None:
+        nonlocal instructions
+        instructions += 1
+
+    run()
+    tool = next(
+        identifier for identifier in _MONITORING_TOOL_IDS if monitoring.get_tool(identifier) is None
     )
+    monitoring.use_tool_id(tool, "settlement census")
+    try:
+        monitoring.register_callback(tool, monitoring.events.CALL, on_call)
+        monitoring.register_callback(tool, monitoring.events.INSTRUCTION, on_instruction)
+        monitoring.set_events(tool, monitoring.events.CALL | monitoring.events.INSTRUCTION)
+        run()
+        monitoring.set_events(tool, 0)
+    finally:
+        monitoring.free_tool_id(tool)
+    return _Census(constructions=constructions, instructions=instructions)
 
+
+def _settle_and_read(settlement: _Settlement, *, every_step: bool) -> Callable[[], None]:
     def run() -> None:
-        plan = planner.finalize(request).plan
+        plan = settlement.planner.finalize(settlement.request).plan
         if every_step:
             for step in plan.steps:
                 assert step is not None
@@ -446,42 +579,46 @@ def _settle_and_read(rows: int, *, every_step: bool) -> Callable[[], None]:
 
 
 @in_a_child_interpreter
-def test_a_versioned_groups_plan_keeps_nothing_per_resolved_row() -> None:
+def test_a_materialized_groups_plan_keeps_nothing_per_resolved_row() -> None:
     # A group's rows are already compact columns when planning receives them, so
     # settling them adds nothing sized by their number: what the plan keeps is
-    # one segment over the facts settled for the whole group, and the advance
-    # each row's update assigns is computed from the group's own observed
-    # version when that row's step is asked for.
+    # one segment over the facts settled for the whole group, and what each row's
+    # step assigns — an advanced version, a closed axis — is derived from the
+    # group's own columns when that step is asked for.
     tracemalloc.start()
     try:
-        few = retained(_settled_group_plan(FEW_ROWS))
-        many = retained(_settled_group_plan(MANY_ROWS))
-        # What the sample above cannot see. It is taken after a collection, so a
-        # row-sized structure `finalize` builds and drops again is gone from it;
-        # the memory contract forbids such a structure "even transiently", so
-        # the settlement window is read as a high-water mark too.
-        peak_few = high_water(_settling_a_group(FEW_ROWS))
-        peak_many = high_water(_settling_a_group(MANY_ROWS))
+        for shape, settlement in _MATERIALIZED_SHAPES:
+            few = retained(_settled_group_plan(settlement(FEW_ROWS)))
+            many = retained(_settled_group_plan(settlement(MANY_ROWS)))
+            # What the sample above cannot see. It is taken after a collection,
+            # so a row-sized structure `finalize` builds and drops again is gone
+            # from it; the memory contract forbids such a structure "even
+            # transiently", so the settlement window is read as a high-water
+            # mark too.
+            peak_few = high_water(_settling_a_group(settlement(FEW_ROWS)))
+            peak_many = high_water(_settling_a_group(settlement(MANY_ROWS)))
+            assert few > 0, f"settling {shape} keeps nothing, or nothing is being measured"
+            assert many == few, shape
+            assert peak_few > 0, f"settling {shape} is free, or nothing is being measured"
+            assert peak_many == peak_few, shape
     finally:
         tracemalloc.stop()
-    assert few > 0, "a settled group's plan is not free, or nothing is being measured"
-    assert many == few
-    assert peak_few > 0, "settling a group is not free, or nothing is being measured"
-    assert peak_many == peak_few
 
 
-def test_settling_a_versioned_group_constructs_no_planned_write_per_resolved_row() -> None:
+def test_settling_a_materialized_group_constructs_nothing_per_resolved_row() -> None:
     # The third reading of the same claim, and the one neither reading above can
-    # take: a loop that builds one wrapper per row and drops it before the next
-    # keeps the level flat, so it passes both. What it cannot do is construct
-    # nothing.
-    few = _constructions_during(_settle_and_read(FEW_ROWS, every_step=False))
-    many = _constructions_during(_settle_and_read(MANY_ROWS, every_step=False))
-    assert many == few
-    # And the census counts what it claims to: asking for every row's step
-    # builds each row's own Planned Write, which is where that work belongs.
-    on_access = _constructions_during(_settle_and_read(FEW_ROWS, every_step=True))
-    assert on_access - few >= FEW_ROWS
+    # take: a loop that builds one intermediary per row and drops it before
+    # building the next keeps the level flat, so it passes both. What it cannot
+    # do is construct nothing and execute nothing.
+    for shape, settlement in _MATERIALIZED_SHAPES:
+        few = _census_of(_settle_and_read(settlement(FEW_ROWS), every_step=False))
+        many = _census_of(_settle_and_read(settlement(MANY_ROWS), every_step=False))
+        assert few.constructions > 0, f"settling {shape} constructs nothing at all"
+        assert many == few, shape
+        # And the census counts what it claims to: asking for every row's step
+        # builds that row's own Planned Write, which is where that work belongs.
+        on_access = _census_of(_settle_and_read(settlement(FEW_ROWS), every_step=True))
+        assert on_access.constructions - few.constructions >= FEW_ROWS, shape
 
 
 @in_a_child_interpreter
