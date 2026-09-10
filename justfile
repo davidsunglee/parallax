@@ -396,6 +396,21 @@ python-report-stream-overhead:
 python-report-instance-state:
     cd {{python}} && uv run python tools/instance_state_overhead.py
 
+# The same posture over the production read's own row-to-graph path: elapsed time
+# is a property of the machine that ran it and a total in bytes moves with the
+# interpreter, so this prints both as evidence and decides nothing on either. It
+# runs one child per (supported minor, storage layout) and exits non-zero only for
+# a usage error or a matrix cell it has no reading for. What is gated is the SHAPE
+# of the claim — that prepared state is fixed by the model's exact Entity layouts
+# and by the compiled reads rather than by rows, graphs, or executions — in
+# `tests/unit/test_snapshot_materialization_scaling.py`, which the `cost` class
+# owns and CI runs on every change. What has been read off this, and under what
+# conditions, is `languages/python/docs/snapshot-materialization-baseline.md`.
+[metadata("runtime:medium")]
+[doc("Production Snapshot materialization throughput and memory per storage layout, on every supported minor.")]
+python-report-snapshot-materialization:
+    cd {{python}} && uv run python tools/snapshot_materialization_overhead.py
+
 # Both prerequisites are soundness conditions, not merely file dependencies.
 # diff-cover derives its line inventory from git, so an untracked production
 # module scores zero changed lines and `--fail-under 100` passes vacuously over
