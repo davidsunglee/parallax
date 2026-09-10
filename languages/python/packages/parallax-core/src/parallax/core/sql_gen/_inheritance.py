@@ -174,7 +174,9 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 # a branch's renames, each occurrence's document shape, the member keys the     #
 # codec already judged — is compiled once here, so a row allocates its own      #
 # values dict and the few pairs a branch rename moves, and no map, set, scan,   #
-# or shape of its own. Stored fields stay tuples of pairs and every index is    #
+# or shape of its own — save the row that reaches materialization without a     #
+# projected occurrence Column, which narrows the compiled classified-key set to #
+# the keys it held. Stored fields stay tuples of pairs and every index is       #
 # derived in `__post_init__`, so a compiled read still pickles, deep-copies,    #
 # compares, and reprs exactly.                                                  #
 #                                                                              #
