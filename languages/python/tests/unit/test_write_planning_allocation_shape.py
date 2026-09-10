@@ -56,17 +56,18 @@ row and releases it before building the next leaves the level unmoved, so neithe
 byte reading can see it, while it cannot avoid instantiating the class and
 running the loop. The census counts every class a call bytecode instantiated and
 every bytecode instruction executed, naming no class of its own, so an
-intermediary introduced under any name — a binding, an adapter, a frame, a tuple
-built inline — is counted the round it appears.
+intermediary Python code introduces under any name — a binding, an adapter, a
+frame, a tuple built inline — is counted the round it appears.
 
 The census reads bytecode, so what a C consumer does internally is outside it:
 `deque(map(dict, rows), maxlen=0)` builds and drops one mapping per row while
 executing no instruction per row. That is outside the census and not outside the
-three readings together. A frame, a source, an adapter, or a binding is a class
-declared in this repository, and instantiating one runs its own `__init__`, so
-no C pipeline builds one without the census counting the instructions that do
-it. What a C pipeline can build unseen is a builtin container, and a builtin
-container built per row is kept (the retained reading), alive beside its
+three readings together. What a C pipeline can build without the census seeing
+it is a value whose construction runs no Python bytecode at all: a builtin
+container, or a class that adds no constructor of its own over one — being
+declared here does not change that, and an intermediary whose class runs its own
+`__init__` is counted from the first row bound into it. A value built per row
+without bytecode is then kept (the retained reading), alive beside its
 neighbours (the high-water reading), or read by Python code per row (the
 instruction count) — unless it is dropped unread, which is per-row work whose
 result nothing observes.
