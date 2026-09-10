@@ -102,6 +102,7 @@ from parallax.core.unit_work.planned import (
     TemporalUpperBound,
     Versioned,
     VersionGate,
+    shortfall_classification,
     shortfall_for,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
@@ -155,13 +156,6 @@ _READLESS_VERBS: Final[frozenset[str]] = frozenset({"update", "delete"})
 # a marker-shaped document stays a document (m-value-object "Writing" marker
 # disambiguation).
 _MARKER_KEYS: Final[frozenset[str]] = frozenset({"computed", "increment"})
-
-# Stands in for a row's observed version where only the settled concurrency
-# decision's SHAPE is read. `shortfall_for` classifies by that shape alone —
-# versioned or not, gated or not — and never by the version a gate binds, so a
-# mutation's shortfall is settled once from this and holds for every row of it
-# whatever each one observed.
-_SHAPE_ONLY_VERSION: Final[int] = 0
 
 
 class WritePlanningError(ValueError):
@@ -235,10 +229,10 @@ class _NonTemporalFacts:
     Everything here is a value some producer emitted for THIS mutation: the
     facet's compiled view of the target, the family-effective primary key, the
     Attribute the Optimistic Lock Facet names as the version source, the
-    arithmetic every version value of it derives from, the gate decision the
-    Concurrency Strategy made, and how a shortfall against it classifies. No
-    producer is among them, which is what lets a segment hold this by reference
-    and still settle no decision at step access.
+    arithmetic the Concurrency Strategy answers with, the gate decision it
+    made, and how a shortfall against it classifies. No producer is among them,
+    which is what lets a segment hold this by reference and still settle no
+    decision at step access.
 
     What is deliberately absent is any row's own observed version: a keyed
     write's is one value it settles with, a group's is a column it keeps, and
@@ -248,11 +242,39 @@ class _NonTemporalFacts:
     entity: EntityMetadata
     view: InheritanceEntityView
     key_attributes: tuple[AttributeIdentity, ...]
-    mutation: str
     version_attribute: AttributeIdentity | None
     arithmetic: VersionArithmetic
     gated: bool
     shortfall: Shortfall
+
+
+@dataclass(frozen=True, slots=True)
+class _Deletion:
+    """What a settled non-temporal delete emits: nothing beyond its address.
+
+    A delete assigns no value at all, so its emission carries none — the
+    absence is the shape rather than a null field every reader re-checks.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class _Revision:
+    """What a settled non-temporal update emits: the replacement values every
+    row of the mutation writes, before the version overlay."""
+
+    base_assignments: PlannedAssignments
+
+
+type _NonTemporalEmission = _Deletion | _Revision
+"""Which non-temporal step one settled mutation emits, and what it assigns.
+
+Decided once per mutation, from the authored verb, by whichever arm settled it
+— which is what leaves the verb behind at settlement: no emitter re-reads it,
+and a delete carrying assignments or an update missing them is unconstructable
+rather than merely asserted against.
+"""
+
+_DELETION: Final[_Deletion] = _Deletion()
 
 
 class WriteSettlement:
@@ -392,13 +414,13 @@ class WriteSettlement:
         return (
             _non_temporal_step(
                 facts,
+                emission=(
+                    _DELETION
+                    if instruction.mutation == "delete"
+                    else _Revision(_addressed_assignments(facts, instruction.rows[0]))
+                ),
                 key_rows=instruction.rows,
                 observed_version=observed_version,
-                base_assignments=(
-                    None
-                    if instruction.mutation == "delete"
-                    else _addressed_assignments(facts, instruction.rows[0])
-                ),
                 # One addressed instruction is ONE step however many keys it
                 # addresses, so its expectation is the whole batch's (ADR 0044)
                 # rather than a per-row one.
@@ -520,12 +542,11 @@ class WriteSettlement:
             entity=entity,
             view=self._families.view(entity),
             key_attributes=tuple(a.identity for a in self._families.primary_key(entity)),
-            mutation=mutation,
             version_attribute=version_attribute,
             arithmetic=self._concurrency.version_arithmetic(),
             gated=gated,
-            shortfall=shortfall_for(
-                _non_temporal_concurrency(version_attribute, _SHAPE_ONLY_VERSION, gated)
+            shortfall=shortfall_classification(
+                observing=version_attribute is not None, gated=gated
             ),
         )
 
@@ -740,10 +761,11 @@ class WriteSettlement:
             surface="predicate",
             concurrency=concurrency,
         )
+        mutation = group.mutation.mutation
         if facts.version_attribute is None:
-            _require_unobserved(entity, facts.mutation, group.observations)
-        base_assignments: PlannedAssignments | None = None
-        if facts.mutation != "delete":
+            _require_unobserved(entity, mutation, group.observations)
+        emission: _NonTemporalEmission = _DELETION
+        if mutation != "delete":
             assignment_row = {
                 _assignment_member(assignment.attr): assignment.value
                 for assignment in group.mutation.managed_assignments
@@ -753,13 +775,13 @@ class WriteSettlement:
                 and facts.version_attribute.name in assignment_row
             ):
                 self._concurrency.reject_authored_version(entity.identity, facts.version_attribute)
-            base_assignments = _assignments(entity, facts.view, assignment_row)
+            emission = _Revision(_assignments(entity, facts.view, assignment_row))
         return _MaterializedNonTemporalSegment(
             facts=facts,
             key_attribute_names=group.key_attributes,
             key_columns=group.key_columns,
             versions=group.observations.versions,
-            base_assignments=base_assignments,
+            emission=emission,
             # One resolved row is one independently gated step, so every row of
             # the group shares this one expectation rather than building its own.
             affected_rows=ExactCount(expected=1, on_shortfall=facts.shortfall),
@@ -837,7 +859,7 @@ class _MaterializedNonTemporalSegment:
     key_attribute_names: tuple[str, ...]
     key_columns: tuple[ColumnSlice[object], ...]
     versions: ColumnSlice[int]
-    base_assignments: PlannedAssignments | None
+    emission: _NonTemporalEmission
     affected_rows: AffectedRows
 
     def __len__(self) -> int:
@@ -853,9 +875,9 @@ class _MaterializedNonTemporalSegment:
         )
         return _non_temporal_step(
             self.facts,
+            emission=self.emission,
             key_rows=(key_row,),
             observed_version=self.versions[index],
-            base_assignments=self.base_assignments,
             affected_rows=self.affected_rows,
         )
 
@@ -989,16 +1011,17 @@ def _temporal_steps(
 def _non_temporal_step(
     facts: _NonTemporalFacts,
     *,
+    emission: _NonTemporalEmission,
     key_rows: Sequence[Mapping[str, object]],
     observed_version: int | None,
-    base_assignments: PlannedAssignments | None,
     affected_rows: AffectedRows,
 ) -> PlannedStep:
-    """The rows ``key_rows`` addresses as one Planned Update or Planned Delete.
+    """The rows ``key_rows`` addresses as the step ``emission`` settled.
 
-    Pure in ``facts``: everything it reads was decided by
-    :meth:`WriteSettlement._non_temporal_facts`, so this reaches no clock,
-    strategy, model, or facet and can therefore run either eagerly, while the
+    Pure in ``facts`` and ``emission``: everything it reads was decided by
+    :meth:`WriteSettlement._non_temporal_facts` and by the arm that settled the
+    authored verb, so this reaches no clock, strategy, model, or facet — and
+    re-reads no verb — and can therefore run either eagerly, while the
     instruction settles, or lazily, when a Materialized Write Group's segment is
     asked for a row.
 
@@ -1009,21 +1032,22 @@ def _non_temporal_step(
     """
     target = _key_target(facts.entity, facts.key_attributes, key_rows)
     concurrency = _non_temporal_concurrency(facts.version_attribute, observed_version, facts.gated)
-    if facts.mutation == "delete":
-        return PlannedDelete(
-            entity=facts.entity.identity,
-            target=target,
-            concurrency=concurrency,
-            affected_rows=affected_rows,
-        )
-    assert base_assignments is not None  # every update's assignments are settled up front
-    return PlannedUpdate(
-        entity=facts.entity.identity,
-        target=target,
-        assignments=_versioned_assignments(base_assignments, facts, observed_version),
-        concurrency=concurrency,
-        affected_rows=affected_rows,
-    )
+    match emission:
+        case _Deletion():
+            return PlannedDelete(
+                entity=facts.entity.identity,
+                target=target,
+                concurrency=concurrency,
+                affected_rows=affected_rows,
+            )
+        case _Revision(base_assignments):
+            return PlannedUpdate(
+                entity=facts.entity.identity,
+                target=target,
+                assignments=_versioned_assignments(base_assignments, facts, observed_version),
+                concurrency=concurrency,
+                affected_rows=affected_rows,
+            )
 
 
 def _versioned_assignments(
