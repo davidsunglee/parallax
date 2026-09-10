@@ -95,6 +95,7 @@ check-all` resolve exactly what each run contains.
 | The Snapshot graph's retained and build overhead baseline | `just python-report-snapshot-graph-overhead` |
 | The streamed delivery's working set per page size | `just python-report-stream-overhead` |
 | The published instance-state three-arm retained and timing matrix | `just python-report-instance-state` |
+| The production materialization throughput and memory matrix per storage layout | `just python-report-snapshot-materialization` |
 | Formatting, applied in place | `just harness-format`, `just python-format` |
 
 No focused selector is part of `just check`, so a green focused run is never

@@ -15,10 +15,10 @@ instead, in `tests/unit/test_snapshot_materialization_scaling.py`, which the
 `cost` class owns and CI runs on every change: it asserts that what preparation
 holds is fixed by the model's exact Entity layouts and by the compiled reads, as
 an exact equality between eight rows and sixty-four through one prepared read, and
-between one execution and sixty-four against one layout catalog. That equality is
-read as a closure — every object one prepared structure reaches without crossing
-into another, and every reference between them — beside a survivor census over the
-window that built it, because references and positions answer definitely where a
+between one execution and sixty-four against one prepared selection. That equality
+is read as a closure — every object one prepared structure reaches without crossing
+into another, and every reference between them — beside a census of what each
+window leaves alive, because references and positions answer definitely where a
 total in bytes does not.
 
 ## What the reading does not prove
@@ -65,12 +65,12 @@ minors, both layouts.
 | | CPython 3.13 | | CPython 3.14 | |
 |---|---:|---:|---:|---:|
 | | **Columns** | **Document** | **Columns** | **Document** |
-| Batch, 64 rows (ms) | 20.837 | 24.805 | 21.151 | 25.598 |
-| **Rows per second** | **3,071** | **2,580** | **3,026** | **2,500** |
-| **Microseconds per row** | **325.6** | **387.6** | **330.5** | **400.0** |
-| Model preparation (ms) | 0.178 | 0.186 | 0.182 | 0.182 |
+| Batch, 64 rows (ms) | 22.699 | 25.032 | 22.802 | 25.346 |
+| **Rows per second** | **2,819** | **2,557** | **2,807** | **2,525** |
+| **Microseconds per row** | **354.7** | **391.1** | **356.3** | **396.0** |
+| Model preparation (ms) | 0.178 | 0.182 | 0.185 | 0.199 |
 | — decode preparation within it | 0 | 0 | 0 | 0 |
-| Compiled-read preparation (ms) | 0.376 | 0.451 | 0.376 | 0.454 |
+| Compiled-read preparation (ms) | 0.381 | 0.447 | 0.384 | 0.451 |
 | — decode preparation within it | 0 | 0 | 0 | 0 |
 | Rows of steady state one whole preparation costs | 2 | 2 | 2 | 2 |
 | — compiled-read preparation alone | 1 | 1 | 1 | 1 |
@@ -80,10 +80,10 @@ Memory, over the same batch.
 | | CPython 3.13 | | CPython 3.14 | |
 |---|---:|---:|---:|---:|
 | | **Columns** | **Document** | **Columns** | **Document** |
-| **Retained graph bytes per projection** | **2,631.9** | **3,026.8** | **2,761.6** | **3,138.9** |
-| Retained graph bytes, 64 projections | 168,439 | 193,712 | 176,742 | 200,890 |
-| Peak traced bytes above the collected floor | 429,587 | 431,889 | 419,356 | 441,093 |
-| **Transient bytes per row** | **4,080** | **3,722** | **3,791** | **3,753** |
+| **Retained graph bytes per projection** | **2,631.8** | **3,024.8** | **2,765.0** | **3,137.2** |
+| Retained graph bytes, 64 projections | 168,434 | 193,584 | 176,957 | 200,782 |
+| Peak traced bytes above the collected floor | 432,113 | 436,129 | 421,894 | 445,725 |
+| **Transient bytes per row** | **4,120** | **3,790** | **3,827** | **3,827** |
 | Prepared bytes, whole compiled read set | 14,116 | 38,446 | 14,516 | 39,686 |
 | Prepared bytes per compiled read | 3,529 | 9,612 | 3,629 | 9,922 |
 | **Prepared decode state per exact Entity layout** | **0** | **0** | **0** | **0** |
@@ -152,11 +152,11 @@ repeatability.
 
 | | CPython 3.13 | CPython 3.14 |
 |---|---:|---:|
-| Build (convert, write, seal), 448 projections | 25.21 ms | 24.70 ms |
-| — per projection | 56.27 µs | 55.14 µs |
-| — projections per second | 17,772 | 18,137 |
-| Merge, 448 projections | 0.45 ms | 0.42 ms |
-| — per projection | 1.00 µs | 0.94 µs |
+| Build (convert, write, seal), 448 projections | 26.20 ms | 26.06 ms |
+| — per projection | 58.48 µs | 58.17 µs |
+| — projections per second | 17,100 | 17,191 |
+| Merge, 448 projections | 0.48 ms | 0.46 ms |
+| — per projection | 1.06 µs | 1.03 µs |
 | **64-graph `cost` item, recorded duration** | **47.6 s** | **47.6 s** |
 
 The item itself is never re-run from a tool. Its duration is read from
@@ -177,7 +177,7 @@ six CI shards, and it is recorded here as the "before" figure the ticket asks fo
 | Warm-up | 200 unsampled runs before every memory window; 5 before every timing |
 | Timing samples | mean of 20 batches, taken untraced, from an already prepared model and compiled reads |
 | Runtime | about three minutes for the whole matrix |
-| Repeatability | a second whole-matrix run on the same machine moved the timings by up to 7% (Columns 3.13: 20.837 → 21.429 ms), the retained graph bytes by under 0.4% (168,439 → 168,485), and nothing else: every call count, the prepared bytes, the layout-catalog figures, and the closure census were identical |
+| Repeatability | a second whole-matrix run on the same machine moved the timings by up to 10% (Columns 3.14: 22.802 → 24.965 ms) and one memory row by 0.2% (Document 3.13 retained: 193,584 → 193,253 B); everything else was identical to the byte — the three other retained totals, every peak and transient figure, the prepared bytes, the layout-catalog figures, the tracked/reference census, and every call count |
 
 The tables above are one recorded run. A second run is what the repeatability row
 reports, and it is why the timing rows are direction only: what is stable to the
@@ -191,13 +191,20 @@ through `CompiledRead.materialize_row`, the per-row `LevelContext`, `convert_row
 into a shared `GraphBuilder`, the observation every hydrating row takes, the key
 gather and view fan-back each level performs, and `seal`.
 
+The root statement's rows are materialized whole and held until the batch closes,
+because `read_roots` hands them over that way and the read that answers holds them
+through every level below; a level below the root converts out of its own lazy
+materialization and holds one row at a time. The peak in the memory table above
+is therefore a peak the shipped loop also reaches.
+
 **Compilation is outside the batch, and cannot be inside it.** A child level's
 `compile_read` runs between gathering its parents' keys and converting its rows,
 so timing `build_graph` as one unit would recompile four statements per repetition
 and call the result throughput. The batch therefore compiles once, against the
 fixture's own keys, and still gathers those keys per repetition because production
-does. That gather's answer is not consumed, which is the one place the measured
-loop differs from the shipped one.
+does — and still branches on them, so a level with no gathered key attaches the
+empty result and issues nothing, exactly as the shipped loop does. Lifting the
+compile out is the one place the measured loop differs from it.
 
 **Merge, classification, and publication are excluded**, as the ticket's timing
 boundary states, together with fixture construction, SQL execution, and Wire

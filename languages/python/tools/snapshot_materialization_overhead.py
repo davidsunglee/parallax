@@ -103,7 +103,7 @@ the class's balance, not a measurement this report may retake."""
 
 sys.path.insert(0, str(SUPPORT))
 
-import _snapshot_materialization_support  # noqa: E402
+import _snapshot_materialization_support  # noqa: E402 - after the sys.path setup above
 
 if Path(_snapshot_materialization_support.__file__ or "").resolve() != SUPPORT_MODULE:
     raise ImportError(
@@ -112,7 +112,7 @@ if Path(_snapshot_materialization_support.__file__ or "").resolve() != SUPPORT_M
         f"{_snapshot_materialization_support.__file__}"
     )
 
-from _snapshot_materialization_support import (  # noqa: E402
+from _snapshot_materialization_support import (  # noqa: E402 - after the sys.path setup above
     LAYOUTS,
     PROJECTIONS_PER_BATCH,
     ROWS_PER_BATCH,
@@ -129,6 +129,20 @@ is "the latest minor + one prior minor", which makes the declared
 
 CURRENT_MINOR: Final = f"{sys.version_info.major}.{sys.version_info.minor}"
 
+HASH_SEED: Final = "0"
+"""What every child's string and bytes hashing is pinned to.
+
+Byte figures here are read over containers the interpreter sizes by hash: a set's
+fill and a dictionary's probe sequence follow the hashes of the keys put into
+them, and those hashes are salted per process unless this is set. Unpinned, one
+cell's prepared and retained totals would differ from another's, and from the same
+cell's on a rerun, for a reason that has nothing to do with what was measured.
+
+Spelled here rather than imported: this half of the report reaches no instrument
+(`core/spec/language-testing.md` §5), so it states the value the child's own
+``memory_instruments`` states and the recorded baseline names.
+"""
+
 
 class Contributor(NamedTuple):
     """One call the profiled batch counts, and where it is defined.
@@ -143,7 +157,8 @@ class Contributor(NamedTuple):
     function: str
     per_row: bool
     """Whether this site rebuilds, once per row, something the compiled read
-    already fixed. The sum over these is what the decision gate reads."""
+    already fixed. :meth:`Reading.rebuilt_per_row` sums exactly these, and the
+    rendered matrix marks each of them."""
 
 
 CONTRIBUTORS: Final = (
@@ -331,9 +346,16 @@ def _child_environment(runtime: str) -> dict[str, str]:
     would be resolved in preference to the one uv builds. So the path is dropped
     and the throwaway environment is named explicitly, which is also what keeps
     uv from rebuilding the workspace's own ``.venv`` at the other minor.
+
+    Both branches pin the hash seed, for the reason :data:`HASH_SEED` gives. It
+    is pinned here rather than by the reading, because an interpreter's seed is
+    settled before the first line of the script it was started for runs.
     """
     if runtime == CURRENT_MINOR:
-        return os.environ | {"PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry)}
+        return os.environ | {
+            "PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry),
+            "PYTHONHASHSEED": HASH_SEED,
+        }
     environment = {
         name: value
         for name, value in os.environ.items()
@@ -342,7 +364,8 @@ def _child_environment(runtime: str) -> dict[str, str]:
     return environment | {
         "UV_PROJECT_ENVIRONMENT": str(
             Path(tempfile.gettempdir()) / f"parallax-snapshot-materialization-{runtime}"
-        )
+        ),
+        "PYTHONHASHSEED": HASH_SEED,
     }
 
 
