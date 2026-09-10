@@ -28,15 +28,26 @@ composed outside the claim.
 
 **Two instruments: one bounded by the arm, one bounded by nothing.** What each
 arm holds is read as a closure — every object one prepared structure reaches
-without crossing into another, and every reference between them — and as what the
-whole process's Python objects weigh at the arm's sample point. A closure is a
+without crossing into another, and every reference between them. A closure is a
 total of one participant's own state rather than a difference between two sums,
-so it answers exactly what the claim asks; the whole-process total answers the
-other half, which is a container the arm does not reach at all. A holder older
-than every arm is no survivor of any of them and no window's difference contains
-it, so a process-global or data-keyed cache taking entries per row or per
-execution is visible only as a total — and it is visible there whether or not the
-collector tracks what it took, which a survivor sample cannot say.
+so it answers exactly what the claim asks. Beside it, each axis marks a REGION
+and reads what every Python object in the process weighs at each end of it. A
+holder older than every arm is no survivor of any of them and no window's
+difference contains it, so a process-global or data-keyed cache taking entries
+per row or per execution is visible only as a total — and it is visible there
+whether or not the collector tracks what it took, which a survivor sample cannot
+say.
+
+**A region rather than two arms, because a first-reach cache saturates.** A
+process-global cache keyed by what a row holds stops growing once the rows come
+back, so two arms compared in one process both read it already full and their
+totals agree however much either put into it — the arm that ran first is measured
+after the arm that ran second has filled it. What closes that is entering the
+region ONCE: the sequence is warmed over one root's rows until every cost paid
+once is paid, and only then handed rows whose stored values no conversion in this
+process has decoded. An entry taken for them lands between the two marks, where
+nothing can have taken it earlier. The region releases every graph it builds, so
+what separates the marks is what something OUTSIDE the region kept.
 
 An ALLOCATOR reading cannot be the gate here, and the reason is a measurement
 rather than a preference. This workload declares every Neutral Type, so its
@@ -49,8 +60,8 @@ what this class asserts. The ``tracemalloc`` totals therefore live where a
 machine-relative number belongs — the non-gating
 ``just python-report-snapshot-materialization``. What is gated here instead is
 what the heap's own objects report through :func:`sys.getsizeof`, which no
-allocator residue is inside and which two arms of one process answer exactly. The
-neighbouring 64-graph item still asserts allocator bytes because its workload
+allocator residue is inside and which two points of one process answer exactly.
+The neighbouring 64-graph item still asserts allocator bytes because its workload
 declares four Neutral Types and reaches none of that codec leg.
 
 Both layouts run in one child per axis: the equality is exact per layout, and a
@@ -76,12 +87,13 @@ from _snapshot_materialization_support import (
     workload,
 )
 from memory_instruments import (
+    WARMUP,
     Closure,
-    Seam,
+    Span,
     closure,
     in_a_child_interpreter,
     serve_one_measurement,
-    whole_heap,
+    whole_heap_across,
 )
 
 from parallax.core.db_port import Row
@@ -95,6 +107,13 @@ larger one — eight rows against sixty-four, over the same five levels."""
 
 _EXECUTIONS: Final = 64
 """Whole executions the larger execution arm runs and discards, against one."""
+
+_UNSEEN: Final = OWNERS
+"""The first root a marked region's rows carry.
+
+Past every root the closure readings converted — they take :data:`OWNERS` roots
+from the first — so a region's rows share no stored value with anything this
+process has already decoded, whatever order the readings run in."""
 
 _EDITION: Final = "snapshot-materialization-scaling"
 
@@ -128,11 +147,16 @@ def _boundary(layout: Layout, selection: ModelSelection) -> tuple[object, ...]:
     return (_catalog(selection).meta, workload(layout))
 
 
-def _rows(model: CatalogedModel, owners: int) -> tuple[tuple[Row, ...], ...]:
-    """One arm's stored rows, built here so no measured window allocates them."""
+def _rows(model: CatalogedModel, owners: int, first: int = 0) -> tuple[tuple[Row, ...], ...]:
+    """``owners`` roots' stored rows beginning at root ``first``, built here so no
+    measured window or marked region allocates them.
+
+    ``first`` is what makes a region's rows unseen: :data:`_UNSEEN` starts past
+    every root any other reading in this item converts, so no value in them has
+    reached a conversion before the region opens."""
     meta = model.meta
     plan = fetch_plan(query(meta), meta)
-    return rows_per_level(model, plan, compiled_levels(plan, meta), owners)
+    return rows_per_level(model, plan, compiled_levels(plan, meta), owners, first)
 
 
 def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
@@ -155,39 +179,61 @@ def _execute(model: CatalogedModel, rows: Sequence[Sequence[Row]]) -> None:
     batch(model, plan, compiled_levels(plan, model.meta), rows)
 
 
-def _row_seam(layout: Layout, owners: int) -> Seam:
-    """One prepared selection and one set of compiled reads derived inside the
-    window, ``owners`` roots' worth of rows materialized through them, and only
-    the prepared state reachable at the sample."""
-    rows = _rows(_catalog(_prepared(layout)), owners)
+def _unseen_rows(layout: Layout) -> Span:
+    """One prepared selection and one set of compiled reads, warmed over
+    :data:`OWNERS` roots' rows until every cost paid once is paid, and then handed
+    the rows of :data:`OWNERS` FURTHER roots inside the marked region.
 
-    def run(sample: Callable[[], None]) -> None:
-        selection = _prepared(layout)
-        model = _catalog(selection)
-        meta = model.meta
-        plan = fetch_plan(query(meta), meta)
-        reads = compiled_levels(plan, meta)
-        batch(model, plan, reads, rows)
-        sample()
-        assert reads is not None
+    Warmed at the region's own size and over the region's own levels, so the one
+    thing the region varies is that its rows are new: every one of its roots, and
+    every row beneath them, carries stored values no conversion in this process
+    has ever decoded, so a container keyed by what a row holds takes its entries
+    between the two marks rather than before them. The region's graph is released
+    where it is built, which is what leaves the two marks comparable at all."""
+    selection = _prepared(layout)
+    model = _catalog(selection)
+    meta = model.meta
+    plan = fetch_plan(query(meta), meta)
+    reads = compiled_levels(plan, meta)
+    warm = _rows(model, OWNERS)
+    unseen = _rows(model, OWNERS, _UNSEEN)
 
-    return run
+    def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
+        for _ in range(WARMUP):
+            batch(model, plan, reads, warm)
+        opened()
+        batch(model, plan, reads, unseen)
+        closed()
+
+    return span
 
 
-def _execution_seam(layout: Layout, executions: int) -> Seam:
-    """A prepared selection derived inside the window, ``executions`` whole
-    executions run and discarded against it, and only that selection reachable at
-    the sample."""
-    rows = _root_only(_rows(_catalog(_prepared(layout)), _ONE_ROOT))
+def _unseen_executions(layout: Layout) -> Span:
+    """A prepared selection warmed over :data:`OWNERS` roots' executions, and then
+    :data:`_EXECUTIONS` whole executions inside the marked region — each with its
+    own fetch plan, its own compiled reads, and its own sealed graph, none of
+    which outlives it.
 
-    def run(sample: Callable[[], None]) -> None:
-        selection = _prepared(layout)
-        for _ in range(executions):
-            _execute(_catalog(selection), rows)
-        sample()
+    The warm executions run the region's own rows count, so the one thing the
+    region varies is that its roots are ones this process has never decoded: the
+    first execution in it is where a container keyed by what a row holds takes its
+    entries, and the sixty-four together are what an entry banked per execution
+    accrues across."""
+    selection = _prepared(layout)
+    model = _catalog(selection)
+    warm = _root_only(_rows(model, OWNERS))
+    unseen = _root_only(_rows(model, OWNERS, _UNSEEN))
+
+    def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
+        for _ in range(WARMUP):
+            _execute(model, warm)
+        opened()
+        for _ in range(_EXECUTIONS):
+            _execute(model, unseen)
+        closed()
         assert selection is not None
 
-    return run
+    return span
 
 
 def _settled() -> None:
@@ -227,24 +273,32 @@ def _held_after_executions(layout: Layout, executions: int) -> Closure:
     return closure(selection, _boundary(layout, selection))
 
 
-def _same_whole_heap(few: Seam, many: Seam, where: str) -> None:
-    """What the whole process's Python objects weigh at ``few``'s sample point
-    and at ``many``'s, which must be the same number.
+def _region_added_nothing(span: Span, where: str) -> None:
+    """That nothing in the process holds MORE where ``span``'s region closes than
+    where it opened — in any container anywhere, whether the region reaches it or
+    not, counted as objects, as the references among them, and as what they and
+    everything untracked they reach weigh.
 
-    Both arms are built before either is sampled, so each one's stored rows are
-    alive at both points and the only thing that can separate the two readings is
-    what an arm left behind — in any container anywhere, whether the arm reaches
-    it or not.
+    A reading across ONE region rather than between two arms, because a cache
+    filled on first reach and keyed by the data reaching it saturates: two arms
+    run in one process both find it already full, and their totals agree however
+    much either put into it. The region is entered once, over stored values this
+    process has never decoded, so an entry taken for them lands between the marks.
 
-    The gated number is what the heap holds and not the object or reference
-    counts beside it, for a measurement reason rather than a preference. A
-    collection untracks a tuple holding only untracked items, so whether one is
-    counted as an object follows how many automatic collections landed while an
-    arm ran; the walk prices it through its holder either way, so the counts move
-    by a handful between the arms and the weight does not move at all.
+    All three numbers gate rather than the weight alone: a container banking
+    untracked keys adds no object at all and moves the reference count by one for
+    every entry it takes.
+
+    One-sided, because the claim is one-sided. A FALL means the process released
+    something it held before the region opened — what a bounded container reaching
+    its own size does — and no requirement here forbids that, so gating it would
+    fail this item for a reading it does not make. There is no threshold in either
+    direction: one entry taken anywhere fails the comparison.
     """
-    lighter, heavier = whole_heap(few, many)
-    assert lighter.held == heavier.held, where
+    opened, closed = whole_heap_across(span)
+    assert closed.objects <= opened.objects, (where, opened, closed)
+    assert closed.references <= opened.references, (where, opened, closed)
+    assert closed.held <= opened.held, (where, opened, closed)
 
 
 @in_a_child_interpreter
@@ -252,10 +306,12 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
     # What preparation holds is fixed by the model's exact Entity layouts and by
     # the compiled reads: eight times the rows through one prepared read must
     # leave the prepared side holding the same objects through the same
-    # references, and leave the process weighing what one row's worth left it
-    # weighing. A per-row shape, dispatch table, or classified-key set attached to
-    # either would move one reading, and a per-row entry banked in a container
-    # neither of them reaches would move the other.
+    # references, and eight roots' worth of rows this process has never decoded
+    # must leave nothing anywhere in it holding more than before they arrived. A
+    # per-row shape, dispatch table, or classified-key set attached to either would
+    # move the closure, and a per-row entry banked in a container neither of them
+    # reaches — keyed by what the row holds, so it never grows again once the same
+    # rows come back — would move the region.
     for layout in LAYOUTS:
         one_reads, one_prepared = _held_after_rows(layout, _ONE_ROOT)
         many_reads, many_prepared = _held_after_rows(layout, OWNERS)
@@ -263,7 +319,7 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
         assert one_reads == many_reads, layout
         assert one_prepared == many_prepared, layout
     for layout in LAYOUTS:
-        _same_whole_heap(_row_seam(layout, _ONE_ROOT), _row_seam(layout, OWNERS), layout)
+        _region_added_nothing(_unseen_rows(layout), layout)
 
 
 @in_a_child_interpreter
@@ -272,19 +328,19 @@ def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_fou
     # graphs materialized and of the executions that materialized them. Sixty-four
     # whole executions — each planning, compiling, converting, and sealing a graph
     # of its own — must leave the selection they were all resolved through holding
-    # what one execution left it holding, and leave the process weighing what one
-    # execution left it weighing. A query shape cached for the model's lifetime is
-    # exactly what would move the closure, and a process-global cache keyed by row
-    # or query primitives — which no prepared structure reaches at all, and whose
-    # entries the collector need not track — is what the whole-heap reading beside
-    # it is taken for.
+    # what one execution left it holding, and must leave nothing anywhere in the
+    # process holding more than before the first of them opened. A query shape
+    # cached for the model's lifetime is exactly what would move the closure, and a
+    # process-global cache keyed by row or query primitives — which no prepared
+    # structure reaches at all, and whose entries the collector need not track — is
+    # what the region beside it is marked for.
     for layout in LAYOUTS:
         once = _held_after_executions(layout, 1)
         often = _held_after_executions(layout, _EXECUTIONS)
         assert once.tracked > 0 and once.references > 0, layout
         assert once == often, layout
     for layout in LAYOUTS:
-        _same_whole_heap(_execution_seam(layout, 1), _execution_seam(layout, _EXECUTIONS), layout)
+        _region_added_nothing(_unseen_executions(layout), layout)
 
 
 if __name__ == "__main__":

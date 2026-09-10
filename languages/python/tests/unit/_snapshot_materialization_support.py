@@ -361,7 +361,8 @@ def _node_spec(index: int, offset: int) -> _RowSpec:
     )
 
 
-def _specs(attach_key: str, owners: int) -> tuple[_RowSpec, ...]:
+def _specs(attach_key: str, owners: int, first: int) -> tuple[_RowSpec, ...]:
+    indices = range(first, first + owners)
     if attach_key == _ROOT:
         return tuple(
             _RowSpec(
@@ -369,18 +370,14 @@ def _specs(attach_key: str, owners: int) -> tuple[_RowSpec, ...]:
                 joins={"id": _owner_id(index), "favoriteId": _node_id(index, 0)},
                 seed=_owner_id(index),
             )
-            for index in range(owners)
+            for index in indices
         )
     if attach_key == _NODES:
-        return tuple(
-            _node_spec(index, offset) for index in range(owners) for offset in range(FANOUT)
-        )
+        return tuple(_node_spec(index, offset) for index in indices for offset in range(FANOUT))
     if attach_key == _NARROWED:
-        return tuple(
-            _node_spec(index, offset) for index in range(owners) for offset in range(DUPLICATES)
-        )
+        return tuple(_node_spec(index, offset) for index in indices for offset in range(DUPLICATES))
     if attach_key == _FAVORITE:
-        return tuple(_node_spec(index, 0) for index in range(owners))
+        return tuple(_node_spec(index, 0) for index in indices)
     return ()
 
 
@@ -495,14 +492,22 @@ def _driver_row(
 
 
 def driver_rows(
-    model: CatalogedModel, compiled: CompiledRead, attach_key: str, owners: int = OWNERS
+    model: CatalogedModel,
+    compiled: CompiledRead,
+    attach_key: str,
+    owners: int = OWNERS,
+    first: int = 0,
 ) -> list[Row]:
-    """Every row one level's statement returns for ``owners`` root objects, keyed
-    by that statement's own result keys."""
+    """Every row one level's statement returns for ``owners`` root objects
+    beginning at ``first``, keyed by that statement's own result keys.
+
+    ``first`` moves the whole tree's keys and every value seeded from them, so
+    two ranges that do not overlap share no stored value at any level. That is
+    what lets a caller hand a warmed process rows it has never decoded."""
     meta = model.meta
     return [
         _driver_row(model, compiled, _identity(meta, spec.entity), spec)
-        for spec in _specs(attach_key, owners)
+        for spec in _specs(attach_key, owners, first)
     ]
 
 
@@ -511,17 +516,18 @@ def rows_per_level(
     plan: deep_fetch.ObjectQueryPlan,
     reads: Sequence[CompiledRead | None],
     owners: int = OWNERS,
+    first: int = 0,
 ) -> tuple[tuple[Row, ...], ...]:
     """Every level's rows, indexed as :func:`compiled_levels` indexes its reads."""
     root = reads[0]
     assert root is not None
-    rows: list[tuple[Row, ...]] = [tuple(driver_rows(model, root, _ROOT, owners))]
+    rows: list[tuple[Row, ...]] = [tuple(driver_rows(model, root, _ROOT, owners, first))]
     for index, level in enumerate(plan.levels):
         compiled = reads[index + 1]
         rows.append(
             ()
             if compiled is None
-            else tuple(driver_rows(model, compiled, level.attach_key, owners))
+            else tuple(driver_rows(model, compiled, level.attach_key, owners, first))
         )
     return tuple(rows)
 
