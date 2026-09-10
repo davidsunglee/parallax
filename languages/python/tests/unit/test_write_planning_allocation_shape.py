@@ -54,10 +54,22 @@ row-sized structure built and released inside the call. And beside that, what
 settling DOES is counted rather than weighed: a loop that builds one wrapper per
 row and releases it before building the next leaves the level unmoved, so neither
 byte reading can see it, while it cannot avoid instantiating the class and
-running the loop. The census counts every class instantiated and every bytecode
-instruction executed, naming no class of its own, so an intermediary introduced
-under any name — a binding, an adapter, a frame, a tuple built inline — is
-counted the round it appears.
+running the loop. The census counts every class a call bytecode instantiated and
+every bytecode instruction executed, naming no class of its own, so an
+intermediary introduced under any name — a binding, an adapter, a frame, a tuple
+built inline — is counted the round it appears.
+
+The census reads bytecode, so what a C consumer does internally is outside it:
+`deque(map(dict, rows), maxlen=0)` builds and drops one mapping per row while
+executing no instruction per row. That is outside the census and not outside the
+three readings together. A frame, a source, an adapter, or a binding is a class
+declared in this repository, and instantiating one runs its own `__init__`, so
+no C pipeline builds one without the census counting the instructions that do
+it. What a C pipeline can build unseen is a builtin container, and a builtin
+container built per row is kept (the retained reading), alive beside its
+neighbours (the high-water reading), or read by Python code per row (the
+instruction count) — unless it is dropped unread, which is per-row work whose
+result nothing observes.
 
 All three are read of both materialized shapes, a versioned group settling into
 updates and a temporal one settling into closes, because the prohibition is on
@@ -514,13 +526,14 @@ def _settling_a_group(settlement: _Settlement) -> Span:
 class _Census(NamedTuple):
     """What a run DID, counted where a byte reading can only weigh what survives.
 
-    ``constructions`` is every class a monitored run instantiated, whatever its
-    name and whichever module defines it, so a wrapper settlement does not have
-    yet is counted as readily as one it does. ``instructions`` is every
-    bytecode instruction the run executed, which closes the one gap the first
-    leaves: a tuple, a mapping, or a slice built inline is an intermediary no
-    class call announces, and building one per row cannot be done without
-    executing the instructions that build it.
+    ``constructions`` is every class a monitored call bytecode instantiated,
+    whatever its name and whichever module defines it, so a wrapper settlement
+    does not have yet is counted as readily as one it does. ``instructions`` is
+    every bytecode instruction the run executed, which closes the one gap the
+    first leaves: a tuple, a mapping, or a slice built inline is an intermediary
+    no class call announces, and Python code cannot build one per row without
+    executing the instructions that build it. Both readings are of bytecode, and
+    what that bounds rather than sees is the module docstring's.
     """
 
     constructions: int
@@ -531,11 +544,15 @@ _MONITORING_TOOL_IDS: Final = range(6)
 """Every id :mod:`sys.monitoring` admits a tool under."""
 
 
-def _census_of(run: Callable[[], None]) -> _Census:
-    """Count what ``run`` constructs and executes.
+def _census_of(settling: Callable[[], Callable[[], None]]) -> _Census:
+    """Count what one run of ``settling()`` constructs and executes.
 
-    ``run`` is warmed first, so a module imported or a cache filled on first
-    reach is counted in neither reading. The counting tool takes whichever
+    A run of its own is warmed first, so a module imported or a cache filled on
+    first reach is counted in neither reading — and the warmed run settles a
+    DIFFERENT planner and request from the counted one, because settlement is
+    stateful: warming the run about to be counted would consume its first
+    finalization, and per-row work that a first finalization alone performs
+    would then land in neither reading. The counting tool takes whichever
     monitoring id is free, because a profiler or a coverage backend may already
     hold one.
     """
@@ -552,7 +569,8 @@ def _census_of(run: Callable[[], None]) -> _Census:
         nonlocal instructions
         instructions += 1
 
-    run()
+    settling()()
+    run = settling()
     tool = next(
         identifier for identifier in _MONITORING_TOOL_IDS if monitoring.get_tool(identifier) is None
     )
@@ -568,14 +586,30 @@ def _census_of(run: Callable[[], None]) -> _Census:
     return _Census(constructions=constructions, instructions=instructions)
 
 
-def _settle_and_read(settlement: _Settlement, *, every_step: bool) -> Callable[[], None]:
-    def run() -> None:
-        plan = settlement.planner.finalize(settlement.request).plan
-        if every_step:
-            for step in plan.steps:
-                assert step is not None
+def _settling(
+    shape: Callable[[int], _Settlement], rows: int, *, every_step: bool
+) -> Callable[[], Callable[[], None]]:
+    """A run settling a group of ``rows`` rows, freshly prepared each time it is
+    asked for.
 
-    return run
+    A run rather than a call, and a fresh one per ask, because the census warms
+    one run and counts another: preparing the planner and the request outside
+    the run keeps building them out of the count, and preparing them again for
+    the counted run keeps the warmed settlement's state out of it.
+    """
+
+    def settling() -> Callable[[], None]:
+        prepared = shape(rows)
+
+        def run() -> None:
+            plan = prepared.planner.finalize(prepared.request).plan
+            if every_step:
+                for step in plan.steps:
+                    assert step is not None
+
+        return run
+
+    return settling
 
 
 @in_a_child_interpreter
@@ -605,19 +639,23 @@ def test_a_materialized_groups_plan_keeps_nothing_per_resolved_row() -> None:
         tracemalloc.stop()
 
 
+@in_a_child_interpreter
 def test_settling_a_materialized_group_constructs_nothing_per_resolved_row() -> None:
     # The third reading of the same claim, and the one neither reading above can
-    # take: a loop that builds one intermediary per row and drops it before
-    # building the next keeps the level flat, so it passes both. What it cannot
-    # do is construct nothing and execute nothing.
+    # take: a Python loop that builds one intermediary per row and drops it
+    # before building the next keeps the level flat, so it passes both. What it
+    # cannot do is construct nothing and execute nothing. In an interpreter of
+    # its own because `sys.monitoring` events are installed process-wide and
+    # count every instruction the process executes while they are set, so
+    # anything else running beside the reading is inside it.
     for shape, settlement in _MATERIALIZED_SHAPES:
-        few = _census_of(_settle_and_read(settlement(FEW_ROWS), every_step=False))
-        many = _census_of(_settle_and_read(settlement(MANY_ROWS), every_step=False))
+        few = _census_of(_settling(settlement, FEW_ROWS, every_step=False))
+        many = _census_of(_settling(settlement, MANY_ROWS, every_step=False))
         assert few.constructions > 0, f"settling {shape} constructs nothing at all"
         assert many == few, shape
         # And the census counts what it claims to: asking for every row's step
         # builds that row's own Planned Write, which is where that work belongs.
-        on_access = _census_of(_settle_and_read(settlement(FEW_ROWS), every_step=True))
+        on_access = _census_of(_settling(settlement, FEW_ROWS, every_step=True))
         assert on_access.constructions - few.constructions >= FEW_ROWS, shape
 
 
