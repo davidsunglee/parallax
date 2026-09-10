@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Sized
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, cast
@@ -69,8 +69,10 @@ from parallax.core.unit_work import (
     TemporalColumns,
     TemporalStrategy,
     TransactionInstant,
+    VersionArithmetic,
     VersionColumns,
     WriteAssignment,
+    WritePlan,
     WritePlanner,
     instant_literal,
     whole,
@@ -634,6 +636,71 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
     # resolved instant lives there and nowhere else, so seeing it is what says
     # the walk descended rather than stopping at the segment's own six fields.
     assert any(isinstance(value, dt.datetime) for value in walked)
+
+
+def _account_plan(group: MaterializedWriteGroup) -> WritePlan:
+    return (
+        build_write_planner(_ACCOUNT)
+        .finalize(
+            PlanningRequest(
+                subject_identity=TEST_SUBJECT_IDENTITY,
+                transaction_instant=inert_instant(),
+                concurrency="optimistic",
+                buffered_writes=[group],
+            )
+        )
+        .plan
+    )
+
+
+def _segment_fields(segment: object) -> dict[str, object]:
+    return {
+        field.name: getattr(segment, field.name)
+        for field in dataclasses.fields(cast("Any", segment))
+    }
+
+
+def test_a_versioned_segment_settles_produced_values_and_reaches_no_producer() -> None:
+    # The same rule the temporal segment above is held to, on the arm that
+    # settles a version rather than a milestone: a strategy's version arithmetic
+    # is a value the Concurrency Strategy PRODUCED for this mutation — two
+    # integers that decide nothing — so the segment may hold it, while the
+    # strategy that answered it stays unreachable (`m-unit-work` "A Write Plan
+    # MAY retain an immutable value a strategy ... produced").
+    plan = _account_plan(_version_group("Account", "id", [(1, 1), (2, 1)], assigned=9.00))
+    walked = [value for segment in plan.steps.segments for value in _segment_field_values(segment)]
+    for value in walked:
+        assert not isinstance(value, _FORBIDDEN_PLAN_CONTEXT)
+    assert any(isinstance(value, VersionArithmetic) for value in walked)
+
+
+def test_a_versioned_segment_keeps_the_groups_own_version_column_and_no_second_one() -> None:
+    # The row-sized structure settling a versioned group must not build. A
+    # segment holds no strategy, so advancing every row's version up front into
+    # a second tuple used to be the only way to have the advanced values at step
+    # access — one extra integer per resolved row, retained for the whole flush.
+    # The arithmetic is now a settled fact, so the advance is an addition
+    # performed when a row's step is asked for, and the group's OWN observation
+    # column is the only field of the segment the row count sizes.
+    rows: list[tuple[object, int]] = [(row_id, row_id) for row_id in range(1, 6)]
+    group = _version_group("Account", "id", rows, assigned=9.00)
+    plan = _account_plan(group)
+    (segment,) = plan.steps.segments
+    assert len(segment) == len(rows)
+    fields = _segment_fields(segment)
+    sized = {
+        name
+        for name, value in fields.items()
+        if isinstance(value, Sized) and len(value) == len(rows)
+    }
+    assert sized == {"versions"}
+    assert isinstance(group.observations, VersionColumns)
+    assert fields["versions"] is group.observations.versions
+    # Advancing at step access answers what the second column used to hold.
+    first = plan.steps[0]
+    assert isinstance(first, PlannedUpdate)
+    version = next(ident for ident in first.assignments.attributes if ident.name == "version")
+    assert first.assignments.attributes[version] == 2
 
 
 def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step_access() -> None:

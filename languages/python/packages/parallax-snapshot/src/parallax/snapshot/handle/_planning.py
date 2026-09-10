@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Final
 
 from parallax.core import batch_write, bitemp_write, opt_lock, txtime_write
 from parallax.core.metamodel import (
@@ -39,6 +40,7 @@ from parallax.core.unit_work import (
     MilestoneTopology,
     PlannedClose,
     TransactionInstant,
+    VersionArithmetic,
     WriteObservation,
     WritePlanner,
 )
@@ -46,6 +48,15 @@ from parallax.core.unit_work import plan_temporal_close as _plan_temporal_close
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 
 __all__ = ["build_write_planner", "plan_temporal_close"]
+
+# `m-opt-lock` owns both numbers, so the step is read as the difference one
+# advance makes rather than restated here. One instance serves every planner:
+# the arithmetic varies with nothing — not the model, not the Entity, not the
+# transaction's Concurrency Preference.
+_VERSION_ARITHMETIC: Final[VersionArithmetic] = VersionArithmetic(
+    initial=opt_lock.INITIAL_VERSION,
+    increment=opt_lock.advance(opt_lock.INITIAL_VERSION) - opt_lock.INITIAL_VERSION,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,11 +100,8 @@ class _ConcurrencyAdapter:
         key = opt_lock.view(self.model).key(entity.identity)
         return opt_lock.effective_strategy(concurrency, key) == "optimistic"
 
-    def initial_version(self) -> int:
-        return opt_lock.INITIAL_VERSION
-
-    def advance(self, observed_version: int) -> int:
-        return opt_lock.advance(observed_version)
+    def version_arithmetic(self) -> VersionArithmetic:
+        return _VERSION_ARITHMETIC
 
     def require_version(self, entity: EntityIdentity, observation: WriteObservation | None) -> int:
         return opt_lock.require_observed(entity.name, observation)

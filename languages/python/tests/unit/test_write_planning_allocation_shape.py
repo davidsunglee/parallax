@@ -1,4 +1,10 @@
-"""What write planning costs for Entities no write in the flush names.
+"""What write planning costs for what the flush did not hand it.
+
+Two shapes are graded here, and both are the same mistake at different scales: a
+structure planning derives whose size comes from something other than the writes
+it was given. The first is the model's Entity count, for Entities no write in the
+flush names; the second is a Materialized Write Group's resolved-row count, for
+rows the group already holds.
 
 A prepared write carries the exact target Metadata its ingress resolved, and the
 model's Inheritance Facet was compiled when the model was accepted. Between them
@@ -15,8 +21,9 @@ sized the same way would still be caught, and where a per-flush index REPLACED b
 a per-planner one — a removal that only moves what it costs — is the difference
 between the readings taken here.
 
-Four readings, because the cost has four places to hide. What one key derivation
-allocates, which is where the dictionaries were built. What a model-scoped
+Four readings of the Entity count, because that cost has four places to hide.
+What one key derivation allocates, which is where the dictionaries were built.
+What a model-scoped
 planner KEEPS when it is built, which is where a cache filled up front would move
 them to rather than remove them. What that planner keeps once it has settled a
 write against every Entity the model declares, which is where a cache filled one
@@ -31,6 +38,14 @@ already paid for ordering, and it is read at an entity count a repeated
 measurement of a quadratic ordering stage can afford, while the key derivation —
 the seam the index was removed from — is read at a hundred times as many
 Entities.
+
+The row reading is the one whose seam is a settled plan rather than a call. A
+versioned group's segment holds no strategy, so every row's ADVANCED version
+used to be computed up front into a second tuple beside the observed column the
+group already carried — retained for the flush's whole life. The strategy now
+answers its arithmetic as a value the plan may keep, so the advance is an
+addition performed when a row's step is asked for, and what the plan retains
+beyond the group's own columns is the same bytes at a hundred times the rows.
 """
 
 from __future__ import annotations
@@ -38,6 +53,7 @@ from __future__ import annotations
 import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from typing import Final
 
 from _metamodel_support import Declaration, attribute, identity, key, source
@@ -54,8 +70,21 @@ from _support.clock_probes import inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import Metamodel, Table
-from parallax.core.unit_work import BufferItem, KeyedWrite, PlanningRequest, object_key
-from parallax.core.unit_work.instructions import prepare_typed_write
+from parallax.core.predicate import Comparison
+from parallax.core.unit_work import (
+    BufferItem,
+    ChunkedColumnBuilder,
+    KeyedWrite,
+    MaterializedWriteGroup,
+    PlanningRequest,
+    PredicateSelection,
+    PredicateWrite,
+    VersionColumns,
+    WriteAssignment,
+    object_key,
+    whole,
+)
+from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from parallax.snapshot.handle import build_write_planner
 
 FEW: Final = 8
@@ -67,6 +96,23 @@ MANY: Final = 800
 An index over this model would be two dictionaries of eight hundred entries
 against two of eight, which is tens of thousands of bytes against hundreds — no
 threshold is needed to tell the two readings apart, and none is used.
+"""
+
+FEW_ROWS: Final = 300
+"""The floor the resolved-row reading is compared against.
+
+Above CPython's small-integer cache, so the plan's own step count — the one
+value it keeps that the row count decides — is a freshly allocated integer at
+BOTH readings. That is what lets them be compared exactly rather than through a
+tolerance that a real per-row structure could hide under.
+"""
+
+MANY_ROWS: Final = FEW_ROWS * 100
+"""A hundred times :data:`FEW_ROWS`.
+
+An advanced-version tuple over this many rows is thirty thousand integer
+references against three hundred, so no threshold is needed to tell the two
+readings apart, and none is used.
 """
 
 ORDERED_MANY: Final = 128
@@ -104,6 +150,57 @@ def _model(entities: int) -> Metamodel:
             )
         )
     return form_metamodel(source(*declarations))
+
+
+def _versioned_model() -> Metamodel:
+    """An accepted model of one Entity carrying an optimistic-lock version.
+
+    One Entity, because the row reading grades a group's own resolved rows and
+    nothing about what else the model declares.
+    """
+    entity = identity("Entity0")
+    return form_metamodel(
+        source(
+            Declaration(
+                identity=entity,
+                container=Table("entity0"),
+                attributes=(
+                    key(entity),
+                    attribute(entity, "value"),
+                    replace(attribute(entity, "version"), optimistic_locking=True),
+                ),
+            )
+        )
+    )
+
+
+def _version_group(model: Metamodel, rows: int) -> MaterializedWriteGroup:
+    """A versioned Materialized Write Group of ``rows`` resolved rows.
+
+    Its key and observation columns are the compact aligned storage a
+    materializing predicate write buffers, so a plan settled from it reaches
+    every per-row value by reference.
+    """
+    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+    versions: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
+    for row in range(rows):
+        keys.append(row + 1)
+        versions.append(row + 1)
+    prepared = prepare_typed_write(
+        PredicateWrite(
+            "update",
+            PredicateSelection("Entity0", Comparison("lessThan", "Entity0.value", 1_000_000)),
+            assignments=(WriteAssignment("Entity0.value", 1),),
+        ),
+        model,
+    )
+    assert isinstance(prepared, PreparedPredicateWrite)
+    return MaterializedWriteGroup(
+        mutation=prepared,
+        key_attributes=("id",),
+        key_columns=(whole(keys.build()),),
+        observations=VersionColumns(versions=whole(versions.build())),
+    )
 
 
 def _prepared_writes(model: Metamodel, count: int) -> Sequence[BufferItem]:
@@ -209,6 +306,50 @@ def _planner_having_settled_every_entity(entities: int) -> Seam:
         del planner
 
     return run
+
+
+def _settled_group_plan(rows: int) -> Seam:
+    """One ``finalize`` over a versioned group of ``rows``, sampled while the
+    plan it answered is alive.
+
+    The model, the planner, the group, and its columns are all built before the
+    window, so every byte still reachable at the sample is a byte the PLAN
+    keeps: a column the group already owned is reached by reference and weighs
+    nothing here, and a second structure sized by the resolved rows weighs
+    everything.
+    """
+    model = _versioned_model()
+    planner = build_write_planner(model)
+    request = PlanningRequest(
+        subject_identity=TEST_SUBJECT_IDENTITY,
+        transaction_instant=INSTANT,
+        concurrency="optimistic",
+        buffered_writes=(_version_group(model, rows),),
+    )
+
+    def run(sample: Callable[[], None]) -> None:
+        plan = planner.finalize(request).plan
+        sample()
+        del plan
+
+    return run
+
+
+@in_a_child_interpreter
+def test_a_versioned_groups_plan_keeps_nothing_per_resolved_row() -> None:
+    # A group's rows are already compact columns when planning receives them, so
+    # settling them adds nothing sized by their number: what the plan keeps is
+    # one segment over the facts settled for the whole group, and the advance
+    # each row's update assigns is computed from the group's own observed
+    # version when that row's step is asked for.
+    tracemalloc.start()
+    try:
+        few = retained(_settled_group_plan(FEW_ROWS))
+        many = retained(_settled_group_plan(MANY_ROWS))
+    finally:
+        tracemalloc.stop()
+    assert few > 0, "a settled group's plan is not free, or nothing is being measured"
+    assert many == few
 
 
 @in_a_child_interpreter

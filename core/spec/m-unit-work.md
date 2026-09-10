@@ -449,7 +449,8 @@ semantics already decided.
   Derived values are materialized *into* the steps instead.
 - A Write Plan **MAY** retain an immutable value a strategy, a clock, or a facet
   **produced** for one settled write — a resolved instant, a Close Cause, resolved
-  Milestone Successors, the target's compiled Inheritance Entity View — and
+  Milestone Successors, the target's compiled Inheritance Entity View, the version
+  arithmetic a versioned write's new version derives from — and
   **MUST NOT** retain the producer: no clock, no strategy, no Metamodel, no
   Inheritance Facet, no private group, no planner. What separates the two is
   whether the retained thing can still decide something.
