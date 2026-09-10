@@ -47,10 +47,13 @@ answers its arithmetic as a value the plan may keep, so the advance is an
 addition performed when a row's step is asked for, and what the plan retains
 beyond the group's own columns is the same bytes at a hundred times the rows.
 
-Twice over, because a per-row structure is forbidden even transiently and a
-sample taken after settlement returned cannot see one that settlement dropped:
-beside what the plan KEEPS, the settlement window is read as a high-water mark,
-which is what prices a row-sized structure built and released inside the call.
+Three times over, because a per-row structure is forbidden even transiently and
+what a byte reading can see shrinks as the structure's life does. Beside what the
+plan KEEPS, the settlement window is read as a high-water mark, which prices a
+row-sized structure built and released inside the call. And beside that, the
+Planned Writes settlement constructs are counted, because a loop that builds one
+wrapper per row and releases it before building the next never raises the level
+at all — a census sees it where no byte reading can.
 """
 
 from __future__ import annotations
@@ -59,7 +62,7 @@ import sys
 import tracemalloc
 from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Final
+from typing import Final, cast
 
 from _metamodel_support import Declaration, attribute, identity, key, source
 from memory_instruments import (
@@ -73,6 +76,7 @@ from memory_instruments import (
     serve_one_measurement,
 )
 
+import parallax.core.unit_work.write_settlement as write_settlement
 from _support.clock_probes import inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.core._formation_profile import form_metamodel
@@ -370,6 +374,77 @@ def _settling_a_group(rows: int) -> Span:
     return span
 
 
+_PER_ROW_CONSTRUCTS: Final = (
+    "PlannedUpdate",
+    "PlannedDelete",
+    "PlannedInsert",
+    "PlannedRow",
+    "PlannedAssignments",
+    "InsertEntry",
+    "KeyTarget",
+    "ExactCount",
+    "Versioned",
+    "VersionGate",
+)
+"""What a materialized row's own Planned Write is made of.
+
+These are write planning's counterpart to the frames, sources, adapters, and
+bindings the memory contract forbids per row: the concrete objects that address
+one row, say what it assigns, and gate it. A group's segment builds them when a
+row's step is ASKED for, so ``finalize`` building any number of them that the
+resolved rows decide is the defect, whether or not it keeps them.
+"""
+
+
+def _constructions_during(run: Callable[[], None]) -> int:
+    """How many of :data:`_PER_ROW_CONSTRUCTS` ``run`` constructs.
+
+    A census rather than a measurement, and it is the one reading here that
+    does not depend on a byte surviving: a wrapper built and released inside a
+    loop leaves the level it was allocated at unmoved, so neither what a plan
+    keeps nor how far settling rose can see one made per row and dropped again.
+    Counting them where settlement names them can.
+    """
+    counted = 0
+
+    def census(constructor: Callable[..., object]) -> Callable[..., object]:
+        def construct(*args: object, **kwargs: object) -> object:
+            nonlocal counted
+            counted += 1
+            return constructor(*args, **kwargs)
+
+        return construct
+
+    original = {name: getattr(write_settlement, name) for name in _PER_ROW_CONSTRUCTS}
+    for name, constructor in original.items():
+        setattr(write_settlement, name, census(cast("Callable[..., object]", constructor)))
+    try:
+        run()
+    finally:
+        for name, constructor in original.items():
+            setattr(write_settlement, name, constructor)
+    return counted
+
+
+def _settle_and_read(rows: int, *, every_step: bool) -> Callable[[], None]:
+    model = _versioned_model()
+    planner = build_write_planner(model)
+    request = PlanningRequest(
+        subject_identity=TEST_SUBJECT_IDENTITY,
+        transaction_instant=INSTANT,
+        concurrency="optimistic",
+        buffered_writes=(_version_group(model, rows),),
+    )
+
+    def run() -> None:
+        plan = planner.finalize(request).plan
+        if every_step:
+            for step in plan.steps:
+                assert step is not None
+
+    return run
+
+
 @in_a_child_interpreter
 def test_a_versioned_groups_plan_keeps_nothing_per_resolved_row() -> None:
     # A group's rows are already compact columns when planning receives them, so
@@ -393,6 +468,20 @@ def test_a_versioned_groups_plan_keeps_nothing_per_resolved_row() -> None:
     assert many == few
     assert peak_few > 0, "settling a group is not free, or nothing is being measured"
     assert peak_many == peak_few
+
+
+def test_settling_a_versioned_group_constructs_no_planned_write_per_resolved_row() -> None:
+    # The third reading of the same claim, and the one neither reading above can
+    # take: a loop that builds one wrapper per row and drops it before the next
+    # keeps the level flat, so it passes both. What it cannot do is construct
+    # nothing.
+    few = _constructions_during(_settle_and_read(FEW_ROWS, every_step=False))
+    many = _constructions_during(_settle_and_read(MANY_ROWS, every_step=False))
+    assert many == few
+    # And the census counts what it claims to: asking for every row's step
+    # builds each row's own Planned Write, which is where that work belongs.
+    on_access = _constructions_during(_settle_and_read(FEW_ROWS, every_step=True))
+    assert on_access - few >= FEW_ROWS
 
 
 @in_a_child_interpreter
