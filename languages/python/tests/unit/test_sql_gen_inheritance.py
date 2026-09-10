@@ -116,9 +116,26 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
         is None
     )
 
-    transform = cast("Any", row_compiled)._transform
-    book_only = replace(transform, documents=(transform.documents[0],))
-    without_sibling_document_members = replace(row_compiled, _transform=book_only)
+    # A branch that stores no document of its own still pads what its siblings'
+    # documents carry: the stage keeps its entry and answers no shape.
+    materializer = cast("Any", row_compiled)._materializer
+    shared = materializer.stages.shared_document
+    book = target(DOCUMENT_LAYOUT, "Book").identity
+    book_only = replace(
+        shared,
+        per_entity=tuple(
+            (identity, entry)
+            if identity == book
+            else (identity, replace(entry, shape=None, members=()))
+            for identity, entry in shared.per_entity
+        ),
+    )
+    without_sibling_document_members = replace(
+        row_compiled,
+        _materializer=replace(
+            materializer, stages=replace(materializer.stages, shared_document=book_only)
+        ),
+    )
     assert without_sibling_document_members.transform_row(
         {
             "id": 20,
@@ -1041,6 +1058,134 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     assert unknown.resolved_entity == target(partial, "Beast").identity
     assert unknown.resolved_entity not in compiled.resolved_position
     assert unknown.resolved_entity in compiled.resolvable
+
+
+def _own_column_occurrences() -> Any:
+    """A table-per-hierarchy family whose concretes each own a Value Object Column.
+
+    ``Barge`` is a concrete subtype OF the concrete ``Tug``, and sorts ahead of it,
+    so a read targeting `Tug` resolves a position of two concretes whose first
+    member is not the one its rows name.
+    """
+    from parallax.descriptor._records import (
+        Attribute,
+        Entity,
+        Inheritance,
+        Metamodel,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+
+    return formed(
+        Metamodel(
+            entities=(
+                Entity(
+                    name="Vessel",
+                    table="vessel",
+                    inheritance=Inheritance(
+                        role="root", strategy="table-per-hierarchy", tag_column="kind"
+                    ),
+                    attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+                ),
+                Entity(
+                    name="Tug",
+                    inheritance=Inheritance(
+                        role="concrete-subtype", parent="Vessel", tag_value="tug"
+                    ),
+                    value_objects=(
+                        ValueObject(
+                            name="berth",
+                            column="berth",
+                            nullable=True,
+                            attributes=(
+                                ValueObjectAttribute(name="code", type="string", nullable=True),
+                            ),
+                        ),
+                    ),
+                ),
+                Entity(
+                    name="Barge",
+                    inheritance=Inheritance(
+                        role="concrete-subtype", parent="Tug", tag_value="barge"
+                    ),
+                    value_objects=(
+                        ValueObject(
+                            name="deck",
+                            column="deck",
+                            nullable=True,
+                            attributes=(
+                                ValueObjectAttribute(name="area", type="string", nullable=True),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+    )
+
+
+def test_own_column_occurrences_are_classified_for_the_concrete_the_row_names() -> None:
+    # A concrete target with concrete descendants projects the position's whole
+    # superset, so a row carries its siblings' occurrence Columns as null. What is
+    # classified is the RESOLVED concrete's own occurrences — the read materializes
+    # `Tug` rows, so `Tug`'s `berth` is decoded and `Barge`'s `deck` is left as the
+    # carrier the port returned, for the level that owns it to judge.
+    meta = _own_column_occurrences()
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Tug"), result_form="instance")
+    assert compiled.resolved_position == (
+        target(meta, "Barge").identity,
+        target(meta, "Tug").identity,
+    )
+    deck = PresentDocument({"area": "9"})
+    materialized = compiled.materialize_row(
+        {"id": 1, "berth": PresentDocument({"code": "A1"}), "deck": deck}
+    )
+    assert materialized.resolved_entity == target(meta, "Tug").identity
+    assert materialized.classified_members == frozenset({"berth"})
+    assert materialized.values["berth"] == {"code": "A1"}
+    assert materialized.values["deck"] is deck
+
+
+def test_an_occurrence_column_absent_from_a_row_is_not_classified() -> None:
+    # The classified keys are compiled from the projection, and a row that does
+    # not carry one of those Columns was judged for nothing: the provenance names
+    # only what this row actually held, so conversion still judges the rest.
+    meta = _own_column_occurrences()
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Tug"), result_form="instance")
+    materialized = compiled.materialize_row({"id": 2})
+    assert materialized.classified_members == frozenset()
+    assert materialized.values == {"id": 2}
+
+
+def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
+    # Storage Layout is root-owned, so every branch of a family spells the shared
+    # Structured Column the way the root declared it, and the union projects that
+    # tier under one result alias whichever branch rendered the row. One column
+    # for the whole read rests on exactly that, and both branches read through it.
+    compiled = compile_read(
+        oa.All(),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Publication"),
+        result_form="instance",
+    )
+    assert compiled.statement.sql == (
+        "select t0.id, not t0.payload is null, t0.payload, 'Book' family_variant "
+        "from publication_book t0 union all "
+        "select t0.id, not t0.payload is null, t0.payload, 'Film' family_variant "
+        "from publication_film t0"
+    )
+    assert compiled.structured_column == "payload"
+    for variant, member in (("Book", "pages"), ("Film", "minutes")):
+        materialized = compiled.materialize_row(
+            {
+                "id": 1,
+                "payload": PresentDocument({"title": "Systems", "detail": "x", member: 320}),
+                "family_variant": variant,
+            }
+        )
+        assert "payload" not in materialized.values
+        assert materialized.values[member] == 320
 
 
 def test_tpcs_union_read_renames_the_projected_literal_column() -> None:

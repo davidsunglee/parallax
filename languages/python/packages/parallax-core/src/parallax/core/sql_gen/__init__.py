@@ -10,7 +10,7 @@ and ``m-dialect``.
 The two exported data/error names below are the whole supported facade; compiler
 operations remain private implementation. The private ``compile_read`` operation
 returns a self-contained
-:class:`CompiledRead` — statement, root narrow, and row transform together — so
+:class:`CompiledRead` — statement, root narrow, and row materializer together — so
 a caller executes and transforms without re-deriving anything from the
 query it just compiled. The projection this package emits follows the
 canonical slot order of ``m-storage-layout``'s compiled ``TableLayout.columns``,
@@ -37,8 +37,8 @@ That implementation is six private modules, each owning one concern:
   inheritance plan type rather than descending into a predicate.)
 * ``_navigation`` — relationship resolution and correlated-hop planning.
 * ``_inheritance`` — table-per-hierarchy and table-per-concrete-subtype
-  planning, family projection, tag predicates, and ``familyVariant`` row
-  transforms.
+  planning, family projection, tag predicates, and the row materialization
+  stages a read's own projection fills.
 * ``_context`` — one statement's shared mutable state, and nothing else: the
   metamodel and dialect it renders against, its ordered bind list, and its alias
   counter. It holds no resolution policy.
