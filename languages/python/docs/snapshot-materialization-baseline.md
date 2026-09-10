@@ -58,11 +58,13 @@ sizes: an equality between two arms, and a refusal to rise across one region. Bo
 therefore see growth along rows, graphs, and executions — which is the whole of
 what COR-137 asks — and neither separates a holder that grows along none of them
 from state the model legitimately owns. One query shape banked once and shared by
-every execution after it leaves both execution arms holding one; a decode memo
-bounded by a Neutral Type's own value domain fills during warming, and `Boolean`
-has two values. That such holders do not exist is a structural property of the
-code that would own them, asserted where that code is, and outside what a
-measurement of size can say.
+every execution after it leaves both execution arms holding one. A decode memo
+bounded by a value domain fills during warming only where warming covered that
+domain: `Boolean` has two values and both are decoded before any reading, while
+the wider modular domains are sampled rather than exhausted, so a memo over one
+of those would take entries inside the region and fail that reading. That such
+holders do not exist is a structural property of the code that would own them,
+asserted where that code is, and outside what a measurement of size can say.
 
 **A byte equality over a window that runs the codec.** Two runs of one identical
 seam read about four hundred bytes apart on a forty-kilobyte window, in either

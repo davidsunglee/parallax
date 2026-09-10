@@ -21,11 +21,10 @@ executions, which is what forbids a query shape retained PER EXECUTION.
 
 Both axes grade a SIZE, so what they reach is bounded by what varies across the
 thing they vary. A holder whose entry count is fixed by the model — one banked
-query shape every execution after the first then shares, a memo bounded by a
-Neutral Type's own value domain — is model-fixed, grows with neither graphs nor
-executions nor rows, and is therefore something neither reading separates from
-state the model legitimately owns. That such a shape is not banked at all is a
-structural property of the code that owns it, asserted where that code is, and
+query shape every execution after the first then shares — grows with neither
+graphs nor executions nor rows, and is therefore not something a size separates
+from state the model legitimately owns. That such a shape is not banked at all is
+a structural property of the code that owns it, asserted where that code is, and
 outside what any measurement of size can say.
 
 **Preparation is entered whole.** Every arm derives its cataloged model from
@@ -52,21 +51,28 @@ process-global cache keyed by what a row holds stops growing once the rows come
 back, so two arms compared in one process both read it already full and their
 totals agree however much either put into it — the arm that ran first is measured
 after the arm that ran second has filled it. What closes that is entering the
-region ONCE: the sequence is warmed over one root's rows until every cost paid
-once is paid, and only then handed rows composed from seeds no conversion in this
-process has decoded. An entry taken for them lands between the two marks, where
-nothing can have taken it earlier. The region releases every graph it builds, so
-what separates the marks is what something OUTSIDE the region kept.
+region ONCE: the sequence is warmed over as many roots' rows as the region then
+converts, until every cost paid once is paid, and only then handed rows composed
+from seeds no conversion in this process has decoded. An entry taken for them
+lands between the two marks, where nothing can have taken it earlier. The region
+releases every graph it builds, so what separates the marks is what something
+OUTSIDE the region kept.
 
 The seeds are what bound that. Every key a region's rows carry, every string and
 every wide-domain value derived from one, and every composed row and document are
 values this process has not decoded, so a container taking an entry per row, per
 key, or per composed value takes it between the marks. What a new seed does NOT
-produce is a new value of a low-cardinality Neutral Type: ``Boolean`` has two
-values and warming decodes both, and the modular ``Float32`` and ``Time`` domains
-repeat inside a single warm range. A memo bounded by such a domain saturates
-before the region opens — which is the same thing as saying it grows with neither
-rows nor graphs nor executions, and so is not what this item claims.
+produce is a new value of a Neutral Type whose whole domain warming already
+decoded, and ``Boolean`` is the only one of those: its two values are
+``seed % 2``, and every range carries both. The other modular domains are sampled
+rather than exhausted — a range's seeds are scattered rather than contiguous, so
+the region's rows still carry ``Float32`` and ``Time`` values warming did not
+reach.
+A memo bounded by one of them would take its remaining entries between the marks
+and fail this reading, even though a holder that saturates at a value domain
+grows with neither rows nor graphs nor executions and is not what this item
+claims. The answer if one is ever introduced is to warm over enough roots to
+cover its domain, not to loosen the reading.
 
 An ALLOCATOR reading cannot be the gate here, and the reason is a measurement
 rather than a preference. This workload declares every Neutral Type, so its
@@ -131,11 +137,10 @@ _UNSEEN: Final = OWNERS
 """The first root a marked region's rows carry.
 
 Past every root the closure readings converted — they take :data:`OWNERS` roots
-from the first — so every key a region's row carries, and every value its seed
-derives, is one this process has not decoded, whatever order the readings run
-in. A value of a Neutral Type whose domain is smaller than a warm range —
-``Boolean`` above all — recurs regardless, which is what leaves a memo bounded by
-that domain outside what a region can separate."""
+from the first — so every key a region's row carries, and every value derived
+from one over a domain warming did not cover, is one this process has not
+decoded, whatever order the readings run in. ``Boolean`` is the one type warming
+does cover: its two values are ``seed % 2``, and every range carries both."""
 
 _EDITION: Final = "snapshot-materialization-scaling"
 
@@ -175,7 +180,7 @@ def _rows(model: CatalogedModel, owners: int, first: int = 0) -> tuple[tuple[Row
 
     ``first`` is what makes a region's rows unseen: :data:`_UNSEEN` starts past
     every root any other reading in this item converts, so every key in them, and
-    every value a seed derived from one over a domain wider than a warm range,
+    every value a seed derived from one over a domain warming did not cover,
     reaches a conversion first inside the region."""
     meta = model.meta
     plan = fetch_plan(query(meta), meta)
@@ -211,10 +216,12 @@ def _unseen_rows(layout: Layout) -> Span:
     thing the region varies is that its rows are new: every one of its roots, and
     every row beneath them, is composed from a seed no conversion in this process
     has ever decoded, so a container keyed by a row, by a key, or by a composed
-    value takes its entries between the two marks rather than before them. The
-    values a seed derives over a domain narrower than a warm range recur, so a
-    memo bounded by one is full before the opening mark. The region's graph is released
-    where it is built, which is what leaves the two marks comparable at all."""
+    value takes its entries between the two marks rather than before them.
+    ``Boolean`` recurs regardless — its two values are ``seed % 2`` — so a memo
+    bounded by it is full before the opening mark, where one bounded by a wider
+    value domain would still take entries inside the region. The region's graph is
+    released where it is built, which is what leaves the two marks comparable at
+    all."""
     selection = _prepared(layout)
     model = _catalog(selection)
     meta = model.meta
@@ -312,8 +319,9 @@ def _region_added_nothing(span: Span, where: str) -> None:
     per composed value lands between the marks. An entry a holder had already
     taken for something a warm row carried does not, which is the same statement
     as the one the claim makes: what is graded is growth along rows, graphs, and
-    executions, and a holder bounded by the model or by a value domain grows along
-    none of them.
+    executions, and a holder bounded by the model grows along none of them. A
+    holder bounded by a value domain is invisible here only where warming covered
+    that domain, which in this fixture is ``Boolean`` alone.
 
     All three numbers gate rather than the weight alone: a container banking
     untracked keys adds no object at all and moves the reference count by one for

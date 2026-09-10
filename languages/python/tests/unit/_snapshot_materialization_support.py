@@ -503,10 +503,12 @@ def driver_rows(
 
     ``first`` moves the whole tree's keys and every value seeded from them, so
     two ranges that do not overlap share no key, no composed row, and no value of
-    a Neutral Type whose domain is wider than a range. A type whose domain is
-    NARROWER repeats across them: :func:`_managed` answers ``Boolean`` from
-    ``seed % 2`` and ``Float32`` and ``Time`` from modular domains a single range
-    already exhausts. That is what lets a caller hand a warmed process rows it has
+    a Neutral Type whose domain the earlier range did not cover. ``Boolean`` is
+    the one type it does cover: :func:`_managed` answers it from ``seed % 2``, and
+    every range carries both parities. The other modular domains are SAMPLED
+    rather than exhausted — a range's seeds are scattered rather than contiguous,
+    so a further range still carries ``Float32`` and ``Time`` values the earlier
+    one did not. That is what lets a caller hand a warmed process rows it has
     never decoded, and what bounds the claim to rows rather than to every value in
     one."""
     meta = model.meta
