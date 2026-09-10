@@ -61,6 +61,7 @@ Support code only one surface uses stays inside that surface —
 `_metamodel_support.py`, `_mixed_strategy_model.py`,
 `_pool_source_support.py`,
 `_second_dialect.py`, `_snapshot_graph_support.py`,
+`_snapshot_materialization_support.py`,
 `_source_inventory_support.py`, `_stream_page_support.py`,
 `_transact_support.py`,
 `tests/unit/memory_instruments.py`,
@@ -70,10 +71,12 @@ Support code only one surface uses stays inside that surface —
 Two of those serve the cost suites and split by subject:
 `memory_instruments.py` is what all three measure WITH, and
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
-with. `tools/snapshot_graph_overhead.py` reads the instruments as well, and is
-the one place in the tree that spells `tests/unit` as an import root — it
-prepends that directory to `sys.path` and then refuses any `memory_instruments`
-that did not resolve to the file it named, which is also why
+with. `_snapshot_materialization_support.py` is a third of that kind, and the one
+a `report` also drives: the scaling regression and
+`just python-report-snapshot-materialization` measure one workload through one
+set of functions. The `report` tools under `tools/` are what spell `tests/unit` as
+an import root — each prepends that directory to `sys.path` and then refuses any
+module that did not resolve to the file it named, which is also why
 `pyrightconfig.json`'s `extraPaths` carries `tests/unit` beside the two
 `pythonpath` roots.
 
