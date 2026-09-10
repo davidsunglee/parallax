@@ -1054,6 +1054,27 @@ def test_an_observation_free_multi_key_delete_carries_the_aggregate_missing_targ
     assert step.affected_rows == ExactCount(2, MISSING_TARGET)
 
 
+def test_an_unversioned_multi_key_update_settles_to_one_aggregate_planned_write() -> None:
+    # The delete above proves the aggregate expectation on the destructive verb;
+    # this is the assigning one, and together they fix the cardinality an
+    # addressed write keeps whichever verb it carries. A collapsed run is ONE
+    # statement over one multi-key Key Target, so it settles to one Planned
+    # Update whose expectation is the whole target's key count — never one step
+    # per key, which is the grain a Materialized Write Group settles at and an
+    # addressed write never does.
+    buffer: list[_TestBufferItem] = [
+        KeyedWrite("update", "Wallet", ({"id": 1, "balance": Decimal("5.00")},)),
+        KeyedWrite("update", "Wallet", ({"id": 2, "balance": Decimal("5.00")},)),
+        KeyedWrite("update", "Wallet", ({"id": 3, "balance": Decimal("5.00")},)),
+    ]
+    plan = _plan(buffer, _WALLET)
+    (step,) = plan.steps
+    assert isinstance(step, PlannedUpdate)
+    assert _key_values(step) == ((1,), (2,), (3,))
+    assert step.concurrency == UNVERSIONED
+    assert step.affected_rows == ExactCount(3, MISSING_TARGET)
+
+
 def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
     predicate = PredicateWrite(
         "delete",
@@ -1482,6 +1503,41 @@ def test_one_temporal_row_settles_identically_addressed_and_materialized() -> No
     )
     assert _shape(eager) == [("close", "Balance"), ("insert", "Balance")]
     assert list(materialized.steps) == list(eager.steps)
+
+
+def test_one_versioned_row_settles_identically_addressed_and_materialized() -> None:
+    # The non-temporal counterpart. The same observed row, the same authored
+    # value, and the same concurrency mode, reaching settlement through its two
+    # representations: an addressed keyed update settled eagerly, and a one-row
+    # Materialized Write Group settled into a segment that emits on demand. Every
+    # non-temporal fact — the family-effective key the target addresses by, the
+    # version Attribute, the gate the observation binds, the advanced version the
+    # update assigns, and how a shortfall classifies — is decided in one place for
+    # both, so a single addressed row and a single resolved row must agree
+    # exactly. Their CARDINALITY is the one thing they do not share, and it is
+    # not in evidence here: both plans carry one step over one key.
+    assigned = Decimal("5.00")
+    addressed = KeyedWrite("update", "Account", ({"id": 9, "balance": assigned},))
+    key_ = object_key(addressed, _ACCOUNT)
+    assert key_ is not None
+    eager = _plan(
+        [addressed],
+        _ACCOUNT,
+        observations={key_: VersionObservation(observed_version=1)},
+        concurrency="optimistic",
+    )
+    materialized = _plan(
+        [
+            _version_group(
+                "Account", "update", "id", [(9, 1)], [WriteAssignment("Account.balance", assigned)]
+            )
+        ],
+        _ACCOUNT,
+        concurrency="optimistic",
+    )
+    (settled,) = eager.steps
+    assert isinstance(settled, PlannedUpdate)
+    assert list(materialized.steps) == [settled]
 
 
 # --------------------------------------------------------------------------- #

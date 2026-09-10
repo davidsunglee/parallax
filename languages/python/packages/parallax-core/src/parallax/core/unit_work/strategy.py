@@ -66,6 +66,7 @@ __all__ = [
     "UndecoratedAudit",
     "ValidTimeBound",
     "ValidTimeWindow",
+    "VersionArithmetic",
     "capture_subject_identity",
 ]
 
@@ -281,6 +282,25 @@ class BatchingStrategy(Protocol):
     ) -> object: ...
 
 
+@dataclass(frozen=True, slots=True)
+class VersionArithmetic:
+    """The two numbers `m-opt-lock` fixes for every versioned write: the version
+    a new lineage opens at, and the step a successful write advances by.
+
+    Data rather than policy — it decides nothing beyond addition — which is what
+    lets a settled write keep it. A packed run of a Materialized Write Group's
+    rows advances each row's observed version at step access from the value here
+    rather than from a precomputed second column, and holding the strategy that
+    produced it would instead put a policy object inside a Write Plan.
+    """
+
+    initial: int
+    increment: int
+
+    def advance(self, observed: int) -> int:
+        return observed + self.increment
+
+
 @runtime_checkable
 class ConcurrencyStrategy(Protocol):
     """How one transaction's Concurrency Preference settles a versioned write's
@@ -289,8 +309,8 @@ class ConcurrencyStrategy(Protocol):
     Every method mirrors one `m-opt-lock` policy question the planner cannot
     answer itself, because the module DAG runs `m-opt-lock --> m-unit-work`:
     which Attribute (if any) carries an entity's optimistic version, whether the
-    write's own Entity gates at all, the derived initial and advanced version
-    values, whether a required version was actually observed, and whether a row
+    write's own Entity gates at all, the arithmetic every version value derives
+    from, whether a required version was actually observed, and whether a row
     still authors an explicit version value. Each raises the policy's own error
     on refusal; the planner never inspects or re-raises a specific type.
 
@@ -307,9 +327,7 @@ class ConcurrencyStrategy(Protocol):
 
     def gates(self, concurrency: Concurrency, entity: EntityMetadata) -> bool: ...
 
-    def initial_version(self) -> int: ...
-
-    def advance(self, observed_version: int) -> int: ...
+    def version_arithmetic(self) -> VersionArithmetic: ...
 
     def require_version(
         self, entity: EntityIdentity, observation: WriteObservation | None

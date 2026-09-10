@@ -197,6 +197,7 @@ from parallax.core.unit_work.strategy import (
     UndecoratedAudit,
     ValidTimeBound,
     ValidTimeWindow,
+    VersionArithmetic,
     capture_subject_identity,
 )
 from parallax.core.unit_work.temporal import SuccessorRow, TemporalAxes
@@ -361,6 +362,7 @@ __all__ = [
     "Unversioned",
     "ValidTimeBound",
     "ValidTimeWindow",
+    "VersionArithmetic",
     "VersionColumns",
     "VersionGate",
     "VersionObservation",
