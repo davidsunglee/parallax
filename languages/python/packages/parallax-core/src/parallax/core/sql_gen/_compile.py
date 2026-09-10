@@ -17,7 +17,6 @@ from typing import Literal, assert_never, cast
 from parallax.core.base import (
     Bytes,
     DocumentReadOrdinals,
-    NeutralType,
     UnknownFamilyTag,
     admits_stored_scalar,
     inert_scalar,
@@ -65,6 +64,7 @@ from parallax.core.sql_gen._inheritance import render_projection as _render_proj
 from parallax.core.sql_gen._inheritance import select_projection as _select_projection
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
+from parallax.core.sql_gen._inheritance import transform_resolvable as _transform_resolvable
 from parallax.core.sql_gen._inheritance import (
     transform_structured_column as _transform_structured_column,
 )
@@ -171,15 +171,37 @@ class MaterializedReadRow:
 
 @dataclass(frozen=True, slots=True)
 class AttributeReadContract:
-    """One projected Attribute's logical, physical, and driver-result contract."""
+    """One projected Attribute's driver-result contract.
 
-    identity: AttributeIdentity
-    column: str
+    ``attribute`` is the accepted metadata itself, held by reference: the logical
+    identity, physical Column, Neutral Type, and nullability this contract reads
+    against are the compiler's INPUTS rather than its decisions, and copies of
+    them here would be a second place they could disagree with the model.
+
+    What the contract adds is what this statement decided. ``result_key`` is the
+    alias the projection actually rendered, which departs from the Column
+    spelling exactly when the cell is ``encoded`` and so arrives in a dialect's
+    wire spelling rather than its stored one. ``temporal_end`` marks the
+    Attribute a family's As-Of Axis may leave open, which admits the infinity
+    sentinel no other Attribute of its type admits.
+    """
+
+    attribute: AttributeMetadata
     result_key: str
-    type: NeutralType
-    nullable: bool
     temporal_end: bool
     encoded: bool
+
+
+def _fallback_entity(
+    position: tuple[EntityIdentity, ...], target: EntityIdentity
+) -> EntityIdentity:
+    """The concrete a row of this read names when no discriminator named one.
+
+    A position resolving to exactly one concrete IS that concrete, however the
+    query spelled its target; any wider position leaves the target itself, which
+    a family read then overrides per row from the tag or literal it carries.
+    """
+    return position[0] if len(position) == 1 else target
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +242,15 @@ class CompiledRead:
     empty for every read that pages through nothing. Publishing them here is what
     makes this compiler the only interpreter of a carrier: the expressions were
     chosen here, so what they evaluated to is lifted off the row here too.
+
+    ``resolvable`` closes the set of Entities this read's rows can name, so a
+    consumer preparing one structure per such Entity prepares them all at once
+    instead of on the first row that reaches one. It reaches past
+    ``resolved_position`` for a family read, whose unrecognized tag names the
+    family root rather than any concrete in the position, and it is derived here
+    rather than supplied, because the position, the fallback, and the transform
+    that resolves a row already fix it. Closed rather than minimal: the fallback
+    this read would apply belongs to it whether or not any row reaches it.
     """
 
     statement: LoweredStatement
@@ -234,6 +265,22 @@ class CompiledRead:
         repr=False
     )
     _transform: _RowTransform
+    resolvable: tuple[EntityIdentity, ...] = field(init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "resolvable",
+            tuple(
+                dict.fromkeys(
+                    (
+                        *self.resolved_position,
+                        _fallback_entity(self.resolved_position, self.target),
+                        *_transform_resolvable(self._transform),
+                    )
+                )
+            ),
+        )
 
     @property
     def structured_column(self) -> str | None:
@@ -271,31 +318,40 @@ class CompiledRead:
         return materialized.values
 
     def _has_invalid_direct_scalar(self, row: MaterializedReadRow) -> bool:
-        contracts = dict(self._scalar_contracts).get(row.resolved_entity, ())
-        for contract in contracts:
+        for contract in self.attribute_reads(row.resolved_entity):
             if (
                 contract.result_key not in row.values
                 or contract.result_key in row.classified_members
             ):
                 continue
+            attribute = contract.attribute
             value = row.values[contract.result_key]
             if contract.encoded:
                 try:
-                    value = decode_canonical_wire(contract.type, cast("WireValue", value))
+                    value = decode_canonical_wire(attribute.type, cast("WireValue", value))
                 except WireDecodingError:
                     return True
             if not admits_stored_scalar(
                 value,
-                contract.type,
-                nullable=contract.nullable,
+                attribute.type,
+                nullable=attribute.nullable,
                 temporal_end=contract.temporal_end,
             ).admitted:
                 return True
         return False
 
     def attribute_reads(self, entity: EntityIdentity) -> tuple[AttributeReadContract, ...]:
-        """The compiled Attribute contracts for one resolved concrete Entity."""
-        return dict(self._scalar_contracts).get(entity, ())
+        """The compiled Attribute contracts for one resolved concrete Entity.
+
+        In that Entity's own applicable-Attribute order, which is the order every
+        consumer of the same position view derives — so a caller holding an exact
+        member layout reads the two by one position rather than by identity.
+
+        Answers nothing for an Entity this read projected no columns for: a
+        family root an unrecognized tag resolved to, or a sibling outside the
+        narrow. Every Attribute of such a row carries its own storage spelling.
+        """
+        return next((reads for identity, reads in self._scalar_contracts if identity == entity), ())
 
     def materialize_row(self, row: Mapping[str, object]) -> MaterializedReadRow:
         """Resolve one driver row without flattening synthetic field provenance."""
@@ -304,9 +360,7 @@ class CompiledRead:
         values = transformed.values
         resolved = transformed.resolved_entity
         if resolved is None:
-            resolved = (
-                self.resolved_position[0] if len(self.resolved_position) == 1 else self.target
-            )
+            resolved = _fallback_entity(self.resolved_position, self.target)
         return MaterializedReadRow(
             values,
             resolved,
@@ -397,11 +451,8 @@ def _scalar_read_contracts(
             projected_key = projection_result_key(attribute.storage.name, attribute.type)
             entity_contracts.append(
                 AttributeReadContract(
-                    attribute.identity,
-                    attribute.storage.name,
+                    attribute,
                     projected_key if direct else attribute.storage.name,
-                    attribute.type,
-                    attribute.nullable,
                     attribute.identity in temporal_ends,
                     direct and projected_key != attribute.storage.name,
                 )

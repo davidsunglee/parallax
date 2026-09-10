@@ -29,6 +29,7 @@ from parallax.core import deep_fetch, inheritance, relationship, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
     Metamodel,
     NestedValueObjectMetadata,
@@ -51,6 +52,7 @@ CUSTOMER = model("customer")
 ACCOUNT = model("account")
 SCALARS = model("scalars")
 PAYMENT = model("payment")
+DOCUMENT_LAYOUT = model("document-layout")
 
 
 def _compile_validated_product(
@@ -476,11 +478,8 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
     payload = entity.attribute("payload")
     assert payload is not None
     assert AttributeReadContract(
-        identity=payload.identity,
-        column="payload",
+        attribute=payload,
         result_key="payload_hex",
-        type=payload.type,
-        nullable=payload.nullable,
         temporal_end=False,
         encoded=True,
     ) in compiled.attribute_reads(entity.identity)
@@ -491,6 +490,40 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
     for invalid in (None, "not-hex"):
         with pytest.raises(SqlGenError, match="invalid stored data"):
             compiled.transform_row({"id": 1, "payload_hex": invalid})
+
+
+@pytest.mark.parametrize(
+    ("meta", "name"),
+    [
+        (ORDERS, "Order"),
+        (SCALARS, "ScalarThing"),
+        (CUSTOMER, "Customer"),
+        (PAYMENT, "Payment"),
+        (DOCUMENT_LAYOUT, "Publication"),
+    ],
+    ids=["plain", "encoded", "documents", "family", "document-layout"],
+)
+def test_attribute_contracts_align_by_position_with_each_resolvable_layout(
+    meta: Metamodel, name: str
+) -> None:
+    # The compiled contracts and the model's exact member layout are two readings
+    # of ONE position view, so contract `i` describes layout Attribute `i` — the
+    # same metadata object, not an equal copy. That is what lets a consumer read
+    # the two together by position instead of indexing one by identity per row.
+    # An Entity this read projected no columns for — a family root only an
+    # unrecognized tag names — answers nothing, and its rows read storage keys.
+    cataloged = CatalogedModel(meta)
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, name))
+    assert compiled.resolvable
+    for identity in compiled.resolvable:
+        reads = compiled.attribute_reads(identity)
+        if identity not in compiled.resolved_position:
+            assert reads == ()
+            continue
+        attributes = cataloged.layouts.entity(identity).attributes
+        assert reads
+        for contract, attribute in zip(reads, attributes, strict=True):
+            assert contract.attribute is attribute
 
 
 def test_limit_bind_lands_after_predicate_binds() -> None:

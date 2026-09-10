@@ -36,7 +36,6 @@ from typing import Final, Protocol, cast
 from parallax.core.base import (
     SQL_NULL,
     DocumentValue,
-    NeutralType,
     PresentDocument,
     SqlNull,
     UnknownFamilyTag,
@@ -56,7 +55,6 @@ from parallax.core.document_codec import (
 )
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
-    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     Multiplicity,
@@ -93,16 +91,10 @@ _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 class _AttributeReadContract(Protocol):
     @property
-    def identity(self) -> AttributeIdentity: ...
-
-    @property
-    def column(self) -> str: ...
+    def attribute(self) -> AttributeMetadata: ...
 
     @property
     def result_key(self) -> str: ...
-
-    @property
-    def type(self) -> NeutralType: ...
 
     @property
     def encoded(self) -> bool: ...
@@ -124,8 +116,8 @@ class LevelContext:
     out another. ``documents`` is the resolved position's own `Document` tier
     contributors, decided once where the projection was, so no level re-projects
     a family superset of its own. ``attribute_reads`` carries each compiled
-    projection's logical identity, physical column, actual driver key, and decode
-    contract intact. This keeps an encoded result such as ``payload_hex``
+    projection's own Attribute beside the driver key and decode contract the
+    statement chose for it. This keeps an encoded result such as ``payload_hex``
     attached to physical ``payload``.
 
     ``layout`` stays out of equality and hashing: ``concrete_entity`` already
@@ -201,7 +193,7 @@ def convert_row(
             )
         )
     members: list[object] = []
-    result_keys = {contract.identity: contract for contract in level.attribute_reads}
+    result_keys = {contract.attribute.identity: contract for contract in level.attribute_reads}
     for attribute in layout.attributes:
         contract = result_keys.get(attribute.identity)
         result_key = attribute.storage.name if contract is None else contract.result_key
@@ -296,8 +288,9 @@ def observable_columns(
         if contract.result_key not in row:
             continue
         raw = row[contract.result_key]
-        columns[contract.column] = (
-            decode_canonical_wire(contract.type, cast("WireValue", raw))
+        attribute = contract.attribute
+        columns[attribute.storage.name] = (
+            decode_canonical_wire(attribute.type, cast("WireValue", raw))
             if contract.encoded
             else raw
         )

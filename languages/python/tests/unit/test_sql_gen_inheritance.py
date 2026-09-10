@@ -996,6 +996,15 @@ def test_tph_tag_transform_holds_regardless_of_narrow_cardinality() -> None:
     )
     assert compiled.transform_row({"id": 1, "kind": "dog"})["familyVariant"] == "Dog"
     assert compiled.transform_row({"id": 2, "kind": "boar"})["familyVariant"] == "WildBoar"
+    # And the sibling the narrow excluded is named ahead of any row: `resolvable`
+    # is the whole tag map plus the family root, so a consumer preparing one
+    # structure per Entity a row can carry prepares WildBoar's before the boar
+    # row arrives rather than on reaching it.
+    boar = compiled.materialize_row({"id": 2, "kind": "boar"})
+    assert boar.resolved_entity in compiled.resolvable
+    assert set(compiled.resolvable) == {
+        target(ANIMAL, name).identity for name in ("Animal", "Cat", "Dog", "WildBoar")
+    }
 
 
 def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None:
@@ -1026,6 +1035,12 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     assert wolf_row["familyVariant"] == "Wolf"
     unknown = compiled.materialize_row({"id": 2, "kind": "bear", "howl": None})
     assert unknown.unknown_family_tag is not None
+    # That row resolves to the family ROOT, which no position holds — the root is
+    # abstract and only concretes are projected — so `resolvable` is what tells a
+    # consumer the Entity exists at all before a bear row proves it.
+    assert unknown.resolved_entity == target(partial, "Beast").identity
+    assert unknown.resolved_entity not in compiled.resolved_position
+    assert unknown.resolved_entity in compiled.resolvable
 
 
 def test_tpcs_union_read_renames_the_projected_literal_column() -> None:
@@ -1097,6 +1112,9 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     )
     assert "family_variant" not in compiled.statement.sql
     assert compiled.transform_row({"id": 1, "title": "A"}) == {"id": 1, "title": "A"}
+    # Nothing discriminates, so every row of this read names the one concrete and
+    # `resolvable` collapses to it — the read's own fallback and its whole set.
+    assert compiled.resolvable == (target(DOCUMENT, "Invoice").identity,)
 
 
 def test_transform_row_accepts_any_mapping_and_always_returns_a_fresh_dict() -> None:
