@@ -47,9 +47,13 @@ untracked they reach report through :func:`sys.getsizeof` — as totals, with no
 baseline and no survivor sample. Every reading above is a window's own
 difference, so a holder that existed before the window is outside all of them
 however much it took inside one. This is the reading that has no window to be
-outside of, and it has two prices: a total is meaningful only between two runs of
-one process that differ in one thing, and it prices PYTHON OBJECTS rather than a
-process, so storage an object owns outside its own allocation is not in it.
+outside of, and it has two prices: a total is meaningful only between two points
+of one process that differ in one thing, and it prices PYTHON OBJECTS rather than
+a process, so storage an object owns outside its own allocation is not in it.
+:func:`whole_heap` takes those two points as two runs of one process; where the
+holder to be caught fills on FIRST REACH and saturates — so both runs read it
+full — :func:`whole_heap_across` takes them as the two ends of one region
+entered once, over work the process has never done before.
 
 **What one object holds.** :func:`closure` grades the objects and references one
 object reaches without passing through any of a caller-named BOUNDARY. Where the
@@ -58,7 +62,7 @@ in it kept, so a caller comparing one structure against the same structure
 somewhere else compares two totals rather than the difference of two sums that
 share most of their terms.
 
-**Warming: four warm themselves, one is warmed from outside, and one must not
+**Warming: four warm themselves, one is warmed from outside, and two must not
 be.** :func:`allocation` runs its seam :data:`WARMUP` times before opening either
 of its windows, :func:`retained` warms both its seam and its sampler inside its
 own call, :func:`high_water` warms its span the same way, and :func:`whole_heap`
@@ -66,10 +70,14 @@ warms each seam and then takes a whole discarded set of readings before the set
 it answers. :func:`live_graph` opens its window before the first run, so a seam
 that fills a memo on first reach is handed to it through :func:`warmed`, which
 puts those memos in the baseline the sample is compared against rather than in
-the sample. :func:`first_run` is the one that must not be warmed at all: its
-subject IS the first run a process makes, so warming it would erase what it
-grades. :func:`closure` walks an object the caller already holds and runs no
-seam, so warming does not arise for it.
+the sample. The two that must not be warmed are the two whose subject is a first
+reach: :func:`first_run` grades the first run a process makes, and
+:func:`whole_heap_across` marks a region whose work is new, so repeating either
+would move what it grades to before the reading. The first takes no warming at
+all; the second leaves it to the caller, who pays every once-only cost by running
+the same sequence at the same size over OTHER data before opening the region.
+:func:`closure` walks an object the caller already holds and runs no seam, so
+warming does not arise for it.
 
 Outside all of them, stated rather than implied. An object born and dropped
 inside a single call that the free list also serves: no sample point holds it and
@@ -147,6 +155,7 @@ __all__ = [
     "untraced",
     "warmed",
     "whole_heap",
+    "whole_heap_across",
 ]
 
 WARMUP: Final = 200
@@ -169,10 +178,11 @@ type Span = Callable[[Callable[[], None], Callable[[], None]], None]
 """One sequence through the seam, calling ``opened`` where the region being
 measured begins and ``closed`` where it ends.
 
-Two marks rather than :data:`Seam`'s one, because a peak needs a floor and a
-roof: what was already alive where the region opened, and the high-water it
-reached before anything it built was released. The region is a middle of the
-sequence rather than its innermost point, so the sequence keeps running after
+Two marks rather than :data:`Seam`'s one, because what is being read is a
+DIFFERENCE ACROSS the region rather than a state at one point in it — the
+high-water one span reached above what was already alive where it opened, or what
+the process holds at each end of a region entered once. The region is a middle of
+the sequence rather than its innermost point, so the sequence keeps running after
 ``closed`` and whatever it has to unwind is outside the reading.
 """
 
@@ -525,12 +535,7 @@ def whole_heap(*seams: Seam) -> tuple[Heap, ...]:
     first set's readings answered to nobody.
     """
     readings: list[Heap] = []
-
-    def sample() -> None:
-        gc.collect()
-        heap = gc.get_objects()
-        readings.append(_heap_census(heap, frozenset({id(heap), id(readings), *map(id, readings)})))
-
+    sample = _marking(readings)
     with untraced():
         for _ in range(2):
             readings.clear()
@@ -539,6 +544,57 @@ def whole_heap(*seams: Seam) -> tuple[Heap, ...]:
                     seam(_unsampled)
                 seam(sample)
     return tuple(readings)
+
+
+def whole_heap_across(span: Span) -> tuple[Heap, Heap]:
+    """What the WHOLE PROCESS holds where ``span``'s region opens and where it
+    closes.
+
+    :func:`whole_heap`'s three totals, marked across ONE region of one sequence
+    rather than compared between two runs of it. That is what sees the one
+    pathology repeated readings cannot: a cache filled on FIRST REACH and keyed
+    by the data reaching it SATURATES, so two arms run in one process both read
+    it already full and their totals agree however much either one put into it.
+    A region entered once, over work the process has never done before, separates
+    the two marks by whatever any container anywhere took for that work.
+
+    Run once and NEVER WARMED, which is the whole of why it is a function of its
+    own: warming is repetition, and repetition is what would pay the region's
+    first-reach costs before the opening mark instead of between the two. The
+    caller warms the process itself instead — by running the same sequence at the
+    same size over OTHER data until every cost paid once is paid — and then marks a
+    region whose only new thing is the data reaching it.
+
+    The caller owes one thing more: the region must RELEASE everything it
+    legitimately builds before the closing mark, because these are totals rather
+    than a difference against what the region allocated, so a structure still
+    reachable at the second mark is inside it. Each mark discounts the heap
+    listing it takes and the reading already taken, so the process looks
+    identical at both.
+    """
+    readings: list[Heap] = []
+    mark = _marking(readings)
+    with untraced():
+        span(mark, mark)
+    opened, closed = readings
+    return opened, closed
+
+
+def _marking(readings: list[Heap]) -> Callable[[], None]:
+    """A sampler appending ``readings``' next whole-process total.
+
+    Discounted against itself: the listing the census walks, the list the
+    readings are collected in, and every reading already in it are the objects a
+    whole-heap comparison cannot avoid creating, so a later mark would otherwise
+    weigh what an earlier one answered.
+    """
+
+    def mark() -> None:
+        gc.collect()
+        heap = gc.get_objects()
+        readings.append(_heap_census(heap, frozenset({id(heap), id(readings), *map(id, readings)})))
+
+    return mark
 
 
 def _heap_census(heap: Sequence[object], instruments: frozenset[int]) -> Heap:

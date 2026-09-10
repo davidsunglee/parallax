@@ -13,14 +13,18 @@ property of the machine that ran it — every CI job runs the floating
 since `tracemalloc` figures move with CPython. The *shape* of the claim is gated
 instead, in `tests/unit/test_snapshot_materialization_scaling.py`, which the
 `cost` class owns and CI runs on every change: it asserts that what preparation
-holds is fixed by the model's exact Entity layouts and by the compiled reads, as
-an exact equality between eight rows and sixty-four through one prepared read, and
-between one execution and sixty-four against one prepared selection. That equality
-is read as a closure — every object one prepared structure reaches without crossing
-into another, and every reference between them — beside what the whole process's
-objects weigh at each arm's sample point, which is the reading a container the arm
-never reaches is inside. Neither is a `tracemalloc` figure, which is what leaves
-them exactly equal where a total in bytes allocated is not.
+holds is fixed by the model's exact Entity layouts and by the compiled reads,
+across eight rows against sixty-four through one prepared read and one execution
+against sixty-four against one prepared selection. Two readings carry that. One is
+an exact equality over what each prepared structure reaches — every object it
+reaches without crossing into another, and every reference between them. The other
+is what every Python object in the process weighs at each end of a marked region
+handed rows this process has never decoded, which must not rise; that is where a
+container no prepared structure reaches at all shows up. A region rather than a
+second arm because a cache keyed by what a row holds stops growing once the same
+rows come back, so two arms compared in one process would both read it already
+full. Neither reading is a `tracemalloc` figure, which is what leaves both of them
+exact where a total in bytes allocated would need a tolerance.
 
 ## What the reading does not prove
 

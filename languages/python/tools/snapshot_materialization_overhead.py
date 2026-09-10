@@ -605,8 +605,10 @@ def _scope() -> list[str]:
         "  Every figure is a measurement of ONE machine and ONE interpreter. Nothing here",
         "  gates. The gated claim is the scaling regression's: prepared state is fixed by the",
         "  model's exact Entity layouts and by the compiled reads, asserted as an exact",
-        "  equality over what each prepared structure reaches and what its window leaves",
-        "  alive, where references and positions answer definitely and a byte total does not.",
+        "  equality over what each prepared structure reaches, and as a refusal to rise over",
+        "  what every Python object in the process weighs at each end of a region handed rows",
+        "  this process has never decoded. Neither is an allocator reading, which is what",
+        "  leaves both of them exact where a total in bytes allocated would need a tolerance.",
     ]
 
 
