@@ -7,17 +7,26 @@ exact Entity and shared — "never rebuilt per row, per graph, or per execution"
 and states that retained layout count and size are independent of the number of
 graphs materialized. Beside it, *execution-owned view slots* draws the other line:
 a query shape belongs to one execution and MUST NOT be cached for the lifetime of
-a model. This is those two requirements measured over the production
-materialization path, from ``prepare_model`` through ``compile_read`` to
-``CompiledRead.materialize_row`` and conversion.
+a model. This is the SIZE half of those two requirements measured over the
+production materialization path, from ``prepare_model`` through ``compile_read``
+to ``CompiledRead.materialize_row`` and conversion: what is retained must not
+grow with rows, with graphs, or with executions.
 
 **Two axes, one claim each.** The first varies rows through one prepared selection
 and one set of compiled reads: nothing prepared may grow with the rows
 materialized through it. The second varies whole executions — a fetch plan, its
 compiled reads, and a graph, each unreachable before the next begins — with only
 the prepared selection held: nothing model-fixed may grow with graphs or with
-executions, which is also what states that no query shape was cached for the
-model's lifetime.
+executions, which is what forbids a query shape retained PER EXECUTION.
+
+Both axes grade a SIZE, so what they reach is bounded by what varies across the
+thing they vary. A holder whose entry count is fixed by the model — one banked
+query shape every execution after the first then shares, a memo bounded by a
+Neutral Type's own value domain — is model-fixed, grows with neither graphs nor
+executions nor rows, and is therefore something neither reading separates from
+state the model legitimately owns. That such a shape is not banked at all is a
+structural property of the code that owns it, asserted where that code is, and
+outside what any measurement of size can say.
 
 **Preparation is entered whole.** Every arm derives its cataloged model from
 ``prepare_model``, and the closure is taken over the selection that answers rather
@@ -44,10 +53,20 @@ back, so two arms compared in one process both read it already full and their
 totals agree however much either put into it — the arm that ran first is measured
 after the arm that ran second has filled it. What closes that is entering the
 region ONCE: the sequence is warmed over one root's rows until every cost paid
-once is paid, and only then handed rows whose stored values no conversion in this
+once is paid, and only then handed rows composed from seeds no conversion in this
 process has decoded. An entry taken for them lands between the two marks, where
 nothing can have taken it earlier. The region releases every graph it builds, so
 what separates the marks is what something OUTSIDE the region kept.
+
+The seeds are what bound that. Every key a region's rows carry, every string and
+every wide-domain value derived from one, and every composed row and document are
+values this process has not decoded, so a container taking an entry per row, per
+key, or per composed value takes it between the marks. What a new seed does NOT
+produce is a new value of a low-cardinality Neutral Type: ``Boolean`` has two
+values and warming decodes both, and the modular ``Float32`` and ``Time`` domains
+repeat inside a single warm range. A memo bounded by such a domain saturates
+before the region opens — which is the same thing as saying it grows with neither
+rows nor graphs nor executions, and so is not what this item claims.
 
 An ALLOCATOR reading cannot be the gate here, and the reason is a measurement
 rather than a preference. This workload declares every Neutral Type, so its
@@ -112,8 +131,11 @@ _UNSEEN: Final = OWNERS
 """The first root a marked region's rows carry.
 
 Past every root the closure readings converted — they take :data:`OWNERS` roots
-from the first — so a region's rows share no stored value with anything this
-process has already decoded, whatever order the readings run in."""
+from the first — so every key a region's row carries, and every value its seed
+derives, is one this process has not decoded, whatever order the readings run
+in. A value of a Neutral Type whose domain is smaller than a warm range —
+``Boolean`` above all — recurs regardless, which is what leaves a memo bounded by
+that domain outside what a region can separate."""
 
 _EDITION: Final = "snapshot-materialization-scaling"
 
@@ -152,8 +174,9 @@ def _rows(model: CatalogedModel, owners: int, first: int = 0) -> tuple[tuple[Row
     measured window or marked region allocates them.
 
     ``first`` is what makes a region's rows unseen: :data:`_UNSEEN` starts past
-    every root any other reading in this item converts, so no value in them has
-    reached a conversion before the region opens."""
+    every root any other reading in this item converts, so every key in them, and
+    every value a seed derived from one over a domain wider than a warm range,
+    reaches a conversion first inside the region."""
     meta = model.meta
     plan = fetch_plan(query(meta), meta)
     return rows_per_level(model, plan, compiled_levels(plan, meta), owners, first)
@@ -186,9 +209,11 @@ def _unseen_rows(layout: Layout) -> Span:
 
     Warmed at the region's own size and over the region's own levels, so the one
     thing the region varies is that its rows are new: every one of its roots, and
-    every row beneath them, carries stored values no conversion in this process
-    has ever decoded, so a container keyed by what a row holds takes its entries
-    between the two marks rather than before them. The region's graph is released
+    every row beneath them, is composed from a seed no conversion in this process
+    has ever decoded, so a container keyed by a row, by a key, or by a composed
+    value takes its entries between the two marks rather than before them. The
+    values a seed derives over a domain narrower than a warm range recur, so a
+    memo bounded by one is full before the opening mark. The region's graph is released
     where it is built, which is what leaves the two marks comparable at all."""
     selection = _prepared(layout)
     model = _catalog(selection)
@@ -282,8 +307,13 @@ def _region_added_nothing(span: Span, where: str) -> None:
     A reading across ONE region rather than between two arms, because a cache
     filled on first reach and keyed by the data reaching it saturates: two arms
     run in one process both find it already full, and their totals agree however
-    much either put into it. The region is entered once, over stored values this
-    process has never decoded, so an entry taken for them lands between the marks.
+    much either put into it. The region is entered once, over rows composed from
+    seeds this process has never decoded, so an entry taken per row, per key, or
+    per composed value lands between the marks. An entry a holder had already
+    taken for something a warm row carried does not, which is the same statement
+    as the one the claim makes: what is graded is growth along rows, graphs, and
+    executions, and a holder bounded by the model or by a value domain grows along
+    none of them.
 
     All three numbers gate rather than the weight alone: a container banking
     untracked keys adds no object at all and moves the reference count by one for
@@ -330,9 +360,11 @@ def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_fou
     # of its own — must leave the selection they were all resolved through holding
     # what one execution left it holding, and must leave nothing anywhere in the
     # process holding more than before the first of them opened. A query shape
-    # cached for the model's lifetime is exactly what would move the closure, and a
-    # process-global cache keyed by row or query primitives — which no prepared
-    # structure reaches at all, and whose entries the collector need not track — is
+    # retained per execution is exactly what would move the closure — one banked
+    # once for the model and shared by every execution after it leaves both arms
+    # holding one, so a size equality answers nothing about it — and a
+    # process-global cache keyed by row or query primitives, which no prepared
+    # structure reaches at all and whose entries the collector need not track, is
     # what the region beside it is marked for.
     for layout in LAYOUTS:
         once = _held_after_executions(layout, 1)

@@ -502,8 +502,13 @@ def driver_rows(
     beginning at ``first``, keyed by that statement's own result keys.
 
     ``first`` moves the whole tree's keys and every value seeded from them, so
-    two ranges that do not overlap share no stored value at any level. That is
-    what lets a caller hand a warmed process rows it has never decoded."""
+    two ranges that do not overlap share no key, no composed row, and no value of
+    a Neutral Type whose domain is wider than a range. A type whose domain is
+    NARROWER repeats across them: :func:`_managed` answers ``Boolean`` from
+    ``seed % 2`` and ``Float32`` and ``Time`` from modular domains a single range
+    already exhausts. That is what lets a caller hand a warmed process rows it has
+    never decoded, and what bounds the claim to rows rather than to every value in
+    one."""
     meta = model.meta
     return [
         _driver_row(model, compiled, _identity(meta, spec.entity), spec)
