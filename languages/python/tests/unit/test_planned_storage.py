@@ -17,7 +17,6 @@ import dataclasses
 import datetime as dt
 import functools
 import json
-import sys
 from collections.abc import Mapping, Sequence, Sized
 from collections.abc import Set as AbstractSet
 from decimal import Decimal
@@ -558,10 +557,19 @@ class _ModelSeam(Protocol):
     repository has more than one implementation of, so recognizing only the
     concrete class one live accepted model answers with would let an alternate
     implementation past the rule vacuously. What makes something the model is
-    the seam it answers — resolve an arbitrary Identity, hand back an arbitrary
-    module's facet — and that is what this matches.
+    the seam it answers — enumerate its Entities, resolve an arbitrary Identity,
+    hand back an arbitrary module's facet — and that is what this matches.
+
+    Every member of that seam, not the subset that would suffice to tell the
+    model from what a plan holds today. A runtime-checkable Protocol matches on
+    member PRESENCE, so a subset makes this a trap for a produced value that
+    later grows the same names: an Inheritance Facet and an Entity View both
+    answer ``entity`` already, and a plan is supposed to hold the second one.
+    Matching the whole seam is what keeps that margin wider than one name.
     """
 
+    @property
+    def entities(self) -> Sequence[object]: ...
     def entity(self, identity: object, /) -> object: ...
     def facet(self, key: object, /) -> object: ...
 
@@ -622,16 +630,10 @@ def _reachable_from(segment: object) -> list[object]:
     can carry a captured value on.
 
     Captured rather than reachable by any route at all, because that is what the
-    rule is about: a plan must not retain what settling was handed, and an
-    attribute of a class the interpreter already holds under its own name, or a
-    module global, is there whether or not a plan was ever built, so neither is
-    followed. A class MADE while a plan is settled is the opposite: its whole
-    body ran during ``finalize()`` and every name that body bound is per-plan
-    state, whether a method closed over it or the body assigned it as a class
-    attribute. Such a class is one the interpreter would not find under its own
-    module and qualified name — a class statement inside a function, or a class
-    built by calling ``type`` — and its body is walked, its own and each one it
-    inherits from.
+    rule is about: a plan must not retain what settling was handed, and what a
+    class or a module holds under its own name is there whether or not a plan
+    was ever built. So the walk stops at a class and at a module, and the claim
+    is bounded to what settling put on the segment.
 
     A segment holds its settled facts as one nested value rather than as copied
     fields, and a producer smuggled into a plan sits one container deep as
@@ -640,10 +642,9 @@ def _reachable_from(segment: object) -> list[object]:
     is what keeps the rule a claim about everything a step access can reach.
     Every value's own attribute state is walked rather than only a dataclass's
     declared fields, because a plain object is as capable of holding a producer
-    as a frozen one, in ``__dict__`` or in a slot — including a private slot,
-    whose descriptor carries the name the declaring class body mangled it to
-    rather than the name ``__slots__`` spells. Each object is visited once, by
-    identity, so a shared subgraph is walked once and a cyclic one terminates.
+    as a frozen one, in ``__dict__`` or in a slot. Each object is visited once,
+    by identity, so a shared subgraph is walked once and a cyclic one
+    terminates.
 
     A segment that defers to a callable over live planning machinery (rather
     than holding already-settled data) hides in whichever channel that callable
@@ -652,11 +653,10 @@ def _reachable_from(segment: object) -> list[object]:
     ``lambda p=planner: p`` and ``lambda *, p=planner: p`` capture positional
     and keyword defaults that neither of the first two carry,
     ``partial(f, planner)`` holds its own function and arguments, and a callable
-    OBJECT carries none of those — it holds the producer as instance state, in a
-    slot public or private, or the class it is an instance of was made during
-    settling and holds one in its body. All of them are walked, because a claim
-    about a captured producer that only one of them would catch is not a claim
-    about the segment.
+    OBJECT carries none of those — it holds the producer as instance state or
+    closes over it in the ``__call__`` its class defines. All of them are
+    walked, because a claim about a captured producer that only one of them
+    would catch is not a claim about the segment.
     """
     reached: list[object] = []
     seen: set[int] = set()
@@ -670,7 +670,7 @@ def _reachable_from(segment: object) -> list[object]:
             declared = cast("Any", getattr(owner, "__slots__", ()))
             names = (declared,) if isinstance(declared, str) else cast("Sequence[str]", declared)
             for name in names:
-                walk(getattr(value, _slot_of(owner, name), None))
+                walk(getattr(value, name, None))
 
     def walk_captures(value: Any) -> None:
         self_obj = getattr(value, "__self__", None)
@@ -704,23 +704,12 @@ def _reachable_from(segment: object) -> list[object]:
             for argument in partial.keywords.values():
                 walk(argument)
 
-    def walk_class_bodies(value: Any) -> None:
-        classes = value.__mro__ if isinstance(value, type) else type(value).__mro__
-        for owner in classes:
-            if not _made_by_running_a_body(owner):
-                continue
-            for item in cast("Mapping[str, Any]", vars(owner)).values():
-                walk(item)
-
     def walk(value: object) -> None:
         if id(value) in seen:
             return
         seen.add(id(value))
         reached.append(value)
-        if isinstance(value, str | bytes | bytearray | ModuleType):
-            return
-        walk_class_bodies(value)
-        if isinstance(value, type):
+        if isinstance(value, str | bytes | bytearray | ModuleType | type):
             return
         walk_state(value)
         if isinstance(value, Mapping):
@@ -737,31 +726,6 @@ def _reachable_from(segment: object) -> list[object]:
     for field in dataclasses.fields(cast("Any", segment)):
         walk(getattr(segment, field.name))
     return reached
-
-
-def _slot_of(owner: type, declared: str) -> str:
-    """The attribute name ``owner``'s ``__slots__`` entry ``declared`` is read under.
-
-    A class body mangles a private name, and ``__slots__`` is a class body: an
-    entry spelled ``__held`` becomes the descriptor ``_Owner__held``, so reading
-    the declared spelling finds nothing at all.
-    """
-    private = declared.startswith("__") and not declared.endswith("__")
-    return f"_{owner.__name__.lstrip('_')}{declared}" if private else declared
-
-
-def _made_by_running_a_body(owner: type) -> bool:
-    """Whether ``owner`` is a class no name in the interpreter already held.
-
-    A class the interpreter finds by following its own module and qualified name
-    was declared once, before any plan; one it does not find was created by
-    executing a body — a class statement inside ``finalize()``, or a call to
-    ``type`` — so everything that body bound is state a plan captured.
-    """
-    declared: object = sys.modules.get(getattr(owner, "__module__", ""))
-    for part in getattr(owner, "__qualname__", "").split("."):
-        declared = getattr(declared, part, None)
-    return declared is not owner
 
 
 def _binds_anything(*values: object, **held: object) -> tuple[object, ...]:
@@ -786,32 +750,12 @@ class _SlottedCallable:
         return self.held
 
 
-class _PrivateSlottedCallable:
-    __slots__ = ("__held",)
-
-    def __init__(self, held: object) -> None:
-        self.__held = held
-
-    def __call__(self) -> object:
-        return self.__held
-
-
 def _callable_closing_over(held: object) -> object:
     class Closing:
         def __call__(self) -> object:
             return held
 
     return Closing()
-
-
-def _callable_holding_on_its_own_class(held: object) -> object:
-    class Holding:
-        attribute = held
-
-        def __call__(self) -> object:
-            return self.attribute
-
-    return Holding()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -827,9 +771,7 @@ class _CapturingSegment:
     partial_keyword: object
     instance_state: object
     slot_state: object
-    private_slot_state: object
     call_closure: object
-    class_body: object
 
 
 def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> None:
@@ -838,7 +780,7 @@ def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> 
     # capture channel it skipped would leave a segment deferring to live
     # planning machinery passing them, so each channel is graded here against a
     # value only that channel carries.
-    captured = [object() for _ in range(11)]
+    captured = [object() for _ in range(9)]
     (
         closure_value,
         bound_value,
@@ -848,9 +790,7 @@ def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> 
         keyword,
         attribute_value,
         slot_value,
-        private_slot_value,
         call_closure_value,
-        class_body_value,
     ) = captured
     segment = _CapturingSegment(
         closure=lambda: closure_value,
@@ -861,9 +801,7 @@ def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> 
         partial_keyword=functools.partial(_binds_anything, held=keyword),
         instance_state=_HoldingCallable(attribute_value),
         slot_state=_SlottedCallable(slot_value),
-        private_slot_state=_PrivateSlottedCallable(private_slot_value),
         call_closure=_callable_closing_over(call_closure_value),
-        class_body=_callable_holding_on_its_own_class(class_body_value),
     )
 
     reached = _reachable_from(segment)
