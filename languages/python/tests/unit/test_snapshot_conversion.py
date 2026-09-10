@@ -234,11 +234,8 @@ def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
         (),
         (
             AttributeReadContract(
-                identity=payload.identity,
-                column="payload",
+                attribute=payload,
                 result_key="payload_hex",
-                type=payload.type,
-                nullable=payload.nullable,
                 temporal_end=False,
                 encoded=True,
             ),
@@ -761,11 +758,8 @@ def test_observable_columns_rekeys_and_decodes_an_encoded_scalar_projection() ->
         (),
         (
             AttributeReadContract(
-                identity=payload.identity,
-                column="payload",
+                attribute=payload,
                 result_key="payload_hex",
-                type=payload.type,
-                nullable=payload.nullable,
                 temporal_end=False,
                 encoded=True,
             ),

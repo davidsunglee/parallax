@@ -179,7 +179,7 @@ CONTRIBUTORS: Final = (
     Contributor("materialize_row", "_compile.py", "materialize_row", False),
     Contributor("convert_row (result_keys dict)", "_convert.py", "convert_row", True),
     Contributor("LevelContext (fresh per row)", "_convert.py", "__post_init__", True),
-    Contributor("attribute_reads (contract dict)", "_compile.py", "attribute_reads", True),
+    Contributor("attribute_reads (contract scan)", "_compile.py", "attribute_reads", False),
     Contributor(
         "_document_columns (projected frozenset)", "_convert.py", "_document_columns", True
     ),
@@ -187,10 +187,13 @@ CONTRIBUTORS: Final = (
 )
 """Every contributor the baseline names.
 
-The last five are the containers whose inputs one compiled read already fixed and
-which are rebuilt anyway. They are counted at the function that BUILDS each one
-rather than as ``dict`` calls: ``dict(...)`` is a type call, which ``cProfile``
-does not record at all, so counting the site is the only reading there is.
+The ones marked ``per_row`` are the containers whose inputs one compiled read
+already fixed and which are rebuilt anyway. They are counted at the function that
+BUILDS each one rather than as ``dict`` calls: ``dict(...)`` is a type call, which
+``cProfile`` does not record at all, so counting the site is the only reading
+there is. An unmarked site is counted for its own cadence: ``attribute_reads``
+answers a tuple its compiled read already holds, so what its count says is how
+often the seam asks, not what asking allocates.
 """
 
 

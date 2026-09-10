@@ -640,6 +640,30 @@ def transform_structured_column(transform: _RowMaterializer) -> str | None:
     )
 
 
+def transform_resolvable(transform: _RowMaterializer) -> tuple[EntityIdentity, ...]:
+    """Every Entity ``transform`` itself can name, beyond its read's own position.
+
+    A tag map is the WHOLE family's rather than the read's narrow, so a narrowed
+    abstract read still resolves a sibling's row to that sibling, and a tag no
+    composed concrete claims resolves the row to the family root — which is never
+    a concrete in the position. A consumer preparing one structure per Entity a
+    row can carry therefore cannot read the position alone.
+    """
+    match transform:
+        case _DirectDocumentTransform(base=base):
+            return transform_resolvable(base)
+        case _TpcsDocumentTransform(base=literal):
+            return transform_resolvable(literal)
+        case _TagTransform(root=root, tag_pairs=pairs):
+            return (root, *(identity for _, identity, _ in pairs))
+        case _TphDocumentTransform(root=root, variants=tph_variants):
+            return (root, *(variant.identity for variant in tph_variants))
+        case _LiteralTransform(variants=literal_variants):
+            return tuple(identity for _, identity in literal_variants)
+        case _:
+            return ()
+
+
 # --------------------------------------------------------------------------- #
 # Position resolution.                                                         #
 # --------------------------------------------------------------------------- #

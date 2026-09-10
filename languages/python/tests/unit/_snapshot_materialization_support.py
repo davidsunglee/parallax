@@ -452,7 +452,9 @@ def _driver_row(
     meta = model.meta
     layout = model.layouts.entity(entity)
     table = _table_layout(meta, entity)
-    contracts = {contract.identity: contract for contract in compiled.attribute_reads(entity)}
+    contracts = {
+        contract.attribute.identity: contract for contract in compiled.attribute_reads(entity)
+    }
     projected = frozenset(member.storage.name for member in compiled.projected_documents)
     row: dict[str, object] = {}
     document: dict[str, DocumentValue] = {}
