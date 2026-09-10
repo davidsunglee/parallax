@@ -11,20 +11,29 @@ a model. This is those two requirements measured over the production
 materialization path, from ``prepare_model`` through ``compile_read`` to
 ``CompiledRead.materialize_row`` and conversion.
 
-**Two axes, one claim each.** The first varies rows through one prepared model and
-one set of compiled reads: nothing prepared may grow with the rows materialized
-through it. The second varies whole executions — a fetch plan, its compiled reads,
-and a graph, each unreachable before the next begins — with only the model's
-layout catalog held: nothing model-fixed may grow with graphs or with executions,
-which is also what states that no query shape was cached for the model's lifetime.
+**Two axes, one claim each.** The first varies rows through one prepared selection
+and one set of compiled reads: nothing prepared may grow with the rows
+materialized through it. The second varies whole executions — a fetch plan, its
+compiled reads, and a graph, each unreachable before the next begins — with only
+the prepared selection held: nothing model-fixed may grow with graphs or with
+executions, which is also what states that no query shape was cached for the
+model's lifetime.
+
+**Preparation is entered whole.** Every arm derives its cataloged model from
+``prepare_model``, and the closure is taken over the selection that answers rather
+than over the catalog inside it, so the read and write projections, the Entity
+Graph Construction, the row codec, and the write planner are all state a reading
+can reach. A catalog constructed directly would leave everything else preparation
+composed outside the claim.
 
 **Two instruments, and deliberately not a byte total.** What each arm holds is
 read as a closure — every object one prepared structure reaches without crossing
 into another, and every reference between them — and as a survivor census over the
 window that built it. A closure is a total of one participant's own state rather
 than a difference between two sums, so it answers exactly what the claim asks; the
-census answers the other half, which is a per-row reference taken by something
-already alive.
+census answers the other half, which is a reference taken by something the arm
+does not reach at all — a pre-existing or process-global holder that grew inside
+the window.
 
 A byte reading cannot be the gate here, and the reason is a measurement rather than
 a preference. This workload declares every Neutral Type, so its conforming path
@@ -57,7 +66,6 @@ from _snapshot_materialization_support import (
     batch,
     compiled_levels,
     fetch_plan,
-    metamodel,
     query,
     rows_per_level,
     workload,
@@ -74,7 +82,8 @@ from memory_instruments import (
 
 from parallax.core.db_port import Row
 from parallax.core.entity._layout import CatalogedModel
-from parallax.snapshot import prepare_model
+from parallax.snapshot import ModelSelection, prepare_model
+from parallax.snapshot.handle._publication import read_projection
 
 _ONE_ROOT: Final = 1
 """Root objects the smaller row arm materializes, against :data:`OWNERS` in the
@@ -86,18 +95,46 @@ _EXECUTIONS: Final = 64
 _EDITION: Final = "snapshot-materialization-scaling"
 
 
-def _rows(layout: Layout, owners: int) -> tuple[tuple[Row, ...], ...]:
+def _prepared(layout: Layout) -> ModelSelection:
+    """``layout``'s whole prepared selection.
+
+    The measured seams enter through this rather than through a bare
+    :class:`CatalogedModel`, because everything preparation composed — the read
+    and write projections, the exact-model layouts, the Entity Graph
+    Construction, the row codec, and the write planner — is state a later
+    preparation change could grow per row or per execution, and only what a
+    reading can reach can be graded.
+    """
+    return prepare_model(workload(layout), edition=_EDITION)
+
+
+def _catalog(selection: ModelSelection) -> CatalogedModel:
+    """The cataloged model ``selection``'s read projection resolves against."""
+    return read_projection(selection).model
+
+
+def _boundary(layout: Layout, selection: ModelSelection) -> tuple[object, ...]:
+    """What a closure over ``selection`` stops at: the two structures preparation
+    was handed rather than composed.
+
+    Both are shared and older than any arm, so a sample crossing into either
+    would answer what the process accumulated around the Domain Model rather than
+    what this preparation holds.
+    """
+    return (_catalog(selection).meta, workload(layout))
+
+
+def _rows(model: CatalogedModel, owners: int) -> tuple[tuple[Row, ...], ...]:
     """One arm's stored rows, built here so no measured window allocates them."""
-    meta = metamodel(layout)
-    prepare_model(workload(layout), edition=_EDITION)
-    model = CatalogedModel(meta)
+    meta = model.meta
     plan = fetch_plan(query(meta), meta)
     return rows_per_level(model, plan, compiled_levels(plan, meta), owners)
 
 
 def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
-    """``rows`` with every level below the root emptied, which the loop attaches
-    as a loaded-empty relationship result.
+    """``rows`` with every level below the root emptied, which the loop still
+    compiles, converts, and fans back as the empty result a child statement
+    returning nothing produces.
 
     The execution axis repeats its whole window sixty-four times, so what it
     converts per execution decides this item's duration outright. What it claims
@@ -115,14 +152,15 @@ def _execute(model: CatalogedModel, rows: Sequence[Sequence[Row]]) -> None:
 
 
 def _row_seam(layout: Layout, owners: int) -> Seam:
-    """One model and one set of compiled reads derived inside the window,
-    ``owners`` roots' worth of rows materialized through them, and only the
-    prepared state reachable at the sample."""
-    meta = metamodel(layout)
-    rows = _rows(layout, owners)
+    """One prepared selection and one set of compiled reads derived inside the
+    window, ``owners`` roots' worth of rows materialized through them, and only
+    the prepared state reachable at the sample."""
+    rows = _rows(_catalog(_prepared(layout)), owners)
 
     def run(sample: Callable[[], None]) -> None:
-        model = CatalogedModel(meta)
+        selection = _prepared(layout)
+        model = _catalog(selection)
+        meta = model.meta
         plan = fetch_plan(query(meta), meta)
         reads = compiled_levels(plan, meta)
         batch(model, plan, reads, rows)
@@ -133,96 +171,124 @@ def _row_seam(layout: Layout, owners: int) -> Seam:
 
 
 def _execution_seam(layout: Layout, executions: int) -> Seam:
-    """A layout catalog derived inside the window, ``executions`` whole executions
-    run and discarded against it, and only the catalog reachable at the sample."""
-    meta = metamodel(layout)
-    rows = _root_only(_rows(layout, _ONE_ROOT))
+    """A prepared selection derived inside the window, ``executions`` whole
+    executions run and discarded against it, and only that selection reachable at
+    the sample."""
+    rows = _root_only(_rows(_catalog(_prepared(layout)), _ONE_ROOT))
 
     def run(sample: Callable[[], None]) -> None:
-        model = CatalogedModel(meta)
+        selection = _prepared(layout)
         for _ in range(executions):
-            _execute(model, rows)
+            _execute(_catalog(selection), rows)
         sample()
-        assert model is not None
+        assert selection is not None
 
     return run
 
 
-def _held(layout: Layout, owners: int, executions: int) -> tuple[Closure, Closure]:
-    """What the compiled reads hold of their own, and what the layout catalog
-    does, once ``owners`` roots have been materialized through them ``executions``
-    times.
-
-    Collected first, because a tuple holding only untracked items is itself
+def _settled() -> None:
+    """Two collections, because a tuple holding only untracked items is itself
     untracked only after a collection has passed over it — so the tracked half of
     a closure taken before one answers when the collector last ran rather than
-    what the structure holds.
-    """
-    meta = metamodel(layout)
-    model = CatalogedModel(meta)
+    what the structure holds."""
+    gc.collect()
+    gc.collect()
+
+
+def _held_after_rows(layout: Layout, owners: int) -> tuple[Closure, Closure]:
+    """What the compiled reads hold of their own, and what the whole prepared
+    selection does, once ``owners`` roots have been materialized through them."""
+    selection = _prepared(layout)
+    model = _catalog(selection)
+    meta = model.meta
     plan = fetch_plan(query(meta), meta)
     reads = compiled_levels(plan, meta)
-    rows = rows_per_level(model, plan, reads, owners)
+    batch(model, plan, reads, _rows(model, owners))
+    _settled()
+    return closure(reads, (meta, selection, model, plan)), closure(
+        selection, _boundary(layout, selection)
+    )
+
+
+def _held_after_executions(layout: Layout, executions: int) -> Closure:
+    """What the prepared selection holds once ``executions`` whole executions —
+    each with its own fetch plan, its own compiled reads, and its own sealed
+    graph — have resolved through it and been discarded."""
+    selection = _prepared(layout)
+    model = _catalog(selection)
+    rows = _root_only(_rows(model, _ONE_ROOT))
     for _ in range(executions):
-        batch(model, plan, reads, rows)
-    gc.collect()
-    gc.collect()
-    return closure(reads, (meta, model, plan)), closure(model, (meta,))
+        _execute(model, rows)
+    _settled()
+    return closure(selection, _boundary(layout, selection))
 
 
-def _own_survivors(seam: Seam) -> list[object]:
-    """Every object of Parallax's own that ``seam`` leaves alive at its sample
-    point, whatever kind it is."""
-    return [obj for obj in survivors(seam) if type(obj).__module__.startswith("parallax.")]
+def _census(seam: Seam) -> list[str]:
+    """Every kind of object ``seam`` leaves alive at its sample point, sorted.
+
+    Classified by nothing but its type's name, so a cache that no prepared
+    structure reaches is still inside the reading: a process-global container
+    keyed by row or query primitives holds ordinary built-in values, and a census
+    restricted to types defined under ``parallax.`` would watch it grow without
+    counting anything.
+
+    A bare ``tuple`` is the one kind left out, for a measurement reason rather
+    than a preference. A collection untracks a tuple holding only untracked
+    items, so whether one is visible to the collector at the sample follows how
+    many automatic collections landed inside the window — which is a property of
+    how much an arm allocated rather than of what it kept, and it moves the two
+    arms apart by a handful either way.
+    """
+    return sorted(type(obj).__qualname__ for obj in survivors(seam) if type(obj) is not tuple)
 
 
-def _same_census(few: Sequence[object], many: Sequence[object], where: str) -> None:
-    assert len(few) == len(many) > 0, where
-    assert sorted(type(obj).__qualname__ for obj in few) == sorted(
-        type(obj).__qualname__ for obj in many
-    ), where
+def _same_census(few: Sequence[str], many: Sequence[str], where: str) -> None:
+    assert len(few) > 0, where
+    assert few == many, where
 
 
 @in_a_child_interpreter
 def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
-    # The ticket's invariant at the materialization interface: what preparation
-    # holds is fixed by the model's exact Entity layouts and by the compiled
-    # reads, so eight times the rows through one prepared read must leave the
-    # prepared side holding the same objects through the same references — and
-    # leave the same objects of Parallax's own alive behind the window that built
+    # What preparation holds is fixed by the model's exact Entity layouts and by
+    # the compiled reads: eight times the rows through one prepared read must
+    # leave the prepared side holding the same objects through the same
+    # references, and leave the same objects alive behind the window that built
     # it. A per-row shape, dispatch table, or classified-key set attached to
     # either would move one reading or the other.
     for layout in LAYOUTS:
-        one_reads, one_catalog = _held(layout, _ONE_ROOT, 1)
-        many_reads, many_catalog = _held(layout, OWNERS, 1)
+        one_reads, one_prepared = _held_after_rows(layout, _ONE_ROOT)
+        many_reads, many_prepared = _held_after_rows(layout, OWNERS)
         assert one_reads.tracked > 0 and one_reads.references > 0, layout
         assert one_reads == many_reads, layout
-        assert one_catalog == many_catalog, layout
+        assert one_prepared == many_prepared, layout
     for layout in LAYOUTS:
         _same_census(
-            _own_survivors(warmed(_row_seam(layout, _ONE_ROOT))),
-            _own_survivors(warmed(_row_seam(layout, OWNERS))),
+            _census(warmed(_row_seam(layout, _ONE_ROOT))),
+            _census(warmed(_row_seam(layout, OWNERS))),
             layout,
         )
 
 
 @in_a_child_interpreter
 def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_four() -> None:
-    # The other half: what the MODEL keeps is independent of the number of graphs
-    # materialized and of the executions that materialized them. Sixty-four whole
-    # executions — each planning, compiling, converting, and sealing a graph of
-    # its own — must leave the catalog they were all resolved through holding what
-    # one execution left it holding. A query shape cached for the model's lifetime
-    # is exactly what would move it.
+    # The other half: what preparation keeps is independent of the number of
+    # graphs materialized and of the executions that materialized them. Sixty-four
+    # whole executions — each planning, compiling, converting, and sealing a graph
+    # of its own — must leave the selection they were all resolved through holding
+    # what one execution left it holding, and leave the same objects alive behind
+    # the window. A query shape cached for the model's lifetime is exactly what
+    # would move the closure, and a process-global cache keyed by row or query
+    # primitives — which no prepared structure reaches at all — is what the
+    # census beside it is read for.
     for layout in LAYOUTS:
-        _, once = _held(layout, _ONE_ROOT, 1)
-        _, often = _held(layout, _ONE_ROOT, _EXECUTIONS)
+        once = _held_after_executions(layout, 1)
+        often = _held_after_executions(layout, _EXECUTIONS)
         assert once.tracked > 0 and once.references > 0, layout
         assert once == often, layout
     for layout in LAYOUTS:
         _same_census(
-            _own_survivors(warmed(_execution_seam(layout, 1))),
-            _own_survivors(warmed(_execution_seam(layout, _EXECUTIONS))),
+            _census(warmed(_execution_seam(layout, 1))),
+            _census(warmed(_execution_seam(layout, _EXECUTIONS))),
             layout,
         )
 

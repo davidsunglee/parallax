@@ -68,10 +68,10 @@ Support code only one surface uses stays inside that surface —
 `tests/unit/observation_models.py`, and
 `tests/unit/value_object_bad_models.py`.
 
-Two of those serve the cost suites and split by subject:
-`memory_instruments.py` is what all three measure WITH, and
+Three of those serve the cost suites and split by subject:
+`memory_instruments.py` is what all three measure WITH,
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
-with. `_snapshot_materialization_support.py` is a third of that kind, and the one
+with, and `_snapshot_materialization_support.py` is the one
 a `report` also drives: the scaling regression and
 `just python-report-snapshot-materialization` measure one workload through one
 set of functions. The `report` tools under `tools/` are what spell `tests/unit` as

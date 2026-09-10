@@ -530,15 +530,15 @@ def rows_per_level(
 # The batch: the shipped per-level loop, with compilation lifted out of it.    #
 # --------------------------------------------------------------------------- #
 
-_slot_table = _read._slot_table  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helpers, driven rather than copied
-_convert_rows = _read._convert_rows  # pyright: ignore[reportPrivateUsage] - as above
-_parent_refs = _read._parent_refs  # pyright: ignore[reportPrivateUsage] - as above
-_guarded_parents = _read._guarded_parents  # pyright: ignore[reportPrivateUsage] - as above
-_gather_keys = _read._gather_keys  # pyright: ignore[reportPrivateUsage] - as above
-_correlation_member = _read._correlation_member  # pyright: ignore[reportPrivateUsage] - as above
-_attach_children = _read._attach_children  # pyright: ignore[reportPrivateUsage] - as above
-_attach_empty = _read._attach_empty  # pyright: ignore[reportPrivateUsage] - as above
-_attach_back_reference = _read._attach_back_reference  # pyright: ignore[reportPrivateUsage] - as above
+_slot_table = _read._slot_table  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_convert_rows = _read._convert_rows  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_parent_refs = _read._parent_refs  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_guarded_parents = _read._guarded_parents  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_gather_keys = _read._gather_keys  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_correlation_member = _read._correlation_member  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_attach_children = _read._attach_children  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_attach_empty = _read._attach_empty  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
+_attach_back_reference = _read._attach_back_reference  # pyright: ignore[reportPrivateUsage] - the shipped loop's own helper, driven rather than copied
 
 
 def batch(
@@ -549,19 +549,24 @@ def batch(
 ) -> SnapshotGraph:
     """One whole graph, built the way ``build_graph`` builds one.
 
-    Root rows are materialized inside the batch, as ``read_roots`` materializes
-    them, and every level gathers its own keys — the statement those keys would
-    bind is the one already compiled, so the gather is measured and its answer is
-    not consumed.
+    The root statement's rows are materialized WHOLE before the loop opens and
+    held until it closes, as ``read_roots`` materializes them and as the read it
+    answers holds them; a level below the root converts straight out of its own
+    lazy materialization and holds one row at a time.
+
+    Each level's gathered keys decide its branch and stay live across the
+    conversion beneath them, which is the compiled child query holding them in
+    production. An empty gathered set is the only thing that attaches an empty
+    result: a level with keys and no rows converts the empty result and fans it
+    back, exactly as a child statement returning nothing does.
     """
     meta = model.meta
     root = reads[0]
     assert root is not None
+    root_rows = tuple(map(root.materialize_row, rows[0]))
     builder = GraphBuilder(ViewSchema(_slot_table(plan)))
     observations = ObservedRows()
-    root_refs = _convert_rows(
-        builder, ROOT_LEVEL, model, root, map(root.materialize_row, rows[0]), observations
-    )
+    root_refs = _convert_rows(builder, ROOT_LEVEL, model, root, root_rows, observations)
     level_refs: list[tuple[int, ...]] = []
     for index, level in enumerate(plan.levels):
         parents = _guarded_parents(
@@ -571,13 +576,13 @@ def batch(
             _attach_back_reference(builder, meta, level, parents)
             level_refs.append(())
             continue
-        _gather_keys(builder, parents, _correlation_member(meta, level.owner.identity))
-        compiled = reads[index + 1]
-        assert compiled is not None
-        if not rows[index + 1]:
+        keys = _gather_keys(builder, parents, _correlation_member(meta, level.owner.identity))
+        if not keys:
             _attach_empty(builder, level, parents)
             level_refs.append(())
             continue
+        compiled = reads[index + 1]
+        assert compiled is not None
         child_refs = _convert_rows(
             builder,
             index + 1,

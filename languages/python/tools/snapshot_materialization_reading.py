@@ -38,13 +38,17 @@ from pathlib import Path
 from time import perf_counter
 from typing import Final, cast
 
+from parallax.core.entity._layout import CatalogedModel
+from parallax.snapshot import prepare_model
+from parallax.snapshot.handle._publication import read_projection
+
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
 SUPPORT: Final = WORKSPACE / "tests" / "unit"
 INSTRUMENT_MODULE: Final = SUPPORT / "memory_instruments.py"
 
 sys.path.insert(0, str(SUPPORT))
 
-import memory_instruments  # noqa: E402
+import memory_instruments  # noqa: E402 - after the sys.path setup above
 
 if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
     raise ImportError(
@@ -52,7 +56,7 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
         f"'memory_instruments' resolved to {memory_instruments.__file__}"
     )
 
-from _snapshot_materialization_support import (  # noqa: E402
+from _snapshot_materialization_support import (  # noqa: E402 - after the sys.path setup above
     LAYOUTS,
     PROJECTIONS_PER_BATCH,
     ROWS_PER_BATCH,
@@ -66,7 +70,7 @@ from _snapshot_materialization_support import (  # noqa: E402
     verify,
     workload,
 )
-from memory_instruments import (  # noqa: E402
+from memory_instruments import (  # noqa: E402 - after the sys.path setup above
     WARMUP,
     Seam,
     closure,
@@ -74,11 +78,8 @@ from memory_instruments import (  # noqa: E402
     untraced,
 )
 
-import snapshot_graph_overhead  # noqa: E402
-from parallax.core.entity._layout import CatalogedModel  # noqa: E402
-from parallax.snapshot import prepare_model  # noqa: E402
-from parallax.snapshot.handle._publication import read_projection  # noqa: E402
-from snapshot_materialization_overhead import (  # noqa: E402
+import snapshot_graph_overhead  # noqa: E402 - after the sys.path setup above
+from snapshot_materialization_overhead import (  # noqa: E402 - after the sys.path setup above
     CONTRIBUTORS,
     REPETITIONS,
     Reading,
