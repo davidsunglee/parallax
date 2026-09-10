@@ -72,12 +72,15 @@ from parallax.core.unit_work import (
     PlannedUpdate,
     PlannedWrite,
     PlanningRequest,
+    PredecessorColumns,
     PredecessorRow,
+    PredecessorShape,
     PredicateMutation,
     PredicateSelection,
     PredicateWrite,
     RetainedObservation,
     SubjectIdentity,
+    TemporalColumns,
     TemporalObservation,
     TransactionInstant,
     VersionColumns,
@@ -1396,6 +1399,89 @@ def _bitemporal_observation() -> WriteObservation:
             }
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# One temporal settlement for both representations: the eagerly settled        #
+# instruction and the Materialized Write Group decide the same facts and emit  #
+# from them the same way, so the two cannot drift.                             #
+# --------------------------------------------------------------------------- #
+_BALANCE_PREDECESSOR: dict[str, object] = {
+    "id": 1,
+    "acctNum": "A",
+    "value": Decimal("1.00"),
+    "txStart": "2024-01-01T00:00:00+00:00",
+    "txEnd": "infinity",
+}
+
+
+def _one_row_temporal_group(assigned: Decimal) -> MaterializedWriteGroup:
+    """A Materialized Write Group resolving the one row
+    :data:`_BALANCE_PREDECESSOR` describes, under the same update."""
+    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+    keys.append(_BALANCE_PREDECESSOR["id"])
+    members: dict[str, ChunkedColumnBuilder[object]] = {}
+    for name, value in _BALANCE_PREDECESSOR.items():
+        column: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+        column.append(value)
+        members[name] = column
+    predicate = prepare_typed_write(
+        PredicateWrite(
+            "update",
+            PredicateSelection(
+                "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", "1000000.00")
+            ),
+            assignments=(WriteAssignment("Balance.value", assigned),),
+        ),
+        _BALANCE,
+    )
+    assert isinstance(predicate, PreparedPredicateWrite)
+    return MaterializedWriteGroup(
+        mutation=predicate,
+        key_attributes=("id",),
+        key_columns=(whole(keys.build()),),
+        observations=TemporalColumns(
+            predecessors=PredecessorColumns(
+                shape=PredecessorShape(attributes=tuple(_BALANCE_PREDECESSOR)),
+                attribute_columns=tuple(
+                    whole(members[name].build()) for name in _BALANCE_PREDECESSOR
+                ),
+            )
+        ),
+    )
+
+
+def test_one_temporal_row_settles_identically_addressed_and_materialized() -> None:
+    # The same observed row, the same authored change, the same instant, and
+    # the same concurrency mode, reaching settlement through its two
+    # representations: an addressed keyed write settled eagerly, and a
+    # one-row Materialized Write Group settled into a segment that emits on
+    # demand. Every temporal fact — the topology's close cause, the axis the
+    # gate binds, the successors and their represented state, the resolved
+    # instant — is decided in one place for both, so the two plans must be
+    # equal step for step. A drift between the arms is precisely what a
+    # second derivation site would produce.
+    assigned = Decimal("9.00")
+    addressed = KeyedWrite("update", "Balance", ({"id": 1, "value": assigned},))
+    key_ = object_key(addressed, _BALANCE)
+    assert key_ is not None
+    eager = _plan(
+        [addressed],
+        _BALANCE,
+        observations={
+            key_: TemporalObservation(predecessor=PredecessorRow(members=_BALANCE_PREDECESSOR))
+        },
+        concurrency="optimistic",
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    materialized = _plan(
+        [_one_row_temporal_group(assigned)],
+        _BALANCE,
+        concurrency="optimistic",
+        tx_instant=instant_at("2024-06-01T00:00:00+00:00"),
+    )
+    assert _shape(eager) == [("close", "Balance"), ("insert", "Balance")]
+    assert list(materialized.steps) == list(eager.steps)
 
 
 # --------------------------------------------------------------------------- #

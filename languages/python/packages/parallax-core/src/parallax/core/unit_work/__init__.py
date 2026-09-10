@@ -199,7 +199,7 @@ from parallax.core.unit_work.strategy import (
     ValidTimeWindow,
     capture_subject_identity,
 )
-from parallax.core.unit_work.temporal import SuccessorRow, TemporalAxes, expand_milestone
+from parallax.core.unit_work.temporal import SuccessorRow, TemporalAxes
 from parallax.core.unit_work.uow import (
     Concurrency,
     EscapedTransactionError,
@@ -391,7 +391,6 @@ __all__ = [
     "deserialize",
     "eager_segment",
     "enforce_affected_rows",
-    "expand_milestone",
     "instant_literal",
     "keyed_intent",
     "object_key",

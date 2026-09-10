@@ -22,11 +22,11 @@ writes"):
 
 The description is scoped to the authored mutation, never to a resolved row: it
 names no instant, no bound value, no observation, and no payload, so one
-description serves every row a predicate-selected mutation resolves. Finalization
-applies it (`~parallax.core.unit_work.temporal.expand_milestone`), addresses the
-close through a Milestone Target, and decides from the transaction's concurrency
-mode whether the gate basis this module names becomes a Temporal Gate or the
-explicit `Ungated` decision (`m-opt-lock`).
+description serves every row a predicate-selected mutation resolves. Write
+Settlement applies it, addresses the close through a Milestone Target, and
+decides from the transaction's concurrency mode whether the gate basis this
+module names becomes a Temporal Gate or the explicit `Ungated` decision
+(`m-opt-lock`).
 
 Prior art (Reladomo; semantics, not idioms): close-then-chain mirrors
 ``AuditOnlyTemporalDirector.update`` / ``.inactivate`` — the close-old-insert-new

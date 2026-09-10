@@ -29,8 +29,7 @@ themselves terminated: the closure's cause records the absence.
 
 The description names no bound value, payload, or observation — only where each
 bound comes from — so one description serves every rectangle a predicate-selected
-mutation resolves. Finalization applies it
-(:func:`~parallax.core.unit_work.temporal.expand_milestone`), and the two-axis
+mutation resolves. Write Settlement applies it, and the two-axis
 address the inactivation needs is the Milestone Target it settles alongside: the
 observed rectangle's own Valid-Time end is what keeps the close on the intended
 rectangle when several disjoint rectangles of one key are current on Transaction

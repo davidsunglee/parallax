@@ -14,10 +14,12 @@ Write Group) does the first step once and the second per row:
   values into an already-resolved successor, producing its concrete row and
   Insert Origin.
 
-:func:`expand_milestone` composes both for a caller resolving a single
-predecessor and authored row directly. Keeping the two halves apart is what
-keeps every consumer of a temporal expansion — the finalized steps a flush
-executes, and the tracked current milestone a later mutation observes —
+Write Settlement is the sole composition of the two, for both representations:
+it resolves a mutation's successors once, into that mutation's settled facts,
+and binds each row against them afterwards — immediately for an eagerly
+settled instruction, on demand for a group's row. Keeping the two halves apart
+is what keeps every consumer of a temporal expansion — the finalized steps a
+flush executes, and the tracked current milestone a later mutation observes —
 deriving it identically.
 """
 
@@ -41,7 +43,6 @@ from parallax.core.unit_work.strategy import (
     CarriedState,
     ChangedState,
     MilestoneSuccessor,
-    MilestoneTopology,
     OpenEnd,
     PredecessorEnd,
     PredecessorStart,
@@ -54,7 +55,6 @@ __all__ = [
     "SuccessorRow",
     "TemporalAxes",
     "bind_successor",
-    "expand_milestone",
     "resolve_successors",
 ]
 
@@ -191,34 +191,6 @@ def bind_successor(
     members[axes.transaction_start] = transaction_instant
     members[axes.transaction_end] = INFINITY_LITERAL
     return SuccessorRow(origin=_origin(successor.state, predecessor), members=members)
-
-
-def expand_milestone(
-    topology: MilestoneTopology,
-    axes: TemporalAxes,
-    *,
-    transaction_instant: object,
-    authored: Mapping[str, object],
-    valid_from: object | None = None,
-    until: object | None = None,
-    predecessor: PredecessorRow | None = None,
-) -> tuple[SuccessorRow, ...]:
-    """The milestones ``topology`` opens for one predecessor and authored row.
-
-    Composes :func:`resolve_successors` and :func:`bind_successor` for a
-    caller resolving a single row directly.
-    """
-    resolved = resolve_successors(topology.successors, valid_from=valid_from, until=until)
-    return tuple(
-        bind_successor(
-            successor,
-            axes,
-            transaction_instant=transaction_instant,
-            authored=authored,
-            predecessor=predecessor,
-        )
-        for successor in resolved
-    )
 
 
 def _origin(state: SuccessorState, predecessor: PredecessorRow | None) -> InsertOrigin:
