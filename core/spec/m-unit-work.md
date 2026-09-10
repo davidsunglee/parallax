@@ -447,6 +447,12 @@ semantics already decided.
   Observation, the transaction's Concurrency Preference, a Subject Identity, a strategy
   object, a barrier marker, a private group, or any other planning context.
   Derived values are materialized *into* the steps instead.
+- A Write Plan **MAY** retain an immutable value a strategy, a clock, or a facet
+  **produced** for one settled write — a resolved instant, a Close Cause, resolved
+  Milestone Successors, the target's compiled Inheritance Entity View — and
+  **MUST NOT** retain the producer: no clock, no strategy, no Metamodel, no
+  Inheritance Facet, no private group, no planner. What separates the two is
+  whether the retained thing can still decide something.
 - An **empty** Planned Steps sequence is the one canonical result for complete
   cancellation or known no-op elimination. There is no empty-plan sentinel and no
   second result variant.
@@ -454,6 +460,14 @@ semantics already decided.
   runs and expose stable immutable views during iteration rather than allocating
   one container per step; every exposed view is immutable and stable, and equal
   views need not have object identity.
+- A packed run of a Materialized Write Group's rows MAY be held **compactly** —
+  the group's own aligned columns beside the facts settlement decided for the
+  whole group — and its step access reads those two and nothing else. It
+  **MUST NOT** consult a clock, a strategy, a Metamodel, an Inheritance Facet, or
+  a Temporal Facet there, and **MUST NOT** re-resolve a Milestone Successor or
+  re-derive the applicable member set: every one of those was answered while the
+  plan was being made. Reading one settled row's cells through an index a facet
+  compiled when the model was accepted is not a re-derivation.
 
 ## The Planned Write algebra
 

@@ -563,9 +563,14 @@ _FORBIDDEN_PLAN_CONTEXT = (
 
 
 def _segment_field_values(segment: object) -> list[object]:
-    """Every value one Step Segment's own dataclass fields hold, plus — for a
-    callable field — whatever its closure cells and bound ``__self__``
-    capture.
+    """Every value one Step Segment's own dataclass fields hold — recursively,
+    through any nested frozen value — plus, for a callable field, whatever its
+    closure cells and bound ``__self__`` capture.
+
+    A segment holds its settled facts as one nested value rather than as copied
+    fields, so inspecting only the segment's own fields would see that value
+    and not what it carries. The recursion is what keeps the rule a claim about
+    everything a step access can reach.
 
     A segment that defers to a closure over live planning machinery (rather
     than holding already-settled data) hides exactly there: a callable
@@ -576,6 +581,8 @@ def _segment_field_values(segment: object) -> list[object]:
     for field in dataclasses.fields(cast("Any", segment)):
         value = getattr(segment, field.name)
         values.append(value)
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            values.extend(_segment_field_values(value))
         if callable(value) and not isinstance(value, type):
             self_obj = getattr(value, "__self__", None)
             if self_obj is not None:
@@ -619,9 +626,14 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
         )
         .plan
     )
-    for segment in plan.steps.segments:
-        for value in _segment_field_values(segment):
-            assert not isinstance(value, _FORBIDDEN_PLAN_CONTEXT)
+    walked = [value for segment in plan.steps.segments for value in _segment_field_values(segment)]
+    for value in walked:
+        assert not isinstance(value, _FORBIDDEN_PLAN_CONTEXT)
+    # The rule is about everything a step access can reach, and a segment's
+    # settled facts are one nested value rather than copied fields. The
+    # resolved instant lives there and nowhere else, so seeing it is what says
+    # the walk descended rather than stopping at the segment's own six fields.
+    assert any(isinstance(value, dt.datetime) for value in walked)
 
 
 def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step_access() -> None:
