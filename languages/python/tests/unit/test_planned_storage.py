@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import functools
 import json
 from collections.abc import Mapping, Sequence, Sized
 from collections.abc import Set as AbstractSet
@@ -43,9 +44,12 @@ from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
+from parallax.core._formation_profile import BUILTIN_MANIFEST
 from parallax.core.base import INFINITY
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import FacetKey
+from parallax.core.model_formation import ModelCompilerRequirement
 from parallax.core.sql_gen._write import compile_write_step
 from parallax.core.unit_work import (
     AuditStrategy,
@@ -561,24 +565,11 @@ class _ModelSeam(Protocol):
     def facet(self, key: object, /) -> object: ...
 
 
-@runtime_checkable
-class _FacetSeam(Protocol):
-    """Whatever answers a compiled facet's own lookup seam, by shape.
-
-    A facet resolves an arbitrary Identity or member set into a view, which is
-    what makes it a producer. The per-Entity VIEW it produced for one settled
-    write answers neither, and is a value the plan may keep.
-    """
-
-    def entity(self, identity: object, /) -> object: ...
-    def position(self, members: object, /) -> object: ...
-
-
 # A segment may retain what a producer PRODUCED for one settled write and
-# never the producer. The two seams stand for the accepted Metamodel and any
-# compiled facet whatever class answers them; the concrete classes a live
-# accepted model answers with are named beside them so the rule still holds if
-# an implementation ever stops matching a seam by shape.
+# never the producer. `_ModelSeam` stands for the accepted Metamodel whatever
+# class answers it, with the concrete class a live accepted model answers with
+# named beside it so the rule still holds if an implementation ever stops
+# matching the seam by shape.
 _FORBIDDEN_PLAN_CONTEXT = (
     MaterializedWriteGroup,
     TransactionInstant,
@@ -591,17 +582,43 @@ _FORBIDDEN_PLAN_CONTEXT = (
     TemporalStrategy,
     AuditStrategy,
     _ModelSeam,
-    _FacetSeam,
     type(_BALANCE),
-    type(inheritance.view(_BALANCE)),
 )
+
+_COMPILED_FACET_KEYS: tuple[FacetKey[object], ...] = tuple(
+    entry.compiler.facet_key
+    for entry in BUILTIN_MANIFEST.entries
+    if isinstance(entry.compiler, ModelCompilerRequirement)
+)
+"""Every key an accepted built-in model installs a compiled facet under.
+
+Derived from the manifest rather than listed, so a module that starts compiling
+a facet is covered by these proofs the moment its row demands one — and each key
+carries its OWNER's own decision procedure for "is this value my facet?", which
+is what makes recognition exact for a facet no shape distinguishes (an
+Optimistic Lock Facet answers one lookup) as well as for one that has several.
+"""
+
+
+def _is_producer(value: object) -> bool:
+    """Whether ``value`` is something a settled step could still consult for an
+    answer, rather than an answer already produced for it.
+
+    An Inheritance Entity View, a resolved instant, or a Version Arithmetic
+    answers from what it was handed; the model and any facet the accepted model
+    carries resolve an arbitrary Identity or member set, which is what makes
+    them producers a plan must not reach.
+    """
+    return isinstance(value, _FORBIDDEN_PLAN_CONTEXT) or any(
+        key.accepts(value) for key in _COMPILED_FACET_KEYS
+    )
 
 
 def _reachable_from(segment: object) -> list[object]:
     """Every value one Step Segment's step access can reach: its own dataclass
     fields, everything nested inside them through further frozen values and
     through tuples, mappings, and other containers, and — for a callable —
-    whatever its closure cells and bound ``__self__`` capture.
+    every channel a Python callable can carry a captured value on.
 
     A segment holds its settled facts as one nested value rather than as copied
     fields, and a producer smuggled into a plan sits one container deep as
@@ -611,13 +628,40 @@ def _reachable_from(segment: object) -> list[object]:
     Each object is visited once, by identity, so a shared subgraph is walked
     once and a cyclic one terminates.
 
-    A segment that defers to a closure over live planning machinery (rather
-    than holding already-settled data) hides exactly there: a callable
-    field's ``__closure__`` cells and its ``__self__`` are where a captured
-    group, instant, or planner would still be reachable.
+    A segment that defers to a callable over live planning machinery (rather
+    than holding already-settled data) hides in whichever channel that callable
+    captured it on, and they are not interchangeable: ``lambda: planner``
+    captures a closure cell, ``planner.finalize`` binds a ``__self__``,
+    ``lambda p=planner: p`` and ``lambda *, p=planner: p`` capture positional
+    and keyword defaults that neither of the first two carry, and
+    ``partial(f, planner)`` holds its own function and arguments. All four are
+    walked, because a claim about a captured producer that only one of them
+    would catch is not a claim about the segment.
     """
     reached: list[object] = []
     seen: set[int] = set()
+
+    def walk_captures(value: Any) -> None:
+        self_obj = getattr(value, "__self__", None)
+        if self_obj is not None:
+            walk(self_obj)
+        function = getattr(value, "__func__", value)
+        for cell in cast("tuple[Any, ...]", getattr(function, "__closure__", None) or ()):
+            walk(cell.cell_contents)
+        for default in cast("tuple[Any, ...]", getattr(function, "__defaults__", None) or ()):
+            walk(default)
+        keyword_defaults = cast(
+            "Mapping[str, Any]", getattr(function, "__kwdefaults__", None) or {}
+        )
+        for default in keyword_defaults.values():
+            walk(default)
+        if isinstance(value, functools.partial):
+            partial = cast("functools.partial[Any]", value)
+            walk(partial.func)
+            for argument in partial.args:
+                walk(argument)
+            for argument in partial.keywords.values():
+                walk(argument)
 
     def walk(value: object) -> None:
         if id(value) in seen:
@@ -638,17 +682,69 @@ def _reachable_from(segment: object) -> list[object]:
                 walk(item)
         untyped = cast("Any", value)
         if callable(untyped):
-            self_obj = getattr(untyped, "__self__", None)
-            if self_obj is not None:
-                walk(self_obj)
-            closure = getattr(getattr(untyped, "__func__", untyped), "__closure__", None)
-            if closure:
-                for cell in cast("tuple[Any, ...]", closure):
-                    walk(cell.cell_contents)
+            walk_captures(untyped)
 
     for field in dataclasses.fields(cast("Any", segment)):
         walk(getattr(segment, field.name))
     return reached
+
+
+def _binds_anything(*values: object, **held: object) -> tuple[object, ...]:
+    return (*values, *held.values())
+
+
+@dataclasses.dataclass(frozen=True)
+class _CapturingSegment:
+    """A stand-in segment whose fields capture one value on every channel a
+    Python callable has, for grading the walk the two proofs below depend on."""
+
+    closure: object
+    bound: object
+    default: object
+    keyword_default: object
+    partial_argument: object
+    partial_keyword: object
+
+
+def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> None:
+    # The two proofs below assert that NOTHING reachable from a settled segment
+    # is a producer, so what they rule out is exactly what the walk reaches. A
+    # capture channel it skipped would leave a segment deferring to live
+    # planning machinery passing them, so each channel is graded here against a
+    # value only that channel carries.
+    captured = [object() for _ in range(6)]
+    closure_value, bound_value, default, keyword_default, argument, keyword = captured
+    segment = _CapturingSegment(
+        closure=lambda: closure_value,
+        bound=[bound_value].count,
+        default=lambda held=default: held,
+        keyword_default=lambda *, held=keyword_default: held,
+        partial_argument=functools.partial(_binds_anything, argument),
+        partial_keyword=functools.partial(_binds_anything, held=keyword),
+    )
+
+    reached = _reachable_from(segment)
+
+    for value in captured:
+        assert any(item is value for item in reached)
+
+
+def test_every_facet_an_accepted_model_carries_counts_as_a_producer() -> None:
+    # The proofs below rule out a producer by asking `_is_producer` of every
+    # reachable value, so a facet it failed to recognize would be a facet a plan
+    # could retain unnoticed — an Optimistic Lock Facet answers one lookup and a
+    # Temporal Facet another, and neither shares the Inheritance Facet's shape.
+    facets = [_BALANCE.facet(key) for key in _COMPILED_FACET_KEYS]
+    assert len(facets) == len(_COMPILED_FACET_KEYS) > 1
+
+    for facet in facets:
+        assert _is_producer(facet)
+    assert _is_producer(_BALANCE)
+    # What a facet PRODUCED for one settled write is not the facet: a plan may
+    # keep the compiled view of one Entity and the arithmetic a strategy fixed.
+    entity = _BALANCE.entities[0]
+    assert not _is_producer(inheritance.view(_BALANCE).entity(entity.identity))
+    assert not _is_producer(VersionArithmetic(initial=1, increment=1))
 
 
 def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> None:
@@ -686,7 +782,7 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
     )
     walked = [value for segment in plan.steps.segments for value in _reachable_from(segment)]
     for value in walked:
-        assert not isinstance(value, _FORBIDDEN_PLAN_CONTEXT)
+        assert not _is_producer(value)
     # The rule is about everything a step access can reach, and a segment's
     # settled facts are one nested value rather than copied fields. The
     # resolved instant lives there and nowhere else, so seeing it is what says
@@ -732,7 +828,7 @@ def test_a_versioned_segment_settles_produced_values_and_reaches_no_producer() -
     plan = _account_plan(_version_group("Account", "id", [(1, 1), (2, 1)], assigned=9.00))
     walked = [value for segment in plan.steps.segments for value in _reachable_from(segment)]
     for value in walked:
-        assert not isinstance(value, _FORBIDDEN_PLAN_CONTEXT)
+        assert not _is_producer(value)
     assert any(isinstance(value, VersionArithmetic) for value in walked)
     assert any(isinstance(value, ColumnSlice) for value in walked)
 
