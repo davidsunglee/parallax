@@ -78,6 +78,7 @@ __all__ = [
     "VersionGate",
     "Versioned",
     "WriteTarget",
+    "shortfall_classification",
     "shortfall_for",
 ]
 
@@ -557,8 +558,8 @@ type AffectedRows = AnyCount | ExactCount
 carries before lowering."""
 
 
-def shortfall_for(concurrency: NonTemporalConcurrency | TemporalConcurrency) -> Shortfall:
-    """How a shortfall against an addressed write classifies.
+def shortfall_classification(*, observing: bool, gated: bool) -> Shortfall:
+    """How a shortfall classifies from the two facts that decide it.
 
     Classification follows the settled **gate**, never the verb (ADR 0044/0047):
     a gated shortfall is the detected lost update a re-read could resolve; an
@@ -566,20 +567,35 @@ def shortfall_for(concurrency: NonTemporalConcurrency | TemporalConcurrency) -> 
     outcome, since no gate could have caused it; and an observation-free keyed
     write observed nothing, so its shortfall says only that the addressed rows
     are not there. One decision therefore admits exactly one classification,
-    which is why every addressed step derives it here rather than accepting it.
+    which is why every addressed step derives it rather than accepting it.
+
+    Both facts are settled per mutation, before any row of it is observed, so a
+    caller holding them answers here directly rather than standing a version in
+    for one it has not seen. :func:`shortfall_for` is the same rule read off a
+    concrete decision.
+    """
+    if not observing:
+        return MISSING_TARGET
+    return OPTIMISTIC_CONFLICT if gated else STALE_WRITE
+
+
+def shortfall_for(concurrency: NonTemporalConcurrency | TemporalConcurrency) -> Shortfall:
+    """How a shortfall against one settled concurrency decision classifies.
 
     The rule is uniform across update, delete, and close, so a versioned write's
-    decision and a close's bare gate decision answer through one function.
+    decision and a close's bare gate decision answer through one function: this
+    reads the two deciding facts off the decision's shape and
+    :func:`shortfall_classification` applies them.
     """
     match concurrency:
         case Unversioned():
-            return MISSING_TARGET
+            return shortfall_classification(observing=False, gated=False)
         case Versioned(gate):
-            return OPTIMISTIC_CONFLICT if isinstance(gate, VersionGate) else STALE_WRITE
+            return shortfall_classification(observing=True, gated=isinstance(gate, VersionGate))
         case TemporalGate():
-            return OPTIMISTIC_CONFLICT
+            return shortfall_classification(observing=True, gated=True)
         case Ungated():
-            return STALE_WRITE
+            return shortfall_classification(observing=True, gated=False)
 
 
 def _settle(

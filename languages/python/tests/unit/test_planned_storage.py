@@ -17,9 +17,10 @@ import dataclasses
 import datetime as dt
 import json
 from collections.abc import Mapping, Sequence, Sized
+from collections.abc import Set as AbstractSet
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 import pytest
 from _transact_support import BALANCE as BALANCE_MODEL
@@ -544,10 +545,40 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
 # `finalize()`, and a temporal group's topology and instant are both          #
 # resolved during `finalize()`, never on step access.                         #
 # --------------------------------------------------------------------------- #
+@runtime_checkable
+class _ModelSeam(Protocol):
+    """Whatever answers the accepted Metamodel's own seam, by shape.
+
+    :class:`~parallax.core.metamodel.Metamodel` is a structural Protocol the
+    repository has more than one implementation of, so recognizing only the
+    concrete class one live accepted model answers with would let an alternate
+    implementation past the rule vacuously. What makes something the model is
+    the seam it answers — resolve an arbitrary Identity, hand back an arbitrary
+    module's facet — and that is what this matches.
+    """
+
+    def entity(self, identity: object, /) -> object: ...
+    def facet(self, key: object, /) -> object: ...
+
+
+@runtime_checkable
+class _FacetSeam(Protocol):
+    """Whatever answers a compiled facet's own lookup seam, by shape.
+
+    A facet resolves an arbitrary Identity or member set into a view, which is
+    what makes it a producer. The per-Entity VIEW it produced for one settled
+    write answers neither, and is a value the plan may keep.
+    """
+
+    def entity(self, identity: object, /) -> object: ...
+    def position(self, members: object, /) -> object: ...
+
+
 # A segment may retain what a producer PRODUCED for one settled write and
-# never the producer. The accepted Metamodel and its compiled Inheritance
-# Facet are structural Protocols, so they are named by the concrete classes a
-# live accepted model answers with.
+# never the producer. The two seams stand for the accepted Metamodel and any
+# compiled facet whatever class answers them; the concrete classes a live
+# accepted model answers with are named beside them so the rule still holds if
+# an implementation ever stops matching a seam by shape.
 _FORBIDDEN_PLAN_CONTEXT = (
     MaterializedWriteGroup,
     TransactionInstant,
@@ -559,40 +590,65 @@ _FORBIDDEN_PLAN_CONTEXT = (
     ConcurrencyStrategy,
     TemporalStrategy,
     AuditStrategy,
+    _ModelSeam,
+    _FacetSeam,
     type(_BALANCE),
     type(inheritance.view(_BALANCE)),
 )
 
 
-def _segment_field_values(segment: object) -> list[object]:
-    """Every value one Step Segment's own dataclass fields hold — recursively,
-    through any nested frozen value — plus, for a callable field, whatever its
-    closure cells and bound ``__self__`` capture.
+def _reachable_from(segment: object) -> list[object]:
+    """Every value one Step Segment's step access can reach: its own dataclass
+    fields, everything nested inside them through further frozen values and
+    through tuples, mappings, and other containers, and — for a callable —
+    whatever its closure cells and bound ``__self__`` capture.
 
     A segment holds its settled facts as one nested value rather than as copied
-    fields, so inspecting only the segment's own fields would see that value
-    and not what it carries. The recursion is what keeps the rule a claim about
-    everything a step access can reach.
+    fields, and a producer smuggled into a plan sits one container deep as
+    readily as one field deep — inside a tuple of resolved successors, a column
+    of retained cells, an assignment mapping's values. Descending through both
+    is what keeps the rule a claim about everything a step access can reach.
+    Each object is visited once, by identity, so a shared subgraph is walked
+    once and a cyclic one terminates.
 
     A segment that defers to a closure over live planning machinery (rather
     than holding already-settled data) hides exactly there: a callable
     field's ``__closure__`` cells and its ``__self__`` are where a captured
     group, instant, or planner would still be reachable.
     """
-    values: list[object] = []
-    for field in dataclasses.fields(cast("Any", segment)):
-        value = getattr(segment, field.name)
-        values.append(value)
-        if dataclasses.is_dataclass(value) and not isinstance(value, type):
-            values.extend(_segment_field_values(value))
-        if callable(value) and not isinstance(value, type):
-            self_obj = getattr(value, "__self__", None)
+    reached: list[object] = []
+    seen: set[int] = set()
+
+    def walk(value: object) -> None:
+        if id(value) in seen:
+            return
+        seen.add(id(value))
+        reached.append(value)
+        if isinstance(value, str | bytes | bytearray | type):
+            return
+        if dataclasses.is_dataclass(value):
+            for field in dataclasses.fields(value):
+                walk(getattr(value, field.name, None))
+        if isinstance(value, Mapping):
+            for key_value, item in cast("Mapping[object, object]", value).items():
+                walk(key_value)
+                walk(item)
+        elif isinstance(value, Sequence | AbstractSet):
+            for item in cast("Sequence[object] | AbstractSet[object]", value):
+                walk(item)
+        untyped = cast("Any", value)
+        if callable(untyped):
+            self_obj = getattr(untyped, "__self__", None)
             if self_obj is not None:
-                values.append(self_obj)
-            closure = getattr(getattr(value, "__func__", value), "__closure__", None)
+                walk(self_obj)
+            closure = getattr(getattr(untyped, "__func__", untyped), "__closure__", None)
             if closure:
-                values.extend(cell.cell_contents for cell in closure)
-    return values
+                for cell in cast("tuple[Any, ...]", closure):
+                    walk(cell.cell_contents)
+
+    for field in dataclasses.fields(cast("Any", segment)):
+        walk(getattr(segment, field.name))
+    return reached
 
 
 def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> None:
@@ -628,7 +684,7 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
         )
         .plan
     )
-    walked = [value for segment in plan.steps.segments for value in _segment_field_values(segment)]
+    walked = [value for segment in plan.steps.segments for value in _reachable_from(segment)]
     for value in walked:
         assert not isinstance(value, _FORBIDDEN_PLAN_CONTEXT)
     # The rule is about everything a step access can reach, and a segment's
@@ -636,6 +692,10 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
     # resolved instant lives there and nowhere else, so seeing it is what says
     # the walk descended rather than stopping at the segment's own six fields.
     assert any(isinstance(value, dt.datetime) for value in walked)
+    # And a container hides a value as well as a field does: the key columns
+    # are a TUPLE of Column Slices, so reaching one of them says the walk
+    # descends through collections rather than only through dataclass fields.
+    assert any(isinstance(value, ColumnSlice) for value in walked)
 
 
 def _account_plan(group: MaterializedWriteGroup) -> WritePlan:
@@ -663,15 +723,18 @@ def _segment_fields(segment: object) -> dict[str, object]:
 def test_a_versioned_segment_settles_produced_values_and_reaches_no_producer() -> None:
     # The same rule the temporal segment above is held to, on the arm that
     # settles a version rather than a milestone: a strategy's version arithmetic
-    # is a value the Concurrency Strategy PRODUCED for this mutation — two
-    # integers that decide nothing — so the segment may hold it, while the
-    # strategy that answered it stays unreachable (`m-unit-work` "A Write Plan
-    # MAY retain an immutable value a strategy ... produced").
+    # is a value the Concurrency Strategy PRODUCED for this mutation — it
+    # consults nothing, so advancing an observed version by its already-fixed
+    # step restates the strategy's settled answer rather than reaching a fresh
+    # one — so the segment may hold it, while the strategy that answered it
+    # stays unreachable (`m-unit-work` "A Write Plan MAY retain an immutable
+    # value a strategy ... produced").
     plan = _account_plan(_version_group("Account", "id", [(1, 1), (2, 1)], assigned=9.00))
-    walked = [value for segment in plan.steps.segments for value in _segment_field_values(segment)]
+    walked = [value for segment in plan.steps.segments for value in _reachable_from(segment)]
     for value in walked:
         assert not isinstance(value, _FORBIDDEN_PLAN_CONTEXT)
     assert any(isinstance(value, VersionArithmetic) for value in walked)
+    assert any(isinstance(value, ColumnSlice) for value in walked)
 
 
 def test_a_versioned_segment_keeps_the_groups_own_version_column_and_no_second_one() -> None:

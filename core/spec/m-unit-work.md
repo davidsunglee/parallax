@@ -450,10 +450,16 @@ semantics already decided.
 - A Write Plan **MAY** retain an immutable value a strategy, a clock, or a facet
   **produced** for one settled write — a resolved instant, a Close Cause, resolved
   Milestone Successors, the target's compiled Inheritance Entity View, the version
-  arithmetic a versioned write's new version derives from — and
+  arithmetic the effective Concurrency Strategy answers with — and
   **MUST NOT** retain the producer: no clock, no strategy, no Metamodel, no
   Inheritance Facet, no private group, no planner. What separates the two is
-  whether the retained thing can still decide something.
+  whether the retained thing can still **consult** something to reach an answer:
+  a producer reaches the model, a facet, the clock, or the transaction's
+  Concurrency Preference, so it could answer differently than settlement did,
+  while a produced value answers from what the step itself supplies and nothing
+  else. Carrying an operation is therefore not what makes something a producer —
+  advancing an observed version by an already-fixed step is the strategy's
+  settled answer restated, not a fresh decision.
 - An **empty** Planned Steps sequence is the one canonical result for complete
   cancellation or known no-op elimination. There is no empty-plan sentinel and no
   second result variant.

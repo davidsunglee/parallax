@@ -46,6 +46,11 @@ group already carried — retained for the flush's whole life. The strategy now
 answers its arithmetic as a value the plan may keep, so the advance is an
 addition performed when a row's step is asked for, and what the plan retains
 beyond the group's own columns is the same bytes at a hundred times the rows.
+
+Twice over, because a per-row structure is forbidden even transiently and a
+sample taken after settlement returned cannot see one that settlement dropped:
+beside what the plan KEEPS, the settlement window is read as a high-water mark,
+which is what prices a row-sized structure built and released inside the call.
 """
 
 from __future__ import annotations
@@ -60,7 +65,9 @@ from _metamodel_support import Declaration, attribute, identity, key, source
 from memory_instruments import (
     REPEATS,
     Seam,
+    Span,
     allocation,
+    high_water,
     in_a_child_interpreter,
     retained,
     serve_one_measurement,
@@ -335,6 +342,34 @@ def _settled_group_plan(rows: int) -> Seam:
     return run
 
 
+def _settling_a_group(rows: int) -> Span:
+    """The same ``finalize`` with the region opened around the call itself.
+
+    Everything the call reads is built before the region opens, and the plan it
+    answers is still alive when the region closes, so the roof covers what
+    settling ROSE to and not only what it kept: a row-sized structure built and
+    dropped inside ``finalize`` — a wrapper array, a materialized row sequence,
+    a comprehension over the resolved rows — is invisible to every reading taken
+    at a point afterwards and is inside this one.
+    """
+    model = _versioned_model()
+    planner = build_write_planner(model)
+    request = PlanningRequest(
+        subject_identity=TEST_SUBJECT_IDENTITY,
+        transaction_instant=INSTANT,
+        concurrency="optimistic",
+        buffered_writes=(_version_group(model, rows),),
+    )
+
+    def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
+        opened()
+        plan = planner.finalize(request).plan
+        closed()
+        del plan
+
+    return span
+
+
 @in_a_child_interpreter
 def test_a_versioned_groups_plan_keeps_nothing_per_resolved_row() -> None:
     # A group's rows are already compact columns when planning receives them, so
@@ -346,10 +381,18 @@ def test_a_versioned_groups_plan_keeps_nothing_per_resolved_row() -> None:
     try:
         few = retained(_settled_group_plan(FEW_ROWS))
         many = retained(_settled_group_plan(MANY_ROWS))
+        # What the sample above cannot see. It is taken after a collection, so a
+        # row-sized structure `finalize` builds and drops again is gone from it;
+        # the memory contract forbids such a structure "even transiently", so
+        # the settlement window is read as a high-water mark too.
+        peak_few = high_water(_settling_a_group(FEW_ROWS))
+        peak_many = high_water(_settling_a_group(MANY_ROWS))
     finally:
         tracemalloc.stop()
     assert few > 0, "a settled group's plan is not free, or nothing is being measured"
     assert many == few
+    assert peak_few > 0, "settling a group is not free, or nothing is being measured"
+    assert peak_many == peak_few
 
 
 @in_a_child_interpreter
