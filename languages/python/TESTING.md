@@ -69,7 +69,7 @@ Support code only one surface uses stays inside that surface —
 `tests/unit/value_object_bad_models.py`.
 
 Three of those serve the cost suites and split by subject:
-`memory_instruments.py` is what all three measure WITH,
+`memory_instruments.py` is what every cost suite measures WITH,
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
 with, and `_snapshot_materialization_support.py` is the one
 a `report` also drives: the scaling regression and

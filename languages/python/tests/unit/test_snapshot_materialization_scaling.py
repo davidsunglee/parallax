@@ -26,27 +26,32 @@ Graph Construction, the row codec, and the write planner are all state a reading
 can reach. A catalog constructed directly would leave everything else preparation
 composed outside the claim.
 
-**Two instruments, and deliberately not a byte total.** What each arm holds is
-read as a closure — every object one prepared structure reaches without crossing
-into another, and every reference between them — and as a survivor census over the
-window that built it. A closure is a total of one participant's own state rather
-than a difference between two sums, so it answers exactly what the claim asks; the
-census answers the other half, which is a reference taken by something the arm
-does not reach at all — a pre-existing or process-global holder that grew inside
-the window.
+**Two instruments: one bounded by the arm, one bounded by nothing.** What each
+arm holds is read as a closure — every object one prepared structure reaches
+without crossing into another, and every reference between them — and as what the
+whole process's Python objects weigh at the arm's sample point. A closure is a
+total of one participant's own state rather than a difference between two sums,
+so it answers exactly what the claim asks; the whole-process total answers the
+other half, which is a container the arm does not reach at all. A holder older
+than every arm is no survivor of any of them and no window's difference contains
+it, so a process-global or data-keyed cache taking entries per row or per
+execution is visible only as a total — and it is visible there whether or not the
+collector tracks what it took, which a survivor sample cannot say.
 
-A byte reading cannot be the gate here, and the reason is a measurement rather than
-a preference. This workload declares every Neutral Type, so its conforming path
-runs the canonical Wire codec's ``Timestamp`` leg, and the interpreter's own
-``datetime`` formatting leaves a slowly saturating residue behind it: two runs of
-one identical seam read four hundred bytes apart on a forty-kilobyte window, in
-either direction, after eight hundred warm-up batches. An exact equality over that
-window would be a coin toss, and a tolerance is not what this class asserts. The
-byte totals therefore live where a machine-relative number belongs — the
-non-gating ``just python-report-snapshot-materialization`` — and what is gated
-here is the shape, which references and positions answer definitely. The
-neighbouring 64-graph item still asserts bytes because its workload declares four
-Neutral Types and reaches none of that codec leg.
+An ALLOCATOR reading cannot be the gate here, and the reason is a measurement
+rather than a preference. This workload declares every Neutral Type, so its
+conforming path runs the canonical Wire codec's ``Timestamp`` leg, and the
+interpreter's own ``datetime`` formatting leaves a slowly saturating residue
+behind it: two runs of one identical seam read four hundred bytes apart on a
+forty-kilobyte window, in either direction, after eight hundred warm-up batches.
+An exact equality over that window would be a coin toss, and a tolerance is not
+what this class asserts. The ``tracemalloc`` totals therefore live where a
+machine-relative number belongs — the non-gating
+``just python-report-snapshot-materialization``. What is gated here instead is
+what the heap's own objects report through :func:`sys.getsizeof`, which no
+allocator residue is inside and which two arms of one process answer exactly. The
+neighbouring 64-graph item still asserts allocator bytes because its workload
+declares four Neutral Types and reaches none of that codec leg.
 
 Both layouts run in one child per axis: the equality is exact per layout, and a
 second child would pay for one more interpreter to prove the same thing twice.
@@ -76,8 +81,7 @@ from memory_instruments import (
     closure,
     in_a_child_interpreter,
     serve_one_measurement,
-    survivors,
-    warmed,
+    whole_heap,
 )
 
 from parallax.core.db_port import Row
@@ -223,28 +227,24 @@ def _held_after_executions(layout: Layout, executions: int) -> Closure:
     return closure(selection, _boundary(layout, selection))
 
 
-def _census(seam: Seam) -> list[str]:
-    """Every kind of object ``seam`` leaves alive at its sample point, sorted.
+def _same_whole_heap(few: Seam, many: Seam, where: str) -> None:
+    """What the whole process's Python objects weigh at ``few``'s sample point
+    and at ``many``'s, which must be the same number.
 
-    Classified by nothing but its type's name, so a cache that no prepared
-    structure reaches is still inside the reading: a process-global container
-    keyed by row or query primitives holds ordinary built-in values, and a census
-    restricted to types defined under ``parallax.`` would watch it grow without
-    counting anything.
+    Both arms are built before either is sampled, so each one's stored rows are
+    alive at both points and the only thing that can separate the two readings is
+    what an arm left behind — in any container anywhere, whether the arm reaches
+    it or not.
 
-    A bare ``tuple`` is the one kind left out, for a measurement reason rather
-    than a preference. A collection untracks a tuple holding only untracked
-    items, so whether one is visible to the collector at the sample follows how
-    many automatic collections landed inside the window — which is a property of
-    how much an arm allocated rather than of what it kept, and it moves the two
-    arms apart by a handful either way.
+    The gated number is what the heap holds and not the object or reference
+    counts beside it, for a measurement reason rather than a preference. A
+    collection untracks a tuple holding only untracked items, so whether one is
+    counted as an object follows how many automatic collections landed while an
+    arm ran; the walk prices it through its holder either way, so the counts move
+    by a handful between the arms and the weight does not move at all.
     """
-    return sorted(type(obj).__qualname__ for obj in survivors(seam) if type(obj) is not tuple)
-
-
-def _same_census(few: Sequence[str], many: Sequence[str], where: str) -> None:
-    assert len(few) > 0, where
-    assert few == many, where
+    lighter, heavier = whole_heap(few, many)
+    assert lighter.held == heavier.held, where
 
 
 @in_a_child_interpreter
@@ -252,9 +252,10 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
     # What preparation holds is fixed by the model's exact Entity layouts and by
     # the compiled reads: eight times the rows through one prepared read must
     # leave the prepared side holding the same objects through the same
-    # references, and leave the same objects alive behind the window that built
-    # it. A per-row shape, dispatch table, or classified-key set attached to
-    # either would move one reading or the other.
+    # references, and leave the process weighing what one row's worth left it
+    # weighing. A per-row shape, dispatch table, or classified-key set attached to
+    # either would move one reading, and a per-row entry banked in a container
+    # neither of them reaches would move the other.
     for layout in LAYOUTS:
         one_reads, one_prepared = _held_after_rows(layout, _ONE_ROOT)
         many_reads, many_prepared = _held_after_rows(layout, OWNERS)
@@ -262,11 +263,7 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
         assert one_reads == many_reads, layout
         assert one_prepared == many_prepared, layout
     for layout in LAYOUTS:
-        _same_census(
-            _census(warmed(_row_seam(layout, _ONE_ROOT))),
-            _census(warmed(_row_seam(layout, OWNERS))),
-            layout,
-        )
+        _same_whole_heap(_row_seam(layout, _ONE_ROOT), _row_seam(layout, OWNERS), layout)
 
 
 @in_a_child_interpreter
@@ -275,22 +272,19 @@ def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_fou
     # graphs materialized and of the executions that materialized them. Sixty-four
     # whole executions — each planning, compiling, converting, and sealing a graph
     # of its own — must leave the selection they were all resolved through holding
-    # what one execution left it holding, and leave the same objects alive behind
-    # the window. A query shape cached for the model's lifetime is exactly what
-    # would move the closure, and a process-global cache keyed by row or query
-    # primitives — which no prepared structure reaches at all — is what the
-    # census beside it is read for.
+    # what one execution left it holding, and leave the process weighing what one
+    # execution left it weighing. A query shape cached for the model's lifetime is
+    # exactly what would move the closure, and a process-global cache keyed by row
+    # or query primitives — which no prepared structure reaches at all, and whose
+    # entries the collector need not track — is what the whole-heap reading beside
+    # it is taken for.
     for layout in LAYOUTS:
         once = _held_after_executions(layout, 1)
         often = _held_after_executions(layout, _EXECUTIONS)
         assert once.tracked > 0 and once.references > 0, layout
         assert once == often, layout
     for layout in LAYOUTS:
-        _same_census(
-            _census(warmed(_execution_seam(layout, 1))),
-            _census(warmed(_execution_seam(layout, _EXECUTIONS))),
-            layout,
-        )
+        _same_whole_heap(_execution_seam(layout, 1), _execution_seam(layout, _EXECUTIONS), layout)
 
 
 if __name__ == "__main__":

@@ -17,9 +17,10 @@ holds is fixed by the model's exact Entity layouts and by the compiled reads, as
 an exact equality between eight rows and sixty-four through one prepared read, and
 between one execution and sixty-four against one prepared selection. That equality
 is read as a closure — every object one prepared structure reaches without crossing
-into another, and every reference between them — beside a census of what each
-window leaves alive, because references and positions answer definitely where a
-total in bytes does not.
+into another, and every reference between them — beside what the whole process's
+objects weigh at each arm's sample point, which is the reading a container the arm
+never reaches is inside. Neither is a `tracemalloc` figure, which is what leaves
+them exactly equal where a total in bytes allocated is not.
 
 ## What the reading does not prove
 
