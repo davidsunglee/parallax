@@ -201,7 +201,9 @@ class RowMaterializer:
     discriminator named one, the closed set of concretes its rows can name, and
     the hidden aliases its continuation coordinate was captured under. Each is a
     compile-time fact of one statement, so a row runs the stages over its own
-    values and allocates that dict and its carrier alone.
+    values and allocates that dict and its carrier alone — save the row that
+    arrives without a projected occurrence Column, which narrows the compiled
+    classified-key set to the keys it held.
     """
 
     stages: _RowStages
