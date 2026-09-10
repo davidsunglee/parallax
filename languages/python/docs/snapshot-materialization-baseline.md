@@ -53,6 +53,17 @@ class-backed model cannot declare one and the workload reaches every *declarable
 type and no more: `Boolean`, `Int32`, `Int64`, `Float32`, `Float64`, `String`,
 `Decimal`, `Bytes`, `Date`, `Time`, `Timestamp`, `Uuid`.
 
+**A holder whose entry count is fixed by the model.** Both gated readings are
+sizes: an equality between two arms, and a refusal to rise across one region. Both
+therefore see growth along rows, graphs, and executions — which is the whole of
+what COR-137 asks — and neither separates a holder that grows along none of them
+from state the model legitimately owns. One query shape banked once and shared by
+every execution after it leaves both execution arms holding one; a decode memo
+bounded by a Neutral Type's own value domain fills during warming, and `Boolean`
+has two values. That such holders do not exist is a structural property of the
+code that would own them, asserted where that code is, and outside what a
+measurement of size can say.
+
 **A byte equality over a window that runs the codec.** Two runs of one identical
 seam read about four hundred bytes apart on a forty-kilobyte window, in either
 direction, after eight hundred warm-up batches: the interpreter's own `datetime`
