@@ -391,17 +391,21 @@ def test_compiled_read_is_an_equatable_hashable_value() -> None:
 
 
 def test_compiled_read_repr_is_exact_and_stable() -> None:
-    # The default generated dataclass repr, pinned exactly. The row transform is
-    # a stored FIELD, not a closure, which is why it reprs at all — a stored
-    # callable would print an address and make this untestable.
+    # The default generated dataclass repr, pinned exactly. The materializer is a
+    # stored FIELD, not a closure, which is why it reprs at all — a stored
+    # callable would print an address and make this untestable. A read that fills
+    # no stage still names what its rows resolve to, which is the fallback alone.
     compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"))
+    order = "EntityIdentity(namespace='parallax.compatibility', name='Order')"
     assert repr(compiled) == (
         "CompiledRead(statement=LoweredStatement(sql='select t0.id, t0.name, t0.sku, "
         "t0.qty, t0.price, t0.active, t0.ordered_on from orders t0', binds=()), "
-        "narrow_to=None, target=EntityIdentity(namespace='parallax.compatibility', name='Order'), "
-        "resolved_position=(EntityIdentity(namespace='parallax.compatibility', name='Order'),), "
-        "documents=(), projected_documents=(), document_reads=(), coordinate_reads=(), "
-        "_transform=_IdentityTransform())"
+        f"narrow_to=None, target={order}, "
+        f"resolved_position=({order},), "
+        "documents=(), projected_documents=(), document_reads=(), "
+        "_materializer=RowMaterializer(stages=RowStages(resolve=None, shared_document=None, "
+        f"direct_documents=None), fallback_entity={order}, resolvable=({order},), "
+        "coordinate_reads=()))"
     )
 
 

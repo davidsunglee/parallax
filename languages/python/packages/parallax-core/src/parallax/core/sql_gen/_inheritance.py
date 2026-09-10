@@ -58,8 +58,8 @@ module-private spelling.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
-from typing import Literal, Protocol, cast
+from dataclasses import dataclass, field, replace
+from typing import Literal, cast
 
 from parallax.core.base import (
     JSON,
@@ -156,76 +156,59 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Row transforms: what a read's own projection decided each observed row still #
-# needs (m-case-format / m-conformance-adapter). Table-per-hierarchy derives   #
-# `familyVariant` from the projected raw tag column, table-per-concrete-       #
-# subtype reads it straight from the projected literal column, a Relational    #
-# Document Layout read fans its one projected Structured Column out into the   #
-# members it asked for, and every other read carries none. This lane is not    #
-# family-specific — it lives here because the projection it mirrors does.      #
+# Row materialization stages: what a read's own projection decided each observed #
+# row still needs (m-case-format / m-conformance-adapter). Table-per-hierarchy  #
+# derives `familyVariant` from the projected raw tag column, table-per-concrete- #
+# subtype reads it straight from the projected literal column, a Relational     #
+# Document Layout read fans its one projected Structured Column out into the    #
+# members it asked for, and a Value Object stored in its own Column is          #
+# classified where it lies. This lane is not family-specific — it lives here    #
+# because the projection it mirrors does.                                       #
 #                                                                              #
-# A UNION of frozen forms rather than one class with a `kind` tag and          #
-# optional fields: every field of every form is required, so there is no       #
-# illegal state to assert against at materialization time, and each form's     #
-# `materialize` is total — which is what lets `CompiledRead.materialize_row`   #
-# be a single structural delegation with no dispatch. This is the module's own  #
-# documented style (the `m-predicate` node union), and each form pickles,       #
-# compares, and reprs as a plain dataclass with no `__reduce__` and no stored  #
-# callable.                                                                    #
+# ONE staged record rather than a union of forms with a `kind` tag: a read      #
+# fills the stages its projection decided and leaves the rest `None`, so every  #
+# point of the stage product is a legal materializer and materialization        #
+# asserts nothing. An absent stage does not run, and a present stage's          #
+# per-entity index answers a `dict.get` whose miss means "this stage does not   #
+# apply to this row". Every fact a row would otherwise re-derive — the tag map, #
+# a branch's renames, each occurrence's document shape, the member keys the     #
+# codec already judged — is compiled once here, so a row allocates its own      #
+# values dict and the few pairs a branch rename moves, and no map, set, scan,   #
+# or shape of its own. Stored fields stay tuples of pairs and every index is    #
+# derived in `__post_init__`, so a compiled read still pickles, deep-copies,    #
+# compares, and reprs exactly.                                                  #
 #                                                                              #
-# The forms keep their module-private spelling: no sibling names them —        #
-# `_compile` reaches them only through :data:`RowTransform` (the declared type #
-# of `CompiledRead._transform`) and :data:`IDENTITY_TRANSFORM`. Those two are  #
-# this module's published surface for the family; the forms themselves are     #
-# construction details of the planners below.                                  #
+# The stages keep their module's spelling and `_compile` aliases each down, the #
+# package convention `_context` established. `_compile` sequences them because  #
+# the carrier they fill is its own (`MaterializedReadRow`) and this module      #
+# sits below it: what a stage cannot write into the row's values it returns,    #
+# and nothing here names the carrier.                                          #
 # --------------------------------------------------------------------------- #
-@dataclass(frozen=True, slots=True)
-class RowTransformResult:
-    """One row transform's values and all provenance needed by its consumers.
-
-    ``unknown_family_tag`` is present exactly where the row's stored
-    discriminator resolved to no composed concrete subtype, and carries the
-    value a diagnosis of that row publishes as evidence.
-    """
-
-    values: dict[str, object]
-    resolved_entity: EntityIdentity | None = None
-    family_variant: str | None = None
-    unknown_family_tag: UnknownFamilyTag | None = None
-    findings: tuple[DocumentFinding, ...] = ()
-    classified_members: frozenset[str] = frozenset()
-
-
-class _RowMaterializer(Protocol):
-    def materialize(self, row: Mapping[str, object]) -> RowTransformResult: ...
+type ResolvedVariant = tuple[EntityIdentity, str | None, UnknownFamilyTag | None]
+"""What resolving one row answers: the concrete Entity it names, the
+`familyVariant` spelling it publishes, and the stored discriminator no composed
+concrete subtype claimed."""
 
 
 @dataclass(frozen=True, slots=True)
-class _IdentityTransform:
-    """No `familyVariant` to materialize: a non-family read, a concrete-target
-    table-per-hierarchy read, or a table-per-concrete-subtype read whose
-    position resolved to a single concrete. Still returns a FRESH dict, so
-    every caller may mutate the result regardless of which form it got."""
-
-    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
-        return RowTransformResult(dict(row))
-
-
-@dataclass(frozen=True, slots=True)
-class _TagTransform:
+class ByTag:
     """Table-per-hierarchy: pop the framework-owned raw tag column (it never
     reaches the caller) and map its value to the declaring concrete's name.
 
-    ``tag_pairs`` is the WHOLE family's `(tagValue, Identity, variant spelling)` mapping in the
-    facet's canonical concrete-subtype order — never the read's own resolved
-    position, since a narrowed abstract read still projects the shared table's
-    tag column and may observe any of them. A tuple of pairs rather than a
-    `Mapping` is what keeps `CompiledRead` hashable and its `repr` stable.
+    ``tag_pairs`` is a `(tagValue, Identity, variant spelling)` mapping in the
+    facet's canonical concrete-subtype order. For a homogeneous read it is the
+    WHOLE family's — never the read's own resolved position, since a narrowed
+    abstract read still projects the shared table's tag column and may observe
+    any of them — and for a heterogeneous shared document it is the position's,
+    which is the pairing the document shapes are keyed by. A tuple of pairs
+    rather than a `Mapping` is what keeps `CompiledRead` hashable and its `repr`
+    stable; ``by_tag`` holds the whole answer a hit gives, so a resolved row
+    allocates nothing here.
 
     "The whole family" is the family as this model COMPOSES it, which need not be
     the family the shared Table holds: a model may compose a family's concrete
     leaves partially (`m-inheritance`), and an abstract-root read injects no tag
-    predicate, so a row tagged for an uncomposed sibling can reach this transform.
+    predicate, so a row tagged for an uncomposed sibling can reach this stage.
     ``root`` is carried so that row is refused by name — the family it belongs to
     and the composed tags it could have matched — rather than by a bare mapping
     miss.
@@ -234,53 +217,118 @@ class _TagTransform:
     column: str
     root: EntityIdentity
     tag_pairs: tuple[tuple[str, EntityIdentity, str], ...]
+    by_tag: Mapping[str, ResolvedVariant] = field(init=False, compare=False, repr=False)
 
-    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
-        materialized = dict(row)
-        raw = materialized.pop(self.column)
-        pairs = {tag: (identity, spelling) for tag, identity, spelling in self.tag_pairs}
-        resolved = pairs.get(cast("str", raw))
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "by_tag",
+            {tag: (identity, spelling, None) for tag, identity, spelling in self.tag_pairs},
+        )
+
+    @property
+    def resolvable(self) -> tuple[EntityIdentity, ...]:
+        return (self.root, *(identity for _, identity, _ in self.tag_pairs))
+
+    def resolve(self, values: dict[str, object]) -> ResolvedVariant:
+        raw = values.pop(self.column)
+        resolved = self.by_tag.get(cast("str", raw))
         if resolved is None:
-            return RowTransformResult(
-                materialized, self.root, unknown_family_tag=UnknownFamilyTag(raw)
-            )
-        identity, spelling = resolved
-        return RowTransformResult(materialized, identity, spelling)
+            return self.root, None, UnknownFamilyTag(raw)
+        return resolved
 
 
 @dataclass(frozen=True, slots=True)
-class _LiteralTransform:
+class ByLiteral:
     """Table-per-concrete-subtype `union all`: rename the per-branch projected
-    subtype-name literal column — there is no tag column to derive it from."""
+    subtype-name literal column — there is no tag column to derive it from.
+
+    The branch that produced a row owns some of the union's result aliases and
+    reads the rest as its siblings' typed `NULL` padding. ``drop`` is every alias
+    the read's own lane discards, compiled from ``projected_fields`` once: a
+    narrow-to-owned read keeps only what the resolved branch owns, while a
+    row-form read keeps a sibling's null padding under an unrenamed alias, as the
+    corpus expects. The moved values are lifted before the drop, so an alias may
+    be both a source and discarded.
+    """
 
     column: str
     variants: tuple[tuple[str, EntityIdentity], ...]
     projected_fields: tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
     narrow_to_owned: bool
+    by_spelling: Mapping[str, ResolvedVariant] = field(init=False, compare=False, repr=False)
+    renames: Mapping[str, tuple[tuple[str, str], ...]] = field(
+        init=False, compare=False, repr=False
+    )
+    drop: frozenset[str] = field(init=False, compare=False, repr=False)
 
-    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
-        materialized = dict(row)
-        spelling = cast("str", materialized.pop(self.column))
-        fields = dict(self.projected_fields)
-        projected_aliases = {
-            alias
-            for variant_fields in fields.values()
-            for alias, rendered_key in variant_fields
-            if self.narrow_to_owned or alias != rendered_key
-        }
-        values = {key: value for key, value in materialized.items() if key not in projected_aliases}
-        for alias, rendered_key in fields[spelling]:
-            if alias in materialized:
-                values[rendered_key] = materialized[alias]
-        return RowTransformResult(values, dict(self.variants)[spelling], spelling)
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "by_spelling",
+            {spelling: (identity, spelling, None) for spelling, identity in self.variants},
+        )
+        object.__setattr__(self, "renames", dict(self.projected_fields))
+        object.__setattr__(
+            self,
+            "drop",
+            frozenset(
+                alias
+                for _, variant_fields in self.projected_fields
+                for alias, rendered_key in variant_fields
+                if self.narrow_to_owned or alias != rendered_key
+            ),
+        )
+
+    @property
+    def resolvable(self) -> tuple[EntityIdentity, ...]:
+        return tuple(identity for _, identity in self.variants)
+
+    def resolve(self, values: dict[str, object]) -> ResolvedVariant:
+        spelling = cast("str", values.pop(self.column))
+        moved = tuple(
+            (rendered_key, values[alias])
+            for alias, rendered_key in self.renames[spelling]
+            if alias in values
+        )
+        for alias in self.drop:
+            values.pop(alias, None)
+        for rendered_key, value in moved:
+            values[rendered_key] = value
+        return self.by_spelling[spelling]
 
 
 @dataclass(frozen=True, slots=True)
-class _DocumentTransform:
+class DocumentFanOut:
+    """One resolved concrete's share of a read's shared Structured Column.
+
+    ``shape`` is absent for a `union all` branch that stores no document of its
+    own: such a row carries no document to decode and still pads the members its
+    siblings' documents carry, which is the state that padding stands for.
+    ``members`` may be empty for a present shape too — an observation-bearing
+    read of an owner with no document-resident member projects the column for the
+    stored document itself, and naming it keeps that document off the row's
+    values.
+    """
+
+    shape: DocumentShape | None
+    members: tuple[tuple[str, tuple[str, ...]], ...]
+    padding: tuple[str, ...] = ()
+
+    @property
+    def classified(self) -> frozenset[str]:
+        """The keys this fan-out judged, which conversion must not judge again."""
+        if self.shape is None:
+            return frozenset(self.padding)
+        return frozenset(key for key, _path in self.members)
+
+
+@dataclass(frozen=True, slots=True)
+class SharedDocument:
     """Relational Document Layout: fan the one projected Structured Column out
     into the members the read asked for, and drop the raw document.
 
-    The Structured Column is never a result field (`m-sql`), so `column` is
+    The Structured Column is never a result field (`m-sql`), so ``column`` is
     popped rather than renamed. Each member is decoded by its DECLARED Neutral
     Type through the codec, not by the JSON value's own shape, and lands under
     the very result key it would have carried as a direct Column — which is what
@@ -288,191 +336,88 @@ class _DocumentTransform:
     is absent or explicitly null in the document reads as `None`, the same one
     logical answer a NULL Column gives.
 
-    ``members`` may be empty: an observation-bearing read of an owner with no
-    document-resident member projects the column for the stored document itself,
-    and naming it here is what keeps that document off the row's values.
+    ``column`` is ONE row key for the whole read, including a `union all` whose
+    branches each hold their own Structured Column: Storage Layout is root-owned,
+    so every branch of a family spells that column the way the root declared it,
+    and the union projects the document tier under one result alias
+    (`_contributor_column`) whatever the branch that rendered the row.
     """
 
     column: str
-    shape: DocumentShape
-    members: tuple[tuple[str, tuple[str, ...]], ...]
-
-    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
-        materialized = dict(row)
-        document_read = materialized.pop(self.column)
-        members = _materialize_document_members(self.shape, document_read, self.members)
-        materialized.update(members.values)
-        return RowTransformResult(
-            materialized,
-            findings=members.findings,
-            classified_members=members.classified_members,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _TphVariantDocument:
-    identity: EntityIdentity
-    spelling: str
-    discriminator_value: str
-    shape: DocumentShape
-    members: tuple[tuple[str, tuple[str, ...]], ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _TpcsVariantDocument:
-    identity: EntityIdentity
-    spelling: str
-    document_column: str
-    shape: DocumentShape
-    members: tuple[tuple[str, tuple[str, ...]], ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _MaterializedDocumentMembers:
-    values: dict[str, object]
-    findings: tuple[DocumentFinding, ...]
-    classified_members: frozenset[str]
-
-
-def _materialize_document_members(
-    shape: DocumentShape,
-    document_read: object,
-    members: tuple[tuple[str, tuple[str, ...]], ...],
-) -> _MaterializedDocumentMembers:
-    values: dict[str, object] = {}
-    findings: list[DocumentFinding] = []
-    for key, path in members:
-        decoded = _classified_entity_member(shape, document_read, path)
-        findings.extend(decoded.findings)
-        if isinstance(decoded.presence, Present):
-            values[key] = decoded.presence.value
-        elif decoded.presence is UNAVAILABLE:
-            values[key] = UNAVAILABLE
-        else:
-            values[key] = None
-    return _MaterializedDocumentMembers(
-        values,
-        tuple(findings),
-        frozenset(values),
+    per_entity: tuple[tuple[EntityIdentity, DocumentFanOut], ...]
+    by_entity: Mapping[EntityIdentity, DocumentFanOut] = field(
+        init=False, compare=False, repr=False
     )
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "by_entity", dict(self.per_entity))
 
-@dataclass(frozen=True, slots=True)
-class _TphDocumentTransform:
-    """Resolve a TPH row's tag before decoding its heterogeneous document."""
-
-    column: str
-    tag_column: str
-    root: EntityIdentity
-    variants: tuple[_TphVariantDocument, ...]
-    padding: tuple[str, ...]
-
-    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
-        materialized = dict(row)
-        raw_tag = materialized.pop(self.tag_column)
-        document_read = materialized.pop(self.column)
-        variant = next(
-            (candidate for candidate in self.variants if candidate.discriminator_value == raw_tag),
-            None,
-        )
-        if variant is None:
-            materialized.pop(self.column, None)
-            return RowTransformResult(
-                materialized, self.root, unknown_family_tag=UnknownFamilyTag(raw_tag)
-            )
-        for key in self.padding:
-            materialized[key] = None
-        members = _materialize_document_members(variant.shape, document_read, variant.members)
-        materialized.update(members.values)
-        return RowTransformResult(
-            materialized,
-            variant.identity,
-            variant.spelling,
-            findings=members.findings,
-            classified_members=members.classified_members,
-        )
+    def fan_out(
+        self, values: dict[str, object], resolved: EntityIdentity
+    ) -> tuple[DocumentFinding, ...]:
+        """Fan ``resolved``'s members out of ``values``' raw document, in place."""
+        entry = self.by_entity.get(resolved)
+        if entry is None or entry.shape is None:
+            values.pop(self.column, None)
+            if entry is not None:
+                for key in entry.padding:
+                    values[key] = None
+            return ()
+        document_read = values.pop(self.column)
+        for key in entry.padding:
+            values[key] = None
+        findings: tuple[DocumentFinding, ...] = ()
+        for key, path in entry.members:
+            decoded = _classified_entity_member(entry.shape, document_read, path)
+            if decoded.findings:
+                findings += decoded.findings
+            if isinstance(decoded.presence, Present):
+                values[key] = decoded.presence.value
+            elif decoded.presence is UNAVAILABLE:
+                values[key] = UNAVAILABLE
+            else:
+                values[key] = None
+        return findings
 
 
 @dataclass(frozen=True, slots=True)
-class _TpcsDocumentTransform:
-    """Decode a TPCS union row with the concrete branch's document shape."""
+class DirectDocuments:
+    """Classify each projected Value Object occurrence stored in its own Column.
 
-    base: _LiteralTransform
-    documents: tuple[_TpcsVariantDocument, ...]
-    padding: tuple[str, ...]
-
-    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
-        base = self.base.materialize(row)
-        materialized = base.values
-        identity = cast("EntityIdentity", base.resolved_entity)
-        spelling = cast("str", base.family_variant)
-        variant = next(
-            (document for document in self.documents if document.identity == identity), None
-        )
-        for key in self.padding:
-            materialized[key] = None
-        if variant is None:
-            materialized.pop(self.documents[0].document_column, None)
-            return RowTransformResult(
-                materialized,
-                identity,
-                spelling,
-                base.unknown_family_tag,
-                base.findings,
-                base.classified_members | frozenset(self.padding),
-            )
-        document_read = materialized.pop(variant.document_column)
-        members = _materialize_document_members(variant.shape, document_read, variant.members)
-        materialized.update(members.values)
-        return RowTransformResult(
-            materialized,
-            identity,
-            spelling,
-            base.unknown_family_tag,
-            (*base.findings, *members.findings),
-            base.classified_members | members.classified_members,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _DirectDocumentVariant:
-    identity: EntityIdentity
-    occurrences: tuple[ValueObjectMetadata, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _DirectDocumentTransform:
-    """Classify direct Value Object Columns after inheritance resolution.
-
-    A provider folds every selected document pair before this transform runs,
-    regardless of whether the carrier is the Table's shared Structured Column
-    or a Value Object's own Column. This wrapper consumes the latter carriers,
-    decodes their declared occurrence shapes, and preserves the base transform's
-    concrete identity, family variant, and classified provenance.
+    A provider folds every selected document pair before materialization,
+    regardless of whether the carrier is the Table's shared Structured Column or
+    a Value Object's own Column. This stage consumes the latter carriers and
+    decodes each against the shape its occurrence declares, resolved once at
+    compile time rather than per row. It keys on the concrete the row RESOLVED
+    to, so a read whose position holds several concretes classifies the
+    occurrences of the one its row names.
     """
 
-    base: _RowMaterializer
-    variants: tuple[_DirectDocumentVariant, ...]
+    per_entity: tuple[
+        tuple[EntityIdentity, tuple[tuple[ValueObjectMetadata, DocumentShape], ...]], ...
+    ]
+    by_entity: Mapping[EntityIdentity, tuple[tuple[ValueObjectMetadata, DocumentShape], ...]] = (
+        field(init=False, compare=False, repr=False)
+    )
 
-    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
-        base = self.base.materialize(row)
-        identity = base.resolved_entity
-        variant = next(
-            (
-                candidate
-                for candidate in self.variants
-                if identity is None or candidate.identity == identity
-            ),
-            None,
-        )
-        if variant is None:
-            return base
-        values = base.values
-        findings = list(base.findings)
-        classified = set(base.classified_members)
-        for occurrence in variant.occurrences:
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "by_entity", dict(self.per_entity))
+
+    def classify(
+        self, values: dict[str, object], resolved: EntityIdentity
+    ) -> tuple[tuple[DocumentFinding, ...], bool]:
+        """Classify ``resolved``'s direct occurrences in place.
+
+        Answers its findings and whether every one of them was there to classify:
+        a column absent from the row is left alone, which is the only way the
+        compiled classified-key set overstates what this row carries.
+        """
+        findings: tuple[DocumentFinding, ...] = ()
+        complete = True
+        for occurrence, shape in self.by_entity.get(resolved, ()):
             key = occurrence.storage.name
             if key not in values:
+                complete = False
                 continue
             document_read = values[key]
             if not isinstance(document_read, (SqlNull, PresentDocument)):
@@ -480,25 +425,78 @@ class _DirectDocumentTransform:
                     f"the database port returned {type(document_read).__name__}, not a DocumentRead"
                 )
             decoded = _classified_occurrence(
-                occurrence_shape(occurrence),
+                shape,
                 document_read,
                 multiplicity=occurrence.multiplicity,
                 nullable=occurrence.nullable,
             )
-            name = occurrence.identity.path[-1]
-            findings.extend(
-                replace(finding, path=(name, *finding.path)) for finding in decoded.findings
-            )
+            if decoded.findings:
+                name = occurrence.identity.path[-1]
+                findings += tuple(
+                    replace(finding, path=(name, *finding.path)) for finding in decoded.findings
+                )
             values[key] = decoded.presence.value if isinstance(decoded.presence, Present) else None
-            classified.add(key)
-        return RowTransformResult(
-            values,
-            base.resolved_entity,
-            base.family_variant,
-            base.unknown_family_tag,
-            tuple(findings),
-            frozenset(classified),
-        )
+        return findings, complete
+
+
+@dataclass(frozen=True, slots=True)
+class RowStages:
+    """The stages one read's projection filled, and the facts they share.
+
+    ``classified_by_entity`` is the union of what both document stages judge for
+    one resolved concrete, compiled here because the two stages are the only
+    judges and their keys are fixed by the projection. A read that fills no stage
+    at all is a plain record: a non-family read, a concrete-target
+    table-per-hierarchy read, or a table-per-concrete-subtype read whose position
+    resolved to a single concrete has no `familyVariant` to materialize and no
+    document to fan out.
+    """
+
+    resolve: ByTag | ByLiteral | None = None
+    shared_document: SharedDocument | None = None
+    direct_documents: DirectDocuments | None = None
+    classified_by_entity: Mapping[EntityIdentity, frozenset[str]] = field(
+        init=False, compare=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        classified: dict[EntityIdentity, frozenset[str]] = {}
+        if self.shared_document is not None:
+            for identity, entry in self.shared_document.per_entity:
+                keys = entry.classified
+                if keys:
+                    classified[identity] = keys
+        if self.direct_documents is not None:
+            for identity, occurrences in self.direct_documents.per_entity:
+                keys = frozenset(occurrence.storage.name for occurrence, _shape in occurrences)
+                if keys:
+                    classified[identity] = classified.get(identity, frozenset()) | keys
+        object.__setattr__(self, "classified_by_entity", classified)
+
+    @property
+    def structured_column(self) -> str | None:
+        """The Structured Column these stages fan out, or absence for none.
+
+        The fan-out drops the raw column, so a caller that needs the stored
+        document — a temporal observation, which retains it (`m-unit-work`) —
+        reads it off the driver row by this name. Absence is the honest answer
+        for every read that projected no Structured Column, `Columns` layout
+        included.
+        """
+        return None if self.shared_document is None else self.shared_document.column
+
+    @property
+    def resolvable(self) -> tuple[EntityIdentity, ...]:
+        """Every Entity these stages can name, beyond the read's own position.
+
+        A homogeneous tag map is the WHOLE family's rather than the read's
+        narrow, so a narrowed abstract read still resolves a sibling's row to
+        that sibling, and a tag no composed concrete claims resolves the row to
+        the family root — which is never a concrete in the position. A consumer
+        preparing one structure per Entity a row can carry therefore cannot read
+        the position alone.
+        """
+        return () if self.resolve is None else self.resolve.resolvable
 
 
 def _classified_entity_member(
@@ -583,85 +581,24 @@ def observed_document(document_read: object) -> object | None:
     return unwrap_document_read(document_read)
 
 
-RowTransform = (
-    _IdentityTransform
-    | _TagTransform
-    | _LiteralTransform
-    | _DocumentTransform
-    | _TphDocumentTransform
-    | _TpcsDocumentTransform
-    | _DirectDocumentTransform
-)
-
-# The identity form is stateless, so one shared instance serves every read that
-# carries no `familyVariant`; equality is structural, so a copied/unpickled
-# `CompiledRead` still compares equal to one holding this very object.
-IDENTITY_TRANSFORM = _IdentityTransform()
-
-
-def direct_document_transform(
-    base: RowTransform,
+def direct_documents(
     candidates: Sequence[tuple[EntityIdentity, TableLayout, Sequence[ValueObjectMetadata]]],
-) -> RowTransform:
-    """Wrap ``base`` for every projected occurrence stored in its own Column."""
-    variants = tuple(
-        _DirectDocumentVariant(
+) -> DirectDocuments | None:
+    """The direct-Column occurrence stage, or absence when a read projects none."""
+    per_entity = tuple(
+        (
             identity,
             tuple(
-                occurrence
+                (occurrence, occurrence_shape(occurrence))
                 for occurrence in occurrences
                 if isinstance(layout.placement(occurrence.identity), DirectColumn)
             ),
         )
         for identity, layout, occurrences in candidates
     )
-    if not any(variant.occurrences for variant in variants):
-        return base
-    return _DirectDocumentTransform(base, variants)
-
-
-def transform_structured_column(transform: _RowMaterializer) -> str | None:
-    """The Structured Column ``transform`` fans out, or absence when it fans out none.
-
-    The document fan-out drops the raw column, so a caller that needs the stored
-    document — a temporal observation, which retains it (`m-unit-work`) — reads it
-    off the driver row by this name BEFORE the transform runs. Absence is the
-    honest answer for every read that projected no Structured Column, `Columns`
-    layout included.
-    """
-    if isinstance(transform, _DirectDocumentTransform):
-        return transform_structured_column(transform.base)
-    return (
-        transform.column
-        if isinstance(transform, (_DocumentTransform, _TphDocumentTransform))
-        else transform.documents[0].document_column
-        if isinstance(transform, _TpcsDocumentTransform) and transform.documents
-        else None
-    )
-
-
-def transform_resolvable(transform: _RowMaterializer) -> tuple[EntityIdentity, ...]:
-    """Every Entity ``transform`` itself can name, beyond its read's own position.
-
-    A tag map is the WHOLE family's rather than the read's narrow, so a narrowed
-    abstract read still resolves a sibling's row to that sibling, and a tag no
-    composed concrete claims resolves the row to the family root — which is never
-    a concrete in the position. A consumer preparing one structure per Entity a
-    row can carry therefore cannot read the position alone.
-    """
-    match transform:
-        case _DirectDocumentTransform(base=base):
-            return transform_resolvable(base)
-        case _TpcsDocumentTransform(base=literal):
-            return transform_resolvable(literal)
-        case _TagTransform(root=root, tag_pairs=pairs):
-            return (root, *(identity for _, identity, _ in pairs))
-        case _TphDocumentTransform(root=root, variants=tph_variants):
-            return (root, *(variant.identity for variant in tph_variants))
-        case _LiteralTransform(variants=literal_variants):
-            return tuple(identity for _, identity in literal_variants)
-        case _:
-            return ()
+    if not any(occurrences for _identity, occurrences in per_entity):
+        return None
+    return DirectDocuments(per_entity)
 
 
 # --------------------------------------------------------------------------- #
@@ -683,21 +620,29 @@ def query_narrow_position(
 # --------------------------------------------------------------------------- #
 # The DEFERRED tag guard.                                                      #
 # --------------------------------------------------------------------------- #
+def tag_pairs(
+    facet: InheritanceFacet, concretes: Sequence[EntityIdentity]
+) -> tuple[tuple[str, EntityIdentity, str], ...]:
+    """``concretes``' `(tagValue, Identity, variant spelling)` triples, in order."""
+    return tuple(
+        (tag_value(facet, concrete), concrete, family_variant_name(facet, concrete))
+        for concrete in concretes
+    )
+
+
 def family_tag_pairs(
     facet: InheritanceFacet, root: EntityIdentity
 ) -> tuple[tuple[str, EntityIdentity, str], ...]:
-    """The WHOLE family's `(tagValue, Identity, variant spelling)` triples, in the facet's
-    canonical concrete-subtype order.
+    """The WHOLE family's triples, in the facet's canonical concrete-subtype order.
 
     Deliberately the family's set, not the read's resolved position: a narrowed
     abstract read still projects the shared table's raw tag column, and the
     mapping that interprets it is a property of the family, not of the narrow
-    (`m-inheritance-012`).
+    (`m-inheritance-012`). A read whose document shapes are keyed per concrete
+    resolves the position's own pairs instead, so one row's tag and one row's
+    document shape name the same concrete.
     """
-    return tuple(
-        (tag_value(facet, concrete), concrete, family_variant_name(facet, concrete))
-        for concrete in entity_view(facet, root).concrete_subtypes
-    )
+    return tag_pairs(facet, entity_view(facet, root).concrete_subtypes)
 
 
 TagKind = Literal["eq", "in"]
@@ -781,8 +726,8 @@ def tag_guard(
 # Each is a frozen description of ONE family read: what it selects from, what  #
 # it projects (rendered on demand against the statement's own alias, the one   #
 # thing only `_compile` knows), the un-lowered `inner` predicate, the tag       #
-# guard's inputs, and the row transform. Nothing here holds a `StatementBuilder`, a bind     #
-# list, or an alias.                                                           #
+# guard's inputs, and the row materialization stages. Nothing here holds a     #
+# `StatementBuilder`, a bind list, or an alias.                                 #
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class ProjectedColumn:
@@ -864,8 +809,8 @@ def document_projection(
     value_objects: Sequence[ValueObjectMetadata],
     *,
     observation: bool = False,
-) -> tuple[ProjectedColumn | None, RowTransform]:
-    """The Structured Column a read projects, and the transform that fans it back
+) -> tuple[ProjectedColumn | None, DocumentFanOut | None]:
+    """The Structured Column a read projects, and the fan-out that reads it back
     out (`m-sql` *Read projection*, rule 5).
 
     ``attributes`` and ``value_objects`` are the members this read must produce.
@@ -881,8 +826,8 @@ def document_projection(
     is one, fanning out however many members it asked for, zero included. Outside
     that lane a read whose members are all direct — every read under `Columns`
     layout, and a `Document`-layout row-form read of direct members alone —
-    projects no document column and transforms by identity, so this is inert
-    rather than conditional at the call site.
+    projects no document column and fans nothing out, so this is inert rather
+    than conditional at the call site.
     """
     document_slot: ColumnSlot | None = None
     document_attributes: list[AttributeMetadata] = []
@@ -903,76 +848,68 @@ def document_projection(
     if document_slot is None and observation:
         document_slot = _structured_column_slot(layout)
     if document_slot is None:
-        return None, IDENTITY_TRANSFORM
+        return None, None
     return (
         ProjectedColumn(document_slot.column.name, None, document=True),
-        _DocumentTransform(
-            document_slot.column.name,
-            entity_shape(document_attributes, document_occurrences),
-            tuple(members),
-        ),
+        DocumentFanOut(entity_shape(document_attributes, document_occurrences), tuple(members)),
     )
 
 
 def _tph_document_projection(
     layout: TableLayout,
     facet: InheritanceFacet,
-    root: EntityIdentity,
     concretes: Sequence[EntityIdentity],
     *,
     instance_form: bool,
     abstract_target: bool,
-    tag_col: str,
-) -> tuple[ProjectedColumn | None, RowTransform | None]:
+) -> tuple[ProjectedColumn | None, SharedDocument | None]:
+    """The Structured Column a family read projects, and the per-concrete fan-out
+    that reads it back out.
+
+    Each concrete resolves its own shape and members against the shared Table, so
+    a heterogeneous document is decoded by the shape of the concrete the ROW
+    named rather than by any one branch's. A concrete with no document-resident
+    member still takes an entry: its rows carry the shared column and fan nothing
+    out of it. Padding is the abstract-target row-form lane's alone — a read that
+    publishes flat rows renders every branch's document members, so a row carries
+    its siblings' keys as null.
+    """
     slot = _structured_column_slot(layout)
     if slot is None:
         return None, None
 
-    variants: list[_TphVariantDocument] = []
-    projects_document = False
+    fan_outs: list[tuple[EntityIdentity, DocumentFanOut | None]] = []
     for concrete in concretes:
         view = entity_view(facet, concrete)
-        projected, transform = document_projection(
+        _projected, fan_out = document_projection(
             layout,
             view.applicable_attributes,
             view.applicable_value_objects if instance_form else (),
             observation=instance_form,
         )
-        if isinstance(transform, _DocumentTransform):
-            projects_document = True
-            shape = transform.shape
-            members = transform.members
-        else:
-            shape = entity_shape((), ())
-            members = ()
-        variants.append(
-            _TphVariantDocument(
-                identity=concrete,
-                spelling=family_variant_name(facet, concrete),
-                discriminator_value=tag_value(facet, concrete),
-                shape=shape,
-                members=members,
+        fan_outs.append((concrete, fan_out))
+    if all(fan_out is None for _identity, fan_out in fan_outs):
+        return None, None
+    padding = (
+        ()
+        if instance_form or not abstract_target
+        else tuple(
+            dict.fromkeys(
+                key
+                for _identity, fan_out in fan_outs
+                if fan_out is not None
+                for key, _path in fan_out.members
             )
         )
-    if not projects_document:
-        return None, None
-    projected = ProjectedColumn(slot.column.name, None, document=True)
-    if abstract_target:
-        return projected, _TphDocumentTransform(
-            slot.column.name,
-            tag_col,
-            root,
-            tuple(variants),
-            (
-                ()
-                if instance_form
-                else tuple(
-                    dict.fromkeys(key for variant in variants for key, _path in variant.members)
-                )
-            ),
-        )
-    only = variants[0]
-    return projected, _DocumentTransform(projected.column, only.shape, only.members)
+    )
+    nothing = DocumentFanOut(entity_shape((), ()), (), padding)
+    return ProjectedColumn(slot.column.name, None, document=True), SharedDocument(
+        slot.column.name,
+        tuple(
+            (identity, nothing if fan_out is None else replace(fan_out, padding=padding))
+            for identity, fan_out in fan_outs
+        ),
+    )
 
 
 def select_projection(
@@ -1078,7 +1015,7 @@ class TphPlan:
     columns: tuple[ProjectedColumn, ...]
     inner: PredicateNode
     tag: TagPredicate | None
-    transform: RowTransform
+    stages: RowStages
 
     def projection(
         self,
@@ -1113,7 +1050,7 @@ class TpcsSinglePlan:
     position: tuple[EntityIdentity, ...]
     columns: tuple[ProjectedColumn, ...]
     inner: PredicateNode
-    transform: RowTransform
+    stages: RowStages
 
     def projection(
         self, dialect: Dialect, alias: str, *, document_pairs: bool = True
@@ -1261,7 +1198,7 @@ class TpcsUnionPlan:
     position: tuple[EntityIdentity, ...]
     columns: tuple[TpcsUnionColumn, ...]
     inner: PredicateNode
-    transform: RowTransform
+    stages: RowStages
 
     def projection(
         self, dialect: Dialect, alias: str
@@ -1387,51 +1324,55 @@ def _plan_tph_read(
     # no tag predicate at all.
     guarded = narrowed or not isinstance(entity.inheritance, AbstractRoot)
 
-    # `familyVariant` rides the SAME condition as the discriminator projection:
-    # the transform reads the column this read projects, or there is no column to
-    # read and nothing to materialize.
-    transform: RowTransform = (
-        _TagTransform(tag_col, view.root, family_tag_pairs(facet, view.root))
-        if abstract_target
-        else IDENTITY_TRANSFORM
-    )
     columns = select_projection(
         position_slots(layout, position.concrete_subtypes),
         position.superset_attributes,
         position.superset_value_objects if instance_form else (),
         project_discriminator=abstract_target,
     )
-    document, document_transform = _tph_document_projection(
+    document, shared = _tph_document_projection(
         layout,
         facet,
-        view.root,
         position.concrete_subtypes,
         instance_form=instance_form,
         abstract_target=abstract_target,
-        tag_col=tag_col,
     )
     if document is not None:
         columns = (*columns, document)
-    if document_transform is not None:
-        transform = document_transform
-    transform = direct_document_transform(
-        transform,
-        tuple(
-            (
-                concrete,
-                layout,
-                entity_view(facet, concrete).applicable_value_objects if instance_form else (),
-            )
-            for concrete in position.concrete_subtypes
-        ),
-    )
+    # `familyVariant` rides the SAME condition as the discriminator projection:
+    # the tag stage reads the column this read projects, or there is no column to
+    # read and nothing to materialize. A heterogeneous shared document is keyed by
+    # the concretes whose shapes it holds, so the two agree on one pairing.
     return TphPlan(
         table=layout.table.name,
         position=tuple(position.concrete_subtypes),
         columns=columns,
         inner=inner,
         tag=TagPredicate(tag_col, tuple(position.concrete_subtypes)) if guarded else None,
-        transform=transform,
+        stages=RowStages(
+            ByTag(
+                tag_col,
+                view.root,
+                tag_pairs(facet, position.concrete_subtypes)
+                if shared is not None
+                else family_tag_pairs(facet, view.root),
+            )
+            if abstract_target
+            else None,
+            shared,
+            direct_documents(
+                tuple(
+                    (
+                        concrete,
+                        layout,
+                        entity_view(facet, concrete).applicable_value_objects
+                        if instance_form
+                        else (),
+                    )
+                    for concrete in position.concrete_subtypes
+                )
+            ),
+        ),
     )
 
 
@@ -1484,7 +1425,7 @@ def _plan_tpcs_read(
             position.superset_value_objects if instance_form else (),
             project_discriminator=False,
         )
-        document, transform = document_projection(
+        document, fan_out = document_projection(
             layout,
             position.superset_attributes,
             position.superset_value_objects if instance_form else (),
@@ -1492,16 +1433,6 @@ def _plan_tpcs_read(
         )
         if document is not None:
             columns = (*columns, document)
-        transform = direct_document_transform(
-            transform,
-            (
-                (
-                    concretes[0],
-                    layout,
-                    position.superset_value_objects if instance_form else (),
-                ),
-            ),
-        )
         return TpcsSinglePlan(
             table=layout.table.name,
             position=concretes,
@@ -1510,8 +1441,22 @@ def _plan_tpcs_read(
             # A single resolved concrete projects neither a tag column nor a
             # variant literal — the settled asymmetry with table-per-hierarchy,
             # whose abstract target keeps its tag however narrow the position
-            # resolves.
-            transform=transform,
+            # resolves — so it fills no resolution stage.
+            stages=RowStages(
+                None,
+                None
+                if document is None or fan_out is None
+                else SharedDocument(document.column, ((concretes[0], fan_out),)),
+                direct_documents(
+                    (
+                        (
+                            concretes[0],
+                            layout,
+                            position.superset_value_objects if instance_form else (),
+                        ),
+                    )
+                ),
+            ),
         )
 
     if lock == "locking":
@@ -1583,9 +1528,9 @@ def _plan_tpcs_read(
         )
         for branch in layout_position.branches
     )
-    # Every branch projects its own `family_variant` literal, so the transform is
+    # Every branch projects its own `family_variant` literal, so resolution is
     # a plain rename — no tag map, no metamodel lookup.
-    literal_transform = _LiteralTransform(
+    literal = ByLiteral(
         "family_variant",
         tuple((branch.variant, branch.identity) for branch in branches),
         tuple(
@@ -1606,50 +1551,55 @@ def _plan_tpcs_read(
         ),
         instance_form,
     )
-    documents: list[_TpcsVariantDocument] = []
+    fan_outs: list[tuple[EntityIdentity, DocumentFanOut | None]] = []
+    document_column: str | None = None
     for concrete in concretes:
         layout = _table_layout(storage, facet, concrete)
         view = entity_view(facet, concrete)
-        projected, document_transform = document_projection(
+        projected, fan_out = document_projection(
             layout,
             view.applicable_attributes,
             view.applicable_value_objects if instance_form else (),
             observation=instance_form,
         )
-        if projected is not None and isinstance(document_transform, _DocumentTransform):
-            documents.append(
-                _TpcsVariantDocument(
-                    concrete,
-                    family_variant_name(facet, concrete),
-                    projected.column,
-                    document_transform.shape,
-                    document_transform.members,
-                )
+        if projected is not None and fan_out is not None and document_column is None:
+            document_column = projected.column
+        fan_outs.append((concrete, fan_out))
+    padding = (
+        ()
+        if instance_form
+        else tuple(
+            dict.fromkeys(
+                key
+                for _identity, fan_out in fan_outs
+                if fan_out is not None
+                for key, _path in fan_out.members
             )
-    transform: RowTransform = (
-        _TpcsDocumentTransform(
-            literal_transform,
-            tuple(documents),
-            (
-                ()
-                if instance_form
-                else tuple(
-                    dict.fromkeys(key for document in documents for key, _path in document.members)
-                )
-            ),
         )
-        if documents
-        else literal_transform
     )
-    transform = direct_document_transform(
-        transform,
-        tuple(
-            (
-                concrete,
-                _table_layout(storage, facet, concrete),
-                entity_view(facet, concrete).applicable_value_objects if instance_form else (),
+    # A branch storing no document of its own still pads its siblings' document
+    # members, and reads the shared column the union aliased for all of them.
+    nothing = DocumentFanOut(None, (), padding)
+    stages = RowStages(
+        literal,
+        None
+        if document_column is None
+        else SharedDocument(
+            document_column,
+            tuple(
+                (identity, nothing if fan_out is None else replace(fan_out, padding=padding))
+                for identity, fan_out in fan_outs
+            ),
+        ),
+        direct_documents(
+            tuple(
+                (
+                    concrete,
+                    _table_layout(storage, facet, concrete),
+                    entity_view(facet, concrete).applicable_value_objects if instance_form else (),
+                )
+                for concrete in concretes
             )
-            for concrete in concretes
         ),
     )
     return TpcsUnionPlan(
@@ -1657,7 +1607,7 @@ def _plan_tpcs_read(
         position=concretes,
         columns=union_columns,
         inner=inner,
-        transform=transform,
+        stages=stages,
     )
 
 

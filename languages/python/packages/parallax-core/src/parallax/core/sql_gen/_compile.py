@@ -47,14 +47,13 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # above, which is the metamodel module. Each name is aliased down to the
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
-from parallax.core.sql_gen._inheritance import RowTransform as _RowTransform
+from parallax.core.sql_gen._inheritance import RowStages as _RowStages
+from parallax.core.sql_gen._inheritance import SharedDocument as _SharedDocument
 from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
-from parallax.core.sql_gen._inheritance import (
-    direct_document_transform as _direct_document_transform,
-)
+from parallax.core.sql_gen._inheritance import direct_documents as _direct_documents
 from parallax.core.sql_gen._inheritance import document_projection as _document_projection
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import observed_document as _observed_document
@@ -64,10 +63,6 @@ from parallax.core.sql_gen._inheritance import render_projection as _render_proj
 from parallax.core.sql_gen._inheritance import select_projection as _select_projection
 from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
-from parallax.core.sql_gen._inheritance import transform_resolvable as _transform_resolvable
-from parallax.core.sql_gen._inheritance import (
-    transform_structured_column as _transform_structured_column,
-)
 
 # The predicate lane: an entity resolution scope in, one `where`-clause fragment
 # out, with this statement's binds pushed on the shared context in order. Same
@@ -192,22 +187,99 @@ class AttributeReadContract:
     encoded: bool
 
 
-def _fallback_entity(
-    position: tuple[EntityIdentity, ...], target: EntityIdentity
-) -> EntityIdentity:
-    """The concrete a row of this read names when no discriminator named one.
+# One shared empty set answers every row whose concrete had nothing classified,
+# so a read that judges nothing allocates nothing per row to say so.
+_NOTHING_CLASSIFIED: frozenset[str] = frozenset()
 
-    A position resolving to exactly one concrete IS that concrete, however the
-    query spelled its target; any wider position leaves the target itself, which
-    a family read then overrides per row from the tag or literal it carries.
+
+@dataclass(frozen=True, slots=True)
+class RowMaterializer:
+    """One read's driver rows, turned into :class:`MaterializedReadRow` values.
+
+    Holds the stages the projection filled and the three facts about the read
+    itself that materializing a row needs: the concrete a row names when no
+    discriminator named one, the closed set of concretes its rows can name, and
+    the hidden aliases its continuation coordinate was captured under. Each is a
+    compile-time fact of one statement, so a row runs the stages over its own
+    values and allocates that dict and its carrier alone.
     """
-    return position[0] if len(position) == 1 else target
+
+    stages: _RowStages
+    fallback_entity: EntityIdentity
+    resolvable: tuple[EntityIdentity, ...]
+    coordinate_reads: tuple[str, ...]
+
+    def materialize(self, row: Mapping[str, object]) -> MaterializedReadRow:
+        """Resolve one driver row into its concrete identity and provenance."""
+        stages = self.stages
+        values = dict(row)
+        resolved, variant, unknown_tag = self.fallback_entity, None, None
+        if stages.resolve is not None:
+            resolved, variant, unknown_tag = stages.resolve.resolve(values)
+        shared = stages.shared_document
+        findings = () if shared is None else shared.fan_out(values, resolved)
+        classified = stages.classified_by_entity.get(resolved, _NOTHING_CLASSIFIED)
+        if stages.direct_documents is not None:
+            direct, complete = stages.direct_documents.classify(values, resolved)
+            if direct:
+                findings += direct
+            if not complete:
+                classified = frozenset(key for key in classified if key in values)
+        return MaterializedReadRow(
+            values,
+            resolved,
+            variant,
+            None if shared is None else _observed_document(row.get(shared.column)),
+            findings,
+            unknown_tag,
+            classified,
+            self._coordinate(values),
+        )
+
+    def _coordinate(self, values: dict[str, object]) -> ContinuationCoordinate | None:
+        """Lift this read's captured coordinate off ``values``, by name.
+
+        The same move the inheritance discriminator takes: a framework-owned
+        cell is popped so it never reaches a consumer as a field, and it is
+        normalized here — at capture, by the module that chose the expression
+        that produced it — so a provider buffer is not handed onward as a
+        carrier a later page would rebind.
+        """
+        if not self.coordinate_reads:
+            return None
+        return ContinuationCoordinate(
+            tuple(inert_scalar(values.pop(alias)) for alias in self.coordinate_reads)
+        )
+
+
+def _row_materializer(
+    stages: _RowStages,
+    position: tuple[EntityIdentity, ...],
+    target: EntityIdentity,
+    coordinate_reads: tuple[str, ...],
+) -> RowMaterializer:
+    """The materializer for a read of ``position`` under ``target``.
+
+    A position resolving to exactly one concrete IS the concrete a row names,
+    however the query spelled its target; any wider position leaves the target
+    itself, which a resolution stage then overrides per row from the tag or
+    literal the row carries. What a row can name is therefore the position, that
+    fallback, and whatever the stages reach past it — closed rather than minimal,
+    since the fallback belongs to the read whether or not a row applies it.
+    """
+    fallback = position[0] if len(position) == 1 else target
+    return RowMaterializer(
+        stages,
+        fallback,
+        tuple(dict.fromkeys((*position, fallback, *stages.resolvable))),
+        coordinate_reads,
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class CompiledRead:
     """One compiled read: its :class:`LoweredStatement`, the root narrow to materialize
-    under, and the row transform that materializes `familyVariant`.
+    under, and the materializer that turns its driver rows into observed ones.
 
     Self-contained by design: everything a caller needs to turn driver rows into
     observed rows travels WITH the compiled statement. The flat lane publishes a
@@ -237,20 +309,22 @@ class CompiledRead:
     selected; conversion receives that subset so an unrequested occurrence is
     never judged merely because the position could have carried it.
 
-    ``coordinate_reads`` is the hidden result aliases this statement allocated to
-    capture one Continuation Order coordinate per ordering term, in term order —
-    empty for every read that pages through nothing. Publishing them here is what
-    makes this compiler the only interpreter of a carrier: the expressions were
-    chosen here, so what they evaluated to is lifted off the row here too.
-
+    Three facts a caller reads off this read are the materializer's own, so one
+    owner answers them and nothing can disagree. ``coordinate_reads`` is the
+    hidden result aliases this statement allocated to capture one Continuation
+    Order coordinate per ordering term, in term order — empty for every read that
+    pages through nothing; publishing it here is what makes this compiler the
+    only interpreter of a carrier, since the expressions were chosen here.
     ``resolvable`` closes the set of Entities this read's rows can name, so a
     consumer preparing one structure per such Entity prepares them all at once
-    instead of on the first row that reaches one. It reaches past
+    instead of on the first row that reaches one — it reaches past
     ``resolved_position`` for a family read, whose unrecognized tag names the
-    family root rather than any concrete in the position, and it is derived here
-    rather than supplied, because the position, the fallback, and the transform
-    that resolves a row already fix it. Closed rather than minimal: the fallback
-    this read would apply belongs to it whether or not any row reaches it.
+    family root rather than any concrete in the position. ``structured_column``
+    is the Structured Column this read projected, or absence when it projected
+    none, under `Columns` layout and for a `Document`-layout read whose members
+    are all direct; the fan-out drops that column from a row's values, so a
+    caller retaining the stored document (`m-unit-work`'s Predecessor Row) reads
+    it by this name off the driver row rather than out of the materialized one.
     """
 
     statement: LoweredStatement
@@ -260,39 +334,22 @@ class CompiledRead:
     documents: tuple[ValueObjectMetadata, ...]
     projected_documents: tuple[ValueObjectMetadata, ...]
     document_reads: tuple[DocumentReadOrdinals, ...]
-    coordinate_reads: tuple[str, ...]
     _scalar_contracts: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
         repr=False
     )
-    _transform: _RowTransform
-    resolvable: tuple[EntityIdentity, ...] = field(init=False, compare=False, repr=False)
+    _materializer: RowMaterializer
 
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "resolvable",
-            tuple(
-                dict.fromkeys(
-                    (
-                        *self.resolved_position,
-                        _fallback_entity(self.resolved_position, self.target),
-                        *_transform_resolvable(self._transform),
-                    )
-                )
-            ),
-        )
+    @property
+    def coordinate_reads(self) -> tuple[str, ...]:
+        return self._materializer.coordinate_reads
+
+    @property
+    def resolvable(self) -> tuple[EntityIdentity, ...]:
+        return self._materializer.resolvable
 
     @property
     def structured_column(self) -> str | None:
-        """The Structured Column this read projected, or absence when it projected
-        none — under `Columns` layout, and for a `Document`-layout read whose
-        members are all direct.
-
-        The fan-out drops that column from a row's values, so a caller retaining
-        the stored document (`m-unit-work`'s Predecessor Row) reads it by this name
-        off the driver row rather than out of the transformed one.
-        """
-        return _transform_structured_column(self._transform)
+        return self._materializer.stages.structured_column
 
     def transform_row(self, row: Mapping[str, object]) -> dict[str, object]:
         """Materialize one metadata-free row, refusing classified invalid state.
@@ -355,37 +412,7 @@ class CompiledRead:
 
     def materialize_row(self, row: Mapping[str, object]) -> MaterializedReadRow:
         """Resolve one driver row without flattening synthetic field provenance."""
-        column = self.structured_column
-        transformed = self._transform.materialize(row)
-        values = transformed.values
-        resolved = transformed.resolved_entity
-        if resolved is None:
-            resolved = _fallback_entity(self.resolved_position, self.target)
-        return MaterializedReadRow(
-            values,
-            resolved,
-            transformed.family_variant,
-            None if column is None else _observed_document(row.get(column)),
-            transformed.findings,
-            transformed.unknown_family_tag,
-            transformed.classified_members,
-            self._coordinate(values),
-        )
-
-    def _coordinate(self, values: dict[str, object]) -> ContinuationCoordinate | None:
-        """Lift this read's captured coordinate off ``values``, by name.
-
-        The same move the inheritance discriminator takes: a framework-owned
-        cell is popped so it never reaches a consumer as a field, and it is
-        normalized here — at capture, by the module that chose the expression
-        that produced it — so a provider buffer is not handed onward as a
-        carrier a later page would rebind.
-        """
-        if not self.coordinate_reads:
-            return None
-        return ContinuationCoordinate(
-            tuple(inert_scalar(values.pop(alias)) for alias in self.coordinate_reads)
-        )
+        return self._materializer.materialize(row)
 
 
 # --------------------------------------------------------------------------- #
@@ -403,7 +430,7 @@ def _projection(
     str,
     list[object],
     tuple[DocumentReadOrdinals, ...],
-    _RowTransform,
+    _RowStages,
 ]:
     """Render the resolved Value Object projection in canonical layout order.
 
@@ -418,14 +445,20 @@ def _projection(
         projected_vos,
         project_discriminator=False,
     )
-    document, transform = _document_projection(
+    document, fan_out = _document_projection(
         layout, entity.declared_attributes, projected_vos, observation=observation
     )
     if document is not None:
         columns = (*columns, document)
-    transform = _direct_document_transform(transform, ((entity.identity, layout, projected_vos),))
+    stages = _RowStages(
+        None,
+        None
+        if document is None or fan_out is None
+        else _SharedDocument(document.column, ((entity.identity, fan_out),)),
+        _direct_documents(((entity.identity, layout, projected_vos),)),
+    )
     sql, binds, document_reads = _render_projection(dialect, alias, columns)
-    return sql, list(binds), document_reads, transform
+    return sql, list(binds), document_reads, stages
 
 
 def _scalar_read_contracts(
@@ -493,7 +526,7 @@ def compile_read(
     narrow_to = query.narrow_to
     captured = _coordinate_reads(terms) if paging is not None else ()
     if target.inheritance is not None:
-        statement, plan_position, document_reads, transform = _compile_inheritance_read(
+        statement, plan_position, document_reads, stages = _compile_inheritance_read(
             target,
             predicate,
             narrow_to,
@@ -516,9 +549,8 @@ def compile_read(
             position_documents,
             position_documents if result_form == "instance" else (),
             document_reads,
-            captured,
             _scalar_read_contracts(model, facet, storage, dialect, plan_position),
-            transform,
+            _row_materializer(stages, plan_position, target.identity, captured),
         )
     # One context per statement (the mutable accumulator), one resolution scope
     # over it (the immutable "what does a leaf resolve against" half).
@@ -526,7 +558,7 @@ def compile_read(
     layout = _table_layout(storage, facet, target.identity)
     scope = _EntityScope(ctx, target, layout)
 
-    proj_sql, proj_binds, document_reads, transform = _projection(
+    proj_sql, proj_binds, document_reads, stages = _projection(
         target,
         layout,
         dialect,
@@ -547,7 +579,8 @@ def compile_read(
 
     statement = _normalize(ctx.finish(" ".join(parts)))
     # A non-family read projects no tag and no variant literal, so the only
-    # transform it can carry is the document fan-out its own projection decided.
+    # stages it can fill are the document fan-out its own projection decided and
+    # the occurrences that hold their own Column.
     position = (target.identity,)
     position_documents = _position_documents(facet, storage, position)
     return CompiledRead(
@@ -558,9 +591,8 @@ def compile_read(
         position_documents,
         query.projection.value_objects,
         document_reads,
-        captured,
         _scalar_read_contracts(model, facet, storage, dialect, position),
-        transform,
+        _row_materializer(stages, position, target.identity, captured),
     )
 
 
@@ -722,13 +754,13 @@ def _compile_inheritance_read(
     LoweredStatement,
     tuple[EntityIdentity, ...],
     tuple[DocumentReadOrdinals, ...],
-    _RowTransform,
+    _RowStages,
 ]:
     """Assemble an inheritance-family read from its plan.
 
-    Returns the statement AND its row transform together: whether a read carries
-    `familyVariant` is decided by the very same resolved position that decides
-    what it projects, so the two travel together on one plan.
+    Returns the statement AND its row materialization stages together: whether a
+    read carries `familyVariant` is decided by the very same resolved position
+    that decides what it projects, so the two travel together on one plan.
     """
     plan = _plan_inheritance_read(
         entity,
@@ -742,7 +774,7 @@ def _compile_inheritance_read(
     )
     match plan:
         case _TphPlan():
-            statement, document_reads, transform = _compile_tph_read(
+            statement, document_reads, stages = _compile_tph_read(
                 plan,
                 predicate,
                 entity,
@@ -755,9 +787,9 @@ def _compile_inheritance_read(
                 dialect,
                 lock,
             )
-            return statement, plan.position, document_reads, transform
+            return statement, plan.position, document_reads, stages
         case _TpcsSinglePlan():
-            statement, document_reads, transform = _compile_tpcs_single(
+            statement, document_reads, stages = _compile_tpcs_single(
                 plan,
                 predicate,
                 entity,
@@ -770,12 +802,12 @@ def _compile_inheritance_read(
                 dialect,
                 lock,
             )
-            return statement, plan.position, document_reads, transform
+            return statement, plan.position, document_reads, stages
         case _TpcsUnionPlan():
-            statement, document_reads, transform = _compile_tpcs_read(
+            statement, document_reads, stages = _compile_tpcs_read(
                 plan, predicate, entity, terms, paging, limit, model, facet, storage, dialect
             )
-            return statement, plan.position, document_reads, transform
+            return statement, plan.position, document_reads, stages
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
 
@@ -792,7 +824,7 @@ def _compile_tph_read(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowTransform]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
     """Assemble a table-per-hierarchy read: one shared correlated `EXISTS`-free
     single-table SELECT (m-sql "Inheritance — table-per-hierarchy lowering").
 
@@ -844,10 +876,10 @@ def _compile_tph_read(
                 dialect,
                 lock,
             ),
-            plan.transform,
+            plan.stages,
         )
     statement = _normalize(ctx.finish(" ".join(parts)))
-    return statement, document_reads, plan.transform
+    return statement, document_reads, plan.stages
 
 
 def _compile_tph_partitioned(
@@ -987,7 +1019,7 @@ def _compile_tpcs_read(
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowTransform]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
     """Assemble a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
     table-per-concrete-subtype lowering").
 
@@ -1039,7 +1071,7 @@ def _compile_tpcs_read(
         for branch in branch_statements:
             statement_ctx.append_fragment(branch)
         statement = _normalize(statement_ctx.finish(union))
-        return statement, document_reads or (), plan.transform
+        return statement, document_reads or (), plan.stages
 
     # The outer select brackets the union in the emitted text — its capture
     # cells precede every branch and its tail follows them all — so its binds
@@ -1069,7 +1101,7 @@ def _compile_tpcs_read(
         statement_ctx.append_fragment(branch)
     statement_ctx.append_fragment(tail_ctx.finish(""))
     statement = _normalize(statement_ctx.finish(" ".join(outer_parts)))
-    return statement, outer_document_reads, plan.transform
+    return statement, outer_document_reads, plan.stages
 
 
 def _tpcs_subject(plan: _TpcsUnionPlan, scope: _EntityScope) -> _TermSubject:
@@ -1137,7 +1169,7 @@ def _compile_tpcs_single(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowTransform]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
     no union, no `familyVariant` — attribute resolution still widens across the
@@ -1165,7 +1197,7 @@ def _compile_tpcs_single(
     _append_where(parts, _beside_a_seek(inner, where_sql, seek_sql), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))
-    return statement, document_reads, plan.transform
+    return statement, document_reads, plan.stages
 
 
 def _planned_inner(predicate: ValidatedPredicate, planned: object) -> ValidatedPredicate:
