@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-95**.
+Entry numbering is continuous and never reused. The next new number is **D-96**.
 
 ## Entries
 
@@ -913,6 +913,66 @@ waived: the recipe is a `report`, gates nothing, and belongs to no aggregate.
 **When.** One run of `just python-report-lifecycle-overhead` on a quiet machine,
 re-recording the conditions table and the five configurations with it. Closing
 this means replacing the withdrawal section rather than adding to it.
+
+### D-95 — `m-edit` and `m-navigate` are implemented on the Typed surface alone, so a class-free consumer derives an edited copy of its own
+
+*Medium — a normative module reaches one of two declared peer interfaces, and the
+conformance engine carries a second model of it.* Relates to
+`core/spec/m-edit.md`, `core/spec/m-navigate.md`,
+`docs/adr/0057-typed-and-wire-are-peer-interfaces-over-one-transaction.md`,
+`parallax.core.entity._edit`, `parallax.snapshot._inspection`,
+`parallax.conformance.engine`,
+[COR-93](https://linear.app/flimflam/issue/COR-93/make-python-conformance-a-thin-adapter-over-the-production-snapshot).
+Owner: this target's Wire public interface; a second language target composing a
+class-free adapter inherits the same gap.
+
+**What.** `m-edit` specifies in-memory edited-value derivation, depends only on
+`m-metamodel`, speaks of "the value's class OR EQUIVALENT NATIVE DECLARATION",
+and closes on language-neutral witness roles — nothing in it is
+representation-bound. ADR 0057 declares Typed and Wire peer interfaces over one
+transaction. Python implements the derivation only as `Entity.edit(**changes)`,
+whose judgement resolves names through `WireNames` derived from a Python class,
+and implements path traversal only as `_inspection.view`, which requires
+`snapshot_state_of(node)` and a class-derived `RelationshipPath` — "never a bare
+relationship name". The Wire surface has neither, so a consumer holding wire
+nodes and a metamodel can reach neither module. The conformance engine is that
+consumer: it runs class-free against every corpus model, and `class_models.py`
+hand-authors class families for 17 of 168. It therefore derives its own edited
+copy (`_edited_copy`, `_judged_assignments`) and walks its own loaded arms
+(`_navigate_step_view`) — about 90 lines restating rules production states
+elsewhere, with unit tests mirroring `tests/unit/test_edit.py` case for case
+(unknown field, primary key, relationship field, change-free edit, preserved
+views, chaining). What is duplicated is the member resolution and the copy, not
+the verdict: the engine already reaches
+`inheritance.validate_write_assignment`, the one judgement `.set(...)` and
+`Entity.edit(**changes)` also reach. This residue is what COR-93 left rather
+than what it missed: that claim moved read traversal, observation resolution,
+temporal evolution, write orchestration and retry accounting to production, and
+stated the test this entry answers to — where removing a conformance helper
+reappears as the same semantic complexity in adapter code, the production
+interface is still too shallow.
+
+**Why it is deferred rather than fixed.** Giving the Wire surface an in-memory
+derivation is a public interface decision governed by `spec/python.md`, and
+ADR 0057 has to be read against it first rather than around it. Its account of
+Wire — deeply frozen results, the changes mapping as "the sole assignment
+input" — governs WRITE verbs buffering DML, where `m-edit` derives a value and
+emits none; and `m-edit`'s own requirement that an edit "MUST return a distinct
+derived value" and "MUST NOT mutate the source" reads as consistent with a
+frozen Wire node rather than in tension with it. That reading is a decision
+record and is authored as one. The duplication it removes is ~90 lines against
+a 7,245-line module, so it earns nothing by preempting that module's structural
+work.
+
+**When.** As its own claim, after the conformance engine's snapshot sub-lane
+(`_compile_snapshot_scenario` / `_run_snapshot_scenario`) is a module of its
+own, so the deletion lands in a named module rather than mid-lane. Two nearby
+gaps are deliberately NOT in its scope: a Wire pin accessor, which ADR 0057
+refuses in terms ("Wire Entity mappings expose no temporal milestone
+coordinate"), leaving `_root_pin`/`_edge_rank` to repoint on
+`temporal_read.milestone_edge_from_members` instead; and `CompiledRead`'s
+projection accessor, whose own docstring already says no consumer should
+re-project a family superset, which is an unrelated obligation.
 
 ## Forwarding pointers
 
