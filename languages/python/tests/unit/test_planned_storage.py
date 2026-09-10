@@ -20,7 +20,7 @@ import json
 from collections.abc import Mapping, Sequence, Sized
 from collections.abc import Set as AbstractSet
 from decimal import Decimal
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Any, Protocol, cast, runtime_checkable
 
 import pytest
@@ -615,31 +615,47 @@ def _is_producer(value: object) -> bool:
 
 
 def _reachable_from(segment: object) -> list[object]:
-    """Every value one Step Segment's step access can reach: its own dataclass
-    fields, everything nested inside them through further frozen values and
-    through tuples, mappings, and other containers, and — for a callable —
-    every channel a Python callable can carry a captured value on.
+    """Every value one Step Segment's step access can reach: its own fields,
+    everything nested inside them through further values' own state and through
+    tuples, mappings, and other containers, and — for a callable — every channel
+    a Python callable can carry a captured value on.
 
     A segment holds its settled facts as one nested value rather than as copied
     fields, and a producer smuggled into a plan sits one container deep as
     readily as one field deep — inside a tuple of resolved successors, a column
     of retained cells, an assignment mapping's values. Descending through both
     is what keeps the rule a claim about everything a step access can reach.
-    Each object is visited once, by identity, so a shared subgraph is walked
-    once and a cyclic one terminates.
+    Every value's own attribute state is walked rather than only a dataclass's
+    declared fields, because a plain object is as capable of holding a producer
+    as a frozen one, in ``__dict__`` or in a slot. Each object is visited once,
+    by identity, so a shared subgraph is walked once and a cyclic one
+    terminates.
 
     A segment that defers to a callable over live planning machinery (rather
     than holding already-settled data) hides in whichever channel that callable
     captured it on, and they are not interchangeable: ``lambda: planner``
     captures a closure cell, ``planner.finalize`` binds a ``__self__``,
     ``lambda p=planner: p`` and ``lambda *, p=planner: p`` capture positional
-    and keyword defaults that neither of the first two carry, and
-    ``partial(f, planner)`` holds its own function and arguments. All four are
-    walked, because a claim about a captured producer that only one of them
-    would catch is not a claim about the segment.
+    and keyword defaults that neither of the first two carry,
+    ``partial(f, planner)`` holds its own function and arguments, and a callable
+    OBJECT carries none of those — it holds the producer as instance state, or
+    its class's ``__call__`` closes over one. All of them are walked, because a
+    claim about a captured producer that only one of them would catch is not a
+    claim about the segment.
     """
     reached: list[object] = []
     seen: set[int] = set()
+
+    def walk_state(value: Any) -> None:
+        instance_dict = getattr(value, "__dict__", None)
+        if isinstance(instance_dict, Mapping):
+            for item in cast("Mapping[str, Any]", instance_dict).values():
+                walk(item)
+        for owner in type(value).__mro__:
+            declared = cast("Any", getattr(owner, "__slots__", ()))
+            names = (declared,) if isinstance(declared, str) else cast("Sequence[str]", declared)
+            for name in names:
+                walk(getattr(value, name, None))
 
     def walk_captures(value: Any) -> None:
         self_obj = getattr(value, "__self__", None)
@@ -655,6 +671,16 @@ def _reachable_from(segment: object) -> list[object]:
         )
         for default in keyword_defaults.values():
             walk(default)
+        implementation = next(
+            (
+                owner.__dict__["__call__"]
+                for owner in type(value).__mro__
+                if "__call__" in owner.__dict__
+            ),
+            None,
+        )
+        if implementation is not None:
+            walk(implementation)
         if isinstance(value, functools.partial):
             partial = cast("functools.partial[Any]", value)
             walk(partial.func)
@@ -668,11 +694,9 @@ def _reachable_from(segment: object) -> list[object]:
             return
         seen.add(id(value))
         reached.append(value)
-        if isinstance(value, str | bytes | bytearray | type):
+        if isinstance(value, str | bytes | bytearray | type | ModuleType):
             return
-        if dataclasses.is_dataclass(value):
-            for field in dataclasses.fields(value):
-                walk(getattr(value, field.name, None))
+        walk_state(value)
         if isinstance(value, Mapping):
             for key_value, item in cast("Mapping[object, object]", value).items():
                 walk(key_value)
@@ -693,6 +717,32 @@ def _binds_anything(*values: object, **held: object) -> tuple[object, ...]:
     return (*values, *held.values())
 
 
+class _HoldingCallable:
+    def __init__(self, held: object) -> None:
+        self.held = held
+
+    def __call__(self) -> object:
+        return self.held
+
+
+class _SlottedCallable:
+    __slots__ = ("held",)
+
+    def __init__(self, held: object) -> None:
+        self.held = held
+
+    def __call__(self) -> object:
+        return self.held
+
+
+def _callable_closing_over(held: object) -> object:
+    class Closing:
+        def __call__(self) -> object:
+            return held
+
+    return Closing()
+
+
 @dataclasses.dataclass(frozen=True)
 class _CapturingSegment:
     """A stand-in segment whose fields capture one value on every channel a
@@ -704,6 +754,9 @@ class _CapturingSegment:
     keyword_default: object
     partial_argument: object
     partial_keyword: object
+    instance_state: object
+    slot_state: object
+    call_closure: object
 
 
 def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> None:
@@ -712,8 +765,18 @@ def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> 
     # capture channel it skipped would leave a segment deferring to live
     # planning machinery passing them, so each channel is graded here against a
     # value only that channel carries.
-    captured = [object() for _ in range(6)]
-    closure_value, bound_value, default, keyword_default, argument, keyword = captured
+    captured = [object() for _ in range(9)]
+    (
+        closure_value,
+        bound_value,
+        default,
+        keyword_default,
+        argument,
+        keyword,
+        attribute_value,
+        slot_value,
+        call_closure_value,
+    ) = captured
     segment = _CapturingSegment(
         closure=lambda: closure_value,
         bound=[bound_value].count,
@@ -721,6 +784,9 @@ def test_the_segment_walk_reaches_a_value_captured_on_any_callable_channel() -> 
         keyword_default=lambda *, held=keyword_default: held,
         partial_argument=functools.partial(_binds_anything, argument),
         partial_keyword=functools.partial(_binds_anything, held=keyword),
+        instance_state=_HoldingCallable(attribute_value),
+        slot_state=_SlottedCallable(slot_value),
+        call_closure=_callable_closing_over(call_closure_value),
     )
 
     reached = _reachable_from(segment)
