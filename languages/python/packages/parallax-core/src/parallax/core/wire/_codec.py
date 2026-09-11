@@ -106,33 +106,41 @@ def encode_wire(neutral_type: NeutralType, value: ManagedValue) -> WireValue:
             f"{_diagnostic(value)} is not a member of the declared value space "
             f"{_diagnostic(neutral_type)}"
         )
+    return _canonical_spelling(neutral_type, normalized)
+
+
+def _canonical_spelling(neutral_type: NeutralType, managed: object) -> WireValue:
+    """The canonical spelling of a value already known to be a managed member."""
     match neutral_type:
         case Boolean():
-            return cast("bool", normalized)
+            return cast("bool", managed)
         case Int32() | Int64():
-            return cast("int", normalized)
+            return cast("int", managed)
         case String():
-            return cast("str", normalized)
-        case Float32() | Float64():
-            float_value = cast("float", normalized)
+            return cast("str", managed)
+        case Float32():
+            float_value = cast("float", managed)
             float_value = 0.0 if float_value == 0.0 else float_value
             return _shortest_float(float_value, neutral_type)
+        case Float64():
+            float_value = cast("float", managed)
+            return 0.0 if float_value == 0.0 else float_value
         case Decimal(_precision, scale):
-            return _exact_decimal(cast("decimal.Decimal", normalized), scale)
+            return _exact_decimal(cast("decimal.Decimal", managed), scale)
         case Bytes():
-            return bytes.hex(cast("bytes", normalized))
+            return bytes.hex(cast("bytes", managed))
         case Date():
-            return dt.date.isoformat(cast("dt.date", normalized))
+            return dt.date.isoformat(cast("dt.date", managed))
         case Time():
-            return dt.time.isoformat(cast("dt.time", normalized))
+            return dt.time.isoformat(cast("dt.time", managed))
         case Timestamp():
-            instant = dt.datetime.astimezone(cast("dt.datetime", normalized), dt.UTC)
+            instant = dt.datetime.astimezone(cast("dt.datetime", managed), dt.UTC)
             return dt.datetime.strftime(instant, "%Y-%m-%dT%H:%M:%S.%f") + "Z"
         case Uuid():
-            return uuid.UUID.__str__(cast("uuid.UUID", normalized))
+            return uuid.UUID.__str__(cast("uuid.UUID", managed))
         case Json():
             try:
-                return _normalize_json(normalized, top_level=True)
+                return _normalize_json(managed, top_level=True)
             except _JsonFailure as exc:
                 raise WireEncodingError(str(exc)) from exc
         case _ as unreachable:
@@ -346,19 +354,35 @@ def _is_canonical_output(
     written: object,
     decoded: _DecodedWireLiteral,
 ) -> bool:
-    canonical = encode_wire(neutral_type, decoded.managed)
+    """Whether ``written`` is the canonical spelling of the value it decoded to.
+
+    Only the numeric and temporal spellings have to be derived to answer, and
+    the reason is what each decoder above already established. Boolean, String
+    and Json have no noncanonical spelling at all: every literal their grammar
+    admits is the one this module writes for the value it names. Decimal,
+    Bytes, Date and Uuid have one, and each decoder refuses it against the
+    source text itself — the exact scaled spelling, the lowercase-hex grammar,
+    the fixed-width date grammar, the lowercase hyphenated UUID grammar — so a
+    literal that reaches here has already been held against its canonical
+    spelling. What is left is the numbers, whose spelling is not the value they
+    name, and the temporal fraction widths, which the grammars admit written at
+    three digits, at six, and not at all.
+    """
     match neutral_type:
         case Int32() | Int64():
+            canonical = _canonical_spelling(neutral_type, decoded.managed)
             return _spelled_number(written) == _spelled_number(canonical)
         case Float32() | Float64():
             if decoded.source_negative_zero:
                 return False
+            canonical = _canonical_spelling(neutral_type, decoded.managed)
             return _spelled_number(written) == _spelled_number(canonical)
-        case Boolean():
-            return canonical is written
-        case Decimal() | String() | Bytes() | Date() | Time() | Timestamp() | Uuid():
+        case Time() | Timestamp():
+            canonical = _canonical_spelling(neutral_type, decoded.managed)
             return isinstance(written, str) and canonical == str.__str__(written)
-        case Json():
+        case Boolean() | String() | Json():
+            return True
+        case Decimal() | Bytes() | Date() | Uuid():
             return True
         case _ as unreachable:
             assert_never(unreachable)
@@ -392,7 +416,14 @@ def _exact_decimal(value: decimal.Decimal, scale: int) -> str:
     return f"-{body}" if sign else body
 
 
-def _shortest_float(value: float, neutral_type: Float32 | Float64) -> float:
+def _shortest_float(value: float, neutral_type: Float32) -> float:
+    """The fewest-digit number that names ``value`` at binary32 width.
+
+    Only a ``float32`` has one to search for. A number is accepted here when it
+    names ``value`` at the declared width, and at binary64 a number that names
+    ``value`` IS ``value`` — so the search would hand back what it was given,
+    and a ``float64``'s canonical Wire Value is the value itself.
+    """
     for precision in range(1, _MAX_FLOAT_DIGITS + 1):
         spelling = f"{value:.{precision}g}"
         if nearest_float_at_width(decimal.Decimal(spelling), neutral_type) == value:
