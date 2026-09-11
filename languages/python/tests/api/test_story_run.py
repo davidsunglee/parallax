@@ -35,6 +35,7 @@ import pytest
 
 from parallax.conformance import case_format, engine
 from parallax.conformance._lifecycle_observation import LifecycleObservation
+from parallax.conformance._mechanism.given_state import apply_given_apply
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_stories import (
@@ -104,9 +105,7 @@ def _reset_for(case_id: str, profile_run: Any) -> DomainModel:
     """
     case = _CASES[case_id]
     profile_run.reset(engine.load_case_metamodel(case), case_fixtures(case))
-    engine._apply_given_apply(  # pyright: ignore[reportPrivateUsage] - case-driven API setup
-        case, profile_run.port, TemporalShadow()
-    )
+    apply_given_apply(case, profile_run.port, TemporalShadow())
     return MODELS[Path(case.model).stem]
 
 

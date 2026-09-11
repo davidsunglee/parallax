@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import json
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -27,7 +26,6 @@ from parallax.conformance import (
     _case_ingress,
     case_format,
     models,
-    provision,
     temporal_state,
 )
 from parallax.conformance._actual_wire import ActualWireProjection
@@ -49,6 +47,11 @@ from parallax.conformance._mechanism.envelope import (
     Emission,
     EngineError,
     ScenarioRun,
+)
+from parallax.conformance._mechanism.given_state import (
+    apply_given_apply,
+    apply_given_corrupt,
+    seed_shadow_from_fixtures,
 )
 from parallax.conformance._mechanism.model_facts import (
     case_edition,
@@ -98,7 +101,6 @@ from parallax.core.db_port import (
     DatabaseAdapter,
     DatabaseConnection,
     IsolationLevel,
-    JsonDocument,
     Row,
 )
 from parallax.core.deep_fetch import ValidatedEntityQuery
@@ -131,7 +133,6 @@ from parallax.core.predicate import (
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.storage_layout import DirectColumn, DocumentPath
 from parallax.core.temporal_read import Pin, TemporalReadError, query_pin, scans_an_axis
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
@@ -247,221 +248,6 @@ def _read_query(case: case_format.Case, model: AcceptedMetamodel) -> ObjectQuery
     if "objectQuery" not in body:
         raise EngineError(f"{case.path.name}: read case has no `objectQuery`")
     return _case_ingress.normalize_case_query(deserialize_query(body["objectQuery"]), model)
-
-
-# --------------------------------------------------------------------------- #
-# given.corrupt: the stored state a read case observes instead of the           #
-# conforming one its fixtures loaded (m-case-format "Corrupting stored state"). #
-# --------------------------------------------------------------------------- #
-def _apply_given_corrupt(
-    case: case_format.Case, model: AcceptedMetamodel, port: DatabaseConnection
-) -> None:
-    """Write a read case's ``given.corrupt`` entries over its loaded fixtures.
-
-    Applied where every read lane already stands — after provisioning, before the
-    action — so a case states the stored value once and every read form observes
-    the same storage. Each entry addresses a Structured Column and a path inside
-    it, and the value is stored exactly as authored: it is what the model
-    contradicts, so passing it back through the codec that spells a conforming
-    one would refuse it.
-
-    Every entry's Entity is judged for temporality before any entry applies, as
-    the reference harness judges it before any row lands: that refusal is about
-    the CASE, so a legal entry standing before a temporal one must not have
-    written a row by the time the list is refused. A refusal only one entry's own
-    address resolution reaches leaves earlier entries' writes standing, which the
-    case's ungradeability makes harmless.
-    """
-    given = case.document.get("given")
-    if not isinstance(given, Mapping):
-        return
-    entries = cast("Mapping[str, object]", given).get("corrupt")
-    if not isinstance(entries, list):
-        return
-    corruptions = cast("list[Mapping[str, object]]", entries)
-    _refuse_temporal_corruptions(case, model, corruptions)
-    for entry in corruptions:
-        _corrupt_stored_state(case, model, port, entry)
-
-
-def _refuse_temporal_corruptions(
-    case: case_format.Case, model: AcceptedMetamodel, entries: Sequence[Mapping[str, object]]
-) -> None:
-    """Refuse every entry addressing a temporal Entity, before any entry applies.
-
-    A temporal Entity's rows are keyed by the model key plus each axis's end
-    instant, so one ``key`` value there addresses a milestone chain and names no
-    row in it (`m-case-format` *Corrupting stored state*).
-    """
-    for entry in entries:
-        entity = case_entity(model, cast("str", entry["entity"]))
-        if _is_temporal(model, entity):
-            raise EngineError(f"{case.path.name}: {_temporal_corruption_refusal(entity)}")
-
-
-def _corrupt_stored_state(
-    case: case_format.Case,
-    model: AcceptedMetamodel,
-    port: DatabaseConnection,
-    entry: Mapping[str, object],
-) -> None:
-    """Realize one corruption as a whole-document replacement of one row's cell.
-
-    Read, mutate, write: a document holds the value at an authored path, and
-    replacing the whole document reaches it without a per-dialect document
-    mutation expression — the corrupt value is the subject of the case's own
-    assertion, so it must mean the same thing on every provider.
-    """
-    entity = case_entity(model, cast("str", entry["entity"]))
-    view = storage_layout.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - a corrupted Entity owns rows
-        raise EngineError(f"{case.path.name}: {entity.identity.canonical} owns no table")
-    member = tuple(cast("list[object]", entry["member"]))
-    column, path = _corruption_target(case, model, entity, member)
-    key_column, key = _corruption_key(case, model, entity, entry["key"])
-    dialect = port.dialect
-    table = dialect.quote(view.layout.table.name)
-    where = f"where {dialect.quote(key_column)} = ?"
-    rows = port.execute(
-        dialect.to_driver_sql(f"select {dialect.quote(column)} from {table} {where}"), [key]
-    )
-    if len(rows) != 1:
-        raise EngineError(
-            f"{case.path.name}: given.corrupt addresses {entity.identity.canonical} "
-            f"{entry['key']!r}, which the loaded fixtures answer with {len(rows)} row(s) "
-            "rather than one"
-        )
-    document = _replaced_at(_stored_value(rows[0][column]), path, entry["value"])
-    port.execute_write(
-        dialect.to_driver_sql(f"update {table} set {dialect.quote(column)} = ? {where}"),
-        [JsonDocument(document), key],
-    )
-
-
-def _is_temporal(model: AcceptedMetamodel, entity: EntityMetadata) -> bool:
-    """Whether ``entity``'s family declares an As-Of Axis.
-
-    Temporality is family-wide and root-owned, so the question is asked of the
-    family root's own declaration; a descendant declares none of its own.
-    """
-    position = inheritance.view(model).entity(entity.identity)
-    root = entity if position is None else model.entity(position.root)
-    return root is not None and bool(root.declared_as_of_axes)
-
-
-def _temporal_corruption_refusal(entity: EntityMetadata) -> str:
-    """Why a corruption addressing ``entity`` is refused.
-
-    Spelled exactly as the corpus's own static validation and the reference
-    harness spell it, so a case reaching for a temporal Entity is told the same
-    thing wherever it is refused: its rows are keyed by the model key plus each
-    axis's end instant, so one ``key`` value addresses a milestone chain and
-    names no row in it (`m-case-format` *Corrupting stored state*).
-    """
-    return (
-        f"given.corrupt addresses {entity.identity.canonical}, a temporal Entity: its "
-        "model primary key addresses a milestone chain rather than one row "
-        "(m-case-format *Corrupting stored state*)"
-    )
-
-
-def _stored_value(cell: object) -> object:
-    """One Structured Column as the mutable JSON value its provider returned.
-
-    The root is whatever the column carries rather than an object in every case:
-    a shared document and a top-level `One` occurrence are objects, and a
-    top-level `Many` occurrence is an array.
-    """
-    return json.loads(cell) if isinstance(cell, str) else cell
-
-
-def _replaced_at(document: object, path: tuple[object, ...], value: object) -> object:
-    """``document`` with ``value`` stored at ``path``, walking its own containers.
-
-    A path segment is a member name or an array position, and the container it
-    indexes is whatever the stored document holds there, so the walk is untyped
-    for the same reason the stored state is: it is not the model's. The empty
-    path addresses the Structured Column's whole stored value, which is what an
-    address naming a top-level occurrence itself resolves to.
-    """
-    if not path:
-        return value
-    current: Any = document
-    for segment in path[:-1]:
-        current = current[segment]
-    current[path[-1]] = value
-    return document
-
-
-def _corruption_target(
-    case: case_format.Case,
-    model: AcceptedMetamodel,
-    entity: EntityMetadata,
-    member: tuple[object, ...],
-) -> tuple[str, tuple[object, ...]]:
-    """The Structured Column and in-document path one addressed member resolves to.
-
-    The addressed top-level member answers it through the DECLARING member the
-    name resolves to, because a placement stays keyed by declaration identity
-    across every Entity that inherits it (`m-storage-layout`): a document-resident
-    member contributes its own Document Path, a top-level Value Object occurrence
-    under `Columns` contributes its own Structured Column, and the nested names
-    and array positions the address carries follow — an address stopping at the
-    occurrence itself leaving the whole stored value as the target. A member the
-    layout keeps in a Column of its own is refused — only a Structured Column can
-    hold a value its own declaration contradicts.
-    """
-    view = storage_layout.view(model).entity(entity.identity)
-    family = inheritance.view(model).entity(entity.identity)
-    name = member[0]
-    declared = (
-        None
-        if not isinstance(name, str) or family is None
-        else family.applicable_attribute(name) or family.applicable_value_object(name)
-    )
-    placement = (
-        None if declared is None or view is None else view.layout.placement(declared.identity)
-    )
-    if isinstance(placement, DocumentPath):
-        return placement.slot.column.name, (*placement.path, *member[1:])
-    if isinstance(placement, DirectColumn) and isinstance(
-        placement.slot.contributor, ValueObjectIdentity
-    ):
-        return placement.slot.column.name, member[1:]
-    raise EngineError(
-        f"{case.path.name}: given.corrupt addresses {entity.identity.canonical}."
-        f"{'.'.join(str(segment) for segment in member)}, which this model does not place "
-        "inside a Structured Column"
-    )
-
-
-def _corruption_key(
-    case: case_format.Case, model: AcceptedMetamodel, entity: EntityMetadata, key: object
-) -> tuple[str, object]:
-    """The primary-key Column one corruption addresses its row by, and the managed
-    value it binds.
-
-    `m-metamodel` admits no composite primary key, and the addressed Entity is
-    non-temporal by then, so this one Column IS the row's physical key.
-    """
-    view = storage_layout.view(model).entity(entity.identity)
-    family = inheritance.view(model).entity(entity.identity)
-    attributes = () if family is None else family.applicable_attributes
-    declared = next(
-        (attribute for attribute in attributes if isinstance(attribute.primary_key, PrimaryKey)),
-        None,
-    )
-    placement = (
-        None if declared is None or view is None else view.layout.placement(declared.identity)
-    )
-    # Defensive: every accepted Entity declares one primary key and every Storage
-    # Layout keeps it in a Column of its own.
-    if declared is None or not isinstance(placement, DirectColumn):  # pragma: no cover
-        raise EngineError(
-            f"{case.path.name}: {entity.identity.canonical} declares no primary key a "
-            "corruption can address a row by"
-        )
-    return placement.slot.column.name, decode_wire(declared.type, cast("WireValue", key))
 
 
 def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
@@ -596,7 +382,7 @@ def run_read_case(
     model = load_case_metamodel(case)
     query = _read_query(case, model)
     observed = lifecycle_run(lifecycle).observation()
-    _apply_given_corrupt(case, model, port)
+    apply_given_corrupt(case, model, port)
     with case_database(case, port, observed.provider) as db:
         concurrency = _read_case_concurrency(case)
         try:
@@ -659,7 +445,7 @@ def _wire_read(
     retains nothing about the execution that produced it.
     """
     observed = lifecycle.observation()
-    _apply_given_corrupt(case, model, port)
+    apply_given_corrupt(case, model, port)
     with case_database(case, port, observed.provider) as db:
         try:
             return underlying(lambda: db.wire.find(query)), observed
@@ -807,7 +593,7 @@ def _wire_delivery(
     delivery published, and that needs the whole delivery in hand.
     """
     observed = lifecycle_run(lifecycle).observation()
-    _apply_given_corrupt(case, model, port)
+    apply_given_corrupt(case, model, port)
     with case_database(case, port, observed.provider) as db:
         roots: list[object] = []
 
@@ -2398,8 +2184,10 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     """Lower every scenario step to its pointer + DML — pure (no database).
 
     One :class:`TemporalShadow` spans the whole scenario, seeded from the case's
-    own fixture documents (:func:`_seed_shadow_from_fixtures`) and then advanced
-    by each step's plan: a write step's temporal close/chain observes the
+    own fixture documents
+    (:func:`~parallax.conformance._mechanism.given_state.seed_shadow_from_fixtures`)
+    and then advanced by each step's plan: a write step's temporal close/chain
+    observes the
     milestone persisted history declares or one an earlier step opened, and no
     query answers either — the seed reads the fixtures the run lane's database is
     provisioned FROM, which is what makes the two lanes the same computation
@@ -2432,7 +2220,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     context = _CaseContext(
         serving, model, concurrency, TemporalShadow(), case_format.uow_isolation(case)
     )
-    _seed_shadow_from_fixtures(case, model, context.shadow)
+    seed_shadow_from_fixtures(case, model, context.shadow)
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
     try:
@@ -2468,8 +2256,9 @@ def _write_sequence_lowered(
     """Lower each writeSequence entry independently to ``(pointer, statements)`` —
     pure. One :class:`TemporalShadow` spans the whole sequence, seeded from the
     case's own fixture documents where it opted in
-    (:func:`_seed_shadow_from_fixtures`): an entry's temporal close/chain
-    observes the milestone that opt-in declares or one an earlier entry opened,
+    (:func:`~parallax.conformance._mechanism.given_state.seed_shadow_from_fixtures`):
+    an entry's temporal close/chain observes the milestone that opt-in declares
+    or one an earlier entry opened,
     and no query answers either. A writeSequence carries no find steps at all
     (`m-case-format`), so its own group observation store stays permanently
     empty — a keyed write's Version Observation still comes from its row's own
@@ -2482,7 +2271,7 @@ def _write_sequence_lowered(
     # starts from persisted history, and its first temporal close observes a
     # fixture milestone rather than one an earlier entry opened. Both lanes must
     # start from the same tracked state or they are not the same computation.
-    _seed_shadow_from_fixtures(case, model, shadow)
+    seed_shadow_from_fixtures(case, model, shadow)
     group_observations: GroupObservations = []
     try:
         return [
@@ -2607,7 +2396,7 @@ def _compile_snapshot_scenario(
     # fixtures, so a temporal close observes the milestone that persisted history
     # holds rather than none at all. Both lanes must start from the same tracked
     # state or they are not the same computation.
-    _seed_shadow_from_fixtures(case, model, shadow)
+    seed_shadow_from_fixtures(case, model, shadow)
     emissions: list[Emission] = []
     try:
         for index, step in enumerate(steps):
@@ -2731,8 +2520,8 @@ def _run_snapshot_scenario(
     # plan, so a temporal close observes the milestone the persisted history (or
     # an earlier step) actually holds — the SAME order every other lane applies:
     # fixtures, then `given.apply`, then the first step.
-    _seed_shadow_from_fixtures(case, model, context.shadow)
-    _apply_given_apply(case, port, context.shadow)
+    seed_shadow_from_fixtures(case, model, context.shadow)
+    apply_given_apply(case, port, context.shadow)
     observation = lifecycle.observation()
     with handle.Database.connect(port, serving, lifecycle_provider=observation.provider) as db:
         emissions: list[Emission] = []
@@ -3332,44 +3121,6 @@ def compile_write_sequence_case(
     """Compile a writeSequence case to its ordered per-entry emissions and round trips."""
     emissions = envelope.emissions(_write_sequence_lowered(case, dialect_name))
     return emissions, len(emissions)
-
-
-def _seed_shadow_from_fixtures(
-    case: case_format.Case, model: AcceptedMetamodel, shadow: TemporalShadow
-) -> None:
-    """Seed ``shadow`` from the case's OWN fixture-loading rule (`m-case-format`):
-    a writeSequence starts EMPTY unless it opts in with ``given.fixtures: true``;
-    every other shape (scenario, conflict) loads the model's default fixtures —
-    mirrored from ``tests/_support/corpus.py``'s ``case_fixtures`` rule, kept independent
-    (production/adapter code never imports the test suite)."""
-    given = case.document.get("given")
-    fixtures_flag = (
-        isinstance(given, Mapping) and cast("Mapping[str, object]", given).get("fixtures") is True
-    )
-    if case.shape == "writeSequence" and not fixtures_flag:
-        return
-    fixtures = provision.load_fixtures(cast("str", case.document["model"]))
-    for entity_name, rows in fixtures.items():
-        entity = case_entity(model, entity_name)
-        if not _is_temporal_entity(model, entity.identity.canonical):
-            shadow.seed_fixtures(
-                model,
-                entity,
-                cast("list[Mapping[str, object]]", rows),
-            )
-            continue
-        managed_rows: list[Mapping[str, object]] = []
-        for row in cast("list[Mapping[str, object]]", rows):
-            open_bounds = {name: value for name, value in row.items() if value == INFINITY_LITERAL}
-            instruction = KeyedWrite(
-                "insert",
-                entity.identity.canonical,
-                ({name: value for name, value in row.items() if name not in open_bounds},),
-            )
-            prepared = _case_ingress.prepare_case_write(instruction, model)
-            assert isinstance(prepared, PreparedKeyedWrite)
-            managed_rows.append({**prepared.rows[0], **open_bounds})
-        shadow.seed_fixtures(model, entity, managed_rows)
 
 
 def _is_framework_write(
@@ -4964,8 +4715,8 @@ def run_interleaved_scenario_case(
     ungrouped = [i for i in range(len(steps)) if i not in {j for js in groups.values() for j in js}]
     (label_a, indices_a), (label_b, indices_b) = groups.items()
     shadow = TemporalShadow()
-    _seed_shadow_from_fixtures(case, model, shadow)
-    _apply_given_apply(case, port, shadow)
+    seed_shadow_from_fixtures(case, model, shadow)
+    apply_given_apply(case, port, shadow)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     # This lane reports no lifecycle oracle, and could not: two connections
     # driven at once have no single root order to state. The run is here so the
@@ -5114,16 +4865,18 @@ def run_scenario_case(
     lowered: list[_LoweredStep] = []
     round_trips = 0
     try:
-        _seed_shadow_from_fixtures(case, model, shadow)
+        seed_shadow_from_fixtures(case, model, shadow)
         # After the fixtures and before the first step, exactly where every other
-        # lane applies it (:func:`_apply_given_apply`). The tracker is deliberately
+        # lane applies it
+        # (:func:`~parallax.conformance._mechanism.given_state.apply_given_apply`).
+        # The tracker is deliberately
         # not re-seeded from it — it records which milestones the statements may
         # have overtaken instead. A predicate write resolves through a real read that
         # sees whatever they wrote; a keyed write's observation stays case state,
         # and where that state can no longer be the whole stored row the write is
         # refused rather than silently rebuilt
         # (:func:`_refuse_unaccounted_document_milestone`).
-        _apply_given_apply(case, port, shadow)
+        apply_given_apply(case, port, shadow)
         index = 0
         while index < len(steps):
             label = span_start_labels.get(index)
@@ -5238,8 +4991,8 @@ def run_write_sequence_case(
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0
     try:
-        _seed_shadow_from_fixtures(case, model, context.shadow)
-        _apply_given_apply(case, port, context.shadow)
+        seed_shadow_from_fixtures(case, model, context.shadow)
+        apply_given_apply(case, port, context.shadow)
         for index, entry in enumerate(case_document.write_sequence_entries(case)):
             statements, unit_trips = _execute_keyed_unit(
                 port, context, [entry], group_observations, lifecycle, rollback=False
@@ -5285,36 +5038,6 @@ def read_table_state(port: DatabaseConnection, model: AcceptedMetamodel) -> dict
 # conflict case tests ONLY the close, under an address and a gate the case     #
 # names EXPLICITLY rather than derives from an observation.                    #
 # --------------------------------------------------------------------------- #
-def _apply_given_apply(
-    case: case_format.Case, port: DatabaseConnection, shadow: TemporalShadow
-) -> None:
-    """Apply a case's out-of-band ``given.apply`` naive statements VERBATIM,
-    immediately (never inside our own transaction), and tell ``shadow`` they ran.
-
-    They stand for a writer this unit of work is not: a CONCURRENT transaction
-    that already committed, so its effect must survive our own eventual rollback
-    (a stale-version conflict), or a newer application version that stored state
-    no authored member of this model could produce (a Structured Column key the
-    model declares nowhere).
-
-    Marking the tracker here rather than at each lane is what makes the mark
-    unforgettable: every executor of a shape ``given.apply`` is admitted on —
-    conflict, writeSequence, and each of the three scenario executors — runs the
-    statements through this one function, so no lane can leave a tracker claiming
-    a whole account of a row one of them may since have overtaken."""
-    given = case.document.get("given")
-    if not isinstance(given, Mapping):
-        return
-    entries = cast("Mapping[str, object]", given).get("apply")
-    if not isinstance(entries, list):
-        return
-    shadow.note_out_of_band_write()
-    for entry in cast("list[Mapping[str, object]]", entries):
-        sql = cast("str", entry["sql"])
-        binds = cast("list[object]", entry.get("binds", []))
-        port.execute_write(port.dialect.to_driver_sql(sql), envelope.driver_binds(binds))
-
-
 def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     """The entity a conflict case's write targets, when ``when.write`` carries no
     explicit reference (`m-case-format`: a conflict case's write names no
@@ -6239,7 +5962,8 @@ def run_conflict_case(
     Loads no fixtures itself (the caller's own lifecycle does, per
     `m-case-format`'s conflict-shape default). `given.apply`'s concurrent writer
     commits BETWEEN the FIRST attempt's source read and the write that read
-    licenses (`_apply_given_apply`), which is the ordering a non-temporal
+    licenses (:func:`~parallax.conformance._mechanism.given_state.apply_given_apply`),
+    which is the ordering a non-temporal
     conflict case describes: the state its write settles against is one a real
     read of this lane observed, and the writer that invalidated it committed
     afterwards. A retry attempt reads again, after the attempt before it ran, so
@@ -6267,7 +5991,7 @@ def run_conflict_case(
     shadow = TemporalShadow()
     _refuse_unentitled_observed_edge(case, when, is_temporal=is_temporal)
     if is_temporal:
-        _seed_shadow_from_fixtures(case, model, shadow)
+        seed_shadow_from_fixtures(case, model, shadow)
     emissions: list[Emission] = []
     affected = 0
     round_trips = 0
@@ -6298,7 +6022,7 @@ def run_conflict_case(
         # Taken before the concurrent writer commits, and spent by the first
         # attempt; every later attempt reads again, after the one before it ran.
         sources = None if is_temporal else sources_for(attempts[0][1])
-        _apply_given_apply(case, port, shadow)
+        apply_given_apply(case, port, shadow)
         for pointer, attempt in attempts:
             if is_temporal:
                 statements, affected, attempt_trips = _run_conflict_close(
