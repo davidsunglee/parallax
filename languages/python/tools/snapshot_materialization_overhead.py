@@ -177,12 +177,9 @@ CONTRIBUTORS: Final = (
     ),
     Contributor("occurrence_shape", "_shape.py", "occurrence_shape", False),
     Contributor("materialize_row", "_compile.py", "materialize_row", False),
-    Contributor("convert_row (result_keys dict)", "_convert.py", "convert_row", True),
+    Contributor("convert_row", "_convert.py", "convert_row", False),
     Contributor("LevelContext (fresh per row)", "_convert.py", "__post_init__", True),
     Contributor("attribute_reads (contract scan)", "_compile.py", "attribute_reads", False),
-    Contributor(
-        "_document_columns (projected frozenset)", "_convert.py", "_document_columns", True
-    ),
     Contributor("observable_columns", "_convert.py", "observable_columns", False),
 )
 """Every contributor the baseline names.

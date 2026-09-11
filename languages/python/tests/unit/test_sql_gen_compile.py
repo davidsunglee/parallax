@@ -17,7 +17,7 @@ import copy
 import dataclasses
 import inspect
 import pickle
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, Literal, cast
 
 import pytest
@@ -37,6 +37,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectIdentity,
 )
+from parallax.core.object_query import TemporalDimension, TemporalSelection
 from parallax.core.predicate._validated import ValidatedOperands, ValidatedPredicate
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
@@ -497,37 +498,49 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
 
 
 @pytest.mark.parametrize(
-    ("meta", "name"),
+    ("meta", "name", "temporal"),
     [
-        (ORDERS, "Order"),
-        (SCALARS, "ScalarThing"),
-        (CUSTOMER, "Customer"),
-        (PAYMENT, "Payment"),
-        (DOCUMENT_LAYOUT, "Publication"),
+        (ORDERS, "Order", None),
+        (SCALARS, "ScalarThing", None),
+        (CUSTOMER, "Customer", None),
+        (PAYMENT, "Payment", None),
+        (DOCUMENT_LAYOUT, "Publication", None),
+        (
+            DOCUMENT_LAYOUT,
+            "Charter",
+            {"valid-time": oq.AsOf("latest"), "transaction-time": oq.AsOf("latest")},
+        ),
     ],
-    ids=["plain", "encoded", "documents", "family", "document-layout"],
+    ids=["plain", "encoded", "documents", "family", "document-layout", "temporal"],
 )
 def test_attribute_contracts_align_by_position_with_each_resolvable_layout(
-    meta: Metamodel, name: str
+    meta: Metamodel,
+    name: str,
+    temporal: Mapping[TemporalDimension, TemporalSelection] | None,
 ) -> None:
     # The compiled contracts and the model's exact member layout are two readings
     # of ONE position view, so contract `i` describes layout Attribute `i` — the
     # same metadata object, not an equal copy. That is what lets a consumer read
     # the two together by position instead of indexing one by identity per row.
+    # The interval-closing Attributes agree for the same reason, both being the
+    # family root's declared axes, so a consumer admitting a stored scalar reads
+    # the flag off the contract rather than re-testing the layout's own set.
     # An Entity this read projected no columns for — a family root only an
     # unrecognized tag names — answers nothing, and its rows read storage keys.
     cataloged = CatalogedModel(meta)
-    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, name))
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, name), temporal=temporal)
     assert compiled.resolvable
     for identity in compiled.resolvable:
         reads = compiled.attribute_reads(identity)
         if identity not in compiled.resolved_position:
             assert reads == ()
             continue
-        attributes = cataloged.layouts.entity(identity).attributes
+        layout = cataloged.layouts.entity(identity)
         assert reads
-        for contract, attribute in zip(reads, attributes, strict=True):
+        for contract, attribute in zip(reads, layout.attributes, strict=True):
             assert contract.attribute is attribute
+            assert contract.temporal_end == (attribute.identity in layout.temporal_ends)
+        assert any(contract.temporal_end for contract in reads) == bool(layout.temporal_ends)
 
 
 def test_limit_bind_lands_after_predicate_binds() -> None:

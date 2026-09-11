@@ -97,6 +97,9 @@ class _AttributeReadContract(Protocol):
     def result_key(self) -> str: ...
 
     @property
+    def temporal_end(self) -> bool: ...
+
+    @property
     def encoded(self) -> bool: ...
 
 
@@ -117,8 +120,22 @@ class LevelContext:
     contributors, decided once where the projection was, so no level re-projects
     a family superset of its own. ``attribute_reads`` carries each compiled
     projection's own Attribute beside the driver key and decode contract the
-    statement chose for it. This keeps an encoded result such as ``payload_hex``
-    attached to physical ``payload``.
+    statement chose for it, in ``layout.attributes`` order — the statement and
+    the layout derive their Attribute sequences from one position view, so a
+    contract is read at its Attribute's own position rather than looked up by
+    identity — and is empty for an Entity this read projected no column for,
+    whose Attributes each carry their own storage spelling. This keeps an
+    encoded result such as ``payload_hex`` attached to physical ``payload``.
+
+    Three facts fixed by the layout and the projection resolve here rather than
+    per row. ``projected_by_position`` marks which of ``layout.occurrences``
+    this read carried. ``observed_exclusions`` names the keys an observation
+    answers with a decoded spelling of its own instead of the driver's.
+    ``observed_documents`` pairs each projected occurrence with whether a column
+    holding nothing reduces to the zero value a Many spells or to the ``None`` a
+    One collapses to — the answer the codec gives such a column, so an
+    observation resolves the occurrences of the position's OTHER concretes,
+    which a row of this one stores nothing at, without decoding.
 
     ``layout`` stays out of equality and hashing: ``concrete_entity`` already
     distinguishes every context it distinguishes — two layouts for one exact
@@ -131,9 +148,33 @@ class LevelContext:
     concrete_entity: EntityIdentity = field(init=False)
     documents: tuple[ValueObjectMetadata, ...] = ()
     attribute_reads: tuple[_AttributeReadContract, ...] = ()
+    projected_by_position: tuple[bool, ...] = field(init=False, compare=False, repr=False)
+    observed_exclusions: frozenset[str] = field(init=False, compare=False, repr=False)
+    observed_documents: tuple[tuple[str, ValueObjectMetadata, bool], ...] = field(
+        init=False, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "concrete_entity", self.layout.concrete)
+        projected = frozenset(member.storage.name for member in self.documents)
+        object.__setattr__(
+            self,
+            "projected_by_position",
+            tuple(occurrence.storage.name in projected for occurrence in self.layout.occurrences),
+        )
+        object.__setattr__(
+            self,
+            "observed_exclusions",
+            projected | frozenset(contract.result_key for contract in self.attribute_reads),
+        )
+        object.__setattr__(
+            self,
+            "observed_documents",
+            tuple(
+                (member.storage.name, member, member.multiplicity is Multiplicity.MANY)
+                for member in self.documents
+            ),
+        )
 
 
 def convert_row(
@@ -167,9 +208,14 @@ def convert_row(
 
     ``findings``, ``unknown_family_tag``, and ``classified_members`` are the
     compiled row transform's provenance.
-    Conversion translates those findings and does not re-judge members the
-    transform already classified. Each judgment's own rejected value converges
-    here, where this row's conversion freezes it into an issue record of its own.
+    Conversion translates those findings and judges no member the transform
+    already classified: such a member is admitted by the classification that
+    produced it, so its value stands as the transform left it, a position the
+    transform could make no value available at reads ``ABSENT``, and a stored
+    null reads by the Attribute's own nullability — the three states a
+    classified member arrives in, kept apart without a second admission. Each
+    judgment's own rejected value converges here, where this row's conversion
+    freezes it into an issue record of its own.
     A record no earlier projection of the same logical node made is the copy
     every seam above shares; one repeating an earlier projection's judgment is
     replaced by that projection's record when the row reaches the builder, and
@@ -180,7 +226,6 @@ def convert_row(
     nothing rather than landing on a member that never declared it.
     """
     layout = level.layout
-    projected = _document_columns(level)
     issues: list[StoredDataIssueInput] = [
         _translate_finding(finding, level) for finding in findings
     ]
@@ -193,14 +238,23 @@ def convert_row(
             )
         )
     members: list[object] = []
-    result_keys = {contract.attribute.identity: contract for contract in level.attribute_reads}
-    for attribute in layout.attributes:
-        contract = result_keys.get(attribute.identity)
+    reads = level.attribute_reads
+    for position, attribute in enumerate(layout.attributes):
+        contract = reads[position] if reads else None
         result_key = attribute.storage.name if contract is None else contract.result_key
         if result_key not in row:
             members.append(ABSENT)
             continue
         raw = row[result_key]
+        if result_key in classified_members:
+            members.append(
+                ABSENT
+                if raw is UNAVAILABLE
+                else raw
+                if raw is not None or attribute.nullable
+                else ABSENT
+            )
+            continue
         try:
             value = (
                 decode_canonical_wire(attribute.type, cast("WireValue", raw))
@@ -213,13 +267,17 @@ def convert_row(
             value,
             attribute.type,
             nullable=attribute.nullable,
-            temporal_end=attribute.identity in layout.temporal_ends,
+            temporal_end=(
+                attribute.identity in layout.temporal_ends
+                if contract is None
+                else contract.temporal_end
+            ),
         )
-        if not admission.admitted and result_key not in classified_members:
+        if not admission.admitted:
             issues.append(_attribute_issue(attribute, admission.rejected, level.concrete_entity))
         members.append(value if admission.admitted else ABSENT)
-    for occurrence in layout.occurrences:
-        if occurrence.storage.name not in projected:
+    for occurrence, projected in zip(layout.occurrences, level.projected_by_position, strict=True):
+        if not projected:
             members.append(ABSENT)
             continue
         raw = row.get(occurrence.storage.name)
@@ -280,10 +338,15 @@ def observable_columns(
     Deliberately outside the projection-row algebra. An observation is physical by
     contract, and keeping it a separate function is what stops a column-keyed
     mapping riding along inside a converted node.
+
+    A column holding nothing is answered by the reduction its own occurrence
+    fixes rather than by decoding one: a stored document is what the codec reads,
+    and no stored document is the one state a declaration alone decides. That is
+    what keeps a polymorphic position's other concretes — whose occurrences this
+    row stores nothing at, and whose columns arrive null on every row of it —
+    off the codec entirely.
     """
-    projected = _document_columns(level)
-    attribute_keys = frozenset(contract.result_key for contract in level.attribute_reads)
-    columns = {key: value for key, value in row.items() if key not in projected | attribute_keys}
+    columns = {key: value for key, value in row.items() if key not in level.observed_exclusions}
     for contract in level.attribute_reads:
         if contract.result_key not in row:
             continue
@@ -294,20 +357,17 @@ def observable_columns(
             if contract.encoded
             else raw
         )
-    for occurrence in level.documents:
-        raw = row.get(occurrence.storage.name)
+    for key, occurrence, many in level.observed_documents:
+        raw = row.get(key)
         if isinstance(raw, (SqlNull, PresentDocument)):
             raw = unwrap_document_read(raw)
-        columns[occurrence.storage.name] = _decode_document(
-            raw,
-            occurrence,
-            outer_classified=occurrence.storage.name in classified_members,
-        )[0]
+        if key in classified_members:
+            columns[key] = raw
+        elif raw is None:
+            columns[key] = [] if many else None
+        else:
+            columns[key] = _decode_document(raw, occurrence)[0]
     return columns
-
-
-def _document_columns(level: LevelContext) -> frozenset[str]:
-    return frozenset(member.storage.name for member in level.documents)
 
 
 # --------------------------------------------------------------------------- #
