@@ -83,7 +83,7 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core.sql_gen._compile",
     ): frozenset({"compile_read", "CompiledRead"}),
     (
-        "parallax.conformance.engine",
+        "parallax.conformance._lanes.scenario",
         "parallax.core.sql_gen._compile",
     ): frozenset({"compile_read", "CompiledRead"}),
     (
@@ -95,7 +95,7 @@ _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.core.sql_gen._write",
     ): frozenset({"compile_write_step"}),
     (
-        "parallax.conformance.engine",
+        "parallax.conformance._lanes.scenario",
         "parallax.core.sql_gen._write",
     ): frozenset({"compile_write_step"}),
 }
@@ -284,13 +284,13 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.case_format", "parallax.core.wire._json"): frozenset(
         {"authored_number"}
     ),
-    ("parallax.conformance.engine", "parallax.core.sql_gen._compile"): frozenset(
+    ("parallax.conformance._lanes.scenario", "parallax.core.sql_gen._compile"): frozenset(
         {"CompiledRead", "compile_read"}
     ),
     ("parallax.conformance._lanes.reads", "parallax.core.sql_gen._compile"): frozenset(
         {"CompiledRead", "compile_read"}
     ),
-    ("parallax.conformance.engine", "parallax.core.sql_gen._write"): frozenset(
+    ("parallax.conformance._lanes.scenario", "parallax.core.sql_gen._write"): frozenset(
         {"compile_write_step"}
     ),
     ("parallax.conformance.another_source", "parallax.snapshot.handle._preflight"): frozenset(
@@ -300,7 +300,7 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
         "parallax.conformance._mechanism.model_facts",
         "parallax.snapshot.handle._preflight",
     ): frozenset({"preflight"}),
-    ("parallax.conformance.engine", "parallax.snapshot.handle._transaction"): frozenset(
+    ("parallax.conformance._lanes.scenario", "parallax.snapshot.handle._transaction"): frozenset(
         {"buffer_prepared_predicate_write", "buffer_prepared_wire_keyed_write"}
     ),
     ("parallax.conformance.another_source", "parallax.snapshot.handle._publication"): frozenset(

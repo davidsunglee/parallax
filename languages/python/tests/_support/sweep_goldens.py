@@ -158,7 +158,7 @@ _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
 # `m-read-lock-001` is the harness-lane single-
 # connection golden — the module's OWN witness for the shared-row-lock suffix
 # (`m-read-lock.md`), which it reaches by declaring the `locking` preference its
-# versioned target needs to resolve to Locking; `engine._read_case_concurrency`
+# versioned target needs to resolve to Locking; `reads._read_case_concurrency`
 # grants no module-scoped default. `m-read-lock-002`/`-005` are the
 # `api-conformance`-lane runtime matrix (an explicit `when.uow.concurrency`
 # locking object-find lock / optimistic object-find omits-lock): compile-eligible
@@ -503,7 +503,7 @@ _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-
 # reconstructed from case state rather than read, so it carries no document to
 # preserve — which the write lane now REFUSES by name rather than chaining a
 # successor that would drop the key
-# (`engine._refuse_unaccounted_document_milestone`).
+# (`scenario._refuse_unaccounted_document_milestone`).
 #
 # The materializing predicate
 # forms (m-txtime-write-007/009, m-bitemp-write-010-013), the conflict-shape

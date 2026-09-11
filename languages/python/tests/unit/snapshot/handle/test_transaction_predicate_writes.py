@@ -28,6 +28,7 @@ from uuid import UUID
 import pytest
 
 from parallax.conformance import case_format, engine
+from parallax.conformance._lanes import scenario
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import (
@@ -2016,7 +2017,7 @@ def test_the_engines_readless_case_adapter_refuses_before_execution(
     message: str, predicate: dict[str, object]
 ) -> None:
     with pytest.raises(ValueError, match=re.escape(message)):
-        engine._prepared_case_predicate_write(  # pyright: ignore[reportPrivateUsage] - the conformance engine's case-format preparation ingress
+        scenario._prepared_case_predicate_write(  # pyright: ignore[reportPrivateUsage] - the scenario lane's case-format preparation ingress
             {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
             _READLESS_ENGINE_META,
         )
@@ -2038,7 +2039,7 @@ def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
         }
     }
     with pytest.raises(ValueError, match=re.escape(message)):
-        engine._is_materializing_write_step(step, _MATERIALIZING_ENGINE_META)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own materializing predicate-write ingress
+        scenario.is_materializing_write_step(step, _MATERIALIZING_ENGINE_META)
 
 
 # The WIRE predicate ingress's OWN validation, driven the way the conformance
