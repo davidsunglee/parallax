@@ -22,6 +22,7 @@ from typing import Any, cast
 import pytest
 
 from parallax.conformance import case_format, engine
+from parallax.conformance._lanes import scenario
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
     PlanningRequest,
@@ -49,7 +50,7 @@ _CASE: Path = (
 def test_the_compile_lane_names_the_same_seams_the_runtime_flush_does() -> None:
     """Not "an equivalent planner" — the identical factory and lowering
     function ``Database.transact`` injects, reached under their own names."""
-    lane: Mapping[str, object] = vars(engine)
+    lane: Mapping[str, object] = vars(scenario)
     assert lane["build_write_planner"] is handle.build_write_planner
     assert lane["stream_lowered"] is handle.stream_lowered
 

@@ -778,7 +778,7 @@ def test_inheritance_family_predicate_write_is_rejected_before_sql(
     # engine's buffering translation — but they are NOT on every road here.
     # `stream_lowered` is EXPORTED (`parallax.snapshot.handle.__all__`,
     # `tests/api/public_api.json`), and the conformance engine's readless
-    # predicate-write step (`engine._lower_predicate_write_step`) reaches it
+    # predicate-write step (`scenario._lower_predicate_write_step`) reaches it
     # straight from a deserialized instruction. The lowering-side guard must
     # reject the `narrow` case before it can introduce an alias that unaliased
     # DML never declares (`m-sql` rule 1).

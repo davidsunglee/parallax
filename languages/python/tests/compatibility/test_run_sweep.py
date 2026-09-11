@@ -307,7 +307,7 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
 # `uow` grouping (:func:`_case_uses_uow_grouping`) but whose groups INTERLEAVE —
 # one unit of work's read, a CONCURRENT unit of work's own write-and-commit, then
 # back to the first. `run_scenario_case`/`adapter.run_case` execute only CONTIGUOUS
-# `uow` groups (`engine._scenario_uow_spans`; a genuinely interleaved group needs a
+# `uow` groups (`scenario._scenario_uow_spans`; a genuinely interleaved group needs a
 # SECOND, independent connection this test's ordinary single-`DatabaseConnection` seam does not
 # hold open), so every one of them stays OUT of `_WRITE_CASES`/
 # `test_write_run_sweep`. Membership here is a routing exclusion alone;
@@ -332,7 +332,7 @@ _INTERLEAVED_UOW_GROUP_CASES: Final[frozenset[str]] = frozenset(
 # delivery) — two units of work reading and writing one row, whose second read is
 # graded against the first. The isolation arms are what make the level reach a HELD
 # group through the shipped `db.transact` at all, so their `expectRows` is this
-# lane's only grading of `engine._CaseContext.isolation`. A streamed arm belongs
+# lane's only grading of `scenario.CaseContext.isolation`. A streamed arm belongs
 # here because the turnstile hands off per authored STEP and a step's delivery is
 # drained WHOLE before it does: the peer's commit lands between the two deliveries,
 # exactly where the case authors it.
@@ -356,7 +356,7 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
     """Whether a scenario case's own steps declare the `uow` grouping key
     (`m-case-format`) — the discriminator
     between "this run-only case's observation is transaction-scoped, and the
-    engine's `uow`-grouping seam (`engine._run_uow_group`) is what makes it
+    engine's `uow`-grouping seam (`scenario._run_uow_group`) is what makes it
     runnable" and every OTHER run-only reason a scenario/writeSequence case
     carries (single-connection materializing predicate writes, deep-fetch
     deferred loads, pk-gen sequence batch reservations — none of which the
@@ -370,7 +370,7 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # (`m-opt-lock` "Predicate-selected writes materialize when observations are
 # needed", ADR 0014): each resolves through its OWN internal read
 # (`tx.wire.update_where` and its family, paired with the immediately
-# preceding find step in ONE transaction, `engine._run_materializing_pair`) —
+# preceding find step in ONE transaction, `scenario._run_materializing_pair`) —
 # query-result-dependent (`compileEligibility: run-only`), so `compile` never
 # grades them, but NONE of them declare `uow` grouping (unlike
 # `m-opt-lock-012`) — `_case_uses_uow_grouping` alone would wrongly exclude

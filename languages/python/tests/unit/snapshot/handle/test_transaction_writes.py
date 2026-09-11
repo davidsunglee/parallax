@@ -491,10 +491,10 @@ def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
 # identity assertion pins.                                                     #
 # --------------------------------------------------------------------------- #
 def test_the_engine_and_the_typed_verbs_share_the_prepared_write_producer() -> None:
-    from parallax.conformance import engine as engine_module
+    from parallax.conformance._lanes import scenario
     from parallax.snapshot.handle import _transaction as transaction_module
 
-    assert engine_module.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage]
+    assert scenario.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage]
     assert (
         transaction_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage]
         is instructions.prepare_typed_write
