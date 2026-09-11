@@ -43,6 +43,13 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     lifecycle_run,
 )
+from parallax.conformance._mechanism import envelope
+from parallax.conformance._mechanism.envelope import (
+    READ_ERRORS,
+    Emission,
+    EngineError,
+    ScenarioRun,
+)
 from parallax.conformance._mechanism.transaction_control import (
     absorbing_rollback,
     committed,
@@ -204,119 +211,11 @@ __all__ = [
 ]
 
 
-class EngineError(ValueError):
-    """The engine cannot compile or run a case (unsupported shape or bad reference)."""
-
-
-_READ_ERRORS = (
-    CanonicalDocumentError,
-    ModelRejectedError,
-    SqlGenError,
-    TemporalReadError,
-    handle.QueryTargetError,
-    KeyError,
-    ValueError,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class Emission:
-    """One compiled statement emission (an entry of the adapter ``emissions`` array)."""
-
-    case_pointer: str
-    statement: LoweredStatement
-
-    @property
-    def sql(self) -> str:
-        return self.statement.sql
-
-    @property
-    def binds(self) -> tuple[object, ...]:
-        return self.statement.binds
-
-    def to_json(self) -> dict[str, object]:
-        return {
-            "casePointer": self.case_pointer,
-            "sql": self.statement.sql,
-            "binds": list(self.statement.wire_binds()),
-        }
-
-
-def _delivered(
-    planned: Sequence[LoweredStatement], observed: Sequence[LoweredStatement], where: str
-) -> tuple[LoweredStatement, ...]:
-    """``planned``, once the lifecycle has confirmed it is what ran.
-
-    A write lane reports the plan rather than the delivered statement, because
-    `then.statements` is graded on BOTH lanes and only one of them executes: the
-    compile lane has no delivery to read, so an emission sourced from one would
-    make the two lanes report different spellings of one oracle. The plan is a
-    SECOND derivation of the same statements, though, and a second derivation is
-    exactly what can drift — which is what this closes. Every statement the unit
-    put on the wire is reconciled with the plan it came from, so what the case
-    grades is the plan only where the plan is what the database saw.
-
-    Binds are reconciled through each statement's compiler-owned Wire projection,
-    so carrier differences are admitted only where typed metadata or an explicit
-    Wire override declares them.
-    """
-    if len(planned) != len(observed):
-        raise EngineError(
-            f"{where}: the plan holds {len(planned)} statement(s) but the lifecycle delivered "
-            f"{len(observed)}; the emission a case grades is the plan, so a plan the execution "
-            f"did not follow would report DML nobody ran"
-        )
-    for index, (plan, ran) in enumerate(zip(planned, observed, strict=True)):
-        if plan.sql != ran.sql:
-            raise EngineError(
-                f"{where}: statement {index} is planned as {plan.sql!r} but the lifecycle "
-                f"delivered {ran.sql!r}"
-            )
-        if not _same_wire_binds(plan.wire_binds(), ran.wire_binds()):
-            raise EngineError(
-                f"{where}: statement {index} is planned with binds (canonical Wire) "
-                f"{plan.wire_binds()!r} but the lifecycle delivered {ran.wire_binds()!r}"
-            )
-    return tuple(planned)
-
-
-def _same_wire_binds(left: tuple[object, ...], right: tuple[object, ...]) -> bool:
-    if len(left) != len(right):
-        return False
-    return all(
-        json.dumps(one, sort_keys=True, separators=(",", ":"))
-        == json.dumps(other, sort_keys=True, separators=(",", ":"))
-        for one, other in zip(left, right, strict=True)
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class RunOnly:
     """A case the corpus declares compile-ineligible (`compileEligibility: run-only`)."""
 
     reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class ScenarioRun:
-    """What running one scenario case observed, by channel (:func:`run_scenario_case`).
-
-    A scenario reports several observation channels of the SAME shape, so each is
-    named rather than placed: ``errors`` holds one entry per `expectError` step
-    whose verb raised its declared application-lifecycle error, and is filled by
-    the snapshot action-step lane alone; ``step_rows`` one per read step the run
-    itself drove plus each row-observing `mutate`, carrying the values that step published
-    (`m-conformance-adapter`); ``step_graphs`` one per step declaring
-    `expectGraph`, from either placement of that observable — an `access` step's
-    retained view on the snapshot lane, a find step's own materialized graph on
-    both. All three are in step order.
-    """
-
-    emissions: list[Emission]
-    round_trips: int
-    errors: list[dict[str, object]]
-    step_rows: list[dict[str, object]]
-    step_graphs: list[dict[str, object]]
 
 
 def eligibility(case: case_format.Case) -> RunOnly | None:
@@ -749,7 +648,7 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
             result_form=_result_form(case),
             lock=handle.entity_read_lock(model, metadata.identity, _read_case_concurrency(case)),
         )
-    except _READ_ERRORS as exc:
+    except READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
@@ -809,7 +708,7 @@ def run_read_case(
                 if concurrency is None
                 else transact(db, lambda tx: tx.read_rows(query), concurrency=concurrency)
             )
-        except _READ_ERRORS as exc:
+        except READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         return (
             _read_emissions(observed),
@@ -836,10 +735,6 @@ def _conforming_row(case: case_format.Case, row: handle.PublishedRow) -> Mapping
             "`storedDataIssues`, never as a row"
         )
     return row
-
-
-def _driver_binds(binds: Sequence[object]) -> list[object]:
-    return list(binds)
 
 
 # --------------------------------------------------------------------------- #
@@ -871,7 +766,7 @@ def _wire_read(
     with case_database(case, port, observed.provider) as db:
         try:
             return underlying(lambda: db.wire.find(query)), observed
-        except _READ_ERRORS as exc:
+        except READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
@@ -896,13 +791,17 @@ def run_graph_case(
     roots = snapshot.checked().results()
     return (
         _read_emissions(observed),
-        {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
+        {
+            envelope.graph_root_key(query.target.canonical, model): [
+                envelope.graph_root(root) for root in roots
+            ]
+        },
         observed.round_trips,
         _stored_data_records(roots, model),
     )
 
 
-_STREAM_ERRORS = (*_READ_ERRORS, ContinuationError, handle.SnapshotStreamStateError)
+_STREAM_ERRORS = (*READ_ERRORS, ContinuationError, handle.SnapshotStreamStateError)
 
 
 def _batch_size_of(carrier: Mapping[str, object], where: str) -> int | None:
@@ -978,7 +877,11 @@ def run_stream_case(
     roots, observed = _wire_delivery(case, query, model, port, lifecycle)
     return (
         _read_emissions(observed),
-        {_graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]},
+        {
+            envelope.graph_root_key(query.target.canonical, model): [
+                envelope.graph_root(root) for root in roots
+            ]
+        },
         observed.round_trips,
         _stored_data_records(roots, model),
     )
@@ -1007,7 +910,7 @@ def run_streamed_graphs_case(
             "a single-instant delivery asserts `then.graph`"
         )
     roots, observed = _wire_delivery(case, query, model, port, lifecycle)
-    root_key = _graph_root_key(query.target.canonical, model)
+    root_key = envelope.graph_root_key(query.target.canonical, model)
     entity = _declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
         {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: milestone_roots}}
@@ -1068,7 +971,7 @@ def run_graphs_case(
             f"{case.path.name}: a `then.graphs` case read a single instant — "
             "a single-instant read asserts `then.graph`"
         )
-    root_key = _graph_root_key(query.target.canonical, model)
+    root_key = envelope.graph_root_key(query.target.canonical, model)
     entity = _declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
         {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: roots}}
@@ -1101,7 +1004,7 @@ def _milestone_partition(
         pin = _root_pin(entity, root)
         if not partitions or partitions[-1][0] != pin:
             partitions.append((pin, []))
-        partitions[-1][1].append(_graph_root(root))
+        partitions[-1][1].append(envelope.graph_root(root))
     return partitions
 
 
@@ -1125,7 +1028,7 @@ def _milestone_groups(
     """
     groups: dict[Pin, list[Row | None]] = {}
     for root in roots:
-        groups.setdefault(_root_pin(entity, root), []).append(_graph_root(root))
+        groups.setdefault(_root_pin(entity, root), []).append(envelope.graph_root(root))
     return sorted(groups.items(), key=lambda entry: _edge_rank(entity, entry[0]))
 
 
@@ -1147,7 +1050,7 @@ def _root_pin(entity: EntityMetadata, root: object) -> Pin:
     members, so the coordinate is the row's own rather than a second reading of
     the query.
     """
-    values = _graph_root(root)
+    values = envelope.graph_root(root)
     if values is None:  # pragma: no cover - a non-hydrating milestone root pins nothing
         raise EngineError("a milestone-set root published no value to pin")
     coordinates: dict[TemporalDimension, object] = {
@@ -1166,39 +1069,9 @@ def _pin_instant(value: object) -> dt.datetime | None:
     return normalize_instant(dt.datetime.fromisoformat(value))
 
 
-def _graph_root(root: object) -> Row | None:
-    """One published result position as the value `then.graph` grades.
-
-    A conforming root IS the graph node. A classified root publishes its record
-    instead, carrying the hydrated node when the collapse produced one and
-    nothing when no value could be produced without inventing it — and the graph
-    position then carries ``null``, because a record is graded through
-    `then.storedDataIssues` rather than rendered as though it were a node.
-    """
-    if isinstance(root, handle.InvalidData):
-        return cast("Row | None", cast("handle.InvalidData[object]", root).data)
-    return cast("Row", root)
-
-
 def _read_emissions(observed: LifecycleObservation) -> list[Emission]:
     """The read's own emissions: the statements production actually ran, in order."""
     return [Emission("/objectQuery", statement) for statement in observed.statements]
-
-
-# The wire spelling each pinned as-of axis is emitted under in a milestone-set
-# graph's pin entry. The coordinate itself is structured everywhere above this seam.
-def _graph_root_key(target: str, model: AcceptedMetamodel) -> str:
-    """The `then.graph` root key the query's own ``target`` denotes.
-
-    Result vocabulary is LOCAL where an addressing reference is exact
-    (`m-case-format`), so the authored spelling is resolved and the Entity's own
-    local name answers — the same key a bare spelling produced before every
-    reference position became canonical.
-    """
-    entity = entity_by_name(model, target)
-    if entity is None:  # pragma: no cover - the read already resolved this target
-        raise EngineError(f"{target!r} names no entity the accepted model declares")
-    return entity.identity.name
 
 
 def _stored_data_records(
@@ -2516,7 +2389,7 @@ def _graph_rows(
     columns, family = _read_projection(model, query)
     projection = ActualWireProjection(model)
     return [
-        _projected_row(model, projection, columns, family, _graph_root(root) or {})
+        _projected_row(model, projection, columns, family, envelope.graph_root(root) or {})
         for root in roots
     ]
 
@@ -2816,16 +2689,6 @@ def _write_sequence_lowered(
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
-def _emissions(
-    pointer_statements: Sequence[tuple[str, Sequence[LoweredStatement]]],
-) -> list[Emission]:
-    return [
-        Emission(pointer, statement)
-        for pointer, statements in pointer_statements
-        for statement in statements
-    ]
-
-
 def _has_action_step(steps: Sequence[Mapping[str, object]]) -> bool:
     """Whether a scenario carries at least one lifecycle **action** step
     (m-case-format "Lifecycle action steps") — the discriminator between this
@@ -2973,7 +2836,7 @@ def _compile_snapshot_scenario(
                         entity_query, model, dialect, result_form="instance"
                     ).statement
                     emissions.append(Emission(f"/scenario/{index}/objectQuery", statement))
-    except (*_READ_ERRORS, *_LOWERING_ERRORS) as exc:
+    except (*READ_ERRORS, *_LOWERING_ERRORS) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return emissions, len(emissions)
 
@@ -3113,7 +2976,7 @@ def _run_snapshot_scenario(
                         identity = case_entity(model, query.target.canonical).identity
                         snapshot = underlying(partial(db.wire.find, query))
                         pin = _find_step_pin(model, query)
-                    except _READ_ERRORS as exc:
+                    except READ_ERRORS as exc:
                         raise EngineError(f"{case.path.name}: {exc}") from exc
                     emissions.extend(
                         Emission(f"/scenario/{index}/objectQuery", statement)
@@ -3144,7 +3007,7 @@ def _root_members(
     a copy derived from this state answers the SAME materialized children, which
     is the composition rule itself (`m-snapshot-read` *Closed world*).
     """
-    return tuple(dict(_graph_root(root) or {}) for root in snapshot.checked().results())
+    return tuple(dict(envelope.graph_root(root) or {}) for root in snapshot.checked().results())
 
 
 def _run_snapshot_write_step(
@@ -3263,7 +3126,9 @@ def _read_step_graph(
         )
     roots = snapshot.checked().results()
     graph: dict[str, object] = {
-        _graph_root_key(query.target.canonical, model): [_graph_root(root) for root in roots]
+        envelope.graph_root_key(query.target.canonical, model): [
+            envelope.graph_root(root) for root in roots
+        ]
     }
     return {"at": f"/scenario/{index}", "graph": graph}
 
@@ -3650,7 +3515,7 @@ def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[li
     steps = _scenario_steps(case)
     if _has_action_step(steps):
         return _compile_snapshot_scenario(case, dialect_name, steps)
-    emissions = _emissions(
+    emissions = envelope.emissions(
         [(step.pointer, step.statements) for step in _scenario_lowered(case, dialect_name)]
     )
     return emissions, len(emissions)
@@ -3660,7 +3525,7 @@ def compile_write_sequence_case(
     case: case_format.Case, dialect_name: str
 ) -> tuple[list[Emission], int]:
     """Compile a writeSequence case to its ordered per-entry emissions and round trips."""
-    emissions = _emissions(_write_sequence_lowered(case, dialect_name))
+    emissions = envelope.emissions(_write_sequence_lowered(case, dialect_name))
     return emissions, len(emissions)
 
 
@@ -3801,7 +3666,7 @@ def _execute_framework_write_unit(
     def run(conn: DatabaseConnection) -> None:
         for statement in statements:
             conn.execute_write(
-                conn.dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds)
+                conn.dialect.to_driver_sql(statement.sql), envelope.driver_binds(statement.binds)
             )
 
     with absorbing_rollback():
@@ -3929,7 +3794,7 @@ def _execute_write_unit(
 
     ``statements`` is the caller's plan for the same ``resolved`` instructions,
     reported back once the delivered lifecycle has confirmed the unit ran exactly
-    it (:func:`_delivered`).
+    it (:func:`~parallax.conformance._mechanism.envelope.delivered`).
 
     Every write against existing state is stated through the PUBLIC ``tx.wire``
     verb its mutation names, against the value this unit's own resolving reads
@@ -3993,7 +3858,9 @@ def _execute_write_unit(
 
         with absorbing_rollback():
             transact(database, body, concurrency=concurrency)
-        return _delivered(statements, observed.writes, "a keyed write unit"), observed.round_trips
+        return envelope.delivered(
+            statements, observed.writes, "a keyed write unit"
+        ), observed.round_trips
 
 
 def _execute_keyed_unit(
@@ -4022,7 +3889,8 @@ def _execute_keyed_unit(
     emission is therefore the PURE re-lowering of the very instructions the
     execution buffered, with binds observed through the lowered statement's
     canonical Wire projection. That plan is reported only where the
-    delivered lifecycle confirms the unit ran it (:func:`_delivered`), so being
+    delivered lifecycle confirms the unit ran it
+    (:func:`~parallax.conformance._mechanism.envelope.delivered`), so being
     the plan and being what the database saw are one claim rather than two.
     """
     tx_instant = _entry_instant(entries[0])
@@ -4072,7 +3940,8 @@ def _run_readless_predicate_write(
     The reported emission is ``statement`` — lowered from that same prepared
     product — and its compiler metadata renders the canonical Wire binds used
     for grading and delivery reconciliation. It is reported only where the
-    delivered lifecycle confirms this transaction ran it (:func:`_delivered`).
+    delivered lifecycle confirms this transaction ran it
+    (:func:`~parallax.conformance._mechanism.envelope.delivered`).
     """
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
@@ -4089,7 +3958,7 @@ def _run_readless_predicate_write(
         with absorbing_rollback():
             transact(database, body, concurrency=context.concurrency)
         return (
-            _delivered((statement,), observed.writes, "a readless predicate write"),
+            envelope.delivered((statement,), observed.writes, "a readless predicate write"),
             observed.round_trips,
         )
 
@@ -4898,7 +4767,7 @@ def _run_uow_group(
         # own plan is reconciled against the group's whole delivery rather than
         # against a flush of its own: what the transaction wrote is every write
         # step's DML, in the order those steps buffered it.
-        _delivered(
+        envelope.delivered(
             [statement for step in lowered if step.is_write for statement in step.statements],
             observation.writes,
             "a held `uow` group",
@@ -5344,7 +5213,7 @@ def run_interleaved_scenario_case(
     # worker, so a disagreement surfaces where every other failure of this lane
     # does.
     for result, observed in ((result_a, observed_a), (result_b, observed_b)):
-        _delivered(
+        envelope.delivered(
             [
                 statement
                 for step in result.lowered.values()
@@ -5378,7 +5247,7 @@ def run_interleaved_scenario_case(
         )
 
     ordered = [lowered[index] for index in sorted(lowered)]
-    emissions = _emissions([(step.pointer, step.statements) for step in ordered])
+    emissions = envelope.emissions([(step.pointer, step.statements) for step in ordered])
     conflict_actual = result_a.conflict_actual
     if conflict_actual is None:
         conflict_actual = result_b.conflict_actual
@@ -5525,7 +5394,7 @@ def run_scenario_case(
             index += 1
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    emissions = _emissions([(step.pointer, step.statements) for step in lowered])
+    emissions = envelope.emissions([(step.pointer, step.statements) for step in lowered])
     return ScenarioRun(emissions, round_trips, [], step_rows, step_graphs)
 
 
@@ -5570,7 +5439,7 @@ def run_write_sequence_case(
             lowered.append((f"/writeSequence/{index}", statements))
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-    emissions = _emissions(lowered)
+    emissions = envelope.emissions(lowered)
     table_state = read_table_state(port, model)
     return emissions, table_state, round_trips
 
@@ -5634,7 +5503,7 @@ def _apply_given_apply(
     for entry in cast("list[Mapping[str, object]]", entries):
         sql = cast("str", entry["sql"])
         binds = cast("list[object]", entry.get("binds", []))
-        port.execute_write(port.dialect.to_driver_sql(sql), _driver_binds(binds))
+        port.execute_write(port.dialect.to_driver_sql(sql), envelope.driver_binds(binds))
 
 
 def _default_family_root(model: AcceptedMetamodel) -> EntityMetadata | None:
@@ -6065,7 +5934,7 @@ def _run_conflict_write(
     Its Lowered Statement carries the metadata that projects native execution
     carriers and planned carriers into one canonical Wire observation. It is
     reported only where the delivered lifecycle confirms the attempt ran it
-    (:func:`_delivered`).
+    (:func:`~parallax.conformance._mechanism.envelope.delivered`).
     """
     resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
     statements = _lower_conflict_write(model, port.dialect, concurrency, resolved)
@@ -6100,7 +5969,7 @@ def _run_conflict_write(
         observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
         implied = _implied_shortfall_error(observation_requiring, concurrency, model, target)
         affected = _conflict_attempt_affected(database, concurrency, implied, body)
-        ran = _delivered(statements, observed.writes, "a conflict attempt")
+        ran = envelope.delivered(statements, observed.writes, "a conflict attempt")
         return ran, affected, observed.round_trips
 
 
@@ -6795,7 +6664,7 @@ def run_error_case(
     for index, (sql, binds) in enumerate(trigger):
         emissions.append(Emission(f"/then/statements/{index}", LoweredStatement(sql, binds)))
         try:
-            port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
+            port.execute_write(dialect.to_driver_sql(sql), envelope.driver_binds(binds))
         except DatabaseError as exc:
             if index != final:
                 raise EngineError(

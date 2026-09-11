@@ -73,14 +73,15 @@ its dotted name and no other. A test module imports from `_support` or from a
 helper module, never from another test module.
 
 Support code only one surface uses stays inside that surface, and follows its
-consumers within it. A helper every consumer of which sits in one directory of
-`tests/unit/` sits there too — `core/entity/_compact_support.py`,
-`core/entity/value_object_bad_models.py`,
+consumers within it. A helper every consumer of which sits under one directory
+of `tests/unit/` sits in that directory — `conformance/_wire_value_support.py`,
+`core/entity/_compact_support.py`, `core/entity/value_object_bad_models.py`,
 `core/execution_lifecycle/_lifecycle_cost_support.py`,
 `snapshot/handle/_keyed_write_drivers.py`,
 `snapshot/handle/_mixed_strategy_model.py`,
 `snapshot/handle/observation_models.py`. A helper whose consumers span
-directories, or that a `tools/` script imports, stays at the `tests/unit/` root —
+directories none of them contains, or that a `tools/` script imports, stays at
+the `tests/unit/` root —
 `_authored_storage_support.py`, `_contention_support.py`,
 `_corpus_identity_support.py`, `_corpus_model_support.py`,
 `_document_layout_support.py`, `_inheritance_family_support.py`,
