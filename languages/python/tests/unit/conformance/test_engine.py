@@ -45,7 +45,6 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
-    Committed,
     DatabaseConnection,
     JsonDocument,
     Row,
@@ -106,8 +105,14 @@ from parallax.evolution.schema_delta import (
 )
 from parallax.snapshot import DeferredFeatureError, handle
 from parallax.snapshot.handle import WriteEvidenceError
-from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
-from tests._support.document_reads import fold_mapping_rows
+from tests._support.db_port import (
+    ConnectsAsItself,
+    FakeDbPort,
+    FakeWritePort,
+    QueueDbPort,
+    body_outcome,
+    projected_row,
+)
 from tests.unit._metamodel_support import Declaration, attribute, key, source
 from tests.unit._second_dialect import BACKTICKED
 
@@ -134,30 +139,6 @@ def _entry(entry: dict[str, object], key: str) -> Row:
     """A milestone-set `{pin, graph}` entry's own member, typed for test-side
     assertions (`then.graphs`' wire shape is a plain ``dict[str, object]``)."""
     return cast("Row", entry[key])
-
-
-class FakeDbPort(ConnectsAsItself):
-    """An in-memory port that records executed SQL and returns canned rows."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self, rows: list[Row]) -> None:
-        self.rows = rows
-        self.executed: list[tuple[str, list[object]]] = []
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:
-        self.executed.append((sql, list(binds)))
-        return fold_mapping_rows(self.rows, document_reads)
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
-
-    def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        return body_outcome(self, body)
 
 
 # One corpus read serves the whole module, and both indexes project it: what
@@ -632,39 +613,6 @@ def test_compile_read_case_reports_missing_fields(
 # --------------------------------------------------------------------------- #
 # Scenario / writeSequence — the unit-of-work write lanes (Docker-free).       #
 # --------------------------------------------------------------------------- #
-class FakeWritePort(ConnectsAsItself):
-    """An in-memory ``m-db-port`` recording DML + read execution and commit/rollback."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self, find_rows: list[Row] | None = None) -> None:
-        self.find_rows = find_rows if find_rows is not None else []
-        self.writes: list[tuple[str, list[object]]] = []
-        self.reads: list[tuple[str, list[object]]] = []
-        self.commits = 0
-        self.rollbacks = 0
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:
-        self.reads.append((sql, list(binds)))
-        return fold_mapping_rows(self.find_rows, document_reads)
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        self.writes.append((sql, list(binds)))
-        return 1
-
-    def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:
-        outcome = body_outcome(self, body)
-        if isinstance(outcome, Committed):
-            self.commits += 1
-        else:
-            self.rollbacks += 1
-        return outcome
-
-
 # The rows a fake port answers the RESOLVING READ a keyed write owes
 # (`m-case-format` *Resolving reads a write owes*). A write against existing
 # state is stated against a value a read published, so a fake driving one of
@@ -2766,28 +2714,19 @@ def test_the_admitted_affected_guard_reraises_an_unadmitted_write_effect_error()
         engine._admitted_affected(MissingTargetError, raises)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
 
 
-class _FailingClosePort(FakeWritePort):
-    """A port whose temporal CLOSE raises a translated transient failure — the
-    case's own out-of-band `given.apply` writer still lands, so the failure is
-    the close's own rather than the arrangement's."""
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        affected = super().execute_write(sql, binds)
-        # The case's own `given.apply` writer runs first and binds nothing; the
-        # close is the parameterized statement.
-        if binds:
-            raise DatabaseError(
-                category="deadlock", native_code="40P01", message="deadlock detected"
-            )
-        return affected
-
-
 def test_run_conflict_case_temporal_close_propagates_a_failed_call() -> None:
     # A close the port could not complete is recorded as a FAILED Database Call
     # and then propagates: the lane admits only the shortfall class the case's own
     # facts imply, and a transient database failure is not one.
     with pytest.raises(DatabaseError):
-        engine.run_conflict_case(_load_case("m-temporal-read-010"), _FailingClosePort())
+        engine.run_conflict_case(
+            _load_case("m-temporal-read-010"),
+            FakeWritePort(
+                parameterized_write_failure=DatabaseError(
+                    category="deadlock", native_code="40P01", message="deadlock detected"
+                )
+            ),
+        )
 
 
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
@@ -3923,19 +3862,16 @@ def test_run_conflict_case_reads_its_source_before_applying_given_apply() -> Non
     assert table_state is not None
 
 
-class _ZeroAffectedPort(FakeWritePort):
-    """A port whose golden write reports a zero-row shortfall (a concurrent
-    writer already moved or removed the row)."""
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        super().execute_write(sql, binds)
-        return (
-            0 if sql.startswith(("update account set balance = %s", "delete from account")) else 1
-        )
+# The DRIVER spellings of the golden writes a fake port reports a zero-row
+# shortfall for: a concurrent writer already moved or removed the row.
+_ACCOUNT_WRITE_SHORTFALL: Final[tuple[str, ...]] = (
+    "update account set balance = %s",
+    "delete from account",
+)
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
-    port = _ZeroAffectedPort(find_rows=[_ACCOUNT_ROW_2])
+    port = FakeWritePort(find_rows=[_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL)
     _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), port
     )
@@ -3980,16 +3916,11 @@ def test_a_conflict_attempt_writes_through_the_public_keyed_delete_verb() -> Non
     assert affected == 1
 
 
-class _ZeroAffectedClosePort(FakeWritePort):
-    """A port whose golden milestone close reports a zero-row shortfall (the
-    case's own `given.apply` already closed the current row out of band).
-
-    Keyed on the DRIVER spelling of the golden close, so the naive literal
-    `given.apply` statements the same lane applies first still report a row."""
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        super().execute_write(sql, binds)
-        return 0 if sql.startswith("update balance set out_z = %s") else 1
+# The DRIVER spelling of the golden milestone close a fake port reports a
+# zero-row shortfall for (the case's own `given.apply` already closed the current
+# row out of band), so the naive literal `given.apply` statements the same lane
+# applies first still report a row.
+_BALANCE_CLOSE_SHORTFALL: Final[tuple[str, ...]] = ("update balance set out_z = %s",)
 
 
 def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() -> None:
@@ -3999,7 +3930,8 @@ def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() 
     # which is why a Locking-mode conflict is expressible here and nowhere else
     # in this lane.
     _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
-        _load_case("m-temporal-read-012"), _ZeroAffectedClosePort()
+        _load_case("m-temporal-read-012"),
+        FakeWritePort(zero_affected_for=_BALANCE_CLOSE_SHORTFALL),
     )
     assert affected == 0
 
@@ -4044,7 +3976,8 @@ def test_an_unversioned_conflict_target_is_refused_for_want_of_a_participating_r
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
     _emissions, affected, _table_state, _round_trips = engine.run_conflict_case(
-        _load_case("m-temporal-read-010"), _ZeroAffectedClosePort()
+        _load_case("m-temporal-read-010"),
+        FakeWritePort(zero_affected_for=_BALANCE_CLOSE_SHORTFALL),
     )
     assert affected == 0
 
@@ -4126,7 +4059,10 @@ class TestConflictShortfallClassification:
             engine, "_implied_shortfall_error", _always_implying(OptimisticLockConflictError)
         )
         with pytest.raises(StaleWriteError):
-            engine.run_conflict_case(_load_case("m-temporal-read-012"), _ZeroAffectedClosePort())
+            engine.run_conflict_case(
+                _load_case("m-temporal-read-012"),
+                FakeWritePort(zero_affected_for=_BALANCE_CLOSE_SHORTFALL),
+            )
 
     def test_a_gated_shortfall_admitted_as_a_stale_write_propagates(
         self, monkeypatch: pytest.MonkeyPatch
@@ -4134,7 +4070,8 @@ class TestConflictShortfallClassification:
         monkeypatch.setattr(engine, "_implied_shortfall_error", _always_implying(StaleWriteError))
         with pytest.raises(OptimisticLockConflictError):
             engine.run_conflict_case(
-                _load_case("m-opt-lock-005"), _ZeroAffectedPort([_ACCOUNT_ROW_2])
+                _load_case("m-opt-lock-005"),
+                FakeWritePort([_ACCOUNT_ROW_2], zero_affected_for=_ACCOUNT_WRITE_SHORTFALL),
             )
 
 
@@ -4160,28 +4097,15 @@ def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target()
         engine.run_conflict_case(case, FakeWritePort())
 
 
-class _ScriptedReadPort(FakeWritePort):
-    """A port answering each read from an ordered script rather than one constant
-    result, so a retry sequence's successive source reads can observe successive
-    generations of one row."""
-
-    def __init__(self, results: list[list[Row]]) -> None:
-        super().__init__()
-        self._results = list(results)
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:
-        self.reads.append((sql, list(binds)))
-        return self._results.pop(0) if self._results else []
-
-
 def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:
     # Each attempt takes its OWN source read, so the retry observes the generation
     # the concurrent writer left rather than reusing the stale one the first
     # attempt settled against.
-    port = _ScriptedReadPort(
-        [[_ACCOUNT_ROW_2], [{**_ACCOUNT_ROW_2, "balance": decimal.Decimal("999.00"), "version": 2}]]
+    port = FakeWritePort(
+        read_script=[
+            [_ACCOUNT_ROW_2],
+            [{**_ACCOUNT_ROW_2, "balance": decimal.Decimal("999.00"), "version": 2}],
+        ]
     )
     emissions, affected, table_state, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-007"), port
@@ -5491,30 +5415,6 @@ def test_read_table_state_normalizes_values_without_changing_the_projection() ->
 # `mutate` action. What a root LOOKS like is the wire materializer's own       #
 # contract (`test_wire_reads.py`); what is left here is the envelope.          #
 # --------------------------------------------------------------------------- #
-class QueueDbPort(ConnectsAsItself):
-    """A fake `m-db-port` returning one canned response per `execute()` call."""
-
-    dialect: Dialect = POSTGRES
-
-    def __init__(self, responses: Sequence[list[Row]]) -> None:
-        self._responses = list(responses)
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:
-        return [projected_row(sql, row) for row in self._responses.pop(0)]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        # A read case's own `given.corrupt` writes through this port before the
-        # read runs (m-case-format), so a stand-in for one answers a write.
-        return 1
-
-    def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:  # pragma: no cover
-        raise NotImplementedError
-
-
 def test_run_graph_case_renders_root_class_keyed_graph_with_relationships() -> None:
     port = QueueDbPort(
         [
