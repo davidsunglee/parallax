@@ -6,9 +6,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _corpus_model_support import model as corpus_model
 
-from _support.lowering_probes import lower_instruction
 from parallax.core import inheritance, storage_layout
 from parallax.core import predicate as predicate_algebra
 from parallax.core.base import DATE, INFINITY, STRING
@@ -28,6 +26,8 @@ from parallax.core.sql_gen._context import (
 from parallax.core.sql_gen._predicate import EntityScope
 from parallax.core.unit_work import KeyedWrite
 from parallax.core.wire import loads
+from tests._support.lowering_probes import lower_instruction
+from tests.unit._corpus_model_support import model as corpus_model
 
 WALLET = corpus_model("wallet")
 

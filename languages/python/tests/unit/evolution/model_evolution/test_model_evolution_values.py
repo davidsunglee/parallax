@@ -14,7 +14,6 @@ from dataclasses import FrozenInstanceError
 from typing import Any
 
 import pytest
-from _metamodel_support import identity
 
 from parallax.core.base import INT64
 from parallax.core.metamodel import (
@@ -63,6 +62,7 @@ from parallax.evolution.model_evolution import (
     ValueObjectOccurrenceRemoved,
     canonical_operation_key,
 )
+from tests.unit._metamodel_support import identity
 
 _ORDER = identity("Order")
 _PAYMENT = identity("Payment")

@@ -25,13 +25,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 import pytest
-from _corpus_identity_support import corpus_object_key
-from _corpus_model_support import corpus_records, formed
-from _corpus_model_support import model as corpus_model
-from _metamodel_support import Declaration, attribute, identity, key, source
 
-from _support.clock_probes import CountingClock, inert_instant, instant_at
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
@@ -108,6 +102,12 @@ from parallax.core.unit_work.planned import ValidatedMutationSelection
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import _planning as planning_composition
 from parallax.snapshot.handle import build_write_planner
+from tests._support.clock_probes import CountingClock, inert_instant, instant_at
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
+from tests.unit._corpus_identity_support import corpus_object_key
+from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _MODELS = corpus_records()
 _ACCOUNT = corpus_model("account")

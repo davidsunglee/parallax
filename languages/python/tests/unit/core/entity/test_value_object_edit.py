@@ -27,10 +27,8 @@ from functools import cached_property
 from typing import Any, cast
 
 import pytest
-from _compact_support import layout_slots
 from pydantic import PrivateAttr
 
-from _support import value_object_models as vm
 from parallax.core import Attr, Rel, ValueObject, attr
 from parallax.core.entity import EDIT_CODES, EditError, EntityDefinitionError
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
@@ -40,6 +38,8 @@ from parallax.core.entity._instance_state import (
     BackedModel,
 )
 from parallax.core.metamodel import MODEL_ROOT
+from tests._support import value_object_models as vm
+from tests.unit.core.entity._compact_support import layout_slots
 
 _UNREACHABLE_FROM_A_VALUE_OBJECT = frozenset(
     {

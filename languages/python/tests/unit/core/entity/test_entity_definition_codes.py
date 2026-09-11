@@ -12,8 +12,8 @@ from typing import cast
 
 import pytest
 
-from _support import frontend_probes, frontend_probes_stringized
 from parallax.core.entity import ENTITY_DEFINITION_CODES, EntityDefinitionError
+from tests._support import frontend_probes, frontend_probes_stringized
 
 _SPEC_CODES = frozenset(
     {

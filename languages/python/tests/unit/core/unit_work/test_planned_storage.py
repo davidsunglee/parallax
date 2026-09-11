@@ -24,23 +24,11 @@ from types import MappingProxyType, ModuleType
 from typing import Any, Protocol, cast, runtime_checkable
 
 import pytest
-from _transact_support import BALANCE as BALANCE_MODEL
-from _transact_support import WHERE_POSITION_META, WherePosition, db_for
 
 # The module itself, not a name from it: the call-count regression below
 # monkeypatches `resolve_successors` where `_settle_temporal_group` looks it
 # up, which is this module's own namespace rather than `unit_work.temporal`'s.
 import parallax.core.unit_work.write_settlement as write_settlement
-from _support import mirrored_models as mm
-from _support.clock_probes import CountingClock, inert_instant
-from _support.db_port import (
-    Read,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
@@ -97,6 +85,18 @@ from parallax.core.unit_work.write_settlement import (
     WriteSettlement,  # forbidden-plan-context regression only
 )
 from parallax.snapshot.handle import Database, Transaction, build_write_planner
+from tests._support import mirrored_models as mm
+from tests._support.clock_probes import CountingClock, inert_instant
+from tests._support.db_port import (
+    Read,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests.unit._transact_support import BALANCE as BALANCE_MODEL
+from tests.unit._transact_support import WHERE_POSITION_META, WherePosition, db_for
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]

@@ -16,8 +16,6 @@ carried by this MODULE's underscore. Never imported by production code.
 
 from __future__ import annotations
 
-from _metamodel_support import Declaration, accepted, identity, key, source
-
 from parallax.core import inheritance, opt_lock, relationship, storage_layout, temporal_read
 from parallax.core.base import DATE, INT64, STRING, NeutralType
 from parallax.core.metamodel import (
@@ -39,6 +37,7 @@ from parallax.core.metamodel import (
     accept_metamodel,
     compile_metadata,
 )
+from tests.unit._metamodel_support import Declaration, accepted, identity, key, source
 
 PERSON: EntityIdentity = identity("Person")
 MARKER: EntityIdentity = identity("Marker")

@@ -9,9 +9,6 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
-from _corpus_model_support import corpus_records, formed
-from _corpus_model_support import model as corpus_model
-from _metamodel_support import Declaration, accepted, attribute, identity, key, source
 
 from parallax.conformance import case_format
 from parallax.core import inheritance
@@ -65,6 +62,9 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
+from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._metamodel_support import Declaration, accepted, attribute, identity, key, source
 
 _REPO = case_format.find_repo_root()
 _MODELS = corpus_records()

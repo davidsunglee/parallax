@@ -38,7 +38,23 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import get_type_hints
 
-from _source_inventory_support import (
+from parallax.core import sql_gen
+from parallax.core.deep_fetch import ValidatedEntityQuery
+from parallax.core.deep_fetch import plan as plan_deep_fetch
+from parallax.core.object_query._validated import ValidatedObjectQuery
+from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
+from parallax.core.sql_gen._write import compile_write_step
+from parallax.core.unit_work import WritePlanner
+from parallax.core.unit_work.instructions import (
+    PreparedWrite,
+    prepare_typed_write,
+    prepare_wire_write,
+)
+from parallax.core.unit_work.planned import PlannedWrite
+from parallax.snapshot.handle._preflight import preflight
+from tests._support.repo import PY_ROOT
+from tests.unit._source_inventory_support import (
     CONFORMANCE_SRC,
     ENTITY_PACKAGE,
     SNAPSHOT_SRC,
@@ -55,23 +71,6 @@ from _source_inventory_support import (
     synthetic_site,
     synthetic_sources,
 )
-
-from _support.repo import PY_ROOT
-from parallax.core import sql_gen
-from parallax.core.deep_fetch import ValidatedEntityQuery
-from parallax.core.deep_fetch import plan as plan_deep_fetch
-from parallax.core.object_query._validated import ValidatedObjectQuery
-from parallax.core.predicate._validated import ValidatedPredicate
-from parallax.core.sql_gen._compile import compile_read, compile_write_predicate
-from parallax.core.sql_gen._write import compile_write_step
-from parallax.core.unit_work import WritePlanner
-from parallax.core.unit_work.instructions import (
-    PreparedWrite,
-    prepare_typed_write,
-    prepare_wire_write,
-)
-from parallax.core.unit_work.planned import PlannedWrite
-from parallax.snapshot.handle._preflight import preflight
 
 _PRIVATE_SQL_REACH_FENCE = "```carrier-neutral-private-reaches\n"
 _CARRIER_NEUTRAL_PRIVATE_SQL_REACHES: dict[tuple[str, str], frozenset[str]] = {

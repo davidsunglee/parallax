@@ -17,8 +17,6 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from _support.adoption import raises_contextualized
-from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine
 from parallax.conformance.boundary_runner import TARGET_ID
 from parallax.conformance.class_models import MODELS
@@ -26,6 +24,8 @@ from parallax.conformance.story_models import Account
 from parallax.core.object_query import deserialize
 from parallax.snapshot import InvalidDataError, ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Transaction
+from tests._support.adoption import raises_contextualized
+from tests._support.corpus import case_fixtures
 
 _CASE_ID = "m-execution-lifecycle-004"
 _ACCOUNT = "parallax.compatibility.Account"

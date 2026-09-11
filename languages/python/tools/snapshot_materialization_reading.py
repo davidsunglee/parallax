@@ -17,10 +17,10 @@ the report imports no instrument at all — the reading lives here, this file is
 imported by nothing, and the only thing that runs it is a child.
 
 This file therefore also owns the module-identity refusal for the instruments.
-``memory_instruments`` is a generic name on a path this process does not own, and
-a module of that name already in ``sys.modules`` wins before any path entry is
-consulted, so a different sampling recipe would still produce numbers and they
-would not be the numbers the recorded baseline is stated over.
+``tests.unit.memory_instruments`` is resolved from a path this process does not
+own, and a module of that name already in ``sys.modules`` wins before any path
+entry is consulted, so a different sampling recipe would still produce numbers
+and they would not be the numbers the recorded baseline is stated over.
 
 The answer crosses back as one line of JSON on stdout, encoded by the report's own
 :func:`~snapshot_materialization_overhead.payload` so the encoder and the decoder
@@ -43,12 +43,11 @@ from parallax.snapshot import prepare_model
 from parallax.snapshot.handle._publication import read_projection
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
-SUPPORT: Final = WORKSPACE / "tests" / "unit"
-INSTRUMENT_MODULE: Final = SUPPORT / "memory_instruments.py"
+INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 
-sys.path.insert(0, str(SUPPORT))
+sys.path.insert(0, str(WORKSPACE))
 
-import memory_instruments  # noqa: E402 - after the sys.path setup above
+from tests.unit import memory_instruments  # noqa: E402 - after the sys.path setup above
 
 if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
     raise ImportError(
@@ -56,7 +55,14 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
         f"'memory_instruments' resolved to {memory_instruments.__file__}"
     )
 
-from _snapshot_materialization_support import (  # noqa: E402 - after the sys.path setup above
+import snapshot_graph_overhead  # noqa: E402 - after the sys.path setup above
+from snapshot_materialization_overhead import (  # noqa: E402 - after the sys.path setup above
+    CONTRIBUTORS,
+    REPETITIONS,
+    Reading,
+    payload,
+)
+from tests.unit._snapshot_materialization_support import (  # noqa: E402 - after the sys.path setup above
     LAYOUTS,
     PROJECTIONS_PER_BATCH,
     ROWS_PER_BATCH,
@@ -71,20 +77,12 @@ from _snapshot_materialization_support import (  # noqa: E402 - after the sys.pa
     verify,
     workload,
 )
-from memory_instruments import (  # noqa: E402 - after the sys.path setup above
+from tests.unit.memory_instruments import (  # noqa: E402 - after the sys.path setup above
     WARMUP,
     Seam,
     closure,
     retained,
     untraced,
-)
-
-import snapshot_graph_overhead  # noqa: E402 - after the sys.path setup above
-from snapshot_materialization_overhead import (  # noqa: E402 - after the sys.path setup above
-    CONTRIBUTORS,
-    REPETITIONS,
-    Reading,
-    payload,
 )
 
 PREPARATION_REPETITIONS: Final = 20

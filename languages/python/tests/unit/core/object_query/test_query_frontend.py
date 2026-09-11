@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 
-from _support.query_probes import canonical_document, predicate_document
 from parallax.core import (
     LATEST,
     TX_TIME,
@@ -35,6 +34,7 @@ from parallax.core import (
 from parallax.core.entity._entity import build_object_query
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.object_query._fluent import object_query_node
+from tests._support.query_probes import canonical_document, predicate_document
 
 _NS = "parallax.compatibility"
 

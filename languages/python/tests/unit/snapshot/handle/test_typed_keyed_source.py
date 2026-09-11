@@ -19,18 +19,7 @@ from decimal import Decimal
 from typing import Final, cast
 
 import pytest
-from _transact_support import (
-    ACCOUNT,
-    INFINITY_INSTANT,
-    WHERE_POSITION_META,
-    WherePosition,
-    db_for,
-    new_account,
-)
 
-from _support import mirrored_models as mm
-from _support.db_port import Read, ScriptedAdapter
-from _support.model_capabilities import cataloged_for, row_codec_for
 from parallax.conformance.vo_models import (
     CONTACT_MODEL,
     Contact,
@@ -51,6 +40,17 @@ from parallax.snapshot.handle._transaction import (
     TypedKeyedInsertSource,
     TypedKeyedWriteSource,
     provenance_of,
+)
+from tests._support import mirrored_models as mm
+from tests._support.db_port import Read, ScriptedAdapter
+from tests._support.model_capabilities import cataloged_for, row_codec_for
+from tests.unit._transact_support import (
+    ACCOUNT,
+    INFINITY_INSTANT,
+    WHERE_POSITION_META,
+    WherePosition,
+    db_for,
+    new_account,
 )
 
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)

@@ -10,8 +10,8 @@ from typing import Any
 import jsonschema
 import pytest
 
-from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import case_format, cli
+from tests._support.repo import adapter_schema, canonical_snapshot_claim
 
 _SCHEMA = adapter_schema()
 _READ_CASE = str(case_format.default_cases_dir() / "m-predicate-002-eq.yaml")

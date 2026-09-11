@@ -28,11 +28,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 import pytest
-from _transact_support import ACCOUNT, FIXED
 
-from _support.db_port import RefusingAdapter, ScriptedAdapter
-from _support.model_capabilities import cataloged_for, graph_construction_for
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.db_port import DatabaseConnection
 from parallax.core.execution_lifecycle import (
     ExecutionEvent,
@@ -64,6 +60,10 @@ from parallax.snapshot.handle import ExecutionFailure, build_write_planner, prep
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._publication import SelectedReadModel, ServingModel, read_projection
 from parallax.snapshot.handle._read_scope import ReadInputs
+from tests._support.db_port import RefusingAdapter, ScriptedAdapter
+from tests._support.model_capabilities import cataloged_for, graph_construction_for
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests.unit._transact_support import ACCOUNT, FIXED
 
 # The two production adapters are what this suite grades, and module privacy is
 # what closes their construction — so they are reached here exactly as the

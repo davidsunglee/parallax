@@ -33,10 +33,7 @@ from collections.abc import Callable
 from decimal import Decimal
 
 import pytest
-from _corpus_model_support import model as corpus_model
 
-from _support.clock_probes import inert_instant
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.core.auto_retry import retriable_failure, run_with_retry
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.unit_work import (
@@ -59,6 +56,9 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.planned import PlannedWrite
 from parallax.snapshot.handle import build_write_planner
+from tests._support.clock_probes import inert_instant
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
+from tests.unit._corpus_model_support import model as corpus_model
 
 _ACCOUNT = corpus_model("account")
 _WALLET = corpus_model("wallet")

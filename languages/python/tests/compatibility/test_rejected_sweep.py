@@ -25,13 +25,13 @@ from typing import Any, cast
 import jsonschema
 import pytest
 
-from _support.corpus import case_document
-from _support.db_port import ConnectsAsItself
-from _support.repo import adapter_schema
 from parallax.conformance import adapter, case_format, sweep
 from parallax.conformance.profile import profile_for
 from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
+from tests._support.corpus import case_document
+from tests._support.db_port import ConnectsAsItself
+from tests._support.repo import adapter_schema
 
 _SCHEMA = adapter_schema()
 # The declared profile a rejected `run` is requested under, read off the one roster.

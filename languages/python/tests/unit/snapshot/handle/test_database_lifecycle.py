@@ -22,16 +22,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from _transact_support import ACCOUNT, FIXED, deadlock
 
-from _support.db_port import (
-    ConnectsAsItself,
-    Read,
-    RefusingAdapter,
-    ScriptedAdapter,
-    Transact,
-    Write,
-)
 from parallax.conformance.story_models import ORDERS_MODEL, Account, Order
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -47,6 +38,15 @@ from parallax.core.diagnostics import diagnostic_for
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
+from tests._support.db_port import (
+    ConnectsAsItself,
+    Read,
+    RefusingAdapter,
+    ScriptedAdapter,
+    Transact,
+    Write,
+)
+from tests.unit._transact_support import ACCOUNT, FIXED, deadlock
 
 _ACCOUNT_ROW = {"id": 1, "owner": "Newton", "balance": Decimal("10.00"), "version": 1}
 

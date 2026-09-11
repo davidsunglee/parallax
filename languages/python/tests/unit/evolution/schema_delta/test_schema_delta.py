@@ -23,16 +23,6 @@ from collections.abc import Iterator
 from types import ModuleType
 
 import pytest
-from _corpus_model_support import corpus, corpus_records, formed
-from _document_layout_support import document_model
-from _inheritance_family_support import (
-    entity_with_two_indices_over_one_column,
-    tpcs_family_with_a_root_declared_unique_index,
-    tpcs_family_with_a_temporal_root,
-    tpcs_family_with_a_value_object,
-    tph_family_with_a_descendant_declared_value_object_and_index,
-    tph_family_with_a_value_object,
-)
 
 from parallax.core.base import STRING
 from parallax.core.dialect import (
@@ -62,6 +52,16 @@ from parallax.evolution.schema_delta._physical import (
     member_key,
 )
 from parallax.evolution.schema_delta._render import render
+from tests.unit._corpus_model_support import corpus, corpus_records, formed
+from tests.unit._document_layout_support import document_model
+from tests.unit._inheritance_family_support import (
+    entity_with_two_indices_over_one_column,
+    tpcs_family_with_a_root_declared_unique_index,
+    tpcs_family_with_a_temporal_root,
+    tpcs_family_with_a_value_object,
+    tph_family_with_a_descendant_declared_value_object_and_index,
+    tph_family_with_a_value_object,
+)
 
 _RECORDS = corpus_records()
 _MODELS = corpus()

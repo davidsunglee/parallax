@@ -18,10 +18,10 @@ answer for the modules it is pointed at; an import that is not there is not a
 route it has to answer for.
 
 This file therefore also owns the module-identity refusal for the instruments.
-``memory_instruments`` is a generic name on a path this process does not own, and
-a module of that name already in ``sys.modules`` wins before any path entry is
-consulted, so a different sampling recipe would still produce numbers and they
-would not be the numbers the recorded baseline is stated over.
+``tests.unit.memory_instruments`` is resolved from a path this process does not
+own, and a module of that name already in ``sys.modules`` wins before any path
+entry is consulted, so a different sampling recipe would still produce numbers
+and they would not be the numbers the recorded baseline is stated over.
 
 The answer crosses back as one line of JSON on stdout, encoded by the report's
 own :func:`~instance_state_overhead.payload` so the encoder and the decoder stay
@@ -39,34 +39,17 @@ from time import perf_counter
 from typing import Any, Final, cast
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
-INSTRUMENTS: Final = WORKSPACE / "tests" / "unit"
-INSTRUMENT_MODULE: Final = INSTRUMENTS / "memory_instruments.py"
+INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 
-sys.path.insert(0, str(INSTRUMENTS))
+sys.path.insert(0, str(WORKSPACE))
 
-import memory_instruments  # noqa: E402
+from tests.unit import memory_instruments  # noqa: E402
 
 if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
     raise ImportError(
         f"this reading is taken through {INSTRUMENT_MODULE}, but "
         f"'memory_instruments' resolved to {memory_instruments.__file__}"
     )
-
-from _instance_state_support import (  # noqa: E402
-    COMPACT,
-    LEGACY,
-    ORDINARY,
-    Arm,
-    Scenario,
-    scenario_named,
-    state_cells,
-)
-from memory_instruments import (  # noqa: E402
-    WARMUP,
-    Seam,
-    retained,
-    untraced,
-)
 
 from instance_state_overhead import (  # noqa: E402
     MARGINAL_NODES,
@@ -75,6 +58,21 @@ from instance_state_overhead import (  # noqa: E402
     Reading,
     marginal,
     payload,
+)
+from tests.unit._instance_state_support import (  # noqa: E402
+    COMPACT,
+    LEGACY,
+    ORDINARY,
+    Arm,
+    Scenario,
+    scenario_named,
+    state_cells,
+)
+from tests.unit.memory_instruments import (  # noqa: E402
+    WARMUP,
+    Seam,
+    retained,
+    untraced,
 )
 
 

@@ -15,7 +15,6 @@ one that carries a polymorphic family a guard can actually split.
 from __future__ import annotations
 
 import pytest
-from _corpus_model_support import model as corpus_model
 
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.metamodel import EntityIdentity, Metamodel, RelationshipIdentity
@@ -25,6 +24,7 @@ from parallax.snapshot.materialize._views import (
     RelationshipViewKey,
     ViewSchema,
 )
+from tests.unit._corpus_model_support import model as corpus_model
 
 _NAMESPACE = "parallax.compatibility"
 

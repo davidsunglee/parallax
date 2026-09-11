@@ -6,7 +6,7 @@ view slots, duplicate logical nodes, and relationship fan-out — driven through
 the production converter, builder, and merge with no database anywhere. It is a
 `report`: it passes no verdict and joins no aggregate. The SHAPE of what a graph
 retains is gated instead, in
-``tests/unit/test_snapshot_graph_retention.py``, because references and positions
+``tests/unit/snapshot/test_snapshot_graph_retention.py``, because references and positions
 give a definite answer where a total in bytes is machine- and interpreter-
 relative. What has been read off this, and under what conditions, is
 ``docs/snapshot-graph-baseline.md``.
@@ -67,9 +67,9 @@ from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
 from parallax.snapshot.materialize._views import ChildSlot, RelationshipViewKey, ViewSchema
 
-INSTRUMENTS: Final = Path(__file__).resolve().parents[1] / "tests" / "unit"
-"""The one directory this report names, so it can read the instruments the gated
-suites read.
+WORKSPACE: Final = Path(__file__).resolve().parents[1]
+"""The one directory this report puts on the path, so it can read the instruments
+the gated suites read as `tests.unit.memory_instruments`.
 
 They are support code for `tests/unit/`, whose three cost suites are their only
 other readers, and `core/spec/language-testing.md` §4 keeps single-surface
@@ -79,20 +79,20 @@ the path is spelled once, here, and nothing under `tests/` knows this file
 exists.
 """
 
-INSTRUMENT_MODULE: Final = INSTRUMENTS / "memory_instruments.py"
+INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 """The exact file the reading is taken through.
 
-``memory_instruments`` is a generic name on a path this process does not own, so
-prepending the directory is only half of what makes the import deterministic: a
-module of that name already in :data:`sys.modules` wins before any path entry is
-consulted at all. The report therefore states which file it means and refuses to
-measure through any other, because the alternative failure is silent — a
-different definition of the sampling recipe would still produce a number, and the
-number would not be the one the recorded baseline is stated over.
+``tests.unit.memory_instruments`` is resolved from a path this process does not
+own, so prepending the workspace is only half of what makes the import
+deterministic: a module of that name already in :data:`sys.modules` wins before
+any path entry is consulted at all. The report therefore states which file it
+means and refuses to measure through any other, because the alternative failure
+is silent — a different definition of the sampling recipe would still produce a
+number, and the number would not be the one the recorded baseline is stated over.
 """
-sys.path.insert(0, str(INSTRUMENTS))
+sys.path.insert(0, str(WORKSPACE))
 
-import memory_instruments  # noqa: E402
+from tests.unit import memory_instruments  # noqa: E402
 
 if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
     raise ImportError(
@@ -100,7 +100,7 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
         f"resolved to {memory_instruments.__file__}"
     )
 
-from memory_instruments import (  # noqa: E402
+from tests.unit.memory_instruments import (  # noqa: E402
     WARMUP,
     LiveGraph,
     Seam,

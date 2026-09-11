@@ -16,9 +16,6 @@ from typing import Any
 
 import pytest
 
-from _support import mirrored_models as mm
-from _support import snapshot_models as sm
-from _support import value_object_models as vom
 from parallax.core import (
     Attr,
     DomainModel,
@@ -43,6 +40,9 @@ from parallax.core.metamodel import (
 from parallax.core.object_query import LATEST, TX_TIME
 from parallax.core.object_query._fluent import mutation_selection
 from parallax.core.predicate import All
+from tests._support import mirrored_models as mm
+from tests._support import snapshot_models as sm
+from tests._support import value_object_models as vom
 
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 

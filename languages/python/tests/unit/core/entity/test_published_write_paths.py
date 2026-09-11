@@ -25,13 +25,6 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from _compact_support import (
-    carries_instance_storage,
-    layout_slots,
-    published,
-    raw_row,
-    real_storage,
-)
 from pydantic import BaseModel, ConfigDict, PrivateAttr, TypeAdapter, ValidationError
 
 from parallax.core.entity import (
@@ -49,6 +42,13 @@ from parallax.core.entity._instance_state import (
     AUXILIARY_STATE_SLOT,
     COMPACT_STATE_SLOT,
     auxiliary,
+)
+from tests.unit.core.entity._compact_support import (
+    carries_instance_storage,
+    layout_slots,
+    published,
+    raw_row,
+    real_storage,
 )
 
 if TYPE_CHECKING:

@@ -15,41 +15,8 @@ from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, cast
 
-import _mixed_strategy_model as mx
 import pytest
-from _transact_support import (
-    ACCOUNT,
-    BALANCE,
-    FIND_SQL_LOCKED,
-    FIND_SQL_UNLOCKED,
-    FIXED,
-    INFINITY_INSTANT,
-    INSERT_SQL,
-    PAYMENT,
-    PERSON,
-    WHERE_POSITION_META,
-    WherePosition,
-    account_db,
-    balance_row,
-    db_for,
-    grace,
-    new_account,
-)
 
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    BeginCall,
-    CommitCall,
-    Read,
-    ReadCall,
-    RollbackCall,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
-from _support.model_capabilities import cataloged_for, graph_construction_for
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, Person
 from parallax.conformance.vo_models import (
@@ -91,6 +58,39 @@ from parallax.snapshot.handle._keyed_writes import (
     PreparedSourceWrite,
     ResolvedKeyedWriteSource,
 )
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    RollbackCall,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests._support.model_capabilities import cataloged_for, graph_construction_for
+from tests.unit._transact_support import (
+    ACCOUNT,
+    BALANCE,
+    FIND_SQL_LOCKED,
+    FIND_SQL_UNLOCKED,
+    FIXED,
+    INFINITY_INSTANT,
+    INSERT_SQL,
+    PAYMENT,
+    PERSON,
+    WHERE_POSITION_META,
+    WherePosition,
+    account_db,
+    balance_row,
+    db_for,
+    grace,
+    new_account,
+)
+from tests.unit.snapshot.handle import _mixed_strategy_model as mx
 
 
 # --------------------------------------------------------------------------- #

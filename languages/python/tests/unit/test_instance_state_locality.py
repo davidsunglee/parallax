@@ -32,7 +32,7 @@ from __future__ import annotations
 import ast
 from typing import TYPE_CHECKING
 
-from _source_inventory_support import (
+from tests.unit._source_inventory_support import (
     ENTITY_PACKAGE,
     ENTITY_SRC,
     declared_imports,

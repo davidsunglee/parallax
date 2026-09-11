@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 
-from _support.sql import compile_read
 from parallax.core import deep_fetch, navigate
 from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
@@ -34,6 +33,7 @@ from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.snapshot.handle import QueryTargetError
 from parallax.snapshot.handle._preflight import preflight
+from tests._support.sql import compile_read
 
 
 def _entity(name: str, namespace: str) -> records.Entity:

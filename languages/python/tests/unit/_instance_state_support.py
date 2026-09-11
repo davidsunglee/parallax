@@ -89,7 +89,6 @@ from typing import Any, Final, cast
 
 from pydantic import BaseModel, PrivateAttr
 
-from _support.model_capabilities import cataloged_for, graph_construction_for
 from parallax.core import (
     MANY_TO_ONE,
     AbstractRoot,
@@ -124,6 +123,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.snapshot._inspection import SnapshotNodeState
+from tests._support.model_capabilities import cataloged_for, graph_construction_for
 
 __all__ = [
     "ARMS",

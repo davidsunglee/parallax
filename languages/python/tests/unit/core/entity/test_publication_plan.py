@@ -14,7 +14,6 @@ import gc
 from typing import Any, cast
 
 import pytest
-from _compact_support import carries_instance_storage, published, raw_row
 from pydantic import BaseModel
 
 from parallax.core.entity import (
@@ -44,6 +43,7 @@ from parallax.core.entity._instance_state import (
 from parallax.core.entity._members import Attr as AttrDescriptor
 from parallax.core.entity._pydantic_storage import instance_presence
 from parallax.core.metamodel import TablePerHierarchy
+from tests.unit.core.entity._compact_support import carries_instance_storage, published, raw_row
 
 _NS = "plan"
 

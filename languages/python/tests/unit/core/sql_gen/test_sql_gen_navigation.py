@@ -13,11 +13,11 @@ the private-module split must preserve.
 from __future__ import annotations
 
 import pytest
-from _corpus_model_support import formed, model, target
 
-from _support.sql import compile_read
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import formed, model, target
 
 ORDERS = model("orders")
 ANIMAL = model("animal")

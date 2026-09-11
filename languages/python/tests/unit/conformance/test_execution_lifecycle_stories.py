@@ -16,7 +16,6 @@ from uuid import uuid4
 
 import pytest
 
-from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import execution_lifecycle_stories
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_port import Bind, DatabaseConnection, Row, TransactionOutcome
@@ -26,6 +25,7 @@ from parallax.core.execution_lifecycle import (
     ExecutionLifecycleHandlerError,
     RootExecution,
 )
+from tests._support.db_port import ConnectsAsItself, body_outcome
 
 
 class _AccountPort(ConnectsAsItself):

@@ -15,10 +15,7 @@ from unittest import mock
 
 import jsonschema
 import pytest
-from _second_dialect import BACKTICKED
 
-from _support.db_port import ConnectsAsItself, body_outcome, projected_row
-from _support.repo import adapter_schema, canonical_snapshot_claim
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
 from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lifecycle_observation import LifecycleRun
@@ -42,6 +39,9 @@ from parallax.core.predicate import (
 from parallax.core.predicate import serialize as serialize_predicate
 from parallax.core.unit_work import instructions
 from parallax.core.unit_work.instructions import PreparedKeyedWrite, PreparedPredicateWrite
+from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
+from tests._support.repo import adapter_schema, canonical_snapshot_claim
+from tests.unit._second_dialect import BACKTICKED
 
 _SCHEMA = adapter_schema()
 # The declared profile these suites run under, read off the one roster rather than

@@ -9,8 +9,6 @@ under pyright strict, so privacy is carried by this MODULE's underscore.
 
 from __future__ import annotations
 
-from _corpus_model_support import formed
-
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
@@ -22,6 +20,7 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
+from tests.unit._corpus_model_support import formed
 
 __all__ = [
     "entity_with_two_indices_over_one_column",

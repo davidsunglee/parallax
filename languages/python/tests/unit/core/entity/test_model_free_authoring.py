@@ -17,19 +17,7 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from _transact_support import FIXED
 
-from _support.db_port import (
-    BeginCall,
-    CommitCall,
-    Read,
-    ReadCall,
-    RefusingAdapter,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
 from parallax.core import (
     Attr,
     DomainModel,
@@ -47,6 +35,18 @@ from parallax.core.metamodel import UnresolvedEntityDeclaration
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import QueryTargetError, SnapshotConnectionError
 from parallax.snapshot.handle import Database, Transaction
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    RefusingAdapter,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests.unit._transact_support import FIXED
 
 _NS = "parallax.compatibility"
 _INSTANT = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)

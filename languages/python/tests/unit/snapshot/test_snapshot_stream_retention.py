@@ -126,7 +126,17 @@ from decimal import Decimal
 from itertools import pairwise
 from typing import Any, Final, NamedTuple, cast
 
-from memory_instruments import (
+from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
+from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.object_query._fluent import ObjectQuery
+from parallax.snapshot import SnapshotStream
+from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.materialize import SnapshotGraph
+from parallax.snapshot.materialize._graph import GraphRows
+from parallax.snapshot.materialize._merge import GraphMerge
+from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
+from tests.unit.memory_instruments import (
     Seam,
     Span,
     high_water,
@@ -137,17 +147,6 @@ from memory_instruments import (
     warmed,
     whole_heap,
 )
-
-from _support.db_port import ConnectsAsItself, body_outcome, projected_row
-from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
-from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES, Dialect
-from parallax.core.object_query._fluent import ObjectQuery
-from parallax.snapshot import SnapshotStream
-from parallax.snapshot.handle import Database, Transaction
-from parallax.snapshot.materialize import SnapshotGraph
-from parallax.snapshot.materialize._graph import GraphRows
-from parallax.snapshot.materialize._merge import GraphMerge
 
 _SMALL: Final = 20
 """Roots in the small reading — enough for several pages at the page size below."""

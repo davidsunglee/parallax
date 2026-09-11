@@ -16,8 +16,8 @@ from typing import Any, cast
 
 import pytest
 
-from _support.corpus import CollectionKinds, case_document, compare_graph
 from parallax.conformance import case_format, engine
+from tests._support.corpus import CollectionKinds, case_document, compare_graph
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 

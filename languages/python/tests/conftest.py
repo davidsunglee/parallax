@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from _support import cost_durations
-from _support.distributions import ALL_PACKAGES, Wheelhouse
-from _support.repo import PY_ROOT
+from tests._support import cost_durations
+from tests._support.distributions import ALL_PACKAGES, Wheelhouse
+from tests._support.repo import PY_ROOT
 
 if TYPE_CHECKING:
     from parallax.conformance.profile import Profile
@@ -30,9 +30,9 @@ _DB_SKIPS: list[str] = []
 _DATABASE_FIXTURES = frozenset({"profile_run"})
 
 # What marks an item as needing an interpreter no other test shares, spelled as
-# `tests/unit/memory_instruments.py` sets it. This module loads before any surface
-# directory reaches the path and so cannot import that one; the two spellings are
-# held together by `tools/check_instrument_access.py`.
+# `tests/unit/memory_instruments.py` sets it. The runner's own module imports no
+# instrument, so the two spellings are held together by
+# `tools/check_instrument_access.py` rather than by one importing the other.
 _OWN_INTERPRETER_ATTRIBUTE = "__parallax_own_interpreter__"
 
 _WHOLE_CLASS = "1/1"

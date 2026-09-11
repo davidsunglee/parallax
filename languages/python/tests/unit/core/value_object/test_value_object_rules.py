@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from _metamodel_support import Declaration, accepted, identity, key, source
 
 from parallax.conformance import case_format
 from parallax.core import value_object
@@ -46,6 +45,7 @@ from parallax.core.value_object import (
 )
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
+from tests.unit._metamodel_support import Declaration, accepted, identity, key, source
 
 _OWNER = identity("Customer")
 

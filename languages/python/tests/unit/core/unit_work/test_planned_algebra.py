@@ -33,11 +33,7 @@ from collections.abc import Callable
 from typing import cast
 
 import pytest
-from _corpus_model_support import model as corpus_model
-from _corpus_model_support import target as entity_of
 
-from _support.clock_probes import inert_instant
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.metamodel import AttributeIdentity, ValueObjectIdentity
 from parallax.core.predicate import All, validate_predicate
 from parallax.core.unit_work import (
@@ -81,6 +77,10 @@ from parallax.core.unit_work import (
     shortfall_for,
 )
 from parallax.core.unit_work.planned import ValidatedMutationSelection
+from tests._support.clock_probes import inert_instant
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._corpus_model_support import target as entity_of
 
 _ACCOUNT_MODEL = corpus_model("account")
 _ACCOUNT_META = entity_of(_ACCOUNT_MODEL, "Account")

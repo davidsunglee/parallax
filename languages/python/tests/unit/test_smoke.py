@@ -16,9 +16,9 @@ import parallax.core
 import parallax.descriptor
 import parallax.postgres
 import parallax.snapshot
-from _support.distributions import TOP_PACKAGE_NAMES
-from _support.repo import PY_ROOT
 from parallax.conformance import cli
+from tests._support.distributions import TOP_PACKAGE_NAMES
+from tests._support.repo import PY_ROOT
 
 _PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api" / "public_api.json"
 

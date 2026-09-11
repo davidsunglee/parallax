@@ -16,9 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator, Iterable
 
 import pytest
-from _compact_support import published
 
-from _support import frontend_probes, frontend_probes_stringized
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -75,6 +73,8 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
+from tests._support import frontend_probes, frontend_probes_stringized
+from tests.unit.core.entity._compact_support import published
 
 
 class Warehouse(

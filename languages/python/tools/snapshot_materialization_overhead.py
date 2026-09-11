@@ -13,7 +13,7 @@ its grader measure one workload rather than two.
 It is a `report`: it passes no verdict and joins no aggregate, because elapsed
 time is a property of the machine that ran it and a total in bytes moves with the
 interpreter. The SHAPE of the claim is gated instead, in
-``tests/unit/test_snapshot_materialization_scaling.py``, which proves prepared
+``tests/unit/snapshot/test_snapshot_materialization_scaling.py``, which proves prepared
 state is fixed by the model's exact layouts and the compiled reads rather than by
 rows or graphs. What has been read off this, and under what conditions, is
 ``docs/snapshot-materialization-baseline.md``.
@@ -69,26 +69,22 @@ WORKSPACE: Final = Path(__file__).resolve().parents[1]
 """The Python workspace root — where a child interpreter of another minor is
 resolved from, and where the supported-minor range is declared."""
 
-SUPPORT: Final = WORKSPACE / "tests" / "unit"
-"""The one directory this report names, so it can read the workload the gated
-suite reads.
+READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_materialization_reading.py"
+"""The script one child runs: the half of this report that takes a reading."""
+
+SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_snapshot_materialization_support.py"
+"""The exact file the workload is read off, reached as
+``tests.unit._snapshot_materialization_support`` with the workspace on the path.
 
 It is support code for `tests/unit/`, whose own suites are its other readers, and
 `core/spec/language-testing.md` §4 keeps single-surface support code inside its
 surface — a report is no surface of its own, so picking it up here does not move
 it. The reach stays deliberate and one-way: the path is spelled once, here, and
 nothing under `tests/` knows this file exists.
-"""
 
-READING_SCRIPT: Final = Path(__file__).resolve().parent / "snapshot_materialization_reading.py"
-"""The script one child runs: the half of this report that takes a reading."""
-
-SUPPORT_MODULE: Final = SUPPORT / "_snapshot_materialization_support.py"
-"""The exact file the workload is read off.
-
-A generic name on a path this process does not own, so prepending the directory
-is only half of what makes the import deterministic: a module of that name
-already in :data:`sys.modules` wins before any path entry is consulted. The report
+Resolved from a path this process does not own, so prepending the workspace is
+only half of what makes the import deterministic: a module of that name already
+in :data:`sys.modules` wins before any path entry is consulted. The report
 therefore states which file it means and refuses to run against any other, because
 the alternative failure is silent — a different workload would still produce
 numbers, and they would not be the numbers the recorded baseline is stated over.
@@ -96,16 +92,16 @@ numbers, and they would not be the numbers the recorded baseline is stated over.
 
 DURATIONS: Final = WORKSPACE / "tests" / "_support" / "cost_durations.json"
 COST_ITEM: Final = (
-    "tests/unit/test_snapshot_graph_retention.py::"
+    "tests/unit/snapshot/test_snapshot_graph_retention.py::"
     "test_a_models_layout_catalog_is_the_same_size_after_one_graph_and_after_sixty_four"
 )
 """The 64-graph cost item, and the file recording what it last cost. Read rather
 than re-run: the item owns its own instruments and its duration is a fact about
 the class's balance, not a measurement this report may retake."""
 
-sys.path.insert(0, str(SUPPORT))
+sys.path.insert(0, str(WORKSPACE))
 
-import _snapshot_materialization_support  # noqa: E402 - after the sys.path setup above
+from tests.unit import _snapshot_materialization_support  # noqa: E402 - after the path setup
 
 if Path(_snapshot_materialization_support.__file__ or "").resolve() != SUPPORT_MODULE:
     raise ImportError(
@@ -114,7 +110,7 @@ if Path(_snapshot_materialization_support.__file__ or "").resolve() != SUPPORT_M
         f"{_snapshot_materialization_support.__file__}"
     )
 
-from _snapshot_materialization_support import (  # noqa: E402 - after the sys.path setup above
+from tests.unit._snapshot_materialization_support import (  # noqa: E402 - after the sys.path setup above
     LAYOUTS,
     PROJECTIONS_PER_BATCH,
     ROWS_PER_BATCH,

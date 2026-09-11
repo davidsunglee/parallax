@@ -21,10 +21,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, Literal, cast
 
 import pytest
-from _corpus_model_support import model, target
 
-from _support import fake_metamodel
-from _support.sql import compile_read
 from parallax.core import deep_fetch, inheritance, relationship, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
@@ -47,6 +44,9 @@ from parallax.core.sql_gen._compile import (
     CompiledRead,
 )
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
+from tests._support import fake_metamodel
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import model, target
 
 ORDERS = model("orders")
 CUSTOMER = model("customer")

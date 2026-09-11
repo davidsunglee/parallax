@@ -24,18 +24,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
-from _layout_twin_columns import COLUMNS_TWIN
-from _layout_twin_columns import LayoutTwinItem as ColumnsItem
-from _layout_twin_document import DOCUMENT_TWIN
-from _layout_twin_document import LayoutTwinItem as DocumentItem
-from _snapshot_graph_support import GraphFixture, invalid_record
-from _transact_support import ACCOUNT
 
-from _support import mirrored_models as mm
-from _support.db_port import (
-    Read,
-    ScriptedAdapter,
-)
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.story_models import ORDERS_MODEL, Order
@@ -66,6 +55,17 @@ from parallax.snapshot.materialize import (
     merge_graph_input,
 )
 from parallax.snapshot.materialize._graph import graph_rows
+from tests._support import mirrored_models as mm
+from tests._support.db_port import (
+    Read,
+    ScriptedAdapter,
+)
+from tests.unit._snapshot_graph_support import GraphFixture, invalid_record
+from tests.unit._transact_support import ACCOUNT
+from tests.unit.snapshot._layout_twin_columns import COLUMNS_TWIN
+from tests.unit.snapshot._layout_twin_columns import LayoutTwinItem as ColumnsItem
+from tests.unit.snapshot._layout_twin_document import DOCUMENT_TWIN
+from tests.unit.snapshot._layout_twin_document import LayoutTwinItem as DocumentItem
 
 _NAMESPACE = "parallax.compatibility"
 

@@ -28,9 +28,7 @@ import weakref
 from typing import Any, cast
 
 import pytest
-from _compact_support import carries_instance_storage, layout_slots, raw_row
 
-from _support.model_capabilities import graph_construction_for, row_codec_for
 from parallax.core.entity import (
     MANY_TO_ONE,
     UNLOADED,
@@ -65,6 +63,8 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
     ValueObjectIdentity,
 )
+from tests._support.model_capabilities import graph_construction_for, row_codec_for
+from tests.unit.core.entity._compact_support import carries_instance_storage, layout_slots, raw_row
 
 _NS = "publication"
 

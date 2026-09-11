@@ -15,8 +15,6 @@ nowhere else.
 
 from __future__ import annotations
 
-from _corpus_model_support import formed
-
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import (
@@ -43,6 +41,7 @@ from parallax.evolution.schema_delta._physical import (
     RestateColumnDomain,
 )
 from parallax.evolution.schema_delta._plan import plan
+from tests.unit._corpus_model_support import formed
 
 
 def _tpcs(*, sealed: bool, reparented: bool, own_lid: bool = False) -> AcceptedMetamodel:

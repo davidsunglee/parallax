@@ -35,7 +35,6 @@ from typing import Any
 
 import pytest
 
-from _support.adoption import raises_contextualized
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ScriptedClock
@@ -52,6 +51,7 @@ from parallax.core.entity._model import model_of
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction, TransactionTimePinReadOnlyError
+from tests._support.adoption import raises_contextualized
 
 _BALANCE = MODELS["balance"]
 _BRANCH = MODELS["branch"]

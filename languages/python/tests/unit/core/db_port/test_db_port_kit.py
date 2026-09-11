@@ -13,18 +13,6 @@ from __future__ import annotations
 
 import pytest
 
-from _support.db_port import (
-    BeginCall,
-    CommitCall,
-    Read,
-    ReadCall,
-    RefusingAdapter,
-    RollbackCall,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     BeginFailed,
@@ -36,6 +24,18 @@ from parallax.core.db_port import (
     Row,
 )
 from parallax.core.dialect import POSTGRES
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    RefusingAdapter,
+    RollbackCall,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
 
 
 def _deadlock() -> DatabaseError:

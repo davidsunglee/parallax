@@ -21,8 +21,6 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from _corpus_model_support import model as corpus_model
-from _corpus_model_support import target as entity_of
 
 from parallax.core.metamodel import AttributeIdentity
 from parallax.core.predicate import All, validate_predicate
@@ -66,6 +64,8 @@ from parallax.core.unit_work.planned import (
 from parallax.core.unit_work.planned import (
     ValidatedMutationSelection,
 )
+from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._corpus_model_support import target as entity_of
 
 _ACCOUNT_MODEL = corpus_model("account")
 _ACCOUNT_META = entity_of(_ACCOUNT_MODEL, "Account")

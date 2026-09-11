@@ -19,12 +19,12 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from _corpus_model_support import model, target
 
-from _support.sql import compile_read, compile_write_predicate
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen._compile import CompiledPredicate
+from tests._support.sql import compile_read, compile_write_predicate
+from tests.unit._corpus_model_support import model, target
 
 ORDERS = model("orders")
 ACCOUNT = model("account")

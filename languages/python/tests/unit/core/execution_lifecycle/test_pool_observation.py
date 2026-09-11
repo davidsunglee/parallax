@@ -18,10 +18,7 @@ import threading
 from typing import Any
 
 import pytest
-from _contention_support import observing
-from _pool_source_support import DetachableSource
 
-from _support.db_port import Read, ScriptedAdapter
 from parallax.conformance.story_models import ACCOUNT_MODEL
 from parallax.core.db_port import RESOURCE_LOGGER_NAME
 from parallax.core.execution_lifecycle import (
@@ -37,6 +34,9 @@ from parallax.core.execution_lifecycle._pool_observation import (
 )
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database
+from tests._support.db_port import Read, ScriptedAdapter
+from tests.unit._contention_support import observing
+from tests.unit._pool_source_support import DetachableSource
 
 
 class _Registration:

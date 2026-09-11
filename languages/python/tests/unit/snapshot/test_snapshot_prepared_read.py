@@ -39,23 +39,7 @@ from dataclasses import dataclass
 from typing import Any, Final, cast
 
 import pytest
-from _corpus_model_support import formed, target
-from _corpus_model_support import model as corpus_model
-from _snapshot_graph_support import rendered_members
-from _snapshot_materialization_support import (
-    LAYOUTS,
-    OWNERS,
-    Layout,
-    batch,
-    compiled_levels,
-    fetch_plan,
-    metamodel,
-    prepared_levels,
-    query,
-    rows_per_level,
-)
 
-from _support.sql import compile_read
 from parallax.core import predicate as oa
 from parallax.core.base import (
     SQL_NULL,
@@ -85,6 +69,22 @@ from parallax.snapshot.materialize import StoredDataIssueInput, _convert
 from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import formed, target
+from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._snapshot_graph_support import rendered_members
+from tests.unit._snapshot_materialization_support import (
+    LAYOUTS,
+    OWNERS,
+    Layout,
+    batch,
+    compiled_levels,
+    fetch_plan,
+    metamodel,
+    prepared_levels,
+    query,
+    rows_per_level,
+)
 
 ANIMAL = corpus_model("animal")
 SCALARS = corpus_model("scalars")

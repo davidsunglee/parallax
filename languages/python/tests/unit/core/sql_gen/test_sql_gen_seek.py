@@ -14,9 +14,6 @@ from dataclasses import replace
 from typing import Final
 
 import pytest
-from _corpus_model_support import formed
-from _corpus_model_support import model as accepted_model
-from _corpus_model_support import target as entity_of
 
 from parallax.core import continuation, deep_fetch
 from parallax.core.base import INFINITY, INFINITY_LITERAL, PresentDocument
@@ -38,6 +35,9 @@ from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.core.sql_gen._seek import lowered_terms
 from parallax.core.wire import WireEncodingError
 from parallax.descriptor import _records
+from tests.unit._corpus_model_support import formed
+from tests.unit._corpus_model_support import model as accepted_model
+from tests.unit._corpus_model_support import target as entity_of
 
 DOCUMENT_LAYOUT = accepted_model("document-layout")
 ORDERS = accepted_model("orders")

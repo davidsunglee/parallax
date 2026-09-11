@@ -29,7 +29,6 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from _metamodel_support import Declaration, attribute, identity, key, source
 
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import (
@@ -67,6 +66,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.unit_work import WriteRejectedError, validate_write
+from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 # A synthetic multi-type entity: every scalar neutral type as a NULLABLE
 # top-level attribute (so a bare `{id, label}` row is a valid INSERT baseline

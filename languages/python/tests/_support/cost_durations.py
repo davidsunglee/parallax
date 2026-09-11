@@ -12,7 +12,7 @@ from typing import cast
 
 import pytest
 
-from _support.repo import PY_ROOT
+from tests._support.repo import PY_ROOT
 
 COST_DURATIONS = PY_ROOT / "tests" / "_support" / "cost_durations.json"
 

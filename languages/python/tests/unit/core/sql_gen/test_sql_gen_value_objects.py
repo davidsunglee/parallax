@@ -16,14 +16,14 @@ top-level `many` value object).
 from __future__ import annotations
 
 import pytest
-from _corpus_model_support import formed, model, target
 
-from _support.sql import compile_read
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.object_query import History
 from parallax.core.predicate import ModelRejectedError
 from parallax.core.sql_gen import SqlGenError
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import formed, model, target
 
 CUSTOMER = model("customer")
 

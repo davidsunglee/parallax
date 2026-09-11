@@ -23,11 +23,11 @@ from typing import Any
 
 import pytest
 import yaml
-from memory_instruments import takes_its_own_interpreter
 
-from _support import cost_durations
-from _support.repo import PY_ROOT, REPO_ROOT
 from check_database_access import ENTRY_POINT_FIXTURE
+from tests._support import cost_durations
+from tests._support.repo import PY_ROOT, REPO_ROOT
+from tests.unit.memory_instruments import takes_its_own_interpreter
 
 SCHEDULING_CLASSES = frozenset({"dbfree", "db", "cost"})
 DATABASE_FIXTURES = frozenset({ENTRY_POINT_FIXTURE})
@@ -483,7 +483,7 @@ def test_the_marker_catalog_is_the_partition_plus_the_orthogonal_selectors() -> 
 # --------------------------------------------------------------------------
 def test_the_test_root_holds_only_surfaces_support_and_runner_required_files() -> None:
     entries = {p.name for p in TESTS_ROOT.iterdir() if p.name != "__pycache__"}
-    assert entries == SURFACES | {"_support", "conftest.py"}
+    assert entries == SURFACES | {"_support", "__init__.py", "conftest.py"}
 
 
 def test_every_collected_item_sits_under_a_primary_surface(

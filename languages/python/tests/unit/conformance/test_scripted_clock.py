@@ -17,14 +17,6 @@ from decimal import Decimal
 
 import pytest
 
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    Read,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ClockExhaustedError, ScriptedClock
@@ -32,6 +24,14 @@ from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    Read,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
 
 _ACCOUNT = MODELS["account"]
 _BALANCE = MODELS["balance"]

@@ -132,14 +132,6 @@ from functools import cache
 from typing import Final, NamedTuple, cast
 
 import pytest
-from memory_instruments import (
-    Seam,
-    in_a_child_interpreter,
-    retained,
-    serve_one_measurement,
-    survivors,
-    warmed,
-)
 
 from parallax.core.base import Float64, Int64
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, LayoutCatalog
@@ -169,6 +161,14 @@ from parallax.snapshot.materialize._views import (
     RelationshipViewKey,
     SourceViewLayout,
     ViewSchema,
+)
+from tests.unit.memory_instruments import (
+    Seam,
+    in_a_child_interpreter,
+    retained,
+    serve_one_measurement,
+    survivors,
+    warmed,
 )
 
 _POINTER: Final = struct.calcsize("P")

@@ -16,8 +16,6 @@ refactor of the functions below.
 from __future__ import annotations
 
 import pytest
-from _corpus_model_support import model as accepted_model
-from _corpus_model_support import target as entity_of
 
 from parallax.core import continuation
 from parallax.core.metamodel import Metamodel
@@ -25,6 +23,8 @@ from parallax.core.object_query import object_query, validate_object_query
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.predicate import All
 from parallax.snapshot.handle._page import PagePlan, PageRequest, page_decision
+from tests.unit._corpus_model_support import model as accepted_model
+from tests.unit._corpus_model_support import target as entity_of
 
 ORDERS: Metamodel = accepted_model("orders")
 

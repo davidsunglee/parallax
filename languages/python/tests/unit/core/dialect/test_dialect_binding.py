@@ -15,11 +15,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _second_dialect import BACKTICKED
-from _transact_support import ACCOUNT
 
-from _support import mirrored_models as mm
-from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import engine
 from parallax.conformance.boundary_runner import FaultInjectingPort
 from parallax.core.db_port import DatabaseConnection, DeclaresDialect, DocumentReadOrdinals, Row
@@ -27,6 +23,10 @@ from parallax.core.db_port import TransactionOutcome as Outcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
 from parallax.snapshot import connect
+from tests._support import mirrored_models as mm
+from tests._support.db_port import ConnectsAsItself, body_outcome
+from tests.unit._second_dialect import BACKTICKED
+from tests.unit._transact_support import ACCOUNT
 
 _ACCOUNT_ROW: Row = {"id": 7, "owner": "Ada", "balance": Decimal("1.00"), "version": 1}
 

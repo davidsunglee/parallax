@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Final, cast
 
-from _support.corpus import case_document, wire_value_deep
 from parallax.conformance import case_format
+from tests._support.corpus import case_document, wire_value_deep
 
 # Reachable read cases whose golden projection and predicate are supported by
 # the current compiler.

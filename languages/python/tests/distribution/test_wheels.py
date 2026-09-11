@@ -7,8 +7,8 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-from _support.distributions import PRODUCTION_PACKAGES, TOP_PACKAGE_DIR, Wheelhouse
-from _support.repo import PY_ROOT, REPO_ROOT
+from tests._support.distributions import PRODUCTION_PACKAGES, TOP_PACKAGE_DIR, Wheelhouse
+from tests._support.repo import PY_ROOT, REPO_ROOT
 
 _PACKAGED_SCHEMA = "parallax/descriptor/_schemas/metamodel.schema.json"
 

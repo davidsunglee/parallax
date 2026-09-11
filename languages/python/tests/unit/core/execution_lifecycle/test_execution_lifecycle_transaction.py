@@ -24,26 +24,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _transact_support import (
-    ACCOUNT,
-    FIXED,
-    NEW_ROW,
-    deadlock,
-    new_account,
-)
 
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    BeginCall,
-    CommitCall,
-    ConnectsAsItself,
-    Read,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    body_outcome,
-)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
@@ -96,6 +77,25 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Database, Transaction, TransactionRollbackError
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    ConnectsAsItself,
+    Read,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    body_outcome,
+)
+from tests.unit._transact_support import (
+    ACCOUNT,
+    FIXED,
+    NEW_ROW,
+    deadlock,
+    new_account,
+)
 
 
 def _db(adapter: DatabaseAdapter, provider: Any, model: Any = ACCOUNT) -> Database:

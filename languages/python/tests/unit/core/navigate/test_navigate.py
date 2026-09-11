@@ -16,10 +16,7 @@ import datetime as dt
 import decimal
 
 import pytest
-from _corpus_model_support import model as accepted_model
-from _corpus_model_support import target
 
-from _support.sql import compile_read
 from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
@@ -27,6 +24,9 @@ from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, T
 from parallax.core.navigate import canonicalize, canonicalize_validated, resolve_relationship
 from parallax.core.object_query import AsOf, TemporalSelection
 from parallax.core.object_query import TemporalDimension as QueryTemporalDimension
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import model as accepted_model
+from tests.unit._corpus_model_support import target
 
 ORDERS = accepted_model("orders")
 POLICY = accepted_model("policy")

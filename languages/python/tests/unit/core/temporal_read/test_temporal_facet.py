@@ -7,9 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Final, cast
 
 import pytest
-from _metamodel_support import Declaration, identity, instant, key, source
 
-from _support import fake_metamodel as fake
 from parallax.conformance import case_format
 from parallax.core import inheritance, opt_lock, relationship, temporal_read
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
@@ -55,6 +53,8 @@ from parallax.core.temporal_read import (
 )
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
+from tests._support import fake_metamodel as fake
+from tests.unit._metamodel_support import Declaration, identity, instant, key, source
 
 _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _CORPUS_NAMESPACE: Final[str] = "parallax.compatibility"

@@ -37,13 +37,13 @@ from typing import cast
 import pytest
 
 import check_dag_sync as dag
-from _support.distributions import (
+from tests._support.distributions import (
     ALL_PACKAGES,
     PRODUCTION_PACKAGES,
     TOP_PACKAGE_DIR,
     TOP_PACKAGE_NAMES,
 )
-from _support.repo import PY_ROOT
+from tests._support.repo import PY_ROOT
 
 _PACKAGES_DIR = PY_ROOT / "packages"
 _WORKSPACE_PYPROJECT = PY_ROOT / "pyproject.toml"

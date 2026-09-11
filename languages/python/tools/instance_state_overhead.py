@@ -145,36 +145,32 @@ WORKSPACE: Final = Path(__file__).resolve().parents[1]
 """The Python workspace root — where a child interpreter of another minor is
 resolved from, and where the supported-minor range is declared."""
 
-INSTRUMENTS: Final = WORKSPACE / "tests" / "unit"
-"""The one directory this report names, so it can read the instruments and the
-scenario fixture the gated suite reads.
-
-They are support code for `tests/unit/`, whose own suites are their other
-readers, and `core/spec/language-testing.md` §4 keeps single-surface support code
-inside its surface — a report is no surface of its own, so picking them up here
-does not move them. The reach stays deliberate and one-way: the path is spelled
-once, here, and nothing under `tests/` knows this file exists.
-"""
-
 READING_SCRIPT: Final = Path(__file__).resolve().parent / "instance_state_reading.py"
 """The script one child runs: the half of this report that takes a reading."""
 
-SUPPORT_MODULE: Final = INSTRUMENTS / "_instance_state_support.py"
-"""The exact file the scenarios are read off.
+SUPPORT_MODULE: Final = WORKSPACE / "tests" / "unit" / "_instance_state_support.py"
+"""The exact file the scenarios are read off, reached as
+``tests.unit._instance_state_support`` with the workspace on the path.
 
-A generic name on a path this process does not own, so prepending the directory
-is only half of what makes the import deterministic: a module of that name
-already in :data:`sys.modules` wins before any path entry is consulted. The
-report therefore states which file it means and refuses to run against any other,
+It is support code for `tests/unit/`, whose own suites are its other readers, and
+`core/spec/language-testing.md` §4 keeps single-surface support code inside its
+surface — a report is no surface of its own, so picking it up here does not move
+it. The reach stays deliberate and one-way: the path is spelled once, here, and
+nothing under `tests/` knows this file exists.
+
+Resolved from a path this process does not own, so prepending the workspace is
+only half of what makes the import deterministic: a module of that name already
+in :data:`sys.modules` wins before any path entry is consulted. The report
+therefore states which file it means and refuses to run against any other,
 because the alternative failure is silent — a different scenario mix would still
 produce numbers, and they would not be the numbers the recorded baseline is
 stated over. The reading script states the same about ``memory_instruments``,
 which is the module this one deliberately does not import.
 """
 
-sys.path.insert(0, str(INSTRUMENTS))
+sys.path.insert(0, str(WORKSPACE))
 
-import _instance_state_support  # noqa: E402
+from tests.unit import _instance_state_support  # noqa: E402
 
 if Path(_instance_state_support.__file__ or "").resolve() != SUPPORT_MODULE:
     raise ImportError(
@@ -182,7 +178,7 @@ if Path(_instance_state_support.__file__ or "").resolve() != SUPPORT_MODULE:
         f"'_instance_state_support' resolved to {_instance_state_support.__file__}"
     )
 
-from _instance_state_support import (  # noqa: E402
+from tests.unit._instance_state_support import (  # noqa: E402
     REPORTED,
     SCENARIOS,
     WARMED_AUXILIARY,

@@ -18,7 +18,6 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-from _metamodel_support import Declaration, attribute, identity, key, source
 
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INT32, STRING, TIMESTAMP
@@ -61,6 +60,7 @@ from parallax.evolution.model_evolution import (
     UnilateralEvolution,
     evolve,
 )
+from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _AUTHORING = CoordinationReason.AUTHORING_SURFACE_CHANGE_REQUIRED
 _MIGRATION = CoordinationReason.DATABASE_MIGRATION_REQUIRED

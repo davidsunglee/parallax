@@ -20,15 +20,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from _transact_support import ACCOUNT, FIXED, NEW_ROW, read_account
 
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    Read,
-    ReadCall,
-    ScriptedAdapter,
-)
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter
 from parallax.core.diagnostics import FailureDiagnostic, diagnostic_for
@@ -56,6 +48,14 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    Read,
+    ReadCall,
+    ScriptedAdapter,
+)
+from tests.unit._transact_support import ACCOUNT, FIXED, NEW_ROW, read_account
 
 
 def _db(adapter: DatabaseAdapter, provider: Any) -> Database:

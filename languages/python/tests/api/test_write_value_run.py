@@ -18,7 +18,6 @@ from typing import Any
 
 import pytest
 
-from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine, write_value_runner
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.another_source import AnotherSource
@@ -26,6 +25,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.snapshot import connect, prepare_model
 from parallax.snapshot.handle import Transaction
+from tests._support.corpus import case_fixtures
 
 _CASES = write_value_runner.reachable_write_value_cases()
 _CASE_IDS = [case.case_id for case in _CASES]

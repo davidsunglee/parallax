@@ -8,9 +8,6 @@ check the key against them, so the shortcut cannot silently stop being valid.
 
 from __future__ import annotations
 
-from _corpus_model_support import corpus, formed
-from _inheritance_family_support import entity_with_two_indices_over_one_column
-
 from parallax.core.base import INT32, STRING
 from parallax.core.dialect import POSTGRES, PhysicalIndexName
 from parallax.core.metamodel import AttributeIdentity, Column, EntityIdentity, IndexIdentity, Table
@@ -30,6 +27,8 @@ from parallax.evolution.schema_delta._physical import (
     table_of,
 )
 from parallax.evolution.schema_delta._plan import plan
+from tests.unit._corpus_model_support import corpus, formed
+from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
 _MODELS = corpus()
 

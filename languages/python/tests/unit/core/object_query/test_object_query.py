@@ -13,11 +13,11 @@ from typing import Any, cast
 
 import pytest
 
-from _support.corpus import case_document
 from parallax.conformance import case_format
 from parallax.core import object_query as oq
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.predicate import All, CanonicalDocumentError, QueryDefinitionError
+from tests._support.corpus import case_document
 
 _ORDER = "parallax.compatibility.Order"
 

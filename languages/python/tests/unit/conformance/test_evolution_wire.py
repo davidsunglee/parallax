@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from _metamodel_support import identity
 
 from parallax.conformance.evolution_wire import (
     EvolutionSpellingError,
@@ -126,6 +125,7 @@ from parallax.evolution.schema_delta import (
     UnsupportedSchemaEvolutionError,
     UnsupportedSchemaOperation,
 )
+from tests.unit._metamodel_support import identity
 
 _ORDER = identity("Order")
 _PAYMENT = identity("Payment")

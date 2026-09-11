@@ -17,7 +17,6 @@ from typing import cast
 
 import pytest
 
-from _support import fake_metamodel
 from parallax.conformance import case_format, models
 from parallax.core.base import STRING, TIMESTAMP
 from parallax.core.metamodel import (
@@ -39,6 +38,7 @@ from parallax.core.metamodel import (
 )
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._export import DescriptorExportError, export_document
+from tests._support import fake_metamodel
 
 
 def _corpus_paths() -> list[Path]:

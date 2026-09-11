@@ -20,9 +20,7 @@ from enum import IntEnum
 from typing import Any, cast
 
 import pytest
-from _snapshot_graph_support import GraphFixture, invalid_record
 
-from _support import snapshot_models as sm
 from parallax.conformance import read_models, vo_models
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.story_models import Order as _soOrder
@@ -52,6 +50,8 @@ from parallax.snapshot.materialize import (
     merge_graph_input,
 )
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
+from tests._support import snapshot_models as sm
+from tests.unit._snapshot_graph_support import GraphFixture, invalid_record
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL

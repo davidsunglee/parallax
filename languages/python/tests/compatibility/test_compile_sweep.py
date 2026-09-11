@@ -21,19 +21,19 @@ from typing import Any, cast
 import jsonschema
 import pytest
 
-from _support.corpus import case_document
-from _support.db_port import ConnectsAsItself
-from _support.repo import adapter_schema
-from _support.sweep_goldens import (
+from parallax.conformance import adapter, case_format, engine, sweep
+from parallax.conformance.profile import profile_for
+from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
+from parallax.core.dialect import POSTGRES, Dialect
+from tests._support.corpus import case_document
+from tests._support.db_port import ConnectsAsItself
+from tests._support.repo import adapter_schema
+from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
     wire_binds,
     write_golden_statements,
 )
-from parallax.conformance import adapter, case_format, engine, sweep
-from parallax.conformance.profile import profile_for
-from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
-from parallax.core.dialect import POSTGRES, Dialect
 
 pytestmark = pytest.mark.compile_sweep
 

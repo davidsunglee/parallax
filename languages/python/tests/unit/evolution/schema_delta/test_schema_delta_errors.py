@@ -17,8 +17,6 @@ import dataclasses
 from collections.abc import Sequence
 
 import pytest
-from _corpus_model_support import formed
-from _inheritance_family_support import entity_with_two_indices_over_one_column
 
 from parallax.core.dialect import (
     POSTGRES,
@@ -32,6 +30,8 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.descriptor._records import Attribute, Entity, Index, Metamodel
 from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
 from parallax.evolution.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
+from tests.unit._corpus_model_support import formed
+from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
 _INDEX_REFUSAL = "this dialect indexes nothing"
 _WIDENING_REFUSAL = "this dialect widens nothing"

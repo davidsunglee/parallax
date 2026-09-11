@@ -33,18 +33,6 @@ from typing import Any, cast
 
 import pytest
 
-from _support.adoption import raises_contextualized
-from _support.corpus import (
-    CollectionKinds,
-    case_document,
-    case_fixtures,
-    compare_binds,
-    compare_graph,
-    compare_rows,
-    instance_graph_node,
-    instance_row,
-)
-from _support.db_port import ConnectsAsItself
 from parallax.conformance import case_format, engine
 from parallax.conformance._lifecycle_observation import LifecycleObservation
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
@@ -72,6 +60,18 @@ from parallax.snapshot.handle import (
     Transaction,
     TransactionTimePinReadOnlyError,
 )
+from tests._support.adoption import raises_contextualized
+from tests._support.corpus import (
+    CollectionKinds,
+    case_document,
+    case_fixtures,
+    compare_binds,
+    compare_graph,
+    compare_rows,
+    instance_graph_node,
+    instance_row,
+)
+from tests._support.db_port import ConnectsAsItself
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 

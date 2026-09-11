@@ -32,9 +32,6 @@ from functools import cmp_to_key
 from typing import Any, Final, cast
 
 import pytest
-from _corpus_model_support import corpus, formed
-from _corpus_model_support import model as accepted_model
-from _corpus_model_support import target as entity_of
 
 from parallax.core import continuation, deep_fetch
 from parallax.core.dialect import INFINITY, POSTGRES
@@ -65,6 +62,9 @@ from parallax.core.predicate import All, Comparison, Or, PredicateNode
 from parallax.core.sql_gen._compile import LoweredStatement
 from parallax.core.sql_gen._compile import compile_read as compile_entity_query
 from parallax.descriptor import _records
+from tests.unit._corpus_model_support import corpus, formed
+from tests.unit._corpus_model_support import model as accepted_model
+from tests.unit._corpus_model_support import target as entity_of
 
 ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")

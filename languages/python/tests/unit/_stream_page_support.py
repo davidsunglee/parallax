@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from _support.db_port import Read
+from tests._support.db_port import Read
 
 __all__ = ["paged_reads"]
 

@@ -85,17 +85,6 @@ from typing import Any
 import pytest
 from pydantic import PydanticUserError
 
-from _support import snapshot_models
-from _support.query_probes import canonical_document, predicate_document
-from _support.snapshot_models import (
-    Animal,
-    AnimalOwner,
-    Cat,
-    Dog,
-    Pet,
-    SnapOrder,
-    SnapOrderStatus,
-)
 from parallax.core import (
     ONE_TO_MANY,
     ONE_TO_ONE,
@@ -133,6 +122,17 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.snapshot.handle._preflight import preflight
+from tests._support import snapshot_models
+from tests._support.query_probes import canonical_document, predicate_document
+from tests._support.snapshot_models import (
+    Animal,
+    AnimalOwner,
+    Cat,
+    Dog,
+    Pet,
+    SnapOrder,
+    SnapOrderStatus,
+)
 
 _ANIMALS = snapshot_models.ANIMAL_MODEL
 _ORDERS = snapshot_models.SNAP_ORDERS_MODEL

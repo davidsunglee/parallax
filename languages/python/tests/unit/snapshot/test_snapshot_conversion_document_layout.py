@@ -29,10 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from _document_layout_support import columns_model, document_model, entity
-from _snapshot_graph_support import documents_of, rendered_members
 
-from _support.sql import compile_read
 from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.base import DocumentValue, PresentDocument
@@ -44,6 +41,9 @@ from parallax.snapshot.materialize import StoredDataIssueInput
 from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
 from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests._support.sql import compile_read
+from tests.unit._document_layout_support import columns_model, document_model, entity
+from tests.unit._snapshot_graph_support import documents_of, rendered_members
 
 _CORPUS = models.load_models()["document-layout"]
 _TWIN_DOCUMENT = document_model()

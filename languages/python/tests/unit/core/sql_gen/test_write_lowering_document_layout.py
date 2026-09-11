@@ -21,9 +21,7 @@ from collections.abc import Mapping
 from typing import Final, cast
 
 import pytest
-from _document_layout_support import PERSON, columns_model, document_model, entity
 
-from _support.lowering_probes import lower_instruction
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
@@ -39,6 +37,8 @@ from parallax.core.unit_work.planned import (
     PlannedRow,
 )
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
+from tests._support.lowering_probes import lower_instruction
+from tests.unit._document_layout_support import PERSON, columns_model, document_model, entity
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
