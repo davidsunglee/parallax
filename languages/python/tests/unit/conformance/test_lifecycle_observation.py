@@ -728,14 +728,19 @@ def test_every_handle_the_conformance_engine_builds_observes_its_own_work() -> N
     that really happened. The absence is invisible at the call site, which is
     why it is asserted over the source rather than left to a case to discover.
 
-    The construction count is asserted too: a reading that resolved no
+    Every module of the package is read, with the constructor spellings
+    resolved per module, so a lane holds to this wherever it lands. The
+    construction count is asserted too: a reading that resolved no
     constructor at all would report the same empty list as a clean engine.
     """
-    from parallax.conformance import engine
-
-    source = Path(str(engine.__file__)).read_text(encoding="utf-8")
-    built, unobserved = _handle_constructions(source)
-    assert built, "the reading resolved no Handle construction in the engine at all"
+    package = Path(str(conformance.__file__)).parent
+    built: list[str] = []
+    unobserved: list[str] = []
+    for source in sorted(package.rglob("*.py")):
+        found, missing = _handle_constructions(source.read_text(encoding="utf-8"))
+        built += [f"{source.name}:{line}" for line in found]
+        unobserved += [f"{source.name}:{line}" for line in missing]
+    assert built, "the reading resolved no Handle construction in the package at all"
     assert unobserved == []
 
 
