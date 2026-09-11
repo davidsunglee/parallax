@@ -757,15 +757,10 @@ def find_rows(
         result_form="row",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
-    rows = execute_read(
-        port,
-        compiled,
-        read,
-    )
     stage = stage_rows(
         model,
         compiled,
-        rows,
+        execute_read(port, compiled, read),
         pin=validated_query_pin(query.temporal),
     )
     for item in stage.rows:
