@@ -471,13 +471,56 @@ occurrences are decoded in conversion, and every leaf of them is an admission.
 | — projections per second | 17,100 | 18,586 | 20,081 | 17,191 | 18,432 | 20,125 |
 | Merge, 448 projections | 0.48 ms | 0.44 ms | 0.44 ms | 0.46 ms | 0.43 ms | 0.43 ms |
 | — per projection | 1.06 µs | 0.97 µs | 0.99 µs | 1.03 µs | 0.96 µs | 0.96 µs |
-| **64-graph `cost` item, recorded duration** | **47.6 s** | — | *refreshed with the duration store* | **47.6 s** | — | *refreshed with the duration store* |
+| **64-graph `cost` item, recorded duration** | **47.6 s** | — | **45.2 s** | **47.6 s** | — | **45.2 s** |
 
 The item itself is never re-run from a tool. Its duration is read from
 `tests/_support/cost_durations.json`, which is what balances the `cost` class's
-six CI shards; the "before" figure above is that file as it stood, and its
-"after" figure lands when the store is refreshed, together with the predicted
-maximum across the six CI cost cells.
+six CI shards, and it is one figure rather than one per minor: the store is
+refreshed by a single whole-class session under the workspace interpreter, so the
+same number stands in both halves of the row above. The "before" figure is that
+file as it stood at `431936be`; the "after" figure was stored on 2026-09-11 by
+`cd languages/python && uv run pytest -m cost -n auto --store-cost-durations`,
+running the whole class in ten workers on the machine the conditions table names.
+
+**Read the −2.4 s against its own family rather than on its own.** A stored
+duration is a contended wall time from a ten-worker session, and between the two
+refreshes the items this work cannot reach moved by −45% to +69%. What carries
+the figure is that it moves with every other item of
+`tests/unit/test_snapshot_graph_retention.py` — the suite whose workload is
+`convert_row` and `GraphBuilder`, which is the path this section measures:
+sixteen of that file's eighteen items over five seconds fell, by a median of
+6.7%, while the rest of the class over five seconds scattered in both directions
+around a median of −2.3%, seven of thirteen down. That file's total falls from
+581.3 s to 544.6 s.
+
+### The six CI cost cells
+
+The cost class runs in six duration-balanced CI shards. The maximum below is a
+**local prediction and not a CI reading**: it partitions the refreshed durations
+with the same weights and the same assignment the collection hook uses
+(`tests/_support/cost_durations.py`, whose `weights` and `shard_of_each`
+`tests/unit/test_scheduling_partition.py` predicts every deployed cell through),
+and it is stated in the seconds this machine measured rather than the seconds
+`ubuntu-latest` will spend. What it predicts is the balance, not a wall time; the
+actual six-cell wall time exists only once a pushed branch has run the six
+shards.
+
+| | before (`431936be`, 62 items) | after (64 items) |
+|---|---:|---:|
+| Whole class, summed | 1,003.8 s | 944.8 s |
+| **Predicted maximum cell of six** | **167.5 s** | **157.6 s** |
+| Predicted minimum cell of six | 167.1 s | 157.3 s |
+| Items in the heaviest cell | 11 | 10 |
+
+The heaviest cell is within a third of a second of the lightest in both columns,
+which is the balance the store exists for; what the class as a whole lost, the
+maximum cell lost with it. The two
+`tests/unit/test_snapshot_materialization_scaling.py` items Phase 1 added enter
+the store here for the first time, at 12.9 s and 1.7 s, and are inside the
+"after" total — so the class gained two items and still summed 59.0 s less.
+**The item's shard number is not stable and is recorded nowhere**: this refresh
+moved the 64-graph item from cell 6 to cell 5, which is the rebalance COR-137
+anticipates.
 
 ## Conditions
 
