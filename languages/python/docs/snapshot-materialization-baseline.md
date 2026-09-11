@@ -366,11 +366,11 @@ reproduced by the matrix's own −28% to −30%.
 
 COR-137 permits removing redundant encode-back or membership work inside the
 canonical-decoding contract *only if* canonical Wire validation is still a
-material contributor once the per-row work above is gone. The stated criterion is
-that the redundant legs — `encode_wire`, reached only from `_is_canonical_output`,
-and the second `matches_neutral_type` inside it; the decode itself is the
-contract — take at least 10% of the profiled batch's cumulative time on either
-layout.
+material contributor once the per-row work above is gone. It sets no percentage
+for that; the bar this work adopted is that the redundant legs — `encode_wire`,
+reached only from `_is_canonical_output`, and the second `matches_neutral_type`
+inside it; the decode itself is the contract — take at least 10% of the profiled
+batch's cumulative time on either layout.
 
 One profiled batch of 64 rows, after Phase 5:
 
@@ -444,7 +444,7 @@ double-rounding and tie-break representatives.
 
 **One contributor stays, and it is the rule rather than a repeat.** The
 shortest-number search at `float32` is 21% to 24% of the profiled batch and 18% to
-21% of the untraced one, which is over COR-137's own bar — but nothing about it is
+21% of the untraced one, which is over that same 10% bar — but nothing about it is
 redundant. A `float32`'s canonical Wire Value is a *different* number from the
 value it names, and finding it means asking, digit count by digit count, which
 numbers round back to that value at binary32 width. Nothing earlier in the decode

@@ -10,7 +10,8 @@ produced.
 
 Three properties divide the suite. The levels exist before the rows do: a read
 whose position is one concrete can still answer a row of a sibling or of the
-family root, and the level that row converts under was derived at bind. A
+family root, and the level that row converts under was derived at bind — one per
+Entity the read can resolve, all of them before the first row arrives. A
 classified member is translated rather than judged again, in each of the states
 the transform can leave it in. And the observation reads one row's physical
 columns under the same level, including the occurrences only the position's OTHER
@@ -19,8 +20,9 @@ concretes ever store at.
 Beside them, one cadence claim: over the report's own workload, the work fixed by
 a layout, a member declaration, or a Neutral Type no longer happens per row at
 all, and what scales with rows is the admission each unclassified stored cell
-owes. Call counts cannot be read off a result, so that one reaches into
-conversion by name — the private seam the ticket permits for exactly this case.
+owes. A cadence cannot be read off a result, so it and the bind-time claim above
+are the two here that patch a name inside the seam and count what it reaches,
+rather than grading what the seam published.
 
 Conversion itself is graded in `test_snapshot_conversion.py`, which drives
 ``convert_row`` directly: the positional layout, the absent/null/empty
@@ -192,15 +194,13 @@ CRAFT = _craft_family()
 # --------------------------------------------------------------------------- #
 # Driving one prepared read.                                                   #
 # --------------------------------------------------------------------------- #
-def _prepared(
-    model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()
-) -> PreparedRead[MaterializedReadRow]:
-    """The instance-form read of ``name``, compiled and bound as a find binds it.
+def _compiled(model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()) -> CompiledRead:
+    """The instance-form read of ``name``, compiled as a find compiles it.
 
     ``narrow_to`` names the query-wide narrowing by bare Entity name, which is
     what resolves the read's position to fewer concretes than its family has.
     """
-    compiled: CompiledRead = compile_read(
+    return compile_read(
         oa.All(),
         model,
         POSTGRES,
@@ -208,7 +208,13 @@ def _prepared(
         narrow_to=tuple(target(model, narrowed).identity for narrowed in narrow_to) or None,
         result_form="instance",
     )
-    return bind(CatalogedModel(model), compiled)
+
+
+def _prepared(
+    model: Metamodel, name: str, *, narrow_to: tuple[str, ...] = ()
+) -> PreparedRead[MaterializedReadRow]:
+    """The read of ``name``, compiled and bound as a find binds it."""
+    return bind(CatalogedModel(model), _compiled(model, name, narrow_to=narrow_to))
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +271,52 @@ def _stored_decks() -> PresentDocument:
 # --------------------------------------------------------------------------- #
 # Every Entity a read can resolve has its level before a row names it.         #
 # --------------------------------------------------------------------------- #
+def _recording_levels(patched: pytest.MonkeyPatch, derived: list[EntityIdentity]) -> None:
+    """Record the exact Entity of every level the prepared seam builds, in build
+    order.
+
+    Patched on the name :func:`bind` and the per-row path both read, so a level
+    built anywhere in that seam is recorded — including one built on the row that
+    first reached an Entity.
+    """
+    level_context = _convert.LevelContext
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        level = level_context(*args, **kwargs)
+        derived.append(level.concrete_entity)
+        return level
+
+    patched.setattr("parallax.snapshot.materialize._prepared.LevelContext", recording)
+
+
+def test_binding_derives_every_resolvable_level_and_no_row_derives_another() -> None:
+    # A level belongs to the compiled read, so all of them exist the moment bind
+    # returns: one per Entity the read can resolve, and none built afterwards.
+    # The narrowed family read is where the two halves are distinguishable — its
+    # position is one concrete while its rows can resolve to the whole family —
+    # and converting a row of the position and a row outside it adds nothing,
+    # which a level derived on first reach could not do.
+    compiled = _compiled(ANIMAL, "Animal", narrow_to=("Dog",))
+    derived: list[EntityIdentity] = []
+    with pytest.MonkeyPatch.context() as patched:
+        _recording_levels(patched, derived)
+        prepared = bind(CatalogedModel(ANIMAL), compiled)
+        at_bind = tuple(derived)
+        rex = _converted(
+            prepared,
+            {"id": 1, "kind": "dog", "name": "Rex", "owner_id": 10, "bark_volume": 3},
+        )
+        boar = _converted(
+            prepared,
+            {"id": 2, "kind": "boar", "name": "Bo", "owner_id": 10, "tusk_length": None},
+        )
+    assert set(at_bind) == set(compiled.resolvable)
+    assert len(at_bind) == len(set(compiled.resolvable))
+    assert {identity.name for identity in at_bind} >= {"Dog", "WildBoar"}
+    assert (rex.concrete.name, boar.concrete.name) == ("Dog", "WildBoar")
+    assert tuple(derived) == at_bind
+
+
 def test_a_sibling_outside_the_narrowed_position_converts_under_its_own_concrete() -> None:
     # A narrowed read of an abstract target resolves a position of one concrete
     # and still projects the family's whole tag column, so the shared table can
@@ -474,7 +526,8 @@ _DECLARATION_FIXED: Final = (
 )
 """The codec entries conversion reaches only for a document its compiled read did
 not already classify. Each one's work is fixed by the occurrence's declaration,
-so reaching any of them once per row is the per-row cadence this ticket removes."""
+so reaching any of them once per row is declaration-fixed work scaling with
+rows."""
 
 _COUNTED: Final = (*_DECLARATION_FIXED, "admits_stored_scalar")
 
@@ -554,8 +607,8 @@ def _unclassified_cells(layout: Layout, owners: int) -> int:
 def test_the_conforming_path_decodes_no_declaration_and_admits_nothing_twice(
     layout: Layout,
 ) -> None:
-    # The ticket's completion criterion, measured: work fixed by a layout, a
-    # member declaration, or a Neutral Type must no longer scale with rows. Every
+    # Work fixed by a layout, a member declaration, or a Neutral Type does not
+    # scale with rows, measured over the report's own workload. Every
     # document a conforming row carries reaches conversion already classified, so
     # conversion asks the codec for none of them at either batch size — and the
     # admissions that remain are exactly the stored cells no transform classified,

@@ -334,13 +334,13 @@ def _temporal_observation(
     whole").
 
     ``fields`` is a plain column-keyed mapping — one materialized row's own
-    observable columns, documents decoded
-    (:meth:`~parallax.snapshot.materialize.PreparedRead.observable_columns`, a real
-    ``Transaction.find``) — and :func:`row_payload` is the extraction a
-    materializing predicate-write resolve applies to its OWN rows, so both sides
-    share the SAME rule rather than duplicating it. Extraction renders nothing of
-    its own: every value passes through EXACTLY as ``fields`` carries it, which
-    for a scalar or interval column is exactly what the port returned (a real
+    observable columns, documents decoded (a real ``Transaction.find`` reads them
+    through :meth:`parallax.snapshot.materialize._prepared.PreparedRead.observable_columns`)
+    — and :func:`row_payload` is the extraction a materializing predicate-write
+    resolve applies to its OWN rows, so both sides share the SAME rule rather than
+    duplicating it. Extraction renders nothing of its own: every value passes
+    through EXACTLY as ``fields`` carries it, which for a scalar or interval
+    column is exactly what the port returned (a real
     ``timestamptz`` column may be a driver-native ``datetime.datetime`` or the
     native-infinity sentinel, never pre-rendered to a wire string here) — the
     SAME driver-native-passthrough contract every other temporal bind already

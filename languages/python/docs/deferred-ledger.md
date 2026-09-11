@@ -1021,8 +1021,9 @@ counts in turn, and each try rounds a decimal to binary32 through
 `nearest_float_at_width`, which builds an exact ratio and searches. Measured over
 the materialization report's conforming batch, that search is 21% to 24% of the
 profiled batch and 18% to 21% of the untraced one on both storage layouts and both
-supported minors — over the 10% bar COR-137 set for a material codec contributor,
-and now the largest single contributor left inside canonical decoding.
+supported minors — over the 10% bar that report set for a material codec
+contributor, COR-137 itself setting no percentage — and now the largest single
+contributor left inside canonical decoding.
 
 **Why it is deferred rather than fixed.** Nothing about it is redundant, which is
 what COR-137's codec clause licensed removing. A `float32`'s canonical Wire Value
