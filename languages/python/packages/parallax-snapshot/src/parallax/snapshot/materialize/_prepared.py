@@ -98,10 +98,14 @@ class PreparedRead[RowT: _MaterializedRow]:
     classified-member set, or finding crossing the call. A lane that named any
     of those would be coordinating a shape it does not own, and would be the
     second place the pairing of a row with its own level could go wrong.
+
+    Both halves it is built from are private for that reason: the level table is
+    reachable only through the three methods, so nothing outside can read a level,
+    replace one, or hold the compiled read apart from the levels bound with it.
     """
 
-    compiled: _CompiledRead[RowT]
-    levels: Mapping[EntityIdentity, LevelContext]
+    _compiled: _CompiledRead[RowT]
+    _levels: Mapping[EntityIdentity, LevelContext]
 
     def materialize(self, row: Mapping[str, object]) -> RowT:
         """Resolve one driver row through the read that returned it.
@@ -111,7 +115,7 @@ class PreparedRead[RowT: _MaterializedRow]:
         prepared read materialized, and no lane holds a compiled read beside a
         prepared one to cross them.
         """
-        return self.compiled.materialize_row(row)
+        return self._compiled.materialize_row(row)
 
     def convert(self, row: RowT, builder: GraphBuilder, *, source: SourceLevel) -> int:
         """Convert one materialized row into ``builder``'s next projection at
@@ -139,7 +143,7 @@ class PreparedRead[RowT: _MaterializedRow]:
         Entities a row of this read can name, and :func:`bind` derives a level
         for every member of it.
         """
-        return self.levels[row.resolved_entity]
+        return self._levels[row.resolved_entity]
 
 
 def bind[RowT: _MaterializedRow](
