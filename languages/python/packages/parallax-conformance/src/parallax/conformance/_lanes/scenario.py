@@ -1212,9 +1212,10 @@ def _lower_predicate_write_step(
 
     A MATERIALIZING predicate write never reaches here: its case carries
     ``compileEligibility: run-only``, which short-circuits at
-    :func:`eligibility` before the compile lane ever calls this — reaching
-    this seam with one is therefore always a caller wiring defect, surfaced as
-    planning's own defensive :class:`~parallax.core.unit_work.WritePlanningError`.
+    :func:`~parallax.conformance._mechanism.case_document.eligibility` before
+    the compile lane ever calls this — reaching this seam with one is therefore
+    always a caller wiring defect, surfaced as planning's own defensive
+    :class:`~parallax.core.unit_work.WritePlanningError`.
     """
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
@@ -1587,10 +1588,11 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[Lowered
     advance of a version this SAME scenario's own observing find returned is
     query-result-dependent (`m-conformance-adapter` "Compile eligibility") and
     is therefore declared `compileEligibility: run-only` in the corpus, so it
-    short-circuits at :func:`eligibility` before this function ever runs
-    (`adapter.compile_case`). The group observation store therefore stays
-    permanently empty here: a keyed write's Version Observation comes from its
-    OWN row's reserved ``observedVersion`` control key alone
+    short-circuits at :func:`~parallax.conformance._mechanism.case_document.eligibility`
+    before this function ever runs (`adapter.compile_case`). The group
+    observation store therefore stays permanently empty here: a keyed write's
+    Version Observation comes from its OWN row's reserved ``observedVersion``
+    control key alone
     (:func:`_durable_row`), exactly as a writeSequence entry's does, and a
     temporal write's whole-milestone observation from the tracker above.
 
@@ -3183,11 +3185,11 @@ def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     """The entity a conflict case's write targets, when ``when.write`` carries no
     explicit reference (`m-case-format`: a conflict case's write names no
     entity of its own). For a plain model this is its SOLE entity — the same
-    convention :func:`_rejected_target` uses. For an inheritance family
-    (`m-inheritance-105`'s TPH composed conflict) writes are concrete-subtype
-    only (`m-inheritance` "Concrete-subtype writes"), never the abstract root
-    :func:`_rejected_target` resolves to for the REJECTED lane's DIFFERENT
-    default-target convention — this resolves to the family's SOLE concrete
+    convention the REJECTED lane's default target follows. For an inheritance
+    family (`m-inheritance-105`'s TPH composed conflict) writes are
+    concrete-subtype only (`m-inheritance` "Concrete-subtype writes"), never
+    the abstract family root the REJECTED lane's DIFFERENT default-target
+    convention resolves to — this resolves to the family's SOLE concrete
     subtype (every reachable temporal-inheritance conflict model declares
     exactly one).
 

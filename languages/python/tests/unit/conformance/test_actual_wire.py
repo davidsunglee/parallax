@@ -257,7 +257,7 @@ def test_actual_wire_projection_rejects_unresolved_physical_contributors() -> No
     with pytest.raises(ValueError, match="no Value Object"):
         ActualWireProjection(model).table_row(missing_value_object, {slot.column.name: {}})
 
-    assert ActualWireProjection(model)._table_row_entity(layout, {}) is entity  # pyright: ignore[reportPrivateUsage]
+    assert ActualWireProjection(model)._table_row_entity(layout, {}) is entity  # pyright: ignore[reportPrivateUsage] - unit test drives the projection's private entity lookup directly
 
 
 def test_actual_wire_projection_rejects_a_narrowing_product_with_no_position(

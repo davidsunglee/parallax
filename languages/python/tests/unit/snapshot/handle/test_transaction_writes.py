@@ -494,9 +494,9 @@ def test_the_engine_and_the_typed_verbs_share_the_prepared_write_producer() -> N
     from parallax.conformance._lanes import scenario
     from parallax.snapshot.handle import _transaction as transaction_module
 
-    assert scenario.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage]
+    assert scenario.instructions.prepare_wire_write is instructions.prepare_wire_write  # pyright: ignore[reportPrivateImportUsage] - the identity proof reads the module's own import binding
     assert (
-        transaction_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage]
+        transaction_module.instructions.prepare_typed_write  # pyright: ignore[reportPrivateImportUsage] - the identity proof reads the module's own import binding
         is instructions.prepare_typed_write
     )
 

@@ -22,8 +22,8 @@ from parallax.core.base import Decimal as DecimalType
 from parallax.core.db_port import JsonDocument
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen._context import (
-    _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
-    _WireBindOverride,  # pyright: ignore[reportPrivateUsage]
+    _TypedBindSpan,  # pyright: ignore[reportPrivateUsage] - unit test builds sql_gen's private bind records directly
+    _WireBindOverride,  # pyright: ignore[reportPrivateUsage] - unit test builds sql_gen's private bind records directly
 )
 from tests.unit.conformance._wire_value_support import wire_value
 
