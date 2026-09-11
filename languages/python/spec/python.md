@@ -5962,7 +5962,7 @@ parallax.postgres --> parallax.core.dialect
 
   ```carrier-neutral-private-reaches
   parallax.core.sql_gen._compile | CompiledRead, MaterializedReadRow, compile_read | parallax.snapshot.handle._read
-  parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.snapshot.handle._predicate_writes; parallax.conformance.engine
+  parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.snapshot.handle._predicate_writes; parallax.conformance.engine; parallax.conformance._lanes.reads
   parallax.core.sql_gen._write | compile_write_step | parallax.snapshot.handle._write_lowering; parallax.conformance.engine
   ```
 
@@ -6000,10 +6000,12 @@ parallax.postgres --> parallax.core.dialect
   crosses `populate` as the merge laid it out, against the same model-owned
   member layout the writer reads it against, so the fixture hands a row over the
   one way production hands one over and no rule is restated in a second place.
-  The adapter engine and second-source fixture also import the private Snapshot
-  `preflight` operation so compile-only and alternate-source reads consume the
-  same validated execution token as production. The engine's private `m-sql`
-  compiler reaches are enumerated separately in the carrier-neutral block above,
+  The adapter engine's model-facts mechanism and the second-source fixture also
+  import the private Snapshot `preflight` operation so compile-only and
+  alternate-source reads consume the same validated execution token as
+  production. The engine's private `m-sql` compiler reaches — its façade
+  module's and its reads lane's — are enumerated separately in the
+  carrier-neutral block above,
   and the case loader's `wire._json.authored_number` reach is the production YAML
   token-preservation seam. Compatibility inputs use canonical Wire literals, so
   case ingress needs no private token-inspection reach. Each remaining reach stays
