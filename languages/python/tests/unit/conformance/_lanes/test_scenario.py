@@ -3,9 +3,7 @@
 The compile path is proven pure and golden-matching over a representative
 exercised case; the run path is proven against a fake in-memory ``m-db-port``
 (no Docker) so the port-execution seam, the `?` -> `%s` translation, and the
-observation recording are covered in the unit lane. The interleaved ``uow``
-fork is pinned here beside the write core it shares; its threading primitives
-are the turnstile module's own.
+observation recording are covered in the unit lane.
 """
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ import pytest
 
 from parallax.conformance import case_format, models, sweep
 from parallax.conformance._actual_wire import ActualWireProjection
-from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._lanes import scenario
 from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
@@ -45,11 +42,8 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
-    DatabaseConnection,
     Row,
-    TransactionOutcome,
 )
-from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -79,13 +73,10 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
-from parallax.snapshot import handle
 from parallax.snapshot.handle import WriteEvidenceError
-from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests.unit._metamodel_support import Declaration, attribute, source
-from tests.unit._second_dialect import BACKTICKED
+from tests.unit.conformance._lanes._scripted_port import ScriptedPort
 from tests.unit.conformance._recording_ports import FakeWritePort
-from tests.unit.conformance._wire_value_support import wire_value
 
 
 # One corpus read serves the whole module, and both indexes project it: what
@@ -343,7 +334,7 @@ def _account(identifier: int, owner: str, balance: str, version: int) -> Row:
     }
 
 
-def _two_delivery_port() -> _ScriptedPort:
+def _two_delivery_port() -> ScriptedPort:
     """The four pages `m-unit-work-030`'s two deliveries read at `batchSize: 2`.
 
     Each page asks for THREE accounts and delivers two, so each delivery reads
@@ -356,7 +347,7 @@ def _two_delivery_port() -> _ScriptedPort:
     written = _account(1, "Ada", "125.00", 2)
     second = _account(2, "Linus", "250.00", 1)
     third = _account(3, "Grace", "10.00", 1)
-    return _ScriptedPort(
+    return ScriptedPort(
         read_rows=[
             [first, second, third],
             [third],
@@ -586,7 +577,7 @@ _ORDER_ITEM_13_ROW: Row = {
 }
 
 
-def _ryow_relationship_port() -> _ScriptedPort:
+def _ryow_relationship_port() -> ScriptedPort:
     """The four level reads `m-unit-work-029`'s two grouped finds issue.
 
     The second find's item level answers what the group's own writes left: the
@@ -594,7 +585,7 @@ def _ryow_relationship_port() -> _ScriptedPort:
     difference between the two finds authorable at all here — `FakeWritePort`
     answers one canned row set to every read, so both finds would state one graph.
     """
-    return _ScriptedPort(
+    return ScriptedPort(
         read_rows=[
             [dict(_ORDER_1_ROW)],
             [dict(_ORDER_ITEM_11_ROW)],
@@ -644,7 +635,7 @@ def test_run_scenario_case_reports_an_ungrouped_finds_own_materialized_graph() -
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
     run = scenario.run_scenario_case(
         case,
-        _ScriptedPort(read_rows=[[dict(_ORDER_1_ROW)], [dict(_ORDER_ITEM_11_ROW)]]),
+        ScriptedPort(read_rows=[[dict(_ORDER_1_ROW)], [dict(_ORDER_ITEM_11_ROW)]]),
     )
     assert [entry["at"] for entry in run.step_graphs] == ["/scenario/0"]
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
@@ -663,21 +654,6 @@ def test_run_scenario_case_refuses_a_read_step_graph_over_no_include_path() -> N
 
     with pytest.raises(EngineError, match="declares no `includes`"):
         scenario.run_scenario_case(case, _ryow_relationship_port())
-
-
-def test_run_interleaved_scenario_case_refuses_a_step_stating_relationship_contents() -> None:
-    # That entry point reports emissions, round trips and find rows and carries no
-    # `stepGraphs` channel, so an `expectGraph` authored on an interleaved case
-    # would be an oracle nothing answers. It is refused rather than left silent.
-    case = _own_copy(_load_case("m-opt-lock-012"))
-    when = cast("dict[str, Any]", case.document["when"])
-    steps = cast("list[dict[str, Any]]", when["scenario"])
-    steps[0]["expectGraph"] = {"Account": [{"id": 2}]}
-
-    with pytest.raises(EngineError, match="carries no `stepGraphs` channel"):
-        scenario.run_interleaved_scenario_case(
-            case, _ScriptedPort(), _ScriptedExecutions(_ScriptedPort(), _ScriptedPort())
-        )
 
 
 def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
@@ -974,498 +950,6 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
         scenario._scenario_uow_spans(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             "m-unit-work-999-synthetic.yaml", steps
         )
-
-
-class _ScriptedPort(ConnectsAsItself):
-    """A `DatabaseConnection` fake with per-call SCRIPTED read rows / write-affected counts
-    (`run_interleaved_scenario_case`'s own unit
-    pins) — unlike `FakeWritePort` above (one constant `find_rows` for every
-    `execute`, `write_affected` always `1`), a genuinely two-session
-    choreography's own conflict needs each connection scripted with its OWN,
-    call-ordered sequence to reproduce a real stale-version mismatch
-    deterministically, with no real database involved.
-
-    Carries the documented trust marker
-    (`scenario._TERMINATION_LADDER_TRUST_ATTR`): every method here is a plain
-    synchronous, in-memory call that never blocks on real I/O at all, so
-    there is nothing for the termination ladder to unblock in the first
-    place — a genuinely truthful declaration, not a shortcut around it. This
-    is what lets every entry-point pin below run through
-    `run_interleaved_scenario_case`'s own preflight
-    (`_require_interleaved_termination_capability`) unchanged; the same
-    class also stands in directly for `_await_interleaved_workers`'s own
-    pins, which bypass preflight entirely and so never consult this marker
-    either way. Set via `setattr` below (never a hardcoded attribute name
-    here) so this fake can never drift from `engine`'s own marker name.
-
-    ``dialect`` is a constructor argument rather than the class attribute every
-    other double declares, because the two-session pins hand the peer session a
-    DIFFERENT dialect from the main port's, so a statement's own spelling names
-    the connection that compiled it."""
-
-    def __init__(
-        self,
-        *,
-        dialect: Dialect = POSTGRES,
-        read_rows: Sequence[list[Row]] = (),
-        write_affected: Sequence[int] = (),
-        raise_on_read: BaseException | None = None,
-    ) -> None:
-        self.dialect = dialect
-        self._read_rows = [list(rows) for rows in read_rows]
-        self._write_affected = list(write_affected)
-        self._raise_on_read = raise_on_read
-        self.reads: list[tuple[str, tuple[object, ...]]] = []
-        self.writes: list[tuple[str, tuple[object, ...]]] = []
-        self.closed = False
-
-    def execute(
-        self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[Row]:
-        if self._raise_on_read is not None:
-            raise self._raise_on_read
-        self.reads.append((sql, tuple(binds)))
-        rows = self._read_rows.pop(0) if self._read_rows else []
-        return [projected_row(sql, row) for row in rows]
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        self.writes.append((sql, tuple(binds)))
-        return self._write_affected.pop(0) if self._write_affected else 1
-
-    def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
-    ) -> TransactionOutcome[T]:
-        return body_outcome(self, body)
-
-    def close(self) -> None:
-        self.closed = True
-
-
-class _ScriptedExecution:
-    """One interleaved group's dedicated execution, over a scripted port.
-
-    It declares the termination contract truthfully by default: every call into
-    a `_ScriptedPort` is a plain synchronous in-memory one that never blocks on
-    real I/O, so there is nothing for the ladder to unblock. `trusted=False` is
-    the refusal shape — an execution that grants nothing, which the lane must
-    refuse before either worker thread starts.
-    """
-
-    def __init__(
-        self,
-        port: _ScriptedPort,
-        model: Any,
-        *,
-        clock: Any = None,
-        lifecycle_provider: Any = None,
-        trusted: bool = True,
-    ) -> None:
-        self.port = port
-        self.trusted = trusted
-        self.closed = False
-        self.cancel_calls = 0
-        self.terminate_calls = 0
-        self._database = handle.Database.connect(
-            port, model, clock=clock, lifecycle_provider=lifecycle_provider
-        )
-
-    @property
-    def database(self) -> handle.Database:
-        return self._database
-
-    @property
-    def dialect(self) -> Dialect:
-        return self.port.dialect
-
-    @property
-    def termination_ladder_trusted(self) -> bool:
-        return self.trusted
-
-    def cancel_active(self) -> None:  # pragma: no cover - the entry-point pins never time out
-        self.cancel_calls += 1
-
-    def terminate_active(self) -> TerminationReport:  # pragma: no cover - same
-        self.terminate_calls += 1
-        return TerminationReport(terminated=True)
-
-    def close(self) -> None:
-        self.closed = True
-        self.port.close()
-
-
-class _ScriptedExecutions:
-    """The lane's own execution factory, handing out one scripted execution per
-    group in the order the groups are declared.
-
-    ``trusted`` states each group's own declaration, and ``refuse_at`` makes the
-    n-th open FAIL — the shape that proves the lane releases what it had already
-    opened rather than leaking it.
-    """
-
-    def __init__(
-        self,
-        *ports: _ScriptedPort,
-        trusted: Sequence[bool] = (),
-        refuse_at: int | None = None,
-    ) -> None:
-        self._ports = ports
-        self._trusted = tuple(trusted) if trusted else (True,) * len(ports)
-        self._refuse_at = refuse_at
-        self.opened: list[_ScriptedExecution] = []
-
-    def __call__(self, model: Any, *, clock: Any = None, lifecycle_provider: Any = None) -> Any:
-        index = len(self.opened)
-        if index == self._refuse_at:
-            raise RuntimeError("this session could not be opened")
-        execution = _ScriptedExecution(
-            self._ports[index],
-            model,
-            clock=clock,
-            lifecycle_provider=lifecycle_provider,
-            trusted=self._trusted[index],
-        )
-        self.opened.append(execution)
-        return execution
-
-
-def _wire_row(row: Row) -> dict[str, object]:
-    """One authored row as the Wire spelling a find step's own rows carry."""
-    return {key: wire_value(value) for key, value in row.items()}
-
-
-def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abort() -> None:
-    # `m-opt-lock-012` end to end over two SCRIPTED fake connections (never a
-    # real database): the `ours` group's own observing find (step 0) is stale
-    # by the time it flushes (step 3) — the `concurrent` group (steps 1-2)
-    # committed its own gated update first — so the doomed group's SECOND
-    # write (the version-gated update) affects 0 rows, and the group's own
-    # buffered insert (account 9) is discarded with it. The trailing
-    # ungrouped verify find (step 4) observes no rows for it.
-    case = _load_case("m-opt-lock-012")
-    row_v1: Row = {
-        "id": 2,
-        "owner": "Linus",
-        "balance": decimal.Decimal("250.00"),
-        "version": 1,
-    }
-    caller_port = _ScriptedPort(read_rows=[[]])
-    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
-    peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
-    executions = _ScriptedExecutions(ours_port, peer_port)
-
-    emissions, round_trips, conflict_actual, find_rows = scenario.run_interleaved_scenario_case(
-        case, caller_port, executions
-    )
-
-    assert round_trips == 6
-    assert len(emissions) == 6
-    assert conflict_actual == 0
-    # Both dedicated sessions are released by the lane that opened them.
-    assert [execution.closed for execution in executions.opened] == [True, True]
-    assert [e.case_pointer for e in emissions] == [
-        "/scenario/0/objectQuery",
-        "/scenario/1/objectQuery",
-        "/scenario/2/write",
-        "/scenario/3/write",
-        "/scenario/3/write",
-        "/scenario/4/objectQuery",
-    ]
-    assert emissions[3].sql.startswith("insert into account")
-    assert emissions[4].sql.startswith("update account set")
-    assert len(ours_port.writes) == 2  # the doomed group's insert + gated update
-    assert len(peer_port.writes) == 1  # the concurrent group's own gated update
-    # Every find step's own observed rows, in
-    # scenario step order (0, 1, then the trailing ungrouped verify at 4) —
-    # the doomed group's discarded insert leaves account 9 absent. The rows are
-    # the Wire result re-keyed by column, so a `decimal` reads as its canonical
-    # string exactly as the grader's own wire space compares it.
-    assert find_rows == [[_wire_row(row_v1)], [_wire_row(row_v1)], []]
-
-
-def test_each_interleaved_group_lowers_in_its_own_connections_dialect() -> None:
-    # The two groups run on two connections, so the emission a group reports is
-    # spelled by the connection that executed it: the `concurrent` group's write
-    # (step 2) is lowered through the peer session's dialect and the `ours`
-    # group's (step 3) through the caller's port. A shared dialect taken off the
-    # main port would make the concurrent group report DML the peer never ran,
-    # which its own plan-versus-delivery reconciliation refuses outright.
-    case = _load_case("m-opt-lock-012")
-    row_v1: Row = {
-        "id": 2,
-        "owner": "Linus",
-        "balance": decimal.Decimal("250.00"),
-        "version": 1,
-    }
-    caller_port = _ScriptedPort(read_rows=[[]])
-    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
-    peer_port = _ScriptedPort(dialect=BACKTICKED, read_rows=[[row_v1]], write_affected=[1])
-
-    emissions, _round_trips, _conflict_actual, _find_rows = scenario.run_interleaved_scenario_case(
-        case, caller_port, _ScriptedExecutions(ours_port, peer_port)
-    )
-
-    concurrent_write = next(e for e in emissions if e.case_pointer == "/scenario/2/write")
-    ours_writes = [e for e in emissions if e.case_pointer == "/scenario/3/write"]
-    assert "`version`" in concurrent_write.sql
-    assert all("`" not in emission.sql for emission in ours_writes)
-    assert all('"' not in emission.sql for emission in ours_writes)
-
-
-def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the_groups() -> None:
-    # The interleaved executor owes the same `given.apply` setup the other scenario
-    # executors do: applied on the caller's own port after the fixtures and before
-    # either worker starts, so both groups race against the state it left. Its own
-    # first write lands after it in `writes` order, which is what pins the ordering.
-    case = _load_case("m-opt-lock-012")
-    with_apply = dataclasses.replace(
-        case,
-        document={
-            **case.document,
-            "given": {"fixtures": True, "apply": [{"sql": "update account set balance = ?"}]},
-        },
-    )
-    row_v1: Row = {
-        "id": 2,
-        "owner": "Linus",
-        "balance": decimal.Decimal("250.00"),
-        "version": 1,
-    }
-    caller_port = _ScriptedPort(read_rows=[[]], write_affected=[0])
-    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 0])
-    peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
-
-    scenario.run_interleaved_scenario_case(
-        with_apply, caller_port, _ScriptedExecutions(ours_port, peer_port)
-    )
-
-    assert caller_port.writes[0][0] == "update account set balance = %s"
-    assert len(caller_port.writes) == 1  # the out-of-band statement, and nothing else
-    assert len(ours_port.writes) == 2  # the doomed group's own two
-
-
-def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_too() -> None:
-    # The conflict-rendering fallback is symmetric: whichever group's own
-    # last write conflicts, its `actual` affected-row count surfaces —
-    # `m-opt-lock-012`'s own corpus witness always dooms the FIRST-labeled
-    # (`ours`) group, but the engine's own logic does not assume that. A
-    # synthetic two-group scenario (never `m-opt-lock-012` itself: its own
-    # fixed step order makes the SECOND group's conflict turnstile-unsafe —
-    # something downstream always waits on its final `advance()`) pins the
-    # fallback: the SECOND group's own last step is also the scenario's
-    # OVERALL last grouped step, so nothing waits on its advance either way.
-    case = _synthetic_write(
-        "scenario",
-        {
-            "when": {
-                "uow": {"concurrency": "optimistic"},
-                "scenario": [
-                    {
-                        "uow": "x",
-                        "objectQuery": {
-                            "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
-                        },
-                    },
-                    {
-                        "uow": "x",
-                        "write": [
-                            {
-                                "mutation": "update",
-                                "entity": "Account",
-                                "rows": [{"id": 2, "balance": "260.00"}],
-                            }
-                        ],
-                    },
-                    {
-                        "uow": "y",
-                        "objectQuery": {
-                            "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
-                        },
-                    },
-                    {
-                        "uow": "y",
-                        "write": [
-                            {
-                                "mutation": "update",
-                                "entity": "Account",
-                                "rows": [{"id": 2, "balance": "270.00"}],
-                            }
-                        ],
-                    },
-                ],
-            },
-            "then": {"roundTrips": 4},
-        },
-    )
-    row_v1: Row = {
-        "id": 2,
-        "owner": "Linus",
-        "balance": decimal.Decimal("250.00"),
-        "version": 1,
-    }
-    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
-    peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[0])
-
-    _emissions, _round_trips, conflict_actual, _find_rows = scenario.run_interleaved_scenario_case(
-        case, _ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
-    )
-
-    assert conflict_actual == 0
-
-
-def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> None:
-    # A group's own write step that is NOT its last step buffers without
-    # forcing a flush (mirroring `_run_uow_group`'s own per-step buffering
-    # for a contiguous span, `_run_interleaved_group`'s own generalization
-    # of the SAME machinery) — unwitnessed by `m-opt-lock-012` itself (whose
-    # own two groups each carry exactly one write, always last).
-    case = _synthetic_write(
-        "scenario",
-        {
-            "when": {
-                "uow": {"concurrency": "optimistic"},
-                "scenario": [
-                    {
-                        "uow": "x",
-                        "objectQuery": {
-                            "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
-                        },
-                    },
-                    {
-                        "uow": "x",
-                        "write": [
-                            {
-                                "mutation": "insert",
-                                "entity": "Account",
-                                "rows": [
-                                    {"id": 90, "owner": "Noether", "balance": "5.00", "version": 1}
-                                ],
-                            }
-                        ],
-                    },
-                    {
-                        "uow": "x",
-                        "write": [
-                            {
-                                "mutation": "update",
-                                "entity": "Account",
-                                "rows": [{"id": 2, "balance": "260.00"}],
-                            }
-                        ],
-                    },
-                    {
-                        "uow": "y",
-                        "objectQuery": {
-                            "target": "Account",
-                            "predicate": {"eq": {"attr": "Account.id", "value": 3}},
-                        },
-                    },
-                ],
-            },
-            "then": {"roundTrips": 4},
-        },
-    )
-    row_v1: Row = {
-        "id": 2,
-        "owner": "Linus",
-        "balance": decimal.Decimal("250.00"),
-        "version": 1,
-    }
-    row3: Row = {
-        "id": 3,
-        "owner": "Ada",
-        "balance": decimal.Decimal("10.00"),
-        "version": 1,
-    }
-    ours_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1, 1])
-    peer_port = _ScriptedPort(read_rows=[[row3]])
-
-    emissions, round_trips, conflict_actual, find_rows = scenario.run_interleaved_scenario_case(
-        case, _ScriptedPort(), _ScriptedExecutions(ours_port, peer_port)
-    )
-
-    assert conflict_actual is None
-    assert round_trips == 4
-    assert len(ours_port.writes) == 2  # buffered together, flushed once at the group's last step
-    assert [e.case_pointer for e in emissions] == [
-        "/scenario/0/objectQuery",
-        "/scenario/1/write",
-        "/scenario/2/write",
-        "/scenario/3/objectQuery",
-    ]
-    assert find_rows == [[_wire_row(row_v1)], [_wire_row(row3)]]
-
-
-def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -> None:
-    # A worker thread's own UNEXPECTED defect (never a witnessed path) must
-    # surface loudly on the main thread rather than hang the choreography —
-    # `_Turnstile.release_all` unsticks the partner thread (blocked on
-    # `wait_for` a later step that now never arrives) so `thread.join()`
-    # itself never hangs either.
-    case = _load_case("m-opt-lock-012")
-    failure = RuntimeError("a worker thread's own unexpected defect")
-    ours_port = _ScriptedPort(raise_on_read=failure)
-    peer_port = _ScriptedPort(
-        read_rows=[
-            [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
-        ]
-    )
-    executions = _ScriptedExecutions(ours_port, peer_port)
-
-    with pytest.raises(RuntimeError, match="unexpected defect"):
-        scenario.run_interleaved_scenario_case(case, _ScriptedPort(), executions)
-    assert [execution.closed for execution in executions.opened] == [True, True]
-
-
-@pytest.mark.parametrize(
-    "trusted, expected_labels",
-    [
-        ((False, True), ("uow-ours",)),
-        ((True, False), ("uow-concurrent",)),
-        ((False, False), ("uow-ours", "uow-concurrent")),
-    ],
-)
-def test_run_interleaved_scenario_case_refuses_an_execution_granting_no_termination_trust(
-    trusted: tuple[bool, bool], expected_labels: tuple[str, ...]
-) -> None:
-    # The lane's post-termination join is unbounded, so an execution that grants
-    # nothing must be refused BEFORE either worker thread starts — every defect
-    # named at once rather than first-failure-only, and the refusal must still
-    # release both sessions it had already opened. Nothing ran: neither scripted
-    # port ever saw a statement.
-    case = _load_case("m-opt-lock-012")
-    healthy_row: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
-    ours_port = _ScriptedPort(read_rows=[[healthy_row]])
-    peer_port = _ScriptedPort(read_rows=[[healthy_row]])
-    executions = _ScriptedExecutions(ours_port, peer_port, trusted=trusted)
-
-    with pytest.raises(EngineError, match="refuses to start") as raised:
-        scenario.run_interleaved_scenario_case(case, _ScriptedPort(), executions)
-
-    message = str(raised.value)
-    for label in expected_labels:
-        assert label in message
-    assert [execution.closed for execution in executions.opened] == [True, True]
-    assert ours_port.reads == []
-    assert peer_port.reads == []
-
-
-def test_run_interleaved_scenario_case_releases_the_first_when_the_second_will_not_open() -> None:
-    # Incremental ownership: a second session that cannot be opened must not
-    # leak the first. The failure surfaces as itself — never masked by the
-    # release — and the session already opened is closed on the way out.
-    case = _load_case("m-opt-lock-012")
-    ours_port = _ScriptedPort()
-    peer_port = _ScriptedPort()
-    executions = _ScriptedExecutions(ours_port, peer_port, refuse_at=1)
-
-    with pytest.raises(RuntimeError, match="could not be opened"):
-        scenario.run_interleaved_scenario_case(case, _ScriptedPort(), executions)
-
-    assert [execution.closed for execution in executions.opened] == [True]
-    assert ours_port.reads == []
 
 
 def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> None:
