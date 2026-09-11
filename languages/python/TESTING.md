@@ -74,8 +74,9 @@ helper module, never from another test module.
 
 Support code only one surface uses stays inside that surface, and follows its
 consumers within it. A helper every consumer of which sits under one directory
-of `tests/unit/` sits in that directory — `conformance/_recording_ports.py`,
-`conformance/_wire_value_support.py`, `core/entity/_compact_support.py`,
+of `tests/unit/` sits in that directory — `conformance/_lanes/_scripted_port.py`,
+`conformance/_recording_ports.py`, `conformance/_wire_value_support.py`,
+`core/entity/_compact_support.py`,
 `core/entity/value_object_bad_models.py`,
 `core/execution_lifecycle/_lifecycle_cost_support.py`,
 `snapshot/_layout_twin_columns.py`, `snapshot/_layout_twin_document.py`,

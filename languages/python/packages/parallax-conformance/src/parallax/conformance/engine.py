@@ -26,6 +26,7 @@ from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lanes import scenario, snapshot
 from parallax.conformance._lanes.error import run_error_case
 from parallax.conformance._lanes.evolution import run_evolution_case
+from parallax.conformance._lanes.interleaved import run_interleaved_scenario_case
 from parallax.conformance._lanes.reads import (
     case_database,
     compile_read_case,
@@ -40,7 +41,6 @@ from parallax.conformance._lanes.scenario import (
     compile_write_sequence_case,
     read_table_state,
     run_conflict_case,
-    run_interleaved_scenario_case,
     run_write_sequence_case,
 )
 from parallax.conformance._lifecycle_observation import LifecycleRun, lifecycle_run
