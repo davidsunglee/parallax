@@ -30,6 +30,7 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     execution_lifecycle_observation,
 )
+from parallax.conformance._mechanism import model_facts
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import inheritance, predicate, storage_layout
 from parallax.core._formation_profile import form_metamodel
@@ -519,15 +520,6 @@ def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> No
         engine.run_read_case(dataclasses.replace(case, document=document), FakeDbPort([]))
 
 
-def test_eligibility_reads_the_case_declaration() -> None:
-    assert engine.eligibility(_case("m-value-object-001")) is None
-    cases = _corpus()
-    run_only = [c for c in cases if engine.eligibility(c) is not None]
-    assert run_only, "the corpus declares at least one run-only case"
-    first = engine.eligibility(run_only[0])
-    assert first is not None and first.reason  # a non-empty reason
-
-
 def test_the_compile_lane_refuses_a_deferred_execution_feature() -> None:
     # The compile lane runs production's own read gate, Deferred Execution Feature
     # classification included: an adapter whose compile lane accepted a query its
@@ -579,17 +571,6 @@ def _synthetic(document: dict[str, object]) -> case_format.Case:
         model="models/orders.yaml",
         document=document,
     )
-
-
-def test_eligibility_non_run_only_declaration_is_compile_eligible() -> None:
-    case = _synthetic({"compileEligibility": {"mode": "eligible"}})
-    assert engine.eligibility(case) is None
-
-
-def test_load_case_metamodel_rejects_a_non_string_model() -> None:
-    case = _synthetic({"model": 42})
-    with pytest.raises(engine.EngineError, match="`model` must be a string"):
-        engine.load_case_metamodel(case)
 
 
 @pytest.mark.parametrize(
@@ -2411,7 +2392,7 @@ def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> 
     shadow.note_out_of_band_write()
     engine._refuse_unaccounted_document_milestone(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         model,
-        engine.case_entity(model, "parallax.compatibility.Balance"),
+        model_facts.case_entity(model, "parallax.compatibility.Balance"),
         {"id": 1},
         shadow,
     )
@@ -3151,26 +3132,6 @@ def test_predicate_shaped_write_sequence_entry_refuses_loudly() -> None:
         engine.compile_write_sequence_case(case, "postgres")
 
 
-def test_canonical_predicate_doc_preserves_valid_time_bounds_and_drops_at() -> None:
-    # `at` is Clock context, never an instruction field. Valid-Time bounds
-    # already use their canonical instruction spelling.
-    doc = engine._canonical_predicate_doc(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        {
-            "mutation": "terminateUntil",
-            "target": {
-                "entity": "Position",
-                "predicate": {"eq": {"attr": "Position.id", "value": 1}},
-            },
-            "at": "2024-10-01T00:00:00+00:00",
-            "validFrom": "2024-07-01T00:00:00+00:00",
-            "until": "2024-09-01T00:00:00+00:00",
-        }
-    )
-    assert "at" not in doc
-    assert doc["validFrom"] == "2024-07-01T00:00:00+00:00"
-    assert doc["until"] == "2024-09-01T00:00:00+00:00"
-
-
 def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
     # `m-batch-write-005`'s own shape, run end to end (no Docker): an
     # unversioned, non-temporal target's predicate delete is stated through
@@ -3904,7 +3865,7 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
     # whole — including for a key it tracks no milestone of — which is what a keyed
     # temporal write over a document-mapped target depends on.
     assert shadow.accounts_for(
-        model, engine.case_entity(model, "parallax.compatibility.Balance"), {"id": 1}
+        model, model_facts.case_entity(model, "parallax.compatibility.Balance"), {"id": 1}
     )
 
 
@@ -5476,7 +5437,7 @@ def _scenario_result(
 
 
 _ORDERS_MODEL = engine.load_case_metamodel(_case("m-snapshot-read-010"))
-_ORDER_IDENTITY = engine.case_entity(_ORDERS_MODEL, "parallax.compatibility.Order").identity
+_ORDER_IDENTITY = model_facts.case_entity(_ORDERS_MODEL, "parallax.compatibility.Order").identity
 
 
 def _edited_copy(step: Mapping[str, object], on: int, source: Any) -> Any:
@@ -5605,7 +5566,7 @@ def test_an_edit_chain_carries_the_sources_relationship_arm_at_every_hop() -> No
 
 _ANIMAL_CASE = _case("m-inheritance-004")
 _ANIMAL_MODEL = engine.load_case_metamodel(_ANIMAL_CASE)
-_ANIMAL_IDENTITY = engine.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Animal").identity
+_ANIMAL_IDENTITY = model_facts.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Animal").identity
 
 
 def _abstract_read_of_a_dog(**overrides: object) -> Any:
@@ -5659,7 +5620,10 @@ def test_edited_copy_carries_the_concrete_identity_its_node_resolves_to() -> Non
     # and the copy states the Entity it IS rather than the abstract target that
     # published it — so a chain of edits keeps judging against `Dog`.
     copy = _edited_animal({"barkVolume": 9}, _abstract_read_of_a_dog())
-    assert copy.identity == engine.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
+    assert (
+        copy.identity
+        == model_facts.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
+    )
     assert copy.roots[0]["barkVolume"] == 9
     assert _edited_animal({"barkVolume": 3}, copy).identity == copy.identity
 
@@ -5676,7 +5640,7 @@ def test_edited_copy_judges_a_concrete_target_read_against_that_target() -> None
     # A CONCRETE-target read carries no `familyVariant` at all (`m-case-format`):
     # the caller already knows the variant, so a node states no provenance to
     # resolve and the target it was published under is the Entity it is.
-    dog = engine.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
+    dog = model_facts.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
     step = {"action": "mutate", "on": 0, "set": {"barkVolume": 9}}
     source = _scenario_result({"id": 1, "name": "Rex", "barkVolume": 7}, identity=dog)
     copy = engine._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
@@ -5736,7 +5700,7 @@ def test_grade_mutate_step_publishes_no_copy_when_the_pin_rule_refuses() -> None
     # step naming it is told so rather than handed a copy the verb never made.
     case = _case("m-bitemp-write-016")
     model = engine.load_case_metamodel(case)
-    identity = engine.case_entity(model, "parallax.compatibility.Position").identity
+    identity = model_facts.case_entity(model, "parallax.compatibility.Position").identity
     source = _scenario_result(
         {"id": 1, "value": decimal.Decimal("90.00")},
         pin=Pin(tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC), valid_time=None),

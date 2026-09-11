@@ -21,7 +21,6 @@ import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from pathlib import Path
 from typing import Any, Final, Literal, cast
 
 from parallax.conformance import (
@@ -43,12 +42,25 @@ from parallax.conformance._lifecycle_observation import (
     LifecycleRun,
     lifecycle_run,
 )
-from parallax.conformance._mechanism import envelope
+from parallax.conformance._mechanism import case_document, envelope
+from parallax.conformance._mechanism.case_document import RunOnly, eligibility
 from parallax.conformance._mechanism.envelope import (
     READ_ERRORS,
     Emission,
     EngineError,
     ScenarioRun,
+)
+from parallax.conformance._mechanism.model_facts import (
+    case_edition,
+    case_entity,
+    case_serving_model,
+    declaring_metadata,
+    default_family_root,
+    family_declarer,
+    first_declared_entity,
+    load_case_domain_model,
+    load_case_metamodel,
+    model_path,
 )
 from parallax.conformance._mechanism.transaction_control import (
     absorbing_rollback,
@@ -91,7 +103,6 @@ from parallax.core.db_port import (
 )
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import DIALECT_CATALOG, Dialect, dialect_for
-from parallax.core.entity import DomainModel
 from parallax.core.execution_lifecycle import ExecutionLifecycleProvider
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -170,7 +181,6 @@ from parallax.snapshot.handle import (
     ServingModel,
     TransactionTimePinReadOnlyError,
     build_write_planner,
-    prepare_model,
     stream_lowered,
     validate_source_pin,
 )
@@ -211,74 +221,6 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class RunOnly:
-    """A case the corpus declares compile-ineligible (`compileEligibility: run-only`)."""
-
-    reason: str
-
-
-def eligibility(case: case_format.Case) -> RunOnly | None:
-    """The case's compile eligibility: ``None`` when compile-eligible, else run-only."""
-    raw = case.document.get("compileEligibility")
-    if not isinstance(raw, Mapping):
-        return None
-    declaration = cast("Mapping[str, object]", raw)
-    if declaration.get("mode") != "run-only":
-        return None
-    reason = declaration.get("reason")
-    return RunOnly(reason=str(reason) if isinstance(reason, str) else "run-only")
-
-
-def _case_model_path(case: case_format.Case) -> Path:
-    model_ref = case.document.get("model")
-    if not isinstance(model_ref, str):
-        raise EngineError(f"{case.path.name}: `model` must be a string path")
-    return _model_path(model_ref)
-
-
-def _model_path(model_ref: str) -> Path:
-    return case_format.find_repo_root() / "core" / "compatibility" / model_ref
-
-
-def load_case_metamodel(case: case_format.Case) -> AcceptedMetamodel:
-    """The accepted Metamodel the case's model descriptor forms into."""
-    return models.load_model(_case_model_path(case))
-
-
-def load_case_domain_model(case: case_format.Case) -> DomainModel:
-    """The Domain Model the case's model descriptor forms into.
-
-    A Snapshot connection takes the Domain Model rather than the accepted
-    Metamodel underneath it, so a lane that connects loads this and reads the
-    accepted model back out through
-    :func:`~parallax.conformance.models.accepted_model_of` — one formation
-    serving the connection and every neutral surface beside it.
-    """
-    return models.load_domain_model(_case_model_path(case))
-
-
-def case_edition(case: case_format.Case) -> str:
-    """The Model Edition a case's model is prepared under: the model
-    descriptor's file stem, ``"account"`` for ``models/account.yaml``.
-
-    One rule, so every lane preparing a case's model derives the same literal
-    from the same fact about the case.
-    """
-    return _case_model_path(case).stem
-
-
-def case_serving_model(case: case_format.Case) -> ServingModel:
-    """The Serving Model a case's Handles adopt from: its Domain Model prepared
-    explicitly under :func:`case_edition`, and never published to again.
-
-    The one place a case's model is prepared, so every Handle a lane builds
-    over one case serves the same literal edition, which is what the case's
-    lifecycle oracle asserts (`m-conformance-adapter`).
-    """
-    return ServingModel(prepare_model(load_case_domain_model(case), edition=case_edition(case)))
-
-
 def case_database(
     case: case_format.Case,
     port: CaseDatabase,
@@ -295,36 +237,6 @@ def case_database(
     return handle.Database.connect(
         port, case_serving_model(case), clock=clock, lifecycle_provider=lifecycle
     )
-
-
-def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
-    """The accepted Metadata ``name`` denotes in ``model``.
-
-    A case names an Entity by the spelling its own model authored — bare when
-    that is unambiguous, canonical otherwise — which is exactly the QUERY
-    REFERENCE rule :func:`~parallax.core.metamodel.entity_by_name` adjudicates,
-    so a case's spelling resolves here the way every validator and lowering site
-    resolves one.
-
-    A miss is a ``KeyError``: it is a lookup that found nothing, and every lane
-    already translates one into an :class:`EngineError` naming the case file, so
-    a corpus defect reports the case rather than an engine frame.
-    """
-    metadata = entity_by_name(model, name)
-    if metadata is None:
-        raise KeyError(f"{name!r} names no entity the accepted model declares")
-    return metadata
-
-
-def _declaring_metadata(model: AcceptedMetamodel, name: str) -> EntityMetadata:
-    """The accepted Metadata of the position that DECLARES ``name``'s family
-    facts — its family root, itself for a standalone Entity.
-
-    Temporality is family-wide and root-owned (`m-inheritance` "Inherited
-    members"), so a read's pin resolves through the root rather than through a
-    concrete descendant's own (locally empty) declaration.
-    """
-    return _family_declarer(model, case_entity(model, name))
 
 
 def _read_query(case: case_format.Case, model: AcceptedMetamodel) -> ObjectQueryNode:
@@ -590,21 +502,6 @@ def _canonicalize_read(
     return deep_fetch.plan(validated, model, projection=projection).root
 
 
-def _family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityMetadata:
-    """``entity``'s family root, which owns the family-wide declarations.
-
-    A standalone Entity is its own root, so this is the identity there rather
-    than a second code path.
-    """
-    view = inheritance.view(model).entity(entity.identity)
-    if view is None:  # pragma: no cover - the facet covers every accepted Entity
-        raise EngineError(f"{entity.identity.canonical!r} names no entity the model declares")
-    root = model.entity(view.root)
-    if root is None:  # pragma: no cover - a family root is an accepted Entity
-        raise EngineError(f"{view.root.canonical!r} names no entity the model declares")
-    return root
-
-
 def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
     """A read-shape case's own unit-of-work Concurrency Preference — the
     read-shape half of the `when.uow` threading.
@@ -804,35 +701,12 @@ def run_graph_case(
 _STREAM_ERRORS = (*READ_ERRORS, ContinuationError, handle.SnapshotStreamStateError)
 
 
-def _batch_size_of(carrier: Mapping[str, object], where: str) -> int | None:
-    """The page size the `stream` context member on ``carrier`` requests, or
-    ``None`` where it carries no such member and the read is therefore eager.
-
-    One reader for the member's two placements (`m-case-format` *Streamed
-    reads*): a `read` case's own ``when``, and a scenario READ step. The member
-    means one thing in both, so a page size is read one way in both, and
-    ``where`` names the placement a malformed one is reported at.
-    """
-    stream = carrier.get("stream")
-    if stream is None:
-        return None
-    size = (
-        cast("Mapping[str, object]", stream).get("batchSize")
-        if isinstance(stream, Mapping)
-        else None
-    )
-    if not isinstance(size, int) or isinstance(size, bool) or size < 1:
-        raise EngineError(
-            f"{where}: a streamed delivery declares a positive integer "
-            f"`stream.batchSize` (got {size!r})"
-        )
-    return int(size)
-
-
 def _stream_batch_size(case: case_format.Case) -> int:
     when = case.document.get("when")
     size = (
-        _batch_size_of(cast("Mapping[str, object]", when), f"{case.path.name}: when.stream")
+        case_document.batch_size_of(
+            cast("Mapping[str, object]", when), f"{case.path.name}: when.stream"
+        )
         if isinstance(when, Mapping)
         else None
     )
@@ -911,7 +785,7 @@ def run_streamed_graphs_case(
         )
     roots, observed = _wire_delivery(case, query, model, port, lifecycle)
     root_key = envelope.graph_root_key(query.target.canonical, model)
-    entity = _declaring_metadata(model, query.target.canonical)
+    entity = declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
         {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: milestone_roots}}
         for pin, milestone_roots in _milestone_groups(entity, roots)
@@ -972,7 +846,7 @@ def run_graphs_case(
             "a single-instant read asserts `then.graph`"
         )
     root_key = envelope.graph_root_key(query.target.canonical, model)
-    entity = _declaring_metadata(model, query.target.canonical)
+    entity = declaring_metadata(model, query.target.canonical)
     graphs_wire: list[dict[str, object]] = [
         {"pin": ActualWireProjection(model).pin(pin), "graph": {root_key: roots}}
         for pin, roots in _milestone_partition(entity, snapshot.checked().results())
@@ -1238,51 +1112,6 @@ class _LoweredStep:
     rollback: bool
 
 
-def _when(case: case_format.Case) -> Mapping[str, object]:
-    when = case.document.get("when")
-    if not isinstance(when, Mapping):
-        raise EngineError(f"{case.path.name}: case has no `when`")
-    return cast("Mapping[str, object]", when)
-
-
-def _scenario_steps(case: case_format.Case) -> list[Mapping[str, object]]:
-    steps = _when(case).get("scenario")
-    if not isinstance(steps, list):
-        raise EngineError(f"{case.path.name}: scenario case has no `when.scenario` list")
-    return [cast("Mapping[str, object]", step) for step in cast("list[object]", steps)]
-
-
-def _write_sequence_entries(case: case_format.Case) -> list[Mapping[str, object]]:
-    entries = _when(case).get("writeSequence")
-    if not isinstance(entries, list):
-        raise EngineError(f"{case.path.name}: writeSequence case has no `when.writeSequence` list")
-    return [cast("Mapping[str, object]", entry) for entry in cast("list[object]", entries)]
-
-
-def _concurrency(case: case_format.Case) -> Concurrency:
-    """The case's declared unit-of-work Concurrency Preference
-    (`when.uow.concurrency`; `m-unit-work` "Strategy selection"), defaulting to
-    `optimistic` when the case declares none — the SAME default
-    `m-unit-work.TransactionSettings` resolves and the one `m-case-format`
-    states for the `when.uow` block.
-
-    A preference is not a strategy: what each step's own Entity participates
-    under is derived from this value and that Entity's Optimistic Lock Facet, so
-    an unversioned Non-Temporal target still locks and still writes ungated
-    under the default. A case whose golden SQL depends on that choice declares
-    the preference explicitly (`m-case-format`); `when.uow` is schema-legal on
-    writeSequence shape (`compatibility-case.schema.json`'s writeSequence
-    `propertyNames` admits `uow` alongside `writeSequence`)."""
-    when = case.document.get("when")
-    if isinstance(when, Mapping):
-        uow = cast("Mapping[str, object]", when).get("uow")
-        if isinstance(uow, Mapping):
-            value = cast("Mapping[str, object]", uow).get("concurrency")
-            if value == "locking":
-                return "locking"
-    return "optimistic"
-
-
 # The ONE reserved observation control key a case writeRow can author
 # (`compatibility-case.schema.json` `$defs/writeRow`): the version the unit of
 # work observed, stripped into a Version Observation before the durable
@@ -1355,10 +1184,11 @@ def _versioned_non_temporal_version_attribute(
     temporal entity observes a whole MILESTONE rather than a version, which is a
     different observation shape and not this attribute's
     (:func:`_milestone_observation`; `_build_temporal_instruction`). Resolved
-    through the FAMILY-declaring entity (:func:`_family_declarer`): the version
-    column is family-wide metadata declared only on the root
+    through the FAMILY-declaring entity
+    (:func:`~parallax.conformance._mechanism.model_facts.family_declarer`): the
+    version column is family-wide metadata declared only on the root
     (`m-opt-lock` "The version column")."""
-    declaring = _family_declarer(model, case_entity(model, entity_name))
+    declaring = family_declarer(model, case_entity(model, entity_name))
     if declaring.declared_as_of_axes:
         return None
     return next((attr for attr in declaring.declared_attributes if attr.optimistic_locking), None)
@@ -1486,7 +1316,7 @@ def _entry_instant(entry: Mapping[str, object]) -> str:
 
 
 def _is_temporal_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
-    return bool(_family_declarer(model, case_entity(model, entity_name)).declared_as_of_axes)
+    return bool(family_declarer(model, case_entity(model, entity_name)).declared_as_of_axes)
 
 
 _TEMPORAL_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
@@ -1663,24 +1493,8 @@ def _write_entries(raw_write: object) -> Sequence[Mapping[str, object]]:
     return cast("Sequence[Mapping[str, object]]", raw_write)
 
 
-def _canonical_predicate_doc(raw_write: Mapping[str, object]) -> dict[str, object]:
-    """A scenario predicate-write step's own ``write`` field, translated to the
-    canonical ``write-instruction.schema.json`` predicate shape
-    (`m-case-format` "Predicate-selected write instruction"): ``at`` (the
-    Clock-context Transaction-Time instant) is DROPPED — never an instruction
-    field, ADR 0010. ``validFrom`` and ``until`` already use the canonical
-    spelling. Every caller that hands a raw case document to
-    :func:`~parallax.core.unit_work.instructions.deserialize` routes through
-    this first — the canonical deserializer rejects ``at``/``until`` outright
-    as unexpected keys.
-    """
-    doc = dict(raw_write)
-    doc.pop("at", None)
-    return doc
-
-
 def _is_versioned_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
-    declaring = _family_declarer(model, case_entity(model, entity_name))
+    declaring = family_declarer(model, case_entity(model, entity_name))
     return any(attr.optimistic_locking for attr in declaring.declared_attributes)
 
 
@@ -2197,7 +2011,7 @@ def _lower_writes(
 def _prepared_case_predicate_write(
     raw_write: Mapping[str, object], model: AcceptedMetamodel
 ) -> PreparedPredicateWrite:
-    instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
+    instruction = instructions.deserialize(case_document.canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)
     prepared = _case_ingress.prepare_case_write(instruction, model)
     assert isinstance(prepared, PreparedPredicateWrite)
@@ -2264,8 +2078,9 @@ def _compile_find(
     alone.
 
     A scenario find is an in-transaction object find, so ``concurrency`` is the
-    scenario's RESOLVED Concurrency Preference (:func:`_concurrency` — declared
-    ``when.uow.concurrency`` or the `optimistic` default), never absent. It
+    scenario's RESOLVED Concurrency Preference
+    (:func:`~parallax.conformance._mechanism.case_document.concurrency` —
+    declared ``when.uow.concurrency`` or the `optimistic` default), never absent. It
     resolves against the step's own target Entity into the Effective
     Concurrency Strategy that decides the ``m-sql`` shared-row-lock suffix
     (``for share of t0``) — through
@@ -2612,7 +2427,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     """
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
-    concurrency = _concurrency(case)
+    concurrency = case_document.concurrency(case)
     dialect = dialect_for(dialect_name)
     context = _CaseContext(
         serving, model, concurrency, TemporalShadow(), case_format.uow_isolation(case)
@@ -2621,7 +2436,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
     try:
-        steps = _scenario_steps(case)
+        steps = case_document.scenario_steps(case)
         doomed_spans = _doomed_group_spans(case.path.name, steps)
         index = 0
         while index < len(steps):
@@ -2661,7 +2476,7 @@ def _write_sequence_lowered(
     ``observedVersion`` control key."""
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
-    concurrency = _concurrency(case)
+    concurrency = case_document.concurrency(case)
     shadow = TemporalShadow()
     # The same seeding the RUN lane applies: a case opting into `given.fixtures`
     # starts from persisted history, and its first temporal close observes a
@@ -2683,24 +2498,10 @@ def _write_sequence_lowered(
                     group_observations,
                 ),
             )
-            for index, entry in enumerate(_write_sequence_entries(case))
+            for index, entry in enumerate(case_document.write_sequence_entries(case))
         ]
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-
-
-def _has_action_step(steps: Sequence[Mapping[str, object]]) -> bool:
-    """Whether a scenario carries at least one lifecycle **action** step
-    (m-case-format "Lifecycle action steps") — the discriminator between this
-    module's two scenario paths, which are never mixed.
-
-    A scenario carrying one runs on the snapshot-read path, which holds each
-    find's materialized view across the steps that follow it so a `mutate` and
-    an `access` have something to name; every other scenario runs on the keyed
-    unit-of-work path, which holds `uow` groups instead and sees no action step
-    at all. **Both** paths execute `write:` steps: the shapes overlap in the
-    write step alone, which is why the split is drawn on the action step."""
-    return any("action" in step for step in steps)
 
 
 _GRADED_ACTION_VERBS: Final[frozenset[str]] = frozenset({"mutate", "access"})
@@ -2800,7 +2601,7 @@ def _compile_snapshot_scenario(
     never SQL)."""
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
-    concurrency = _concurrency(case)
+    concurrency = case_document.concurrency(case)
     shadow = TemporalShadow()
     # The same seeding the RUN lane applies: this lane's cases load their model's
     # fixtures, so a temporal close observes the milestone that persisted history
@@ -2920,7 +2721,11 @@ def _run_snapshot_scenario(
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     context = _CaseContext(
-        serving, model, _concurrency(case), TemporalShadow(), case_format.uow_isolation(case)
+        serving,
+        model,
+        case_document.concurrency(case),
+        TemporalShadow(),
+        case_format.uow_isolation(case),
     )
     # Seeded from the case's own fixtures and then advanced by each write step's
     # plan, so a temporal close observes the milestone the persisted history (or
@@ -3319,7 +3124,7 @@ def _find_step_pin(model: AcceptedMetamodel, query: ObjectQueryNode) -> Pin:
     :func:`_grade_mutate_step` hands the production write seam's finite-pin
     rule, resolved through the family-declaring entity exactly as the read
     path resolves it."""
-    return query_pin(query, _declaring_metadata(model, query.target.canonical))
+    return query_pin(query, declaring_metadata(model, query.target.canonical))
 
 
 def _grade_mutate_step(
@@ -3512,8 +3317,8 @@ def _judged_assignments(
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
     """Compile a scenario case to its ordered per-step emissions and round-trip count."""
-    steps = _scenario_steps(case)
-    if _has_action_step(steps):
+    steps = case_document.scenario_steps(case)
+    if case_document.has_action_step(steps):
         return _compile_snapshot_scenario(case, dialect_name, steps)
     emissions = envelope.emissions(
         [(step.pointer, step.statements) for step in _scenario_lowered(case, dialect_name)]
@@ -3700,7 +3505,7 @@ def _unit_source_query(
     Transaction-Time past is read-only, so a source pinned anywhere else is a
     value no verb accepts.
     """
-    declaring = _family_declarer(model, case_entity(model, entity_name))
+    declaring = family_declarer(model, case_entity(model, entity_name))
     pk = [
         attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
     ]
@@ -3986,7 +3791,7 @@ def _is_materializing_write_step(
     if not isinstance(raw_write, Mapping):
         return None
     instruction = instructions.deserialize(
-        _canonical_predicate_doc(cast("Mapping[str, object]", raw_write))
+        case_document.canonical_predicate_doc(cast("Mapping[str, object]", raw_write))
     )
     if not isinstance(instruction, PredicateWrite):
         return None
@@ -4685,7 +4490,7 @@ def _run_group_step(
             None,
         )
     mark = observation.round_trips
-    batch_size = _batch_size_of(step, f"/scenario/{index}/stream")
+    batch_size = case_document.batch_size_of(step, f"/scenario/{index}/stream")
     if batch_size is None:
         snapshot = tx.wire.find(_step_query(step, model))
         read = _StepRead(tuple(snapshot.checked().results()), snapshot)
@@ -5139,10 +4944,10 @@ def run_interleaved_scenario_case(
     surfacing only much later as an indefinite hang at
     :func:`_await_interleaved_workers`'s own unbounded post-ladder join.
     """
-    steps = _scenario_steps(case)
+    steps = case_document.scenario_steps(case)
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
-    concurrency = _concurrency(case)
+    concurrency = case_document.concurrency(case)
     if any("expectGraph" in step for step in steps):
         raise EngineError(
             f"{case.path.name}: this entry point reports emissions, round trips and find "
@@ -5286,14 +5091,14 @@ def run_scenario_case(
     production performs that read internally while planning the write and hands
     its rows to no caller, so the step reports no entry (`m-conformance-adapter`
     *Per-step row observations*)."""
-    steps = _scenario_steps(case)
+    steps = case_document.scenario_steps(case)
     lifecycle = lifecycle_run(lifecycle)
-    if _has_action_step(steps):
+    if case_document.has_action_step(steps):
         return _run_snapshot_scenario(case, port, steps, lifecycle)
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     dialect = port.dialect
-    concurrency = _concurrency(case)
+    concurrency = case_document.concurrency(case)
     shadow = TemporalShadow()
     step_rows: list[dict[str, object]] = []
     step_graphs: list[dict[str, object]] = []
@@ -5423,7 +5228,11 @@ def run_write_sequence_case(
     model = models.accepted_model_of(serving.current().model)
     lifecycle = lifecycle_run(lifecycle)
     context = _CaseContext(
-        serving, model, _concurrency(case), TemporalShadow(), case_format.uow_isolation(case)
+        serving,
+        model,
+        case_document.concurrency(case),
+        TemporalShadow(),
+        case_format.uow_isolation(case),
     )
     group_observations: GroupObservations = []
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
@@ -5431,7 +5240,7 @@ def run_write_sequence_case(
     try:
         _seed_shadow_from_fixtures(case, model, context.shadow)
         _apply_given_apply(case, port, context.shadow)
-        for index, entry in enumerate(_write_sequence_entries(case)):
+        for index, entry in enumerate(case_document.write_sequence_entries(case)):
             statements, unit_trips = _execute_keyed_unit(
                 port, context, [entry], group_observations, lifecycle, rollback=False
             )
@@ -5506,66 +5315,6 @@ def _apply_given_apply(
         port.execute_write(port.dialect.to_driver_sql(sql), envelope.driver_binds(binds))
 
 
-def _default_family_root(model: AcceptedMetamodel) -> EntityMetadata | None:
-    """The family root the default-target conventions resolve through.
-
-    ``None`` when the model declares no inheritance family at all, so a caller
-    falls back to the model document's own first entity
-    (:func:`_first_declared_entity`). A model declaring SEVERAL families
-    has no single root to name, and picking one of them would silently target an
-    entity the case never asked for, so it is refused: the conventions below all
-    say "the family root", singular, and a case over such a model must name its
-    target explicitly.
-
-    A family is read off the Inheritance Facet: every participant's view carries
-    the root's own strategy, and a standalone Entity carries none, so the
-    strategy-bearing views' distinct roots ARE the model's families.
-    """
-    facet = inheritance.view(model)
-    roots = {
-        entity.identity: view.root
-        for entity in model.entities
-        if (view := facet.entity(entity.identity)) is not None and view.strategy is not None
-    }
-    distinct = set(roots.values())
-    if not distinct:
-        return None
-    if len(distinct) > 1:
-        raise EngineError(
-            "the case's model declares no single inheritance family root; a case whose "
-            "`when` names no explicit target has no default to resolve against a model "
-            "carrying several families"
-        )
-    root = model.entity(next(iter(distinct)))
-    if root is None:  # pragma: no cover - a family root is an accepted Entity
-        raise EngineError("the case's model names a family root it does not declare")
-    return root
-
-
-def _first_declared_entity(case: case_format.Case) -> str:
-    """The canonical spelling of the Entity a case's model document declares
-    FIRST.
-
-    `m-case-format` fixes the default target of a case naming none as the
-    family root, "else — when it declares no family at all — its own first
-    entity". That is the DOCUMENT's order: the accepted model enumerates its
-    Entities canonically, so the authored order survives nowhere else. Of the
-    cases that reach this convention, one resolves to a different Entity under
-    each reading — ``m-predicate-048`` over ``shared-local-name`` — and it is
-    refused by the same rule either way, so no case grades the difference.
-
-    The ORDER is the document's; the SPELLING is canonical
-    (:func:`~parallax.conformance.models.declared_entity_spellings`), because a
-    convention resolving a target the case never named must land on the Entity
-    it selected rather than re-enter the bare-name rule that adjudicates an
-    AUTHORED reference.
-    """
-    spellings = models.declared_entity_spellings(models.read_document(_case_model_path(case)))
-    if not spellings:  # pragma: no cover - a formed model declares at least one entity
-        raise EngineError(f"{case.path.name}: the case's model declares no entity")
-    return spellings[0]
-
-
 def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     """The entity a conflict case's write targets, when ``when.write`` carries no
     explicit reference (`m-case-format`: a conflict case's write names no
@@ -5582,9 +5331,9 @@ def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     subtype is selected by Identity here, so reducing it to a bare local name
     would hand a resolved selection back to the ambiguity rule that adjudicates
     an authored reference."""
-    root = _default_family_root(model)
+    root = default_family_root(model)
     if root is None:
-        return _first_declared_entity(case)
+        return first_declared_entity(case)
     view = inheritance.view(model).entity(root.identity)
     concretes = sorted(
         identity.canonical for identity in (() if view is None else view.concrete_subtypes)
@@ -5785,7 +5534,7 @@ def _conflict_key_predicate(
     no different path from a multi-key one. The key is family-declared for the
     reason every write-side key resolution is: a concrete subtype inherits it.
     """
-    declaring = _family_declarer(model, case_entity(model, target))
+    declaring = family_declarer(model, case_entity(model, target))
     keys = [
         attr for attr in declaring.declared_attributes if isinstance(attr.primary_key, PrimaryKey)
     ]
@@ -6192,7 +5941,7 @@ def _conflict_close_metadata(model: AcceptedMetamodel, target: str) -> _Conflict
         for attribute in position.applicable_attributes
         if isinstance(attribute.primary_key, PrimaryKey)
     )
-    declarer = _family_declarer(model, entity)
+    declarer = family_declarer(model, entity)
     tx_start, _tx_end = _axis_attributes(declarer, TemporalDimension.TRANSACTION_TIME)
     valid_axis = (
         _axis_attributes(declarer, TemporalDimension.VALID_TIME)
@@ -6456,7 +6205,7 @@ def _refuse_unentitled_observed_edge(
                     "a retry sequence reads each attempt's own coordinates, so a root one is "
                     "consumed by no attempt"
                 )
-    if _concurrency(case) == "optimistic":
+    if case_document.concurrency(case) == "optimistic":
         return
     for pointer, source in [
         ("`when`", when),
@@ -6506,8 +6255,8 @@ def run_conflict_case(
     serving = case_serving_model(case)
     model = models.accepted_model_of(serving.current().model)
     lifecycle = lifecycle_run(lifecycle)
-    when = _when(case)
-    concurrency = _concurrency(case)
+    when = case_document.when(case)
+    concurrency = case_document.concurrency(case)
     target = _conflict_target(case, model)
     mutation = _conflict_mutation(when)
     is_temporal = _is_temporal_entity(model, target)
@@ -6699,10 +6448,10 @@ def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     resolves to nothing and a local name an ownerless sibling also carries
     resolves to that sibling.
     """
-    root = _default_family_root(model)
+    root = default_family_root(model)
     if root is not None:
         return root.identity.canonical
-    return _first_declared_entity(case)
+    return first_declared_entity(case)
 
 
 # The `rejected` shape's schema `oneOf`: exactly one of these keys, never zero
@@ -6760,8 +6509,8 @@ def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
         raise EngineError(
             f"{case.path.name}: `when.evolve.earlier` is a string path or the null sentinel"
         )
-    earlier = ABSENT if earlier_ref is None else models.load_model(_model_path(earlier_ref))
-    evolution = evolve(earlier, models.load_model(_model_path(later_ref)))
+    earlier = ABSENT if earlier_ref is None else models.load_model(model_path(earlier_ref))
+    evolution = evolve(earlier, models.load_model(model_path(later_ref)))
     observations: dict[str, Any] = {"evolution": evolution_observation(evolution)}
     if isinstance(evolution, UnilateralEvolution):
         observations["schema"] = _schema_matrix(evolution)
@@ -6832,7 +6581,7 @@ def run_rejected_case(case: case_format.Case) -> str:
     violation detected) — the caller compares the returned rule against the
     case's `then.rejectedRule`.
     """
-    when = _when(case)
+    when = case_document.when(case)
     kind = _rejected_when_kind(case, when)
     model = load_case_metamodel(case)
     if kind == "objectQuery":
@@ -6888,7 +6637,7 @@ def run_rejected_case(case: case_format.Case) -> str:
     row = cast("Mapping[str, object]", raw_write)
     if "target" in row:
         try:
-            instruction = instructions.deserialize(_canonical_predicate_doc(row))
+            instruction = instructions.deserialize(case_document.canonical_predicate_doc(row))
         except (
             WritePlanningError
         ) as exc:  # pragma: no cover - schema validation owns malformed writes
