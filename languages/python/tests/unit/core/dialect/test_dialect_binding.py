@@ -16,7 +16,7 @@ from typing import Any, cast
 
 import pytest
 
-from parallax.conformance import engine
+from parallax.conformance._mechanism.transaction_control import write_connection
 from parallax.conformance.boundary_runner import FaultInjectingPort
 from parallax.core.db_port import DatabaseConnection, DeclaresDialect, DocumentReadOrdinals, Row
 from parallax.core.db_port import TransactionOutcome as Outcome
@@ -86,7 +86,7 @@ def test_a_fault_injecting_port_preserves_the_dialect_through_its_own_re_wrap() 
 
 def test_an_aborting_port_reports_the_dialect_of_the_port_it_decorates() -> None:
     inner = _SpellingPort(BACKTICKED)
-    decorator = engine._AbortingPort(inner)  # pyright: ignore[reportPrivateUsage] - the case-only decorator's own seam
+    decorator = write_connection(inner, rollback=True)
     assert decorator.dialect is BACKTICKED
 
 
