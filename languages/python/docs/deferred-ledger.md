@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-96**.
+Entry numbering is continuous and never reused. The next new number is **D-97**.
 
 ## Entries
 
@@ -973,6 +973,38 @@ coordinate"), leaving `_root_pin`/`_edge_rank` to repoint on
 `temporal_read.milestone_edge_from_members` instead; and `CompiledRead`'s
 projection accessor, whose own docstring already says no consumer should
 re-project a family superset, which is an unrelated obligation.
+
+### D-96 — The materialization report reads what a graph retains after its own timed seams, so that cell states a level and not a difference
+
+*Low — one reported cell needs a controlled reading beside it before two
+recordings of it can be compared.* Relates to
+`languages/python/tools/snapshot_materialization_reading.py`,
+`languages/python/docs/snapshot-materialization-baseline.md`,
+`just python-report-snapshot-materialization`. Owner: this target.
+
+**What.** `measure` runs its four timed seams — model preparation, compilation,
+`bind`, and twenty batches — before it starts `tracemalloc` and reads what the
+sealed graph retains, and what those repetitions leave behind the reading then
+charges to the graph. On the current code the retained seam reads about 1.9 kB
+above the same seam read in a process that has done nothing else (170,368 B
+against 168,453 B on 3.13 `Columns`, over 64 projections); on the code the
+baseline document's "before" half measured, the two readings agree inside their
+own spread. Two recorded cells therefore cannot be differenced, which is why the
+"retained graph bytes per projection must not increase" comparison in that
+document is settled by a controlled A/B in fresh child interpreters and says so.
+
+**Why it is deferred rather than fixed.** Both obvious repairs change what the
+recorded matrix means. Taking the memory readings first re-orders every figure in
+a report whose two halves are already recorded against each other, and taking
+them in a child of their own doubles the matrix's child count and its runtime.
+Neither belongs in the claim that publishes the comparison, and nothing gates on
+the cell: the report passes no verdict, and what is gated is the scaling
+regression's structure.
+
+**When.** Alongside the next change to this report's shape. Closing it means
+either reading memory before the timings or giving the memory readings a child of
+their own, re-recording the matrix under the new order, and saying which order
+the conditions table describes.
 
 ## Forwarding pointers
 

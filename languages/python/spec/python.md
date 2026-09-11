@@ -2649,6 +2649,15 @@ of shared edition identity.
   materialized and of the Entities its reads happen to address. No first-reach
   derivation, unsynchronized publication, process-global cache, weak cache,
   data-keyed cache, or query-result cache participates.
+
+  Projection-aligned state — which result key each position reads, whether a
+  cell arrives encoded, and which members the statement's own row transform
+  already judged — is what a layout is read BESIDE, and it belongs to the
+  compiled read that fixed the projection rather than to the layout or to a row.
+  It MUST be derived once per compiled read, for every exact Entity that read's
+  rows can resolve to, and discarded with the execution that compiled it: never
+  rebuilt per row, never derived on the first row that reaches an Entity, and
+  never cached for the lifetime of a model.
 - **Deterministic graph order.** Merged logical nodes receive their zero-based
   allocation index by deterministic first-encounter preorder: roots in result
   order; relationships on each node in accepted metadata declaration order;
