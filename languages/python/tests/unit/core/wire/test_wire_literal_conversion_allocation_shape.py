@@ -8,19 +8,6 @@ from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Final
 
-from _corpus_model_support import model as corpus_model
-from _corpus_model_support import target
-from memory_instruments import (
-    Heap,
-    Seam,
-    Span,
-    high_water,
-    in_a_child_interpreter,
-    serve_one_measurement,
-    whole_heap,
-)
-
-from _support.sql import compile_read
 from parallax.core import inheritance, predicate, storage_layout
 from parallax.core.base import FLOAT64, STRING
 from parallax.core.base import Decimal as DecimalType
@@ -30,6 +17,18 @@ from parallax.core.sql_gen._context import (
     _TypedBindSpan,  # pyright: ignore[reportPrivateUsage]
 )
 from parallax.core.wire import WireDecodingError, decode_canonical_wire, loads
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._corpus_model_support import target
+from tests.unit.memory_instruments import (
+    Heap,
+    Seam,
+    Span,
+    high_water,
+    in_a_child_interpreter,
+    serve_one_measurement,
+    whole_heap,
+)
 
 _MODEL: Final = corpus_model("wallet")
 _WALLET: Final = target(_MODEL, "Wallet")

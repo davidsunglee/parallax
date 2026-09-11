@@ -13,13 +13,13 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine
 from parallax.conformance.boundary_runner import TARGET_ID, fault_injecting_adapter
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Transaction
+from tests._support.corpus import case_fixtures
 
 _CASE_ID = "m-execution-lifecycle-004"
 

@@ -20,18 +20,7 @@ from types import MethodType
 from typing import Any, Final
 
 import pytest
-from _transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
 
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    ConnectsAsItself,
-    Read,
-    ReadCall,
-    ScriptedAdapter,
-    Transact,
-    Write,
-)
 from parallax.conformance import read_models
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
@@ -71,6 +60,17 @@ from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Database, QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle import _read as read_module
 from parallax.snapshot.handle import _read_scope as read_scope_module
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    ConnectsAsItself,
+    Read,
+    ReadCall,
+    ScriptedAdapter,
+    Transact,
+    Write,
+)
+from tests.unit._transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
 
 _ORDER_ROW: Row = {
     "id": 1,

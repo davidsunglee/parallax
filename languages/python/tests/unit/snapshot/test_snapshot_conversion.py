@@ -28,17 +28,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import pytest
-from _corpus_model_support import formed
-from _corpus_model_support import model as corpus_model
-from _snapshot_graph_support import (
-    documents_of,
-    identity_of,
-    invalid_record,
-    layout_of,
-    rendered_occurrence,
-)
 
-from _support.model_capabilities import graph_construction_for
 from parallax.conformance import vo_models
 from parallax.core.base import (
     BOOLEAN,
@@ -90,6 +80,16 @@ from parallax.snapshot.materialize._convert import (
 )
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests._support.model_capabilities import graph_construction_for
+from tests.unit._corpus_model_support import formed
+from tests.unit._corpus_model_support import model as corpus_model
+from tests.unit._snapshot_graph_support import (
+    documents_of,
+    identity_of,
+    invalid_record,
+    layout_of,
+    rendered_occurrence,
+)
 
 ORDERS = corpus_model("orders")
 ANIMAL = corpus_model("animal")

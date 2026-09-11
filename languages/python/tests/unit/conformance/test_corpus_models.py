@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from _corpus_model_support import corpus_records
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.core.metamodel import entity_by_name
+from tests.unit._corpus_model_support import corpus_records
 
 _DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 

@@ -47,8 +47,7 @@ from pathlib import Path
 import pytest
 
 import check_dag_sync as dag
-
-PY_ROOT = Path(__file__).resolve().parents[2]
+from tests._support.repo import PY_ROOT
 
 # The §7 table header the prose parser keys on, for synthetic one-row fixtures.
 _HEADER = "| Behavioral/support module | a | b | c | d |"

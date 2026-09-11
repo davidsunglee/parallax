@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from _corpus_model_support import formed, records
 
 from parallax.conformance import _case_ingress, case_format
 from parallax.core import inheritance
@@ -82,6 +81,7 @@ from parallax.descriptor._records import (
     ValueObject,
     ValueObjectAttribute,
 )
+from tests.unit._corpus_model_support import formed, records
 
 
 def test_query_entities_collects_every_class_the_query_names() -> None:

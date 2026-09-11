@@ -17,10 +17,7 @@ from decimal import Decimal
 from types import TracebackType
 
 import pytest
-from _corpus_identity_support import corpus_object_key
 
-from _support.clock_probes import CountingClock
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import predicate as predicate_algebra
 from parallax.core.metamodel import AttributeIdentity, Metamodel
@@ -57,6 +54,9 @@ from parallax.core.unit_work.instructions import (
     prepare_typed_write,
 )
 from parallax.snapshot.handle import build_write_planner
+from tests._support.clock_probes import CountingClock
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests.unit._corpus_identity_support import corpus_object_key
 
 _MODELS = models.load_models()
 _ACCOUNT = _MODELS["account"]

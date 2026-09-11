@@ -24,16 +24,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _metamodel_support import Declaration, key, source
-from _snapshot_graph_support import documents_of, identity_of, layout_of
 
-from _support.db_port import (
-    ConnectsAsItself,
-    RefusingAdapter,
-    body_outcome,
-)
-from _support.document_reads import fold_mapping_rows
-from _support.sql import compile_read
 from parallax.conformance import class_models, models
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
@@ -69,6 +60,15 @@ from parallax.snapshot.materialize import (
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests._support.db_port import (
+    ConnectsAsItself,
+    RefusingAdapter,
+    body_outcome,
+)
+from tests._support.document_reads import fold_mapping_rows
+from tests._support.sql import compile_read
+from tests.unit._metamodel_support import Declaration, key, source
+from tests.unit._snapshot_graph_support import documents_of, identity_of, layout_of
 
 # Descriptor-backed Domain Models, because a connection takes the Domain Model
 # itself; the accepted Metamodel underneath one is what the materialize-level

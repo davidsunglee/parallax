@@ -7,13 +7,13 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
-from _compact_support import carries_instance_storage, published, raw_row
 
-from _support import mirrored_models as mm
 from parallax.conformance.edit_models import LEDGER, Note, NoteTag
 from parallax.core import AbstractRoot, Attr, ConcreteSubtype, Entity, TablePerHierarchy, attr
 from parallax.core.entity._instance_state import is_published
 from parallax.core.entity._pydantic_storage import attach_instance_state
+from tests._support import mirrored_models as mm
+from tests.unit.core.entity._compact_support import carries_instance_storage, published, raw_row
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

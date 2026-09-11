@@ -179,35 +179,7 @@ from itertools import product
 from typing import Final, NamedTuple, cast, get_type_hints
 
 import pytest
-from _lifecycle_cost_support import STATEMENT, TARGET, rows
-from _transact_support import (
-    ACCOUNT,
-    FIXED,
-    NEW_ROW,
-    deadlock,
-    new_account,
-)
-from memory_instruments import (
-    REPEATS,
-    Closure,
-    Seam,
-    allocation,
-    closure,
-    in_a_child_interpreter,
-    live_graph,
-    retained,
-    serve_one_measurement,
-)
 
-from _support import mirrored_models as mm
-from _support.db_port import (
-    ConnectsAsItself,
-    Read,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    body_outcome,
-)
 from parallax.core.db_port import (
     Bind,
     CommitFailed,
@@ -249,6 +221,34 @@ from parallax.core.execution_lifecycle._activity import (
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, ExecutionFailure, Transaction
+from tests._support import mirrored_models as mm
+from tests._support.db_port import (
+    ConnectsAsItself,
+    Read,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    body_outcome,
+)
+from tests.unit._transact_support import (
+    ACCOUNT,
+    FIXED,
+    NEW_ROW,
+    deadlock,
+    new_account,
+)
+from tests.unit.core.execution_lifecycle._lifecycle_cost_support import STATEMENT, TARGET, rows
+from tests.unit.memory_instruments import (
+    REPEATS,
+    Closure,
+    Seam,
+    allocation,
+    closure,
+    in_a_child_interpreter,
+    live_graph,
+    retained,
+    serve_one_measurement,
+)
 
 SMALL_ROWS: Final = 500
 LARGE_ROWS: Final = 5_000

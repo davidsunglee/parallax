@@ -18,7 +18,6 @@ import gc
 from collections.abc import Callable, Iterator
 
 import pytest
-from _metamodel_support import Declaration, attribute, identity, key, source
 
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
@@ -48,6 +47,7 @@ from parallax.evolution.model_evolution import (
     evolve,
 )
 from parallax.evolution.model_evolution._matching import Matching
+from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _WIDGET = identity("Widget")
 _GADGET = identity("Gadget")

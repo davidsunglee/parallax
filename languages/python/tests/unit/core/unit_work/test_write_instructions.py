@@ -19,10 +19,8 @@ from typing import Any, cast
 
 import jsonschema
 import pytest
-from _metamodel_support import Declaration, attribute, identity, key, source
 from referencing import Registry, Resource
 
-from _support.repo import REPO_ROOT
 from parallax.conformance import models
 from parallax.core import inheritance
 from parallax.core import predicate as predicate_algebra
@@ -31,6 +29,8 @@ from parallax.core.base import JSON
 from parallax.core.metamodel import Table
 from parallax.core.unit_work import WriteRejectedError
 from parallax.core.unit_work import instructions as wi
+from tests._support.repo import REPO_ROOT
+from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _SCHEMAS = REPO_ROOT / "core" / "schemas"
 

@@ -1,7 +1,7 @@
 """Unit tests for the untracked-source guard.
 
 Mirrors the drift-canary pattern in ``test_dag_sync.py``: the tool is imported as
-a library (``pythonpath = ["tools", "tests"]``), the clean tree must pass, and a
+a library (``pythonpath = ["tools"]``), the clean tree must pass, and a
 deliberately planted untracked file must block. The canary proves the guard
 actually closes the vacuous-diff-cover hole it exists for — a guard that only
 ever returns 0 is indistinguishable from no guard. Every plant goes into a

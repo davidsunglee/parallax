@@ -38,9 +38,13 @@ import tomllib
 from time import perf_counter
 from typing import cast
 
-import _instance_state_support as support
 import pytest
-from _instance_state_support import (
+from pydantic import BaseModel
+
+import instance_state_overhead as report
+from parallax.core.entity import lifecycle_state_of
+from tests.unit import _instance_state_support as support
+from tests.unit._instance_state_support import (
     ARMS,
     COMPACT,
     LEGACY,
@@ -51,10 +55,6 @@ from _instance_state_support import (
     Scenario,
     compact_common_work_ns,
 )
-from pydantic import BaseModel
-
-import instance_state_overhead as report
-from parallax.core.entity import lifecycle_state_of
 
 
 def test_the_canonical_mix_is_the_six_scenarios_the_measurement_contract_names() -> None:

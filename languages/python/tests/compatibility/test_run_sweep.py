@@ -22,7 +22,11 @@ from typing import Any, Final, cast
 import jsonschema
 import pytest
 
-from _support.corpus import (
+from parallax.conformance import adapter, case_format, concurrency_runner, engine
+from parallax.conformance.profile import Profile
+from parallax.core import inheritance, storage_layout
+from parallax.core.metamodel import Metamodel, entity_by_name
+from tests._support.corpus import (
     CollectionKinds,
     case_document,
     case_fixtures,
@@ -33,17 +37,13 @@ from _support.corpus import (
     compare_stored_data_issues,
     wire_value_deep,
 )
-from _support.repo import adapter_schema
-from _support.sweep_goldens import (
+from tests._support.repo import adapter_schema
+from tests._support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
     wire_binds,
     write_golden_statements,
 )
-from parallax.conformance import adapter, case_format, concurrency_runner, engine
-from parallax.conformance.profile import Profile
-from parallax.core import inheritance, storage_layout
-from parallax.core.metamodel import Metamodel, entity_by_name
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
 # level's nodes PER PROJECTION — the unnarrowed concrete superset with a sibling

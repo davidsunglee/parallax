@@ -19,7 +19,6 @@ from collections.abc import Mapping
 from decimal import Decimal
 from typing import Final, cast
 
-from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, DomainModel, attr
 from parallax.core.db_error import DatabaseError
@@ -32,6 +31,7 @@ from parallax.core.unit_work import FixedClock, RetainedObservation
 from parallax.snapshot import InvalidData, connect
 from parallax.snapshot.handle import Database, Snapshot
 from parallax.snapshot.materialize import WireEntity, source_hint_of
+from tests._support import mirrored_models as mm
 
 __all__ = [
     "ACCOUNT",

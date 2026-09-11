@@ -20,13 +20,13 @@ from __future__ import annotations
 import ast
 import importlib
 import re
-from pathlib import Path
 
 import pytest
 
 from parallax.conformance import database_pooling_stories
+from tests._support.repo import PY_ROOT
 
-_GUIDE = Path(__file__).resolve().parents[2] / "docs" / "postgresql-lifecycle.md"
+_GUIDE = PY_ROOT / "docs" / "postgresql-lifecycle.md"
 
 _STORY_BLOCK = re.compile(
     r"<!-- story: (?P<marker>\w+) -->\n\n```python\n(?P<body>.*?)\n```\n",

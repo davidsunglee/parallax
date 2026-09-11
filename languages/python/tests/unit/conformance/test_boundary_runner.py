@@ -19,8 +19,6 @@ from typing import Any
 
 import pytest
 
-from _support.adoption import raises_contextualized
-from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import boundary_runner, case_format
 from parallax.conformance.boundary_runner import (
     FaultInjectingPort,
@@ -46,6 +44,8 @@ from parallax.core.db_port import (
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction, TransactionOptionConflictError
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import ConnectsAsItself, body_outcome
 
 _ACCOUNT = MODELS["account"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)

@@ -14,10 +14,10 @@ from __future__ import annotations
 from typing import NoReturn
 
 import pytest
-from _transact_support import ACCOUNT
 
 from parallax.snapshot import ExecutionFailure, ServingModel, prepare_model
 from parallax.snapshot.handle._adoption import AdoptedExecution
+from tests.unit._transact_support import ACCOUNT
 
 _A = prepare_model(ACCOUNT, edition="a")
 _B = prepare_model(ACCOUNT, edition="b")

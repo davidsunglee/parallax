@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import dataclasses
 
-from _metamodel_support import Declaration, attribute, identity, instant, key, source
-
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.metamodel import (
@@ -70,6 +68,7 @@ from parallax.evolution.model_evolution import (
     WritesEnabled,
     evolve,
 )
+from tests.unit._metamodel_support import Declaration, attribute, identity, instant, key, source
 
 _ROOT = identity("Instrument")
 _BOND = identity("Bond")

@@ -17,7 +17,6 @@ from typing import Any
 
 import pytest
 
-from _support.db_port import ConnectsAsItself, body_outcome
 from parallax.conformance import model_publication_stories as stories
 from parallax.conformance.story_models import ACCOUNT_MODEL, NICKNAMED_ACCOUNT_MODEL
 from parallax.core.db_port import (
@@ -38,6 +37,7 @@ from parallax.core.metamodel import EntityIdentity, IndexIdentity, Table
 from parallax.evolution import CreatedIndex, SchemaDelta, evolve
 from parallax.snapshot import ModelSelection, ServingModel, connect
 from parallax.snapshot.handle import Database
+from tests._support.db_port import ConnectsAsItself, body_outcome
 
 _ALTER = "alter table account add column nickname varchar(64)"
 _ORDERED = ("alter table t add column a int", "create index i on t (a)", "analyze t")

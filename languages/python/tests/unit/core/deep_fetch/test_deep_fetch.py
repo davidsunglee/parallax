@@ -16,8 +16,6 @@ import dataclasses
 from typing import cast
 
 import pytest
-from _corpus_model_support import model as accepted_model
-from _corpus_model_support import target as entity_of
 
 from parallax.conformance import models
 from parallax.core import deep_fetch, inheritance, relationship
@@ -49,6 +47,8 @@ from parallax.core.predicate import (
 )
 from parallax.core.unit_work import PredicateSelection, PredicateWrite, WriteAssignment
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
+from tests.unit._corpus_model_support import model as accepted_model
+from tests.unit._corpus_model_support import target as entity_of
 
 ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")

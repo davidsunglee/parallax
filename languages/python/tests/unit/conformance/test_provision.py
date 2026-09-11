@@ -16,10 +16,6 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
-from _corpus_model_support import corpus, corpus_records, formed
-from _document_layout_support import document_model
-from _inheritance_family_support import tph_family_with_a_value_object
-from _second_dialect import BACKTICKED
 
 from parallax.conformance import provision
 from parallax.core.db_port import JsonDocument
@@ -34,6 +30,10 @@ from parallax.descriptor._records import (
 )
 from parallax.evolution.model_evolution import ABSENT, evolve
 from parallax.evolution.schema_delta import schema_delta
+from tests.unit._corpus_model_support import corpus, corpus_records, formed
+from tests.unit._document_layout_support import document_model
+from tests.unit._inheritance_family_support import tph_family_with_a_value_object
+from tests.unit._second_dialect import BACKTICKED
 
 _RECORDS = corpus_records()
 _MODELS = corpus()

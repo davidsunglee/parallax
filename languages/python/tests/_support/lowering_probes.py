@@ -11,8 +11,6 @@ statements in order.
 
 from __future__ import annotations
 
-from _support.clock_probes import inert_instant
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
@@ -27,6 +25,8 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.instructions import prepare_typed_write
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.snapshot.handle import build_write_planner, stream_lowered
+from tests._support.clock_probes import inert_instant
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
 
 __all__ = ["lower_instruction", "lower_instruction_steps"]
 

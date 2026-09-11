@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from _support.repo import canonical_snapshot_claim
 from parallax.conformance.claim import ADAPTER, SNAPSHOT_CLAIM, Adapter, Claim
+from tests._support.repo import canonical_snapshot_claim
 
 
 def test_adapter_identity_is_python() -> None:

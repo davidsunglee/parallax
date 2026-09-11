@@ -20,7 +20,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
-from _support.model_capabilities import graph_construction_for
 from parallax.core import DomainModel
 from parallax.core.entity._layout import EntityLayout, LayoutCatalog
 from parallax.core.entity._model import class_index, model_of
@@ -44,6 +43,7 @@ from parallax.snapshot.materialize import (
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests._support.model_capabilities import graph_construction_for
 
 __all__ = [
     "GraphFixture",

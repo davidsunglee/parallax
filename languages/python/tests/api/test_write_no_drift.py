@@ -27,19 +27,6 @@ from typing import Any, Final, cast
 import pytest
 from pydantic import ValidationError
 
-from _support.adoption import raises_contextualized
-from _support.corpus import case_document, compare_binds
-from _support.db_port import (
-    BeginCall,
-    CommitCall,
-    ConnectsAsItself,
-    PortCall,
-    ReadCall,
-    RollbackCall,
-    WriteCall,
-    body_outcome,
-)
-from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Payment
@@ -59,6 +46,19 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.unit_work import KeyedWrite, WriteRejectedError, instructions
 from parallax.snapshot.handle import Database, Transaction
+from tests._support.adoption import raises_contextualized
+from tests._support.corpus import case_document, compare_binds
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    ConnectsAsItself,
+    PortCall,
+    ReadCall,
+    RollbackCall,
+    WriteCall,
+    body_outcome,
+)
+from tests._support.document_reads import fold_mapping_rows
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 _STORIES = {story.case_id: story for story in WRITE_STORIES}

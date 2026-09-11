@@ -30,24 +30,7 @@ from decimal import Decimal
 from typing import Final, cast
 
 import pytest
-from _corpus_model_support import corpus_records, formed
-from _transact_support import (
-    INFINITY_INSTANT,
-    WHERE_POSITION_META,
-    WherePosition,
-    db_for,
-)
 
-from _support.clock_probes import instant_at
-from _support.db_port import (
-    Read,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
-from _support.lowering_probes import lower_instruction, lower_instruction_steps
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core import bitemp_write, storage_layout, txtime_write
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, Row
@@ -97,6 +80,23 @@ from parallax.snapshot.handle import (
     plan_temporal_close,
 )
 from parallax.snapshot.handle._retention import ObservedRows, retain_evidence
+from tests._support.clock_probes import instant_at
+from tests._support.db_port import (
+    Read,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests._support.lowering_probes import lower_instruction, lower_instruction_steps
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests.unit._corpus_model_support import corpus_records, formed
+from tests.unit._transact_support import (
+    INFINITY_INSTANT,
+    WHERE_POSITION_META,
+    WherePosition,
+    db_for,
+)
 
 
 def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:

@@ -17,39 +17,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, cast
 
-import _mixed_strategy_model as mx
-import observation_models as om
 import pytest
-from _transact_support import (
-    ACCOUNT,
-    BALANCE,
-    FIND_SQL_LOCKED,
-    FIND_SQL_UNLOCKED,
-    FIXED,
-    INFINITY_INSTANT,
-    INSERT_SQL,
-    NEW_ROW,
-    PAYMENT,
-    account_db,
-    balance_row,
-    db_for,
-    new_account,
-    read_account,
-)
 
-from _support import inheritance_models as im
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    BeginCall,
-    CommitCall,
-    Read,
-    ReadCall,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
@@ -76,6 +45,37 @@ from parallax.snapshot.handle import (
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _read_scope as read_scope_module
 from parallax.snapshot.handle._retention import ObservationLedger
+from tests._support import inheritance_models as im
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests.unit._transact_support import (
+    ACCOUNT,
+    BALANCE,
+    FIND_SQL_LOCKED,
+    FIND_SQL_UNLOCKED,
+    FIXED,
+    INFINITY_INSTANT,
+    INSERT_SQL,
+    NEW_ROW,
+    PAYMENT,
+    account_db,
+    balance_row,
+    db_for,
+    new_account,
+    read_account,
+)
+from tests.unit.snapshot.handle import _mixed_strategy_model as mx
+from tests.unit.snapshot.handle import observation_models as om
 
 
 @dataclass(frozen=True, slots=True)

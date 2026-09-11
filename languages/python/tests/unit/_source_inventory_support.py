@@ -29,8 +29,8 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from _support.distributions import ALL_PACKAGES, PRODUCTION_PACKAGES, TOP_PACKAGE_DIR
-from _support.repo import PY_ROOT
+from tests._support.distributions import ALL_PACKAGES, PRODUCTION_PACKAGES, TOP_PACKAGE_DIR
+from tests._support.repo import PY_ROOT
 
 __all__ = [
     "CONFORMANCE_SRC",

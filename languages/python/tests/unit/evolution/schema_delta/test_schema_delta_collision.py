@@ -13,8 +13,6 @@ import dataclasses
 from collections.abc import Sequence
 
 import pytest
-from _corpus_model_support import formed
-from _inheritance_family_support import entity_with_two_indices_over_one_column
 
 from parallax.core.base import STRING
 from parallax.core.dialect import POSTGRES, Dialect, PhysicalIndexName
@@ -31,6 +29,8 @@ from parallax.evolution.schema_delta import (
 from parallax.evolution.schema_delta import _naming as naming
 from parallax.evolution.schema_delta._naming import NamedIndex, collision_groups
 from parallax.evolution.schema_delta._physical import IndexDefinition, PhysicalColumn
+from tests.unit._corpus_model_support import formed
+from tests.unit._inheritance_family_support import entity_with_two_indices_over_one_column
 
 _ENTITY = EntityIdentity(namespace="parallax.test", name="Widget")
 _OTHER = EntityIdentity(namespace="parallax.test", name="Gadget")

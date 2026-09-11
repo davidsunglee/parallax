@@ -15,8 +15,6 @@ import datetime as dt
 from typing import Any, cast
 
 import pytest
-from _corpus_model_support import model as accepted_model
-from _corpus_model_support import target
 
 from parallax.conformance import models
 from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch
@@ -44,6 +42,8 @@ from parallax.core.temporal_read import (
     validated_hop_as_of_terms,
     validated_query_pin,
 )
+from tests.unit._corpus_model_support import model as accepted_model
+from tests.unit._corpus_model_support import target
 
 _MODELS = models.load_models()
 _ACCEPTED = {

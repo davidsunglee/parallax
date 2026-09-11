@@ -16,9 +16,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _corpus_model_support import formed, model, target
 
-from _support.sql import compile_read
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import PresentDocument
@@ -30,6 +28,8 @@ from parallax.core.sql_gen._inheritance import (
     BranchColumn,
     TpcsBranchPlan,
 )
+from tests._support.sql import compile_read
+from tests.unit._corpus_model_support import formed, model, target
 
 PAYMENT = model("payment")
 ANIMAL = model("animal")

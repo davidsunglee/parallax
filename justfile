@@ -340,7 +340,7 @@ python-test-distribution:
 [metadata("runtime:medium")]
 [doc("Focused: the Pydantic parity corpus on the declared floor rather than the locked release.")]
 python-test-pydantic-floor:
-    cd {{python}} && uv run --with 'pydantic=={{pydantic_floor}}' pytest tests/unit/test_pydantic_parity.py
+    cd {{python}} && uv run --with 'pydantic=={{pydantic_floor}}' pytest tests/unit/core/entity/test_pydantic_parity.py
 
 # Like the focused selectors above it this belongs to no aggregate, and for a
 # different reason: a `report` passes no judgement, so no number it prints can
@@ -357,7 +357,7 @@ python-report-lifecycle-overhead:
 # this one because a total in bytes is machine- and interpreter-relative, so the
 # ratio it prints against the recorded pre-cutover reading is evidence rather
 # than a verdict. The SHAPE of what a graph retains is gated instead, in
-# `tests/unit/test_snapshot_graph_retention.py`, which `python-test-dbfree` owns.
+# `tests/unit/snapshot/test_snapshot_graph_retention.py`, which `python-test-dbfree` owns.
 # What has been read off this, and under what conditions, is
 # `languages/python/docs/snapshot-graph-baseline.md`.
 [metadata("runtime:medium")]
@@ -369,7 +369,7 @@ python-report-snapshot-graph-overhead:
 # delivery holds is a total in bytes, so this prints it as evidence and judges
 # nothing. The SHAPE of the bound — a survivor census with no term in the result
 # size and none in how far the delivery has got, and both exclusions demonstrated
-# — is gated in `tests/unit/test_snapshot_stream_retention.py`, which the `cost`
+# — is gated in `tests/unit/snapshot/test_snapshot_stream_retention.py`, which the `cost`
 # class owns and CI runs on every change. What has been read off this, and under
 # what conditions, is `languages/python/docs/stream-baseline.md`.
 [metadata("runtime:medium")]
@@ -388,7 +388,7 @@ python-report-stream-overhead:
 # non-zero on is a matrix cell it has no reading for. The aggregates divide the
 # first two arms; the third states what a published node costs against one a
 # caller built, and enters neither. What grades those comparisons is
-# `tests/unit/test_instance_state_baseline.py`, which `python-test-dbfree` owns
+# `tests/unit/core/entity/test_instance_state_baseline.py`, which `python-test-dbfree` owns
 # and which feeds them doctored readings. What has been read off this, and under
 # what conditions, is `languages/python/docs/instance-state-baseline.md`.
 [metadata("runtime:medium")]
@@ -403,7 +403,7 @@ python-report-instance-state:
 # a usage error or a matrix cell it has no reading for. What is gated is the SHAPE
 # of the claim — that prepared state is fixed by the model's exact Entity layouts
 # and by the compiled reads rather than by rows, graphs, or executions — in
-# `tests/unit/test_snapshot_materialization_scaling.py`, which the `cost` class
+# `tests/unit/snapshot/test_snapshot_materialization_scaling.py`, which the `cost` class
 # owns and CI runs on every change. What has been read off this, and under what
 # conditions, is `languages/python/docs/snapshot-materialization-baseline.md`.
 [metadata("runtime:medium")]

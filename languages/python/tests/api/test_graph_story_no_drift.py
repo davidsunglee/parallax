@@ -39,11 +39,6 @@ from typing import Any, cast
 
 import pytest
 
-from _support.adoption import raises_contextualized
-from _support.corpus import case_document, compare_binds
-from _support.db_port import ConnectsAsItself, body_outcome
-from _support.document_reads import fold_mapping_rows
-from _support.query_probes import canonical_document
 from parallax.conformance import case_format, graph_stories
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order, OrderStatus
@@ -67,6 +62,11 @@ from parallax.snapshot.handle import (
     Transaction,
     TransactionTimePinReadOnlyError,
 )
+from tests._support.adoption import raises_contextualized
+from tests._support.corpus import case_document, compare_binds
+from tests._support.db_port import ConnectsAsItself, body_outcome
+from tests._support.document_reads import fold_mapping_rows
+from tests._support.query_probes import canonical_document
 
 _ORDER_ROW: Row = {
     "id": 1,

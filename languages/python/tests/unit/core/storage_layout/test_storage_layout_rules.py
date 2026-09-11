@@ -7,15 +7,6 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
-from _metamodel_support import (
-    Declaration,
-    accepted,
-    attribute,
-    identity,
-    instant,
-    key,
-    source,
-)
 
 from parallax.conformance import case_format
 from parallax.core import inheritance, storage_layout
@@ -59,6 +50,15 @@ from parallax.core.metamodel import (
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
+from tests.unit._metamodel_support import (
+    Declaration,
+    accepted,
+    attribute,
+    identity,
+    instant,
+    key,
+    source,
+)
 
 _ROOT = identity("Ledger")
 _MID = identity("Journal")

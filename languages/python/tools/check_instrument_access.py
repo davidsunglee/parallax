@@ -71,18 +71,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _TOOL = "tools/check_instrument_access.py"
-TESTS_ROOT = Path(__file__).resolve().parents[1] / "tests"
+WORKSPACE = Path(__file__).resolve().parents[1]
+TESTS_ROOT = WORKSPACE / "tests"
 TOOLS_ROOT = Path(__file__).resolve().parent
 INSTRUMENTS = TESTS_ROOT / "unit" / "memory_instruments.py"
 CONFTEST = TESTS_ROOT / "conftest.py"
 
 FIRST_PARTY_ROOTS = (TESTS_ROOT, TOOLS_ROOT)
-"""Where a module a test imports by bare name can be resolved to a file.
+"""Where a module a test imports by bare name can be resolved to a file, and where
+a dotted one is resolved from, since ``tests`` is a package under the workspace.
 
 Both, because the two are one import namespace at run time: a suite reaches the
-instruments and their support code by putting ``tests/unit`` on the path, and a
-report under ``tools/`` does the same, so a test importing that report imports
-whatever it holds."""
+instruments and their support code as ``tests.unit.<module>`` from the workspace
+root pytest puts on the path, a report under ``tools/`` puts the same root there
+itself, and a test importing that report by bare name imports whatever it
+holds."""
 
 BOUNDARY = "in_a_child_interpreter"
 """The decorator that acquires an interpreter of its own for one measurement."""
@@ -248,12 +251,14 @@ def _mentioned(node: ast.AST, held: Mapping[str, str]) -> set[str]:
 def _imported_files(tree: ast.Module, roots: Sequence[Path], seen: set[Path]) -> list[Path]:
     """Every module *tree* imports from *roots*, transitively, as its own file.
 
-    Resolved by bare module name, which is how these modules are imported at run
-    time, and by dotted path, so a module reached as ``unit.memory_instruments``
-    is the same file as one reached bare and neither spelling is a way past the
-    rule. *roots* rather than :data:`FIRST_PARTY_ROOTS` alone so an audited tree
-    resolves its OWN helper modules: a rule about what a test reaches through a
-    module it imported is untestable over a tree whose imports resolve elsewhere.
+    Resolved by dotted path against the workspace root, which is how a module
+    under ``tests`` is imported at run time, and by bare module name under
+    *roots*, which is how a report under ``tools/`` is — so a module reached as
+    ``tests.unit.memory_instruments`` is the same file as one a planted tree
+    reaches bare, and neither spelling is a way past the rule. *roots* rather
+    than :data:`FIRST_PARTY_ROOTS` alone so an audited tree resolves its OWN
+    helper modules: a rule about what a test reaches through a module it imported
+    is untestable over a tree whose imports resolve elsewhere.
     """
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -264,11 +269,12 @@ def _imported_files(tree: ast.Module, roots: Sequence[Path], seen: set[Path]) ->
     found: list[Path] = []
     for name in sorted(names):
         candidates: list[Path] = []
-        for root in roots:
-            if "." in name:
-                dotted = root.joinpath(*name.split(".")).with_suffix(".py")
+        if "." in name:
+            for base in (*roots, WORKSPACE):
+                dotted = base.joinpath(*name.split(".")).with_suffix(".py")
                 candidates += [dotted] if dotted.is_file() else []
-            else:
+        else:
+            for root in roots:
                 candidates += sorted(root.rglob(f"{name}.py"))
         for path in candidates:
             if path in seen:

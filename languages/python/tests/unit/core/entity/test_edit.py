@@ -19,13 +19,8 @@ from functools import cached_property
 from typing import Any, Final, cast
 
 import pytest
-from _compact_support import layout_slots
 from pydantic import PrivateAttr, ValidationError
 
-from _support import mirrored_models as mm
-from _support import snapshot_models as sm
-from _support import value_object_models as vm
-from _support.model_capabilities import graph_construction_for
 from parallax.conformance.read_models import Dog
 from parallax.core import (
     AbstractRoot,
@@ -75,6 +70,11 @@ from parallax.core.metamodel import (
     RelationshipLocation,
     ValueObjectIdentity,
 )
+from tests._support import mirrored_models as mm
+from tests._support import snapshot_models as sm
+from tests._support import value_object_models as vm
+from tests._support.model_capabilities import graph_construction_for
+from tests.unit.core.entity._compact_support import layout_slots
 
 
 def _account(balance: str = "100.00") -> mm.Account:

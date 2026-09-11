@@ -34,17 +34,6 @@ from collections.abc import Callable
 from typing import Final
 from uuid import uuid4
 
-from _lifecycle_cost_support import AFFECTED, STATEMENT, TARGET, rows
-from memory_instruments import (
-    REPEATS,
-    Seam,
-    allocation,
-    first_run,
-    in_a_child_interpreter,
-    serve_one_measurement,
-    survivors,
-)
-
 from parallax.core.execution_lifecycle import ExecutionLifecycleHandler, RootExecution
 from parallax.core.execution_lifecycle._activity import (
     INERT,
@@ -54,6 +43,22 @@ from parallax.core.execution_lifecycle._activity import (
     WriteBatchActivity,
     open_read_root,
     open_transaction_root,
+)
+from tests._support.repo import PY_ROOT
+from tests.unit.core.execution_lifecycle._lifecycle_cost_support import (
+    AFFECTED,
+    STATEMENT,
+    TARGET,
+    rows,
+)
+from tests.unit.memory_instruments import (
+    REPEATS,
+    Seam,
+    allocation,
+    first_run,
+    in_a_child_interpreter,
+    serve_one_measurement,
+    survivors,
 )
 
 ROWS: Final = rows(1_000)
@@ -189,12 +194,13 @@ def _first_run_in_a_child(seam: str) -> tuple[int, int]:
 
     The child inherits this process's environment untouched, so every comparison
     below grades two children that differ only in the seam they are asked for. It
-    needs no import root handed to it: ``python <this file>`` puts this file's own
-    directory first on the child's path, and both support modules are siblings
-    there.
+    needs no import root handed to it: ``python -m <this module>`` from the
+    workspace root puts that root first on the child's path, and both support
+    modules resolve under ``tests`` there as they do here.
     """
     report = subprocess.run(
-        [sys.executable, __file__, seam],
+        [sys.executable, "-m", __name__, seam],
+        cwd=PY_ROOT,
         capture_output=True,
         text=True,
         check=True,

@@ -20,7 +20,6 @@ from typing import Any
 
 import pytest
 
-from _support.query_probes import canonical_query
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -38,6 +37,7 @@ from parallax.core import (
 from parallax.core.entity import RelationshipPath, RelationshipRef
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import IncludePath, IncludeSegment, validate_object_query
+from tests._support.query_probes import canonical_query
 
 
 class Leaf(Entity, table="leaf", namespace="orchard"):

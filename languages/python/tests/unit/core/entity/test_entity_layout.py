@@ -25,8 +25,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from _corpus_model_support import corpus, target
-from _corpus_model_support import model as corpus_model
 
 from parallax.conformance import models
 from parallax.core.entity._layout import (
@@ -55,6 +53,8 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import RelationshipViewKey, merge_graph_input
 from parallax.snapshot.materialize._graph import GraphBuilder
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
+from tests.unit._corpus_model_support import corpus, target
+from tests.unit._corpus_model_support import model as corpus_model
 
 _NAMESPACE = "parallax.compatibility"
 _COMPOSITE_KEY = frozenset({"id", "sku"})

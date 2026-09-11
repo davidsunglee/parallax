@@ -22,9 +22,6 @@ import datetime as dt
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 
-from _corpus_identity_support import corpus_entity, corpus_object_key
-
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -50,6 +47,8 @@ from parallax.snapshot.handle._predicate_writes import (
     _predecessor_payload,  # pyright: ignore[reportPrivateUsage] - the predicate lane's own contribution, proved to be one extraction with retention's
 )
 from parallax.snapshot.handle._retention import ObservedRows, retain_evidence
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY
+from tests.unit._corpus_identity_support import corpus_entity, corpus_object_key
 
 _MODELS = models.load_models()
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)

@@ -25,7 +25,6 @@ from __future__ import annotations
 from typing import Final
 
 import pytest
-from _corpus_model_support import corpus
 
 from parallax.core import inheritance
 from parallax.core.metamodel import (
@@ -39,6 +38,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
 )
 from parallax.snapshot.handle._family import declaring, family_primary_key
+from tests.unit._corpus_model_support import corpus
 
 _CORPUS: Final[tuple[str, ...]] = tuple(sorted(corpus()))
 

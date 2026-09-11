@@ -16,10 +16,7 @@ import sys
 from collections.abc import Callable, Sequence
 
 import pytest
-from _second_dialect import BACKTICKED
 
-from _support.db_port import ConnectsAsItself
-from _support.repo import PY_ROOT, canonical_snapshot_claim
 from parallax.conformance.claim import SNAPSHOT_CLAIM
 from parallax.conformance.profile import (
     PROFILES,
@@ -33,6 +30,9 @@ from parallax.conformance.provision import Provisioner
 from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
+from tests._support.db_port import ConnectsAsItself
+from tests._support.repo import PY_ROOT, canonical_snapshot_claim
+from tests.unit._second_dialect import BACKTICKED
 
 
 def test_profile_for_resolves_the_declared_profile() -> None:

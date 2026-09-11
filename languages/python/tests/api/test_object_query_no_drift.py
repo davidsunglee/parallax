@@ -49,11 +49,6 @@ from typing import Any, cast
 
 import pytest
 
-from _support import inheritance_models as im
-from _support import snapshot_models as sm
-from _support import value_object_models as vm
-from _support.corpus import case_document
-from _support.query_probes import canonical_document
 from parallax.conformance import case_format
 from parallax.conformance.animal_owner import ANIMAL_MODEL as ANIMAL_OWNER_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
@@ -92,6 +87,11 @@ from parallax.core.entity._model import model_of
 from parallax.core.object_query import LATEST
 from parallax.core.object_query._fluent import object_query_node
 from parallax.snapshot.handle._preflight import preflight
+from tests._support import inheritance_models as im
+from tests._support import snapshot_models as sm
+from tests._support import value_object_models as vm
+from tests._support.corpus import case_document
+from tests._support.query_probes import canonical_document
 
 # case id -> the idiomatic query that must canonicalize to the case's own document.
 BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {

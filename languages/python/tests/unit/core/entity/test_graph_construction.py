@@ -24,8 +24,6 @@ from typing import Any, cast
 
 import pytest
 
-from _support import snapshot_models as sm
-from _support.model_capabilities import graph_construction_for
 from parallax.core import Attr, Bitemporal, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
@@ -45,6 +43,8 @@ from parallax.core.metamodel import (
     EntityIdentity,
     RelationshipIdentity,
 )
+from tests._support import snapshot_models as sm
+from tests._support.model_capabilities import graph_construction_for
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ORDER = sm.SnapOrder.identity

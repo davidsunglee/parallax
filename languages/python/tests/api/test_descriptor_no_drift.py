@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from _support import mirrored_models as mm
 from parallax.conformance import case_format, models
+from tests._support import mirrored_models as mm
 
 if TYPE_CHECKING:
     from parallax.core import DomainModel

@@ -20,7 +20,6 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine, execution_lifecycle_stories
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
@@ -43,6 +42,7 @@ from parallax.core.execution_lifecycle import (
 )
 from parallax.core.execution_lifecycle.testing import RecordingLifecycleProvider
 from parallax.snapshot import connect
+from tests._support.corpus import case_fixtures
 
 _CASE_ID = "m-execution-lifecycle-001"
 

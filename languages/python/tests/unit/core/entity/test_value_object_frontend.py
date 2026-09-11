@@ -14,17 +14,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from value_object_bad_models import (
-    build_copy_verb_value_object,
-    build_entity_only_option_value_object,
-    build_framework_slot_annotated_value_object,
-    build_framework_slot_shadowing_value_object,
-    build_header_bearing_value_object,
-    build_non_attr_annotated_value_object,
-    build_pydantic_namespace_value_object,
-)
 
-from _support import value_object_models as vm
 from parallax.conformance import case_format
 from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.base import Decimal as NeutralDecimal
@@ -41,6 +31,16 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 from parallax.core.predicate import QueryDefinitionError, serialize
+from tests._support import value_object_models as vm
+from tests.unit.core.entity.value_object_bad_models import (
+    build_copy_verb_value_object,
+    build_entity_only_option_value_object,
+    build_framework_slot_annotated_value_object,
+    build_framework_slot_shadowing_value_object,
+    build_header_bearing_value_object,
+    build_non_attr_annotated_value_object,
+    build_pydantic_namespace_value_object,
+)
 
 _CORPUS_TYPES: dict[str, NeutralType] = {
     "string": String(),

@@ -7,7 +7,6 @@ from collections.abc import Iterator, Mapping, MutableMapping
 from typing import Any, TypeGuard, cast
 
 import pytest
-from _metamodel_support import Declaration, accepted, attribute, identity, instant, key, source
 
 from parallax.core import base
 from parallax.core.metamodel import (
@@ -42,6 +41,15 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     accept_metamodel,
     compile_metadata,
+)
+from tests.unit._metamodel_support import (
+    Declaration,
+    accepted,
+    attribute,
+    identity,
+    instant,
+    key,
+    source,
 )
 
 _ORDER = identity("Order")

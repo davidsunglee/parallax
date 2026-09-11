@@ -17,8 +17,6 @@ from typing import Any, cast
 
 import pytest
 
-from _support.corpus import case_document
-from _support.repo import REPO_ROOT
 from parallax.conformance import case_format
 from parallax.core import predicate
 from parallax.core.predicate import (
@@ -26,6 +24,8 @@ from parallax.core.predicate import (
     CanonicalDocumentError,
     QueryDefinitionError,
 )
+from tests._support.corpus import case_document
+from tests._support.repo import REPO_ROOT
 
 
 def _predicates() -> list[tuple[str, dict[str, Any]]]:

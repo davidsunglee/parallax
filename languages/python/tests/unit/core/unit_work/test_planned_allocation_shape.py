@@ -28,17 +28,17 @@ from collections.abc import Mapping
 from decimal import Decimal
 
 import pytest
-from _transact_support import account_db
 
-from _support import mirrored_models as mm
-from _support.db_port import (
+from parallax.core.unit_work import KeyedMutation, KeyedWrite
+from parallax.snapshot.handle import Transaction
+from tests._support import mirrored_models as mm
+from tests._support.db_port import (
     Read,
     ScriptedAdapter,
     Transact,
     Write,
 )
-from parallax.core.unit_work import KeyedMutation, KeyedWrite
-from parallax.snapshot.handle import Transaction
+from tests.unit._transact_support import account_db
 
 
 def _resolved_rows(count: int) -> list[dict[str, object]]:

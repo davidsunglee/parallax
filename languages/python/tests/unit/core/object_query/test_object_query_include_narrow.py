@@ -19,9 +19,6 @@ from typing import Any, cast
 
 import pytest
 
-from _support import inheritance_models as im
-from _support import snapshot_models as sm
-from _support.query_probes import canonical_query
 from parallax.conformance import read_models
 from parallax.conformance.animal_owner import ANIMAL_MODEL as _ANIMAL_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
@@ -58,6 +55,9 @@ from parallax.core.predicate import All, Exists, ModelRejectedError, Narrow, Not
 from parallax.core.wire import encode_wire
 from parallax.snapshot import DeferredFeatureError
 from parallax.snapshot.handle._preflight import preflight
+from tests._support import inheritance_models as im
+from tests._support import snapshot_models as sm
+from tests._support.query_probes import canonical_query
 
 # The animal family's model composes its own polymorphic owner alongside it, so
 # it is the composition every case here is measured against at the gate below.

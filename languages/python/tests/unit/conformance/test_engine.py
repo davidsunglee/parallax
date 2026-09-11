@@ -22,11 +22,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
-from _metamodel_support import Declaration, attribute, key, source
-from _second_dialect import BACKTICKED
 
-from _support.db_port import ConnectsAsItself, body_outcome, projected_row
-from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format, engine, models, sweep
 from parallax.conformance._actual_wire import ActualWireProjection
 from parallax.conformance._database_control import TerminationReport
@@ -110,6 +106,10 @@ from parallax.evolution.schema_delta import (
 )
 from parallax.snapshot import DeferredFeatureError, handle
 from parallax.snapshot.handle import WriteEvidenceError
+from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
+from tests._support.document_reads import fold_mapping_rows
+from tests.unit._metamodel_support import Declaration, attribute, key, source
+from tests.unit._second_dialect import BACKTICKED
 
 
 def _rows(row: Row | None, key: str) -> list[Row]:

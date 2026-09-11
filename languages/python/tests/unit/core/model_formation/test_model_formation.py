@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Final, TypeGuard, cast
 
 import pytest
-from _metamodel_support import Declaration, attribute, identity, key, source
 
 from parallax.conformance import case_format
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
@@ -64,6 +63,7 @@ from parallax.core.model_formation import (
     form,
 )
 from parallax.core.model_formation import _runner as runner
+from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
 
 _ORDER = identity("Order")
 _ITEM = identity("Item")

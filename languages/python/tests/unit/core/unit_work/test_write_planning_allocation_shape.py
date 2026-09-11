@@ -85,21 +85,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Final, NamedTuple
 
-from _metamodel_support import Declaration, attribute, identity, key, source
-from _metamodel_support import instant as timestamp
-from memory_instruments import (
-    REPEATS,
-    Seam,
-    Span,
-    allocation,
-    high_water,
-    in_a_child_interpreter,
-    retained,
-    serve_one_measurement,
-)
-
-from _support.clock_probes import inert_instant
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -128,6 +113,20 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import PreparedPredicateWrite, prepare_typed_write
 from parallax.snapshot.handle import build_write_planner
+from tests._support.clock_probes import inert_instant
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
+from tests.unit._metamodel_support import Declaration, attribute, identity, key, source
+from tests.unit._metamodel_support import instant as timestamp
+from tests.unit.memory_instruments import (
+    REPEATS,
+    Seam,
+    Span,
+    allocation,
+    high_water,
+    in_a_child_interpreter,
+    retained,
+    serve_one_measurement,
+)
 
 FEW: Final = 8
 """The floor every reading below is compared against."""

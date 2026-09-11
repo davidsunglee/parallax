@@ -18,8 +18,6 @@ from decimal import Decimal
 
 import pytest
 
-from _support.clock_probes import inert_instant
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.conformance import models
 from parallax.core import batch_write
 from parallax.core.dialect import POSTGRES
@@ -28,6 +26,8 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import BufferItem, KeyedWrite, PlanningRequest, WriteRejectedError
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
+from tests._support.clock_probes import inert_instant
+from tests._support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 
 _MODELS = models.load_models()
 

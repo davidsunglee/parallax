@@ -8,8 +8,8 @@ own probes.
 
 It is cross-surface rather than under ``tests/unit/`` because the unit tests and
 the API Conformance Suite's Value Object examples share these same classes, and
-only a module on the configured ``pythonpath`` resolves reliably regardless of
-collection order.
+a module under ``tests._support`` resolves the same way from every surface
+regardless of collection order.
 """
 
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr

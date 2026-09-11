@@ -12,8 +12,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from _support.distributions import Wheelhouse
-from _support.repo import REPO_ROOT
+from tests._support.distributions import Wheelhouse
+from tests._support.repo import REPO_ROOT
 
 
 def _make_venv(root: Path) -> Path:

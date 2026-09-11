@@ -21,7 +21,6 @@ from typing import Any, cast
 
 import pytest
 
-from _support.db_port import ConnectsAsItself, projected_row
 from parallax.conformance import snapshot_recipes
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import (
@@ -45,6 +44,7 @@ from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.snapshot import SnapshotStreamStateError, connect, is_view_loaded
 from parallax.snapshot.handle import Database
+from tests._support.db_port import ConnectsAsItself, projected_row
 
 _ACCOUNT = MODELS["account"]
 _ORDERS = MODELS["orders"]

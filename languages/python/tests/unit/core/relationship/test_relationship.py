@@ -9,9 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from _metamodel_support import Declaration, accepted, attribute, identity, key, source
 
-from _support import fake_metamodel as fake
 from parallax.conformance import case_format
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.base import INT64, STRING
@@ -90,6 +88,8 @@ from parallax.core.relationship import (
 )
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._parse import parse_document
+from tests._support import fake_metamodel as fake
+from tests.unit._metamodel_support import Declaration, accepted, attribute, identity, key, source
 
 _ORDER = identity("Order")
 _ITEM = identity("Item")

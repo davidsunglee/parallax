@@ -10,15 +10,6 @@ from dataclasses import FrozenInstanceError
 from typing import Any, Literal, cast, overload
 
 import pytest
-from _metamodel_support import (
-    Declaration,
-    accepted,
-    attribute,
-    identity,
-    instant,
-    key,
-    source,
-)
 
 from parallax.core import inheritance, relationship, storage_layout
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
@@ -59,6 +50,15 @@ from parallax.core.model_formation import MODEL_FORMATION_MODULE, ModelCompilerR
 from parallax.core.storage_layout._compile import (
     _interned,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
     _interned_ordinal_selection,  # pyright: ignore[reportPrivateUsage] - private allocation-policy regression only
+)
+from tests.unit._metamodel_support import (
+    Declaration,
+    accepted,
+    attribute,
+    identity,
+    instant,
+    key,
+    source,
 )
 
 

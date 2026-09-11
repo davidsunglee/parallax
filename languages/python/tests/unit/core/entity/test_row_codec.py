@@ -20,18 +20,8 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from _authored_storage_support import (
-    answering_for_instance_state,
-    forge_into_storage,
-    stored_state,
-)
-from _compact_support import carries_instance_storage, published
 from pydantic import TypeAdapter
 
-from _support import mirrored_models as mm
-from _support import snapshot_models as sm
-from _support import value_object_models as vm
-from _support.model_capabilities import row_codec_for
 from parallax.conformance import read_models as rm
 from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.entity import (
@@ -46,6 +36,16 @@ from parallax.core.entity._entity import CHANGE_RECORD_SLOT, ChangeRecord
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import UnresolvedEntityDeclaration
+from tests._support import mirrored_models as mm
+from tests._support import snapshot_models as sm
+from tests._support import value_object_models as vm
+from tests._support.model_capabilities import row_codec_for
+from tests.unit._authored_storage_support import (
+    answering_for_instance_state,
+    forge_into_storage,
+    stored_state,
+)
+from tests.unit.core.entity._compact_support import carries_instance_storage, published
 
 _SPEC_CODES = frozenset(
     {

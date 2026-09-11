@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
-from _corpus_model_support import corpus_records
 
 from parallax.conformance import case_format
 from parallax.core.inheritance import InheritanceError
@@ -21,6 +20,7 @@ from parallax.descriptor._family import (
 )
 from parallax.descriptor._parse import parse_document
 from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
+from tests.unit._corpus_model_support import corpus_records
 
 _REPO = case_format.find_repo_root()
 _MODELS = corpus_records()

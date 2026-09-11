@@ -33,7 +33,16 @@ from dataclasses import replace
 from typing import Final, cast
 
 import pytest
-from _keyed_write_drivers import (
+
+from parallax.core.entity import EditError
+from parallax.core.opt_lock import UnobservedVersionError
+from parallax.core.unit_work import WriteInstructionError, WritePlanningError
+from parallax.snapshot.handle import (
+    KeyedWriteValueError,
+    TransactionTimePinReadOnlyError,
+    WriteEvidenceError,
+)
+from tests.unit.snapshot.handle._keyed_write_drivers import (
     ACCOUNT_TARGET,
     BALANCE_TARGET,
     BLANK_CONTACT_TARGET,
@@ -62,15 +71,6 @@ from _keyed_write_drivers import (
     answer,
     outcome,
     reachable,
-)
-
-from parallax.core.entity import EditError
-from parallax.core.opt_lock import UnobservedVersionError
-from parallax.core.unit_work import WriteInstructionError, WritePlanningError
-from parallax.snapshot.handle import (
-    KeyedWriteValueError,
-    TransactionTimePinReadOnlyError,
-    WriteEvidenceError,
 )
 
 _SOURCE_VERBS: tuple[Verb, ...] = (

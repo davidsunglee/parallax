@@ -29,29 +29,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _transact_support import (
-    ACCOUNT,
-    BALANCE,
-    CONTACT,
-    FIXED,
-    INFINITY_INSTANT,
-    PAYMENT,
-    PERSON,
-    WHERE_POSITION_META,
-    balance_row,
-    db_for,
-)
 
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    Read,
-    ReadCall,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
 from parallax.conformance import vo_models as vo
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import InstantError, PresentDocument
@@ -66,6 +44,28 @@ from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
     WireEntity,
     WriteEvidenceError,
+)
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    Read,
+    ReadCall,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests.unit._transact_support import (
+    ACCOUNT,
+    BALANCE,
+    CONTACT,
+    FIXED,
+    INFINITY_INSTANT,
+    PAYMENT,
+    PERSON,
+    WHERE_POSITION_META,
+    balance_row,
+    db_for,
 )
 
 _ACCOUNT_ROW: Row = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4}

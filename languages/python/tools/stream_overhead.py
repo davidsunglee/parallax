@@ -10,7 +10,7 @@ scale rather than only a shape.
 It is a `report`: it passes no verdict and joins no aggregate, because a total in
 bytes is machine- and interpreter-relative and `tracemalloc` figures move with
 CPython. The SHAPE of the bound is gated instead, in
-``tests/unit/test_snapshot_stream_retention.py``, which the `cost` class owns and
+``tests/unit/snapshot/test_snapshot_stream_retention.py``, which the `cost` class owns and
 CI runs on every change: that suite pins the survivor census as an exact
 population count with no term in the result size and none in how far the delivery
 has got, and demonstrates both exclusions rather than asserting them. What has
@@ -62,25 +62,25 @@ from parallax.core.object_query._fluent import ObjectQuery
 from parallax.snapshot import SnapshotStream
 from parallax.snapshot.handle import Database
 
-INSTRUMENTS: Final = Path(__file__).resolve().parents[1] / "tests" / "unit"
-"""The one directory this report names, so it can read the instruments the gated
-suites read — the same one-way reach its three siblings make, spelled once
-here."""
+WORKSPACE: Final = Path(__file__).resolve().parents[1]
+"""The one directory this report puts on the path, so it can read the instruments
+the gated suites read as `tests.unit.memory_instruments` — the same one-way reach
+its three siblings make, spelled once here."""
 
-INSTRUMENT_MODULE: Final = INSTRUMENTS / "memory_instruments.py"
+INSTRUMENT_MODULE: Final = WORKSPACE / "tests" / "unit" / "memory_instruments.py"
 """The exact file the reading is taken through.
 
-``memory_instruments`` is a generic name on a path this process does not own, so
-prepending the directory is only half of what makes the import deterministic: a
-module of that name already in :data:`sys.modules` wins before any path entry is
-consulted. The report therefore states which file it means and refuses to measure
-through any other, because the alternative failure is silent — a different
-definition of the sampling recipe would still produce a number, and the number
-would not be the one the recorded baseline is stated over.
+``tests.unit.memory_instruments`` is resolved from a path this process does not
+own, so prepending the workspace is only half of what makes the import
+deterministic: a module of that name already in :data:`sys.modules` wins before
+any path entry is consulted. The report therefore states which file it means and
+refuses to measure through any other, because the alternative failure is silent —
+a different definition of the sampling recipe would still produce a number, and
+the number would not be the one the recorded baseline is stated over.
 """
-sys.path.insert(0, str(INSTRUMENTS))
+sys.path.insert(0, str(WORKSPACE))
 
-import memory_instruments  # noqa: E402
+from tests.unit import memory_instruments  # noqa: E402
 
 if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
     raise ImportError(
@@ -88,7 +88,7 @@ if Path(memory_instruments.__file__ or "").resolve() != INSTRUMENT_MODULE:
         f"resolved to {memory_instruments.__file__}"
     )
 
-from memory_instruments import (  # noqa: E402
+from tests.unit.memory_instruments import (  # noqa: E402
     WARMUP,
     LiveGraph,
     Seam,

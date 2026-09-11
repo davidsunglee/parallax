@@ -101,7 +101,11 @@ import sys
 from collections.abc import Callable, Sequence
 from typing import Final
 
-from _snapshot_materialization_support import (
+from parallax.core.db_port import Row
+from parallax.core.entity._layout import CatalogedModel
+from parallax.snapshot import ModelSelection, prepare_model
+from parallax.snapshot.handle._publication import read_projection
+from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     OWNERS,
     Layout,
@@ -113,7 +117,7 @@ from _snapshot_materialization_support import (
     rows_per_level,
     workload,
 )
-from memory_instruments import (
+from tests.unit.memory_instruments import (
     WARMUP,
     Closure,
     Span,
@@ -122,11 +126,6 @@ from memory_instruments import (
     serve_one_measurement,
     whole_heap_across,
 )
-
-from parallax.core.db_port import Row
-from parallax.core.entity._layout import CatalogedModel
-from parallax.snapshot import ModelSelection, prepare_model
-from parallax.snapshot.handle._publication import read_projection
 
 _ONE_ROOT: Final = 1
 """Root objects the smaller row arm materializes, against :data:`OWNERS` in the

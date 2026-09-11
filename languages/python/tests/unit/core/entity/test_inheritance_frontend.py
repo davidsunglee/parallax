@@ -18,7 +18,6 @@ import pytest
 from pydantic import BaseModel, PydanticUserError, ValidationError
 from pydantic_core import PydanticUndefined
 
-from _support import inheritance_models as im
 from parallax.core import (
     MANY_TO_ONE,
     READ_ONLY,
@@ -53,6 +52,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
 from parallax.core.model_formation import MetamodelValidationError
+from tests._support import inheritance_models as im
 
 _NS = "parallax.compatibility"
 

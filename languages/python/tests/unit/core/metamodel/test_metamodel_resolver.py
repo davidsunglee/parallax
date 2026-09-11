@@ -5,17 +5,6 @@ from __future__ import annotations
 import random
 
 import pytest
-from _metamodel_support import (
-    Declaration,
-    accepted,
-    attribute,
-    codes,
-    identity,
-    instant,
-    key,
-    rejection,
-    source,
-)
 
 from parallax.core import base
 from parallax.core.metamodel import (
@@ -74,6 +63,17 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+)
+from tests.unit._metamodel_support import (
+    Declaration,
+    accepted,
+    attribute,
+    codes,
+    identity,
+    instant,
+    key,
+    rejection,
+    source,
 )
 
 _ORDER = identity("Order")

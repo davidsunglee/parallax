@@ -15,32 +15,7 @@ import datetime as dt
 from decimal import Decimal
 
 import pytest
-from _transact_support import (
-    BALANCE,
-    FIND_SQL_LOCKED,
-    FIND_SQL_UNLOCKED,
-    FIXED,
-    INFINITY_INSTANT,
-    PERSON,
-    WHERE_POSITION_META,
-    WherePosition,
-    account_db,
-    balance_row,
-    db_for,
-)
 
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    BeginCall,
-    CommitCall,
-    Read,
-    ReadCall,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
 from parallax.conformance.read_models import Person
 from parallax.core import LATEST, opt_lock
 from parallax.core.dialect import POSTGRES
@@ -63,6 +38,31 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import PreparedKeyedWrite
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests.unit._transact_support import (
+    BALANCE,
+    FIND_SQL_LOCKED,
+    FIND_SQL_UNLOCKED,
+    FIXED,
+    INFINITY_INSTANT,
+    PERSON,
+    WHERE_POSITION_META,
+    WherePosition,
+    account_db,
+    balance_row,
+    db_for,
+)
 
 _ACCOUNT_ROW: dict[str, object] = {
     "id": 1,

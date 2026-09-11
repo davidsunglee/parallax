@@ -21,8 +21,8 @@ global, process-wide entity registry.
 
 Cross-surface rather than surface-local: the unit frontend/no-drift tests AND
 the API Conformance Suite's descriptor no-drift guard both need the SAME
-classes, and only a module ``pythonpath = ["tools", "tests"]`` reaches resolves
-reliably regardless of which surface's files pytest collects first.
+classes, and a module under ``tests._support`` resolves the same way from
+every surface regardless of which surface's files pytest collects first.
 """
 
 from parallax.conformance.read_models import (

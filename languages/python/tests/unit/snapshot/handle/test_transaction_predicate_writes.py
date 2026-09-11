@@ -26,35 +26,7 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from _document_layout_support import document_model
-from _document_layout_support import entity as document_layout_entity
-from _transact_support import (
-    ACCOUNT,
-    BALANCE,
-    FIXED,
-    ORDERS,
-    PAYMENT,
-    PERSON,
-    RATE,
-    WHERE_POSITION_META,
-    WherePosition,
-    account_db,
-)
 
-from _support import inheritance_models as im
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    BeginCall,
-    CommitCall,
-    Read,
-    ReadCall,
-    RollbackCall,
-    ScriptedAdapter,
-    Transact,
-    Write,
-    WriteCall,
-)
 from parallax.conformance import case_format, engine
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
@@ -96,6 +68,34 @@ from parallax.snapshot.handle._predicate_writes import (
     _normalize_assignment_values,  # pyright: ignore[reportPrivateUsage] - the lane's own once-per-write assignment decoding, driven directly so each encoded spelling is proved rather than inferred from the SQL a whole write emitted
 )
 from parallax.snapshot.handle._transaction import buffer_prepared_predicate_write
+from tests._support import inheritance_models as im
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    BeginCall,
+    CommitCall,
+    Read,
+    ReadCall,
+    RollbackCall,
+    ScriptedAdapter,
+    Transact,
+    Write,
+    WriteCall,
+)
+from tests.unit._document_layout_support import document_model
+from tests.unit._document_layout_support import entity as document_layout_entity
+from tests.unit._transact_support import (
+    ACCOUNT,
+    BALANCE,
+    FIXED,
+    ORDERS,
+    PAYMENT,
+    PERSON,
+    RATE,
+    WHERE_POSITION_META,
+    WherePosition,
+    account_db,
+)
 
 
 # A local Transaction-Time-Only, value-object-bearing entity with the

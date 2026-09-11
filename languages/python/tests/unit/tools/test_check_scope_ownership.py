@@ -38,8 +38,7 @@ import pytest
 
 import check_dag_sync as dag
 import check_scope_ownership as own
-
-PY_ROOT = Path(__file__).resolve().parents[2]
+from tests._support.repo import PY_ROOT
 
 
 @pytest.fixture(autouse=True)

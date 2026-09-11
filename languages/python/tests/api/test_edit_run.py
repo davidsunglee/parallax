@@ -9,10 +9,10 @@ from typing import Any, cast
 
 import pytest
 
-from _support.corpus import case_fixtures
 from parallax.conformance import case_format, edit_runner, engine
 from parallax.conformance.edit_models import LEDGER, NOTE_MODEL, Note, NoteMark
 from parallax.snapshot import SnapshotInspectionError, connect, pin_of
+from tests._support.corpus import case_fixtures
 
 
 def _origin(case: case_format.Case) -> object:

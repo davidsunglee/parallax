@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from _corpus_model_support import model as corpus_model
 
 from parallax.core import pk_gen
 from parallax.core.metamodel import (
@@ -14,6 +13,7 @@ from parallax.core.metamodel import (
     PrimaryKey,
     Sequence,
 )
+from tests.unit._corpus_model_support import model as corpus_model
 
 
 def _model(stem: str) -> Metamodel:

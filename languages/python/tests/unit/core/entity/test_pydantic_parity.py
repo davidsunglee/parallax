@@ -27,7 +27,6 @@ from functools import cached_property
 from typing import Annotated, Any, cast
 
 import pytest
-from _compact_support import carries_instance_storage, published, raw_row, real_storage
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -51,6 +50,12 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._instance_state import AUXILIARY_STATE_SLOT, BackedModel, plan_of
 from parallax.core.metamodel import TablePerHierarchy
+from tests.unit.core.entity._compact_support import (
+    carries_instance_storage,
+    published,
+    raw_row,
+    real_storage,
+)
 
 _NS = "parity"
 

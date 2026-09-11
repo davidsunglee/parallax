@@ -17,18 +17,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _transact_support import ACCOUNT, NEW_ROW, PERSON
 
-from _support import mirrored_models as mm
-from _support.adoption import raises_contextualized
-from _support.db_port import (
-    ConnectsAsItself,
-    Read,
-    RefusingAdapter,
-    ScriptedAdapter,
-    Transact,
-)
-from _support.document_reads import fold_mapping_rows
 from parallax.conformance import models, read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
@@ -70,6 +59,17 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._graph import ABSENT, GraphRows, graph_rows
 from parallax.snapshot.materialize._views import ChildSlot
+from tests._support import mirrored_models as mm
+from tests._support.adoption import raises_contextualized
+from tests._support.db_port import (
+    ConnectsAsItself,
+    Read,
+    RefusingAdapter,
+    ScriptedAdapter,
+    Transact,
+)
+from tests._support.document_reads import fold_mapping_rows
+from tests.unit._transact_support import ACCOUNT, NEW_ROW, PERSON
 
 _MODELS = models.load_models()
 ORDERS = _MODELS["orders"]

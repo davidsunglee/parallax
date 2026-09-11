@@ -17,8 +17,6 @@ from typing import Any, cast
 
 import pytest
 
-from _support.adoption import raises_contextualized
-from _support.corpus import case_document, case_fixtures
 from parallax.conformance import boundary_runner, case_format, engine
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
@@ -33,6 +31,8 @@ from parallax.core.execution_lifecycle import TransactionAttemptStarted
 from parallax.core.unit_work import OptimisticLockConflictError
 from parallax.snapshot import ServingModel, connect, prepare_model
 from parallax.snapshot.handle import Transaction, TransactionOptionConflictError
+from tests._support.adoption import raises_contextualized
+from tests._support.corpus import case_document, case_fixtures
 
 _CASES = boundary_runner.reachable_boundary_cases()
 _CASE_IDS = [case.case_id for case in _CASES]

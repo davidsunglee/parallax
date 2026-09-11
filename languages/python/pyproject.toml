@@ -61,7 +61,7 @@ dev = [
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-pythonpath = ["tools", "tests"]
+pythonpath = ["tools"]
 addopts = "-ra --strict-markers --strict-config"
 # An expected failure reproduces a known defect ahead of its fix, so the run
 # fails once it starts passing: the reproduction cannot outlive the defect it
@@ -109,14 +109,14 @@ exclude_also = [
 # ---------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
-src = ["packages/parallax-core/src", "packages/parallax-descriptor/src", "packages/parallax-evolution/src", "packages/parallax-snapshot/src", "packages/parallax-postgres/src", "packages/parallax-conformance/src", "tools", "tests"]
+src = ["packages/parallax-core/src", "packages/parallax-descriptor/src", "packages/parallax-evolution/src", "packages/parallax-snapshot/src", "packages/parallax-postgres/src", "packages/parallax-conformance/src", "tools"]
 target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["parallax"]
+known-first-party = ["parallax", "tests"]
 
 # ---------------------------------------------------------------------------
 # Vulture — dead-code scan. `main` is the packaging-metadata console-script

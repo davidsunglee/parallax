@@ -28,10 +28,8 @@ from typing import Any, cast
 
 import psycopg
 import pytest
-from _contention_support import observing
 from psycopg.rows import TupleRow
 
-from _support.snapshot_models import SNAP_ORDERS_MODEL
 from parallax.conformance._database_control import TerminationReport
 from parallax.conformance._postgres_control import (
     ControlledAdapter,
@@ -42,6 +40,8 @@ from parallax.conformance._postgres_control import (
 from parallax.core.db_port import ConnectionAcquisitionError, DatabaseConnection, Row
 from parallax.core.dialect import POSTGRES
 from parallax.snapshot.handle import SnapshotConnectionError
+from tests._support.snapshot_models import SNAP_ORDERS_MODEL
+from tests.unit._contention_support import observing
 
 
 class _FakeCursor:

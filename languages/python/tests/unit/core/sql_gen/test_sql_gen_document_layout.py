@@ -21,9 +21,7 @@ import datetime as dt
 from collections.abc import Callable
 
 import pytest
-from _document_layout_support import columns_model, document_model, entity
 
-from _support.sql import compile_read, compile_write_predicate
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
@@ -31,6 +29,8 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
+from tests._support.sql import compile_read, compile_write_predicate
+from tests.unit._document_layout_support import columns_model, document_model, entity
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -192,8 +192,6 @@ def test_a_direct_document_classifies_nested_invalid_state(
 
 
 def test_a_required_direct_document_member_is_classified_before_publication() -> None:
-    from _corpus_model_support import formed
-
     from parallax.descriptor._records import (
         Attribute,
         Entity,
@@ -201,6 +199,7 @@ def test_a_required_direct_document_member_is_classified_before_publication() ->
         ValueObject,
         ValueObjectAttribute,
     )
+    from tests.unit._corpus_model_support import formed
 
     required = Entity(
         name="Required",
@@ -307,8 +306,6 @@ def test_an_sql_null_entity_document_classifies_each_requested_member() -> None:
 
 
 def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() -> None:
-    from _corpus_model_support import formed
-
     from parallax.descriptor._records import (
         Attribute,
         DocumentLayout,
@@ -317,6 +314,7 @@ def test_an_occurrence_only_entity_document_still_requires_a_folded_carrier() ->
         ValueObject,
         ValueObjectAttribute,
     )
+    from tests.unit._corpus_model_support import formed
 
     holder = Entity(
         name="Holder",
