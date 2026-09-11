@@ -60,12 +60,12 @@ from tests._support.db_port import (
     Read,
     ScriptedAdapter,
 )
-from tests.unit._snapshot_graph_support import GraphFixture, invalid_record
 from tests.unit._transact_support import ACCOUNT
 from tests.unit.snapshot._layout_twin_columns import COLUMNS_TWIN
 from tests.unit.snapshot._layout_twin_columns import LayoutTwinItem as ColumnsItem
 from tests.unit.snapshot._layout_twin_document import DOCUMENT_TWIN
 from tests.unit.snapshot._layout_twin_document import LayoutTwinItem as DocumentItem
+from tests.unit.snapshot._snapshot_graph_support import GraphFixture, invalid_record
 
 _NAMESPACE = "parallax.compatibility"
 

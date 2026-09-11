@@ -28,7 +28,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import SNAPSHOT_INSPECTION_CODES
 from tests._support import snapshot_models as sm
-from tests.unit._snapshot_graph_support import GraphFixture
+from tests.unit.snapshot._snapshot_graph_support import GraphFixture
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL

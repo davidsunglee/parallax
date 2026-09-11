@@ -28,7 +28,8 @@ from parallax.conformance._mechanism.model_facts import (
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core.db_port import DatabaseConnection, JsonDocument, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
-from tests._support.db_port import FakeWritePort, body_outcome
+from tests._support.db_port import body_outcome
+from tests.unit.conformance._recording_ports import FakeWritePort
 
 
 @functools.cache

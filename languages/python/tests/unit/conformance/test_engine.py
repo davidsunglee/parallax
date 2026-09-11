@@ -100,16 +100,10 @@ from parallax.evolution.schema_delta import (
 )
 from parallax.snapshot import DeferredFeatureError, handle
 from parallax.snapshot.handle import WriteEvidenceError
-from tests._support.db_port import (
-    ConnectsAsItself,
-    FakeDbPort,
-    FakeWritePort,
-    QueueDbPort,
-    body_outcome,
-    projected_row,
-)
+from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 from tests.unit._metamodel_support import Declaration, attribute, key, source
 from tests.unit._second_dialect import BACKTICKED
+from tests.unit.conformance._recording_ports import FakeDbPort, FakeWritePort, QueueDbPort
 from tests.unit.conformance._wire_value_support import wire_value
 
 

@@ -40,13 +40,13 @@ from typing import Final
 from parallax.conformance import vo_models as vo
 from parallax.core.db_port import Row
 from parallax.snapshot.materialize._evidence import freeze_evidence
-from tests.unit._snapshot_graph_support import GraphFixture, invalid_record
 from tests.unit.memory_instruments import (
     Seam,
     in_a_child_interpreter,
     retained,
     serve_one_measurement,
 )
+from tests.unit.snapshot._snapshot_graph_support import GraphFixture, invalid_record
 
 _NARROW: Final = 8
 _WIDE: Final = 40

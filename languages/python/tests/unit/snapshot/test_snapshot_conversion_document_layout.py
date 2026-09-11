@@ -43,7 +43,7 @@ from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read
 from tests.unit._document_layout_support import columns_model, document_model, entity
-from tests.unit._snapshot_graph_support import documents_of, rendered_members
+from tests.unit.snapshot._snapshot_graph_support import documents_of, rendered_members
 
 _CORPUS = models.load_models()["document-layout"]
 _TWIN_DOCUMENT = document_model()

@@ -72,7 +72,6 @@ from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.sql import compile_read
 from tests.unit._corpus_model_support import formed, target
 from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit._snapshot_graph_support import rendered_members
 from tests.unit._snapshot_materialization_support import (
     LAYOUTS,
     OWNERS,
@@ -85,6 +84,7 @@ from tests.unit._snapshot_materialization_support import (
     query,
     rows_per_level,
 )
+from tests.unit.snapshot._snapshot_graph_support import rendered_members
 
 ANIMAL = corpus_model("animal")
 SCALARS = corpus_model("scalars")

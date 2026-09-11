@@ -1,7 +1,7 @@
 """The conformance engine's transaction control: what a `rollback: true` step's
 aborting boundary passes through, and the one scope that absorbs its abort.
 
-Docker-free, over the shared recording fake.
+Docker-free, over the engine's recording fake.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from parallax.conformance._mechanism.transaction_control import (
     write_connection,
 )
 from parallax.core.db_port import DatabaseConnection, RolledBack
-from tests._support.db_port import FakeWritePort
+from tests.unit.conformance._recording_ports import FakeWritePort
 
 
 def test_the_aborting_port_passes_reads_and_writes_through() -> None:
