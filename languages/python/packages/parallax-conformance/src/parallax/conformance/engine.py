@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from parallax.conformance import case_format
 from parallax.conformance._database_control import CaseDatabase
-from parallax.conformance._lanes import scenario
+from parallax.conformance._lanes import scenario, snapshot
 from parallax.conformance._lanes.error import run_error_case
 from parallax.conformance._lanes.evolution import run_evolution_case
 from parallax.conformance._lanes.reads import (
@@ -89,7 +89,7 @@ def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[li
     count, on whichever scenario lane the case's steps select."""
     steps = case_document.scenario_steps(case)
     if case_document.has_action_step(steps):
-        return scenario.compile_scenario(case, dialect_name, steps)
+        return snapshot.compile_scenario(case, dialect_name, steps)
     return scenario.compile_scenario_case(case, dialect_name)
 
 
@@ -102,5 +102,5 @@ def run_scenario_case(
     on whichever scenario lane the case's steps select."""
     steps = case_document.scenario_steps(case)
     if case_document.has_action_step(steps):
-        return scenario.run_scenario(case, port, steps, lifecycle_run(lifecycle))
+        return snapshot.run_scenario(case, port, steps, lifecycle_run(lifecycle))
     return scenario.run_scenario_case(case, port, lifecycle)

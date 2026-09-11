@@ -15,7 +15,7 @@ import functools
 from collections.abc import Mapping
 
 from parallax.conformance import case_format, engine, sweep
-from parallax.conformance._lanes import scenario
+from parallax.conformance._lanes import scenario, snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism import case_document
 from parallax.core.db_port import Row
@@ -54,7 +54,7 @@ def test_compile_scenario_case_selects_the_lane_by_the_cases_action_step() -> No
     action = _case(_ACTION_STEP_SCENARIO)
     steps = case_document.scenario_steps(action)
     assert case_document.has_action_step(steps)
-    assert engine.compile_scenario_case(action, "postgres") == scenario.compile_scenario(
+    assert engine.compile_scenario_case(action, "postgres") == snapshot.compile_scenario(
         action, "postgres", steps
     )
 
@@ -72,7 +72,7 @@ def test_run_scenario_case_selects_the_lane_by_the_cases_action_step() -> None:
     action = _case(_ACTION_STEP_SCENARIO)
     steps = case_document.scenario_steps(action)
     through_facade = engine.run_scenario_case(action, FakeWritePort(find_rows=[dict(_ORDER_ROW)]))
-    through_lane = scenario.run_scenario(
+    through_lane = snapshot.run_scenario(
         action, FakeWritePort(find_rows=[dict(_ORDER_ROW)]), steps, lifecycle_run(None)
     )
     assert through_facade == through_lane
