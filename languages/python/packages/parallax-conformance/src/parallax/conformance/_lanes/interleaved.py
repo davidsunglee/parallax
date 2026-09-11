@@ -126,9 +126,9 @@ def _run_interleaved_group(
     The group's own boundary flushes what its last step buffered, and that
     flush may itself raise
     :class:`~parallax.core.unit_work.OptimisticLockConflictError` (the SAME
-    signal a caller-driven retry catches, `_run_conflict_write`'s own
-    precedent) — caught HERE, its ``actual`` recorded, and the transaction
-    aborts (never retried: `m-opt-lock-012`'s own `when.uow` sets no
+    signal a caller-driven retry catches, the keyed unit-of-work lane's own
+    conflict-write precedent) — caught HERE, its ``actual`` recorded, and the
+    transaction aborts (never retried: `m-opt-lock-012`'s own `when.uow` sets no
     ``retryOptimisticConflicts`` opt-in, so :func:`~parallax.core.auto_retry.
     run_with_retry` surfaces it after exactly one attempt). Unlike
     :func:`~parallax.conformance._lanes.scenario._run_uow_group`'s own OWN
@@ -151,8 +151,8 @@ def _run_interleaved_group(
     on, and lower in the spelling of, the dedicated session opened for it.
 
     ``context`` carries the SAME single :class:`TemporalShadow` every group
-    shares (`_run_uow_group`'s own convention) — safe here ONLY because every
-    model this lane witnesses is entirely NON-temporal (the
+    shares (the keyed unit-of-work lane's own convention) — safe here ONLY
+    because every model this lane witnesses is entirely NON-temporal (the
     tracker is never mutated for these instructions, so two threads never
     contend on it, and this group's own abort has nothing to discard). A
     genuinely temporal interleaved case would need its own per-group tracking
@@ -250,9 +250,10 @@ def run_interleaved_scenario_case(
     this function constructs no connection itself), each a REAL ``db.transact``
     (production routing) whose steps lower in the dialect its OWN connection
     declares, steps sequenced across the two in AUTHORED order
-    (:class:`Turnstile`). Neither group runs on the caller's ``port``: a stuck
-    worker is unstuck by destroying the session it is parked in, and what this
-    lane may destroy is only a session it opened for this one choreography. The
+    (:class:`~parallax.conformance._lanes.turnstile.Turnstile`). Neither group
+    runs on the caller's ``port``: a stuck worker is unstuck by destroying the
+    session it is parked in, and what this lane may destroy is only a session
+    it opened for this one choreography. The
     caller's ``port`` therefore serves the case's out-of-band `given.apply`
     statements and any ungrouped step (each witnessed case's own trailing verify
     find), which runs AFTER both groups have resolved.

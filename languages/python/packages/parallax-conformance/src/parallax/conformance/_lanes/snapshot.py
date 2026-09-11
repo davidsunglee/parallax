@@ -138,12 +138,13 @@ def _snapshot_write_entries(
     are CLASSIFIED before the diagnosis is written rather than sharing one:
 
     - a legacy string label states no instruction to lower at all;
-    - a MATERIALIZING predicate write (:func:`is_materializing_write_step`)
-      resolves through the find step that precedes it
-      (:func:`_run_materializing_pair`), and a find HERE materializes the
-      snapshot whose view a later `access` states rather than the rows a write
-      settles against — the two step roles genuinely conflict, so this refusal
-      is permanent;
+    - a MATERIALIZING predicate write
+      (:func:`~parallax.conformance._lanes.scenario.is_materializing_write_step`)
+      resolves through the find step that precedes it, which the keyed
+      unit-of-work lane runs as one materializing pair, and a find HERE
+      materializes the snapshot whose view a later `access` states rather than
+      the rows a write settles against — the two step roles genuinely conflict,
+      so this refusal is permanent;
     - a READLESS predicate write owes no resolving read at all, so nothing about
       it conflicts with this lane; it is refused because the lane has not wired
       it, never because the shape is wrong here.
@@ -431,11 +432,12 @@ def _run_snapshot_write_step(
     it emitted beside the round trips it cost.
 
     The step is its OWN choreography unit, driven through the SAME
-    :func:`execute_keyed_unit` an ungrouped write step of the keyed
-    unit-of-work lane is, which is the ungrouped semantics `m-case-format` gives
-    a write step carrying no `uow` label. Nothing about it reaches the views this
-    scenario's find steps materialized: those are values taken at their own pin
-    (`m-snapshot-read` closed world), so the write persists and the graph stands.
+    :func:`~parallax.conformance._lanes.scenario.execute_keyed_unit` an
+    ungrouped write step of the keyed unit-of-work lane is, which is the
+    ungrouped semantics `m-case-format` gives a write step carrying no `uow`
+    label. Nothing about it reaches the views this scenario's find steps
+    materialized: those are values taken at their own pin (`m-snapshot-read`
+    closed world), so the write persists and the graph stands.
 
     What this lane adds is its own admitted write form
     (:func:`_snapshot_write_entries`) and the case-named diagnosis every failure

@@ -335,10 +335,10 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
 
 def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> None:
     # A group's own write step that is NOT its last step buffers without
-    # forcing a flush (mirroring `_run_uow_group`'s own per-step buffering
-    # for a contiguous span, `_run_interleaved_group`'s own generalization
-    # of the SAME machinery) — unwitnessed by `m-opt-lock-012` itself (whose
-    # own two groups each carry exactly one write, always last).
+    # forcing a flush (mirroring the keyed unit-of-work lane's own per-step
+    # buffering for a contiguous span, `_run_interleaved_group`'s own
+    # generalization of the SAME machinery) — unwitnessed by `m-opt-lock-012`
+    # itself (whose own two groups each carry exactly one write, always last).
     case = _synthetic_write(
         "scenario",
         {

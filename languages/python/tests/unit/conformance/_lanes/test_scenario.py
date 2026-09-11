@@ -2774,7 +2774,7 @@ def test_a_decimal_temporal_key_requires_its_canonical_wire_string() -> None:
             )
         )
     )
-    accepted = scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+    accepted = scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
         model,
         entity.canonical,
         {"id": "12.30"},
@@ -2785,7 +2785,7 @@ def test_a_decimal_temporal_key_requires_its_canonical_wire_string() -> None:
     )
     assert accepted.identity == (("id", decimal.Decimal("12.30")),)
     with pytest.raises(EngineError, match="neutral-literal-type-mismatch"):
-        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             model,
             entity.canonical,
             {"id": 12.30},
@@ -2795,7 +2795,7 @@ def test_a_decimal_temporal_key_requires_its_canonical_wire_string() -> None:
             None,
         )
     with pytest.raises(EngineError, match="neutral-literal-noncanonical"):
-        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             model,
             entity.canonical,
             {"id": "12.3"},
@@ -2812,7 +2812,7 @@ def test_conflict_close_rejects_axis_specific_inputs_on_a_transaction_time_targe
     common = (model, target_name, {"id": 2}, "2024-10-01T00:00:00+00:00")
 
     with pytest.raises(EngineError, match="exactly its primary-key members"):
-        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             model,
             target_name,
             {"id": 2, "extra": 3},
@@ -2822,16 +2822,16 @@ def test_conflict_close_rejects_axis_specific_inputs_on_a_transaction_time_targe
             None,
         )
     with pytest.raises(EngineError, match="axis the target does not declare"):
-        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+        scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             *common, None, "2024-01-01T00:00:00+00:00", None
         )
     for bound in ("infinity", "2024-06-01T00:00:00+00:00"):
         with pytest.raises(EngineError, match="axis the target does not declare"):
-            scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage]
+            scenario._conflict_close_inputs(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
                 *common, None, None, bound
             )
     assert (
-        scenario._decode_observed_conflict_bound(  # pyright: ignore[reportPrivateUsage]
+        scenario._decode_observed_conflict_bound(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             None, TemporalBound.INFINITY, position="validEnd"
         )
         is TemporalBound.INFINITY
@@ -2847,10 +2847,10 @@ def test_predicate_writes_require_no_keyed_unit_source_read_or_framework_classif
     )
     prepared = instructions.prepare_typed_write(instruction, model)
     assert isinstance(prepared, instructions.PreparedPredicateWrite)
-    resolved = scenario._ResolvedWrite(prepared, None)  # pyright: ignore[reportPrivateUsage]
+    resolved = scenario._ResolvedWrite(prepared, None)  # pyright: ignore[reportPrivateUsage] - unit test builds the scenario lane's private record directly
 
-    assert scenario._unit_source_reads(model, (resolved,)) == []  # pyright: ignore[reportPrivateUsage]
-    assert scenario._is_framework_write(prepared, model) is False  # pyright: ignore[reportPrivateUsage]
+    assert scenario._unit_source_reads(model, (resolved,)) == []  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
+    assert scenario._is_framework_write(prepared, model) is False  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
 
 
 def test_a_projected_row_rejects_an_ambiguous_member() -> None:
@@ -2860,7 +2860,7 @@ def test_a_projected_row_rejects_an_ambiguous_member() -> None:
     columns = {"ambiguous": (("first", first), ("second", second))}
 
     with pytest.raises(EngineError, match="does not select one declaration"):
-        scenario._projected_row(  # pyright: ignore[reportPrivateUsage]
+        scenario._projected_row(  # pyright: ignore[reportPrivateUsage] - unit test drives the scenario lane's private helper directly
             model,
             ActualWireProjection(model),
             columns,
@@ -3387,8 +3387,7 @@ def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None
     # m-inheritance-105: `when.write` names no entity of its own; for an
     # inheritance-participant model `_conflict_target` resolves to the family's
     # SOLE concrete subtype (MeterReading, tag `meter`) — never the abstract
-    # root `_rejected_target` resolves to for the read lane's own default-target
-    # convention.
+    # root the REJECTED lane's own default-target convention resolves to.
     case = _load_case("m-inheritance-105")
     port = FakeWritePort()
     emissions, affected, table_state, _round_trips = scenario.run_conflict_case(case, port)

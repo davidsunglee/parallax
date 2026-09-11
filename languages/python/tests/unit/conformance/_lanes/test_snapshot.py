@@ -57,8 +57,8 @@ from tests.unit.conformance._recording_ports import FakeDbPort, FakeWritePort, Q
 
 
 # One corpus read serves the whole module, and both indexes project it: what
-# they answer is shared between tests, so a test that edits a document takes
-# `_own_copy` first.
+# they answer is shared between tests, so a test that edits a document deep-copies
+# it first.
 @functools.cache
 def _corpus() -> tuple[case_format.Case, ...]:
     return tuple(case_format.load_cases())
@@ -763,7 +763,7 @@ def test_run_scenario_case_reports_an_access_step_graph_from_the_retained_view()
     assert run.errors == []
     assert [entry["at"] for entry in run.step_graphs] == ["/scenario/2"]
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
-    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
+    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
 
 
 def test_run_scenario_case_reports_a_snapshot_lane_finds_own_materialized_graph() -> None:
@@ -790,7 +790,7 @@ def test_run_scenario_case_reports_a_snapshot_lane_finds_own_materialized_graph(
     root_graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     (root,) = root_graph["Order"]
     assert root["id"] == 1
-    assert sorted(node["id"] for node in cast("list[dict[str, object]]", root["items"])) == [11, 12]  # pyright: ignore[reportArgumentType]
+    assert sorted(node["id"] for node in cast("list[dict[str, object]]", root["items"])) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
 
 
 def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:
@@ -817,7 +817,7 @@ def test_run_scenario_case_lets_an_edit_chain_name_the_copy_before_it() -> None:
     run = _run(case, _include_scenario_port())
     assert run.round_trips == 2  # the find's two levels; no hop of the chain costs one
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
-    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
+    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
 
 
 def _orders_access_scenario(access: dict[str, object], *, includes: bool) -> case_format.Case:
@@ -1159,7 +1159,7 @@ def test_run_scenario_case_write_step_commits_and_leaves_the_retained_view_stand
     assert [sql for sql, _binds in port.writes] == ["update orders set name = %s where id = %s"]
     assert run.round_trips == 4  # the find's two levels, the write's resolve and its DML
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
-    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType]
+    assert sorted(node["id"] for node in graph["OrderItem"]) == [11, 12]  # pyright: ignore[reportArgumentType] - the node ids are ints behind the graph's object typing
 
 
 def test_run_scenario_case_refuses_a_non_keyed_write_step_on_the_snapshot_lane() -> None:
@@ -1312,7 +1312,7 @@ def test_judged_assignments_reject_an_invalid_member() -> None:
     account_entity = next(item for item in account.entities if item.identity.name == "Account")
     case = _synthetic_write("scenario", {"model": "models/account.yaml"})
     with pytest.raises(EngineError, match="invalid assignment"):
-        snapshot._judged_assignments(  # pyright: ignore[reportPrivateUsage]
+        snapshot._judged_assignments(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
             case,
             account,
             account_entity.identity,
