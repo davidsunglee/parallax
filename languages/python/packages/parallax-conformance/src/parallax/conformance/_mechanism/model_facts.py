@@ -9,22 +9,30 @@ case's authored Entity spelling is adjudicated, so a case's reference resolves
 the way every validator and lowering site resolves one. The default-target
 conventions a case naming no explicit target falls back on — the model's single
 family root, else its own first declared entity — are model facts too, and
-live here so the lanes that resolve a default share one reading.
+live here so the lanes that resolve a default share one reading. So is what a
+case's Object Query means against its model: :func:`canonicalize_read` is the
+one place a read is preflighted and planned, so every lane that compiles one
+consumes the same validated execution token production's own reads do.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from parallax.conformance import case_format, models
 from parallax.conformance._mechanism.envelope import EngineError
-from parallax.core import inheritance
+from parallax.core import deep_fetch, inheritance
+from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.entity import DomainModel
 from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.object_query import ObjectQueryNode
 from parallax.snapshot.handle import ServingModel, prepare_model
+from parallax.snapshot.handle._preflight import preflight
 
 __all__ = [
+    "canonicalize_read",
     "case_edition",
     "case_entity",
     "case_serving_model",
@@ -191,3 +199,26 @@ def first_declared_entity(case: case_format.Case) -> str:
     if not spellings:  # pragma: no cover - a formed model declares at least one entity
         raise EngineError(f"{case.path.name}: the case's model declares no entity")
     return spellings[0]
+
+
+def canonicalize_read(
+    query: ObjectQueryNode,
+    entity: EntityMetadata,
+    model: AcceptedMetamodel,
+    *,
+    form: Literal["rows", "graph"] = "graph",
+) -> ValidatedEntityQuery:
+    """Preflight and plan one flat root Entity Query.
+
+    The gate is production's own (`handle.preflight`), including Deferred
+    Execution Feature classification: an adapter whose compile lane accepted a
+    query its own executor would refuse would claim two different supported
+    surfaces. ``m-deep-fetch`` then composes temporal injection plus navigation
+    canonicalization before SQL sees the result.
+    """
+    validated = preflight(query, model=model, form=form)
+    projection = deep_fetch.ReadProjectionRequest(
+        "none" if form == "rows" else "all",
+        form == "graph",
+    )
+    return deep_fetch.plan(validated, model, projection=projection).root
