@@ -19,6 +19,7 @@ import pytest
 from parallax.conformance import _case_ingress, adapter, case_format, engine, models
 from parallax.conformance._database_control import CaseDatabase
 from parallax.conformance._lifecycle_observation import LifecycleRun
+from parallax.conformance._mechanism import model_facts
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
@@ -242,7 +243,7 @@ temporal:
         "2024-02-01T00:00:00.000000Z",
         "2024-03-01T00:00:00.000000Z",
     )
-    root = engine.case_entity(model, normalized.target.canonical)
+    root = model_facts.case_entity(model, normalized.target.canonical)
     validated = validate_object_query(root, normalized, model)
     assert validated.predicate.operands is not None
     assert validated.predicate.operands.values == (decimal.Decimal("200.00"),)
@@ -266,7 +267,7 @@ def test_case_query_adapter_does_not_widen_the_timestamp_string_grammar() -> Non
 
     comparison = cast("dict[str, object]", serialize_predicate(normalized.predicate)["eq"])
     assert comparison["value"] == "2026-W01-1T00:00:00+00:00"
-    root = engine.case_entity(model, normalized.target.canonical)
+    root = model_facts.case_entity(model, normalized.target.canonical)
     with pytest.raises(ModelRejectedError) as caught:
         validate_object_query(root, normalized, model)
     assert caught.value.rule == "neutral-literal-type-mismatch"
