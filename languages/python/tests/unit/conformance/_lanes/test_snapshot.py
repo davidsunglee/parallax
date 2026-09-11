@@ -23,7 +23,7 @@ import pytest
 
 from parallax.conformance import case_format, models, sweep
 from parallax.conformance._database_control import CaseDatabase
-from parallax.conformance._lanes import scenario
+from parallax.conformance._lanes import snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism import case_document, model_facts
 from parallax.conformance._mechanism.envelope import Emission, EngineError, ScenarioRun
@@ -101,11 +101,11 @@ def _synthetic_write(shape: str, document: dict[str, object]) -> case_format.Cas
 
 
 def _compile(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
-    return scenario.compile_scenario(case, dialect_name, case_document.scenario_steps(case))
+    return snapshot.compile_scenario(case, dialect_name, case_document.scenario_steps(case))
 
 
 def _run(case: case_format.Case, port: CaseDatabase) -> ScenarioRun:
-    return scenario.run_scenario(
+    return snapshot.run_scenario(
         case, port, case_document.scenario_steps(case), lifecycle_run(None)
     )
 
@@ -193,7 +193,7 @@ _ATTACH_MODEL = form_metamodel(
 def _scenario_result(
     *roots: dict[str, object], pin: Pin | None = None, identity: EntityIdentity | None = None
 ) -> Any:
-    return scenario._ScenarioStepResult(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+    return snapshot._ScenarioStepResult(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
         roots=tuple(roots), pin=pin, identity=identity
     )
 
@@ -203,7 +203,7 @@ _ORDER_IDENTITY = model_facts.case_entity(_ORDERS_MODEL, "parallax.compatibility
 
 
 def _edited_copy(step: Mapping[str, object], on: int, source: Any) -> Any:
-    return scenario._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+    return snapshot._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
         _case("m-snapshot-read-010"), _ORDERS_MODEL, step, on, source
     )
 
@@ -348,7 +348,7 @@ def _abstract_read_of_a_dog(**overrides: object) -> Any:
 
 def _edited_animal(authored: Mapping[str, object], source: Any) -> Any:
     step = {"action": "mutate", "on": 0, "set": dict(authored)}
-    return scenario._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+    return snapshot._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
         _ANIMAL_CASE, _ANIMAL_MODEL, step, 0, source
     )
 
@@ -405,7 +405,7 @@ def test_edited_copy_judges_a_concrete_target_read_against_that_target() -> None
     dog = model_facts.case_entity(_ANIMAL_MODEL, "parallax.compatibility.Dog").identity
     step = {"action": "mutate", "on": 0, "set": {"barkVolume": 9}}
     source = _scenario_result({"id": 1, "name": "Rex", "barkVolume": 7}, identity=dog)
-    copy = scenario._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+    copy = snapshot._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
         _ANIMAL_CASE, _ANIMAL_MODEL, step, 0, source
     )
     assert (copy.identity, copy.roots[0]["barkVolume"]) == (dog, 9)
@@ -430,7 +430,7 @@ _TICKET_MODEL = form_metamodel(
 def _edited_ticket(authored: Mapping[str, object]) -> Any:
     step = {"action": "mutate", "on": 0, "set": dict(authored)}
     source_result = _scenario_result({"id": 1, "familyVariant": "premium"}, identity=_TICKET)
-    return scenario._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+    return snapshot._edited_copy(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
         _case("m-snapshot-read-010"), _TICKET_MODEL, step, 0, source_result
     )
 
@@ -452,7 +452,7 @@ def test_edited_copy_reads_a_standalone_entitys_family_variant_as_domain_state()
 def test_grade_mutate_step_rejects_an_on_index_naming_no_view() -> None:
     step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
     with pytest.raises(EngineError, match="holds no view to edit"):
-        scenario._grade_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+        snapshot._grade_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
             _case("m-snapshot-read-010"), _ORDERS_MODEL, step, [_scenario_result({"id": 1})]
         )
 
@@ -474,7 +474,7 @@ def test_grade_mutate_step_publishes_no_copy_when_the_pin_rule_refuses() -> None
         "set": {"value": 999},
         "expectError": "transaction-time-pin-read-only",
     }
-    error_class, result = scenario._grade_mutate_step(case, model, step, [source])  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+    error_class, result = snapshot._grade_mutate_step(case, model, step, [source])  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
     assert (error_class, result.roots, result.identity) == (
         "transaction-time-pin-read-only",
         (),
@@ -492,11 +492,11 @@ def test_check_action_step_rejects_a_managed_lifecycle_verb() -> None:
     # `load` is a managed-object surfacing this lane holds no state for; the
     # two verbs it does grade over a snapshot graph (`mutate`, `access`) pass.
     with pytest.raises(EngineError, match="graded by the API"):
-        scenario._check_action_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+        snapshot._check_action_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
             _case("m-snapshot-read-010"), {"action": "load"}
         )
-    scenario._check_action_step(_case("m-snapshot-read-010"), {"action": "mutate"})  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
-    scenario._check_action_step(_case("m-snapshot-read-010"), {"action": "access"})  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+    snapshot._check_action_step(_case("m-snapshot-read-010"), {"action": "mutate"})  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
+    snapshot._check_action_step(_case("m-snapshot-read-010"), {"action": "access"})  # pyright: ignore[reportPrivateUsage] - unit test drives the snapshot lane's private helper directly
 
 
 def test_compile_scenario_case_snapshot_lane_requires_an_object_query() -> None:
@@ -1312,7 +1312,7 @@ def test_judged_assignments_reject_an_invalid_member() -> None:
     account_entity = next(item for item in account.entities if item.identity.name == "Account")
     case = _synthetic_write("scenario", {"model": "models/account.yaml"})
     with pytest.raises(EngineError, match="invalid assignment"):
-        scenario._judged_assignments(  # pyright: ignore[reportPrivateUsage]
+        snapshot._judged_assignments(  # pyright: ignore[reportPrivateUsage]
             case,
             account,
             account_entity.identity,
