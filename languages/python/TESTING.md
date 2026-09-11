@@ -11,7 +11,7 @@ restated here.
 ## Test root
 
 `tests/` is closed. Every entry is a semantic surface directory, `_support/`, or
-a file pytest requires at the root.
+one of the two files the root itself requires.
 
 | Surface | Directory | Proves |
 |---|---|---|
@@ -22,9 +22,28 @@ a file pytest requires at the root.
 | Provider integration contract | `tests/provider_contract/` | The provider/matrix contract and the real psycopg adapter smoke checks |
 | Shipped and installed output | `tests/distribution/` | Built-wheel content and public-export health, and the clean-venv production install topologies |
 
-`tests/conftest.py` is the only root file: it holds the fixtures below, the
-database-skip ledger, and the terminal-summary hook. Everything else it used to
-hold is in `_support/`.
+`tests/__init__.py` makes the tree one package, so every module under it is
+imported by its dotted name from `languages/python`, the directory pytest puts on
+the path when it collects any module of the package. `tests/conftest.py` is the
+other root file: it holds the fixtures below, the database-skip ledger, and the
+terminal-summary hook. Everything else it used to hold is in `_support/`.
+
+## `tests/unit/`
+
+The unit surface mirrors the source tree. The test of
+`parallax/<pkg>/<sub>/<module>.py` lives at
+`tests/unit/<pkg>/<sub>/test_<module>*.py`, where `<pkg>` is one of `core`,
+`descriptor`, `evolution`, `snapshot`, `postgres`, `conformance`, with a suffix
+when several files serve one module; a test of a subpackage's own `__init__.py`
+sits in that subpackage's directory. Two more placements cover the rest: a test
+of `tools/<script>.py` goes to `tests/unit/tools/test_<script>.py`, and a
+whole-tree test — one grading the repository, the distributions, the scheduling
+classes, or every module at once — stays at the `tests/unit/` root. A test
+directory without a source counterpart, or the reverse, is a smell you can see in
+a listing.
+
+The five behavioral surfaces carry an `__init__.py` for identity alone and keep
+their story-organised flat layout.
 
 ## `_support/`
 
@@ -45,44 +64,44 @@ no test command of its own.
 | `_support/frontend_probes.py`, `_support/frontend_probes_stringized.py` | Declaration probes on the live-annotation and stringized-annotation paths |
 | `_support/inheritance_models.py`, `_support/mirrored_models.py`, `_support/snapshot_models.py`, `_support/value_object_models.py` | Idiomatic Entity and Value Object classes mirroring the corpus models |
 
-`pythonpath = ["tools", "tests"]` (`pyproject.toml`) puts `tests/` on the import
-path, so a symbol reads `from _support.corpus import case_document` and a model
-module reads `from _support import mirrored_models as mm`, regardless of which
-surface pytest collects first; `pyrightconfig.json`'s `extraPaths` carries the
-same two roots. A test module imports from `_support`, never from another test
-module.
+A symbol reads `from tests._support.corpus import case_document` and a model
+module reads `from tests._support import mirrored_models as mm`, regardless of
+which surface pytest collects first. Nothing but `tools` is added to the import
+path (`pythonpath = ["tools"]` in `pyproject.toml`, the one entry of
+`pyrightconfig.json`'s `extraPaths`), so a module under `tests/` resolves under
+its dotted name and no other. A test module imports from `_support` or from a
+helper module, never from another test module.
 
-Support code only one surface uses stays inside that surface —
-`tests/unit/_authored_storage_support.py`, `_contention_support.py`,
-`tests/unit/_corpus_identity_support.py`, `_corpus_model_support.py`,
-`_document_layout_support.py`, `_keyed_write_drivers.py`,
-`_layout_twin_columns.py`,
-`_layout_twin_document.py`, `_lifecycle_cost_support.py`,
-`_metamodel_support.py`, `_mixed_strategy_model.py`,
-`_pool_source_support.py`,
-`_second_dialect.py`, `_snapshot_graph_support.py`,
-`_snapshot_materialization_support.py`,
+Support code only one surface uses stays inside that surface, and follows its
+consumers within it. A helper every consumer of which sits in one directory of
+`tests/unit/` sits there too — `core/entity/_compact_support.py`,
+`core/entity/value_object_bad_models.py`,
+`core/execution_lifecycle/_lifecycle_cost_support.py`,
+`snapshot/handle/_keyed_write_drivers.py`,
+`snapshot/handle/_mixed_strategy_model.py`,
+`snapshot/handle/observation_models.py`. A helper whose consumers span
+directories, or that a `tools/` script imports, stays at the `tests/unit/` root —
+`_authored_storage_support.py`, `_contention_support.py`,
+`_corpus_identity_support.py`, `_corpus_model_support.py`,
+`_document_layout_support.py`, `_inheritance_family_support.py`,
+`_instance_state_support.py`, `_metamodel_support.py`,
+`_pool_source_support.py`, `_second_dialect.py`,
+`_snapshot_graph_support.py`, `_snapshot_materialization_support.py`,
 `_source_inventory_support.py`, `_stream_page_support.py`,
-`_transact_support.py`,
-`tests/unit/memory_instruments.py`,
-`tests/unit/observation_models.py`, and
-`tests/unit/value_object_bad_models.py`.
+`_transact_support.py`, and `memory_instruments.py`.
 
-Three of those serve the cost suites and split by subject:
+Four of those serve the cost suites and split by subject:
 `memory_instruments.py` is what every cost suite measures WITH,
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
-with, and `_snapshot_materialization_support.py` is the one
-a `report` also drives: the scaling regression and
+with, and `_instance_state_support.py` and
+`_snapshot_materialization_support.py` are the two a `report` also drives: the
+baseline or scaling regression and `just python-report-instance-state` or
 `just python-report-snapshot-materialization` measure one workload through one
-set of functions. The `report` tools under `tools/` are what spell `tests/unit` as
-an import root — each prepends that directory to `sys.path` and then refuses any
-module that did not resolve to the file it named, which is also why
-`pyrightconfig.json`'s `extraPaths` carries `tests/unit` beside the two
-`pythonpath` roots.
-
-`_support/` is the only package under `tests/`. Every surface directory is
-rootless, so pytest imports its modules by bare basename and those basenames must
-stay globally unique across the test tree.
+set of functions. The `report` tools under `tools/` reach them as
+`tests.unit.memory_instruments`, `tests.unit._instance_state_support`, and
+`tests.unit._snapshot_materialization_support` by putting the workspace root on
+`sys.path` themselves, and each refuses any module that did not resolve to the
+file it named.
 
 ## Fixtures
 
@@ -189,7 +208,7 @@ Run from the repository root through `just`, or from `languages/python` through
 | Every cost gate | `just python-check-cost` |
 | All three | `just python-check` |
 | Iterate on one surface | `just python-test-<surface>` |
-| Iterate on one module | `cd languages/python && uv run pytest tests/<surface>/test_<name>.py` |
+| Iterate on one module | `cd languages/python && uv run pytest tests/<surface>/test_<name>.py`, or `tests/unit/<pkg>/<sub>/test_<module>.py` for a unit test |
 | The Pydantic parity corpus on the declared floor | `just python-test-pydantic-floor` |
 
 The six `python-test-<surface>` recipes are for iteration and are deliberately no
@@ -197,7 +216,7 @@ aggregate's dependency: a surface cuts across both scheduling classes, so a gate
 composing one would run part of it twice.
 
 `python-test-pydantic-floor` is outside every aggregate for a different reason.
-It selects one module — `tests/unit/test_pydantic_parity.py`, which
+It selects one module — `tests/unit/core/entity/test_pydantic_parity.py`, which
 `python-test-dbfree` already grades on the locked Pydantic — and overlays the
 oldest release `parallax-core` declares onto the workspace resolution for that
 one run, so what it adds is the other end of the supported range rather than
