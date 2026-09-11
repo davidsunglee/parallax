@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-97**.
+Entry numbering is continuous and never reused. The next new number is **D-98**.
 
 ## Entries
 
@@ -1005,6 +1005,42 @@ regression's structure.
 either reading memory before the timings or giving the memory readings a child of
 their own, re-recording the matrix under the new order, and saying which order
 the conditions table describes.
+
+### D-97 — Finding a `float32`'s canonical number costs a rounding search per admitted value, and only a rounding change can make it cheaper
+
+*Low — one Neutral Type's admission is slower than the other twelve; every
+verdict is correct.* Relates to
+`languages/python/packages/parallax-core/src/parallax/core/wire/_codec.py`,
+`languages/python/packages/parallax-core/src/parallax/core/base/_neutral.py`,
+`core/spec/m-wire.md`. Owner: this target.
+
+**What.** Admitting a stored `float32` asks whether the written number is already
+the canonical one, and answering needs the canonical one: the fewest-digit number
+that names the value at binary32 width. `_shortest_float` finds it by trying digit
+counts in turn, and each try rounds a decimal to binary32 through
+`nearest_float_at_width`, which builds an exact ratio and searches. Measured over
+the materialization report's conforming batch, that search is 21% to 24% of the
+profiled batch and 18% to 21% of the untraced one on both storage layouts and both
+supported minors — over the 10% bar COR-137 set for a material codec contributor,
+and now the largest single contributor left inside canonical decoding.
+
+**Why it is deferred rather than fixed.** Nothing about it is redundant, which is
+what COR-137's codec clause licensed removing. A `float32`'s canonical Wire Value
+is a different number from the value it names, and no earlier step of the decode
+has computed it. The one shortcut available is to round the candidate decimal to
+binary32 through a host double instead of exactly — and `m-wire` spends a whole
+rule (*Rounding happens once, from the digits*) stating that binary64-then-binary32
+is not one rounding and names the value where the two disagree. Taking it means a
+guarded fast path inside `m-core`'s membership predicate, which every declared
+`float32` in the system reads, on evidence from one workload that declares every
+Neutral Type once and so over-represents floats. That is a numeric-semantics
+change with its own correctness argument, not the redundancy removal this claim
+carried.
+
+**When.** With a claim that measures `float32` admission against a workload whose
+float share is representative, and that can carry an exactness argument for a
+guarded double-rounding fast path — or a proof that the midpoint case a guard
+would exclude is decidable from the candidate's bits alone.
 
 ## Forwarding pointers
 

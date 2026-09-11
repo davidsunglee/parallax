@@ -4,9 +4,11 @@ What a production Snapshot read spends turning returned rows into a sealed graph
 and what that costs in memory, measured on one machine under stated conditions,
 under both storage layouts and on both supported CPython minors. COR-137 asks for
 a reviewed baseline before any optimization, and for every later change to be
-measured against it. Both halves are recorded here: the "before" half is the
-shipped path as it stood at `431936be`, and the "after" half is the same path
-with the per-row work whose inputs a compiled read already fixed removed.
+measured against it. Three readings are recorded here: the "before" half is the shipped path as it
+stood at `431936be`; the middle column is that path with the per-row work whose
+inputs a compiled read already fixed removed; and the "after" column adds the
+canonical-decoding slice the middle column's own profile called for, which the
+codec section below states in full.
 
 Nothing here gates. `just python-report-snapshot-materialization` is a `report`:
 it passes no verdict and belongs to no aggregate, because elapsed time is a
@@ -86,35 +88,37 @@ to trust for magnitude.
 
 ## The figure
 
-Per-row steady state, from an already prepared model and compiled read. One
-recorded run per half; see the conditions table for what a second run moved.
+Per-row steady state, from an already prepared model and compiled read. `rows`
+is the per-row work removed, `codec` adds the canonical-decoding slice, and Δ
+spans the whole change. One recorded run per column; see the conditions table for
+what a second run moved.
 
 CPython 3.13:
 
-| | Columns before | Columns after | Δ | Document before | Document after | Δ |
-|---|---:|---:|---:|---:|---:|---:|
-| Batch, 64 rows (ms) | 22.699 | 19.251 | −15.2% | 25.032 | 23.439 | −6.4% |
-| **Rows per second** | **2,819** | **3,324** | **+17.9%** | **2,557** | **2,731** | **+6.8%** |
-| **Microseconds per row** | **354.7** | **300.8** | **−15.2%** | **391.1** | **366.2** | **−6.4%** |
-| Model preparation (ms) | 0.178 | 0.179 | — | 0.182 | 0.177 | — |
-| — decode preparation within it | 0 | 0 | — | 0 | 0 | — |
-| Compiled-read preparation (ms) | 0.381 | 0.462 | +0.081 | 0.447 | 0.473 | +0.026 |
-| — decode preparation within it (`bind`) | 0 | 0.014 | +0.014 | 0 | 0.014 | +0.014 |
+| | Col. before | Col. rows | Col. codec | Δ | Doc. before | Doc. rows | Doc. codec | Δ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Batch, 64 rows (ms) | 22.699 | 19.251 | 13.804 | −39.2% | 25.032 | 23.439 | 16.845 | −32.7% |
+| **Rows per second** | **2,819** | **3,324** | **4,636** | **+64.5%** | **2,557** | **2,731** | **3,799** | **+48.6%** |
+| **Microseconds per row** | **354.7** | **300.8** | **215.7** | **−39.2%** | **391.1** | **366.2** | **263.2** | **−32.7%** |
+| Model preparation (ms) | 0.178 | 0.179 | 0.177 | — | 0.182 | 0.177 | 0.177 | — |
+| — decode preparation within it | 0 | 0 | 0 | — | 0 | 0 | 0 | — |
+| Compiled-read preparation (ms) | 0.381 | 0.462 | 0.466 | +0.085 | 0.447 | 0.473 | 0.468 | +0.021 |
+| — decode preparation within it (`bind`) | 0 | 0.014 | 0.014 | +0.014 | 0 | 0.014 | 0.014 | +0.014 |
 
 CPython 3.14:
 
-| | Columns before | Columns after | Δ | Document before | Document after | Δ |
-|---|---:|---:|---:|---:|---:|---:|
-| Batch, 64 rows (ms) | 22.802 | 19.650 | −13.8% | 25.346 | 23.896 | −5.7% |
-| **Rows per second** | **2,807** | **3,257** | **+16.0%** | **2,525** | **2,678** | **+6.1%** |
-| **Microseconds per row** | **356.3** | **307.0** | **−13.8%** | **396.0** | **373.4** | **−5.7%** |
-| Model preparation (ms) | 0.185 | 0.184 | — | 0.199 | 0.181 | — |
-| — decode preparation within it | 0 | 0 | — | 0 | 0 | — |
-| Compiled-read preparation (ms) | 0.384 | 0.459 | +0.075 | 0.451 | 0.474 | +0.023 |
-| — decode preparation within it (`bind`) | 0 | 0.014 | +0.014 | 0 | 0.014 | +0.014 |
+| | Col. before | Col. rows | Col. codec | Δ | Doc. before | Doc. rows | Doc. codec | Δ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Batch, 64 rows (ms) | 22.802 | 19.650 | 14.241 | −37.5% | 25.346 | 23.896 | 16.671 | −34.2% |
+| **Rows per second** | **2,807** | **3,257** | **4,494** | **+60.1%** | **2,525** | **2,678** | **3,839** | **+52.0%** |
+| **Microseconds per row** | **356.3** | **307.0** | **222.5** | **−37.5%** | **396.0** | **373.4** | **260.5** | **−34.2%** |
+| Model preparation (ms) | 0.185 | 0.184 | 0.190 | — | 0.199 | 0.181 | 0.182 | — |
+| — decode preparation within it | 0 | 0 | 0 | — | 0 | 0 | 0 | — |
+| Compiled-read preparation (ms) | 0.384 | 0.459 | 0.492 | +0.108 | 0.451 | 0.474 | 0.481 | +0.030 |
+| — decode preparation within it (`bind`) | 0 | 0.014 | 0.015 | +0.015 | 0 | 0.014 | 0.014 | +0.014 |
 
-**Model preparation is untouched on both sides**, which is this reading's own
-control: nothing in this work reaches `prepare_model`, so a matrix whose model
+**Model preparation is untouched in all three columns**, which is this reading's
+own control: nothing in this work reaches `prepare_model`, so a matrix whose model
 preparation moved was taken on a busy machine and was discarded. Decode
 preparation inside model preparation stays zero, and is a statement about
 ownership rather than a figure that was not taken: every fact this work
@@ -124,7 +128,9 @@ reported there.
 **`bind` is what the compiled read now owns**, and it is the whole of the decode
 preparation any stage of this path pays: 14 to 16 µs per execution for the five-level
 plan, about 3% of compiled-read preparation and about one row of steady-state
-work.
+work. **The codec slice adds no preparation at all**, on either side of the
+matrix: it holds nothing, so compiled-read preparation reads the same in the last
+two columns and the whole of its effect is in the batch.
 
 ## What preparation costs, and when it repays
 
@@ -133,24 +139,28 @@ saving is per row.
 
 | | 3.13 Columns | 3.13 Document | 3.14 Columns | 3.14 Document |
 |---|---:|---:|---:|---:|
-| Preparation added, per execution (µs) | 81 | 26 | 75 | 23 |
-| Time saved, per row (µs) | 53.9 | 24.9 | 49.3 | 22.6 |
-| **Rows that repay it** | **2** | **2** | **2** | **2** |
+| Preparation added, per execution (µs) | 85 | 21 | 108 | 30 |
+| Time saved, per row (µs) | 139.0 | 127.9 | 133.8 | 135.5 |
+| **Rows that repay it** | **1** | **1** | **1** | **1** |
 | Prepared bytes added, per execution | 28,320 | 16,448 | 28,976 | 16,856 |
-| Transient bytes saved, per row | 341 | 43 | 1 | 38 |
-| **Rows that repay that** | **83** | **383** | — | **444** |
+| Transient bytes saved, per row | 342 | 47 | 2 | 37 |
+| **Rows that repay that** | **83** | **350** | — | **456** |
 
-The time half repays inside two rows on every cell, which is the same order the
-"before" half already recorded for preparation as a whole (one whole preparation
-cost about two rows then and still does).
+The time half repays inside a single row on every cell. The codec slice is what
+moved it there: it added no preparation and took about a third of the batch, so
+the same fixed cost now stands against a per-row saving two and a half times the
+one the row work alone bought, where the middle column repaid in two rows.
 
 The byte half is the honest awkward figure. Read as a running total — every
 prepared byte held against every transient byte a row no longer allocates — one
 execution of this workload converts 64 rows and repays the prepared cost on no
 cell at all, 3.13 `Columns` coming nearest at 83 rows; and on 3.14 `Columns` the
-per-row transient saving is inside this reading's own spread (the two "after"
-runs read 3,826 and 3,824 B/row against 3,827 before), so no row count can be
-stated for it. Two things make that comparison narrower than it looks. Prepared
+per-row transient saving is inside this reading's own spread (the two codec runs
+read 3,825 and 3,828 B/row against 3,827 before), so no row count can be stated
+for it. The codec slice moved this half by nothing measurable, which is what it
+should do: what it stopped allocating — a re-derived spelling and the objects
+under it — was allocated and freed inside one leaf decode, and a container that
+never outlives the row that made it never raises the batch's high-water mark. Two things make that comparison narrower than it looks. Prepared
 state is discarded with the execution that built it, exactly as the transient
 bytes are, so what actually competes is concurrent bytes rather than a fixed cost
 against a running saving — and **peak traced bytes fell on all four cells**, by
@@ -166,33 +176,33 @@ Over the same batch.
 
 CPython 3.13:
 
-| | Columns before | Columns after | Δ | Document before | Document after | Δ |
-|---|---:|---:|---:|---:|---:|---:|
-| **Retained graph bytes per projection** | **2,631.8** | **2,662.0** | **+1.1%** | **3,024.8** | **3,029.9** | **+0.2%** |
-| Retained graph bytes, 64 projections | 168,434 | 170,368 | +1,934 | 193,584 | 193,915 | +331 |
-| Peak traced bytes above the collected floor | 432,113 | 412,225 | −4.6% | 436,129 | 433,744 | −0.5% |
-| **Transient bytes per row** | **4,120** | **3,779** | **−8.3%** | **3,790** | **3,747** | **−1.1%** |
-| Prepared bytes, whole compiled read set | 14,116 | 42,436 | +28,320 | 38,446 | 54,894 | +16,448 |
-| Prepared bytes per compiled read | 3,529 | 10,609 | +7,080 | 9,612 | 13,724 | +4,112 |
-| — the levels `bind` holds, within it | 0 | 2,600 | +2,600 | 0 | 2,600 | +2,600 |
-| **Prepared decode state per exact Entity layout** | **0** | **0** | **0** | **0** | **0** | **0** |
-| Layout catalog bytes per exact Entity layout | 4,965 | 4,965 | 0 | 4,965 | 4,965 | 0 |
-| One exact layout: tracked objects / references | 223 / 986 | 223 / 986 | 0 | 223 / 986 | 223 / 986 | 0 |
+| | Col. before | Col. rows | Col. codec | Δ | Doc. before | Doc. rows | Doc. codec | Δ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **Retained graph bytes per projection** | **2,631.8** | **2,662.0** | **2,659.3** | **+1.0%** | **3,024.8** | **3,029.9** | **3,035.5** | **+0.4%** |
+| Retained graph bytes, 64 projections | 168,434 | 170,368 | 170,196 | +1,762 | 193,584 | 193,915 | 194,273 | +689 |
+| Peak traced bytes above the collected floor | 432,113 | 412,225 | 412,012 | −4.7% | 436,129 | 433,744 | 433,837 | −0.5% |
+| **Transient bytes per row** | **4,120** | **3,779** | **3,778** | **−8.3%** | **3,790** | **3,747** | **3,743** | **−1.2%** |
+| Prepared bytes, whole compiled read set | 14,116 | 42,436 | 42,436 | +28,320 | 38,446 | 54,894 | 54,894 | +16,448 |
+| Prepared bytes per compiled read | 3,529 | 10,609 | 10,609 | +7,080 | 9,612 | 13,724 | 13,724 | +4,112 |
+| — the levels `bind` holds, within it | 0 | 2,600 | 2,600 | +2,600 | 0 | 2,600 | 2,600 | +2,600 |
+| **Prepared decode state per exact Entity layout** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
+| Layout catalog bytes per exact Entity layout | 4,965 | 4,965 | 4,965 | 0 | 4,965 | 4,965 | 4,965 | 0 |
+| One exact layout: tracked objects / references | 223 / 986 | 223 / 986 | 223 / 986 | 0 | 223 / 986 | 223 / 986 | 223 / 986 | 0 |
 
 CPython 3.14:
 
-| | Columns before | Columns after | Δ | Document before | Document after | Δ |
-|---|---:|---:|---:|---:|---:|---:|
-| **Retained graph bytes per projection** | **2,765.0** | **2,762.4** | **−0.1%** | **3,137.2** | **3,143.9** | **+0.2%** |
-| Retained graph bytes, 64 projections | 176,957 | 176,792 | −165 | 200,782 | 201,211 | +429 |
-| Peak traced bytes above the collected floor | 421,894 | 421,660 | −0.1% | 445,725 | 443,688 | −0.5% |
-| **Transient bytes per row** | **3,827** | **3,826** | **−0.0%** | **3,827** | **3,789** | **−1.0%** |
-| Prepared bytes, whole compiled read set | 14,516 | 43,492 | +28,976 | 39,686 | 56,542 | +16,856 |
-| Prepared bytes per compiled read | 3,629 | 10,873 | +7,244 | 9,922 | 14,136 | +4,214 |
-| — the levels `bind` holds, within it | 0 | 2,658 | +2,658 | 0 | 2,658 | +2,658 |
-| **Prepared decode state per exact Entity layout** | **0** | **0** | **0** | **0** | **0** | **0** |
-| Layout catalog bytes per exact Entity layout | 5,072 | 5,072 | 0 | 5,072 | 5,072 | 0 |
-| One exact layout: tracked objects / references | 222 / 986 | 222 / 986 | 0 | 222 / 986 | 222 / 986 | 0 |
+| | Col. before | Col. rows | Col. codec | Δ | Doc. before | Doc. rows | Doc. codec | Δ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **Retained graph bytes per projection** | **2,765.0** | **2,762.4** | **2,764.0** | **−0.0%** | **3,137.2** | **3,143.9** | **3,142.3** | **+0.2%** |
+| Retained graph bytes, 64 projections | 176,957 | 176,792 | 176,896 | −61 | 200,782 | 201,211 | 201,106 | +324 |
+| Peak traced bytes above the collected floor | 421,894 | 421,660 | 421,715 | −0.0% | 445,725 | 443,688 | 443,680 | −0.5% |
+| **Transient bytes per row** | **3,827** | **3,826** | **3,825** | **−0.1%** | **3,827** | **3,789** | **3,790** | **−1.0%** |
+| Prepared bytes, whole compiled read set | 14,516 | 43,492 | 43,492 | +28,976 | 39,686 | 56,542 | 56,542 | +16,856 |
+| Prepared bytes per compiled read | 3,629 | 10,873 | 10,873 | +7,244 | 9,922 | 14,136 | 14,136 | +4,214 |
+| — the levels `bind` holds, within it | 0 | 2,658 | 2,658 | +2,658 | 0 | 2,658 | 2,658 | +2,658 |
+| **Prepared decode state per exact Entity layout** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
+| Layout catalog bytes per exact Entity layout | 5,072 | 5,072 | 5,072 | 0 | 5,072 | 5,072 | 5,072 | 0 |
+| One exact layout: tracked objects / references | 222 / 986 | 222 / 986 | 222 / 986 | 0 | 222 / 986 | 222 / 986 | 222 / 986 | 0 |
 
 **Prepared decode state per exact Entity layout is zero on both sides**, and the
 layout catalog is unchanged to the byte and to the reference. Every fact this
@@ -203,6 +213,11 @@ layout fact, and none of it was made one. What a compiled read holds tripled
 under `Columns` and grew by about 43% under `Document`; that is the fixed cost
 the per-row savings were bought with, and it dies with the execution that
 compiled the read.
+
+**The codec slice holds nothing at all**, which is why every prepared figure in
+the last two columns is identical to the byte. It removed work from a decode
+rather than moving it anywhere, so it has no preparation to pay for and nothing
+that could grow with a model, a read, a row, or a graph.
 
 ## Retained graph bytes per projection did not increase
 
@@ -225,9 +240,27 @@ from this branch's head.
 | 3.14 `Columns` | 176,752 | 176,792 | 2,761.8 | 2,762.4 |
 | 3.14 `Document` | 200,634 | 200,499 | 3,134.9 | 3,132.8 |
 
-**The verdict is that it did not increase.** Two cells read lower, and the two
-that read higher move by 40 B and 8 B over a 170 kB window — one part in four
-thousand, and well inside the instrument's own spread on this workload. The
+The codec slice was measured the same way, against the code the middle column
+reports — same seam, same three processes per cell, the codec file swapped under
+one interpreter so the two arms share a floor:
+
+| | rows (B) | codec (B) | Δ | Δ per projection |
+|---|---:|---:|---:|---:|
+| 3.13 `Columns` (mean of three) | 168,378 | 168,316 | −62 | −1.0 |
+| 3.13 `Document` | 192,157 | 192,217 | +60 | +0.9 |
+| 3.14 `Columns` | 177,018 | 176,702 | −316 | −4.9 |
+| 3.14 `Document` | 200,533 | 200,574 | +41 | +0.6 |
+
+**The verdict is that it did not increase.** Over the whole change two cells read
+lower, and the two that read higher move by 40 B and 8 B over a 170 kB window —
+one part in four thousand, and well inside the instrument's own spread on this
+workload. The codec slice's own reading says the same at a tenth of the size: two
+cells lower, two higher by under a byte per projection, each inside its own arm's
+range (the 3.13 `Document` "before" arm spans 199 B across its three processes and
+the Δ is 60). It is also the reading the structure predicts, because the slice
+changes no value the builder retains: `decode_canonical_wire` answers the same
+decoded value for the same literal, and what stopped being derived was only the
+spelling it was compared against. The
 spread is measured rather than assumed: three "before" processes on 3.13
 `Columns` read 168,359, 168,734, and 168,505 B, a range of 375 B, which is the
 `datetime` residue this workload's `Timestamp` leg leaves behind and which the
@@ -244,22 +277,22 @@ call, which `cProfile` does not record at all, so the containers whose inputs on
 compiled read already fixed are counted at the function that builds each one.
 Identical on both minors.
 
-| contributor | Columns before | Columns after | Document before | Document after |
-|---|---:|---:|---:|---:|
-| `decode_canonical_wire` | 3,640 | 3,640 | 4,264 | 4,264 |
-| `encode_wire` | 3,640 | 3,640 | 4,264 | 4,264 |
-| `matches_neutral_type` | 7,360 | 7,360 | 8,536 | **7,800** |
-| `admits_stored_scalar` | 864 | 864 | 864 | **128** |
-| `reduce_declared_members_classified` | 672 | 672 | 672 | 672 |
-| `decode_occurrence_classified` | 112 | 112 | 112 | 112 |
-| `occurrence_shape` | 336 | **0** | 0 | 0 |
-| `materialize_row` | 64 | 64 | 64 | 64 |
-| `convert_row` — one `result_keys` dict | 64 | **0 dicts** | 64 | **0 dicts** |
-| `LevelContext` — one fresh context per row | 64 | **0** | 64 | **0** |
-| `CompiledRead.attribute_reads` — one dict per row | 64 | **0** | 64 | **0** |
-| `_document_columns` — one projected frozenset | 128 | **gone** | 128 | **gone** |
-| `observable_columns` | 64 | 64 | 64 | 64 |
-| **containers rebuilt per row, summed** | **5.00** | **0.00** | **5.00** | **0.00** |
+| contributor | Col. before | Col. rows | Col. codec | Doc. before | Doc. rows | Doc. codec |
+|---|---:|---:|---:|---:|---:|---:|
+| `decode_canonical_wire` | 3,640 | 3,640 | 3,640 | 4,264 | 4,264 | 4,264 |
+| `encode_wire` | 3,640 | 3,640 | **0** | 4,264 | 4,264 | **0** |
+| `matches_neutral_type` | 7,360 | 7,360 | **2,544** | 8,536 | 7,800 | **2,080** |
+| `admits_stored_scalar` | 864 | 864 | 864 | 864 | **128** | 128 |
+| `reduce_declared_members_classified` | 672 | 672 | 672 | 672 | 672 | 672 |
+| `decode_occurrence_classified` | 112 | 112 | 112 | 112 | 112 | 112 |
+| `occurrence_shape` | 336 | **0** | 0 | 0 | 0 | 0 |
+| `materialize_row` | 64 | 64 | 64 | 64 | 64 | 64 |
+| `convert_row` — one `result_keys` dict | 64 | **0 dicts** | 0 dicts | 64 | **0 dicts** | 0 dicts |
+| `LevelContext` — one fresh context per row | 64 | **0** | 0 | 64 | **0** | 0 |
+| `CompiledRead.attribute_reads` — one dict per row | 64 | **0** | 0 | 64 | **0** | 0 |
+| `_document_columns` — one projected frozenset | 128 | **gone** | gone | 128 | **gone** | gone |
+| `observable_columns` | 64 | 64 | 64 | 64 | 64 | 64 |
+| **containers rebuilt per row, summed** | **5.00** | **0.00** | **0.00** | **5.00** | **0.00** | **0.00** |
 
 **Nothing is rebuilt per row any more**, which is COR-137's completion criterion
 for the layout-, member-, and type-invariant work it names: the fresh
@@ -279,6 +312,13 @@ delegates to it.
 Under `Columns` `admits_stored_scalar` is unchanged at 864, and that is correct
 rather than a missed saving: that layout classifies no direct scalar, so all 864
 are the position's real admissions.
+
+**`encode_wire` is no longer reached at all**, on either layout, and
+`matches_neutral_type` falls with it by 4,816 calls under `Columns` and 5,720
+under `Document` — about 75 calls per row on both. Both are the codec slice, and
+the section below says which of those calls were redundant and why. The number
+that does NOT move is `decode_canonical_wire`: the admission rule still runs once
+per stored value, which is the contract this work was forbidden to touch.
 
 **What the "before" column named as the target, and where each target landed.**
 Optimization was allowed to begin only if the measured baseline showed a per-row
@@ -305,14 +345,22 @@ figure above is attributable.
 | `3d2b9d42` | seven `RowTransform` variants, two wrappers, and `RowTransformResult` collapse into one staged `RowMaterializer` | `occurrence_shape` 336 → 0 under `Columns`; transient −334 B/row and peak −20 kB on 3.13 `Columns`; compiled-read preparation +0.08 ms and +4.9 kB (`Columns`) / +1.9 kB (`Document`) per read |
 | `61c852a1` | `LevelContext` derives the projected flags, the observation exclusions and each document's zero value once; conversion reads contracts by position; no re-admission for a classified member | `admits_stored_scalar` 864 → 128 under `Document`; containers rebuilt per row 4.00 → 1.00; µs/row −3% under `Columns` and −5 to −7% under `Document` |
 | `72949d45` | `PreparedRead` binds one `LevelContext` per resolvable Entity per compiled read; every read lane goes through it | `LevelContext` constructions and `attribute_reads` calls 64 → 0 per batch; containers rebuilt per row 1.00 → 0.00; prepared +2,600 B (3.13) / +2,658 B (3.14) per read and 14–16 µs of `bind` per execution; transient −80 B/row on 3.13 `Columns` |
+| the codec slice | canonical decoding reaches its verdict without re-deriving a spelling it does not need | `encode_wire` 3,640 / 4,264 → 0 per batch; `matches_neutral_type` −4,816 / −5,720; µs/row −28.3% / −28.1% (3.13) and −27.5% / −30.2% (3.14); nothing prepared, retained, or transient moved |
 
-The timings are attributable only as a trajectory, not slice by slice. Each
-intermediate reading moved by about the ±10% this machine's own repeatability
-covers, so no slice claimed a timing verdict of its own; what the four together
-deliver is the −15.2% / −6.4% (3.13) and −13.8% / −5.7% (3.14) recorded above.
-Read as direction, the trajectory of µs/row on 3.13 `Columns` is
+The first four slices are attributable only as a trajectory, not slice by slice.
+Each intermediate reading moved by about the ±10% this machine's own repeatability
+covers, so no slice among them claimed a timing verdict of its own; what the four
+together deliver is the −15.2% / −6.4% (3.13) and −13.8% / −5.7% (3.14) the middle
+column records. Read as direction, the trajectory of µs/row on 3.13 `Columns` is
 354.7 → 331–344 → 315–316 → 305–306 → 301, which puts the movement in the two
 slices that removed the most per-row work.
+
+The codec slice is the one that can be attributed on its own, because its effect
+is many times that spread and because it was also measured as a controlled A/B in
+one process, the codec file swapped under one interpreter between the arms:
+19.594 and 19.890 ms per `Columns` batch before it against 14.008 after, and
+23.992 and 24.084 against 16.642 under `Document` — a third of the batch,
+reproduced by the matrix's own −28% to −30%.
 
 ## The codec decision
 
@@ -345,30 +393,85 @@ That ablation is an upper bound on the opportunity and not a target. It answers
 "what does re-deriving the spelling cost", not "what may be removed": the
 canonicality verdict itself is the admission rule, and every Neutral Type's
 canonical spelling, noncanonical refusal, managed-carrier rule, and diagnostic
-reason must come out unchanged. What is genuinely redundant is narrower — the
-membership check `encode_wire` repeats on a value `decode_canonical_wire` has
-already admitted, and the second `_exact_decimal` spelling every `Decimal`
-admission pays — and how much of the leg that accounts for is what the codec
-slice measures. So the conditional codec phase **runs**, inside the existing
-canonical-decoding contract, with `tests/unit/test_wire.py`'s inverse law as its
-acceptance.
+reason must come out unchanged. So the conditional codec phase **ran**, inside the
+existing canonical-decoding contract, with `tests/unit/test_wire.py`'s inverse law
+and `tests/unit/test_document_codec.py`'s spelling table as its acceptance —
+neither edited by it.
+
+## What the codec slice removed
+
+**Most of the round trip turned out to be redundant rather than necessary,
+because the verdict is per Neutral Type and most types settle it in the decoder.**
+The Wire matrix in `core/spec/m-wire.md` names, for every declared type, what a
+noncanonical spelling of it looks like. Five types have none at all — `boolean`,
+`int32`, `int64`, `string`, `json` — so every literal their grammar admits is the
+one the codec writes back. Four more have one, and each decoder refuses it against
+the source text itself before the verdict is asked for: `decimal` against its
+exact scaled spelling, `bytes` against the lowercase-hex grammar, `date` against
+the fixed-width grammar, `uuid` against the lowercase hyphenated grammar. For
+those nine the re-encode could only re-derive a string that had already been
+compared, or compare a value with itself.
+
+What is left needs a spelling, and still derives one: the numeric spellings, which
+are not the value they name, and the temporal fraction widths, which the grammars
+admit written at three digits, at six, and not at all. Those four types —
+`int32`/`int64`, `float32`/`float64`, `time`, `timestamp` — reach the formatter
+directly instead of through `encode_wire`, skipping the carrier normalization and
+the membership check a decoded value has already passed. Three narrower
+redundancies went with them: the second `_exact_decimal` every `decimal`
+admission spelled, the two extra whole-carrier walks every `json` admission paid
+(one for membership, one for the discarded re-encode), and the shortest-number
+search at `float64`, where a number that names the value at binary64 width **is**
+the value, so the search could only hand back what it was given.
+
+| | 3.13 `Columns` | 3.13 `Document` | 3.14 `Columns` | 3.14 `Document` |
+|---|---:|---:|---:|---:|
+| Profiled batch, cumulative (ms) | 48.519 | 57.745 | 50.197 | 58.813 |
+| — before the slice | 70.463 | 85.671 | 72.598 | 87.214 |
+| `decode_canonical_wire` (the contract) | 61.0% | 66.1% | 61.2% | 66.3% |
+| `_is_canonical_output` (the verdict) | 29.4% | 32.7% | 29.7% | 33.0% |
+| — the `float32` shortest-number search within it | 20.8% | 23.6% | 21.3% | 24.1% |
+| **`encode_wire`** | **0 calls** | **0 calls** | **0 calls** | **0 calls** |
+| `matches_neutral_type` | 7.7% | 3.5% | 7.8% | 3.5% |
+
+Every verdict is unchanged, and that was measured rather than argued: 25,872
+outcomes of `decode_wire`, `decode_canonical_wire`, and `encode_wire` over
+fourteen declared types and every literal the law suites, the Wire matrix, and a
+seeded generator produce, compared value-for-value and reason-for-reason against
+the previous implementation, with no difference; and 720,228 float outcomes on top
+of that, over random bit patterns, subnormals, both extremes, and the matrix's own
+double-rounding and tie-break representatives.
+
+**One contributor stays, and it is the rule rather than a repeat.** The
+shortest-number search at `float32` is 21% to 24% of the profiled batch and 18% to
+21% of the untraced one, which is over COR-137's own bar — but nothing about it is
+redundant. A `float32`'s canonical Wire Value is a *different* number from the
+value it names, and finding it means asking, digit count by digit count, which
+numbers round back to that value at binary32 width. Nothing earlier in the decode
+has that answer, so the only way to make it cheaper is to change how a decimal is
+rounded to binary32 — a rounding shortcut inside `m-core`'s membership predicate,
+which `m-wire` spends three rules keeping exact, and which COR-137 forbids this
+work from touching. The ticket names that as a valid completion, and
+`docs/deferred-ledger.md` **D-97** carries it.
 
 ## Secondary workload
 
 The direct-converter 64-graph shape, driven through `convert_row` and
 `GraphBuilder` alone. It is layout-independent, so the two cells of one runtime
 measure one workload and the spread between them is this reading's own
-repeatability. It calls no `compile_read` and no `materialize_row`, so it sees
-only the conversion-side half of this work — which is why it moves at all.
+repeatability. It calls no `compile_read` and no `materialize_row`, so what it
+sees of this work is the conversion-side half and the codec — which is why it
+moves at all, and why it moves again in the last column: an unclassified row's
+occurrences are decoded in conversion, and every leaf of them is an admission.
 
-| | 3.13 before | 3.13 after | 3.14 before | 3.14 after |
-|---|---:|---:|---:|---:|
-| Build (convert, write, seal), 448 projections | 26.20 ms | 24.10 ms | 26.06 ms | 24.31 ms |
-| — per projection | 58.48 µs | 53.80 µs | 58.17 µs | 54.25 µs |
-| — projections per second | 17,100 | 18,586 | 17,191 | 18,432 |
-| Merge, 448 projections | 0.48 ms | 0.44 ms | 0.46 ms | 0.43 ms |
-| — per projection | 1.06 µs | 0.97 µs | 1.03 µs | 0.96 µs |
-| **64-graph `cost` item, recorded duration** | **47.6 s** | *refreshed with the duration store* | **47.6 s** | *refreshed with the duration store* |
+| | 3.13 before | 3.13 rows | 3.13 codec | 3.14 before | 3.14 rows | 3.14 codec |
+|---|---:|---:|---:|---:|---:|---:|
+| Build (convert, write, seal), 448 projections | 26.20 ms | 24.10 ms | 22.31 ms | 26.06 ms | 24.31 ms | 22.26 ms |
+| — per projection | 58.48 µs | 53.80 µs | 49.80 µs | 58.17 µs | 54.25 µs | 49.69 µs |
+| — projections per second | 17,100 | 18,586 | 20,081 | 17,191 | 18,432 | 20,125 |
+| Merge, 448 projections | 0.48 ms | 0.44 ms | 0.44 ms | 0.46 ms | 0.43 ms | 0.43 ms |
+| — per projection | 1.06 µs | 0.97 µs | 0.99 µs | 1.03 µs | 0.96 µs | 0.96 µs |
+| **64-graph `cost` item, recorded duration** | **47.6 s** | — | *refreshed with the duration store* | **47.6 s** | — | *refreshed with the duration store* |
 
 The item itself is never re-run from a tool. Its duration is read from
 `tests/_support/cost_durations.json`, which is what balances the `cost` class's
@@ -380,19 +483,21 @@ maximum across the six CI cost cells.
 
 | | |
 |---|---|
-| Recorded | 2026-09-10, both halves on the same machine on the same day |
+| Recorded | 2026-09-10, all three columns on the same machine on the same day |
 | Machine | Apple M5, 10 cores, 32 GiB, darwin/arm64 |
 | OS | macOS 26.6.2 (build 25G83) |
 | Interpreters | CPython 3.13.15 and 3.14.7 (both `main`, Aug 5 2026, Clang 21.0.0) |
 | Command | `just python-report-snapshot-materialization` |
 | Source (before) | branch `cor-137-speed-up-snapshot-materialization-0ou36c`, base commit `431936be` |
-| Source (after) | the same branch at `72949d45`, the head of the four slices in *Where each saving came from* |
+| Source (rows) | the same branch at `72949d45`, the head of the four slices in *Where each saving came from* |
+| Source (codec) | the same branch with the canonical-decoding slice applied — the commit this column landed in |
 | Isolation | one fresh child interpreter per (minor, layout), `PYTHONHASHSEED=0`, no coverage tracer |
 | Warm-up | 200 unsampled runs before every memory window; 5 before every timing |
 | Timing samples | mean of 20 batches, taken untraced, from an already prepared model and compiled reads |
 | Runtime | about three minutes for the whole matrix |
 | Repeatability (before) | a second whole-matrix run moved the timings by up to 10% (Columns 3.14: 22.802 → 24.965 ms) and one memory row by 0.2% (Document 3.13 retained: 193,584 → 193,253 B); everything else was identical to the byte |
-| Repeatability (after) | a second whole-matrix run moved µs/row by 3.3% at most (3.13 Columns 300.8 → 310.9) and every retained, peak, and transient figure by under 0.3%; the prepared totals, the layout-catalog figures, the tracked/reference census, and every call count were identical to the byte |
+| Repeatability (rows) | a second whole-matrix run moved µs/row by 3.3% at most (3.13 Columns 300.8 → 310.9) and every retained, peak, and transient figure by under 0.3%; the prepared totals, the layout-catalog figures, the tracked/reference census, and every call count were identical to the byte |
+| Repeatability (codec) | a second whole-matrix run moved µs/row by 2.3% at most (3.13 Document 263.2 → 257.2) and peak by under 0.4%; retained moved by up to 1.4% and transient by up to 1.0%, both on 3.13 `Document` and both the level-and-not-a-difference reading **D-96** describes — the controlled A/B above is what settles that figure. Every prepared total, every layout-catalog figure, the tracked/reference census, and every call count were identical to the byte |
 | Load | every run above was taken at a one-minute load average under 2.5, with model preparation as the control: a matrix taken on a busy machine reads 1.5–2× slow in every cell, *including* the preparation this work does not touch |
 
 Each half is one recorded run. A report matrix is worth only the machine it was
