@@ -53,6 +53,7 @@ from parallax.conformance._database_control import (
     InterleavedExecutionFactory,
     ModeledExecution,
 )
+from parallax.conformance._lanes.turnstile import Turnstile, await_workers
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
@@ -2978,7 +2979,7 @@ def _run_uow_group(
 # consumer than the                                                           #
 # `when.concurrency` rounds runner (`parallax.conformance.concurrency_runner`, #
 # real `db.transact` calls, production routing, not verbatim                   #
-# authored statements). :class:`_Turnstile` sequences the two groups' own      #
+# authored statements). :class:`Turnstile` sequences the two groups' own      #
 # steps in AUTHORED order across two worker threads — deterministic (never a   #
 # genuine race at the Python level) because optimistic mode's own reads take   #
 # no lock and the choreography hands off control explicitly at each step, so   #
@@ -2986,42 +2987,6 @@ def _run_uow_group(
 # read step's every page is drained before the turnstile advances, so a peer's #
 # commit lands BETWEEN two deliveries and never inside one.                    #
 # --------------------------------------------------------------------------- #
-class _Turnstile:
-    """A strict, shared step-index cursor two worker threads take turns
-    through: a thread's own step at index ``i``
-    calls :meth:`wait_for` ``(i)`` before running it (blocking until every
-    EARLIER step, on EITHER thread, has finished) and :meth:`advance` after —
-    so the two groups' steps interleave in EXACTLY authored order, never a
-    genuine Python-level race, matching `m-case-format`'s own "steps execute
-    in authored order" scenario contract even though they run on two
-    independently-held connections.
-    """
-
-    def __init__(self) -> None:
-        self._condition = threading.Condition()
-        self._next = 0
-
-    def wait_for(self, index: int) -> None:
-        with self._condition:
-            while self._next < index:
-                self._condition.wait()
-
-    def advance(self) -> None:
-        with self._condition:
-            self._next += 1
-            self._condition.notify_all()
-
-    def release_all(self) -> None:
-        """Unstick every waiter unconditionally (a worker thread's own
-        UNEXPECTED failure — never a witnessed path, defensive only): without
-        this a partner thread blocked on a LATER index than one extra
-        :meth:`advance` reaches would hang forever, and so would the
-        orchestrator's own `thread.join()`."""
-        with self._condition:
-            self._next = 2**31
-            self._condition.notify_all()
-
-
 def _empty_group_rows() -> dict[int, list[Mapping[str, object]]]:
     return {}
 
@@ -3053,7 +3018,7 @@ def _run_interleaved_group(
     context: CaseContext,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
-    turnstile: _Turnstile,
+    turnstile: Turnstile,
     result: _InterleavedGroupResult,
 ) -> None:
     """Run one interleaved group's OWN steps (``indices``, in authored order,
@@ -3144,16 +3109,6 @@ def _run_interleaved_group(
         turnstile.advance()
 
 
-# The interleaved-group choreography's own bounded join (the provider-
-# contract deadlock proof's own precedent): a genuine harness defect (a
-# missing `advance()` somewhere) must surface as a loud failure, never an
-# indefinitely hung test session. Named so :func:`_await_interleaved_workers`
-# can be exercised directly with a SHRUNK bound — a real, unstuck-by-
-# `release_all` timeout path in well under a second, rather than the
-# production bound actually elapsing twice.
-_INTERLEAVED_GROUP_JOIN_TIMEOUT: Final[float] = 30.0
-
-
 def _refuse_untrusted_terminations(
     executions: Mapping[str, InterleavedExecution], case_name: str
 ) -> None:
@@ -3186,94 +3141,6 @@ def _refuse_untrusted_terminations(
     )
 
 
-def _await_interleaved_workers(
-    workers: Mapping[str, tuple[threading.Thread, InterleavedExecution]],
-    turnstile: _Turnstile,
-    case_name: str,
-    *,
-    timeout: float = _INTERLEAVED_GROUP_JOIN_TIMEOUT,
-) -> None:
-    """Join both interleaved-group worker threads within ``timeout``; on a
-    timeout, cooperatively unstick them before raising rather than raising
-    while they may still be alive.
-
-    Three escalations, each reaching a survivor the one before it cannot:
-
-    1. :meth:`_Turnstile.release_all` wakes every thread parked on a hand-off
-       that never arrived — the ordinary harness defect, and the only one that
-       needs nothing destructive.
-    2. :meth:`~parallax.conformance._database_control.InterleavedExecution.
-       cancel_active` on a survivor's OWN execution, for a thread parked in real
-       driver I/O that no turnstile release can reach. Non-destructive and
-       best-effort, which it is allowed to be because the guarantee lives in the
-       rung after it.
-    3. :meth:`~parallax.conformance._database_control.InterleavedExecution.
-       terminate_active` — the guaranteed one. Every execution here is a session
-       this run opened for this choreography alone, so destroying it is a loss
-       of nothing the caller still owns; that is why the lane never runs a group
-       over the fixture's own connection.
-
-    FINAL CONTRACT: no path — return, raise, or assert — runs while a started
-    worker is alive. The join after the termination rung is therefore
-    deliberately unbounded: against an execution whose ladder is somehow
-    defeated, the failure mode is a diagnosable hang at that exact line rather
-    than a live worker racing the caller through a session the caller believes
-    is finished. Every execution reaching this point has DECLARED that the
-    ladder unblocks it (:func:`_refuse_untrusted_terminations`), so in practice
-    the join returns at once.
-
-    Worker exceptions the termination itself provokes are expected collateral,
-    captured on each worker's own :class:`_InterleavedGroupResult` and never
-    consulted once this function has raised. The error names every execution
-    that had to be terminated and carries every recorded ladder failure as
-    :meth:`~BaseException.add_note` context — recorded, never masking it. The
-    caller's own ``finally`` still closes every execution unconditionally.
-    """
-
-    def rejoin() -> list[str]:
-        for thread, _execution in workers.values():
-            thread.join(timeout=timeout)
-        return [label for label, (thread, _) in workers.items() if thread.is_alive()]
-
-    if not rejoin():
-        return
-
-    turnstile.release_all()
-    survivors = rejoin()
-
-    if survivors:
-        for label in survivors:
-            workers[label][1].cancel_active()
-        survivors = rejoin()
-
-    terminated: list[str] = []
-    failures: list[str] = []
-    for label in survivors:
-        report = workers[label][1].terminate_active()
-        terminated.append(label)
-        failures.extend(f"{label}: {failure}" for failure in report.failures)
-
-    # UNBOUNDED — see docstring: a diagnosable hang here beats ever raising (or
-    # returning) while a worker is still alive, so there is no separate,
-    # narrower termination-join bound to violate.
-    for thread, _execution in workers.values():
-        thread.join()
-
-    if terminated:
-        error = EngineError(
-            f"{case_name}: the interleaved-group choreography did not finish within its "
-            f"bound — {', '.join(terminated)} had to be terminated to unstick it"
-        )
-    else:
-        error = EngineError(
-            f"{case_name}: the interleaved-group choreography did not "
-            "finish within its bound — a turnstile hand-off is missing"
-        )
-    for failure in failures:
-        error.add_note(f"termination ladder: {failure}")
-    raise error
-
-
 def run_interleaved_scenario_case(
     case: case_format.Case,
     port: CaseDatabase,
@@ -3290,7 +3157,7 @@ def run_interleaved_scenario_case(
     this function constructs no connection itself), each a REAL ``db.transact``
     (production routing) whose steps lower in the dialect its OWN connection
     declares, steps sequenced across the two in AUTHORED order
-    (:class:`_Turnstile`). Neither group runs on the caller's ``port``: a stuck
+    (:class:`Turnstile`). Neither group runs on the caller's ``port``: a stuck
     worker is unstuck by destroying the session it is parked in, and what this
     lane may destroy is only a session it opened for this one choreography. The
     caller's ``port`` therefore serves the case's out-of-band `given.apply`
@@ -3315,7 +3182,8 @@ def run_interleaved_scenario_case(
     deterministic-termination contract (:func:`_refuse_untrusted_terminations`):
     an execution that declares none is refused loudly here, rather than
     surfacing only much later as an indefinite hang at
-    :func:`_await_interleaved_workers`'s own unbounded post-ladder join.
+    :func:`~parallax.conformance._lanes.turnstile.await_workers`'s own
+    unbounded post-ladder join.
     """
     steps = case_document.scenario_steps(case)
     serving = case_serving_model(case)
@@ -3347,7 +3215,7 @@ def run_interleaved_scenario_case(
     observed_a = lifecycle.observation()
     observed_b = lifecycle.observation()
     context = CaseContext(serving, model, concurrency, shadow, case_format.uow_isolation(case))
-    turnstile = _Turnstile()
+    turnstile = Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
     # Incremental protection: each execution is registered for release the
@@ -3380,7 +3248,7 @@ def run_interleaved_scenario_case(
         }
         for thread, _execution in workers.values():
             thread.start()
-        _await_interleaved_workers(workers, turnstile, case.path.name)
+        await_workers(workers, turnstile, case.path.name)
     for result in (result_a, result_b):
         if result.failure is not None:
             raise result.failure
