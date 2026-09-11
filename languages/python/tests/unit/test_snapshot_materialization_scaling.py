@@ -9,15 +9,16 @@ graphs materialized. Beside it, *execution-owned view slots* draws the other lin
 a query shape belongs to one execution and MUST NOT be cached for the lifetime of
 a model. This is the SIZE half of those two requirements measured over the
 production materialization path, from ``prepare_model`` through ``compile_read``
-to ``CompiledRead.materialize_row`` and conversion: what is retained must not
-grow with rows, with graphs, or with executions.
+and ``bind`` to ``PreparedRead.materialize`` and conversion: what is retained
+must not grow with rows, with graphs, or with executions.
 
-**Two axes, one claim each.** The first varies rows through one prepared selection
-and one set of compiled reads: nothing prepared may grow with the rows
-materialized through it. The second varies whole executions — a fetch plan, its
-compiled reads, and a graph, each unreachable before the next begins — with only
-the prepared selection held: nothing model-fixed may grow with graphs or with
-executions, which is what forbids a query shape retained PER EXECUTION.
+**Two axes, one claim each.** The first varies rows through one prepared
+selection, one set of compiled reads, and the levels bound from them: nothing
+prepared may grow with the rows materialized through it. The second varies whole
+executions — a fetch plan, its compiled reads, and a graph, each unreachable
+before the next begins — with only the prepared selection held: nothing
+model-fixed may grow with graphs or with executions, which is what forbids a
+query shape retained PER EXECUTION.
 
 Both axes grade a SIZE, so what they reach is bounded by what varies across the
 thing they vary. A holder whose entry count is fixed by the model — one banked
@@ -107,6 +108,7 @@ from _snapshot_materialization_support import (
     batch,
     compiled_levels,
     fetch_plan,
+    prepared_levels,
     query,
     rows_per_level,
     workload,
@@ -201,14 +203,15 @@ def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
 
 
 def _execute(model: CatalogedModel, rows: Sequence[Sequence[Row]]) -> None:
-    """One whole execution: its own plan, its own compiled reads, its own graph,
-    none of which outlives this call."""
+    """One whole execution: its own plan, its own compiled reads, its own
+    prepared reads, its own graph, none of which outlives this call."""
     plan = fetch_plan(query(model.meta), model.meta)
-    batch(model, plan, compiled_levels(plan, model.meta), rows)
+    reads = compiled_levels(plan, model.meta)
+    batch(model, plan, prepared_levels(model, reads), rows)
 
 
 def _unseen_rows(layout: Layout) -> Span:
-    """One prepared selection and one set of compiled reads, warmed over
+    """One prepared selection and one set of compiled and bound reads, warmed over
     :data:`OWNERS` roots' rows until every cost paid once is paid, and then handed
     the rows of :data:`OWNERS` FURTHER roots inside the marked region.
 
@@ -226,15 +229,15 @@ def _unseen_rows(layout: Layout) -> Span:
     model = _catalog(selection)
     meta = model.meta
     plan = fetch_plan(query(meta), meta)
-    reads = compiled_levels(plan, meta)
+    prepared = prepared_levels(model, compiled_levels(plan, meta))
     warm = _rows(model, OWNERS)
     unseen = _rows(model, OWNERS, _UNSEEN)
 
     def span(opened: Callable[[], None], closed: Callable[[], None]) -> None:
         for _ in range(WARMUP):
-            batch(model, plan, reads, warm)
+            batch(model, plan, prepared, warm)
         opened()
-        batch(model, plan, reads, unseen)
+        batch(model, plan, prepared, unseen)
         closed()
 
     return span
@@ -243,8 +246,8 @@ def _unseen_rows(layout: Layout) -> Span:
 def _unseen_executions(layout: Layout) -> Span:
     """A prepared selection warmed over :data:`OWNERS` roots' executions, and then
     :data:`_EXECUTIONS` whole executions inside the marked region — each with its
-    own fetch plan, its own compiled reads, and its own sealed graph, none of
-    which outlives it.
+    own fetch plan, its own compiled and bound reads, and its own sealed graph,
+    none of which outlives it.
 
     The warm executions run the region's own rows count, so the one thing the
     region varies is that its roots are ones this process has never decoded: the
@@ -278,24 +281,26 @@ def _settled() -> None:
 
 
 def _held_after_rows(layout: Layout, owners: int) -> tuple[Closure, Closure]:
-    """What the compiled reads hold of their own, and what the whole prepared
-    selection does, once ``owners`` roots have been materialized through them."""
+    """What the compiled reads and the prepared reads bound from them hold of
+    their own, and what the whole prepared selection does, once ``owners`` roots
+    have been materialized through them."""
     selection = _prepared(layout)
     model = _catalog(selection)
     meta = model.meta
     plan = fetch_plan(query(meta), meta)
     reads = compiled_levels(plan, meta)
-    batch(model, plan, reads, _rows(model, owners))
+    prepared = prepared_levels(model, reads)
+    batch(model, plan, prepared, _rows(model, owners))
     _settled()
-    return closure(reads, (meta, selection, model, plan)), closure(
+    return closure((reads, prepared), (meta, selection, model, plan)), closure(
         selection, _boundary(layout, selection)
     )
 
 
 def _held_after_executions(layout: Layout, executions: int) -> Closure:
     """What the prepared selection holds once ``executions`` whole executions —
-    each with its own fetch plan, its own compiled reads, and its own sealed
-    graph — have resolved through it and been discarded."""
+    each with its own fetch plan, its own compiled and bound reads, and its own
+    sealed graph — have resolved through it and been discarded."""
     selection = _prepared(layout)
     model = _catalog(selection)
     rows = _root_only(_rows(model, _ONE_ROOT))
@@ -342,14 +347,14 @@ def _region_added_nothing(span: Span, where: str) -> None:
 @in_a_child_interpreter
 def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
     # What preparation holds is fixed by the model's exact Entity layouts and by
-    # the compiled reads: eight times the rows through one prepared read must
-    # leave the prepared side holding the same objects through the same
-    # references, and eight roots' worth of rows this process has never decoded
-    # must leave nothing anywhere in it holding more than before they arrived. A
-    # per-row shape, dispatch table, or classified-key set attached to either would
-    # move the closure, and a per-row entry banked in a container neither of them
-    # reaches — keyed by what the row holds, so it never grows again once the same
-    # rows come back — would move the region.
+    # the compiled reads it bound its levels from: eight times the rows through
+    # one prepared read must leave the prepared side holding the same objects
+    # through the same references, and eight roots' worth of rows this process
+    # has never decoded must leave nothing anywhere in it holding more than
+    # before they arrived. A per-row shape, dispatch table, or classified-key set
+    # attached to either would move the closure, and a per-row entry banked in a
+    # container neither of them reaches — keyed by what the row holds, so it
+    # never grows again once the same rows come back — would move the region.
     for layout in LAYOUTS:
         one_reads, one_prepared = _held_after_rows(layout, _ONE_ROOT)
         many_reads, many_prepared = _held_after_rows(layout, OWNERS)
@@ -364,10 +369,11 @@ def test_prepared_state_is_the_same_size_after_one_row_and_after_many() -> None:
 def test_prepared_state_is_the_same_size_after_one_execution_and_after_sixty_four() -> None:
     # The other half: what preparation keeps is independent of the number of
     # graphs materialized and of the executions that materialized them. Sixty-four
-    # whole executions — each planning, compiling, converting, and sealing a graph
-    # of its own — must leave the selection they were all resolved through holding
-    # what one execution left it holding, and must leave nothing anywhere in the
-    # process holding more than before the first of them opened. A query shape
+    # whole executions — each planning, compiling, binding, converting, and
+    # sealing a graph of its own — must leave the selection they were all
+    # resolved through holding what one execution left it holding, and must leave
+    # nothing anywhere in the process holding more than before the first of them
+    # opened. A query shape
     # retained per execution is exactly what would move the closure — one banked
     # once for the model and shared by every execution after it leaves both arms
     # holding one, so a size equality answers nothing about it — and a

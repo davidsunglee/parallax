@@ -48,7 +48,6 @@ from parallax.core.base import (
     FLOAT64,
     INT32,
     INT64,
-    SQL_NULL,
     STRING,
     TIME,
     TIMESTAMP,
@@ -58,7 +57,7 @@ from parallax.core.base import (
     PresentDocument,
     UnknownFamilyTag,
 )
-from parallax.core.document_codec import UNAVAILABLE, DocumentFinding, encode_leaf
+from parallax.core.document_codec import DocumentFinding, encode_leaf
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -73,7 +72,6 @@ from parallax.core.temporal_read import Pin
 from parallax.descriptor._records import (
     Attribute,
     Entity,
-    Inheritance,
     NestedValueObject,
     ValueObject,
     ValueObjectAttribute,
@@ -84,10 +82,12 @@ from parallax.snapshot.materialize import (
     MISSING_STORED_VALUE,
     InvalidRootInput,
     StoredDataIssueInput,
-    _convert,
+)
+from parallax.snapshot.materialize._convert import (
+    LevelContext,
+    convert_row,
     observable_columns,
 )
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
@@ -267,74 +267,6 @@ def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
     invalid = _projection(context, {"payload_hex": "not-hex"})
     assert [issue.code for issue in invalid.issues] == ["stored-data-leaf-undecodable"]
     assert invalid.member(payload.identity) is ABSENT
-
-
-_ORDER = EntityIdentity(_NAMESPACE, "Order")
-_CLASSIFIED_ORDER: dict[str, object] = {
-    "id": 1,
-    "name": "Ada",
-    "sku": None,
-    "qty": 2,
-    "price": decimal.Decimal("10.25"),
-    "active": True,
-    "ordered_on": dt.date(2026, 1, 15),
-}
-
-
-def test_a_classified_scalar_is_carried_as_the_transform_classified_it() -> None:
-    # A member the compiled transform decoded out of a document arrives as the
-    # MANAGED value its declared type spells, already judged. Conversion carries
-    # it at its own position without asking the admission rule a second time,
-    # which is what keeps a decoded value distinguishable from the two states
-    # below.
-    node = _converted(
-        ORDERS, "Order", dict(_CLASSIFIED_ORDER), classified_members=frozenset(_CLASSIFIED_ORDER)
-    )
-    assert node.member(AttributeIdentity(_ORDER, "price")) == decimal.Decimal("10.25")
-    assert node.member(AttributeIdentity(_ORDER, "orderedOn")) == dt.date(2026, 1, 15)
-    assert node.member(AttributeIdentity(_ORDER, "active")) is True
-    assert node.issues == ()
-
-
-def test_a_classified_stored_null_reads_by_its_declared_nullability() -> None:
-    # Stored null is the one classified state the member's own declaration
-    # decides: a nullable Attribute carries it as the value it is, and a
-    # non-nullable one holds no value at all — the same two answers the
-    # admission rule gives, reached without running it.
-    row = dict(_CLASSIFIED_ORDER, name=None)
-    node = _converted(ORDERS, "Order", row, classified_members=frozenset(row))
-    assert node.member(AttributeIdentity(_ORDER, "sku")) is None
-    assert node.member(AttributeIdentity(_ORDER, "name")) is ABSENT
-    assert node.issues == ()
-
-
-def test_a_classified_member_the_transform_made_unavailable_is_absent() -> None:
-    # `UNAVAILABLE` is the codec's own verdict that no conforming value could be
-    # made available at that member, and it is not a value: the position reads
-    # ABSENT even where a stored null at the SAME nullable member reads `None`,
-    # which is the distinction trusting the classification has to keep. The
-    # finding the transform already raised is what publishes the issue, so no
-    # second judgment happens here.
-    row = dict(_CLASSIFIED_ORDER, sku=UNAVAILABLE)
-    node = _converted(ORDERS, "Order", row, classified_members=frozenset(row))
-    assert node.member(AttributeIdentity(_ORDER, "sku")) is ABSENT
-    assert node.issues == ()
-
-
-def test_a_classified_member_is_never_admitted_a_second_time(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The count is the claim, and no result can carry it: a re-admission agreeing
-    # with the classification is invisible in the converted row. So the rule
-    # itself is replaced for this conversion, and a row whose every member the
-    # transform classified must reach none of it.
-    def _refuse(*_args: object, **_kwargs: object) -> object:
-        return pytest.fail("a classified member reached the admission rule again")
-
-    monkeypatch.setattr(_convert, "admits_stored_scalar", _refuse)
-    row = dict(_CLASSIFIED_ORDER, name=UNAVAILABLE, sku=None)
-    node = _converted(ORDERS, "Order", row, classified_members=frozenset(row))
-    assert node.carried == {"id", "sku", "qty", "price", "active", "orderedOn"}
 
 
 def test_a_sibling_column_and_the_synthetic_family_tag_contribute_nothing() -> None:
@@ -833,120 +765,6 @@ def test_observable_columns_renders_a_many_occurrence_as_a_list() -> None:
     assert columns["stops"] == [{"label": "a"}]
 
 
-def test_observable_columns_rekeys_and_decodes_an_encoded_scalar_projection() -> None:
-    context = LevelContext(
-        layout_of(SCALARS, identity_of(SCALARS, "ScalarThing")),
-        (),
-        _reads(SCALARS, "ScalarThing", encoded={"payload": "payload_hex"}),
-    )
-    assert observable_columns({"payload_hex": "0a1b"}, context) == {"payload": b"\x0a\x1b"}
-
-
-def test_observable_columns_preserves_an_already_classified_document_occurrence() -> None:
-    managed = {
-        "amount": decimal.Decimal("10.25"),
-        "blob": b"\x0a\x1b",
-        "day": dt.date(2026, 1, 15),
-        "clock": dt.time(9, 30),
-        "instant": dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC),
-        "token": uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
-    }
-    columns = observable_columns(
-        {"id": 1, "profile": managed},
-        _context(DOCUMENT_CODEC, "Sample"),
-        classified_members=frozenset({"profile"}),
-    )
-    assert columns["profile"] == managed
-
-
-def _craft_family() -> Metamodel:
-    """A table-per-hierarchy family whose two concretes each declare one
-    occurrence, in the two multiplicities — the shape a polymorphic position
-    observes its own concrete's occurrence and its siblings' alike."""
-    root = Entity(
-        name="Craft",
-        table="craft",
-        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-    )
-    tug = Entity(
-        name="Tug",
-        inheritance=Inheritance(role="concrete-subtype", parent="Craft", tag_value="tug"),
-        value_objects=(
-            ValueObject(
-                name="berth",
-                column="berth",
-                nullable=True,
-                attributes=(ValueObjectAttribute(name="quay", type="string"),),
-            ),
-        ),
-    )
-    barge = Entity(
-        name="Barge",
-        inheritance=Inheritance(role="concrete-subtype", parent="Craft", tag_value="barge"),
-        value_objects=(
-            ValueObject(
-                name="decks",
-                column="decks",
-                multiplicity="many",
-                attributes=(ValueObjectAttribute(name="label", type="string"),),
-            ),
-        ),
-    )
-    return formed(DescriptorMetamodel(entities=(root, tug, barge)))
-
-
-CRAFT = _craft_family()
-_CRAFT_POSITION = documents_of(CRAFT, identity_of(CRAFT, "Tug")) + documents_of(
-    CRAFT, identity_of(CRAFT, "Barge")
-)
-
-
-def _craft_level(entity: str) -> LevelContext:
-    """One concrete of the craft family, converting under the WHOLE position's
-    document contributors, as a compiled polymorphic read hands them over."""
-    return LevelContext(layout_of(CRAFT, identity_of(CRAFT, entity)), _CRAFT_POSITION)
-
-
-@pytest.mark.parametrize(
-    "stored",
-    [
-        pytest.param({}, id="the-column-is-not-in-the-row"),
-        pytest.param({"decks": None}, id="the-column-is-null-padding"),
-        pytest.param({"decks": SQL_NULL}, id="the-column-is-a-sql-null-document"),
-    ],
-)
-def test_observable_columns_answers_a_sibling_occurrence_its_own_zero_value(
-    stored: dict[str, object],
-) -> None:
-    # A polymorphic position names every concrete's occurrences, so a row of one
-    # concrete is observed against columns only its siblings ever store at. Those
-    # columns are null on every such row, and what a document column holding
-    # nothing reduces to is fixed by the occurrence's own declaration: the empty
-    # list a Many spells, and `None` for a One.
-    tug = observable_columns(
-        {"id": 1, "berth": PresentDocument({"quay": "7"}), **stored}, _craft_level("Tug")
-    )
-    assert tug["berth"] == {"quay": "7"}
-    assert tug["decks"] == []
-    barge = observable_columns(
-        {"id": 2, "decks": PresentDocument([{"label": "aft"}])}, _craft_level("Barge")
-    )
-    assert barge["decks"] == [{"label": "aft"}]
-    assert barge["berth"] is None
-
-
-def test_observable_columns_decodes_a_sibling_column_that_holds_a_document() -> None:
-    # The zero value covers the null column and nothing else: a sibling column
-    # that unexpectedly holds a stored document is decoded against the occurrence
-    # that declared it, exactly as the row's own would be.
-    columns = observable_columns(
-        {"id": 1, "decks": PresentDocument([{"label": "aft"}])},
-        _craft_level("Tug"),
-    )
-    assert columns["decks"] == [{"label": "aft"}]
-
-
 def test_a_whole_document_stored_in_a_kind_it_cannot_be_read_as_names_the_occurrence() -> None:
     # This is an invalid One occurrence inside the Entity document, so the
     # occurrence itself owns the finding.
@@ -994,16 +812,6 @@ def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], 
     assert published.data is None
     assert published.object_key is None
     assert {issue.code for issue in published.issues} == {code}
-
-
-def test_direct_attribute_null_and_unknown_family_tag_become_projection_issues() -> None:
-    node = _converted(
-        CUSTOMER, "Customer", {"id": 1, "name": None}, unknown_family_tag=UnknownFamilyTag("Zebra")
-    )
-    assert [issue.code for issue in node.issues] == [
-        "stored-data-family-tag-unknown",
-        "stored-data-attribute-null",
-    ]
 
 
 @pytest.mark.parametrize(

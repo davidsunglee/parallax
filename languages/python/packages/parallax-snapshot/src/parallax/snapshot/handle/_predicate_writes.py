@@ -125,7 +125,6 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._retention import row_payload
 from parallax.snapshot.handle._write_inputs import reject_temporal_delete, validate_window
-from parallax.snapshot.materialize import observable_columns
 
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
@@ -565,15 +564,7 @@ def _materialize_predicate_write(
     resolved = stage.rows
     if not resolved:
         return
-    contexts = stage.contexts
-    rows = [
-        observable_columns(
-            materialized.values,
-            context,
-            classified_members=materialized.classified_members,
-        )
-        for materialized, context in zip(resolved, contexts, strict=True)
-    ]
+    rows = [stage.prepared.observable_columns(materialized) for materialized in resolved]
     pk_attrs = family_primary_key(meta, entity)
     key_attributes = tuple(attr.identity.name for attr in pk_attrs)
     key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)

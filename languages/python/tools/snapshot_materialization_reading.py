@@ -65,6 +65,7 @@ from _snapshot_materialization_support import (  # noqa: E402 - after the sys.pa
     compiled_levels,
     fetch_plan,
     metamodel,
+    prepared_levels,
     query,
     rows_per_level,
     verify,
@@ -137,27 +138,28 @@ def peak(seam: Seam) -> int:
 
 
 class _Prepared:
-    """One layout's prepared model and compiled reads, plus the fixture rows every
-    batch converts.
+    """One layout's prepared model, compiled reads and the levels bound from
+    them, plus the fixture rows every batch converts.
 
     Built once, outside every window: the rows in particular, so a reading counts
     the position a converted row takes and never the leaf it references."""
 
-    __slots__ = ("meta", "model", "plan", "reads", "rows")
+    __slots__ = ("bound", "meta", "model", "plan", "reads", "rows")
 
     def __init__(self, layout: Layout) -> None:
         self.meta = metamodel(layout)
         self.model = read_projection(prepare_model(workload(layout), edition=EDITION)).model
         self.plan = fetch_plan(query(self.meta), self.meta)
         self.reads = compiled_levels(self.plan, self.meta)
+        self.bound = prepared_levels(self.model, self.reads)
         self.rows = rows_per_level(self.model, self.plan, self.reads)
 
     def run(self) -> None:
-        batch(self.model, self.plan, self.reads, self.rows)
+        batch(self.model, self.plan, self.bound, self.rows)
 
     def seam(self) -> Seam:
         def run(sample: Callable[[], None]) -> None:
-            graph = batch(self.model, self.plan, self.reads, self.rows)
+            graph = batch(self.model, self.plan, self.bound, self.rows)
             sample()
             assert graph is not None
 
@@ -165,13 +167,18 @@ class _Prepared:
 
 
 def _compiled_seam(prepared: _Prepared) -> Seam:
-    """The compiled reads derived INSIDE the window and held at the sample, with
-    the plan they were derived from already unreachable."""
+    """The compiled reads and the levels bound from them, derived INSIDE the
+    window and held at the sample, with the plan they were derived from already
+    unreachable.
+
+    Binding is inside it because what a bind derives is state one compiled read
+    owns for as long as it lives, which is exactly what this figure reports."""
 
     def run(sample: Callable[[], None]) -> None:
         reads = compiled_levels(fetch_plan(query(prepared.meta), prepared.meta), prepared.meta)
+        bound = prepared_levels(prepared.model, reads)
         sample()
-        assert reads is not None
+        assert bound is not None
 
     return run
 
@@ -232,7 +239,7 @@ def measure(layout: Layout) -> Reading:
     verify(
         prepared.model,
         prepared.plan,
-        batch(prepared.model, prepared.plan, prepared.reads, prepared.rows),
+        batch(prepared.model, prepared.plan, prepared.bound, prepared.rows),
     )
 
     model = workload(layout)
@@ -241,10 +248,15 @@ def measure(layout: Layout) -> Reading:
         prepare_model(model, edition=EDITION)
 
     def compile_levels() -> None:
-        compiled_levels(fetch_plan(query(prepared.meta), prepared.meta), prepared.meta)
+        reads = compiled_levels(fetch_plan(query(prepared.meta), prepared.meta), prepared.meta)
+        prepared_levels(prepared.model, reads)
+
+    def bind_levels() -> None:
+        prepared_levels(prepared.model, prepared.reads)
 
     selection_ns = _elapsed_ns(prepare, repetitions=PREPARATION_REPETITIONS, warmup=5)
     compile_ns = _elapsed_ns(compile_levels, repetitions=PREPARATION_REPETITIONS, warmup=5)
+    bind_ns = _elapsed_ns(bind_levels, repetitions=PREPARATION_REPETITIONS, warmup=5)
     batch_ns = _elapsed_ns(prepared.run, repetitions=REPETITIONS, warmup=5)
 
     tracemalloc.start()
@@ -267,7 +279,7 @@ def measure(layout: Layout) -> Reading:
         selection_ns=selection_ns,
         selection_decode_ns=0.0,
         compile_ns=compile_ns,
-        compile_decode_ns=0.0,
+        compile_decode_ns=bind_ns,
         batch_ns=batch_ns,
         retained_graph_bytes=retained_graph,
         peak_bytes=peak_bytes,

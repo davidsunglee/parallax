@@ -76,7 +76,7 @@ failed-call rules.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -135,13 +135,12 @@ from parallax.snapshot.materialize import (
     classify_roots,
     hydrates,
     merge_graph_input,
-    observable_columns,
     require_publishable,
     unwind_tree,
     wire_roots,
 )
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import (
     ROOT_LEVEL,
     ChildSlot,
@@ -466,16 +465,16 @@ class RootRead:
     """One root statement already executed and materialized, together with what
     the graph built from its rows must be built under.
 
-    The whole-result form of the pairing :func:`_execute_compiled` makes for one
-    statement: the ``plan`` whose levels descend below these roots, the
-    ``compiled`` read they materialized under, and the ``temporal`` selection
-    their pin and their retained evidence are settled from all reach conversion
-    as the one read that produced the rows, so no half of a find can be run
-    against another half's query.
+    The whole-result form of the pairing one statement's execution makes: the
+    ``plan`` whose levels descend below these roots, the ``prepared`` read they
+    materialized through and convert under, and the ``temporal`` selection their
+    pin and their retained evidence are settled from all reach conversion as the
+    one read that produced the rows, so no half of a find can be run against
+    another half's query.
     """
 
     plan: deep_fetch.ObjectQueryPlan
-    compiled: CompiledRead
+    prepared: PreparedRead[MaterializedReadRow]
     rows: tuple[MaterializedReadRow, ...]
     temporal: tuple[ValidatedTemporalSelection, ...]
 
@@ -491,9 +490,9 @@ def read_roots(
     """Plan ``query``, issue its ROOT statement, and materialize the rows it returned.
 
     Canonicalizes the root query (`m-temporal-read` + `m-navigate`, composed
-    here), compiles it, and runs it. Nothing here converts, judges, or attaches
-    anything, and no level's SQL is issued: what comes back is one statement's
-    rows and the read they belong to.
+    here), compiles it, binds it, and runs it. Nothing here converts, judges, or
+    attaches anything, and no level's SQL is issued: what comes back is one
+    statement's rows and the prepared read they belong to.
 
     The rows come back whole rather than as the lazy materialization a level
     converts out of: an iterator crossing this seam would have to be consumed by
@@ -508,10 +507,11 @@ def read_roots(
         result_form="instance",
         lock=entity_read_lock(meta, query.root.identity, preference),
     )
+    prepared = bind(model, compiled)
     return RootRead(
         plan=plan_,
-        compiled=compiled,
-        rows=tuple(_execute_compiled(port, compiled, calls)),
+        prepared=prepared,
+        rows=tuple(map(prepared.materialize, execute_read(port, compiled, calls))),
         temporal=query.temporal,
     )
 
@@ -563,9 +563,7 @@ def build_graph(
     builder = GraphBuilder(ViewSchema(_slot_table(plan_)))
     observations = ObservedRows()
 
-    root_refs = _convert_rows(
-        builder, ROOT_LEVEL, model, root_read.compiled, root_read.rows, observations
-    )
+    root_refs = _convert_rows(builder, ROOT_LEVEL, root_read.prepared, root_read.rows, observations)
 
     level_refs: list[tuple[int, ...]] = []
     for index, level in enumerate(plan_.levels):
@@ -635,10 +633,12 @@ class StagedRows:
     a batch reaching a lane through :func:`stage_rows` has passed no publication
     gate and one reaching it through :func:`stage_publishable_rows` has.
 
-    ``rows`` and their aligned ``contexts`` remain available for the lane-specific
-    work that follows. ``graph`` and ``roots`` retain the converted projections
-    for the history lane, which repartitions clean rows by milestone without
-    converting them a second time. ``merge`` is the merge over that same staging
+    ``rows`` and the ``prepared`` read they materialized through remain available
+    for the lane-specific work that follows — a lane observing them reaches each
+    row's own level through it rather than pairing rows with contexts of its own.
+    ``graph`` and ``roots`` retain the converted projections for the history
+    lane, which repartitions clean rows by milestone without converting them a
+    second time. ``merge`` is the merge over that same staging
     graph, which the lane either classifies or refuses; each row occupies the
     root position of the same ordinal, so a verdict lands on the row it judged.
     ``schema`` is the view schema this batch was laid out against — a flat batch
@@ -648,7 +648,7 @@ class StagedRows:
     """
 
     rows: tuple[MaterializedReadRow, ...]
-    contexts: tuple[LevelContext, ...]
+    prepared: PreparedRead[MaterializedReadRow]
     graph: SnapshotGraph
     roots: tuple[int, ...]
     merge: GraphMerge
@@ -684,37 +684,18 @@ def stage_rows(
 ) -> StagedRows:
     """Materialize and merge one flat row batch before lane-specific use.
 
-    Every caller forwards the compiled transform's findings, family-tag verdict,
-    and classified-member provenance through :func:`convert_row`, so the staging
+    The prepared read carries the compiled transform's findings, family-tag
+    verdict, and classified-member provenance into conversion, so the staging
     graph carries whatever contradicted the model and each lane decides what to
     do with it.
     """
-    layouts = model.layouts
-    materialized = tuple(compiled.materialize_row(row) for row in rows)
-    contexts = tuple(
-        LevelContext(
-            layouts.entity(row.resolved_entity),
-            compiled.projected_documents,
-            compiled.attribute_reads(row.resolved_entity),
-        )
-        for row in materialized
-    )
+    prepared = bind(model, compiled)
+    materialized = tuple(map(prepared.materialize, rows))
     schema = ViewSchema.of()
     builder = GraphBuilder(schema)
-    roots = tuple(
-        convert_row(
-            row.values,
-            context,
-            builder,
-            source=ROOT_LEVEL,
-            findings=row.findings,
-            unknown_family_tag=row.unknown_family_tag,
-            classified_members=row.classified_members,
-        )
-        for row, context in zip(materialized, contexts, strict=True)
-    )
+    roots = tuple(prepared.convert(row, builder, source=ROOT_LEVEL) for row in materialized)
     graph = builder.seal(roots, pin)
-    return StagedRows(materialized, contexts, graph, roots, merge_graph_input(graph), schema)
+    return StagedRows(materialized, prepared, graph, roots, merge_graph_input(graph), schema)
 
 
 def find_rows(
@@ -867,30 +848,43 @@ def _convert_level(
     calls: DatabaseCallScope,
     observations: ObservedRows,
 ) -> tuple[int, ...]:
-    """Execute one level and convert each of its rows as that row materializes.
+    """Bind one level's compiled read, execute it, and convert each of its rows
+    as that row materializes.
+
+    The read is prepared and executed in the same breath, which is what keeps a
+    `find` — holding the root's compiled read and this level's at once — from
+    materializing one statement's rows through the other's transform: crossing
+    them raises deep inside a tag stage in one direction and, in the other,
+    silently leaves the raw tag column standing where `familyVariant` should be.
 
     A level converts straight out of the lazy materialization rather than out of
     a retained tuple the way a root read does, so it holds one materialized row
-    at a time.
+    at a time: the port's own whole-result `list[Row]` is what a row-returning
+    execute answers by contract, and only the per-row materialization is lazy.
     """
+    prepared = bind(model, compiled)
     return _convert_rows(
-        builder, source, model, compiled, _execute_compiled(port, compiled, calls), observations
+        builder,
+        source,
+        prepared,
+        map(prepared.materialize, execute_read(port, compiled, calls)),
+        observations,
     )
 
 
 def _convert_rows(
     builder: GraphBuilder,
     source: SourceLevel,
-    model: CatalogedModel,
-    compiled: CompiledRead,
+    prepared: PreparedRead[MaterializedReadRow],
     rows: Iterable[MaterializedReadRow],
     observations: ObservedRows,
 ) -> tuple[int, ...]:
     """Convert ``rows`` into ``builder``, observing each one while it is still live.
 
-    ``compiled`` is the read those rows materialized under, and every row is
-    converted against its own layout, projected documents, and attribute reads
-    from it — never from a second derivation of what the statement projected.
+    ``prepared`` is the read those rows materialized through, which is also what
+    each of them converts and is observed under: the layout, projected
+    documents, and attribute contracts a row needs were derived when that read
+    was bound, so nothing here re-derives what the statement projected.
 
     ``source`` is where in the plan these rows land, which is what sizes each
     projection's view row: the levels attaching BELOW this one are what its rows
@@ -904,11 +898,11 @@ def _convert_rows(
     extraction rather than by a converted node carrying columns it has no other
     use for.
 
-    Each row is observed under its OWN resolved concrete Entity — the identity
-    the conversion already builds its `LevelContext` from — rather than under
-    the level-wide position the query addressed. The root and every level run
-    through here, so that one rule reaches an abstract-target root's concrete,
-    a polymorphic level's concrete, and an included child alike.
+    Each row is observed under its OWN resolved concrete Entity — the level the
+    conversion resolved for it — rather than under the level-wide position the
+    query addressed. The root and every level run through here, so that one rule
+    reaches an abstract-target root's concrete, a polymorphic level's concrete,
+    and an included child alike.
 
     A NON-HYDRATING projection is observed by nothing: no conforming value exists
     for it, so it publishes no writable source and can carry no claim. A
@@ -918,27 +912,14 @@ def _convert_rows(
     """
     refs: list[int] = []
     for row in rows:
-        context = LevelContext(
-            model.layouts.entity(row.resolved_entity),
-            compiled.projected_documents,
-            compiled.attribute_reads(row.resolved_entity),
-        )
-        ref = convert_row(
-            row.values,
-            context,
-            builder,
-            source=source,
-            findings=row.findings,
-            unknown_family_tag=row.unknown_family_tag,
-            classified_members=row.classified_members,
-        )
+        ref = prepared.convert(row, builder, source=source)
         refs.append(ref)
         if not hydrates(builder.issues_of(ref)):
             continue
         observations.observe_row(
             ref,
             row.resolved_entity,
-            observable_columns(row.values, context, classified_members=row.classified_members),
+            prepared.observable_columns(row),
             row.document,
         )
     return tuple(refs)
@@ -1099,30 +1080,6 @@ def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> Attrib
     return declared.identity
 
 
-def _execute_compiled(
-    port: DatabaseConnection, compiled: CompiledRead, calls: DatabaseCallScope
-) -> Iterator[MaterializedReadRow]:
-    """Execute one compiled read, materializing its rows through its OWN transform.
-
-    Takes the whole `~parallax.core.sql_gen._compile.CompiledRead` rather than a statement
-    plus a transform, so the two can only ever come from the same compile. That
-    matters because `find` holds the root's and a child level's compiled reads in
-    scope at the same time: crossing them is otherwise an ordinary-looking edit
-    that raises deep inside the tag transform in one direction and, in the other,
-    silently leaves the raw tag column standing where `familyVariant` should be.
-    Keeping the pair bundled here is the caller-side half of `CompiledRead`'s own
-    self-containment — it makes `find`'s "compile, execute, convert"
-    structural rather than a convention every level has to remember.
-
-    The statement runs inside its own Database Call bracket on the way in; the
-    port's own whole-result `list[Row]` is what a row-returning execute answers
-    by contract, and only the per-row materialization is lazy — so a consumer
-    converting as it iterates keeps each MATERIALIZED row for exactly as long as
-    that conversion takes, and holds no second copy of its result set.
-    """
-    return map(compiled.materialize_row, execute_read(port, compiled, calls))
-
-
 def execute_read(
     port: DatabaseConnection, compiled: CompiledRead, calls: DatabaseCallScope
 ) -> list[Row]:
@@ -1137,9 +1094,8 @@ def execute_read(
     semantics of a `read` call have exactly one definition.
 
     Takes the whole ``CompiledRead`` rather than a statement plus its document
-    ordinals, for the same reason :func:`_execute_compiled` does: the statement,
-    the ordinals it must be executed with, and the target Entity the activity
-    reports all come from one compile or from none.
+    ordinals: the statement, the ordinals it must be executed with, and the
+    target Entity the activity reports all come from one compile or from none.
     """
     statement = compiled.statement
     document_reads = compiled.document_reads
