@@ -335,7 +335,7 @@ def _temporal_observation(
 
     ``fields`` is a plain column-keyed mapping — one materialized row's own
     observable columns, documents decoded
-    (:func:`~parallax.snapshot.materialize.observable_columns`, a real
+    (:meth:`~parallax.snapshot.materialize.PreparedRead.observable_columns`, a real
     ``Transaction.find``) — and :func:`row_payload` is the extraction a
     materializing predicate-write resolve applies to its OWN rows, so both sides
     share the SAME rule rather than duplicating it. Extraction renders nothing of

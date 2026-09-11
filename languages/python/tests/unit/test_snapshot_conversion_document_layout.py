@@ -7,9 +7,10 @@ oracle, or a graph the compatibility engine assembles itself, so none of them re
 the same members a `Columns` row answers is graded here instead.
 
 What runs here is the driver's own sequence, database aside: the layout's own
-instance-form projection (`compile_read`), the fan-out that lands each
-document-resident member under the result key a direct Column would have carried
-(`m-sql`), and per-row conversion into one compact projection row. The one property
+instance-form projection (`compile_read`), the prepared read bound from it, the
+fan-out that lands each document-resident member under the result key a direct
+Column would have carried (`m-sql`), and per-row conversion into one compact
+projection row. The one property
 under test is that the layout is not observable at that seam — a document row and
 its member-for-member `Columns` twin convert to the same member row, including the
 not-present states a document can spell and a Column cannot.
@@ -29,18 +30,19 @@ from typing import Any
 
 import pytest
 from _document_layout_support import columns_model, document_model, entity
-from _snapshot_graph_support import documents_of, layout_of, rendered_members
+from _snapshot_graph_support import documents_of, rendered_members
 
 from _support.sql import compile_read
 from parallax.conformance import models
 from parallax.core import predicate as oa
 from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize import StoredDataIssueInput
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
+from parallax.snapshot.materialize._prepared import bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 _CORPUS = models.load_models()["document-layout"]
@@ -58,24 +60,10 @@ class _Converted:
 
 def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> _Converted:
     """One stored row through the production read sequence, database aside."""
-    target = entity(model, name)
-    compiled = compile_read(oa.All(), model, POSTGRES, target, result_form="instance")
-    materialized = compiled.materialize_row(stored)
+    compiled = compile_read(oa.All(), model, POSTGRES, entity(model, name), result_form="instance")
+    prepared = bind(CatalogedModel(model), compiled)
     builder = GraphBuilder(ViewSchema.of())
-    context = LevelContext(
-        layout_of(model, materialized.resolved_entity),
-        compiled.projected_documents,
-        compiled.attribute_reads(materialized.resolved_entity),
-    )
-    index = convert_row(
-        materialized.values,
-        context,
-        builder,
-        source=ROOT_LEVEL,
-        findings=materialized.findings,
-        unknown_family_tag=materialized.unknown_family_tag,
-        classified_members=materialized.classified_members,
-    )
+    index = prepared.convert(prepared.materialize(stored), builder, source=ROOT_LEVEL)
     rows = graph_rows(builder.seal((index,), Pin()))
     return _Converted(
         rendered_members(rows.layouts[index], rows.member_rows[index]), rows.issues[index]

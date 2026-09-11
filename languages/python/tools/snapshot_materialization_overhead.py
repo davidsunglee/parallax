@@ -5,7 +5,7 @@ The representative workload — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-the shipped loop from ``CompiledRead.materialize_row`` to ``GraphBuilder.seal``.
+the shipped loop from ``PreparedRead.materialize`` to ``GraphBuilder.seal``.
 The workload itself is ``tests/unit/_snapshot_materialization_support.py``, which
 the gated scaling regression drives through the same functions, so the report and
 its grader measure one workload rather than two.
@@ -18,10 +18,12 @@ state is fixed by the model's exact layouts and the compiled reads rather than b
 rows or graphs. What has been read off this, and under what conditions, is
 ``docs/snapshot-materialization-baseline.md``.
 
-**What is inside the clock and what is not.** Model preparation and compilation
-are timed once each and reported separately. The repeated batch holds exactly what
-a read pays per statement of rows: row materialization, per-row level context,
-conversion, the observation every hydrating row takes, view fan-back, and sealing.
+**What is inside the clock and what is not.** Model preparation and
+compiled-read preparation are timed once each and reported separately, and the
+binding a compiled read pays for its levels is reported within the second. The
+repeated batch holds exactly what a read pays per statement of rows: row
+materialization, conversion, the observation every hydrating row takes, view
+fan-back, and sealing.
 Fixture construction, SQL execution, merge, classification, and Typed or Wire
 publication are outside it — the fixture rows are built before any window opens,
 so a reading counts the position a row takes and not the leaf it references.
@@ -29,9 +31,9 @@ so a reading counts the position a row takes and not the leaf it references.
 **Compilation cannot be inside the batch.** A child level's ``compile_read`` runs
 between gathering its parents' keys and converting its rows, so timing
 ``build_graph`` as one unit would recompile four statements per repetition and
-call the result throughput. The batch therefore compiles once, against the
-fixture's own keys, and still gathers those keys per repetition because production
-does.
+call the result throughput. The batch therefore compiles and binds once, against
+the fixture's own keys, and still gathers those keys per repetition because
+production does.
 
 **Where a reading is taken, and where it is not.** This module IMPORTS no
 instrument. Every reading is taken in a child, by
@@ -178,7 +180,7 @@ CONTRIBUTORS: Final = (
     Contributor("occurrence_shape", "_shape.py", "occurrence_shape", False),
     Contributor("materialize_row", "_compile.py", "materialize_row", False),
     Contributor("convert_row", "_convert.py", "convert_row", False),
-    Contributor("LevelContext (fresh per row)", "_convert.py", "__post_init__", True),
+    Contributor("LevelContext (bound per read)", "_convert.py", "__post_init__", False),
     Contributor("attribute_reads (contract scan)", "_compile.py", "attribute_reads", False),
     Contributor("observable_columns", "_convert.py", "observable_columns", False),
 )
@@ -190,7 +192,8 @@ BUILDS each one rather than as ``dict`` calls: ``dict(...)`` is a type call, whi
 ``cProfile`` does not record at all, so counting the site is the only reading
 there is. An unmarked site is counted for its own cadence: ``attribute_reads``
 answers a tuple its compiled read already holds, so what its count says is how
-often the seam asks, not what asking allocates.
+often the seam asks, not what asking allocates, and a ``LevelContext`` derived
+where its read was bound is counted here to show the batch deriving none.
 """
 
 
@@ -208,11 +211,11 @@ class Reading(NamedTuple):
     preparation exists, which is a statement about the code rather than a
     measurement that was skipped."""
     compile_ns: float
-    """Total compiled-read preparation: the fetch plan and one ``compile_read``
-    per level."""
+    """Total compiled-read preparation: the fetch plan, one ``compile_read`` per
+    level, and the bind each of those reads pays for its own levels."""
     compile_decode_ns: float
-    """Decode preparation the compiled read owns, within that total. Zero for the
-    same reason."""
+    """Decode preparation the compiled read owns, within that total: the bind
+    that derives one level per Entity a read can resolve."""
     batch_ns: float
     retained_graph_bytes: int
     peak_bytes: int
@@ -585,19 +588,20 @@ def _scope() -> list[str]:
         "what the columns are",
         "  model prep    prepare_model over the workload's Domain Model, once. `decode` is the",
         "                decode preparation inside it, and is zero because none exists.",
-        "  compile       the fetch plan plus one compile_read per level, once per execution.",
-        "                `decode` is the decode preparation the compiled read owns: also zero.",
-        "  batch         one steady-state batch from an already prepared model and compiled",
-        "                reads: row materialization, level context, conversion, the observation",
-        "                every hydrating row takes, view fan-back, and sealing.",
+        "  compile       the fetch plan, one compile_read per level, and the bind each of",
+        "                those reads pays for its levels, once per execution. `decode` is the",
+        "                decode preparation the compiled read owns: the bind alone.",
+        "  batch         one steady-state batch from an already prepared model and prepared",
+        "                reads: row materialization, conversion, the observation every",
+        "                hydrating row takes, view fan-back, and sealing.",
         "  prep rows     rows of steady-state work one whole preparation costs, and `compile",
         "                rows` the same for compiled-read preparation alone. A REPAYMENT row",
         "                count needs two halves and is computed in the baseline document.",
         "  retained B    bytes the sealed graph keeps, reachable at the sample point.",
         "  peak B        the high-water mark one batch reached above its collected floor.",
         "  transient B   peak less retained: what a batch allocated and freed again.",
-        "  prepared B    bytes the compiled reads keep, derived inside the window; `B/read` is",
-        "                that over the statements this plan compiles.",
+        "  prepared B    bytes the compiled reads and their bound levels keep, derived inside",
+        "                the window; `B/read` is that over the statements this plan compiles.",
         "  layout decode immutable prepared decode state per exact Entity layout: zero.",
         "  catalog B     what one model's whole layout catalog keeps, over its Entity layouts —",
         "                context for the line above, and unchanged by this work.",

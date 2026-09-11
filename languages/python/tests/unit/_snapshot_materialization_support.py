@@ -4,16 +4,17 @@ One representative graph shape — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Entity Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-the SHIPPED read loop from ``CompiledRead.materialize_row`` to
-``GraphBuilder.seal``, with no database anywhere.
+the SHIPPED read loop from ``PreparedRead.materialize`` to ``GraphBuilder.seal``,
+with no database anywhere.
 
 The loop is the driver's own: :func:`batch` calls ``handle/_read.py``'s private
 helpers rather than copying them, so what it measures is the code a ``find``
 runs. What it cannot borrow is the interleaving — a child level's ``compile_read``
 runs between gathering its parents' keys and converting its rows, so a repeated
-batch would compile once per repetition. Compilation therefore happens once,
-outside the batch, against the keys this module's own fixture is built from; the
-gather still runs inside it, because production pays for it per batch.
+batch would compile once per repetition. Compilation and the binding that
+follows it therefore happen once, outside the batch, against the keys this
+module's own fixture is built from; the gather still runs inside it, because
+production pays for it per batch.
 
 A fourth workload model rather than a reuse: ``tools/snapshot_graph_overhead.py``
 is ``Columns``-only and declares four Neutral Types, ``_document_layout_support``
@@ -103,7 +104,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._validated import ValidatedObjectQuery
-from parallax.core.sql_gen._compile import CompiledRead, compile_read
+from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow, compile_read
 from parallax.core.storage_layout import DirectColumn, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.temporal_read import Pin
@@ -112,6 +113,7 @@ from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._retention import ObservedRows
 from parallax.snapshot.materialize import SnapshotGraph
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
+from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
 __all__ = [
@@ -125,6 +127,7 @@ __all__ = [
     "driver_rows",
     "fetch_plan",
     "metamodel",
+    "prepared_levels",
     "query",
     "rows_per_level",
     "verify",
@@ -327,6 +330,20 @@ def compiled_levels(
             )
         )
     return tuple(reads)
+
+
+def prepared_levels(
+    model: CatalogedModel, reads: Sequence[CompiledRead | None]
+) -> tuple[PreparedRead[MaterializedReadRow] | None, ...]:
+    """One prepared read per compiled one, indexed as :func:`compiled_levels`
+    indexes its reads.
+
+    Bound outside the repeated batch for the same reason compilation is: a
+    production level binds where it compiles, once per statement, so a batch
+    repeated against reads compiled before it must be repeated against the
+    levels bound with them.
+    """
+    return tuple(None if read is None else bind(model, read) for read in reads)
 
 
 # --------------------------------------------------------------------------- #
@@ -559,7 +576,7 @@ _attach_back_reference = _read._attach_back_reference  # pyright: ignore[reportP
 def batch(
     model: CatalogedModel,
     plan: deep_fetch.ObjectQueryPlan,
-    reads: Sequence[CompiledRead | None],
+    prepared: Sequence[PreparedRead[MaterializedReadRow] | None],
     rows: Sequence[Sequence[Row]],
 ) -> SnapshotGraph:
     """One whole graph, built the way ``build_graph`` builds one.
@@ -576,12 +593,12 @@ def batch(
     back, exactly as a child statement returning nothing does.
     """
     meta = model.meta
-    root = reads[0]
+    root = prepared[0]
     assert root is not None
-    root_rows = tuple(map(root.materialize_row, rows[0]))
+    root_rows = tuple(map(root.materialize, rows[0]))
     builder = GraphBuilder(ViewSchema(_slot_table(plan)))
     observations = ObservedRows()
-    root_refs = _convert_rows(builder, ROOT_LEVEL, model, root, root_rows, observations)
+    root_refs = _convert_rows(builder, ROOT_LEVEL, root, root_rows, observations)
     level_refs: list[tuple[int, ...]] = []
     for index, level in enumerate(plan.levels):
         parents = _guarded_parents(
@@ -596,14 +613,13 @@ def batch(
             _attach_empty(builder, level, parents)
             level_refs.append(())
             continue
-        compiled = reads[index + 1]
-        assert compiled is not None
+        level_read = prepared[index + 1]
+        assert level_read is not None
         child_refs = _convert_rows(
             builder,
             index + 1,
-            model,
-            compiled,
-            map(compiled.materialize_row, rows[index + 1]),
+            level_read,
+            map(level_read.materialize, rows[index + 1]),
             observations,
         )
         _attach_children(builder, meta, level, parents, child_refs)

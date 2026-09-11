@@ -80,6 +80,7 @@ from parallax.snapshot.materialize._views import SourceLevel
 
 __all__ = [
     "SNAPSHOT_DECODING_FAILED",
+    "AttributeReadContract",
     "LevelContext",
     "SnapshotDecodingError",
     "convert_row",
@@ -89,7 +90,10 @@ __all__ = [
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
-class _AttributeReadContract(Protocol):
+class AttributeReadContract(Protocol):
+    """What one projected Attribute's compiled contract carries, read structurally
+    because this scope may not import the compiler that decided it."""
+
     @property
     def attribute(self) -> AttributeMetadata: ...
 
@@ -147,7 +151,7 @@ class LevelContext:
     layout: EntityLayout = field(compare=False)
     concrete_entity: EntityIdentity = field(init=False)
     documents: tuple[ValueObjectMetadata, ...] = ()
-    attribute_reads: tuple[_AttributeReadContract, ...] = ()
+    attribute_reads: tuple[AttributeReadContract, ...] = ()
     projected_by_position: tuple[bool, ...] = field(init=False, compare=False, repr=False)
     observed_exclusions: frozenset[str] = field(init=False, compare=False, repr=False)
     observed_documents: tuple[tuple[str, ValueObjectMetadata, bool], ...] = field(

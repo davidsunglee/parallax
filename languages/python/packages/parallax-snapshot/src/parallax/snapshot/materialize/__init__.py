@@ -19,6 +19,12 @@ projection merge that produce and consume it.
   members first; conversion owns the remaining member-identity translation and
   Value Object occurrence reduction. It is the ONLY place a physical column, a
   storage key, or a Document Path becomes a member identity.
+- :mod:`~parallax.snapshot.materialize._prepared` binds one compiled read to one
+  cataloged model and is what every read lane uses: it derives each level that
+  read can resolve once, and materializes, converts, and observes a row against
+  the one its own resolved Entity names. It is reached by module rather than
+  through this interface, as conversion is — a lane composes it exactly where it
+  compiles, and nothing outside this package composes one at all.
 - :mod:`~parallax.snapshot.materialize._merge` collapses duplicate projections
   into one deterministic allocation order and answers each consumer by index,
   holding integers and references only; classified issues ride each winning
@@ -49,11 +55,12 @@ absence sentinel alone. Its consumers —
 each compose it with what their own result form needs.
 
 It never imports ``m-sql`` / ``m-dialect``: `familyVariant` materialization and
-each row's resolved concrete Entity are `m-sql`-owned, carried by the compiled
-read itself and handed here as a level's own context, so this scope only ever
-sees rows whose keys are already the projected physical ones. That is a
-structural fact rather than a habit: `m-snapshot-read`'s own edge to
-`m-execution-lifecycle` — which reaches `m-sql` — belongs to the separate
+each row's resolved concrete Entity are `m-sql`-owned, and a compiled read
+reaches this scope structurally — bound once into a prepared read whose levels
+are derived before its first row — so this scope only ever sees rows whose keys
+are already the projected physical ones. That is a structural fact rather than a
+habit: `m-snapshot-read`'s own edge to `m-execution-lifecycle` — which reaches
+`m-sql` — belongs to the separate
 :mod:`~parallax.snapshot._read_result` scope, so no grant of this one reaches
 SQL generation.
 """
