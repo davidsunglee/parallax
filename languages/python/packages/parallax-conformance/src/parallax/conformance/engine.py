@@ -20,7 +20,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Final, Literal, cast
+from typing import Final, Literal, cast
 
 from parallax.conformance import (
     _case_ingress,
@@ -36,6 +36,7 @@ from parallax.conformance._database_control import (
     ModeledExecution,
 )
 from parallax.conformance._lanes.error import run_error_case
+from parallax.conformance._lanes.evolution import run_evolution_case
 from parallax.conformance._lanes.reads import (
     case_database,
     compile_read_case,
@@ -74,7 +75,6 @@ from parallax.conformance._mechanism.model_facts import (
     first_declared_entity,
     load_case_domain_model,
     load_case_metamodel,
-    model_path,
 )
 from parallax.conformance._mechanism.transaction_control import (
     absorbing_rollback,
@@ -83,11 +83,6 @@ from parallax.conformance._mechanism.transaction_control import (
     underlying,
     write_adapter,
     write_connection,
-)
-from parallax.conformance.evolution_wire import (
-    evolution_observation,
-    schema_cell,
-    unsupported_cell,
 )
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import (
@@ -111,7 +106,7 @@ from parallax.core.db_port import (
     IsolationLevel,
     Row,
 )
-from parallax.core.dialect import DIALECT_CATALOG, Dialect, dialect_for
+from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
@@ -169,8 +164,6 @@ from parallax.core.unit_work.instructions import (
     WriteInstruction,
 )
 from parallax.core.wire import WireDecodingError, WireValue, decode_wire, encode_wire
-from parallax.evolution.model_evolution import ABSENT, UnilateralEvolution, evolve
-from parallax.evolution.schema_delta import UnsupportedSchemaEvolutionError, schema_delta
 from parallax.snapshot import handle
 from parallax.snapshot.handle import (
     ServingModel,
@@ -5472,59 +5465,3 @@ def run_conflict_case(
     # `then.roundTrips`), and the lifecycle stream this count must agree with
     # holds it too.
     return emissions, affected, table_state, round_trips
-
-
-def run_evolution_case(case: case_format.Case) -> dict[str, Any]:
-    """The observations an `evolution` case's two endpoints produce.
-
-    `when.evolve.earlier` is a model descriptor path or the explicit
-    fresh-provisioning sentinel `null`, which reaches `evolve` as `ABSENT` rather
-    than as an empty model. Both endpoints form through the same public door
-    every other corpus model does, so a case cannot describe an evolution between
-    models this implementation would not otherwise accept.
-
-    A unilateral description additionally carries its Schema Delta for every
-    Dialect the specification names, reported as one whole matrix rather than one
-    cell per run: a Dialect this implementation ships no strategy for is an
-    explicit exclusion naming its reason, never a silently absent key.
-
-    The run touches no database and no port: describing the difference between
-    two accepted models and lowering it to statements are both pure, which is
-    what makes an evolution case cost zero round trips and carry no dialect of
-    its own.
-    """
-    when = case.document.get("when")
-    action = cast("Mapping[str, object]", when).get("evolve") if isinstance(when, Mapping) else None
-    if not isinstance(action, Mapping):
-        raise EngineError(f"{case.path.name}: evolution case carries no `when.evolve`")
-    named = cast("Mapping[str, object]", action)
-    later_ref = named.get("later")
-    if not isinstance(later_ref, str):
-        raise EngineError(f"{case.path.name}: `when.evolve.later` must be a string path")
-    earlier_ref = named.get("earlier")
-    if earlier_ref is not None and not isinstance(earlier_ref, str):
-        raise EngineError(
-            f"{case.path.name}: `when.evolve.earlier` is a string path or the null sentinel"
-        )
-    earlier = ABSENT if earlier_ref is None else models.load_model(model_path(earlier_ref))
-    evolution = evolve(earlier, models.load_model(model_path(later_ref)))
-    observations: dict[str, Any] = {"evolution": evolution_observation(evolution)}
-    if isinstance(evolution, UnilateralEvolution):
-        observations["schema"] = _schema_matrix(evolution)
-    return observations
-
-
-def _schema_matrix(evolution: UnilateralEvolution) -> dict[str, Any]:
-    """One cell per Dialect the specification supports, in catalog order."""
-    return {name: _schema_matrix_cell(evolution, name) for name in DIALECT_CATALOG}
-
-
-def _schema_matrix_cell(evolution: UnilateralEvolution, name: str) -> dict[str, Any]:
-    try:
-        dialect = dialect_for(name)
-    except ValueError:
-        return {"excluded": {"reason": "no-dialect"}}
-    try:
-        return schema_cell(schema_delta(evolution, dialect))
-    except UnsupportedSchemaEvolutionError as refusal:
-        return unsupported_cell(refusal)

@@ -90,12 +90,6 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.wire import WireEncodingError
-from parallax.evolution.model_evolution import EntityAdded
-from parallax.evolution.schema_delta import (
-    PhysicalLocation,
-    UnsupportedSchemaEvolutionError,
-    UnsupportedSchemaOperation,
-)
 from parallax.snapshot import handle
 from parallax.snapshot.handle import WriteEvidenceError
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
@@ -464,8 +458,6 @@ _VOYAGE_MILESTONE: Final[Row] = _voyage_row(
 
 
 def _synthetic_write(shape: str, document: dict[str, object]) -> case_format.Case:
-    from pathlib import Path
-
     document.setdefault("model", "models/account.yaml")
     return case_format.Case(
         path=Path("m-unit-work-999-synthetic.yaml"),
@@ -502,8 +494,6 @@ def _ledger_update(
 
 
 def _synthetic_ledger_scenario(steps: list[dict[str, object]]) -> case_format.Case:
-    from pathlib import Path
-
     return case_format.Case(
         path=Path("m-unit-work-998-synthetic.yaml"),
         case_id="m-unit-work-998",
@@ -3616,8 +3606,6 @@ def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target()
     # and never collapses into one set-based statement, so the multi-key `write`
     # array — keyed and non-temporal — names no single milestone for the close to
     # address. It is refused rather than reduced to a row the case never chose.
-    from pathlib import Path
-
     case = case_format.Case(
         path=Path("m-unit-work-999-synthetic.yaml"),
         case_id="m-unit-work-999",
@@ -4409,40 +4397,6 @@ def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
         engine.compile_write_sequence_case(
             _synthetic_write("writeSequence", {"when": {}}), "postgres"
         )
-
-
-# --------------------------------------------------------------------------- #
-# Evolution — the two accepted endpoints a described difference names.         #
-# --------------------------------------------------------------------------- #
-def _evolution_case(document: dict[str, object]) -> case_format.Case:
-    return case_format.Case(
-        path=Path("m-model-evolution-999-synthetic.yaml"),
-        case_id="m-model-evolution-999",
-        shape="evolution",
-        tags=("m-model-evolution", "slice-snapshot-1"),
-        model="",
-        document=document,
-    )
-
-
-def test_an_evolution_case_without_its_endpoints_is_rejected() -> None:
-    with pytest.raises(engine.EngineError, match=r"when\.evolve"):
-        engine.run_evolution_case(_evolution_case({"when": {}}))
-
-
-def test_an_evolution_case_without_a_later_endpoint_is_rejected() -> None:
-    with pytest.raises(engine.EngineError, match=r"when\.evolve\.later"):
-        engine.run_evolution_case(_evolution_case({"when": {"evolve": {"earlier": None}}}))
-
-
-def test_an_evolution_case_whose_earlier_endpoint_is_neither_a_path_nor_null_is_rejected() -> None:
-    # `null` is the fresh-provisioning SENTINEL, so the member is a string path or
-    # that one value; anything else names an endpoint nothing can load.
-    bad = _evolution_case(
-        {"when": {"evolve": {"earlier": 7, "later": "models/evolution-widget-v1.yaml"}}}
-    )
-    with pytest.raises(engine.EngineError, match=r"when\.evolve\.earlier"):
-        engine.run_evolution_case(bad)
 
 
 def test_read_table_state_reads_each_physical_table_once_over_every_slot() -> None:
@@ -5466,8 +5420,6 @@ def test_a_transaction_time_past_reading_is_skipped_as_a_write_source() -> None:
 def _synthetic_scenario(
     model: str, case_id: str, steps: list[dict[str, object]]
 ) -> case_format.Case:
-    from pathlib import Path
-
     return case_format.Case(
         path=Path(f"{case_id}-synthetic.yaml"),
         case_id=case_id,
@@ -6215,44 +6167,3 @@ def test_run_scenario_case_access_step_graph_keeps_an_all_to_one_terminal_null()
 
     graph = cast("dict[str, list[dict[str, object]]]", run.step_graphs[0]["graph"])
     assert graph["Order"] == [None]
-
-
-def test_a_dialect_that_cannot_render_an_operation_reports_an_unsupported_cell(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Postgres renders every physical operation this algebra emits, so the arm
-    # that turns a refusal into a cell has no corpus witness until a dialect that
-    # refuses one ships. The engine must report the refusal AS the cell rather
-    # than letting it escape as a run failure.
-    def _refuse(evolution: object, dialect: object) -> object:
-        del evolution, dialect
-        raise UnsupportedSchemaEvolutionError(
-            "postgres",
-            (
-                UnsupportedSchemaOperation(
-                    kind="CreateIndex",
-                    location=PhysicalLocation(table=Table(name="evolution_widget")),
-                    reason="a refusing renderer",
-                    caused_by=(
-                        EntityAdded(entity=EntityIdentity("parallax.compatibility", "Widget")),
-                    ),
-                ),
-            ),
-        )
-
-    monkeypatch.setattr(engine, "schema_delta", _refuse)
-    observations = engine.run_evolution_case(_case("m-model-evolution-001"))
-    assert observations["schema"]["postgres"] == {
-        "unsupported": {
-            "operations": [
-                {
-                    "kind": "CreateIndex",
-                    "physicalLocation": {"table": "evolution_widget"},
-                    "causedBy": [
-                        {"kind": "EntityAdded", "entity": "parallax.compatibility.Widget"}
-                    ],
-                }
-            ]
-        }
-    }
-    assert observations["schema"]["mariadb"] == {"excluded": {"reason": "no-dialect"}}
