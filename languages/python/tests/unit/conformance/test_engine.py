@@ -2685,17 +2685,6 @@ def test_a_read_step_names_its_own_object_query() -> None:
         )
 
 
-def test_the_aborting_port_passes_reads_and_writes_through() -> None:
-    # It decorates the BOUNDARY alone: every statement still reaches the inner
-    # port unchanged, so the DML a doomed unit of work flushes is the DML it would
-    # have committed.
-    inner = FakeWritePort(find_rows=[{"id": 1}])
-    port = engine._AbortingPort(inner)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    assert port.execute("select 1", []) == [{"id": 1}]
-    assert port.execute_write("update account set balance = ?", [1]) == 1
-    assert inner.reads and inner.writes
-
-
 def test_the_admitted_affected_guard_reraises_an_unadmitted_write_effect_error() -> None:
     # Every member of the family renders the same `actual` count, so admitting the
     # wrong one would report an identical observation whichever class the write

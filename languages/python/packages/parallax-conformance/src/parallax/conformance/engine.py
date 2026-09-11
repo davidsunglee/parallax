@@ -38,11 +38,18 @@ from parallax.conformance._database_control import (
     InterleavedExecutionFactory,
     ModeledExecution,
 )
-from parallax.conformance._decoration import DecoratingAdapter
 from parallax.conformance._lifecycle_observation import (
     LifecycleObservation,
     LifecycleRun,
     lifecycle_run,
+)
+from parallax.conformance._mechanism.transaction_control import (
+    absorbing_rollback,
+    committed,
+    transact,
+    underlying,
+    write_adapter,
+    write_connection,
 )
 from parallax.conformance.evolution_wire import (
     evolution_observation,
@@ -69,19 +76,11 @@ from parallax.core.base import (
 from parallax.core.continuation import ContinuationError
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
-    BeginFailed,
-    CallbackRaised,
-    CommitFailed,
-    Committed,
     DatabaseAdapter,
     DatabaseConnection,
-    DocumentReadOrdinals,
     IsolationLevel,
     JsonDocument,
-    RollbackFailed,
-    RolledBack,
     Row,
-    TransactionOutcome,
 )
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import DIALECT_CATALOG, Dialect, dialect_for
@@ -806,9 +805,9 @@ def run_read_case(
         concurrency = _read_case_concurrency(case)
         try:
             result = (
-                _underlying(lambda: db.read_rows(query))
+                underlying(lambda: db.read_rows(query))
                 if concurrency is None
-                else _transact(db, lambda tx: tx.read_rows(query), concurrency=concurrency)
+                else transact(db, lambda tx: tx.read_rows(query), concurrency=concurrency)
             )
         except _READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -871,7 +870,7 @@ def _wire_read(
     _apply_given_corrupt(case, model, port)
     with case_database(case, port, observed.provider) as db:
         try:
-            return _underlying(lambda: db.wire.find(query)), observed
+            return underlying(lambda: db.wire.find(query)), observed
         except _READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
 
@@ -1040,7 +1039,7 @@ def _wire_delivery(
                 roots.extend(delivery.checked())
 
         try:
-            _underlying(drained)
+            underlying(drained)
         except _STREAM_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         return roots, observed
@@ -1354,147 +1353,6 @@ def _pinned_instant(tx_instant: str) -> TransactionInstant:
     lowering needs no Transaction-Time boundary captures nothing at all.
     """
     return TransactionInstant(FixedClock(dt.datetime.fromisoformat(tx_instant)))
-
-
-class _RollbackStep(Exception):
-    """Sentinel raised inside a transaction body to abort a ``rollback: true`` step."""
-
-
-def _underlying[T](execution: Callable[[], T]) -> T:
-    """Run one adopted ``execution`` and answer the underlying failure rather
-    than its contextualized form.
-
-    What the engine grades is what the callback, the write, the boundary, or
-    the read raised — a rollback sentinel, a Write Effect Error, an
-    optimistic-lock conflict, a lowering refusal, a Database Error — and an
-    :class:`~parallax.snapshot.handle.ExecutionFailure` carries exactly that as
-    its cause. Re-raising the cause with its own chain intact is what lets each
-    lane keep catching the failure it classifies; the edition the wrapper named
-    is the case's own literal, which the lifecycle oracle grades instead.
-
-    The re-raise happens after the handler is left, because raising inside it
-    would install the wrapper as the cause's ``__context__`` — overwriting
-    whatever the cause was already chained to, and pointing the two at each
-    other.
-    """
-    try:
-        return execution()
-    except handle.ExecutionFailure as failure:
-        cause = failure.cause
-    raise cause
-
-
-def _transact[T](
-    database: handle.Database,
-    body: Callable[[handle.Transaction], T],
-    *,
-    concurrency: Concurrency | None = None,
-    isolation: IsolationLevel | None = None,
-) -> T:
-    """``db.transact`` as every lane here drives it, through :func:`_underlying`."""
-    return _underlying(
-        lambda: database.transact(body, concurrency=concurrency, isolation=isolation)
-    )
-
-
-class _AbortingPort:
-    """A pass-through ``m-db-port`` whose transaction ALWAYS aborts, after the
-    unit of work inside it has finished its own work.
-
-    Case-only choreography for a `rollback: true` step (`m-case-format`), and
-    the sibling of the boundary lane's own fault injector: it arranges an
-    outcome a caller cannot ask a real database for. The abort is raised once
-    the body returns — after the boundary's pre-commit flush has already put
-    the buffered DML on the wire — so the case's own contract is reproduced
-    exactly (`m-unit-work` "Abort": "the forced flush is safe precisely because
-    it lands inside the still-open atomic scope the abort discards"): the write's
-    statements execute, count their round trips on the attempt, and are then
-    erased by the provider's rollback.
-
-    Raising HERE rather than inside the transaction callback is what makes the
-    flush production's own: a callback that raises leaves the unit of work
-    discarding its buffer unflushed, so the DML the case asserts would never
-    reach the database at all.
-
-    The cost of raising there is that the boundary has already entered its
-    commit phase, so the attempt's own failure record names ``commit`` for a
-    durability boundary that never failed, and the sentinel — outside every
-    classified family — makes ``retryEligible: false`` a default rather than a
-    verdict. No case reads either: what a `rollback: true` case asserts is the
-    table state and the round trips, and both come from the calls, not from the
-    failure record.
-    """
-
-    def __init__(self, inner: DatabaseConnection) -> None:
-        self._inner = inner
-
-    @property
-    def dialect(self) -> Dialect:
-        return self._inner.dialect
-
-    def execute(
-        self,
-        sql: str,
-        binds: Sequence[object],
-        document_reads: Sequence[DocumentReadOrdinals] = (),
-    ) -> list[Row]:
-        return self._inner.execute(sql, binds, document_reads)
-
-    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
-        return self._inner.execute_write(sql, binds)
-
-    def transaction[T](
-        self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
-    ) -> TransactionOutcome[T]:
-        def aborting(conn: DatabaseConnection) -> T:
-            body(conn)
-            raise _RollbackStep
-
-        return self._inner.transaction(aborting, isolation=isolation)
-
-
-def _write_connection(port: DatabaseConnection, *, rollback: bool) -> DatabaseConnection:
-    """``port`` itself, or the aborting decorator around it.
-
-    The framework-only write lane executes its own plan straight on a session
-    rather than through a Handle, because no public verb expresses it, so what
-    a `rollback: true` step decorates there is that session's execution
-    directly.
-    """
-    return _AbortingPort(port) if rollback else port
-
-
-def _write_adapter(port: CaseDatabase, *, rollback: bool) -> DatabaseAdapter:
-    """``port``'s own configuration, or the aborting decorator a `rollback: true` step needs.
-
-    The decoration is applied where a connection is acquired rather than to a
-    handle, because what aborts is one transaction on one connection: a step
-    that rolls back decorates every connection its own Handle acquires and
-    nothing else's.
-    """
-    return DecoratingAdapter(port, _AbortingPort) if rollback else port
-
-
-def _committed[T](outcome: TransactionOutcome[T]) -> T:
-    """The value a boundary this module drove itself committed, or the failure that
-    ended it.
-
-    The engine drives a few write choreographies straight against the port
-    instead of through ``db.transact``, so it answers the outcome the same way
-    the composition root does: a committed value is the result, and any other
-    outcome raises what the case is grading — the deliberate rollback sentinel,
-    or a genuine failure. A rollback that itself failed chains the two, since no
-    case authors that outcome and a run reaching it has an unusable connection.
-    """
-    match outcome:
-        case Committed(value):
-            return value
-        case BeginFailed(error) | RolledBack(CallbackRaised(error) | CommitFailed(error)):
-            raise error
-        case RollbackFailed(  # pragma: no cover - no case can break a connection mid-rollback
-            CallbackRaised(error) | CommitFailed(error), rollback_error
-        ):
-            raise error from rollback_error
 
 
 @dataclass(frozen=True, slots=True)
@@ -2615,7 +2473,7 @@ def _run_standalone_find(
     observed = lifecycle.observation()
     with handle.Database.connect(port, context.serving, lifecycle_provider=observed.provider) as db:
         return (
-            _transact(db, lambda tx: tx.wire.find(query), concurrency=context.concurrency),
+            transact(db, lambda tx: tx.wire.find(query), concurrency=context.concurrency),
             observed,
         )
 
@@ -3253,7 +3111,7 @@ def _run_snapshot_scenario(
                         # document is read, so no later step carries a spelling into a
                         # production seam that takes an Entity Identity.
                         identity = case_entity(model, query.target.canonical).identity
-                        snapshot = _underlying(partial(db.wire.find, query))
+                        snapshot = underlying(partial(db.wire.find, query))
                         pin = _find_step_pin(model, query)
                     except _READ_ERRORS as exc:
                         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -3946,8 +3804,8 @@ def _execute_framework_write_unit(
                 conn.dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds)
             )
 
-    with contextlib.suppress(_RollbackStep):
-        _committed(_write_connection(port, rollback=rollback).transaction(run))
+    with absorbing_rollback():
+        committed(write_connection(port, rollback=rollback).transaction(run))
     return len(statements)
 
 
@@ -4119,7 +3977,7 @@ def _execute_write_unit(
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
     with handle.Database.connect(
-        _write_adapter(port, rollback=rollback),
+        write_adapter(port, rollback=rollback),
         serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
@@ -4133,8 +3991,8 @@ def _execute_write_unit(
             for write in resolved:
                 _buffer_wire_write(tx, model, state, write, None)
 
-        with contextlib.suppress(_RollbackStep):
-            _transact(database, body, concurrency=concurrency)
+        with absorbing_rollback():
+            transact(database, body, concurrency=concurrency)
         return _delivered(statements, observed.writes, "a keyed write unit"), observed.round_trips
 
 
@@ -4219,7 +4077,7 @@ def _run_readless_predicate_write(
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observed = lifecycle.observation()
     with handle.Database.connect(
-        _write_adapter(port, rollback=rollback),
+        write_adapter(port, rollback=rollback),
         context.serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
@@ -4228,8 +4086,8 @@ def _run_readless_predicate_write(
         def body(tx: handle.Transaction) -> None:
             buffer_prepared_predicate_write(tx, instruction)
 
-        with contextlib.suppress(_RollbackStep):
-            _transact(database, body, concurrency=context.concurrency)
+        with absorbing_rollback():
+            transact(database, body, concurrency=context.concurrency)
         return (
             _delivered((statement,), observed.writes, "a readless predicate write"),
             observed.round_trips,
@@ -4356,7 +4214,7 @@ def _run_materializing_pair(
     rollback = write_step.get("rollback") is True
     observed = lifecycle.observation()
     with handle.Database.connect(
-        _write_adapter(port, rollback=rollback),
+        write_adapter(port, rollback=rollback),
         context.serving,
         clock=FixedClock(instant),
         lifecycle_provider=observed.provider,
@@ -4366,8 +4224,8 @@ def _run_materializing_pair(
             buffer_prepared_predicate_write(tx, instruction)
 
         with shadow.staged(doomed=rollback):
-            with contextlib.suppress(_RollbackStep):
-                _transact(database, body, concurrency=context.concurrency)
+            with absorbing_rollback():
+                transact(database, body, concurrency=context.concurrency)
             shadow.note_materialized_write(case_entity(model, write_target))
         # The split is the port method each statement ran through rather than a
         # position in one flat list, so a resolve that issued more than one call, or
@@ -5008,7 +4866,7 @@ def _run_uow_group(
     state = _GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     observation = lifecycle.observation()
-    session = _GroupSession(_write_adapter(port, rollback=doomed), context, instant, observation)
+    session = _GroupSession(write_adapter(port, rollback=doomed), context, instant, observation)
     try:
         lowered: list[_LoweredStep] = []
         step_rows: list[dict[str, object]] = []
@@ -5032,8 +4890,8 @@ def _run_uow_group(
                 if observed is not None:
                     step_graphs.append(observed)
 
-        with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
-            _transact(
+        with context.shadow.staged(doomed=doomed), absorbing_rollback():
+            transact(
                 session.database, body, concurrency=context.concurrency, isolation=context.isolation
             )
         # The group's writes reach the wire in ONE flush at its boundary, so a step's
@@ -5224,7 +5082,7 @@ def _run_interleaved_group(
 
     committed = False
     try:
-        _transact(
+        transact(
             session.database, body, concurrency=context.concurrency, isolation=context.isolation
         )
         committed = True
@@ -6027,7 +5885,7 @@ def _conflict_attempt_affected(
     that arm.
     """
     try:
-        return _transact(database, body, concurrency=concurrency)
+        return transact(database, body, concurrency=concurrency)
     except WriteEffectError as exc:
         admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
         if type(exc) is not admitted:
@@ -6385,7 +6243,7 @@ def _run_conflict_close(
         return affected
 
     implied = _implied_shortfall_error(True, concurrency, model, target)
-    affected = _admitted_affected(implied, lambda: _committed(port.transaction(run_close)))
+    affected = _admitted_affected(implied, lambda: committed(port.transaction(run_close)))
     return (statement,), affected, 1
 
 
