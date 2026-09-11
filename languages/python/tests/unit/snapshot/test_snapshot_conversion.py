@@ -83,7 +83,7 @@ from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit._snapshot_graph_support import (
+from tests.unit.snapshot._snapshot_graph_support import (
     documents_of,
     identity_of,
     invalid_record,

@@ -55,7 +55,7 @@ no test command of its own.
 | `_support/repo.py` | `PY_ROOT`, `REPO_ROOT`, and the canonical core artifacts read from them — `adapter_schema()`, `canonical_snapshot_claim()` |
 | `_support/cost_durations.py` | What each cost item last cost: the contract `cost_durations.json` is read under, and the store a measuring run writes back through |
 | `_support/corpus.py` | A case's document and fixtures, and the grading comparators the run sweep and the API-suite story lane share |
-| `_support/db_port.py` | The shared `m-db-port` doubles, each an ADAPTER owning the runtime, acquisition contexts and revocable connections beneath it — `ScriptedAdapter` and its script entries, `RefusingAdapter`, `ConnectsAsItself` for a double that is its own runtime, `DetachableMetrics` for the pool source a scripted runtime gives up at its close, the `PortCall` recording — the transaction outcome a fake with no boundary of its own reports, and the three recording fakes the conformance engine's suites drive (`FakeDbPort`, `FakeWritePort`, `QueueDbPort`) |
+| `_support/db_port.py` | The shared `m-db-port` doubles, each an ADAPTER owning the runtime, acquisition contexts and revocable connections beneath it — `ScriptedAdapter` and its script entries, `RefusingAdapter`, `ConnectsAsItself` for a double that is its own runtime, `DetachableMetrics` for the pool source a scripted runtime gives up at its close, the `PortCall` recording — and the transaction outcome a fake with no boundary of its own reports |
 | `_support/sweep_goldens.py` | The corpus cases the compile and run sweeps grade against authored goldens, and the golden readers both use |
 | `_support/distributions.py` | The distribution name tuples and the `Wheelhouse` the `wheelhouse` fixture builds |
 | `_support/fake_metamodel.py` | An alternate accepted-Metamodel implementation and the parity model it pins |
@@ -74,9 +74,12 @@ helper module, never from another test module.
 
 Support code only one surface uses stays inside that surface, and follows its
 consumers within it. A helper every consumer of which sits under one directory
-of `tests/unit/` sits in that directory — `conformance/_wire_value_support.py`,
-`core/entity/_compact_support.py`, `core/entity/value_object_bad_models.py`,
+of `tests/unit/` sits in that directory — `conformance/_recording_ports.py`,
+`conformance/_wire_value_support.py`, `core/entity/_compact_support.py`,
+`core/entity/value_object_bad_models.py`,
 `core/execution_lifecycle/_lifecycle_cost_support.py`,
+`snapshot/_layout_twin_columns.py`, `snapshot/_layout_twin_document.py`,
+`snapshot/_snapshot_graph_support.py`,
 `snapshot/handle/_keyed_write_drivers.py`,
 `snapshot/handle/_mixed_strategy_model.py`,
 `snapshot/handle/observation_models.py`. A helper whose consumers span
@@ -87,8 +90,8 @@ the `tests/unit/` root —
 `_document_layout_support.py`, `_inheritance_family_support.py`,
 `_instance_state_support.py`, `_metamodel_support.py`,
 `_pool_source_support.py`, `_second_dialect.py`,
-`_snapshot_graph_support.py`, `_snapshot_materialization_support.py`,
-`_source_inventory_support.py`, `_stream_page_support.py`,
+`_snapshot_materialization_support.py`, `_source_inventory_support.py`,
+`_stream_page_support.py`,
 `_transact_support.py`, and `memory_instruments.py`.
 
 Four of those serve the cost suites and split by subject:

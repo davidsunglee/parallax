@@ -51,7 +51,7 @@ from parallax.snapshot.materialize import (
 )
 from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
 from tests._support import snapshot_models as sm
-from tests.unit._snapshot_graph_support import GraphFixture, invalid_record
+from tests.unit.snapshot._snapshot_graph_support import GraphFixture, invalid_record
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
 _ANIMAL = sm.ANIMAL_MODEL

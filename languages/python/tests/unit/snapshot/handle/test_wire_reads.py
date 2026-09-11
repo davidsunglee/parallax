@@ -68,7 +68,7 @@ from tests._support.db_port import (
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.sql import compile_read
 from tests.unit._metamodel_support import Declaration, key, source
-from tests.unit._snapshot_graph_support import documents_of, identity_of, layout_of
+from tests.unit.snapshot._snapshot_graph_support import documents_of, identity_of, layout_of
 
 # Descriptor-backed Domain Models, because a connection takes the Domain Model
 # itself; the accepted Metamodel underneath one is what the materialize-level
