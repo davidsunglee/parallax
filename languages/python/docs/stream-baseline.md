@@ -62,7 +62,7 @@ leaves out.
 
 Publishing one root peaks at that root's own graph: the high-water of the region
 between two roots is exactly the same at ten times the result, at a later
-position, and across a 128-fold spread of page sizes, and what it costs per
+position, and across a thirty-two-fold spread of page sizes, and what it costs per
 node falls at each of eight fan-outs — which rejects a term super-linear in
 `G_max` across that grid rather than establishing the asymptote. Page-size
 equality is exact rather than
@@ -70,7 +70,7 @@ a tolerance, because `m-snapshot-read` gives the page to the first layer alone;
 that is what prices the merge layer the census cannot reach. A high-water reading
 is a maximum, so an allocation that never takes the process above an earlier
 moment of the same publication is invisible to it however it scales — which is why
-that grid is 128-fold rather than convenient, and why the merge and the
+that grid is thirty-two-fold rather than convenient, and why the merge and the
 construction it feeds are priced as a pair rather than apart.
 
 Two of the bound's three exclusions are demonstrated rather than asserted: a
