@@ -1,0 +1,133 @@
+# Relational Document Layout twin of materialization-stress-columns.yaml.
+entities:
+  - name: Node
+    namespace: snapshot.materialization
+    table: materialization_node
+    layout:
+      document: { column: payload }
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag: { column: kind }
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: ownerId, type: int64, nullable: true }
+      - { name: label, type: string, maxLength: 32, nullable: true }
+      - { name: flag, type: boolean, nullable: true }
+      - { name: small, type: int32, nullable: true }
+      - { name: big, type: int64, nullable: true }
+      - { name: ratio, type: float32, nullable: true }
+      - { name: measure, type: float64, nullable: true }
+      - { name: amount, type: "decimal(12,2)", nullable: true }
+      - { name: blob, type: bytes, nullable: true }
+      - { name: day, type: date, nullable: true }
+      - { name: clock, type: time, nullable: true }
+      - { name: instant, type: timestamp, nullable: true }
+      - { name: token, type: uuid, nullable: true }
+    valueObjects:
+      - name: primaryTag
+        nullable: true
+        attributes:
+          - { name: label, type: string, nullable: true }
+          - { name: flag, type: boolean, nullable: true }
+          - { name: small, type: int32, nullable: true }
+          - { name: big, type: int64, nullable: true }
+          - { name: ratio, type: float32, nullable: true }
+          - { name: measure, type: float64, nullable: true }
+          - { name: amount, type: "decimal(12,2)", nullable: true }
+          - { name: blob, type: bytes, nullable: true }
+          - { name: day, type: date, nullable: true }
+          - { name: clock, type: time, nullable: true }
+          - { name: instant, type: timestamp, nullable: true }
+          - { name: token, type: uuid, nullable: true }
+        valueObjects:
+          - name: detail
+            nullable: true
+            attributes:
+              - { name: note, type: string, nullable: true }
+              - { name: depth, type: int32, nullable: true }
+              - { name: marked, type: boolean, nullable: true }
+          - name: details
+            multiplicity: many
+            attributes:
+              - { name: note, type: string, nullable: true }
+              - { name: depth, type: int32, nullable: true }
+              - { name: marked, type: boolean, nullable: true }
+      - name: tags
+        multiplicity: many
+        attributes:
+          - { name: label, type: string, nullable: true }
+          - { name: flag, type: boolean, nullable: true }
+          - { name: small, type: int32, nullable: true }
+          - { name: big, type: int64, nullable: true }
+          - { name: ratio, type: float32, nullable: true }
+          - { name: measure, type: float64, nullable: true }
+          - { name: amount, type: "decimal(12,2)", nullable: true }
+          - { name: blob, type: bytes, nullable: true }
+          - { name: day, type: date, nullable: true }
+          - { name: clock, type: time, nullable: true }
+          - { name: instant, type: timestamp, nullable: true }
+          - { name: token, type: uuid, nullable: true }
+        valueObjects:
+          - name: detail
+            nullable: true
+            attributes:
+              - { name: note, type: string, nullable: true }
+              - { name: depth, type: int32, nullable: true }
+              - { name: marked, type: boolean, nullable: true }
+          - name: details
+            multiplicity: many
+            attributes:
+              - { name: note, type: string, nullable: true }
+              - { name: depth, type: int32, nullable: true }
+              - { name: marked, type: boolean, nullable: true }
+    relationships:
+      - name: owner
+        reverseOf: snapshot.materialization.Owner.nodes
+  - name: Special
+    namespace: snapshot.materialization
+    inheritance:
+      role: abstract-subtype
+      parent: snapshot.materialization.Node
+    attributes:
+      - { name: rank, type: int32, nullable: true }
+  - name: Alpha
+    namespace: snapshot.materialization
+    inheritance:
+      role: concrete-subtype
+      parent: snapshot.materialization.Special
+      tagValue: alpha
+  - name: Beta
+    namespace: snapshot.materialization
+    inheritance:
+      role: concrete-subtype
+      parent: snapshot.materialization.Node
+      tagValue: beta
+    attributes:
+      - { name: weight, type: float64, nullable: true }
+  - name: Owner
+    namespace: snapshot.materialization
+    table: materialization_owner
+    layout:
+      document: { column: payload }
+    attributes:
+      - { name: id, type: int64, primaryKey: true }
+      - { name: name, type: string, maxLength: 32, nullable: true }
+      - { name: favoriteId, type: int64, nullable: true }
+    relationships:
+      - name: nodes
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: snapshot.materialization.Node, attribute: ownerId }
+        dependent: true
+      - name: special
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: snapshot.materialization.Special, attribute: ownerId }
+      - name: favorite
+        cardinality: many-to-one
+        join:
+          source: favoriteId
+          target: { entity: snapshot.materialization.Node, attribute: id }

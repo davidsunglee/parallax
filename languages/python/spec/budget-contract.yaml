@@ -1,0 +1,127 @@
+schemaVersion: 1
+authority:
+  machine: Mac17,4
+  cpu: Apple M5
+  cores: 10
+  ramGiB: 32
+  cpython: 3.14.7
+  postgres: "18.6"
+sampling:
+  timing:
+    warmups: 3
+    measured: 9
+    medianMeetsCeiling: true
+    secondSlowestMax: 1.25
+  memory:
+    children: 3
+    medianMeetsCeiling: true
+    individualMax: 1.10
+    scalingArms: [200, 2000]
+    armGrowthMaxKiB: 16
+workloads:
+  conventional-fanout:
+    fixture: benchmarks/stream.yaml
+    cells:
+      live:
+        eager: { maxMs: 12.5, minRootsPerSecond: 16000 }
+        page32: { maxMs: 20, minRootsPerSecond: 10000 }
+        page128: { maxMs: 15.5, minRootsPerSecond: 12903 }
+      firstResult:
+        page1: { maxMs: 1.5 }
+        page32: { maxMs: 2.5 }
+      providerFreeCpu:
+        eager: { maxMs: 10.5, minRootsPerSecond: 19048 }
+        page32: { maxMs: 13, minRootsPerSecond: 15385 }
+      eagerMemory: { retainedKiB: 800, peakKiB: 1350 }
+      streamedMemory:
+        retainedKiB: 64
+        page1PeakKiB: 64
+        page32PeakKiB: 256
+        page128PeakKiB: 768
+  duplicate-include:
+    fixture: benchmarks/duplicate-include.yaml
+    cells:
+      live:
+        eager: { maxMs: 18, minRootsPerSecond: 11111 }
+        page32: { maxMs: 24, minRootsPerSecond: 8333 }
+        page128: { maxMs: 22, minRootsPerSecond: 9091 }
+      firstResult:
+        page1: { maxMs: 1.5 }
+        page32: { maxMs: 3.0 }
+      providerFreeCpu:
+        eager: { maxMs: 14.5, minRootsPerSecond: 13793 }
+        page32: { maxMs: 17, minRootsPerSecond: 11765 }
+      eagerMemory: { retainedKiB: 820, peakKiB: 1500 }
+      streamedMemory:
+        retainedKiB: 64
+        page1PeakKiB: 64
+        page32PeakKiB: 320
+        page128PeakKiB: 1100
+  document-heavy:
+    fixture: benchmarks/document-layout.yaml
+    cells:
+      live:
+        eager: { maxMs: 22, minRootsPerSecond: 9091 }
+        page32: { maxMs: 28, minRootsPerSecond: 7143 }
+        page128: { maxMs: 27, minRootsPerSecond: 7407 }
+      firstResult:
+        page1: { maxMs: 2.0 }
+        page32: { maxMs: 3.5 }
+      eagerMemory: { retainedKiB: 975, peakKiB: 1900 }
+      streamedMemory:
+        retainedKiB: 64
+        page1PeakKiB: 96
+        page32PeakKiB: 400
+        page128PeakKiB: 1280
+  versioned-document:
+    fixture: benchmarks/versioned-document.yaml
+    cells:
+      live:
+        eager: { maxMs: 5.5, minRootsPerSecond: 36364 }
+        page32: { maxMs: 8, minRootsPerSecond: 25000 }
+        page128: { maxMs: 6.75, minRootsPerSecond: 29630 }
+      firstResult:
+        page1: { maxMs: 0.6 }
+        page32: { maxMs: 1.0 }
+      eagerMemory: { retainedKiB: 275, peakKiB: 475 }
+      streamedMemory:
+        retainedKiB: 64
+        page1PeakKiB: 64
+        page32PeakKiB: 144
+        page128PeakKiB: 336
+  bitemporal-current:
+    fixture: benchmarks/bitemporal-current.yaml
+    cells:
+      live:
+        eager: { maxMs: 6.5, minRootsPerSecond: 30769 }
+        page32: { maxMs: 10, minRootsPerSecond: 20000 }
+        page128: { maxMs: 8, minRootsPerSecond: 25000 }
+      firstResult:
+        page1: { maxMs: 1.0 }
+        page32: { maxMs: 1.25 }
+      eagerMemory: { retainedKiB: 330, peakKiB: 425 }
+      streamedMemory:
+        retainedKiB: 64
+        page1PeakKiB: 64
+        page32PeakKiB: 144
+        page128PeakKiB: 352
+  stress-columns:
+    fixture: benchmarks/materialization-stress-columns.yaml
+    cells:
+      stress:
+        maxUsPerProjection: 175
+        minProjectionsPerSecond: 5714
+        retainedBPerProjection: 2800
+        transientBPerProjection: 3328
+        peakFor64KiB: 400
+        preparedSetKiB: 64
+  stress-document:
+    fixture: benchmarks/materialization-stress-document.yaml
+    cells:
+      stress:
+        maxUsPerProjection: 210
+        minProjectionsPerSecond: 4762
+        retainedBPerProjection: 3200
+        transientBPerProjection: 3328
+        peakFor64KiB: 425
+        preparedSetKiB: 80
