@@ -50,6 +50,7 @@ from decimal import Decimal as PyDecimal
 from functools import cache
 from typing import Final, Literal, cast
 
+from parallax.conformance.workloads import catalog
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -102,7 +103,6 @@ from parallax.core.metamodel import (
     Multiplicity,
     entity_by_name,
 )
-from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.object_query._validated import ValidatedObjectQuery
 from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow, compile_read
 from parallax.core.storage_layout import DirectColumn, TableLayout
@@ -139,6 +139,11 @@ type Layout = Literal["columns", "document"]
 LAYOUTS: Final[tuple[Layout, ...]] = ("columns", "document")
 """Every storage layout the workload is measured under, in report order."""
 
+_WORKLOAD_IDS: Final[Mapping[Layout, str]] = {
+    "columns": "stress-columns",
+    "document": "stress-document",
+}
+
 OWNERS: Final = 8
 FANOUT: Final = 4
 DUPLICATES: Final = 2
@@ -166,26 +171,16 @@ _NARROWED: Final = "special[Alpha]"
 _FAVORITE: Final = "favorite"
 
 
-# --------------------------------------------------------------------------- #
-# The model, declared once over the layout.                                    #
-# --------------------------------------------------------------------------- #
-
-
 def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
-    namespace = f"snapshot.materialization.{layout}"
+    namespace = "snapshot.materialization"
     placement = Document(column="payload") if layout == "document" else None
 
     class Detail(ValueObject):
-        """The deepest nested Value Object."""
-
         note: Attr[str | None]
         depth: Attr[int | None] = attr(type=Int32)
         marked: Attr[bool | None]
 
     class Tag(ValueObject):
-        """One leaf of every declarable Neutral Type, a nested One, and a nested
-        Many — so a document reaches every codec row at two depths."""
-
         label: Attr[str | None]
         flag: Attr[bool | None]
         small: Attr[int | None] = attr(type=Int32)
@@ -208,9 +203,6 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
         inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
         layout=placement,
     ):
-        """The family root: one Attribute of every declarable Neutral Type, a
-        top-level One occurrence, a top-level Many, and the back reference."""
-
         id: Attr[int] = attr(primary_key=True)
         owner_id: Attr[int | None]
         label: Attr[str | None] = attr(max_length=32)
@@ -230,17 +222,12 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
         owner: Rel["Owner | None"] = rel(reverse_of="nodes")
 
     class Special(Node, namespace=namespace, inheritance=AbstractSubtype):
-        """The abstract middle a narrowed view resolves through."""
-
         rank: Attr[int | None] = attr(type=Int32)
 
     class Alpha(Special, namespace=namespace, inheritance=ConcreteSubtype(tag_value="alpha")):
-        """The concrete reached both broadly and through the narrowed view, which
-        is what gives the batch its duplicate projections."""
+        pass
 
     class Beta(Node, namespace=namespace, inheritance=ConcreteSubtype(tag_value="beta")):
-        """The family's other concrete, reached broadly alone."""
-
         weight: Attr[float | None]
 
     class Owner(
@@ -249,9 +236,6 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
         namespace=namespace,
         layout=placement,
     ):
-        """The root of every batch, carrying the three view slots: a broad
-        to-many, a narrowed to-many, and a to-one into the same family."""
-
         id: Attr[int] = attr(primary_key=True)
         name: Attr[str | None] = attr(max_length=32)
         favorite_id: Attr[int | None]
@@ -268,7 +252,12 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
 @cache
 def workload(layout: Layout) -> DomainModel:
     """The representative Domain Model under ``layout``."""
-    return DomainModel(*_entity_classes(layout))
+    fixture = catalog()[_WORKLOAD_IDS[layout]]
+    realized = DomainModel(*_entity_classes(layout))
+    assert tuple(entity.identity for entity in model_of(realized).entities) == tuple(
+        entity.identity for entity in fixture.model.entities
+    )
+    return realized
 
 
 @cache
@@ -281,18 +270,7 @@ def query(model: Metamodel) -> ValidatedObjectQuery:
     """The read every batch runs: three includes off the root and one
     back-reference revisiting it."""
     return preflight(
-        deserialize_query(
-            {
-                "target": "Owner",
-                "predicate": {"all": {}},
-                "includes": [
-                    {"segments": [{"rel": "Owner.nodes"}]},
-                    {"segments": [{"rel": "Owner.special", "narrowTo": ["Alpha"]}]},
-                    {"segments": [{"rel": "Owner.favorite"}]},
-                    {"segments": [{"rel": "Owner.nodes"}, {"rel": "Node.owner"}]},
-                ],
-            }
-        ),
+        catalog()["stress-columns"].query,
         model=model,
         form="graph",
     )

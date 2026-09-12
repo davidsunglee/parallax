@@ -7435,6 +7435,349 @@
       ]
     }
   },
+  "models/materialization-stress-columns.yaml": {
+    "materialization_node": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "id",
+          "contributor": "attribute:snapshot.materialization.Node.id",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:snapshot.materialization.Node",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "owner_id",
+          "contributor": "attribute:snapshot.materialization.Node.ownerId",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "label",
+          "contributor": "attribute:snapshot.materialization.Node.label",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "flag",
+          "contributor": "attribute:snapshot.materialization.Node.flag",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "small",
+          "contributor": "attribute:snapshot.materialization.Node.small",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "big",
+          "contributor": "attribute:snapshot.materialization.Node.big",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "ratio",
+          "contributor": "attribute:snapshot.materialization.Node.ratio",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "measure",
+          "contributor": "attribute:snapshot.materialization.Node.measure",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "amount",
+          "contributor": "attribute:snapshot.materialization.Node.amount",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "blob",
+          "contributor": "attribute:snapshot.materialization.Node.blob",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "day",
+          "contributor": "attribute:snapshot.materialization.Node.day",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "clock",
+          "contributor": "attribute:snapshot.materialization.Node.clock",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "instant",
+          "contributor": "attribute:snapshot.materialization.Node.instant",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "token",
+          "contributor": "attribute:snapshot.materialization.Node.token",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha"
+          ],
+          "column": "rank",
+          "contributor": "attribute:snapshot.materialization.Special.rank",
+          "declaringOwner": "snapshot.materialization.Special",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Beta"
+          ],
+          "column": "weight",
+          "contributor": "attribute:snapshot.materialization.Beta.weight",
+          "declaringOwner": "snapshot.materialization.Beta",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "primary_tag",
+          "contributor": "valueObject:snapshot.materialization.Node.primaryTag",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "document"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "tags",
+          "contributor": "valueObject:snapshot.materialization.Node.tags",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "materialization_owner": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Owner"
+          ],
+          "column": "id",
+          "contributor": "attribute:snapshot.materialization.Owner.id",
+          "declaringOwner": "snapshot.materialization.Owner",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Owner"
+          ],
+          "column": "name",
+          "contributor": "attribute:snapshot.materialization.Owner.name",
+          "declaringOwner": "snapshot.materialization.Owner",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Owner"
+          ],
+          "column": "favorite_id",
+          "contributor": "attribute:snapshot.materialization.Owner.favoriteId",
+          "declaringOwner": "snapshot.materialization.Owner",
+          "effectiveNullable": true,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/materialization-stress-document.yaml": {
+    "materialization_node": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "id",
+          "contributor": "attribute:snapshot.materialization.Node.id",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:snapshot.materialization.Node",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "owner_id",
+          "contributor": "attribute:snapshot.materialization.Node.ownerId",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Alpha",
+            "snapshot.materialization.Beta"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:snapshot.materialization.Node",
+          "declaringOwner": "snapshot.materialization.Node",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "materialization_owner": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Owner"
+          ],
+          "column": "id",
+          "contributor": "attribute:snapshot.materialization.Owner.id",
+          "declaringOwner": "snapshot.materialization.Owner",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Owner"
+          ],
+          "column": "favorite_id",
+          "contributor": "attribute:snapshot.materialization.Owner.favoriteId",
+          "declaringOwner": "snapshot.materialization.Owner",
+          "effectiveNullable": true,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "snapshot.materialization.Owner"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:snapshot.materialization.Owner",
+          "declaringOwner": "snapshot.materialization.Owner",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/member-column-defaults.yaml": {
     "member_column_defaults": {
       "columns": [

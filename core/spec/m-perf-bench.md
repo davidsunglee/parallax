@@ -37,8 +37,13 @@ without forcing non-idiomatic structures.
 
 A benchmark fixture is a YAML document under `core/compatibility/benchmarks/`. It
 names a model descriptor, a dataset to load, and an ordered list of **workloads**
-to measure. The shipped fixtures cover the five workload families the spec calls
-out:
+to measure. A fixture MAY additionally carry `objectQuery`, the canonical Object
+Query a language implementation executes when measuring its own delivery path,
+and `delivery.pageSizes`, the positive page sizes at which that delivery is
+graded. Those two members do not change the reference harness's authored-SQL
+workload: they let one fixture own the target delivery shape beside the portable
+database statement shape. The shipped fixtures cover the five workload families
+the spec calls out:
 
 | Workload family | Statement shape its golden SQL is | Example fixture |
 |---|---|---|
@@ -48,8 +53,9 @@ out:
 | **milestone workloads** (insert / update / terminate chains) | `m-txtime-write` milestone chaining — the close-and-chain write pair | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | the `m-agg` aggregate statement | folded into `read-mix.yaml` |
 
-**What a fixture observes, in all five families.** A workload declares golden SQL
-rather than an Object Query, so a run of it executes the AUTHORED statements. What
+**What the reference harness observes, in all five families.** A workload declares
+golden SQL independently of an optional fixture-level Object Query, so a reference
+run executes the AUTHORED statements. What
 lands in the report is therefore the cost of the WORKLOAD against the database —
 those statements, that dataset, and the round trips between them — rather than the
 cost of a target's own path to them. That is what makes one number mean the same
@@ -73,10 +79,12 @@ levels costs `ceil(N / B)` root statements and `ceil(N / B) x L` child statement
 delivered the last roots rather than by a statement of its own — and each
 workload's `expectRoundTrips` is that arithmetic evaluated at its own page size.
 
-What the family exports is that count and the page statements behind it — the
+What the family exports to the reference harness is that count and the page statements behind it — the
 shape a conforming delivery of the result must produce. It exports no delivery: a
-fixture here carries golden SQL and no Object Query, so a run of it executes those
-page statements as authored and reports how many it issued. The adapter's
+fixture's workload carries golden SQL, so a run of it executes those page
+statements as authored and reports how many it issued. A language delivery report
+instead executes the fixture-level `objectQuery`; neither lane substitutes for the
+other. The adapter's
 `benchmark` command carries each workload's `roundTrips` beside its
 `expectRoundTrips`, and the two agreeing says the arithmetic this module states
 and the statements the fixture authors are consistent with each other. It says
@@ -119,6 +127,38 @@ A recipe names the Entities it fills by emitting their keys, so a generated
 dataset declares a row count and a recipe and nothing else about which Entity it
 builds. A recipe may fill several — the `orders-tree` shape fills three — so no
 single Entity property could describe one honestly.
+
+The recipe names and their deterministic semantics are:
+
+- `accounts-sequential`: `rows` Accounts with IDs `1..rows`, owner
+  `owner-<id>`, balance `<id * 100>.00`, and version `1`.
+- `orders-tree`: `rows` Orders with IDs `1..rows`; each Order has `fanout`
+  OrderItems, and each item has `fanout` OrderStatuses. Item and status IDs are
+  independently global and sequential in parent then child order. Every order is
+  active, has quantity `1`, price `10.00`, and date `2024-01-01`; each item has
+  quantity `1`; every status code is `OPEN`.
+- `travelers-tree`: `rows` Travelers with IDs `1..rows`, one complete nested
+  address, and `fanout` tags and Trips each. Trip IDs are global and sequential
+  in traveler then child order.
+- `document-milestones`: `rows` current Voyage milestones and `rows` current
+  Charter rectangles, independently keyed `1..rows`, opened at
+  `2026-01-01T00:00:00+00:00` and unbounded at every end they declare.
+- `versioned-documents`: `rows` current Ledgers keyed `1..rows`, each at version
+  `1` with one complete document payload.
+- `bitemporal-current`: `rows` current Charter rectangles keyed `1..rows`, each
+  valid and transaction-current from `2026-01-01T00:00:00+00:00`.
+- `materialization-stress`: `rows` Owners keyed from `1000`, each with `fanout`
+  Nodes keyed from `10000` in non-overlapping ten-key ranges. The first two nodes
+  are Alpha and the remainder Beta; the first is the owner's favorite. The
+  workload's broad, narrowed, favorite, and back-reference paths therefore make
+  five planned levels while revisiting the same physical Alpha rows.
+
+Every implementation of a recipe MUST preserve these Entity counts, parent-child
+fan-out, key relationships, traversal order, and fixed member values. It MAY
+construct rows lazily and MAY use host-native managed carriers after canonical
+Wire decoding. A target-side workload catalog MUST read recipe selection,
+`objectQuery`, and `delivery.pageSizes` from the fixture rather than restating
+them in a report or test.
 
 ## Measurement protocol
 

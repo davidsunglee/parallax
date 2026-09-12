@@ -41,14 +41,14 @@ import datetime as dt
 import platform
 import sys
 import tracemalloc
-from collections.abc import Callable, Sequence
-from decimal import Decimal
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from time import perf_counter
 from types import TracebackType
 from typing import Any, Final, NamedTuple, cast
 
 from parallax.conformance.story_models import ORDERS_MODEL, Order
+from parallax.conformance.workloads import catalog
 from parallax.core.db_port import (
     CleanupResult,
     DatabaseConnection,
@@ -102,7 +102,7 @@ PAGE_SIZES: Final = (1, 2, 8, 32)
 """The dial, across a factor of thirty-two, so what it buys and what it costs are
 read on the same table."""
 
-FANOUT: Final = 4
+FANOUT: Final = 5
 """Included children per root, so every page graph carries relationship fan-out
 and the root the caller holds is a graph rather than a row."""
 
@@ -134,25 +134,29 @@ RETAINED_AT: Final = (20, 200)
 exclusion, whose slope is what one root of this graph costs."""
 
 
-def _order_row(order_id: int) -> Row:
+_WORKLOAD: Final = catalog()["conventional-fanout"]
+
+
+def _order_row(row: Mapping[str, object]) -> Row:
     return {
-        "id": order_id,
-        "name": f"order-{order_id}",
-        "sku": "A-100",
-        "qty": 5,
-        "price": Decimal("10.50"),
-        "active": True,
-        "ordered_on": dt.date(2024, 1, 5),
+        "id": row["id"],
+        "name": row["name"],
+        "sku": row["sku"],
+        "qty": row["qty"],
+        "price": row["price"],
+        "active": row["active"],
+        "ordered_on": dt.date.fromisoformat(cast("str", row["orderedOn"])),
+        "parallax_seek_0": row["id"],
     }
 
 
-def _item_row(item_id: int, order_id: int) -> Row:
+def _item_row(row: Mapping[str, object]) -> Row:
     return {
-        "id": item_id,
-        "order_id": order_id,
-        "sku": "SKU",
-        "quantity": 1,
-        "shipped_on": dt.date(2024, 2, 1),
+        "id": row["id"],
+        "order_id": row["orderId"],
+        "sku": row["sku"],
+        "quantity": row["quantity"],
+        "shipped_on": dt.date.fromisoformat(cast("str", row["shippedOn"])),
     }
 
 
@@ -225,17 +229,21 @@ class _SoleScope:
         self._left = True
 
 
-class GeneratingPort:
+class CatalogPort:
     """A port that answers each page from a counter and retains nothing beyond
     the page it last answered."""
 
     dialect: Dialect = POSTGRES
 
-    __slots__ = ("_delivered", "_fanout", "_page", "_total")
+    __slots__ = ("_delivered", "_fanout", "_items", "_orders", "_page")
 
     def __init__(self, total: int, fanout: int = FANOUT) -> None:
-        self._total = total
+        rows = _WORKLOAD.rows(total)
+        if fanout != rows.fanout:
+            raise ValueError(f"the catalog fixes fanout at {rows.fanout}, got {fanout}")
         self._fanout = fanout
+        self._orders = rows.entity("parallax.compatibility.Order")
+        self._items = rows.entity("parallax.compatibility.OrderItem")
         self._delivered = 0
         self._page: tuple[int, ...] = ()
 
@@ -248,15 +256,16 @@ class GeneratingPort:
         del document_reads
         if "order_item t0" in sql:
             return [
-                _item_row(parent * 100 + offset, parent)
+                _item_row(row)
                 for parent in self._page
-                for offset in range(self._fanout)
+                for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
             ]
         size = cast("int", binds[-1])
-        taken = min(size, self._total - self._delivered)
-        self._page = tuple(range(self._delivered + 1, self._delivered + taken + 1))
-        self._delivered += taken
-        return [_order_row(order_id) for order_id in self._page]
+        taken = min(size, len(self._orders) - self._delivered)
+        selected = self._orders[self._delivered : self._delivered + taken]
+        self._page = tuple(cast("int", row["id"]) for row in selected)
+        self._delivered += taken - 1 if taken == size else taken
+        return [_order_row(row) for row in selected]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         raise NotImplementedError
@@ -295,7 +304,7 @@ def paused(lane: Lane, total: int, *, batch_size: int) -> Seam:
     at = sample_after(batch_size)
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(_SoleRuntime(GeneratingPort(total)), ORDERS_MODEL)
+        database = Database(_SoleRuntime(CatalogPort(total)), ORDERS_MODEL)
         with lane.opener(database, batch_size) as stream:
             for position, _root in enumerate(stream):
                 if position == at:
@@ -310,7 +319,7 @@ def draining(lane: Lane, total: int, *, batch_size: int, retaining: bool) -> Sea
     root it was handed or none of them."""
 
     def seam(sample: Callable[[], None]) -> None:
-        database = Database(_SoleRuntime(GeneratingPort(total)), ORDERS_MODEL)
+        database = Database(_SoleRuntime(CatalogPort(total)), ORDERS_MODEL)
         held: list[object] = []
         with lane.opener(database, batch_size) as stream:
             for root in stream:

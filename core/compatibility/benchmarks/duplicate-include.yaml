@@ -1,0 +1,35 @@
+# Snapshot delivery workload where two Include Paths project the same OrderItem rows.
+tags: [m-perf-bench, m-snapshot-read, duplicate-include]
+model: models/orders.yaml
+dataset:
+  generate:
+    rows: 200
+    recipe: orders-tree
+    fanout: 5
+objectQuery:
+  target: parallax.compatibility.Order
+  predicate: { all: {} }
+  includes:
+    - segments:
+        - rel: parallax.compatibility.Order.items
+    - segments:
+        - rel: parallax.compatibility.Order.itemsByShipDate
+delivery:
+  pageSizes: [1, 32, 128]
+workloads:
+  - name: duplicate-include-shape
+    iterations: 20
+    expectRoundTrips: 3
+    statements:
+      - sql:
+          postgres: select t0.id from orders t0 order by t0.id asc limit ?
+          mariadb: select t0.id from orders t0 order by t0.id asc limit ?
+        binds: [200]
+      - sql:
+          postgres: select t0.id, t0.order_id from order_item t0 where t0.order_id <= ? order by t0.id desc
+          mariadb: select t0.id, t0.order_id from order_item t0 where t0.order_id <= ? order by t0.id desc
+        binds: [200]
+      - sql:
+          postgres: select t0.id, t0.order_id from order_item t0 where t0.order_id <= ? order by t0.shipped_on asc
+          mariadb: select t0.id, t0.order_id from order_item t0 where t0.order_id <= ? order by t0.shipped_on asc
+        binds: [200]
