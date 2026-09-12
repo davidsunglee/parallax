@@ -6343,6 +6343,49 @@ rows receive the transaction's shared lock.
   under `core/spec/language-testing.md` §2: it exits non-zero on exactly one
   thing, a matrix cell it has no reading for, which says there is nothing to read
   rather than that what was read is wrong.
+- **Snapshot Delivery Budget Contract.**
+  [`budget-contract.yaml`](budget-contract.yaml) is the sole machine-readable
+  source of the Snapshot delivery workload identifiers, benchmark fixture
+  ownership, authority fingerprint, sampling protocol, and absolute timing,
+  throughput, retained-memory, peak-memory, scaling, and materialization-stress
+  ceilings. Python code loads it through `parallax.conformance.budget`; reports,
+  structural gates, and workload drift checks MUST NOT transcribe a threshold.
+  Baseline Markdown documents remain dated evidence and carry no authoritative
+  ceiling. The authority fingerprint is machine model, CPU, physical core count,
+  RAM GiB, CPython version, and PostgreSQL version. The operating-system identity
+  is recorded as provenance but is not compared as part of that fingerprint.
+- **Snapshot Delivery Workload Catalog.** `parallax.conformance.workloads` reads
+  every workload named by the Budget Contract from its benchmark fixture and is
+  the only Python owner of fixture discovery, Object Query lowering, provider-free
+  generated rows, and live provisioning input. Every measurement consumer imports
+  the catalog and knows neither a fixture path nor a generation recipe. A
+  database-free whole-tree check requires exact agreement among catalog IDs,
+  contract IDs, and fixtures carrying `objectQuery` and `delivery.pageSizes`;
+  report expansion and gated coverage join that equality when the portfolio is
+  introduced.
+- **Cost Report Envelope.**
+  [`cost-report-envelope.schema.json`](cost-report-envelope.schema.json) is the
+  versioned schema every quantitative Python report emits. Each envelope carries
+  its subject, readings and units, declared comparisons, explicit incomplete
+  cells and errors, and provenance: commit and dirty state; Budget Contract,
+  workload-catalog, and `uv.lock` digests; hardware and OS identity; CPython and
+  PostgreSQL versions; and the sampling protocol. Authority classification is a
+  pure comparison of that provenance with the Budget Contract: only a clean tree
+  at a commit with an exactly matching authority fingerprint, contract digest,
+  and sampling protocol is `authoritative`; every other useful reading is
+  `non-authoritative`.
+- **Portfolio and observation posture.** The Snapshot delivery portfolio is one
+  atomic report over every required live, provider-free, eager, streamed,
+  first-result, memory-scaling, and materialization-stress cell. It withholds an
+  overall comparison if any required cell is absent. The cost collector attempts
+  every quantitative member, preserves every valid envelope, and fails only after
+  collection when a required envelope is missing or invalid; an unfavorable
+  comparison never determines report exit status. Pull requests observe merge
+  base and head on one assigned runner and main observes head, uploading
+  commit-keyed envelopes and advisory summaries from a non-required CI job.
+  Observations never rewrite or ratchet the Budget Contract. Rebaselining requires
+  clean authoritative envelopes under both the old and proposed contracts plus an
+  explicit reviewed contract change and rationale for every relaxed ceiling.
 - **Complete verification command.** `just python-check` — all three class
   aggregates, ending with a summary block listing every check as run, failed, or
   skipped-with-reason.

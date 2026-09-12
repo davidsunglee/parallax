@@ -78,6 +78,8 @@ _FAMILIES: Final[tuple[str, ...]] = (
     "evolution-rowless-position-v2",
     "instrument",
     "materialization-key-compatibility",
+    "materialization-stress-columns",
+    "materialization-stress-document",
     "payment",
     "quote",
     "rate",

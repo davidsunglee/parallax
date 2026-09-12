@@ -32,26 +32,18 @@
 tags: [m-perf-bench, m-storage-layout, document-layout]
 model: models/document-layout.yaml
 dataset:
-  rows:
-    parallax.compatibility.Traveler:
-      - id: 1
-        displayName: Ada
-        score: 7
-        joinedOn: "2026-01-15"
-        note: north wing
-        address: { city: Oslo, geo: { country: "NO" } }
-        tags: [{ label: founder }]
-      - id: 2
-        displayName: Bo
-        score: 30
-        joinedOn: "2025-12-31"
-        address: { city: Bergen, geo: { country: "NO" } }
-      - id: 3
-        displayName: Cyd
-        score: null
-        joinedOn: null
-        note: null
-        address: null
+  generate:
+    rows: 200
+    recipe: travelers-tree
+    fanout: 5
+objectQuery:
+  target: parallax.compatibility.Traveler
+  predicate: { all: {} }
+  includes:
+    - segments:
+        - rel: parallax.compatibility.Traveler.trips
+delivery:
+  pageSizes: [1, 32, 128]
 workloads:
   - name: document-path-filter
     note: a scalar document-path predicate through the m-dialect typed cast — one statement, one round trip

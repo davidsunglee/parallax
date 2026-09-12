@@ -2718,6 +2718,212 @@
       }
     }
   },
+  "models/materialization-stress-columns.yaml": {
+    "snapshot.materialization.Alpha": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "snapshot.materialization.Beta": {
+      "attribute": {
+        "weight": "weight"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "snapshot.materialization.Node": {
+      "attribute": {
+        "amount": "amount",
+        "big": "big",
+        "blob": "blob",
+        "clock": "clock",
+        "day": "day",
+        "flag": "flag",
+        "id": "id",
+        "instant": "instant",
+        "label": "label",
+        "measure": "measure",
+        "ownerId": "owner_id",
+        "ratio": "ratio",
+        "small": "small",
+        "token": "token"
+      },
+      "documentPath": {
+        "primaryTag.amount": "primary_tag:amount",
+        "primaryTag.big": "primary_tag:big",
+        "primaryTag.blob": "primary_tag:blob",
+        "primaryTag.clock": "primary_tag:clock",
+        "primaryTag.day": "primary_tag:day",
+        "primaryTag.detail": "primary_tag:detail",
+        "primaryTag.detail.depth": "primary_tag:detail.depth",
+        "primaryTag.detail.marked": "primary_tag:detail.marked",
+        "primaryTag.detail.note": "primary_tag:detail.note",
+        "primaryTag.details": "primary_tag:details",
+        "primaryTag.details.depth": "primary_tag:details.depth",
+        "primaryTag.details.marked": "primary_tag:details.marked",
+        "primaryTag.details.note": "primary_tag:details.note",
+        "primaryTag.flag": "primary_tag:flag",
+        "primaryTag.instant": "primary_tag:instant",
+        "primaryTag.label": "primary_tag:label",
+        "primaryTag.measure": "primary_tag:measure",
+        "primaryTag.ratio": "primary_tag:ratio",
+        "primaryTag.small": "primary_tag:small",
+        "primaryTag.token": "primary_tag:token",
+        "tags.amount": "tags:amount",
+        "tags.big": "tags:big",
+        "tags.blob": "tags:blob",
+        "tags.clock": "tags:clock",
+        "tags.day": "tags:day",
+        "tags.detail": "tags:detail",
+        "tags.detail.depth": "tags:detail.depth",
+        "tags.detail.marked": "tags:detail.marked",
+        "tags.detail.note": "tags:detail.note",
+        "tags.details": "tags:details",
+        "tags.details.depth": "tags:details.depth",
+        "tags.details.marked": "tags:details.marked",
+        "tags.details.note": "tags:details.note",
+        "tags.flag": "tags:flag",
+        "tags.instant": "tags:instant",
+        "tags.label": "tags:label",
+        "tags.measure": "tags:measure",
+        "tags.ratio": "tags:ratio",
+        "tags.small": "tags:small",
+        "tags.token": "tags:token"
+      },
+      "valueObject": {
+        "primaryTag": "primary_tag",
+        "tags": "tags"
+      }
+    },
+    "snapshot.materialization.Owner": {
+      "attribute": {
+        "favoriteId": "favorite_id",
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "snapshot.materialization.Special": {
+      "attribute": {
+        "rank": "rank"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
+  "models/materialization-stress-document.yaml": {
+    "snapshot.materialization.Alpha": {
+      "attribute": {},
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "snapshot.materialization.Beta": {
+      "attribute": {
+        "weight": "weight"
+      },
+      "documentPath": {
+        "weight": "payload:weight"
+      },
+      "valueObject": {}
+    },
+    "snapshot.materialization.Node": {
+      "attribute": {
+        "amount": "amount",
+        "big": "big",
+        "blob": "blob",
+        "clock": "clock",
+        "day": "day",
+        "flag": "flag",
+        "id": "id",
+        "instant": "instant",
+        "label": "label",
+        "measure": "measure",
+        "ownerId": "owner_id",
+        "ratio": "ratio",
+        "small": "small",
+        "token": "token"
+      },
+      "documentPath": {
+        "amount": "payload:amount",
+        "big": "payload:big",
+        "blob": "payload:blob",
+        "clock": "payload:clock",
+        "day": "payload:day",
+        "flag": "payload:flag",
+        "instant": "payload:instant",
+        "label": "payload:label",
+        "measure": "payload:measure",
+        "primaryTag": "payload:primaryTag",
+        "primaryTag.amount": "payload:primaryTag.amount",
+        "primaryTag.big": "payload:primaryTag.big",
+        "primaryTag.blob": "payload:primaryTag.blob",
+        "primaryTag.clock": "payload:primaryTag.clock",
+        "primaryTag.day": "payload:primaryTag.day",
+        "primaryTag.detail": "payload:primaryTag.detail",
+        "primaryTag.detail.depth": "payload:primaryTag.detail.depth",
+        "primaryTag.detail.marked": "payload:primaryTag.detail.marked",
+        "primaryTag.detail.note": "payload:primaryTag.detail.note",
+        "primaryTag.details": "payload:primaryTag.details",
+        "primaryTag.details.depth": "payload:primaryTag.details.depth",
+        "primaryTag.details.marked": "payload:primaryTag.details.marked",
+        "primaryTag.details.note": "payload:primaryTag.details.note",
+        "primaryTag.flag": "payload:primaryTag.flag",
+        "primaryTag.instant": "payload:primaryTag.instant",
+        "primaryTag.label": "payload:primaryTag.label",
+        "primaryTag.measure": "payload:primaryTag.measure",
+        "primaryTag.ratio": "payload:primaryTag.ratio",
+        "primaryTag.small": "payload:primaryTag.small",
+        "primaryTag.token": "payload:primaryTag.token",
+        "ratio": "payload:ratio",
+        "small": "payload:small",
+        "tags": "payload:tags",
+        "tags.amount": "payload:tags.amount",
+        "tags.big": "payload:tags.big",
+        "tags.blob": "payload:tags.blob",
+        "tags.clock": "payload:tags.clock",
+        "tags.day": "payload:tags.day",
+        "tags.detail": "payload:tags.detail",
+        "tags.detail.depth": "payload:tags.detail.depth",
+        "tags.detail.marked": "payload:tags.detail.marked",
+        "tags.detail.note": "payload:tags.detail.note",
+        "tags.details": "payload:tags.details",
+        "tags.details.depth": "payload:tags.details.depth",
+        "tags.details.marked": "payload:tags.details.marked",
+        "tags.details.note": "payload:tags.details.note",
+        "tags.flag": "payload:tags.flag",
+        "tags.instant": "payload:tags.instant",
+        "tags.label": "payload:tags.label",
+        "tags.measure": "payload:tags.measure",
+        "tags.ratio": "payload:tags.ratio",
+        "tags.small": "payload:tags.small",
+        "tags.token": "payload:tags.token",
+        "token": "payload:token"
+      },
+      "valueObject": {
+        "primaryTag": "primary_tag",
+        "tags": "tags"
+      }
+    },
+    "snapshot.materialization.Owner": {
+      "attribute": {
+        "favoriteId": "favorite_id",
+        "id": "id",
+        "name": "name"
+      },
+      "documentPath": {
+        "name": "payload:name"
+      },
+      "valueObject": {}
+    },
+    "snapshot.materialization.Special": {
+      "attribute": {
+        "rank": "rank"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    }
+  },
   "models/member-column-defaults.yaml": {
     "parallax.compatibility.MemberColumnDefaults": {
       "attribute": {

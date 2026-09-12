@@ -151,6 +151,88 @@ def _generate_document_milestones(rows: int) -> dict[str, list[dict[str, Any]]]:
     }
 
 
+def _generate_travelers_tree(rows: int, fanout: int) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "parallax.compatibility.Traveler": [
+            {
+                "id": index,
+                "displayName": f"traveler-{index}",
+                "score": index,
+                "joinedOn": "2026-01-15",
+                "note": f"note-{index}",
+                "address": {"city": "Oslo", "geo": {"country": "NO"}},
+                "tags": [{"label": f"tag-{offset}"} for offset in range(fanout)],
+            }
+            for index in range(1, rows + 1)
+        ],
+        "parallax.compatibility.Trip": [
+            {
+                "id": (index - 1) * fanout + offset + 1,
+                "travelerId": index,
+                "destination": f"destination-{offset}",
+                "nights": offset + 1,
+            }
+            for index in range(1, rows + 1)
+            for offset in range(fanout)
+        ],
+    }
+
+
+def _generate_versioned_documents(rows: int) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "parallax.compatibility.Ledger": [
+            {
+                "id": index,
+                "version": 1,
+                "label": f"ledger-{index}",
+                "balance": "10.00",
+                "details": {"code": "OPEN"},
+            }
+            for index in range(1, rows + 1)
+        ]
+    }
+
+
+def _generate_bitemporal_current(rows: int) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "parallax.compatibility.Charter": [
+            {
+                "id": index,
+                "route": f"route-{index}",
+                "terms": {"clause": "standard"},
+                "validStart": "2026-01-01T00:00:00+00:00",
+                "validEnd": "infinity",
+                "txStart": "2026-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
+            }
+            for index in range(1, rows + 1)
+        ]
+    }
+
+
+def _generate_materialization_stress(rows: int, fanout: int) -> dict[str, list[dict[str, Any]]]:
+    owners: list[dict[str, Any]] = []
+    alpha: list[dict[str, Any]] = []
+    beta: list[dict[str, Any]] = []
+    for index in range(rows):
+        owner_id = 1_000 + index
+        favorite = 10_000 + index * 10
+        owners.append({"id": owner_id, "name": f"owner-{index}", "favoriteId": favorite})
+        for offset in range(fanout):
+            node = {
+                "id": favorite + offset,
+                "ownerId": owner_id,
+                "label": f"node-{index}-{offset}",
+                "tags": [],
+            }
+            (alpha if offset < 2 else beta).append(node)
+    return {
+        "snapshot.materialization.Owner": owners,
+        "snapshot.materialization.Alpha": alpha,
+        "snapshot.materialization.Beta": beta,
+    }
+
+
 def _build_dataset(fixture: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Return the rows the benchmark loads, per its ``dataset``.
 
@@ -174,6 +256,14 @@ def _build_dataset(fixture: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         return _generate_orders_tree(count, fanout)
     if recipe == "document-milestones":
         return _generate_document_milestones(count)
+    if recipe == "travelers-tree":
+        return _generate_travelers_tree(count, int(generate.get("fanout", 1)))
+    if recipe == "versioned-documents":
+        return _generate_versioned_documents(count)
+    if recipe == "bitemporal-current":
+        return _generate_bitemporal_current(count)
+    if recipe == "materialization-stress":
+        return _generate_materialization_stress(count, int(generate.get("fanout", 1)))
     raise BenchmarkError(f"unknown dataset generator recipe {recipe!r}")
 
 
