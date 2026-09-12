@@ -33,6 +33,7 @@ type Authority = Literal["authoritative", "non-authoritative"]
 type ComparisonOutcome = Literal["within", "outside", "unavailable"]
 
 _SCHEMA_PATH: Final = Path("languages/python/spec/cost-report-envelope.schema.json")
+_BUDGET_CONTRACT_PATH: Final = Path("languages/python/spec/budget-contract.yaml")
 _LOCK_PATH: Final = Path("languages/python/uv.lock")
 
 
@@ -43,6 +44,16 @@ def _digest(path: Path) -> str:
 def _git(repo: Path, *args: str) -> str:
     completed = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=True)
     return completed.stdout.strip()
+
+
+def _git_bytes(repo: Path, *args: str) -> bytes:
+    completed = subprocess.run(["git", *args], cwd=repo, capture_output=True, check=True)
+    return completed.stdout
+
+
+def _contract_at_commit(repo: Path, commit: str) -> BudgetContract:
+    authored = _git_bytes(repo, "show", f"{commit}:{_BUDGET_CONTRACT_PATH.as_posix()}")
+    return BudgetContract.from_bytes(repo / _BUDGET_CONTRACT_PATH, authored)
 
 
 def _sysctl(name: str) -> str | None:
@@ -236,7 +247,7 @@ def validate(envelope: CostReportEnvelope | Mapping[str, object]) -> None:
         _git(repo, "cat-file", "-e", f"{provenance.commit}^{{commit}}")
     except subprocess.CalledProcessError as error:
         raise ValueError(f"provenance commit {provenance.commit!r} is not a commit") from error
-    expected = classify_authority(provenance, BudgetContract.load())
+    expected = classify_authority(provenance, _contract_at_commit(repo, provenance.commit))
     if document["authority"] != expected:
         raise ValueError(
             f"authority {document['authority']!r} disagrees with provenance "
