@@ -25,7 +25,7 @@ workloads:
     iterations: 20
     expectRoundTrips: 4
     statements:
-      - sql: { postgres: select t0.id, t0.payload from materialization_owner t0, mariadb: select t0.id, t0.payload from materialization_owner t0 }
-      - sql: { postgres: select t0.id, t0.payload from materialization_node t0, mariadb: select t0.id, t0.payload from materialization_node t0 }
-      - sql: { postgres: select t0.id, t0.payload from materialization_node t0, mariadb: select t0.id, t0.payload from materialization_node t0 }
-      - sql: { postgres: select t0.id, t0.payload from materialization_node t0, mariadb: select t0.id, t0.payload from materialization_node t0 }
+      - sql: { postgres: "select t0.id, t0.payload from materialization_owner t0", mariadb: "select t0.id, t0.payload from materialization_owner t0" }
+      - sql: { postgres: "select t0.id, t0.payload from materialization_node t0", mariadb: "select t0.id, t0.payload from materialization_node t0" }
+      - sql: { postgres: "select t0.id, t0.payload from materialization_node t0", mariadb: "select t0.id, t0.payload from materialization_node t0" }
+      - sql: { postgres: "select t0.id, t0.payload from materialization_node t0", mariadb: "select t0.id, t0.payload from materialization_node t0" }

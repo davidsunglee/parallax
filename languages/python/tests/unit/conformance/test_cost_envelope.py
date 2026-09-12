@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import cast
 
 import pytest
@@ -85,6 +86,25 @@ def test_envelope_round_trips_through_its_schema() -> None:
     )
     validate(envelope)
     assert envelope.document()["authority"] == "authoritative"
+
+
+def test_validation_uses_the_producing_commits_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = BudgetContract.load()
+    provenance = _provenance(contract)
+    envelope = CostReportEnvelope(
+        "snapshot-delivery",
+        provenance,
+        classify_authority(provenance, contract),
+    )
+    current_checkout_contract = replace(contract, digest="0" * 64)
+
+    def load_current_checkout_contract() -> BudgetContract:
+        return current_checkout_contract
+
+    monkeypatch.setattr(BudgetContract, "load", staticmethod(load_current_checkout_contract))
+    validate(envelope)
 
 
 def test_dirty_or_os_different_runs_are_classified_from_the_fingerprint_only() -> None:

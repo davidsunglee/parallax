@@ -142,15 +142,17 @@ class _Prepared:
     Built once, outside every window: the rows in particular, so a reading counts
     the position a converted row takes and never the leaf it references."""
 
-    __slots__ = ("bound", "meta", "model", "plan", "reads", "rows")
+    __slots__ = ("bound", "layout", "meta", "model", "plan", "reads", "rows")
+    layout: Layout
 
     def __init__(self, layout: Layout) -> None:
+        self.layout: Layout = layout
         self.meta = metamodel(layout)
         self.model = read_projection(prepare_model(workload(layout), edition=EDITION)).model
-        self.plan = fetch_plan(query(self.meta), self.meta)
-        self.reads = compiled_levels(self.plan, self.meta)
+        self.plan = fetch_plan(query(layout, self.meta), self.meta)
+        self.reads = compiled_levels(layout, self.plan, self.meta)
         self.bound = prepared_levels(self.model, self.reads)
-        self.rows = rows_per_level(self.model, self.plan, self.reads)
+        self.rows = rows_per_level(layout, self.model, self.plan, self.reads)
 
     def run(self) -> None:
         batch(self.model, self.plan, self.bound, self.rows)
@@ -173,7 +175,8 @@ def _compiled_seam(prepared: _Prepared) -> Seam:
     owns for as long as it lives, which is exactly what this figure reports."""
 
     def run(sample: Callable[[], None]) -> None:
-        reads = compiled_levels(fetch_plan(query(prepared.meta), prepared.meta), prepared.meta)
+        plan = fetch_plan(query(prepared.layout, prepared.meta), prepared.meta)
+        reads = compiled_levels(prepared.layout, plan, prepared.meta)
         bound = prepared_levels(prepared.model, reads)
         sample()
         assert bound is not None
@@ -246,7 +249,8 @@ def measure(layout: Layout) -> Reading:
         prepare_model(model, edition=EDITION)
 
     def compile_levels() -> None:
-        reads = compiled_levels(fetch_plan(query(prepared.meta), prepared.meta), prepared.meta)
+        plan = fetch_plan(query(layout, prepared.meta), prepared.meta)
+        reads = compiled_levels(layout, plan, prepared.meta)
         prepared_levels(prepared.model, reads)
 
     def bind_levels() -> None:

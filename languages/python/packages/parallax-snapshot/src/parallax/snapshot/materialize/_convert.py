@@ -358,7 +358,7 @@ def observable_columns(
         attribute = contract.attribute
         columns[attribute.storage.name] = (
             decode_canonical_wire(attribute.type, cast("WireValue", raw))
-            if contract.encoded
+            if contract.encoded and raw is not None
             else raw
         )
     for key, occurrence, many in level.observed_documents:

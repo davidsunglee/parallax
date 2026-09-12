@@ -87,6 +87,8 @@ if TYPE_CHECKING:
 __all__ = [
     "ContainerDatabase",
     "Provisioner",
+    "fixture_document",
+    "fixture_literal",
     "fixture_statements",
     "load_fixtures",
     "reset_statements",
@@ -168,7 +170,7 @@ def _document_members(
     )
 
 
-def _fixture_document(
+def fixture_document(
     shape: DocumentShape, row: Mapping[str, object], *, preserve_unknown: bool = True
 ) -> object:
     """One fixture row's Structured Column, composed through the codec.
@@ -202,7 +204,7 @@ def _fixture_values(shape: DocumentShape, row: Mapping[str, object]) -> dict[str
             values[member.name] = NULL
             continue
         if isinstance(member, Leaf):
-            value = _fixture_literal(member.type, raw)
+            value = fixture_literal(member.type, raw)
         else:
             value = _fixture_occurrence(member, raw)
         values[member.name] = Present(value)
@@ -217,17 +219,18 @@ def _fixture_occurrence(member: Occurrence, raw: object) -> object:
         if any(not isinstance(element, Mapping) for element in source):
             raise ValueError(f"{member.name}: every many occurrence element must be a mapping")
         return [
-            _fixture_document(member.shape, cast("Mapping[str, object]", element))
+            fixture_document(member.shape, cast("Mapping[str, object]", element))
             for element in source
         ]
     if not isinstance(raw, Mapping):
         return raw
-    return _fixture_document(member.shape, cast("Mapping[str, object]", raw))
+    return fixture_document(member.shape, cast("Mapping[str, object]", raw))
 
 
-def _fixture_literal(
+def fixture_literal(
     neutral_type: NeutralType, value: object, *, temporal_end: bool = False
 ) -> object:
+    """Decode one fixture literal, admitting infinity only for a temporal end."""
     if temporal_end and neutral_type == TIMESTAMP and value == "infinity":
         return value
     return decode_wire(
@@ -264,7 +267,7 @@ def _fixture_insert(
     for slot in view.columns:
         if isinstance(slot.contributor, RelationalDocument):
             columns.append(dialect.quote(slot.column.name))
-            binds.append(JsonDocument(_fixture_document(shape, row, preserve_unknown=False)))
+            binds.append(JsonDocument(fixture_document(shape, row, preserve_unknown=False)))
             continue
         member = _fixture_member(model, slot)
         if member is None:
@@ -282,14 +285,14 @@ def _fixture_insert(
         elif isinstance(projection, DocumentShape):
             binds.append(
                 JsonDocument(
-                    _fixture_document(projection, cast("Mapping[str, object]", value))
+                    fixture_document(projection, cast("Mapping[str, object]", value))
                     if isinstance(value, Mapping)
                     else value
                 )
             )
         else:
             binds.append(
-                _fixture_literal(
+                fixture_literal(
                     projection.type,
                     value,
                     temporal_end=_is_temporal_end(model, projection),

@@ -567,9 +567,9 @@ def _workload(
 ]:
     meta = metamodel(layout)
     model = CatalogedModel(meta)
-    plan = fetch_plan(query(meta), meta)
-    reads = compiled_levels(plan, meta)
-    return model, plan, reads, rows_per_level(model, plan, reads, owners)
+    plan = fetch_plan(query(layout, meta), meta)
+    reads = compiled_levels(layout, plan, meta)
+    return model, plan, reads, rows_per_level(layout, model, plan, reads, owners)
 
 
 def _unclassified_cells(layout: Layout, owners: int) -> int:

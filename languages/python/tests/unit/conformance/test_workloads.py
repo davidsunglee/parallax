@@ -10,14 +10,28 @@ from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Order
 from parallax.conformance.workloads import Workload, catalog, workload_digest
-from parallax.core import inheritance
+from parallax.core import deep_fetch, inheritance
+from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.sql_gen._compile import compile_read
+from parallax.snapshot.handle._preflight import preflight
 
 
-def test_every_workload_loads_its_model_query_and_delivery_sizes() -> None:
+def test_every_workload_loads_and_compiles_its_query_and_delivery_sizes() -> None:
     for workload in catalog().values():
         assert workload.model.entity(workload.query.target) is not None
         assert workload.page_sizes == tuple(sorted(set(workload.page_sizes)))
+        validated = preflight(workload.query, model=workload.model, form="graph")
+        plan = deep_fetch.plan(
+            validated,
+            workload.model,
+            projection=deep_fetch.ReadProjectionRequest("all", True),
+        )
+        compile_read(plan.root, workload.model, POSTGRES, result_form="instance")
+        for level in plan.levels:
+            if level.is_back_reference:
+                continue
+            compile_read(level.query_for([0]), workload.model, POSTGRES, result_form="instance")
 
 
 def test_generated_workloads_preserve_the_fixture_scale_and_fanout() -> None:

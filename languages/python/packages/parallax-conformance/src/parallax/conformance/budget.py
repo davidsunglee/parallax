@@ -41,7 +41,12 @@ class BudgetContract:
     @cache
     def load(cls, path: Path | None = None) -> BudgetContract:
         resolved = (path or case_format.find_repo_root() / _CONTRACT_PATH).resolve()
-        authored = resolved.read_bytes()
+        return cls.from_bytes(resolved, resolved.read_bytes())
+
+    @classmethod
+    def from_bytes(cls, path: Path, authored: bytes) -> BudgetContract:
+        """Parse authored contract bytes while retaining their repository path."""
+        resolved = path.resolve()
         loaded = case_format.safe_load_yaml(authored.decode("utf-8"))
         if not isinstance(loaded, Mapping):
             raise ValueError(f"{resolved}: Budget Contract is not a mapping")
