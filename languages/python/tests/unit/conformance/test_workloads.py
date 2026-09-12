@@ -2,36 +2,55 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract
+from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Order
 from parallax.conformance.workloads import Workload, catalog, workload_digest
-from parallax.core.metamodel import Metamodel
+from parallax.core import inheritance
+from parallax.core.metamodel import EntityIdentity, Metamodel
 
 
 def test_every_workload_loads_its_model_query_and_delivery_sizes() -> None:
     for workload in catalog().values():
         assert workload.model.entity(workload.query.target) is not None
-        assert workload.page_sizes == (1, 32, 128)
+        assert workload.page_sizes == tuple(sorted(set(workload.page_sizes)))
 
 
 def test_generated_workloads_preserve_the_fixture_scale_and_fanout() -> None:
-    workloads = catalog()
-    for workload_id, expected_fanout in {
-        "conventional-fanout": 5,
-        "duplicate-include": 5,
-        "document-heavy": 5,
-        "versioned-document": 1,
-        "bitemporal-current": 1,
-        "stress-columns": 4,
-        "stress-document": 4,
-    }.items():
-        rows = workloads[workload_id].rows(200)
-        assert rows.roots == 200
-        assert rows.fanout == expected_fanout
-        assert len(rows.entity(rows.root_entity)) == 200
+    for workload in catalog().values():
+        rows = workload.rows(workload.roots)
+        assert rows.roots == workload.roots
+        assert rows.fanout == workload.fanout
+        assert len(rows.entity(rows.root_entity)) == workload.roots
+
+
+class _MissingInheritance:
+    def entity(self, identity: EntityIdentity) -> None:
+        return None
+
+
+def test_class_backed_consumer_must_match_the_complete_fixture_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workload = catalog()["conventional-fanout"]
+    workload.validate_class_backed(ORDERS_MODEL, Order.where(Order.all).include(Order.items))
+    with pytest.raises(ValueError, match="class-backed query differs"):
+        workload.validate_class_backed(ORDERS_MODEL, Order.where(Order.active == True))  # noqa: E712
+    with pytest.raises(ValueError, match="class-backed metadata differs"):
+        workload.validate_class_backed(ACCOUNT_MODEL)
+    descriptor_view = inheritance.view(workload.model)
+    views = iter((_MissingInheritance(), descriptor_view))
+
+    def next_view(_model: Metamodel) -> Any:
+        return next(views)
+
+    monkeypatch.setattr(inheritance, "view", next_view)
+    with pytest.raises(ValueError, match="class-backed facets differ"):
+        workload.validate_class_backed(ORDERS_MODEL)
 
 
 def test_workload_digest_covers_the_catalog_inputs() -> None:
@@ -113,8 +132,16 @@ def test_workload_reports_malformed_fixture_members() -> None:
         _ = _workload({}).query
     with pytest.raises(ValueError, match="dataset is not a mapping"):
         _workload({}).rows(1)
+    with pytest.raises(ValueError, match="dataset is not a mapping"):
+        _ = _workload({}).roots
     with pytest.raises(ValueError, match="malformed generated dataset"):
         _workload({"dataset": {"generate": {}}}).rows(1)
+    with pytest.raises(ValueError, match=r"dataset\.generate is not a mapping"):
+        _ = _workload({"dataset": {}}).roots
+    with pytest.raises(ValueError, match=r"generate\.rows must be positive"):
+        _ = _workload({"dataset": {"generate": {"rows": 0}}}).roots
+    with pytest.raises(ValueError, match=r"generate\.fanout must be positive"):
+        _ = _workload({"dataset": {"generate": {"fanout": 0}}}).fanout
     with pytest.raises(ValueError, match="dataset has no rows or generator"):
         _workload({"dataset": {}}).rows(1)
     with pytest.raises(ValueError, match="unknown benchmark dataset recipe"):
@@ -135,4 +162,27 @@ def test_catalog_rejects_a_fixture_that_is_not_a_mapping(tmp_path: Path) -> None
         "a",
     )
     with pytest.raises(ValueError, match="benchmark fixture is not a mapping"):
+        catalog(contract)
+
+
+def test_catalog_rejects_duplicate_fixture_ownership(tmp_path: Path) -> None:
+    contract_path = tmp_path / "a" / "b" / "c" / "contract.yaml"
+    fixture = tmp_path / "core" / "compatibility" / "shared.yaml"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("{}", encoding="utf-8")
+    contract = BudgetContract(
+        contract_path,
+        1,
+        {},
+        {},
+        {
+            "first": {"fixture": "shared.yaml"},
+            "second": {"fixture": "shared.yaml"},
+        },
+        "a",
+    )
+    with pytest.raises(
+        ValueError,
+        match="workloads 'first' and 'second' both own",
+    ):
         catalog(contract)

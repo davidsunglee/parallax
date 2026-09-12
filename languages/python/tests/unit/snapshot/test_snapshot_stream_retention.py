@@ -121,12 +121,13 @@ import datetime as dt
 import gc
 import sys
 import tracemalloc
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from itertools import pairwise
 from typing import Any, Final, NamedTuple, cast
 
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
+from parallax.conformance.workloads import catalog
 from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
@@ -164,16 +165,18 @@ _BATCH: Final = 8
 """Root positions per page. Small enough that both readings page many times, so
 what is measured is the steady state rather than one page holding everything."""
 
-_FANOUT: Final = 2
+_WORKLOAD: Final = catalog()["conventional-fanout"]
+
+_FANOUT: Final = _WORKLOAD.fanout // 2
 """Included children per root, so a page graph holds relationship fanout rather
 than bare roots and `P_B` is measured over something with depth."""
 
-_PAGE_SIZES: Final = (2, 4, 8)
-"""The page sizes the census grid varies, holding everything else fixed."""
+_PAGE_SIZES: Final = tuple(2**power for power in range(1, _WORKLOAD.fanout - 1))
+"""A logarithmic probe grid derived from the benchmark fixture's fanout."""
 
-_FANOUTS: Final = (1, 2, 3)
-"""The fanouts it varies beside them, so the page term and the root term move
-independently rather than through one product neither could be read out of."""
+_FANOUTS: Final = tuple(range(1, _FANOUT + 2))
+"""A centered grid derived from the fixture-owned fanout, so the page and root
+terms move independently."""
 
 _AT: Final = 20
 """Roots consumed before the census sample. Deliberately not a multiple of every
@@ -234,33 +237,25 @@ _PEAK_ROOTS: Final = _LARGE * _TENFOLD
 full page of that size rather than the whole result."""
 
 
-def _order_row(order_id: int) -> Row:
-    """One row of the read, with every value the SAME SIZE at every ordinal.
-
-    The whole-heap census is a total rather than a difference, so a name that got
-    a digit longer at a later position would move it for a reason that is not
-    retention. Zero-padding is what keeps the only difference between two arms
-    the one the reading is about; the integer members need none, since every
-    ordinal these fixtures reach is one CPython digit wide.
-    """
+def _order_row(row: Mapping[str, object]) -> Row:
     return {
-        "id": order_id,
-        "name": f"order-{order_id:06d}",
-        "sku": "A-100",
-        "qty": 5,
-        "price": Decimal("10.50"),
-        "active": True,
-        "ordered_on": dt.date(2024, 1, 5),
+        "id": row["id"],
+        "name": row["name"],
+        "sku": row["sku"],
+        "qty": row["qty"],
+        "price": row["price"],
+        "active": row["active"],
+        "ordered_on": dt.date.fromisoformat(cast("str", row["orderedOn"])),
     }
 
 
-def _item_row(item_id: int, order_id: int) -> Row:
+def _item_row(row: Mapping[str, object]) -> Row:
     return {
-        "id": item_id,
-        "order_id": order_id,
-        "sku": "SKU",
-        "quantity": 1,
-        "shipped_on": dt.date(2024, 2, 1),
+        "id": row["id"],
+        "order_id": row["orderId"],
+        "sku": row["sku"],
+        "quantity": row["quantity"],
+        "shipped_on": dt.date.fromisoformat(cast("str", row["shippedOn"])),
     }
 
 
@@ -286,11 +281,14 @@ class _GeneratingPort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    __slots__ = ("_delivered", "_fanout", "_total")
+    __slots__ = ("_delivered", "_fanout", "_items", "_orders", "_total")
 
     def __init__(self, total: int, fanout: int = _FANOUT) -> None:
+        rows = _WORKLOAD.rows(total, fanout=fanout)
         self._total = total
-        self._fanout = fanout
+        self._fanout = rows.fanout
+        self._orders = rows.entity("parallax.compatibility.Order")
+        self._items = rows.entity("parallax.compatibility.OrderItem")
         self._delivered = 0
 
     def execute(
@@ -301,13 +299,14 @@ class _GeneratingPort(ConnectsAsItself):
     ) -> list[Row]:
         del document_reads
         if "order_item t0" in sql:
+            parents = tuple(cast("int", parent) for parent in binds)
             return [
-                _item_row(cast("int", parent) * 100 + offset, cast("int", parent))
-                for parent in binds
-                for offset in range(self._fanout)
+                _item_row(row)
+                for parent in parents
+                for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
             ]
         return [
-            projected_row(sql, _order_row(order_id))
+            projected_row(sql, _order_row(self._orders[order_id - 1]))
             for order_id in self._next_page(cast("int", binds[-1]))
         ]
 
@@ -367,8 +366,12 @@ class _WritingPort(_GeneratingPort):
         return body_outcome(cast("DatabaseConnection", self), body)
 
 
+_QUERY: Final = Order.where(Order.all).include(Order.items)
+_WORKLOAD.validate_class_backed(ORDERS_MODEL, _QUERY)
+
+
 def _query() -> ObjectQuery[Order, Order]:
-    return Order.where(Order.active == True).include(Order.items)  # noqa: E712 - the query algebra's own equality
+    return _QUERY
 
 
 _ORDER_KEYS: Final = (Order.name.asc(), Order.sku.asc(), Order.qty.asc(), Order.price.asc())
@@ -461,7 +464,7 @@ class _Namespace(NamedTuple):
 
 
 _TYPED: Final = _Namespace(
-    "typed", _typed_stream, fixed=70, per_page_node=2, per_page_root=1, per_published_node=2
+    "typed", _typed_stream, fixed=67, per_page_node=2, per_page_root=1, per_published_node=2
 )
 """The Typed lane. Two objects per page node — the Source Hint a page retains for
 it and the Object Key that hint is filed under — one per page ROOT rather than
@@ -485,7 +488,7 @@ is that a delivery holds exactly one for its whole life however many pages it
 reads."""
 
 _WIRE: Final = _Namespace(
-    "wire", _wire_stream, fixed=71, per_page_node=2, per_page_root=1, per_published_node=1
+    "wire", _wire_stream, fixed=68, per_page_node=2, per_page_root=1, per_published_node=1
 )
 """The Wire lane. The same page terms, because retention is a property of the read
 rather than of the representation, and one object per published node: an unwound
@@ -724,14 +727,13 @@ _SOURCES: Final = frozenset(
     {
         "parallax.conformance.story_models",
         "parallax.core.continuation",
+        "parallax.conformance.workloads",
         "parallax.core.entity._graph_construction",
         "parallax.core.entity._layout",
         "parallax.core.entity._row_codec",
         "parallax.core.metamodel._identities",
         "parallax.core.object_query._validated",
-        "parallax.core.object_query._nodes",
         "parallax.core.predicate._validated",
-        "parallax.core.predicate._nodes",
         "parallax.core.temporal_read",
         "parallax.core.unit_work.clock",
         "parallax.core.unit_work.planner",

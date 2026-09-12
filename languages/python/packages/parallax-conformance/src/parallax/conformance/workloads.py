@@ -8,14 +8,16 @@ from dataclasses import dataclass
 from decimal import Decimal
 from functools import cache
 from pathlib import Path
-from typing import Final, Protocol, cast, overload
+from typing import Any, Final, Protocol, cast, overload
 
 from parallax.conformance import _case_ingress, case_format, models
 from parallax.conformance.budget import BudgetContract
+from parallax.core import inheritance, opt_lock, relationship, storage_layout, temporal_read
 from parallax.core.entity import DomainModel
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import ObjectQueryNode
 from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 
 __all__ = ["ScriptedRows", "Workload", "catalog", "workload_digest"]
 
@@ -89,7 +91,34 @@ class Workload:
             raise ValueError(
                 f"{self.fixture_path.name}: delivery.pageSizes must be positive integers"
             )
-        return cast("tuple[int, ...]", sizes)
+        return tuple(int(size) for size in cast("Sequence[int]", sizes))
+
+    @property
+    def roots(self) -> int:
+        generated = self._generated_dataset
+        roots = generated.get("rows")
+        if not isinstance(roots, int) or isinstance(roots, bool) or roots < 1:
+            raise ValueError(f"{self.fixture_path.name}: dataset.generate.rows must be positive")
+        return int(roots)
+
+    @property
+    def fanout(self) -> int:
+        generated = self._generated_dataset
+        fanout = generated.get("fanout", 1)
+        if not isinstance(fanout, int) or isinstance(fanout, bool) or fanout < 1:
+            raise ValueError(f"{self.fixture_path.name}: dataset.generate.fanout must be positive")
+        return int(fanout)
+
+    @property
+    def _generated_dataset(self) -> Mapping[str, object]:
+        dataset = self.document.get("dataset")
+        if not isinstance(dataset, Mapping):
+            raise ValueError(f"{self.fixture_path.name}: dataset is not a mapping")
+        typed_dataset = cast("Mapping[str, object]", dataset)
+        generated = typed_dataset.get("generate")
+        if not isinstance(generated, Mapping):
+            raise ValueError(f"{self.fixture_path.name}: dataset.generate is not a mapping")
+        return cast("Mapping[str, object]", generated)
 
     @property
     def domain_model(self) -> DomainModel:
@@ -115,7 +144,7 @@ class Workload:
             deserialize_query(cast("Mapping[str, object]", document)), self.model
         )
 
-    def rows(self, roots: int) -> ScriptedRows:
+    def rows(self, roots: int, *, fanout: int | None = None) -> ScriptedRows:
         if type(roots) is not int or roots < 1:
             raise ValueError("roots must be a positive built-in int")
         dataset = self.document.get("dataset")
@@ -126,10 +155,15 @@ class Workload:
         if isinstance(generated, Mapping):
             typed_generated = cast("Mapping[str, object]", generated)
             recipe = typed_generated.get("recipe")
-            fanout = typed_generated.get("fanout", 1)
-            if not isinstance(recipe, str) or not isinstance(fanout, int):
+            selected_fanout = typed_generated.get("fanout", 1) if fanout is None else fanout
+            if (
+                not isinstance(recipe, str)
+                or not isinstance(selected_fanout, int)
+                or isinstance(selected_fanout, bool)
+                or selected_fanout < 1
+            ):
                 raise ValueError(f"{self.fixture_path.name}: malformed generated dataset")
-            return _generated(recipe, roots, fanout)
+            return _generated(recipe, roots, selected_fanout)
         inline = typed_dataset.get("rows")
         if not isinstance(inline, Mapping):
             raise ValueError(f"{self.fixture_path.name}: dataset has no rows or generator")
@@ -145,6 +179,55 @@ class Workload:
                 f"{self.fixture_path.name}: inline dataset has only {len(available)} roots"
             )
         return ScriptedRows(entities, root_entity, roots, 1)
+
+    def validate_class_backed(
+        self,
+        domain_model: DomainModel,
+        query: ObjectQuery[Any, Any] | None = None,
+    ) -> None:
+        class_model = models.accepted_model_of(domain_model)
+        descriptor_model = self.model
+        if tuple(class_model.entities) != tuple(descriptor_model.entities):
+            raise ValueError(f"{self.id}: class-backed metadata differs from its descriptor")
+        class_facets = (
+            inheritance.view(class_model),
+            relationship.view(class_model),
+            storage_layout.view(class_model),
+            temporal_read.view(class_model),
+            opt_lock.view(class_model),
+        )
+        descriptor_facets = (
+            inheritance.view(descriptor_model),
+            relationship.view(descriptor_model),
+            storage_layout.view(descriptor_model),
+            temporal_read.view(descriptor_model),
+            opt_lock.view(descriptor_model),
+        )
+        for entity in descriptor_model.entities:
+            identity = entity.identity
+            class_values = (
+                class_facets[0].entity(identity),
+                class_facets[1].relationships(identity),
+                class_facets[2].entity(identity),
+                class_facets[3].shape(identity),
+                class_facets[4].key(identity),
+            )
+            descriptor_values = (
+                descriptor_facets[0].entity(identity),
+                descriptor_facets[1].relationships(identity),
+                descriptor_facets[2].entity(identity),
+                descriptor_facets[3].shape(identity),
+                descriptor_facets[4].key(identity),
+            )
+            if class_values != descriptor_values:
+                raise ValueError(
+                    f"{self.id}: class-backed facets differ from its descriptor at "
+                    f"{identity.canonical}"
+                )
+        if query is not None:
+            class_query = _case_ingress.normalize_case_query(object_query_node(query), class_model)
+            if class_query != self.query:
+                raise ValueError(f"{self.id}: class-backed query differs from its fixture")
 
     def provision(self, database: Provisioning, roots: int) -> None:
         rows = self.rows(roots)
@@ -167,11 +250,16 @@ def _default_catalog() -> Mapping[str, Workload]:
 
 def _load_catalog(budget: BudgetContract) -> Mapping[str, Workload]:
     loaded: dict[str, Workload] = {}
+    fixture_owners: dict[Path, str] = {}
     for workload_id in budget.workload_ids:
-        fixture_path = budget.fixture(workload_id)
+        fixture_path = budget.fixture(workload_id).resolve()
+        previous = fixture_owners.get(fixture_path)
+        if previous is not None:
+            raise ValueError(f"workloads {previous!r} and {workload_id!r} both own {fixture_path}")
         document = case_format.safe_load_yaml(fixture_path.read_text(encoding="utf-8"))
         if not isinstance(document, Mapping):
             raise ValueError(f"{fixture_path}: benchmark fixture is not a mapping")
+        fixture_owners[fixture_path] = workload_id
         loaded[workload_id] = Workload(
             workload_id, fixture_path, cast("Mapping[str, object]", document)
         )
@@ -225,12 +313,12 @@ def _orders_tree(roots: int, fanout: int) -> ScriptedRows:
         order_id = offset + 1
         return {
             "id": order_id,
-            "name": f"order-{order_id}",
-            "sku": f"SKU-{order_id}",
-            "qty": 1,
-            "price": Decimal("10.00"),
+            "name": f"order-{order_id:06d}",
+            "sku": "A-100",
+            "qty": 5,
+            "price": Decimal("10.50"),
             "active": True,
-            "orderedOn": "2024-01-01",
+            "orderedOn": "2024-01-05",
         }
 
     def item_at(offset: int) -> RowDocument:
@@ -238,7 +326,7 @@ def _orders_tree(roots: int, fanout: int) -> ScriptedRows:
         return {
             "id": item_id,
             "orderId": offset // fanout + 1,
-            "sku": f"SKU-{item_id}",
+            "sku": "SKU",
             "quantity": 1,
             "shippedOn": "2024-02-01",
         }

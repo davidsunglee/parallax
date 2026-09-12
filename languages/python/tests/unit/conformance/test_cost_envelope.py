@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+from collections.abc import Mapping, Sequence
+from typing import cast
 
 import pytest
 
+from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.cost_envelope import (
     Comparison,
@@ -17,14 +21,40 @@ from parallax.conformance.cost_envelope import (
 )
 
 
+class _VersionSource:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[object] = (),
+    ) -> list[Mapping[str, object]]:
+        assert (sql, binds, document_reads) == ("show server_version", (), ())
+        return [{"server_version": "18.6"}]
+
+
+class _MissingVersionSource:
+    def execute(
+        self, sql: str, binds: Sequence[object], document_reads: Sequence[object] = ()
+    ) -> list[Mapping[str, object]]:
+        return []
+
+
 def _provenance(contract: BudgetContract, *, dirty: bool = False) -> Provenance:
     authority = contract.authority
     cores = authority["cores"]
     ram_gib = authority["ramGiB"]
     assert isinstance(cores, int)
     assert isinstance(ram_gib, int)
+    repo = case_format.find_repo_root()
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     return Provenance(
-        commit="a" * 40,
+        commit=commit,
         dirty=dirty,
         budget_contract_digest=contract.digest,
         workload_digest="b" * 64,
@@ -48,7 +78,9 @@ def test_envelope_round_trips_through_its_schema() -> None:
         provenance,
         classify_authority(provenance, contract),
         readings=(Reading("conventional-fanout", "live.page32", 18.9, "ms", (18.9,)),),
-        comparisons=(Comparison("conventional-fanout", "live.page32", 20, "within"),),
+        comparisons=(
+            Comparison("conventional-fanout", "live.page32", "at-most", 20, "ms", "within"),
+        ),
         incomplete=(Diagnostic("cell-unavailable", "one optional cell was unavailable"),),
     )
     validate(envelope)
@@ -64,10 +96,31 @@ def test_dirty_or_os_different_runs_are_classified_from_the_fingerprint_only() -
 
 def test_provenance_capture_records_the_current_host() -> None:
     contract = BudgetContract.load()
-    captured = Provenance.capture(contract, workload_digest="d" * 64, postgres="18.6")
+    captured = Provenance.capture(contract, workload_digest="d" * 64, postgres=_VersionSource())
     assert captured.commit
     assert captured.ram_gib >= 1
     assert captured.os
+    assert captured.postgres == "18.6"
+    with pytest.raises(ValueError, match="exactly one server_version"):
+        Provenance.capture(contract, workload_digest="d" * 64, postgres=_MissingVersionSource())
+
+
+def test_semantic_validation_recomputes_authority_and_requires_a_commit() -> None:
+    contract = BudgetContract.load()
+    envelope = CostReportEnvelope(
+        "snapshot-delivery", _provenance(contract, dirty=True), "authoritative"
+    )
+    with pytest.raises(ValueError, match="disagrees with provenance classification"):
+        validate(envelope)
+    document = CostReportEnvelope(
+        "snapshot-delivery", _provenance(contract), "authoritative"
+    ).document()
+    provenance_document = cast("Mapping[str, object]", document["provenance"])
+    provenance = dict(provenance_document)
+    provenance["commit"] = "f" * 40
+    document["provenance"] = provenance
+    with pytest.raises(ValueError, match="is not a commit"):
+        validate(document)
 
 
 def test_provenance_capture_has_portable_memory_fallbacks(
@@ -76,7 +129,7 @@ def test_provenance_capture_has_portable_memory_fallbacks(
     contract = BudgetContract.load()
     monkeypatch.setattr(sys, "platform", "test-platform")
     monkeypatch.setattr(os, "sysconf_names", {})
-    fallback = Provenance.capture(contract, workload_digest="d" * 64, postgres="18.6")
+    fallback = Provenance.capture(contract, workload_digest="d" * 64, postgres=_VersionSource())
     assert fallback.ram_gib == 1
 
     monkeypatch.setattr(os, "sysconf_names", {"SC_PHYS_PAGES": 1, "SC_PAGE_SIZE": 2})
@@ -85,5 +138,5 @@ def test_provenance_capture_has_portable_memory_fallbacks(
         return 1024**2
 
     monkeypatch.setattr(os, "sysconf", one_mib)
-    measured = Provenance.capture(contract, workload_digest="d" * 64, postgres="18.6")
+    measured = Provenance.capture(contract, workload_digest="d" * 64, postgres=_VersionSource())
     assert measured.ram_gib == 1024

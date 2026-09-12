@@ -20,9 +20,8 @@ A fourth workload model rather than a reuse: ``tools/snapshot_graph_overhead.py`
 is ``Columns``-only and declares four Neutral Types, ``_document_layout_support``
 is a layout twin at the accepted-Metamodel level with no ``DomainModel`` for
 ``prepare_model`` to prepare, and ``test_snapshot_graph_retention.py``'s workload
-is the frozen cost item. The members are declared once, in a factory over the
-layout, which is why the two layouts are two namespaces rather than two
-transcriptions.
+is the frozen cost item. The members are declared once in a factory over the
+layout, while both layouts retain the descriptor's one canonical namespace.
 
 Rows are synthesized from the compiled read itself — one value per Attribute
 contract, one document per projected occurrence, each leaf in the codec's own
@@ -143,10 +142,13 @@ _WORKLOAD_IDS: Final[Mapping[Layout, str]] = {
     "columns": "stress-columns",
     "document": "stress-document",
 }
+_WORKLOADS: Final = {
+    layout: catalog()[workload_id] for layout, workload_id in _WORKLOAD_IDS.items()
+}
 
-OWNERS: Final = 8
-FANOUT: Final = 4
-DUPLICATES: Final = 2
+FANOUT: Final = _WORKLOADS["columns"].fanout
+OWNERS: Final = FANOUT * 2
+DUPLICATES: Final = len(_WORKLOADS["columns"].rows(1).entity("snapshot.materialization.Alpha"))
 """Root objects per batch, children per root, and how many of those children a
 narrowed view converts a second time."""
 
@@ -252,11 +254,9 @@ def _entity_classes(layout: Layout) -> tuple[type[Entity], ...]:
 @cache
 def workload(layout: Layout) -> DomainModel:
     """The representative Domain Model under ``layout``."""
-    fixture = catalog()[_WORKLOAD_IDS[layout]]
+    fixture = _WORKLOADS[layout]
     realized = DomainModel(*_entity_classes(layout))
-    assert tuple(entity.identity for entity in model_of(realized).entities) == tuple(
-        entity.identity for entity in fixture.model.entities
-    )
+    fixture.validate_class_backed(realized)
     return realized
 
 
@@ -270,7 +270,7 @@ def query(model: Metamodel) -> ValidatedObjectQuery:
     """The read every batch runs: three includes off the root and one
     back-reference revisiting it."""
     return preflight(
-        catalog()["stress-columns"].query,
+        _WORKLOADS["columns"].query,
         model=model,
         form="graph",
     )
@@ -339,41 +339,56 @@ class _RowSpec:
     seed: int
 
 
-def _owner_id(index: int) -> int:
-    return 1_000 + index
-
-
-def _node_id(index: int, offset: int) -> int:
-    return 10_000 + index * 10 + offset
-
-
-def _node_spec(index: int, offset: int) -> _RowSpec:
-    node = _node_id(index, offset)
-    return _RowSpec(
-        entity="Alpha" if offset < DUPLICATES else "Beta",
-        joins={"id": node, "ownerId": _owner_id(index)},
-        seed=node,
-    )
+def _row_spec(entity: str, row: Mapping[str, object]) -> _RowSpec:
+    joins = {name: row[name] for name in ("id", "ownerId", "favoriteId") if name in row}
+    seed = row["id"]
+    assert isinstance(seed, int)
+    return _RowSpec(entity.rsplit(".", 1)[-1], joins, seed)
 
 
 def _specs(attach_key: str, owners: int, first: int) -> tuple[_RowSpec, ...]:
-    indices = range(first, first + owners)
-    if attach_key == _ROOT:
-        return tuple(
-            _RowSpec(
-                entity="Owner",
-                joins={"id": _owner_id(index), "favoriteId": _node_id(index, 0)},
-                seed=_owner_id(index),
-            )
-            for index in indices
+    scripted = _WORKLOADS["columns"].rows(first + owners)
+    owner_rows = scripted.entity("snapshot.materialization.Owner")[first:]
+    owner_ids = {row["id"] for row in owner_rows}
+    favorite_ids = {row["favoriteId"] for row in owner_rows}
+    alpha = scripted.entity("snapshot.materialization.Alpha")
+    beta = scripted.entity("snapshot.materialization.Beta")
+    nodes = tuple(
+        sorted(
+            (row for row in (*alpha, *beta) if row["ownerId"] in owner_ids),
+            key=lambda row: cast("int", row["id"]),
         )
-    if attach_key == _NODES:
-        return tuple(_node_spec(index, offset) for index in indices for offset in range(FANOUT))
-    if attach_key == _NARROWED:
-        return tuple(_node_spec(index, offset) for index in indices for offset in range(DUPLICATES))
-    if attach_key == _FAVORITE:
-        return tuple(_node_spec(index, 0) for index in indices)
-    return ()
+    )
+    if attach_key == _ROOT:
+        selected = (("snapshot.materialization.Owner", row) for row in owner_rows)
+    elif attach_key == _NODES:
+        selected = (
+            (
+                "snapshot.materialization.Alpha"
+                if row in alpha
+                else "snapshot.materialization.Beta",
+                row,
+            )
+            for row in nodes
+        )
+    elif attach_key == _NARROWED:
+        selected = (
+            ("snapshot.materialization.Alpha", row) for row in alpha if row["ownerId"] in owner_ids
+        )
+    elif attach_key == _FAVORITE:
+        selected = (
+            (
+                "snapshot.materialization.Alpha"
+                if row in alpha
+                else "snapshot.materialization.Beta",
+                row,
+            )
+            for row in nodes
+            if row["id"] in favorite_ids
+        )
+    else:
+        return ()
+    return tuple(_row_spec(entity, row) for entity, row in selected)
 
 
 def _level_keys(attach_key: str) -> list[object]:
@@ -382,9 +397,9 @@ def _level_keys(attach_key: str) -> list[object]:
 
     Always the whole fixture's keys, whatever a caller then converts: a statement
     is compiled once and its binds are not what a row materializes under."""
-    if attach_key == _FAVORITE:
-        return [_node_id(index, 0) for index in range(OWNERS)]
-    return [_owner_id(index) for index in range(OWNERS)]
+    rows = _WORKLOADS["columns"].rows(OWNERS).entity("snapshot.materialization.Owner")
+    key = "favoriteId" if attach_key == _FAVORITE else "id"
+    return [row[key] for row in rows]
 
 
 def _managed(neutral_type: NeutralType, seed: int) -> object:
