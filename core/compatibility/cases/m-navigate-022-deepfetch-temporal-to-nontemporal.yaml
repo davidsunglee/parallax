@@ -27,8 +27,8 @@ then:
         postgres: select t0.id, t0.tenant_id, t0.term, t0.in_z, t0.out_z from lease t0 where t0.out_z = ?
       binds: [infinity]
     - sql:
-        postgres: select t0.id, t0.lease_id, t0.note_text from lease_note t0 where t0.lease_id in (?)
-      binds: [10]
+        postgres: select t0.id, t0.lease_id, t0.note_text from lease_note t0 where t0.lease_id = any(?)
+      binds: [[10]]
   graph:
     Lease:
       - id: 10

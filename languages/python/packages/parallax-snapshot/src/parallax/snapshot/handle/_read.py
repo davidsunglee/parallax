@@ -77,18 +77,29 @@ failed-call rules.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
-from parallax.core.db_port import DatabaseConnection, Row
+from parallax.core.db_port import (
+    DatabaseConnection,
+    MappingRow,
+    PipelineStatement,
+    Row,
+)
 from parallax.core.dialect import LockMode
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.execution_lifecycle import ReadInterface
-from parallax.core.execution_lifecycle._activity import INERT, DatabaseCallScope, ReadActivity
+from parallax.core.execution_lifecycle._activity import (
+    INERT,
+    DatabaseCallActivity,
+    DatabaseCallScope,
+    ReadActivity,
+)
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -100,7 +111,12 @@ from parallax.core.object_query._validated import (
     ValidatedObjectQuery,
     ValidatedTemporalSelection,
 )
-from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow, compile_read
+from parallax.core.sql_gen._compile import (
+    CompiledRead,
+    MaterializedReadRow,
+    compile_read,
+    compile_template,
+)
 from parallax.core.temporal_read import (
     Edge,
     Pin,
@@ -565,33 +581,74 @@ def build_graph(
 
     root_refs = _convert_rows(builder, ROOT_LEVEL, root_read.prepared, root_read.rows, observations)
 
-    level_refs: list[tuple[int, ...]] = []
-    for index, level in enumerate(plan_.levels):
-        parents = _guarded_parents(
-            builder, level, _parent_refs(level.parent, root_refs, level_refs)
-        )
-        if level.is_back_reference:
-            _attach_back_reference(builder, meta, level, parents)
-            level_refs.append(())
-            continue
-        keys = _gather_keys(builder, parents, _correlation_member(meta, level.owner.identity))
-        if not keys:
-            _attach_empty(builder, level, parents)
-            level_refs.append(())
-            continue
-        child_query = level.query_for(keys)
-        child_compiled = compile_read(
-            child_query,
-            meta,
-            port.dialect,
-            result_form="instance",
-            lock=entity_read_lock(meta, child_query.target, preference),
-        )
-        child_refs = _convert_level(
-            builder, index + 1, model, port, child_compiled, calls, observations
-        )
-        _attach_children(builder, meta, level, parents, child_refs)
-        level_refs.append(child_refs)
+    level_refs: list[tuple[int, ...]] = [()] * len(plan_.levels)
+    completed: set[int] = set()
+    while len(completed) < len(plan_.levels):
+        ready = [
+            index
+            for index, level in enumerate(plan_.levels)
+            if index not in completed
+            and (isinstance(level.parent, deep_fetch.RootRef) or level.parent.index in completed)
+        ]
+        pending: list[tuple[int, deep_fetch.FetchLevel, tuple[int, ...], CompiledRead]] = []
+        for index in ready:
+            level = plan_.levels[index]
+            parents = _guarded_parents(
+                builder, level, _parent_refs(level.parent, root_refs, level_refs)
+            )
+            if level.is_back_reference:
+                _attach_back_reference(builder, meta, level, parents)
+                completed.add(index)
+                continue
+            keys = _gather_keys(builder, parents, _correlation_member(meta, level.owner.identity))
+            if not keys:
+                _attach_empty(builder, level, parents)
+                completed.add(index)
+                continue
+            child_query = level.query_template()
+            template = compile_template(
+                child_query,
+                meta,
+                port.dialect,
+                result_form="instance",
+                lock=entity_read_lock(meta, child_query.target, preference),
+            )
+            pending.append((index, level, parents, template.render(keys)))
+
+        if len(pending) == 1:
+            for index, level, parents, compiled in pending:
+                child_refs = _convert_level(
+                    builder, index + 1, model, port, compiled, calls, observations
+                )
+                _attach_children(builder, meta, level, parents, child_refs)
+                level_refs[index] = child_refs
+                completed.add(index)
+        elif pending:
+            with ExitStack() as stack:
+                call_contexts: list[DatabaseCallActivity] = []
+                for _index, _level, _parents, compiled in pending:
+                    context = calls.database_call(compiled.statement, "read", compiled.target)
+                    call_contexts.append(context.__enter__())
+                    stack.push(context.__exit__)
+                batches = port.execute_pipeline(
+                    tuple(
+                        PipelineStatement(
+                            port.dialect.to_driver_sql(compiled.statement.sql),
+                            compiled.statement.binds,
+                            compiled.document_reads,
+                        )
+                        for _index, _level, _parents, compiled in pending
+                    )
+                )
+                for call, rows in zip(call_contexts, batches, strict=True):
+                    call.read_completed(rows)
+            for (index, level, parents, compiled), rows in zip(pending, batches, strict=True):
+                child_refs = _convert_level_rows(
+                    builder, index + 1, model, compiled, rows, observations
+                )
+                _attach_children(builder, meta, level, parents, child_refs)
+                level_refs[index] = child_refs
+                completed.add(index)
 
     pin = validated_query_pin(root_read.temporal)
     return FindResult(
@@ -658,7 +715,7 @@ class StagedRows:
 def stage_publishable_rows(
     model: CatalogedModel,
     compiled: CompiledRead,
-    rows: Sequence[Mapping[str, object]],
+    rows: Sequence[Row],
     *,
     pin: Pin,
 ) -> StagedRows:
@@ -678,7 +735,7 @@ def stage_publishable_rows(
 def stage_rows(
     model: CatalogedModel,
     compiled: CompiledRead,
-    rows: Sequence[Mapping[str, object]],
+    rows: Sequence[Row],
     *,
     pin: Pin,
 ) -> StagedRows:
@@ -862,14 +919,20 @@ def _convert_level(
     at a time: the port's own whole-result `list[Row]` is what a row-returning
     execute answers by contract, and only the per-row materialization is lazy.
     """
+    rows = execute_read(port, compiled, calls)
+    return _convert_level_rows(builder, source, model, compiled, rows, observations)
+
+
+def _convert_level_rows(
+    builder: GraphBuilder,
+    source: SourceLevel,
+    model: CatalogedModel,
+    compiled: CompiledRead,
+    rows: Sequence[Row],
+    observations: ObservedRows,
+) -> tuple[int, ...]:
     prepared = bind(model, compiled)
-    return _convert_rows(
-        builder,
-        source,
-        prepared,
-        map(prepared.materialize, execute_read(port, compiled, calls)),
-        observations,
-    )
+    return _convert_rows(builder, source, prepared, map(prepared.materialize, rows), observations)
 
 
 def _convert_rows(
@@ -1156,11 +1219,16 @@ def _gather_keys(
     runtime invariant, not a widening of the membership node's own typed-literal
     contract.
     """
-    gathered = (builder.member_value(parent, member) for parent in parents)
-    return cast(
-        "list[predicate_algebra.Scalar]",
-        [value for value in gathered if value is not None and value is not ABSENT],
-    )
+    keys: list[predicate_algebra.Scalar] = []
+    seen: set[predicate_algebra.Scalar] = set()
+    for value in (builder.member_value(parent, member) for parent in parents):
+        if value is None or value is ABSENT:
+            continue
+        key = cast("predicate_algebra.Scalar", value)
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
 
 
 def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetadata:
@@ -1190,7 +1258,7 @@ def _start_column(entity: EntityMetadata, axis: AcceptedAsOfAxis) -> str:
     return declared.storage.name
 
 
-def _edge_sort_key(entity: EntityMetadata, row: Row) -> tuple[object, ...]:
+def _edge_sort_key(entity: EntityMetadata, row: MappingRow) -> tuple[object, ...]:
     """Valid Time first, then Transaction Time (m-sql's bind-order convention),
     each dimension's start-column value — used only to chronologically order a
     milestone-set read's per-milestone graphs, never to select or filter rows. A

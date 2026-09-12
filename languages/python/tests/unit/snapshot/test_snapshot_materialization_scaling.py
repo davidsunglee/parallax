@@ -84,7 +84,7 @@ import sys
 from collections.abc import Callable, Sequence
 from typing import Final
 
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.entity._layout import CatalogedModel
 from parallax.snapshot import ModelSelection, prepare_model
 from parallax.snapshot.handle._publication import read_projection
@@ -156,7 +156,7 @@ def _boundary(layout: Layout, selection: ModelSelection) -> tuple[object, ...]:
 
 def _rows(
     layout: Layout, model: CatalogedModel, owners: int, first: int = 0
-) -> tuple[tuple[Row, ...], ...]:
+) -> tuple[tuple[MappingRow, ...], ...]:
     """``owners`` roots' stored rows beginning at root ``first``, built here so no
     measured window or marked region allocates them.
 
@@ -168,7 +168,7 @@ def _rows(
     return rows_per_level(layout, model, plan, compiled_levels(layout, plan, meta), owners, first)
 
 
-def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
+def _root_only(rows: Sequence[Sequence[MappingRow]]) -> tuple[tuple[MappingRow, ...], ...]:
     """``rows`` with every level below the root emptied, which the loop still
     compiles, converts, and fans back as the empty result a child statement
     returning nothing produces.
@@ -181,7 +181,7 @@ def _root_only(rows: Sequence[Sequence[Row]]) -> tuple[tuple[Row, ...], ...]:
     return (tuple(rows[0]), *((),) * (len(rows) - 1))
 
 
-def _execute(layout: Layout, model: CatalogedModel, rows: Sequence[Sequence[Row]]) -> None:
+def _execute(layout: Layout, model: CatalogedModel, rows: Sequence[Sequence[MappingRow]]) -> None:
     """One whole execution: its own plan, its own compiled reads, its own
     prepared reads, its own graph, none of which outlives this call."""
     plan = fetch_plan(query(layout, model.meta), model.meta)

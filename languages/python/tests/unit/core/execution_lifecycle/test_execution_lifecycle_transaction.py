@@ -1033,7 +1033,7 @@ class _DrainingFaultPort(ConnectsAsItself):
         del sql, binds, document_reads
         if self._read_faults:
             raise self._read_faults.pop(0)
-        return [dict(NEW_ROW)]
+        return [tuple(NEW_ROW.values())]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         del sql, binds

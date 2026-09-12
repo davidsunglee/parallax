@@ -58,9 +58,9 @@ when:
             mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
           binds: [11]
         - sql:
-            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(?)
             mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
-          binds: [1]
+          binds: { postgres: [[1]], mariadb: [1] }
       expectGraph:
         OrderItem:
           - id: 11
@@ -100,9 +100,9 @@ when:
             mariadb: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = ?
           binds: [11]
         - sql:
-            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = any(?)
             mariadb: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id in (?)
-          binds: [1]
+          binds: { postgres: [[1]], mariadb: [1] }
       expectGraph:
         OrderItem:
           - id: 11

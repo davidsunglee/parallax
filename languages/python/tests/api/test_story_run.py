@@ -149,7 +149,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, profile_run: 
     observed_state = engine.read_table_state(profile_run.port, model_of(meta))
     assert set(observed_state) >= set(expected_state), (story.case_id, observed_state)
     for table, expected_rows in expected_state.items():
-        compare_rows(observed_state[table], expected_rows)
+        compare_rows([dict(row) for row in observed_state[table]], expected_rows)
 
 
 # --------------------------------------------------------------------------- #

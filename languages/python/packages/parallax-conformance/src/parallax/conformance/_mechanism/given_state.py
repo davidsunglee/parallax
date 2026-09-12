@@ -110,7 +110,7 @@ def _corrupt_stored_state(
             f"{entry['key']!r}, which the loaded fixtures answer with {len(rows)} row(s) "
             "rather than one"
         )
-    document = _replaced_at(_stored_value(rows[0][column]), path, entry["value"])
+    document = _replaced_at(_stored_value(rows[0][0]), path, entry["value"])
     port.execute_write(
         dialect.to_driver_sql(f"update {table} set {dialect.quote(column)} = ? {where}"),
         [JsonDocument(document), key],

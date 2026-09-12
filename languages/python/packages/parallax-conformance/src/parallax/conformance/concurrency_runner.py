@@ -64,7 +64,14 @@ from typing import Protocol, cast
 
 from parallax.conformance import case_format
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DocumentReadOrdinals, IsolationLevel, Row
+from parallax.core.db_port import (
+    Bind,
+    DocumentReadOrdinals,
+    IsolationLevel,
+    MappingRow,
+    PositionalRow,
+    Row,
+)
 from parallax.core.dialect import Dialect
 from parallax.postgres import isolation_spelling
 
@@ -229,7 +236,7 @@ class NodeOutcome:
     declared none this round), XOR the `DatabaseError` its LAST statement
     raised — never both."""
 
-    rows: tuple[Row, ...] = ()
+    rows: tuple[MappingRow, ...] = ()
     error: DatabaseError | None = None
 
 
@@ -243,7 +250,7 @@ class RoundsRun:
     rounds: tuple[dict[str, NodeOutcome], ...]
 
 
-def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> tuple[Row, ...]:
+def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> tuple[MappingRow, ...]:
     """Run one step's statements VERBATIM on ``session`` (`m-case-format`'s
     own case contract for this shape), returning the LAST statement's rows.
 
@@ -270,13 +277,16 @@ def _execute_step(session: RoundsSession, step: ConcurrencyStep) -> tuple[Row, .
     if step.kind == "commit":
         session.execute("commit", [])
         return ()
-    rows: tuple[Row, ...] = ()
+    rows: tuple[MappingRow, ...] = ()
     for sql, binds in step.statements:
         driver_sql = session.dialect.to_driver_sql(sql)
         if step.kind == "write":
             session.execute_write(driver_sql, binds)
         else:
-            rows = tuple(session.execute(driver_sql, binds))
+            raw_rows = session.execute(driver_sql, binds)
+            if step.expect_rows is not None:
+                keys = tuple(step.expect_rows[0])
+                rows = tuple(PositionalRow(keys, row) for row in raw_rows)
     return rows
 
 

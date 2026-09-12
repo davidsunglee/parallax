@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from parallax.core.base import SQL_NULL, PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.snapshot import prepare_model
 from parallax.snapshot.handle._publication import read_projection
 from tests.unit._snapshot_materialization_support import (
@@ -15,7 +15,7 @@ from tests.unit._snapshot_materialization_support import (
 )
 
 
-def _rows(layout: Layout) -> tuple[tuple[Row, ...], ...]:
+def _rows(layout: Layout) -> tuple[tuple[MappingRow, ...], ...]:
     meta = metamodel(layout)
     model = read_projection(prepare_model(workload(layout), edition=f"fixture-rows-{layout}")).model
     plan = fetch_plan(query(layout, meta), meta)

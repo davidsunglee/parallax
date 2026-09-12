@@ -31,6 +31,7 @@ from parallax.core.db_port import (
     DeclaresDialect,
     DocumentReadOrdinals,
     IsolationLevel,
+    PipelineStatement,
     Row,
     TransactionOutcome,
 )
@@ -93,6 +94,12 @@ class _NoProvisioningPort:
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise AssertionError(f"a rejected-case run must not execute SQL: {sql!r}")
+
+    def execute_pipeline(
+        self, statements: Sequence[PipelineStatement]
+    ) -> list[list[Row]]:  # pragma: no cover
+        del statements
+        raise AssertionError("a rejected-case run must not execute a pipeline")
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None

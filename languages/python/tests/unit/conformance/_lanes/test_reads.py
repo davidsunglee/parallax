@@ -23,7 +23,7 @@ from parallax.conformance import case_format, sweep
 from parallax.conformance._lanes import reads
 from parallax.conformance._mechanism.envelope import EngineError
 from parallax.core.base import INFINITY, PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -34,14 +34,14 @@ from parallax.snapshot import DeferredFeatureError
 from tests.unit.conformance._recording_ports import FakeDbPort, QueueDbPort
 
 
-def _rows(row: Row | None, key: str) -> list[Row]:
+def _rows(row: MappingRow | None, key: str) -> list[MappingRow]:
     """A graph leaf's relationship-attached rows, typed for test-side assertions
     (`then.graph`'s wire shape is intentionally a plain ``dict[str, object]``)."""
     assert row is not None
-    return cast("list[Row]", row[key])
+    return cast("list[MappingRow]", row[key])
 
 
-def _node(nodes: list[Row | None], index: int) -> Row:
+def _node(nodes: list[MappingRow | None], index: int) -> MappingRow:
     """One published graph position that carries a value.
 
     A position whose stored state contradicted the model carries ``null``, so a
@@ -52,10 +52,10 @@ def _node(nodes: list[Row | None], index: int) -> Row:
     return node
 
 
-def _entry(entry: dict[str, object], key: str) -> Row:
+def _entry(entry: dict[str, object], key: str) -> MappingRow:
     """A milestone-set `{pin, graph}` entry's own member, typed for test-side
     assertions (`then.graphs`' wire shape is a plain ``dict[str, object]``)."""
-    return cast("Row", entry[key])
+    return cast("MappingRow", entry[key])
 
 
 @functools.cache
@@ -406,7 +406,7 @@ def test_run_graph_case_publishes_null_where_nothing_could_be_hydrated() -> None
     assert stored_data_issues is not None
     (record,) = stored_data_issues
     assert record["hydrated"] is False
-    assert [issue["code"] for issue in cast("list[Row]", record["issues"])] == [
+    assert [issue["code"] for issue in cast("list[MappingRow]", record["issues"])] == [
         "stored-data-leaf-undecodable"
     ]
 
@@ -538,7 +538,7 @@ def test_run_streamed_graphs_case_groups_a_delivery_back_into_edge_ranked_graphs
     # runs. The observation groups them wherever they fall and ranks the entries
     # by edge, which is what makes it the same `then.graphs` the eager read of
     # the same query states, at any page size.
-    def line(key: int, amount: str, in_z: dt.datetime, out_z: object) -> Row:
+    def line(key: int, amount: str, in_z: dt.datetime, out_z: object) -> MappingRow:
         return {
             "id": key,
             "invoice_id": 100,

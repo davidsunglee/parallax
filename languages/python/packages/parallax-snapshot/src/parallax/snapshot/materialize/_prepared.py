@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from parallax.core.base import UnknownFamilyTag
+from parallax.core.db_port import Row
 from parallax.core.document_codec import DocumentFinding
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityIdentity, ValueObjectMetadata
@@ -86,7 +87,7 @@ class _CompiledRead[RowT: _MaterializedRow](Protocol):
 
     def attribute_reads(self, entity: EntityIdentity) -> tuple[AttributeReadContract, ...]: ...
 
-    def materialize_row(self, row: Mapping[str, object]) -> RowT: ...
+    def materialize_row(self, row: Row | Mapping[str, object]) -> RowT: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +108,7 @@ class PreparedRead[RowT: _MaterializedRow]:
     _compiled: _CompiledRead[RowT]
     _levels: Mapping[EntityIdentity, LevelContext]
 
-    def materialize(self, row: Mapping[str, object]) -> RowT:
+    def materialize(self, row: Row | Mapping[str, object]) -> RowT:
         """Resolve one driver row through the read that returned it.
 
         Kept here rather than left to the compiled read so materializing and

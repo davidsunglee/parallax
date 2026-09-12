@@ -232,15 +232,15 @@ def test_the_child_level_is_keyed_by_the_gathered_parent_keys(corpus_case: CaseL
 
     assert_case_read(case, reads)
 
-    assert reads.calls[1][1] == (1,)
+    assert reads.calls[1][1] == ([1],)
 
 
 def test_a_child_level_keyed_by_anything_else_is_refused(damaged_case: CaseLoader) -> None:
     case = damaged_case(_ORDERED_ITEMS)
-    case.then["statements"][1]["binds"] = [2]
+    case.then["statements"][1]["binds"] = {"postgres": [[2]], "mariadb": [2]}
     reads = ScriptedReads(results=[_ORDER_ONE, _ORDER_ONE_ITEMS, _ORDER_ONE])
 
-    with pytest.raises(CaseFailure, match="IN-list binds"):
+    with pytest.raises(CaseFailure, match="key-set binds"):
         assert_case_read(case, reads)
 
 
@@ -296,8 +296,8 @@ def test_a_narrowed_hop_attaches_under_its_derived_view_key(corpus_case: CaseLoa
     assert_case_read(case, reads)
 
     # The single-concrete narrow filters the shared table by the effective set's
-    # tag value, appended after the IN-list of gathered owner ids.
-    assert reads.calls[1][1] == (10, 11, 12, "dog")
+    # tag value, appended after the gathered-owner array.
+    assert reads.calls[1][1] == ([10, 11, 12], "dog")
 
 
 def test_a_broad_and_a_redundantly_narrowed_hop_are_two_levels(corpus_case: CaseLoader) -> None:
@@ -307,7 +307,7 @@ def test_a_broad_and_a_redundantly_narrowed_hop_are_two_levels(corpus_case: Case
     assert_case_read(case, reads)
 
     assert len(reads.calls) == 4
-    assert reads.calls[1][1] == reads.calls[2][1] == (10, 11, 12, "cat", "dog")
+    assert reads.calls[1][1] == reads.calls[2][1] == ([10, 11, 12], "cat", "dog")
 
 
 _ROOT_ANIMALS: list[dict[str, Any]] = [
@@ -367,7 +367,7 @@ _ANIMAL_BY_ID = {row["id"]: row for row in _ROOT_ANIMALS}
 
 _PETS_LEVEL_SQL = (
     "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
-    "t0.bark_volume from animal t0 where t0.owner_id in ({placeholders}) and "
+    "t0.bark_volume from animal t0 where t0.owner_id = any(?) and "
     "t0.kind in (?, ?)"
 )
 
@@ -422,20 +422,20 @@ def _both_guarded_branches_continue(case: Case) -> Case:
     case.then["statements"] = [
         {"sql": {"postgres": case.then["statements"][0]["sql"]["postgres"]}},
         {
-            "sql": {"postgres": "select t0.id, t0.name from person t0 where t0.id in (?)"},
-            "binds": [12],
+            "sql": {"postgres": "select t0.id, t0.name from person t0 where t0.id = any(?)"},
+            "binds": [[12]],
         },
         {
-            "sql": {"postgres": _PETS_LEVEL_SQL.format(placeholders="?")},
-            "binds": [12, "cat", "dog"],
+            "sql": {"postgres": _PETS_LEVEL_SQL},
+            "binds": [[12], "cat", "dog"],
         },
         {
-            "sql": {"postgres": "select t0.id, t0.name from person t0 where t0.id in (?, ?)"},
-            "binds": [10, 11],
+            "sql": {"postgres": "select t0.id, t0.name from person t0 where t0.id = any(?)"},
+            "binds": [[10, 11]],
         },
         {
-            "sql": {"postgres": _PETS_LEVEL_SQL.format(placeholders="?, ?")},
-            "binds": [10, 11, "cat", "dog"],
+            "sql": {"postgres": _PETS_LEVEL_SQL},
+            "binds": [[10, 11], "cat", "dog"],
         },
     ]
     case.then["roundTrips"] = 5
@@ -491,10 +491,10 @@ def test_two_parent_branches_reaching_one_relationship_are_two_levels(
 
     assert len(reads.calls) == 6
     assert [binds for _sql, binds in reads.calls[1:5]] == [
-        (12,),
-        (12, "cat", "dog"),
-        (10, 11),
-        (10, 11, "cat", "dog"),
+        ([12],),
+        ([12], "cat", "dog"),
+        ([10, 11],),
+        ([10, 11], "cat", "dog"),
     ]
 
 
@@ -511,7 +511,7 @@ def test_a_polymorphic_hop_tag_value_naming_no_subtype_is_refused(
 
 def test_a_hop_that_drops_a_tag_bind_is_refused(damaged_case: CaseLoader) -> None:
     case = damaged_case(_BROAD_AND_NARROWED_PETS)
-    case.then["statements"][1]["binds"] = [10, 11, 12, "cat"]
+    case.then["statements"][1]["binds"] = [[10, 11, 12], "cat"]
     reads = ScriptedReads(results=[_PEOPLE, _PETS, _PETS, _PEOPLE])
 
     with pytest.raises(CaseFailure, match="tag binds"):
@@ -526,7 +526,7 @@ def test_the_root_as_of_pin_propagates_to_a_temporal_child_level(
 
     assert_case_read(case, reads)
 
-    assert reads.calls[1][1] == (1, 2, _FOREVER, _FOREVER)
+    assert reads.calls[1][1] == ([1, 2], _FOREVER, _FOREVER)
 
 
 def test_a_child_level_carrying_the_wrong_as_of_suffix_is_refused(

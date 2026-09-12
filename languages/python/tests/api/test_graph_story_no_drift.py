@@ -49,6 +49,7 @@ from parallax.core.db_port import (
     DatabaseAdapter,
     DatabaseConnection,
     IsolationLevel,
+    MappingRow,
     Row,
     TransactionOutcome,
 )
@@ -68,7 +69,7 @@ from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests._support.document_reads import fold_mapping_rows
 from tests._support.query_probes import canonical_document
 
-_ORDER_ROW: Row = {
+_ORDER_ROW: MappingRow = {
     "id": 1,
     "name": "Ada",
     "sku": "SKU-1",
@@ -78,7 +79,7 @@ _ORDER_ROW: Row = {
     "ordered_on": dt.date(2024, 1, 2),
 }
 
-_ORDER_ITEM_ROW: Row = {
+_ORDER_ITEM_ROW: MappingRow = {
     "id": 11,
     "order_id": 1,
     "sku": "SKU-1",
@@ -88,7 +89,7 @@ _ORDER_ITEM_ROW: Row = {
 
 # Order 3 — the fixture row the loaded-empty / unloaded pair is rooted on, which
 # owns no line items until each story's own insert lands.
-_ORDER_3_ROW: Row = {
+_ORDER_3_ROW: MappingRow = {
     "id": 3,
     "name": "ada",
     "sku": "A-300",
@@ -98,7 +99,7 @@ _ORDER_3_ROW: Row = {
     "ordered_on": dt.date(2024, 3, 15),
 }
 
-_ORDER_ITEM_12_ROW: Row = {
+_ORDER_ITEM_12_ROW: MappingRow = {
     "id": 12,
     "order_id": 1,
     "sku": "SKU-12",
@@ -108,7 +109,7 @@ _ORDER_ITEM_12_ROW: Row = {
 
 # Order 1's four statuses: one ORDER-level (null `order_item_id`, the branch the
 # multi-hop walk drops) beside three ITEM-level ones, two of which reach item 11.
-_ORDER_1_STATUS_ROWS: list[Row] = [
+_ORDER_1_STATUS_ROWS: list[MappingRow] = [
     {"id": 101, "order_id": 1, "order_item_id": None, "code": "NEW"},
     {"id": 201, "order_id": 1, "order_item_id": 11, "code": "PICKED"},
     {"id": 202, "order_id": 1, "order_item_id": 11, "code": "PACKED"},
@@ -119,14 +120,14 @@ _ORDER_1_STATUS_ROWS: list[Row] = [
 # the value-object composition arm. The customer's two `phones` are queued in the
 # order the read decodes them, which is the order the surviving view must answer
 # after the story's write rewrites the document with them swapped.
-_LOCATION_100_ROW: Row = {
+_LOCATION_100_ROW: MappingRow = {
     "id": 100,
     "customer_id": 1,
     "label": "HQ",
     "address": {"street": "1 Harbour Way", "city": "Oslo"},
 }
 
-_CUSTOMER_1_ROW: Row = {
+_CUSTOMER_1_ROW: MappingRow = {
     "id": 1,
     "name": "Ada",
     "address": {
@@ -141,7 +142,7 @@ _CUSTOMER_1_ROW: Row = {
 
 # Order 6 and its single line item — the rows the fresh-row story's own insert
 # creates and its find then materializes a graph over.
-_ORDER_6_ROW: Row = {
+_ORDER_6_ROW: MappingRow = {
     "id": 6,
     "name": "Hopper",
     "sku": "F-600",
@@ -151,7 +152,7 @@ _ORDER_6_ROW: Row = {
     "ordered_on": dt.date(2024, 7, 7),
 }
 
-_ORDER_ITEM_61_ROW: Row = {
+_ORDER_ITEM_61_ROW: MappingRow = {
     "id": 61,
     "order_id": 6,
     "sku": "C-610",
@@ -164,7 +165,7 @@ _ORDER_ITEM_INSERT = "insert into order_item(id, order_id, sku, quantity) values
 # Policy 2 and its single coverage at the pin the rectangle-split story takes —
 # one rectangle open on both axes, which is what a bounded `updateUntil` splits
 # into head / middle / tail.
-_POLICY_2_ROW: Row = {
+_POLICY_2_ROW: MappingRow = {
     "id": 2,
     "name": "Home",
     "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
@@ -173,7 +174,7 @@ _POLICY_2_ROW: Row = {
     "out_z": INFINITY,
 }
 
-_COVERAGE_20_ROW: Row = {
+_COVERAGE_20_ROW: MappingRow = {
     "id": 20,
     "policy_id": 2,
     "amount": Decimal("300.00"),
@@ -185,7 +186,7 @@ _COVERAGE_20_ROW: Row = {
 
 # Balance 1's SUPERSEDED milestone — the row a finite Transaction-Time pin at
 # 2024-03-01 selects, closed at 2024-06-01 by the milestone that replaced it.
-_BALANCE_MILESTONE_ROW: Row = {
+_BALANCE_MILESTONE_ROW: MappingRow = {
     "bal_id": 1,
     "acct_num": "A",
     "val": Decimal("100.00"),
@@ -206,7 +207,7 @@ class _CannedPort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, responses: Sequence[list[Row]] = ()) -> None:
+    def __init__(self, responses: Sequence[list[MappingRow]] = ()) -> None:
         self._responses = list(responses)
         self.writes: list[tuple[str, list[Bind]]] = []
 
@@ -302,7 +303,7 @@ def _assert_wire_binds(case_id: str, port: _CannedPort) -> None:
         compare_binds(emitted, golden)
 
 
-def _port_for(run: Callable[[Database], Any], responses: Sequence[list[Row]]) -> _CannedPort:
+def _port_for(run: Callable[[Database], Any], responses: Sequence[list[MappingRow]]) -> _CannedPort:
     return (_WritingCannedPort if run in _WRITING_STORIES else _CannedPort)(responses)
 
 
@@ -313,11 +314,11 @@ def _connect(story: graph_stories.GraphStory, port: _CannedPort) -> Database:
     return Database.connect(port, MODELS[story.model], clock=clock)
 
 
-def _db(story: graph_stories.GraphStory, responses: Sequence[list[Row]] = ()) -> Database:
+def _db(story: graph_stories.GraphStory, responses: Sequence[list[MappingRow]] = ()) -> Database:
     return _connect(story, _port_for(story.run, responses))
 
 
-def _responses_for(run: Callable[[Database], Any]) -> list[list[Row]]:
+def _responses_for(run: Callable[[Database], Any]) -> list[list[MappingRow]]:
     """Canned reads for the stories whose bodies dereference a result — every
     other story's empty root level legally short-circuits the rest.
 

@@ -30,8 +30,8 @@ then:
         postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.thru_z = ? and t0.out_z = ?
       binds: [infinity, infinity]
     - sql:
-        postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
-      binds: [1, 2, infinity, infinity]
+        postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.id = any(?) and t0.thru_z = ? and t0.out_z = ?
+      binds: [[1, 2], infinity, infinity]
   graph:
     Coverage:
       - id: 10

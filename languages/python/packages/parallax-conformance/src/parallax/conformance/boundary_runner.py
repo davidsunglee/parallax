@@ -62,6 +62,7 @@ from parallax.core.db_port import (
     DocumentReadOrdinals,
     Invalidated,
     IsolationLevel,
+    PipelineStatement,
     PoolMetricsSource,
     Row,
     TransactionOutcome,
@@ -450,6 +451,9 @@ class FaultInjectingPort:
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         return self._inner.execute(sql, binds, document_reads)
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return self._inner.execute_pipeline(statements)
 
     def execute_write(self, sql: str, binds: Any) -> int:
         armed = self._armed_at("work")

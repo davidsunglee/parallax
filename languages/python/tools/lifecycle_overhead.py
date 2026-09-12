@@ -83,6 +83,8 @@ from parallax.core.db_port import (
     CleanupResult,
     Committed,
     DatabaseConnection,
+    MappingRow,
+    PipelineStatement,
     Returned,
     RolledBack,
     Row,
@@ -121,7 +123,7 @@ TRACE_SAMPLE: Final = 10
 """One root in ten is traced, which is what "sampled tracing" costs — the
 sampling decision on every root and the span work on a tenth of them."""
 
-ROW: Final[Row] = {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}
+ROW: Final[MappingRow] = {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}
 
 LATENCY_PROJECTION_US: Final = (0, 50, 250, 1_000, 5_000)
 """Per-round-trip database latencies the measured absolute overhead is projected
@@ -225,11 +227,17 @@ class _MemoryPort:
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         self.statements += 1
-        return [dict(ROW)]
+        return [tuple(ROW.values())]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.statements += 1
         return 1
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return [
+            self.execute(statement.sql, statement.binds, statement.document_reads)
+            for statement in statements
+        ]
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None

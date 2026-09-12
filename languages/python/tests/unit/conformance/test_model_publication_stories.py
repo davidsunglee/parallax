@@ -60,15 +60,7 @@ class _AccountPort(ConnectsAsItself):
     def execute(
         self, sql: str, binds: Sequence[Bind], document_reads: Sequence[object] = ()
     ) -> list[Row]:
-        return [
-            {
-                "id": 2,
-                "owner": "Linus",
-                "balance": Decimal("250.00"),
-                "version": 1,
-                "nickname": None,
-            }
-        ]
+        return [(2, "Linus", Decimal("250.00"), 1, None)]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.writes.append(sql)

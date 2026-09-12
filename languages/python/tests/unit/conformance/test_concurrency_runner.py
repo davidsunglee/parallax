@@ -20,6 +20,7 @@ import pytest
 from parallax.conformance import case_format, concurrency_runner
 from parallax.conformance.concurrency_runner import ConcurrencyStep, RoundsRun
 from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES, Dialect
 
 
@@ -157,12 +158,12 @@ class _FakeSession:
 
     def execute(
         self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
-    ) -> list[dict[str, Any]]:
+    ) -> list[Row]:
         self.calls.append(("execute", sql, tuple(binds)))
         if self._raises_on is not None and self._raises_on in sql:
             assert self._error is not None
             raise self._error
-        return [{"id": 2}] if "select" in sql else []
+        return [(2,)] if "select" in sql else []
 
     def execute_write(self, sql: str, binds: Sequence[Any]) -> int:
         self.calls.append(("execute_write", sql, tuple(binds)))
@@ -260,7 +261,7 @@ def test_run_rounds_an_undeclared_kind_step_executes_verbatim() -> None:
         },
     )
     run = concurrency_runner.run_rounds(rounds, lambda: next(peers))
-    assert run.rounds[0]["A"].rows == ({"id": 2},)
+    assert run.rounds[0]["A"].rows == ()
     # Two contention-GUC SETs, then B's own UPDATE -- via `execute`, not
     # `execute_write`, since the step declares no `kind`.
     assert [call[0] for call in b.calls] == ["execute", "execute", "execute"]
@@ -347,7 +348,7 @@ def test_run_rounds_raises_the_originating_failure_not_a_partners_barrier_break(
 
         def execute(
             self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
-        ) -> list[dict[str, Any]]:
+        ) -> list[Row]:
             if _is_session_setup(sql):
                 return []
             raise RuntimeError("B's own genuine defect")
@@ -380,7 +381,7 @@ def test_run_rounds_reraises_an_unexpected_non_database_error() -> None:
 
         def execute(
             self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
-        ) -> list[dict[str, Any]]:
+        ) -> list[Row]:
             if _is_session_setup(sql):
                 return []
             raise RuntimeError("a worker thread's own unexpected defect")
@@ -429,7 +430,7 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
 
         def execute(
             self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
-        ) -> list[dict[str, Any]]:
+        ) -> list[Row]:
             if not _is_session_setup(sql):
                 with order_lock:
                     order.append("A")
@@ -446,7 +447,7 @@ def test_run_rounds_barrier_blocks_the_next_round_until_both_sides_finish() -> N
 
         def execute(
             self, sql: str, binds: Sequence[Any], document_reads: Sequence[tuple[int, int]] = ()
-        ) -> list[dict[str, Any]]:
+        ) -> list[Row]:
             if _is_session_setup(sql):
                 return []
             with order_lock:

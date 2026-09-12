@@ -128,7 +128,13 @@ from typing import Any, Final, NamedTuple, cast
 
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.conformance.workloads import catalog
-from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import (
+    DatabaseConnection,
+    DocumentReadOrdinals,
+    MappingRow,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query._fluent import ObjectQuery
 from parallax.snapshot import SnapshotStream
@@ -237,7 +243,7 @@ _PEAK_ROOTS: Final = _LARGE * _TENFOLD
 full page of that size rather than the whole result."""
 
 
-def _order_row(row: Mapping[str, object]) -> Row:
+def _order_row(row: Mapping[str, object]) -> MappingRow:
     return {
         "id": row["id"],
         "name": row["name"],
@@ -249,7 +255,7 @@ def _order_row(row: Mapping[str, object]) -> Row:
     }
 
 
-def _item_row(row: Mapping[str, object]) -> Row:
+def _item_row(row: Mapping[str, object]) -> MappingRow:
     return {
         "id": row["id"],
         "order_id": row["orderId"],
@@ -259,7 +265,7 @@ def _item_row(row: Mapping[str, object]) -> Row:
     }
 
 
-def _account_row(account_id: int) -> Row:
+def _account_row(account_id: int) -> MappingRow:
     return {
         "id": account_id,
         "owner": f"owner-{account_id:06d}",
@@ -299,9 +305,9 @@ class _GeneratingPort(ConnectsAsItself):
     ) -> list[Row]:
         del document_reads
         if "order_item t0" in sql:
-            parents = tuple(cast("int", parent) for parent in binds)
+            parents = tuple(cast("list[int]", binds[0]))
             return [
-                _item_row(row)
+                tuple(_item_row(row).values())
                 for parent in parents
                 for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
             ]

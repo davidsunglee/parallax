@@ -42,7 +42,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
-    Row,
+    MappingRow,
 )
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -140,7 +140,7 @@ def _own_copy(case: case_format.Case) -> case_format.Case:
 _OPEN_MILESTONE: Final[TemporalBound] = INFINITY
 
 
-def _ledger_row(row_id: int, value: str, *, in_z: str, acct_num: str = "B") -> Row:
+def _ledger_row(row_id: int, value: str, *, in_z: str, acct_num: str = "B") -> MappingRow:
     """One current Ledger milestone a fake port publishes.
 
     ``acct_num`` is the account the row's own history left there — the fixture's
@@ -161,7 +161,7 @@ def _instant(value: str) -> dt.datetime:
     return dt.datetime.fromisoformat(value)
 
 
-def _balance_row(row_id: int, value: str, *, in_z: str) -> Row:
+def _balance_row(row_id: int, value: str, *, in_z: str) -> MappingRow:
     return {
         "bal_id": row_id,
         "acct_num": "A",
@@ -171,7 +171,7 @@ def _balance_row(row_id: int, value: str, *, in_z: str) -> Row:
     }
 
 
-def _position_row(row_id: int, value: str, *, from_z: str, in_z: str) -> Row:
+def _position_row(row_id: int, value: str, *, from_z: str, in_z: str) -> MappingRow:
     return {
         "pos_id": row_id,
         "acct_num": "A",
@@ -183,7 +183,7 @@ def _position_row(row_id: int, value: str, *, from_z: str, in_z: str) -> Row:
     }
 
 
-def _voyage_row(row_id: int, payload: dict[str, object], *, in_z: str) -> Row:
+def _voyage_row(row_id: int, payload: dict[str, object], *, in_z: str) -> MappingRow:
     return {
         "id": row_id,
         "in_z": dt.datetime.fromisoformat(in_z),
@@ -195,7 +195,7 @@ def _voyage_row(row_id: int, payload: dict[str, object], *, in_z: str) -> Row:
 # The milestone `m-txtime-write-010`'s own insert entry leaves current, as its
 # update entry's resolving read publishes it: one Structured Column carrying
 # every member, which is what a document-mapped chain carries forward.
-_VOYAGE_MILESTONE: Final[Row] = _voyage_row(
+_VOYAGE_MILESTONE: Final[MappingRow] = _voyage_row(
     1,
     {"title": "Northern Run", "crew": 4, "manifest": {"cargo": "timber"}, "legs": []},
     in_z="2026-01-01T00:00:00+00:00",
@@ -254,7 +254,9 @@ def _synthetic_ledger_scenario(steps: list[dict[str, object]]) -> case_format.Ca
 
 
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
-    port = FakeWritePort(find_rows=[{"id": 7}])
+    port = FakeWritePort(
+        find_rows=[{"id": 7, "owner": "Newton", "balance": decimal.Decimal("5.00"), "version": 1}]
+    )
     run = scenario.run_scenario_case(_case("m-unit-work-001"), port)
     assert run.round_trips == 2
     assert run.errors == []  # a keyed unit-of-work scenario reports no error observation
@@ -325,7 +327,7 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     assert port.commits == 1 and port.rollbacks == 0
 
 
-def _account(identifier: int, owner: str, balance: str, version: int) -> Row:
+def _account(identifier: int, owner: str, balance: str, version: int) -> MappingRow:
     return {
         "id": identifier,
         "owner": owner,
@@ -458,7 +460,13 @@ def _abstract_step_query(case_id: str) -> ObjectQueryNode:
 # `m-inheritance-130`'s step 0 reads the abstract root `Vehicle` and is handed the
 # concrete `Car` that row resolves to: id 1, `Sedan`, version 5, four doors, and no
 # `axles` key at all, a materialized node carrying only its own branch's members.
-_PUBLISHED_CAR: Row = {"id": 1, "name": "Sedan", "version": 5, "doors": 4, "familyVariant": "Car"}
+_PUBLISHED_CAR: MappingRow = {
+    "id": 1,
+    "name": "Sedan",
+    "version": 5,
+    "doors": 4,
+    "familyVariant": "Car",
+}
 
 
 def test_graph_rows_renders_an_abstract_positions_whole_projection() -> None:
@@ -550,7 +558,7 @@ def test_graph_rows_refuses_an_abstract_read_that_published_no_variant() -> None
         )
 
 
-_ORDER_1_ROW: Row = {
+_ORDER_1_ROW: MappingRow = {
     "id": 1,
     "name": "Ada",
     "sku": "A-100",
@@ -560,7 +568,7 @@ _ORDER_1_ROW: Row = {
     "ordered_on": dt.date(2024, 1, 5),
 }
 
-_ORDER_ITEM_11_ROW: Row = {
+_ORDER_ITEM_11_ROW: MappingRow = {
     "id": 11,
     "order_id": 1,
     "sku": "A-100",
@@ -568,7 +576,7 @@ _ORDER_ITEM_11_ROW: Row = {
     "shipped_on": None,
 }
 
-_ORDER_ITEM_13_ROW: Row = {
+_ORDER_ITEM_13_ROW: MappingRow = {
     "id": 13,
     "order_id": 1,
     "sku": "D-130",
@@ -2187,8 +2195,8 @@ def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[
     ]
 
 
-def _ledger_resolve_port(*rows: Row) -> FakeWritePort:
-    fixture: Row = {
+def _ledger_resolve_port(*rows: MappingRow) -> FakeWritePort:
+    fixture: MappingRow = {
         "led_id": 2,
         "acct_num": "B",
         "val": decimal.Decimal("200.00"),
@@ -2400,7 +2408,7 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
 # the attempt writes against; the fake serves one canned result to every read, #
 # which is enough because a conflict attempt reads exactly once.               #
 # --------------------------------------------------------------------------- #
-_ACCOUNT_ROW_2: Final[Row] = {
+_ACCOUNT_ROW_2: Final[MappingRow] = {
     "id": 2,
     "owner": "Linus",
     "balance": decimal.Decimal("250.00"),

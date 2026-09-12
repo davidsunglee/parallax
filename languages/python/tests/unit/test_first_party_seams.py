@@ -24,7 +24,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, TX_TIME
-from parallax.core.db_port import DatabaseAdapter, Row
+from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, entity_by_name
 from parallax.core.object_query import ObjectQueryNode
@@ -72,10 +72,10 @@ ACCOUNT_META = model_of(ACCOUNT)
 # `Account` is versioned, so the default `optimistic` preference resolves it to
 # the Optimistic strategy and every keyed update binds the observed version last.
 UPDATE_SQL = "update account set balance = %s, version = %s where id = %s and version = %s"
-ACCOUNT_ROW: Row = {"id": 3, "owner": "Grace", "balance": Decimal("10"), "version": 1}
+ACCOUNT_ROW: MappingRow = {"id": 3, "owner": "Grace", "balance": Decimal("10"), "version": 1}
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _INFINITY = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
-_TEMPORAL_BOUNDS: Row = {
+_TEMPORAL_BOUNDS: MappingRow = {
     "from_z": _TX_START,
     "thru_z": _INFINITY,
     "in_z": _TX_START,
@@ -83,11 +83,11 @@ _TEMPORAL_BOUNDS: Row = {
 }
 
 
-def _policy_row() -> Row:
+def _policy_row() -> MappingRow:
     return {"id": 1, "name": "P-1", **_TEMPORAL_BOUNDS}
 
 
-def _coverage_row(amount: object = Decimal("250.00")) -> Row:
+def _coverage_row(amount: object = Decimal("250.00")) -> MappingRow:
     return {"id": 10, "policy_id": 1, "amount": amount, **_TEMPORAL_BOUNDS}
 
 
@@ -482,7 +482,7 @@ def _predicate_target() -> dict[str, object]:
     }
 
 
-def _balance_history_rows() -> list[Row]:
+def _balance_history_rows() -> list[MappingRow]:
     return [
         {
             "bal_id": 1,
@@ -501,7 +501,7 @@ def _balance_history_rows() -> list[Row]:
     ]
 
 
-_ORDER_ROW: Row = {
+_ORDER_ROW: MappingRow = {
     "id": 1,
     "name": "Order1",
     "sku": "X-1",

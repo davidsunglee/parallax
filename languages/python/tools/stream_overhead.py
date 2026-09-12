@@ -53,6 +53,8 @@ from parallax.core.db_port import (
     CleanupResult,
     DatabaseConnection,
     DocumentReadOrdinals,
+    MappingRow,
+    PipelineStatement,
     Returned,
     Row,
     TransactionOutcome,
@@ -136,7 +138,7 @@ RETAINED_AT: Final = (20, 200)
 exclusion, whose slope is what one root of this graph costs."""
 
 
-def _order_row(row: Mapping[str, object]) -> Row:
+def _order_row(row: Mapping[str, object]) -> MappingRow:
     return {
         "id": row["id"],
         "name": row["name"],
@@ -149,7 +151,7 @@ def _order_row(row: Mapping[str, object]) -> Row:
     }
 
 
-def _item_row(row: Mapping[str, object]) -> Row:
+def _item_row(row: Mapping[str, object]) -> MappingRow:
     return {
         "id": row["id"],
         "order_id": row["orderId"],
@@ -254,9 +256,10 @@ class CatalogPort:
     ) -> list[Row]:
         del document_reads
         if "order_item t0" in sql:
+            parents = cast("list[int]", binds[0])
             return [
-                _item_row(row)
-                for parent in self._page
+                tuple(_item_row(row).values())
+                for parent in parents
                 for row in self._items[(parent - 1) * self._fanout : parent * self._fanout]
             ]
         size = cast("int", binds[-1])
@@ -264,10 +267,16 @@ class CatalogPort:
         selected = self._orders[self._delivered : self._delivered + taken]
         self._page = tuple(cast("int", row["id"]) for row in selected)
         self._delivered += taken - 1 if taken == size else taken
-        return [_order_row(row) for row in selected]
+        return [(*tuple(_order_row(row).values()), row["id"]) for row in selected]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         raise NotImplementedError
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return [
+            self.execute(statement.sql, statement.binds, statement.document_reads)
+            for statement in statements
+        ]
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None

@@ -30,8 +30,8 @@ then:
     - sql:
         postgres: select t0.id, t0.name from person t0
     - sql:
-        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind = ?
-      binds: [10, 11, 12, dog]
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id = any(?) and t0.kind = ?
+      binds: [[10, 11, 12], dog]
   referenceSql: select id, name from person
   graph:
     Person:

@@ -22,11 +22,13 @@ from typing import Any, Final
 import pytest
 
 from parallax.conformance import read_models
+from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     Bind,
     DatabaseAdapter,
     DocumentReadOrdinals,
+    MappingRow,
     Row,
 )
 from parallax.core.dialect import POSTGRES
@@ -72,7 +74,7 @@ from tests._support.db_port import (
 )
 from tests.unit._transact_support import ACCOUNT, FIND_SQL_UNLOCKED, FIXED, NEW_ROW, ORDERS
 
-_ORDER_ROW: Row = {
+_ORDER_ROW: MappingRow = {
     "id": 1,
     "name": "Ada",
     "sku": "A-100",
@@ -81,7 +83,8 @@ _ORDER_ROW: Row = {
     "active": True,
     "ordered_on": None,
 }
-_ITEM_ROW: Row = {"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}
+_ITEM_ROW: MappingRow = {"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}
+_TAG_ROW: MappingRow = {"id": 21, "order_id": 1, "label": "urgent", "priority": 2}
 
 
 class _StaticTarget:
@@ -250,6 +253,93 @@ def test_a_deep_fetch_level_is_a_second_call_under_the_same_read() -> None:
     assert [event.parent_activity_id for event in root.events] == [None] + [1] * 8 + [None]
 
 
+def test_pipelined_sibling_levels_keep_one_ordered_call_per_statement() -> None:
+    recorder = RecordingLifecycleProvider()
+    port = ScriptedAdapter(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]), Read(rows=[_TAG_ROW]))
+    _db(port, recorder, ORDERS).wire.find(
+        {
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [
+                {"segments": [{"rel": "Order.items"}]},
+                {"segments": [{"rel": "Order.tags"}]},
+            ],
+        }
+    )
+
+    (root,) = recorder.roots
+    assert _transitions(root.events) == [
+        "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "DatabaseCallStarted",
+        "DatabaseCallFinished",
+        "DatabaseCallStarted",
+        "DatabaseCallStarted",
+        "DatabaseCallFinished",
+        "DatabaseCallFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
+        "ReadFinished",
+    ]
+    call_events = [
+        event
+        for event in root.events
+        if isinstance(event, DatabaseCallStarted | DatabaseCallFinished)
+    ]
+    assert [event.activity_id for event in call_events] == [3, 3, 4, 5, 5, 4]
+    assert [event.outcome for event in call_events if isinstance(event, DatabaseCallFinished)] == [
+        DatabaseReadCompleted(1)
+    ] * 3
+    assert [call for call in port.calls if isinstance(call, ReadCall)] == port.calls
+    assert len(port.calls) == 3
+
+
+def test_a_failed_sibling_pipeline_balances_every_open_call() -> None:
+    recorder = RecordingLifecycleProvider()
+    failure = DatabaseError(category="deadlock", native_code="40P01", message="deadlock detected")
+    port = ScriptedAdapter(Read(rows=[_ORDER_ROW]), Read(rows=[_ITEM_ROW]), Read(raises=failure))
+
+    with raises_contextualized(DatabaseError):
+        _db(port, recorder, ORDERS).wire.find(
+            {
+                "target": "Order",
+                "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                "includes": [
+                    {"segments": [{"rel": "Order.items"}]},
+                    {"segments": [{"rel": "Order.tags"}]},
+                ],
+            }
+        )
+
+    (root,) = recorder.roots
+    assert _transitions(root.events) == [
+        "ReadStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "DatabaseCallStarted",
+        "DatabaseCallFinished",
+        "DatabaseCallStarted",
+        "DatabaseCallStarted",
+        "DatabaseCallFinished",
+        "DatabaseCallFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
+        "ReadFinished",
+    ]
+    pipeline_finishes = [
+        event for event in root.events[5:9] if isinstance(event, DatabaseCallFinished)
+    ]
+    assert [event.activity_id for event in pipeline_finishes] == [5, 4]
+    assert all(isinstance(event.outcome, DatabaseCallFailed) for event in pipeline_finishes)
+    read_finished = root.events[-1]
+    assert isinstance(read_finished, ReadFinished)
+    assert isinstance(read_finished.outcome, ReadFailed)
+    caused = read_finished.outcome.failure
+    assert isinstance(caused, CausedFailure)
+    assert caused.cause_activity_id == 5
+
+
 def test_the_wire_and_values_lanes_name_their_own_interface() -> None:
     recorder = RecordingLifecycleProvider()
     port = ScriptedAdapter(Read(rows=[NEW_ROW], times=2))
@@ -302,11 +392,30 @@ def test_a_failed_call_finishes_both_activities_and_names_its_cause() -> None:
     assert caused.diagnostic is outcome.diagnostic.failure
 
 
-def test_a_failure_after_the_call_completed_is_the_reads_own() -> None:
+def test_a_failure_after_the_call_completed_is_the_reads_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Materialization fails after every call came back, so the Read failed
     # DIRECTLY: proximity to a completed call attributes nothing.
+    def refuse_materialization(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise SnapshotMaterializationError("refused materialization", cause=ValueError("refused"))
+
+    monkeypatch.setattr(read_module, "build_graph", refuse_materialization)
     recorder = RecordingLifecycleProvider()
-    port = ScriptedAdapter(Read(rows=[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]))
+    port = ScriptedAdapter(
+        Read(
+            rows=[
+                {
+                    "bal_id": 1,
+                    "acct_num": "A-1",
+                    "val": Decimal("5.00"),
+                    "in_z": FIXED,
+                    "out_z": INFINITY,
+                }
+            ]
+        )
+    )
     with raises_contextualized(SnapshotMaterializationError):
         _db(port, recorder, read_models.BALANCE_MODEL).find(
             read_models.Balance.where(read_models.Balance.id == 1)

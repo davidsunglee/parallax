@@ -29,7 +29,13 @@ from parallax.conformance import class_models, models
 from parallax.core import Attr, DomainModel, Entity, attr
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, PresentDocument
-from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import (
+    DatabaseConnection,
+    DocumentReadOrdinals,
+    MappingRow,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
@@ -86,7 +92,7 @@ class QueuePort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, responses: Sequence[list[Row]]) -> None:
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         self._responses = list(responses)
         self.executed: list[tuple[str, list[object]]] = []
 
@@ -97,7 +103,7 @@ class QueuePort(ConnectsAsItself):
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
-        return fold_mapping_rows(self._responses.pop(0), document_reads)
+        return fold_mapping_rows(self._responses.pop(0), document_reads, sql)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -108,7 +114,7 @@ class QueuePort(ConnectsAsItself):
         return body_outcome(cast("DatabaseConnection", self), body)
 
 
-def _order_row(order_id: int = 1) -> Row:
+def _order_row(order_id: int = 1) -> MappingRow:
     return {
         "id": order_id,
         "name": "Ada",
@@ -580,14 +586,14 @@ _CUSTOMER_MODELS: Mapping[str, DomainModel] = {
     "descriptor-backed": CUSTOMER,
 }
 
-_VALID_CUSTOMER: Row = {
+_VALID_CUSTOMER: MappingRow = {
     "id": 1,
     "name": "Ada",
     "address": {"street": "Storgata 1", "city": "Oslo", "phones": []},
 }
 
 
-def _customer_wire(model: DomainModel, row: Row) -> object:
+def _customer_wire(model: DomainModel, row: MappingRow) -> object:
     """One connected Customer read, published in band."""
     port = QueuePort([[row]])
     query = deserialize_query({"target": "Customer", "predicate": {"all": {}}})

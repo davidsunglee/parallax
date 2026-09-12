@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from tests._support.db_port import ConnectsAsItself, body_outcome, projected_row
 
@@ -51,7 +51,7 @@ class ScriptedPort(ConnectsAsItself):
         self,
         *,
         dialect: Dialect = POSTGRES,
-        read_rows: Sequence[list[Row]] = (),
+        read_rows: Sequence[list[MappingRow]] = (),
         write_affected: Sequence[int] = (),
         raise_on_read: BaseException | None = None,
     ) -> None:
@@ -70,7 +70,7 @@ class ScriptedPort(ConnectsAsItself):
             raise self._raise_on_read
         self.reads.append((sql, tuple(binds)))
         rows = self._read_rows.pop(0) if self._read_rows else []
-        return [projected_row(sql, row) for row in rows]
+        return [projected_row(sql, row, document_reads) for row in rows]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.writes.append((sql, tuple(binds)))
