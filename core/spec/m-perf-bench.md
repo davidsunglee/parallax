@@ -128,30 +128,44 @@ dataset declares a row count and a recipe and nothing else about which Entity it
 builds. A recipe may fill several — the `orders-tree` shape fills three — so no
 single Entity property could describe one honestly.
 
-The recipe names and their deterministic semantics are:
+The recipe names and their deterministic semantics are below. Each emitted row
+contains exactly the listed members; a model member not listed is absent.
 
-- `accounts-sequential`: `rows` Accounts with IDs `1..rows`, owner
-  `owner-<id>`, balance `<id * 100>.00`, and version `1`.
-- `orders-tree`: `rows` Orders with IDs `1..rows`; each Order has `fanout`
-  OrderItems, and each item has `fanout` OrderStatuses. Item and status IDs are
-  independently global and sequential in parent then child order. Every order is
-  active, has quantity `1`, price `10.00`, and date `2024-01-01`; each item has
-  quantity `1`; every status code is `OPEN`.
-- `travelers-tree`: `rows` Travelers with IDs `1..rows`, one complete nested
-  address, and `fanout` tags and Trips each. Trip IDs are global and sequential
-  in traveler then child order.
-- `document-milestones`: `rows` current Voyage milestones and `rows` current
-  Charter rectangles, independently keyed `1..rows`, opened at
-  `2026-01-01T00:00:00+00:00` and unbounded at every end they declare.
-- `versioned-documents`: `rows` current Ledgers keyed `1..rows`, each at version
-  `1` with one complete document payload.
-- `bitemporal-current`: `rows` current Charter rectangles keyed `1..rows`, each
-  valid and transaction-current from `2026-01-01T00:00:00+00:00`.
-- `materialization-stress`: `rows` Owners keyed from `1000`, each with `fanout`
-  Nodes keyed from `10000` in non-overlapping ten-key ranges. The first two nodes
-  are Alpha and the remainder Beta; the first is the owner's favorite. The
-  workload's broad, narrowed, favorite, and back-reference paths therefore make
-  five planned levels while revisiting the same physical Alpha rows.
+- `accounts-sequential` emits Accounts for `id = 1..rows`: `owner` is
+  `owner-<id>`, `balance` is the decimal string `<id * 100>.00`, and `version`
+  is `1`.
+- `orders-tree` emits Orders for `id = 1..rows`. Their `name` is
+  `order-<id>` with the decimal ID zero-padded to six digits; `sku` is `A-100`,
+  `qty` is `5`, `price` is `10.50`, `active` is true, and `orderedOn` is
+  `2024-01-05`. Each Order emits `fanout` OrderItems in parent-then-child
+  order, with independently sequential IDs, the parent `orderId`, `sku` `SKU`,
+  `quantity` `1`, and `shippedOn` `2024-02-01`. Each item likewise emits
+  `fanout` OrderStatuses with independently sequential IDs, its Order's
+  `orderId`, its parent `orderItemId`, and `code` `OPEN`.
+- `travelers-tree` emits Travelers for `id = 1..rows`: `displayName` is
+  `traveler-<id>`, `score` is `id`, `joinedOn` is `2026-01-15`, `note` is
+  `note-<id>`, `address` is `{city: Oslo, geo: {country: NO}}`, and `tags`
+  contains `fanout` documents `{label: tag-<offset>}` for zero-based offset.
+  It also emits `fanout` Trips per Traveler in parent-then-child order: IDs are
+  global and sequential, `travelerId` is the parent ID, `destination` is
+  `destination-<offset>`, and `nights` is `offset + 1`.
+- `document-milestones` emits Voyages for `id = 1..rows`: `title` is
+  `voyage-<id>`, `crew` is `4`, `manifest` is `{cargo: timber}`, `txStart`
+  is `2026-01-01T00:00:00+00:00`, and `txEnd` is `infinity`. It also emits
+  the Charters defined by `bitemporal-current` for the same ID range.
+- `versioned-documents` emits Ledgers for `id = 1..rows`: `version` is `1`,
+  `label` is `ledger-<id>`, `balance` is `10.00`, and `details` is
+  `{code: OPEN}`.
+- `bitemporal-current` emits Charters for `id = 1..rows`: `route` is
+  `route-<id>`, `terms` is `{clause: standard}`, both `validStart` and
+  `txStart` are `2026-01-01T00:00:00+00:00`, and both `validEnd` and `txEnd`
+  are `infinity`.
+- `materialization-stress` emits Owners for zero-based `index = 0..rows-1`.
+  The Owner's `id` is `1000 + index`, `name` is `owner-<index>`, and
+  `favoriteId` is `10000 + index * 10`. Each Owner emits `fanout` Nodes for
+  zero-based `offset`: `id` is `favoriteId + offset`, `ownerId` is the
+  Owner ID, `label` is `node-<index>-<offset>`, and `tags` is empty. Offsets
+  below `2` are Alpha and the rest Beta; offset `0` is the favorite.
 
 Every implementation of a recipe MUST preserve these Entity counts, parent-child
 fan-out, key relationships, traversal order, and fixed member values. It MAY

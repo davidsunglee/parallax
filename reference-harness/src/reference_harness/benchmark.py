@@ -77,12 +77,12 @@ def _generate_orders_tree(rows: int, fanout: int) -> dict[str, list[dict[str, An
         orders.append(
             {
                 "id": order_id,
-                "name": f"order-{order_id}",
-                "sku": f"SKU-{order_id}",
-                "qty": 1,
-                "price": "10.00",
+                "name": f"order-{order_id:06d}",
+                "sku": "A-100",
+                "qty": 5,
+                "price": "10.50",
                 "active": True,
-                "orderedOn": "2024-01-01",
+                "orderedOn": "2024-01-05",
             }
         )
         for _ in range(fanout):
@@ -91,8 +91,9 @@ def _generate_orders_tree(rows: int, fanout: int) -> dict[str, list[dict[str, An
                 {
                     "id": item_id,
                     "orderId": order_id,
-                    "sku": f"SKU-{item_id}",
+                    "sku": "SKU",
                     "quantity": 1,
+                    "shippedOn": "2024-02-01",
                 }
             )
             for _ in range(fanout):

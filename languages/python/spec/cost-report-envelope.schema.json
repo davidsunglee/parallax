@@ -56,7 +56,7 @@
         "sampling"
       ],
       "properties": {
-        "commit": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "dirty": { "type": "boolean" },
         "budgetContractDigest": { "$ref": "#/$defs/digest" },
         "workloadDigest": { "$ref": "#/$defs/digest" },
@@ -93,11 +93,13 @@
     "comparison": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workload", "cell", "ceiling", "outcome"],
+      "required": ["workload", "cell", "operator", "limit", "unit", "outcome"],
       "properties": {
         "workload": { "type": "string", "minLength": 1 },
         "cell": { "type": "string", "minLength": 1 },
-        "ceiling": { "type": "number" },
+        "operator": { "enum": ["at-most", "at-least"] },
+        "limit": { "type": "number" },
+        "unit": { "type": "string", "minLength": 1 },
         "outcome": { "enum": ["within", "outside", "unavailable"] }
       }
     },

@@ -51,6 +51,23 @@ def test_orders_tree_fans_out() -> None:
     first_order_items = [i for i in rows["parallax.compatibility.OrderItem"] if i["orderId"] == 1]
     assert [i["id"] for i in first_order_items] == [1, 2, 3, 4, 5]
 
+    assert rows["parallax.compatibility.Order"][0] == {
+        "id": 1,
+        "name": "order-000001",
+        "sku": "A-100",
+        "qty": 5,
+        "price": "10.50",
+        "active": True,
+        "orderedOn": "2024-01-05",
+    }
+    assert first_order_items[0] == {
+        "id": 1,
+        "orderId": 1,
+        "sku": "SKU",
+        "quantity": 1,
+        "shippedOn": "2024-02-01",
+    }
+
 
 def test_document_milestones_opens_one_current_row_per_id() -> None:
     # Each write iteration addresses the milestone whose primary key is its own

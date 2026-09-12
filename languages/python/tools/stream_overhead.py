@@ -98,16 +98,18 @@ from tests.unit.memory_instruments import (  # noqa: E402
     warmed,
 )
 
-PAGE_SIZES: Final = (1, 2, 8, 32)
-"""The dial, across a factor of thirty-two, so what it buys and what it costs are
-read on the same table."""
+_WORKLOAD: Final = catalog()["conventional-fanout"]
 
-FANOUT: Final = 5
+PAGE_SIZES: Final = _WORKLOAD.page_sizes
+"""Every delivery size the benchmark fixture declares."""
+
+FANOUT: Final = _WORKLOAD.fanout
 """Included children per root, so every page graph carries relationship fan-out
 and the root the caller holds is a graph rather than a row."""
 
-ROOTS: Final = 200
-"""The result the readings are taken over."""
+ROOTS: Final = max(_WORKLOAD.roots, 3 * max(PAGE_SIZES))
+"""Enough fixture-generated roots to sample inside the third declared-size
+page."""
 
 TENFOLD: Final = 10
 """The factor the independence reading multiplies the result by, holding the
@@ -122,7 +124,7 @@ def sample_after(batch_size: int) -> int:
     fixed position that is the first page at the large sizes and the fortieth at
     the small ones.
     """
-    return 2 * batch_size + 5
+    return 2 * batch_size + min(5, batch_size - 1)
 
 
 _TIMED: Final = 10
@@ -132,9 +134,6 @@ direction only — nothing here is enforced against elapsed time."""
 RETAINED_AT: Final = (20, 200)
 """Result sizes the retaining control is priced from: the caller-retention
 exclusion, whose slope is what one root of this graph costs."""
-
-
-_WORKLOAD: Final = catalog()["conventional-fanout"]
 
 
 def _order_row(row: Mapping[str, object]) -> Row:
@@ -276,8 +275,12 @@ class CatalogPort:
         raise NotImplementedError
 
 
+_QUERY: Final = Order.where(Order.all).include(Order.items)
+_WORKLOAD.validate_class_backed(ORDERS_MODEL, _QUERY)
+
+
 def query() -> ObjectQuery[Order, Order]:
-    return Order.where(Order.active == True).include(Order.items)  # noqa: E712 - the query algebra's own equality
+    return _QUERY
 
 
 class Lane(NamedTuple):

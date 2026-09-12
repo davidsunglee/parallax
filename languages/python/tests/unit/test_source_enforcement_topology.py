@@ -316,6 +316,14 @@ ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
         {"ObjectQuery", "object_query_node"}
     ),
+    # A measurement consumer may retain class-backed publication types only after
+    # this catalog proves both their complete accepted model and their canonical
+    # Object Query equal the fixture-owned descriptor forms. ObjectQuery's
+    # canonicalization seam is the only path that can perform the latter without
+    # duplicating fluent clause state or serialization rules.
+    ("parallax.conformance.workloads", "parallax.core.object_query._fluent"): frozenset(
+        {"ObjectQuery", "object_query_node"}
+    ),
     ("parallax.conformance.models", "parallax.core.entity._model"): frozenset({"model_of"}),
     (
         "parallax.conformance.evolution_wire",

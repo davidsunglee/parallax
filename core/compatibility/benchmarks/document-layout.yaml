@@ -5,9 +5,8 @@
 # does: the same members read through one Structured Column rather than through five
 # columns, and the same members written as one document rather than five cells.
 #
-# The dataset is the corpus model's own three rows, loaded through the same fixture
-# path every case uses, so the document each row stores is the codec's rather than
-# this file's.
+# The dataset is 200 deterministic Travelers and their Trips from the shared
+# `travelers-tree` recipe; the document codec decides their physical storage.
 #
 # Three workloads, each with `expectRoundTrips`, so the report carries a statement
 # count beside every timing rather than a wall-time reading alone:
