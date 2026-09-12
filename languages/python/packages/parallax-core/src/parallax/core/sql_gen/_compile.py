@@ -385,7 +385,7 @@ class CompiledRead:
                 continue
             attribute = contract.attribute
             value = row.values[contract.result_key]
-            if contract.encoded:
+            if contract.encoded and value is not None:
                 try:
                     value = decode_canonical_wire(attribute.type, cast("WireValue", value))
                 except WireDecodingError:

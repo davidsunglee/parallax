@@ -29,7 +29,7 @@ survivors = fixed + per_page_node x batch_size x (1 + fanout)
                   + per_published_node x (1 + fanout)
 ```
 
-with the coefficients pinned as literals — 70 / 2 / 1 / 2 in the Typed lane, 71 /
+with the coefficients pinned as literals — 67 / 2 / 1 / 2 in the Typed lane, 68 /
 2 / 1 / 1 in the Wire lane. The Wire lane's one extra fixed object is the frozen
 sequence its published root spells the included relationship as, which a Typed root
 answers from its node state instead; there is one per relationship the include tree
@@ -62,7 +62,7 @@ leaves out.
 
 Publishing one root peaks at that root's own graph: the high-water of the region
 between two roots is exactly the same at ten times the result, at a later
-position, and across a thirty-two-fold spread of page sizes, and what it costs per
+position, and across a 128-fold spread of page sizes, and what it costs per
 node falls at each of eight fan-outs — which rejects a term super-linear in
 `G_max` across that grid rather than establishing the asymptote. Page-size
 equality is exact rather than
@@ -70,7 +70,7 @@ a tolerance, because `m-snapshot-read` gives the page to the first layer alone;
 that is what prices the merge layer the census cannot reach. A high-water reading
 is a maximum, so an allocation that never takes the process above an earlier
 moment of the same publication is invisible to it however it scales — which is why
-that grid is thirty-two-fold rather than convenient, and why the merge and the
+that grid is 128-fold rather than convenient, and why the merge and the
 construction it feeds are priced as a pair rather than apart.
 
 Two of the bound's three exclusions are demonstrated rather than asserted: a
@@ -86,37 +86,40 @@ none here and under the same heading below.
   Python    CPython 3.14.7
   Platform  darwin/arm64
   Warm-up   200 unsampled runs before every window
-  Shape     200 roots, fan-out 5, one include level,
+  Shape     384 roots, fan-out 5, one include level,
             sampled inside the third page with the delivery still running
 
 typed delivery
   page    at     held B   at 10x N    delta   roots  survivors  inbound   us/root
-     1     7     31,145     31,145       +0    0.00        248      301    1489.5
-     2     9     34,324     34,324       +0    0.00        263      322     997.5
-     8    21     55,058     55,058       +0    0.00        353      448     650.8
-    32    69    143,813    143,813       +0    0.00        713      952     568.7
+     1     2     29,915     29,915       +0    0.00        239      290    1426.6
+    32    69    133,798    133,798       +0    0.00        704      941     538.2
+   128   261    510,438    513,158   +2,720    0.63      2,134    2,942     532.6
+
+  one retained root of this graph = 4,297 B
 
 wire delivery
   page    at     held B   at 10x N    delta   roots  survivors  inbound   us/root
-     1     7     30,456     30,456       +0    0.00        229      280    1426.4
-     2     9     33,635     33,635       +0    0.00        244      301     952.7
-     8    21     54,369     54,369       +0    0.00        334      427     601.6
-    32    69    143,124    143,124       +0    0.00        694      931     527.8
+     1     2     29,226     29,226       +0    0.00        220      269    1376.6
+    32    69    133,109    133,109       +0    0.00        685      920     500.7
+   128   261    509,749    512,469   +2,720    0.81      2,115    2,921     495.2
 
-caller-retention exclusion
-  typed     4,582 B/root over 20 -> 200 roots  = 895 KiB at 200 roots
-  wire      3,630 B/root over 20 -> 200 roots  = 709 KiB at 200 roots
+  one retained root of this graph = 3,345 B
+
+caller-retention exclusion (the growth the bound declines to prevent)
+  typed     4,297 B/root over 20 -> 200 roots  = 839 KiB at 200 roots
+  wire      3,345 B/root over 20 -> 200 roots  = 653 KiB at 200 roots
 ```
 
 **The `delta` column is the headline.** It is what ten times the roots moved the
-working set by, holding the page size and the sampled position fixed, and it is
-exactly zero at every page size in both lanes — not "small", and not "within a
-tolerance". The bound's independence from the result is a structural property of
-where the page loop releases, so the reading is a whole number of bytes rather
-than a ratio.
+working set by, holding the page size and sampled position fixed. It is zero at
+pages 1 and 32; at page 128 it is 2,720 bytes in both lanes, less than one
+retained root (0.63 Typed roots and 0.81 Wire roots). The report records that
+machine-relative level without turning it into a threshold. The gated suite is
+what requires every result-size and delivery-position comparison to differ by
+less than one retained root, with no term for either dial in its survivor model.
 
-**The page size is the whole cost.** The working set is affine in it — about
-3,698 bytes per root position of the page at fan-out 5, in both lanes — because a
+**The page size is the whole cost.** The working set's dominant rate is about
+3,784 bytes per root position of the page at fan-out 5, in both lanes, because a
 page's sealed graph holds every projection for that page's roots and their
 children, and the page holds one evaluated coordinate per root beside it. A caller who wants a smaller working set asks for a smaller page and
 pays for it in round trips, which the `us/root` column prices in the other
@@ -124,13 +127,13 @@ direction: at page size 1 a delivery costs one round trip per root and reads mor
 than twice as slowly per root as at page size 32.
 
 **The exclusion is why the delta means anything.** Keeping every root of the same
-200-root result costs 895 KiB in the Typed lane against a working set that did
-not move at all, so the constant the delivery holds is worth roughly twelve
-retained roots at page size 8. A caller that appends every root to a list has
-opted out of the bound; that is the contract, and this is its price.
+200-root result costs 839 KiB in the Typed lane, while multiplying the delivered
+result by ten moved the sampled working set by less than one retained root. At
+page size 32 that working set is worth roughly 31 retained roots. A caller that
+appends every root to a list has opted out of the bound; that is its price.
 
 **Typed and Wire differ by a constant, not by a rate.** The Typed lane holds
-exactly 689 bytes more at every page size — the same figure at 1, 2, 8, and 32 —
+exactly 689 bytes more at every page size — the same figure at 1, 32, and 128 —
 because the page graph is the same read either way and only the published root
 differs. Retention is a property of the read rather than of the representation.
 What differs materially is the exclusion's slope: a retained Wire tree is about a

@@ -5981,14 +5981,18 @@ parallax.postgres --> parallax.core.dialect
   **reaches the common runtime and one prepared selection's projection**:
   `parallax.core.entity._model.model_of` in its corpus-model loader, and — in its
   second-frontend fixture — `parallax.snapshot.handle._publication.read_projection`
-  and both names its one import of
-  `parallax.core.object_query._fluent` binds, `ObjectQuery` and
-  `object_query_node`. All four are **rebutted rather than exempted**: `model_of`
-  and the two typed-query names are already accepted private seams of
+  and two exact imports of `parallax.core.object_query._fluent`.
+  `parallax.conformance.another_source` binds `ObjectQuery` and
+  `object_query_node` to drive the second frontend; `parallax.conformance.workloads`
+  binds those same two names so a catalog entry can retain the typed query and
+  compare its normalized node with a class-backed consumer before handing either
+  to production preflight. These reaches are **rebutted rather than exempted**:
+  `model_of` and the two typed-query names are already accepted private seams of
   production's own composition root and read preflight, and the typed surface is
   reached by naming the module that owns it — which is what a consumer wanting it
-  does above, the Snapshot handle included, and why `ObjectQuery` appears here
-  although §8 re-exports it. `model_of` exists precisely so a separately
+  does above, the Snapshot handle included. `ObjectQuery` appears in both exact
+  imports although §8 re-exports it because each importer also requires the
+  module-owned `object_query_node`. `model_of` exists precisely so a separately
   distributed frontend can read the accepted model out of a Domain Model
   (*Canonical descriptor input*), which is what the adapter is doing.
   `read_projection` is accepted for the same reason the second frontend needs
@@ -6373,8 +6377,9 @@ rows receive the transaction's shared lock.
   its workload and cell, an `at-most` or `at-least` operator, numeric limit,
   unit, and outcome. Provenance capture reads the commit and dirty state from
   Git and the server version from the connected PostgreSQL source. Semantic
-  validation requires the commit to resolve to a commit object and recomputes
-  the authority label from the provenance and current Budget Contract. Only a
+  validation requires the commit to resolve to a commit object, loads the Budget
+  Contract authored at that producing commit, and recomputes the authority label
+  from the provenance and that contract. Only a
   clean tree at a commit with an exactly matching authority fingerprint,
   contract digest, and sampling protocol is `authoritative`; every other useful
   reading is `non-authoritative`.

@@ -9,7 +9,7 @@ objectQuery:
   target: parallax.compatibility.Charter
   predicate: { all: {} }
   temporal:
-    valid-time: { asOf: "2026-06-01T00:00:00+00:00" }
+    valid-time: { asOf: "2026-06-01T00:00:00Z" }
     transaction-time: { asOf: latest }
 delivery:
   pageSizes: [1, 32, 128]

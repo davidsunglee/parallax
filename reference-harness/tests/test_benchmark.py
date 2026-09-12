@@ -24,6 +24,7 @@ from reference_harness.benchmark import (
     _statements,
     _substitute_iteration,
 )
+from reference_harness.sql_lint import lint_tree
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS_ROOT = _REPO_ROOT / "core" / "compatibility" / "benchmarks"
@@ -180,21 +181,39 @@ def test_benchmark_fixtures_exist() -> None:
     } <= names
 
 
-def test_every_workload_declares_iterations_and_golden() -> None:
+def test_every_workload_declares_iterations_and_strict_canonical_goldens() -> None:
+    assert lint_tree(_REPO_ROOT / "core" / "compatibility") == []
     for fixture_path in _fixtures():
         fixture = yaml.safe_load(fixture_path.read_text(encoding="utf-8"))
+        assert isinstance(fixture, dict), fixture_path.name
         assert "model" in fixture, fixture_path.name
-        for workload in fixture["workloads"]:
-            assert workload.get("iterations", 0) >= 1, (fixture_path.name, workload["name"])
+        workloads = fixture.get("workloads")
+        assert isinstance(workloads, list), fixture_path.name
+        for workload in workloads:
+            assert isinstance(workload, dict), fixture_path.name
+            label = (fixture_path.name, workload.get("name"))
+            assert workload.get("iterations", 0) >= 1, label
             if workload.get("kind") == "cache-hit":
                 # A cache-hit workload issues no SQL (0 round trips), so it lists
                 # no golden SQL — the methodology witness for `expectRoundTrips: 0`.
-                assert workload.get("expectRoundTrips") == 0, (
-                    fixture_path.name,
-                    workload["name"],
-                )
+                assert workload.get("expectRoundTrips") == 0, label
                 continue
-            assert _statements(workload, "postgres"), (fixture_path.name, workload["name"])
+            statements = workload.get("statements")
+            assert isinstance(statements, list) and statements, label
+            for statement in statements:
+                assert isinstance(statement, dict), label
+                assert set(statement) <= {"sql", "binds"}, label
+                sql = statement.get("sql")
+                assert isinstance(sql, dict) and sql, label
+                assert set(sql) == {"postgres", "mariadb"}, label
+                assert all(isinstance(text, str) and text for text in sql.values()), label
+                binds = statement.get("binds", [])
+                assert isinstance(binds, (list, dict)), label
+                if isinstance(binds, dict):
+                    assert set(binds) == set(sql), label
+                    assert all(isinstance(values, list) for values in binds.values()), label
+                else:
+                    assert isinstance(binds, list), label
 
 
 def test_deep_fetch_round_trips_match_statement_count() -> None:
