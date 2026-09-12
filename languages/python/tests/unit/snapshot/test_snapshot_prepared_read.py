@@ -49,7 +49,7 @@ from parallax.core.base import (
     PresentDocument,
     admits_stored_scalar,
 )
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import EntityIdentity, Metamodel
@@ -485,7 +485,7 @@ def test_a_sibling_column_that_holds_a_document_is_decoded() -> None:
 
 
 def test_an_encoded_projection_is_observed_under_its_physical_column() -> None:
-    # A Predecessor Row is keyed by the column the value is STORED in, so the
+    # A Predecessor MappingRow is keyed by the column the value is STORED in, so the
     # alias an encoded cell arrives under is excluded from the passthrough and
     # the decoded value is answered under the Column's own name instead.
     observed = _observed(
@@ -563,7 +563,7 @@ def _workload(
     CatalogedModel,
     Any,
     tuple[CompiledRead | None, ...],
-    tuple[tuple[Row, ...], ...],
+    tuple[tuple[MappingRow, ...], ...],
 ]:
     meta = metamodel(layout)
     model = CatalogedModel(meta)

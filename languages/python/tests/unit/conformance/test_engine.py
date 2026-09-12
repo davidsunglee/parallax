@@ -18,7 +18,7 @@ from parallax.conformance import case_format, engine, sweep
 from parallax.conformance._lanes import scenario, snapshot
 from parallax.conformance._lifecycle_observation import lifecycle_run
 from parallax.conformance._mechanism import case_document
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from tests.unit.conformance._recording_ports import FakeWritePort
 
 
@@ -34,7 +34,7 @@ def _case(case_id: str) -> case_format.Case:
 _KEYED_SCENARIO = "m-unit-work-001"
 _ACTION_STEP_SCENARIO = "m-snapshot-read-010"
 
-_ORDER_ROW: Row = {
+_ORDER_ROW: MappingRow = {
     "id": 1,
     "name": "Ada",
     "sku": "A-100",

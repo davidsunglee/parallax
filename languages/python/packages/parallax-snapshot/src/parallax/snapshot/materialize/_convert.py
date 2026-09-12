@@ -42,7 +42,7 @@ from parallax.core.base import (
     admits_stored_scalar,
     unwrap_document_read,
 )
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.document_codec import (
     UNAVAILABLE,
     DocumentFinding,
@@ -182,7 +182,7 @@ class LevelContext:
 
 
 def convert_row(
-    row: Row,
+    row: MappingRow,
     level: LevelContext,
     builder: GraphBuilder,
     *,
@@ -326,7 +326,7 @@ def _attribute_issue(
 
 
 def observable_columns(
-    row: Row,
+    row: MappingRow,
     level: LevelContext,
     *,
     classified_members: frozenset[str] = frozenset(),

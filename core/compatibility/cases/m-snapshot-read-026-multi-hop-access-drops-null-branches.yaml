@@ -60,11 +60,11 @@ when:
             postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
           binds: [1]
         - sql:
-            postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_id in (?)
-          binds: [1]
+            postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0 where t0.order_id = any(?)
+          binds: [[1]]
         - sql:
-            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id in (?, ?)
-          binds: [11, 12]
+            postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = any(?)
+          binds: [[11, 12]]
       expectRows:
         - { id: 1, name: Ada, sku: A-100, qty: 5, price: "10.50", active: true, ordered_on: 2024-01-05 }
     - action: access

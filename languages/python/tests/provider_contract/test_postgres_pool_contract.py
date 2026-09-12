@@ -33,7 +33,7 @@ _BACKEND = "select pg_backend_pid() as pid"
 
 def _pid(connection: Any) -> int:
     (row,) = connection.execute(_BACKEND, [])
-    return int(row["pid"])
+    return int(row[0])
 
 
 def _runtime(profile_run: Any, **options: Any) -> Any:
@@ -276,11 +276,7 @@ def test_every_connection_a_runtime_creates_decodes_the_same_way(profile_run: An
             for _ in range(3):
                 with runtime.connection() as scoped:
                     (row,) = scoped.execute(_CODEC_PROBE, [])
-                assert row["unbounded"] is INFINITY
-                assert row["document"] == {"present": None}
-                assert row["absent"] is None
-                assert row["stored_null"] is None
-                assert row["number"] == 42
+                assert row == (INFINITY, {"present": None}, None, None, 42)
         finally:
             runtime.close()
 
@@ -303,9 +299,7 @@ def test_a_grown_connection_decodes_exactly_as_the_first_one_does(profile_run: A
             assert len({_pid(scoped) for scoped in grown}) == 3
             for scoped in grown:
                 (row,) = scoped.execute(_CODEC_PROBE, [])
-                assert row["unbounded"] is INFINITY
-                assert row["document"] == {"present": None}
-                assert row["stored_null"] is None
+                assert row == (INFINITY, {"present": None}, None, None, 42)
     finally:
         runtime.close()
 
@@ -327,8 +321,7 @@ def test_a_connection_the_server_ended_is_replaced_at_checkout(profile_run: Any)
         with runtime.connection() as replacement:
             assert _pid(replacement) != retained
             (row,) = replacement.execute(_CODEC_PROBE, [])
-        assert row["unbounded"] is INFINITY
-        assert row["document"] == {"present": None}
+        assert row == (INFINITY, {"present": None}, None, None, 42)
     finally:
         executioner.close()
         runtime.close()
@@ -344,8 +337,8 @@ def test_a_finite_timestamp_still_decodes_beside_the_unbounded_one(profile_run: 
                 "'infinity'::timestamptz as forever",
                 [],
             )
-        assert row["forever"] is INFINITY
-        assert row["at"].year == 2026
+        assert row[1] is INFINITY
+        assert row[0].year == 2026
     finally:
         runtime.close()
 
@@ -362,7 +355,7 @@ def test_checkout_validation_can_be_opted_out_of_without_changing_what_executes(
     )
     try:
         with runtime.connection() as scoped:
-            assert scoped.execute("select 1 as n", []) == [{"n": 1}]
+            assert scoped.execute("select 1 as n", []) == [(1,)]
     finally:
         runtime.close()
 
@@ -388,7 +381,7 @@ def test_two_scopes_hold_isolated_transactions(profile_run: Any) -> None:
                 assert reader.execute("select id from grade where id = 99", []) == []
 
             writer.transaction(insert)
-            assert reader.execute("select id from grade where id = 99", []) == [{"id": 99}]
+            assert reader.execute("select id from grade where id = 99", []) == [(99,)]
     finally:
         runtime.close()
 
@@ -404,7 +397,7 @@ def test_a_scope_leaves_no_transaction_open_behind_it(profile_run: Any) -> None:
             first.execute("select 1", [])
         with runtime.connection() as second:
             (row,) = second.execute("select txid_current_if_assigned() as tx", [])
-        assert row["tx"] is None
+        assert row[0] is None
     finally:
         runtime.close()
 
@@ -424,7 +417,7 @@ def test_indirect_connection_inputs_resolve_at_each_physical_connection(
     def resolved_application_name(runtime: Any) -> str:
         with runtime.connection() as scoped:
             (row,) = scoped.execute("select current_setting('application_name') as name", [])
-        return str(row["name"])
+        return str(row[0])
 
     monkeypatch.setenv("PGAPPNAME", "parallax-before")
     runtime = configured.open()
@@ -465,13 +458,10 @@ def test_settings_a_deployment_configured_survive_initialization(profile_run: An
             )
     finally:
         runtime.close()
-    assert row["timezone"] == "UTC"
-    assert row["read_only"] == "on"
-    assert row["search_path"] == "public"
-    assert row["statement_timeout"] == "7s"
+    assert row[:4] == ("UTC", "on", "public", "7s")
     # And the two it does own are the ones it checked for.
-    assert row["encoding"] == "UTF8"
-    assert row["datestyle"].startswith("ISO")
+    assert row[4] == "UTF8"
+    assert row[5].startswith("ISO")
 
 
 @pytest.mark.adapter_smoke
@@ -489,7 +479,7 @@ def test_a_session_default_arrives_with_the_connection_rather_than_after_it(
         # Postgres HAS no level below Read Committed and runs a Read Uncommitted
         # request as Read Committed, so the floor is met and the connection is
         # kept — which is exactly what the corpus case grades.
-        assert row["default_transaction_isolation"] == "read uncommitted"
+        assert row[0] == "read uncommitted"
     finally:
         runtime.close()
 

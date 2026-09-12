@@ -9,18 +9,20 @@ branches; it performs no authored reference or relationship resolution.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from itertools import chain
 from typing import Literal, assert_never, cast
 
 from parallax.core.base import (
     Bytes,
     DocumentReadOrdinals,
+    ManagedValue,
     UnknownFamilyTag,
     admits_stored_scalar,
     inert_scalar,
 )
+from parallax.core.db_port import PositionalRow, Row
 from parallax.core.deep_fetch import ValidatedEntityQuery
 from parallax.core.dialect import Dialect, LockMode, projection_result_key
 from parallax.core.document_codec import DocumentFinding, is_text_compared
@@ -39,7 +41,7 @@ from parallax.core.object_query._validated import (
     Paging,
 )
 from parallax.core.predicate import Narrow, Or
-from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
 from parallax.core.sql_gen._context import LoweredStatement, SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
@@ -85,16 +87,18 @@ from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
-from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire
+from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire, encode_wire
 
 __all__ = [
     "AttributeReadContract",
     "CompiledPredicate",
     "CompiledRead",
+    "CompiledTemplate",
     "LoweredStatement",
     "MaterializedReadRow",
     "SqlGenError",
     "compile_read",
+    "compile_template",
     "compile_write_predicate",
 ]
 
@@ -336,6 +340,7 @@ class CompiledRead:
     documents: tuple[ValueObjectMetadata, ...]
     projected_documents: tuple[ValueObjectMetadata, ...]
     document_reads: tuple[DocumentReadOrdinals, ...]
+    result_keys: tuple[str, ...]
     _scalar_contracts: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
         repr=False
     )
@@ -353,7 +358,7 @@ class CompiledRead:
     def structured_column(self) -> str | None:
         return self._materializer.stages.structured_column
 
-    def transform_row(self, row: Mapping[str, object]) -> dict[str, object]:
+    def transform_row(self, row: Row | Mapping[str, object]) -> dict[str, object]:
         """Materialize one metadata-free row, refusing classified invalid state.
 
         Accepts any ``Mapping`` (a wire-rendered row or a raw driver row alike)
@@ -412,9 +417,61 @@ class CompiledRead:
         """
         return next((reads for identity, reads in self._scalar_contracts if identity == entity), ())
 
-    def materialize_row(self, row: Mapping[str, object]) -> MaterializedReadRow:
+    def materialize_row(self, row: Row | Mapping[str, object]) -> MaterializedReadRow:
         """Resolve one driver row without flattening synthetic field provenance."""
-        return self._materializer.materialize(row)
+        values = PositionalRow(self.result_keys, row) if isinstance(row, tuple) else row
+        return self._materializer.materialize(values)
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledTemplate:
+    """One compiled child read whose parent key set is supplied per execution."""
+
+    compiled: CompiledRead
+    bind_index: int
+    postgres_array: bool
+
+    def render(self, keys: Sequence[object]) -> CompiledRead:
+        if not keys:
+            raise SqlGenError("a child read template requires at least one gathered key")
+        marker = self.compiled.statement.binds[self.bind_index]
+        if not isinstance(marker, DeferredKeySet):  # pragma: no cover - constructor invariant
+            raise SqlGenError("compiled child template lost its deferred key-set bind")
+        wire_keys = tuple(
+            encode_wire(marker.neutral_type, cast("ManagedValue", key)) for key in keys
+        )
+        if self.postgres_array:
+            statement = self.compiled.statement.replace_bind(
+                self.bind_index, (list(keys),), (list(wire_keys),)
+            )
+        else:
+            holes = ", ".join("?" for _ in keys)
+            statement = self.compiled.statement.replace_bind(self.bind_index, keys, wire_keys)
+            statement = replace(
+                statement,
+                sql=statement.sql.replace("__parallax_deferred_keys__", holes),
+            )
+        return replace(self.compiled, statement=statement)
+
+
+def compile_template(
+    query: ValidatedEntityQuery,
+    model: Metamodel,
+    dialect: Dialect,
+    *,
+    result_form: _ResultForm = "row",
+    lock: LockMode | None = None,
+) -> CompiledTemplate:
+    """Compile a child read once, deferring only its gathered parent keys."""
+    compiled = compile_read(query, model, dialect, result_form=result_form, lock=lock)
+    indexes = tuple(
+        index
+        for index, bind in enumerate(compiled.statement.binds)
+        if isinstance(bind, DeferredKeySet)
+    )
+    if len(indexes) != 1:
+        raise SqlGenError("a child read template must carry exactly one deferred key set")
+    return CompiledTemplate(compiled, indexes[0], dialect.name == "postgres")
 
 
 # --------------------------------------------------------------------------- #
@@ -432,6 +489,7 @@ def _projection(
     str,
     list[object],
     tuple[DocumentReadOrdinals, ...],
+    tuple[str, ...],
     _RowStages,
 ]:
     """Render the resolved Value Object projection in canonical layout order.
@@ -460,7 +518,13 @@ def _projection(
         _direct_documents(((entity.identity, layout, projected_vos),)),
     )
     sql, binds, document_reads = _render_projection(dialect, alias, columns)
-    return sql, list(binds), document_reads, stages
+    result_keys = tuple(
+        projected.column
+        if projected.type is None
+        else projection_result_key(projected.column, projected.type)
+        for projected in columns
+    )
+    return sql, list(binds), document_reads, result_keys, stages
 
 
 def _scalar_read_contracts(
@@ -528,7 +592,7 @@ def compile_read(
     narrow_to = query.narrow_to
     captured = _coordinate_reads(terms) if paging is not None else ()
     if target.inheritance is not None:
-        statement, plan_position, document_reads, stages = _compile_inheritance_read(
+        statement, plan_position, document_reads, result_keys, stages = _compile_inheritance_read(
             target,
             predicate,
             narrow_to,
@@ -551,6 +615,7 @@ def compile_read(
             position_documents,
             position_documents if result_form == "instance" else (),
             document_reads,
+            (*result_keys, *captured),
             _scalar_read_contracts(model, facet, storage, dialect, plan_position),
             _row_materializer(stages, plan_position, target.identity, captured),
         )
@@ -560,7 +625,7 @@ def compile_read(
     layout = _table_layout(storage, facet, target.identity)
     scope = _EntityScope(ctx, target, layout)
 
-    proj_sql, proj_binds, document_reads, stages = _projection(
+    proj_sql, proj_binds, document_reads, result_keys, stages = _projection(
         target,
         layout,
         dialect,
@@ -593,6 +658,7 @@ def compile_read(
         position_documents,
         query.projection.value_objects,
         document_reads,
+        (*result_keys, *captured),
         _scalar_read_contracts(model, facet, storage, dialect, position),
         _row_materializer(stages, position, target.identity, captured),
     )
@@ -756,6 +822,7 @@ def _compile_inheritance_read(
     LoweredStatement,
     tuple[EntityIdentity, ...],
     tuple[DocumentReadOrdinals, ...],
+    tuple[str, ...],
     _RowStages,
 ]:
     """Assemble an inheritance-family read from its plan.
@@ -774,6 +841,16 @@ def _compile_inheritance_read(
         result_form == "instance",
         lock,
     )
+    result_keys = (
+        (*(column.result_alias for column in plan.columns), "family_variant")
+        if isinstance(plan, _TpcsUnionPlan)
+        else tuple(
+            column.column
+            if column.type is None
+            else projection_result_key(column.column, column.type)
+            for column in plan.columns
+        )
+    )
     match plan:
         case _TphPlan():
             statement, document_reads, stages = _compile_tph_read(
@@ -789,7 +866,7 @@ def _compile_inheritance_read(
                 dialect,
                 lock,
             )
-            return statement, plan.position, document_reads, stages
+            return statement, plan.position, document_reads, result_keys, stages
         case _TpcsSinglePlan():
             statement, document_reads, stages = _compile_tpcs_single(
                 plan,
@@ -804,12 +881,12 @@ def _compile_inheritance_read(
                 dialect,
                 lock,
             )
-            return statement, plan.position, document_reads, stages
+            return statement, plan.position, document_reads, result_keys, stages
         case _TpcsUnionPlan():
             statement, document_reads, stages = _compile_tpcs_read(
                 plan, predicate, entity, terms, paging, limit, model, facet, storage, dialect
             )
-            return statement, plan.position, document_reads, stages
+            return statement, plan.position, document_reads, result_keys, stages
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
 

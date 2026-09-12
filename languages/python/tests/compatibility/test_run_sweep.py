@@ -227,6 +227,12 @@ def _stream_root_positions(case: case_format.Case, statements: Sequence[str]) ->
     return positions
 
 
+def _gathered_bind_values(binds: list[object]) -> list[object]:
+    if binds and isinstance(binds[0], list):
+        return [*binds[0], *binds[1:]]
+    return binds
+
+
 @pytest.mark.parametrize(
     "case",
     _CASES,
@@ -272,14 +278,16 @@ def test_run_sweep(case: case_format.Case, profile: Profile, profile_run: Any) -
             # their order is defined and exact.
             assert observed_binds == expected_binds, (case.case_id, emission)
         else:
-            # A deep-fetch child level's `IN`-list binds are the distinct keys
+            # A deep-fetch child level's key-set binds are the distinct keys
             # GATHERED from the parent level's own returned rows — an unordered
             # set (m-case-format fifth assertion layer): the gathered order
             # depends on the parent query's own row order (itself possibly a
             # declared, non-id `orderBy`), so only the MULTISET of bind values —
             # the gathered keys together with any propagated as-of suffix — is
             # asserted, never positional order.
-            assert Counter(observed_binds) == Counter(expected_binds), (case.case_id, emission)
+            assert Counter(_gathered_bind_values(observed_binds)) == Counter(
+                _gathered_bind_values(expected_binds)
+            ), (case.case_id, emission)
 
     observations = envelope["observations"]
     assert observations["roundTrips"] == then.get("roundTrips", 1), case.case_id

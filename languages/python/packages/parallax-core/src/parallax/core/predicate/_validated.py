@@ -36,6 +36,13 @@ type BindForm = Literal["managed", "framework"]
 
 
 @dataclass(frozen=True, slots=True)
+class DeferredKeySet:
+    """A child-read membership whose values arrive when its parent rows do."""
+
+    neutral_type: NeutralType
+
+
+@dataclass(frozen=True, slots=True)
 class ValidatedOperands:
     """One interpreted operand and the physical form SQL may choose for it."""
 
@@ -133,6 +140,16 @@ def managed_membership(
     return ValidatedPredicate(
         authored,
         operands=ValidatedOperands(values, member.type),
+        member=member,
+    )
+
+
+def deferred_membership(*, attr: str, member: AttributeMetadata) -> ValidatedPredicate:
+    """Build a generated membership whose key sequence is bound after compilation."""
+    marker = DeferredKeySet(member.type)
+    return ValidatedPredicate(
+        Membership(op="in", attr=attr, values=()),
+        operands=ValidatedOperands((marker,), member.type, "framework"),
         member=member,
     )
 

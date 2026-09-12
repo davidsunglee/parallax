@@ -457,6 +457,17 @@ left-to-right.
 | `navigate`/`exists` | `exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
 | `notExists` | `not exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
 
+A framework-generated child-level membership carries a **deferred key set**
+rather than an authored list. Its statement is compiled once with one template
+hole and rendered when the distinct parent keys are known. Postgres renders
+`t0.col = any(?)` and binds the complete key set as one array parameter; its SQL
+text and bind arity are therefore constant across pages. MariaDB renders
+`t0.col in (?, ..., ?)` with one placeholder and bind per key. Other predicate
+binds retain their authored order around the rendered key-set bind(s). An empty
+gathered key set issues no child statement, so no dialect renders an empty
+membership list. Authored `in` and `notIn` predicates retain the ordinary forms
+in the table and are not array-bound on Postgres.
+
 ### Normalization notes (the surprising fixed points)
 
 The `m-sql` normalizer is the arbiter of canonical form, and three of its outputs

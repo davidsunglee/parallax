@@ -33,7 +33,7 @@ import pytest
 from parallax.conformance import vo_models as vo
 from parallax.core import Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import InstantError, PresentDocument
-from parallax.core.db_port import JsonDocument, Row
+from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.predicate import CanonicalDocumentError
 from parallax.core.unit_work import FixedClock, WriteRejectedError, instructions
 from parallax.snapshot import InvalidData, connect
@@ -68,8 +68,8 @@ from tests.unit._transact_support import (
     db_for,
 )
 
-_ACCOUNT_ROW: Row = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4}
-_PERSON_ROW: Row = {"id": 1, "name": "Ada"}
+_ACCOUNT_ROW: MappingRow = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4}
+_PERSON_ROW: MappingRow = {"id": 1, "name": "Ada"}
 _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _VALID_FROM = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 _NAIVE_INSTANT = dt.datetime(2024, 7, 1)  # no tzinfo: not an instant at all
@@ -105,7 +105,7 @@ _PERSON_TARGET: dict[str, object] = {
 }
 # The one document-mapped mirror, whose `address` occurrence is what an
 # assignment replaces whole.
-_TRAVELER_ROW: Row = {
+_TRAVELER_ROW: MappingRow = {
     "id": 1,
     "payload": PresentDocument({"address": {"city": "Oslo", "geo": {"country": "NO"}}, "tags": []}),
 }
@@ -152,7 +152,7 @@ class Roster(Entity, table="wire_roster", namespace="parallax.compatibility"):
 
 ROSTER_META = DomainModel(Roster)
 
-_SAMPLE_ROW: Row = {"id": 1, "taken": dt.datetime(2024, 5, 1, tzinfo=dt.UTC)}
+_SAMPLE_ROW: MappingRow = {"id": 1, "taken": dt.datetime(2024, 5, 1, tzinfo=dt.UTC)}
 _SAMPLE_QUERY: dict[str, object] = {
     "target": "parallax.compatibility.Sample",
     "predicate": {"eq": {"attr": "parallax.compatibility.Sample.id", "value": 1}},
@@ -170,7 +170,7 @@ _POSITION_TARGET: dict[str, object] = {
 }
 
 
-def _position_row() -> Row:
+def _position_row() -> MappingRow:
     return {
         "id": 1,
         "acct_num": "A",
@@ -209,7 +209,7 @@ def test_authoring_an_occurrence_short_of_a_nested_many_emits_one_answer() -> No
     # two lanes agree on the only answer that leaves state as it is — no DML, no
     # milestone, no clock. A Wire author who omits the key spells the same zero the
     # Typed author's unpopulated tuple does.
-    stored: Row = {
+    stored: MappingRow = {
         "id": 1,
         "name": "Ada",
         "address": PresentDocument(
@@ -473,7 +473,7 @@ def test_a_hydratable_classified_row_is_a_source_its_own_correction_writes_throu
     # may write — and the update supplying the missing member reaches the buffer.
     # Nothing else could correct it: the write is addressed against exactly the
     # state its own classification names.
-    stored: Row = {
+    stored: MappingRow = {
         "id": 1,
         "name": "Ada",
         "address": PresentDocument(

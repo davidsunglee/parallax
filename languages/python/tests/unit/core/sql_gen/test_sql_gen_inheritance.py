@@ -546,6 +546,16 @@ def test_tph_abstract_superset_projection_follows_shared_table_layout_tiers() ->
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
         "t0.bark_volume, t0.tusk_length from animal t0"
     )
+    assert compiled.result_keys == (
+        "id",
+        "kind",
+        "name",
+        "owner_id",
+        "license_id",
+        "indoor",
+        "bark_volume",
+        "tusk_length",
+    )
 
 
 def test_tph_narrowed_projection_drops_slots_outside_the_position() -> None:
@@ -606,12 +616,22 @@ def test_tpcs_single_concrete_is_an_ordinary_read_no_tag_no_union() -> None:
     assert compiled.statement.sql == (
         "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due from invoice t0"
     )
+    assert compiled.result_keys == ("id", "title", "folder_id", "currency", "amount_due")
     assert "union" not in compiled.statement.sql
     assert "family_variant" not in compiled.statement.sql
 
 
 def test_tpcs_union_all_branch_order_alias_restart_casts_and_literal() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "FinancialDocument"))
+    assert compiled.result_keys == (
+        "id",
+        "title",
+        "folder_id",
+        "currency",
+        "amount_due",
+        "paid_amount",
+        "family_variant",
+    )
     branches = compiled.statement.sql.split(" union all ")
     assert len(branches) == 2
     # Alphabetical branch order (Invoice, Receipt); every branch restarts at `t0`.

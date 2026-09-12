@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from typing import Any, Protocol, cast
@@ -11,6 +12,13 @@ from ._statement_bind_inference import infer_statement_bind_targets
 from .case import Case
 from .ddl_builder import declared_contributors
 from .storage_layout import ColumnContributor, ColumnSlot
+
+
+def _array_bind_indexes(statement: str) -> frozenset[int]:
+    return frozenset(
+        statement[: match.start()].count("?")
+        for match in re.finditer(r"\bany\s*\(\?\)", statement, flags=re.IGNORECASE)
+    )
 
 
 class _ReadExecutor(Protocol):
@@ -86,10 +94,16 @@ class CaseExecution:
     def _provider_binds(self, statement: str, binds: Sequence[Any]) -> tuple[Any, ...]:
         provider_binds = list(binds)
         targets = infer_statement_bind_targets(self._case, statement, binds, self._executor.dialect)
+        array_binds = _array_bind_indexes(statement) if self._executor.dialect == "postgres" else ()
         for index, target in targets.items():
             if not isinstance(target, ColumnSlot) or index >= len(provider_binds):
                 continue
             declared = self._declarations.get(target.contributor)
             if declared is not None:
-                provider_binds[index] = declared.provider_bind(provider_binds[index])
+                value = provider_binds[index]
+                provider_binds[index] = (
+                    [declared.provider_bind(element) for element in value]
+                    if index in array_binds and isinstance(value, list)
+                    else declared.provider_bind(value)
+                )
         return tuple(provider_binds)

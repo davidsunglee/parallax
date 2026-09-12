@@ -159,6 +159,30 @@ def test_framework_bind_can_report_an_explicit_wire_null() -> None:
     assert statement.wire_bind_overrides == (_WireBindOverride(0, None),)
 
 
+def test_replacing_a_framework_bind_preserves_surrounding_bind_provenance() -> None:
+    builder = _builder()
+    builder.bind_managed("before", STRING)
+    builder.bind_framework("deferred", wire_value="deferred")
+    builder.bind_comparison_text("after", STRING)
+    statement = builder.finish("select ?, ?, ?")
+
+    expanded = statement.replace_bind(1, ("first", "second"), ("wire-first", "wire-second"))
+
+    assert expanded.binds == ("before", "first", "second", "after")
+    assert expanded.wire_binds() == ("before", "wire-first", "wire-second", "after")
+    assert expanded.typed_bind_spans == (
+        _TypedBindSpan(0, 1, STRING, "MANAGED"),
+        _TypedBindSpan(3, 4, STRING, "COMPARISON_TEXT"),
+    )
+    assert expanded.wire_bind_overrides == (
+        _WireBindOverride(1, "wire-first"),
+        _WireBindOverride(2, "wire-second"),
+    )
+
+    with pytest.raises(ValueError, match="equal arity"):
+        statement.replace_bind(1, ("only",), ("one", "two"))
+
+
 def test_multirow_write_uses_one_repeated_descriptor_per_typed_row_run() -> None:
     statement = lower_instruction(
         KeyedWrite(

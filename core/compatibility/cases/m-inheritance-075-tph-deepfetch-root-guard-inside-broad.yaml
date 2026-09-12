@@ -39,11 +39,11 @@ then:
     - sql:
         postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
     - sql:
-        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?, ?)
-      binds: [10, 11, 12]
+        postgres: select t0.id, t0.name from person t0 where t0.id = any(?)
+      binds: [[10, 11, 12]]
     - sql:
-        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?)
-      binds: [10, 11]
+        postgres: select t0.id, t0.name from person t0 where t0.id = any(?)
+      binds: [[10, 11]]
   referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal
   graph:
     Animal:

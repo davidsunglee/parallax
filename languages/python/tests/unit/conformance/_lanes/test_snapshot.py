@@ -34,7 +34,7 @@ from parallax.core.base import (
 )
 from parallax.core.db_port import (
     DatabaseConnection,
-    Row,
+    MappingRow,
     TransactionOutcome,
 )
 from parallax.core.metamodel import (
@@ -1046,7 +1046,7 @@ class _QueueWritePort(QueueDbPort):
     refused.
     """
 
-    def __init__(self, responses: Sequence[list[Row]]) -> None:
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         super().__init__(responses)
         self.writes: list[tuple[str, list[object]]] = []
 

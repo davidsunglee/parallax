@@ -25,7 +25,7 @@ import pytest
 from parallax.core import deep_fetch, inheritance, relationship, storage_layout
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
     Metamodel,
@@ -35,7 +35,11 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.object_query import TemporalDimension, TemporalSelection
-from parallax.core.predicate._validated import ValidatedOperands, ValidatedPredicate
+from parallax.core.predicate._validated import (
+    ValidatedOperands,
+    ValidatedPredicate,
+    deferred_membership,
+)
 from parallax.core.sql_gen import LoweredStatement, SqlGenError
 from parallax.core.sql_gen import _compile as sql_compile
 from parallax.core.sql_gen._compile import (
@@ -252,6 +256,7 @@ def test_instance_form_projects_value_object_document_last() -> None:
         "select t0.id, t0.name, not t0.address is null, t0.address from customer t0"
     )
     assert instance.document_reads == ((2, 3),)
+    assert instance.result_keys == ("id", "name", "address")
     # Row-form (the default values lane) omits slot 4 — the scalars alone.
     row = compile_read(oa.All(), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
     assert row.statement.sql == "select t0.id, t0.name from customer t0"
@@ -404,6 +409,7 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         f"narrow_to=None, target={order}, "
         f"resolved_position=({order},), "
         "documents=(), projected_documents=(), document_reads=(), "
+        "result_keys=('id', 'name', 'sku', 'qty', 'price', 'active', 'ordered_on'), "
         "_materializer=RowMaterializer(stages=RowStages(resolve=None, shared_document=None, "
         f"direct_documents=None), fallback_entity={order}, resolvable=({order},), "
         "coordinate_reads=()))"
@@ -482,6 +488,14 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
     compiled = compile_read(oa.All(), SCALARS, POSTGRES, entity)
     payload = entity.attribute("payload")
     assert payload is not None
+    assert compiled.result_keys == (
+        "id",
+        "f32",
+        "f64",
+        "payload_hex",
+        "local_time",
+        "external_id",
+    )
     assert AttributeReadContract(
         attribute=payload,
         result_key="payload_hex",
@@ -495,6 +509,60 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
     for invalid in (None, "not-hex"):
         with pytest.raises(SqlGenError, match="invalid stored data"):
             compiled.transform_row({"id": 1, "payload_hex": invalid})
+
+
+def _child_template(dialect: Dialect) -> sql_compile.CompiledTemplate:
+    entity = target(ORDERS, "OrderItem")
+    member = entity.attribute("orderId")
+    assert member is not None
+    query = deep_fetch.ValidatedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        validated_predicate=deferred_membership(
+            attr="OrderItem.orderId",
+            member=member,
+        ),
+        projection=deep_fetch.ResolvedReadProjection((), False),
+    )
+    return sql_compile.compile_template(query, ORDERS, dialect)
+
+
+def test_postgres_child_template_keeps_one_array_bind_for_every_key_count() -> None:
+    template = _child_template(POSTGRES)
+    first = template.render((1,))
+    several = template.render((1, 42))
+
+    assert first.statement.sql == several.statement.sql
+    assert first.statement.sql.endswith("where t0.order_id = any(?)")
+    assert first.statement.binds == ([1],)
+    assert several.statement.binds == ([1, 42],)
+    assert several.statement.wire_binds() == ([1, 42],)
+
+
+def test_mariadb_child_template_expands_only_the_deferred_key_bind() -> None:
+    rendered = _child_template(dataclasses.replace(POSTGRES, name="mariadb")).render((1, 42))
+
+    assert rendered.statement.sql.endswith("where t0.order_id in (?, ?)")
+    assert rendered.statement.binds == (1, 42)
+    assert rendered.statement.wire_binds() == (1, 42)
+
+
+def test_child_template_refuses_an_empty_set_that_should_issue_no_statement() -> None:
+    with pytest.raises(SqlGenError, match="at least one gathered key"):
+        _child_template(POSTGRES).render(())
+
+
+def test_child_template_refuses_a_query_without_one_deferred_key_set() -> None:
+    entity = target(ACCOUNT, "Account")
+    query = deep_fetch.ValidatedEntityQuery(
+        target=entity.identity,
+        entity=entity,
+        validated_predicate=ValidatedPredicate(oa.All()),
+        projection=deep_fetch.ResolvedReadProjection((), False),
+    )
+
+    with pytest.raises(SqlGenError, match="exactly one deferred key set"):
+        sql_compile.compile_template(query, ACCOUNT, POSTGRES)
 
 
 @pytest.mark.parametrize(

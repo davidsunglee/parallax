@@ -34,6 +34,7 @@ from parallax.core.db_port import (
     CallbackRaised,
     CommitFailed,
     Committed,
+    PipelineStatement,
     RollbackFailed,
     RolledBack,
     isolation_level,
@@ -55,7 +56,7 @@ def test_reset_apply_ddl_load_fixtures_and_query(profile_run: Any) -> None:
     profile_run.reset(meta, provision.load_fixtures(str(case.document["model"])))
     rows = profile_run.port.execute('select t0.id, t0."order", t0.label from grade t0', [])
     assert len(rows) == 3
-    assert {r["label"] for r in rows} == {"low", "mid", "high"}
+    assert {row[2] for row in rows} == {"low", "mid", "high"}
 
 
 def test_exec_affected_rows_matched_and_unmatched(profile_run: Any) -> None:
@@ -74,7 +75,7 @@ def test_exec_affected_rows_matched_and_unmatched(profile_run: Any) -> None:
 
 def test_scalar_read_returns_managed_values(profile_run: Any) -> None:
     (row,) = profile_run.port.execute("select 1 as one, 'x'::text as who", [])
-    assert row == {"one": 1, "who": "x"}
+    assert row == (1, "x")
 
 
 def test_live_structured_document_reads_preserve_sql_null_and_json_null(
@@ -82,12 +83,23 @@ def test_live_structured_document_reads_preserve_sql_null_and_json_null(
 ) -> None:
     sql = "select false as present, null::jsonb as document union all select true, 'null'::jsonb"
     assert profile_run.port.execute(sql, [], document_reads=((0, 1),)) == [
-        {"document": SQL_NULL},
-        {"document": PresentDocument(None)},
+        (SQL_NULL,),
+        (PresentDocument(None),),
     ]
     assert profile_run.port.execute(
         "select null::jsonb as sql_null, 'null'::jsonb as json_null", []
-    ) == [{"sql_null": None, "json_null": None}]
+    ) == [(None, None)]
+
+
+def test_pipeline_preserves_statement_results_and_one_array_bind(profile_run: Any) -> None:
+    statements = (
+        PipelineStatement("select unnest(%s::bigint[])", ([1, 2],)),
+        PipelineStatement("select %s::text", ("second",)),
+    )
+    assert profile_run.port.execute_pipeline(statements) == [
+        [(1,), (2,)],
+        [("second",)],
+    ]
 
     # Both loader slots, reached through a native cursor of the harness's own
     # session rather than through any pooled application connection: psycopg
@@ -114,7 +126,7 @@ def test_transaction_commits_and_reports_the_body_value(profile_run: Any) -> Non
 
     assert profile_run.port.transaction(body) == Committed("done")
     (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [1])
-    assert row["label"] == "committed"
+    assert row[0] == "committed"
 
 
 def test_every_portable_level_opens_the_boundary_at_its_spelling(profile_run: Any) -> None:
@@ -128,7 +140,7 @@ def test_every_portable_level_opens_the_boundary_at_its_spelling(profile_run: An
 
     def body(port: Any) -> None:
         (row,) = port.execute("show transaction_isolation", [])
-        observed.append(str(row["transaction_isolation"]))
+        observed.append(str(row[0]))
 
     for level in sorted(ISOLATION_LEVELS):
         assert profile_run.port.transaction(body, isolation=isolation_level(level)) == Committed(
@@ -162,7 +174,7 @@ def test_exec_rolled_back_leaves_no_effect(profile_run: Any) -> None:
     assert isinstance(trigger, CallbackRaised)
     assert isinstance(trigger.error, _Rollback)
     (row,) = profile_run.port.execute("select t0.label from grade t0 where t0.id = %s", [2])
-    assert row["label"] == "mid"
+    assert row[0] == "mid"
 
 
 # --------------------------------------------------------------------------- #
@@ -202,9 +214,9 @@ def test_a_name_at_the_identifier_limit_is_stored_exactly_as_generated(
         "select t0.indexname from pg_indexes t0 where t0.tablename = %s and t0.indexname = %s",
         [created.physical_table.name, created.physical_index_name.value],
     )
-    assert row["indexname"] == created.physical_index_name.value
+    assert row[0] == created.physical_index_name.value
     # The fingerprint is the half truncation never touches, so it survives whole.
-    assert row["indexname"].endswith(created.physical_index_name.value[-32:])
+    assert cast("str", row[0]).endswith(created.physical_index_name.value[-32:])
 
 
 def test_a_duplicate_names_the_index_it_violated_by_its_created_name(
@@ -291,7 +303,7 @@ def test_transaction_reports_a_commit_failure_as_rolled_back(profile_run: Any) -
         assert isinstance(trigger.error, DatabaseError)
         assert trigger.error.violates_unique_index
         # The rollback completed, so the connection is usable and nothing landed.
-        assert port.execute("select count(*) as n from deferred_tag", []) == [{"n": 1}]
+        assert port.execute("select count(*) as n from deferred_tag", []) == [(1,)]
 
 
 @pytest.mark.adapter_smoke

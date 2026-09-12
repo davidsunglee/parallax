@@ -31,11 +31,11 @@ then:
         postgres: select t0.id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from policy t0 where t0.thru_z = ? and t0.out_z = ?
       binds: [infinity, infinity]
     - sql:
-        postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
-      binds: [1, 2, infinity, infinity]
+        postgres: select t0.id, t0.policy_id, t0.amount, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from coverage t0 where t0.policy_id = any(?) and t0.thru_z = ? and t0.out_z = ?
+      binds: [[1, 2], infinity, infinity]
     - sql:
-        postgres: select t0.id, t0.coverage_id, t0.reserve, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from claim t0 where t0.coverage_id in (?, ?) and t0.thru_z = ? and t0.out_z = ?
-      binds: [10, 20, infinity, infinity]
+        postgres: select t0.id, t0.coverage_id, t0.reserve, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from claim t0 where t0.coverage_id = any(?) and t0.thru_z = ? and t0.out_z = ?
+      binds: [[10, 20], infinity, infinity]
   graph:
     Policy:
       - id: 1

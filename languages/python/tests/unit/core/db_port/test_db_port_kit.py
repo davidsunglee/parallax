@@ -19,6 +19,8 @@ from parallax.core.db_port import (
     Bind,
     Committed,
     DatabaseConnection,
+    PipelineStatement,
+    PositionalRow,
     RollbackFailed,
     RolledBack,
     Row,
@@ -54,7 +56,7 @@ def _read(
 def test_each_call_takes_the_next_entry_of_its_kind() -> None:
     port = ScriptedAdapter(Read(rows=[{"id": 1}]), Read(rows=[{"id": 2}]))
 
-    assert [_read(port), _read(port)] == [[{"id": 1}], [{"id": 2}]]
+    assert [_read(port), _read(port)] == [[(1,)], [(2,)]]
 
 
 def test_a_call_the_script_does_not_reach_fails_at_the_call() -> None:
@@ -77,7 +79,7 @@ def test_a_call_of_another_kind_than_the_next_entry_fails_at_the_call() -> None:
 def test_times_answers_that_many_successive_calls_the_same_way() -> None:
     port = ScriptedAdapter(Read(rows=[{"page": 1}], times=3))
 
-    assert [_read(port) for _ in range(3)] == [[{"page": 1}]] * 3
+    assert [_read(port) for _ in range(3)] == [[(1,)]] * 3
     with pytest.raises(AssertionError, match="unscripted read"):
         _read(port)
 
@@ -93,13 +95,36 @@ def test_a_scripted_failure_is_raised_by_the_call_it_belongs_to() -> None:
     assert raised.value is failure
 
 
-def test_rows_reach_the_caller_as_copies_the_script_does_not_share() -> None:
+def test_mapping_fixtures_reach_the_caller_as_positional_rows() -> None:
     rows = [{"id": 1}]
     port = ScriptedAdapter(Read(rows=rows), Read(rows=rows))
-    answered = _read(port)
-    answered[0]["id"] = 2
 
-    assert _read(port) == [{"id": 1}]
+    assert _read(port) == [(1,)]
+    assert _read(port) == [(1,)]
+
+
+def test_positional_row_exposes_mapping_semantics_and_contract_diagnostics() -> None:
+    row = PositionalRow(("id", "name"), (1, "Ada"))
+
+    assert tuple(row) == ("id", "name")
+    assert len(row) == 2
+    assert row["name"] == "Ada"
+    assert dict(row) == {"id": 1, "name": "Ada"}
+    with pytest.raises(KeyError, match="missing"):
+        _ = row["missing"]
+    with pytest.raises(ValueError, match="row arity"):
+        PositionalRow(("id",), (1, "Ada"))
+    with pytest.raises(ValueError, match="duplicate result key"):
+        PositionalRow(("id", "id"), (1, 2))
+
+
+def test_scripted_pipeline_returns_one_ordered_batch_per_statement() -> None:
+    port = ScriptedAdapter(Read(rows=[{"id": 1}]), Read(rows=[{"name": "Ada"}]))
+
+    assert port.execute_pipeline(
+        (PipelineStatement("select id"), PipelineStatement("select name"))
+    ) == [[(1,)], [("Ada",)]]
+    assert port.calls == [ReadCall("select id"), ReadCall("select name")]
 
 
 # --------------------------------------------------------------------------- #

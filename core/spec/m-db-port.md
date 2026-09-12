@@ -14,13 +14,31 @@ maps to it; the port is proven by each language's
 The port names a
 `dialect` /
 `execute(sql, binds, documentReads) → rows` /
+`executePipeline(statements) → row batches` /
 `executeWrite(sql, binds) → affected-row count` /
-`transaction(body, isolation?)` contract and nothing more. `execute` is row/result oriented;
+`transaction(body, isolation?)` contract and nothing more. `execute` and
+`executePipeline` are row/result oriented;
 DML that needs write-outcome classification uses `executeWrite` and **MUST NOT**
 append dialect-specific row-returning clauses merely to infer an affected count.
 `documentReads` is the compiled read's ordered sequence of adjacent zero-based
 projection ordinal pairs `(presence, document)`; it is empty for a result with no
 selected Structured Column. It carries no model, member, layout, or driver type.
+
+Every returned row is **positional**, with one managed cell in the statement's
+select-list order after each `documentReads` pair has been folded. Column names
+and driver row mappings do not cross the port. The compiled statement owns the
+corresponding result keys; a name-keyed consumer MAY expose a Mapping view over
+those keys and the positional row, but MUST NOT construct a dictionary per row.
+
+`executePipeline` takes an ordered sequence of independent row-returning
+statements, each carrying its own SQL, binds, and `documentReads`, and returns
+one row batch per statement in the same order. A conforming implementation sends
+the sequence in one transport round trip. The statements share no result state:
+each is fetched through its own cursor/result handle, and one statement's rows
+cannot be consumed through another's. The operation is transport batching, not
+a transaction boundary; it neither begins nor commits a transaction. Execution
+lifecycle accounting remains one Database Call per statement rather than one
+call for the pipeline as a whole.
 
 `dialect` is the concrete `m-dialect` strategy every statement crossing this
 port is spelled in — read-only, and answerable at any time. The port is the
@@ -61,7 +79,7 @@ outside Database Call accounting.
 ## Configuration, runtime, and one connection at a time
 
 The port has a second half, used by a different caller. Query code receives
-EXECUTION alone — the four verbs above — and can neither acquire nor release;
+EXECUTION alone — the five verbs above — and can neither acquire nor release;
 composition receives the LIFETIME and never executes. That split is what lets a
 connection be held for exactly one operation without any statement being able to
 take or give one back.
@@ -265,8 +283,8 @@ managed row. The presence ordinal MUST immediately precede the document ordinal
 and MUST hold the SQL boolean projected by `m-sql`; malformed or overlapping
 pairs are an implementation-contract violation, not stored-data classification.
 The adapter passes the pair to its dialect's document-read parser, omits the
-presence cell from the managed row, and stores the resulting provider-neutral
-`m-core` `DocumentRead` under the document cell's ordinary result key. Thus one
+presence cell from the managed row, and places the resulting provider-neutral
+`m-core` `DocumentRead` at the document cell's position in the folded result. Thus one
 managed row value is either `SqlNull` or `PresentDocument(document)`, and SQL
 `NULL` remains distinct from `PresentDocument(document: JSON null)` even when the
 driver used one host sentinel for both raw values. No consumer may reconstruct
@@ -368,7 +386,7 @@ snapshot conflict is a `deadlock` on either engine and retries on the same terms
 
 ## One error instance per failed invocation
 
-An error the port itself produces — raised by `execute` or `executeWrite`, or
+An error the port itself produces — raised by `execute`, `executePipeline`, or `executeWrite`, or
 carried by a `transaction` outcome for begin, commit, or rollback failure — is
 an instance **shared with no other invocation**. An implementation MUST build
 that error where the failure occurs and MUST NOT report a cached, pooled, or
@@ -439,7 +457,7 @@ Two structural rules make the decomposition load-bearing:
 
 The normalize-at-boundary contract fixes **where** a raw database value becomes a
 first-class typed value: at the adapter boundary, **once**. An adapter returns
-**managed** scalars — the language's exact-decimal type, big-integer type,
+positional rows of **managed** scalars — the language's exact-decimal type, big-integer type,
 UTC-instant type, byte-array type — so every consumer above the seam reasons in
 managed types and none re-parses driver text.
 

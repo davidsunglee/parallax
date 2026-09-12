@@ -8,6 +8,7 @@ stable Postgres major; bump the tag as new majors ship.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
@@ -111,7 +112,13 @@ def _adapt(value: Any) -> Any:
 
 def _statement_binds(sql: str, binds: Sequence[Any]) -> tuple[Any, ...]:
     physical = adapt_document_scalar_binds(sql, binds, "postgres")
-    return tuple(_adapt(value) for value in physical)
+    array_binds = {
+        sql[: match.start()].count("?")
+        for match in re.finditer(r"\bany\s*\(\?\)", sql, flags=re.IGNORECASE)
+    }
+    return tuple(
+        value if index in array_binds else _adapt(value) for index, value in enumerate(physical)
+    )
 
 
 def _trusted_query(sql: str) -> QueryNoTemplate:
@@ -275,7 +282,7 @@ class PostgresProvider:
             if binds:
                 cur.execute(
                     _trusted_query(sql.replace("?", "%s")),
-                    tuple(_adapt(value) for value in binds),
+                    _statement_binds(sql, binds),
                 )
             else:
                 # No binds: execute the SQL verbatim with NO params, so psycopg
@@ -404,7 +411,7 @@ class _PgTxSession:
             if binds:
                 cur.execute(
                     _trusted_query(sql.replace("?", "%s")),
-                    tuple(_adapt(value) for value in binds),
+                    _statement_binds(sql, binds),
                 )
             else:
                 cur.execute(_trusted_query(sql))

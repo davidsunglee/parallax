@@ -29,7 +29,7 @@ import pytest
 
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseAdapter, Row
+from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.execution_lifecycle import (
     AcquisitionStarted,
     CausedFailure,
@@ -72,7 +72,7 @@ from tests.unit._transact_support import ACCOUNT, account_db
 _FIXED: Final = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
-def _order_row(order_id: int) -> Row:
+def _order_row(order_id: int) -> MappingRow:
     return {
         "id": order_id,
         "name": f"order-{order_id}",
@@ -84,11 +84,11 @@ def _order_row(order_id: int) -> Row:
     }
 
 
-def _keyless_order_row() -> Row:
+def _keyless_order_row() -> MappingRow:
     return {**_order_row(0), "id": None}
 
 
-def _account_row(account_id: int) -> Row:
+def _account_row(account_id: int) -> MappingRow:
     return {
         "id": account_id,
         "owner": f"owner-{account_id}",

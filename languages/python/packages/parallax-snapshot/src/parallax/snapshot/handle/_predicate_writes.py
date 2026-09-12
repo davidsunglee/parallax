@@ -51,7 +51,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance
-from parallax.core.db_port import DatabaseConnection, Row
+from parallax.core.db_port import DatabaseConnection, MappingRow
 from parallax.core.dialect import LockMode
 from parallax.core.document_codec import (
     DocumentShape,
@@ -570,7 +570,7 @@ def _materialize_predicate_write(
     key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)
     matched = 0
 
-    def append_key(row: Row) -> None:
+    def append_key(row: MappingRow) -> None:
         for builder, value in zip(
             key_builders, _key_column_values(pk_attrs, layout, row), strict=True
         ):
@@ -579,7 +579,7 @@ def _materialize_predicate_write(
     declaring_entity = declaring(meta, entity)
     selected: list[ObservedStateKey] = []
 
-    def select_state(row: Row, observation: WriteObservation) -> None:
+    def select_state(row: MappingRow, observation: WriteObservation) -> None:
         keys = zip(key_attributes, _key_column_values(pk_attrs, layout, row), strict=True)
         object_key = ObjectKey(entity.identity, tuple(keys))
         selected.append(observed_state_key(object_key, observation, declaring_entity))
@@ -696,7 +696,7 @@ def _is_no_op_assignment(
     shape: DocumentShape,
     member_columns: Mapping[str, tuple[str, bool]],
     assignments: Mapping[str, object],
-    row: Row,
+    row: MappingRow,
 ) -> bool:
     """Whether ``row`` is one an assignment-bearing verb would leave unchanged
     (`m-opt-lock` per-row no-op elimination): the effective change set of these
@@ -727,7 +727,7 @@ def _is_no_op_assignment(
 
 
 def _key_column_values(
-    pk_attrs: Sequence[AttributeMetadata], layout: EntityLayoutView, row: Row
+    pk_attrs: Sequence[AttributeMetadata], layout: EntityLayoutView, row: MappingRow
 ) -> tuple[object, ...]:
     """One resolved row's aligned primary-key value tuple, in ``pk_attrs``
     order — a Materialized Write Group's own per-row key-column contribution.
@@ -736,7 +736,7 @@ def _key_column_values(
 
 
 def _predecessor_payload(
-    member_columns: Mapping[str, tuple[str, bool]], row: Row
+    member_columns: Mapping[str, tuple[str, bool]], row: MappingRow
 ) -> dict[str, object]:
     """One resolved row's COMPLETE Predecessor Row payload — every applicable
     member, value-object documents included.

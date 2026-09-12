@@ -34,7 +34,6 @@ a suite pin behavior no adapter can produce.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
@@ -53,6 +52,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    PipelineStatement,
     PoolMetricsSource,
     Returned,
     RollbackFailed,
@@ -61,6 +61,7 @@ from parallax.core.db_port import (
     TransactionOutcome,
 )
 from parallax.core.dialect import POSTGRES, Dialect
+from tests._support.document_reads import fold_mapping_rows
 
 __all__ = [
     "BeginCall",
@@ -165,6 +166,13 @@ class ConnectsAsItself:
 
     def open(self) -> SoleConnectionRuntime:
         return SoleConnectionRuntime(cast("DatabaseConnection", self))
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        connection = cast("DatabaseConnection", self)
+        return [
+            connection.execute(statement.sql, statement.binds, statement.document_reads)
+            for statement in statements
+        ]
 
 
 def body_outcome[T](
@@ -359,6 +367,9 @@ class _ScriptedConnection:
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._script().execute_write(sql, binds)
 
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return self._script().execute_pipeline(statements)
+
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None
     ) -> TransactionOutcome[T]:
@@ -543,12 +554,11 @@ class ScriptedAdapter:
         binds: Sequence[Bind],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        del document_reads
         entry = self._scopes[-1].take(Read, sql)
         self.calls.append(ReadCall(sql, tuple(binds)))
         if entry.raises is not None:
             raise entry.raises
-        return [projected_row(sql, row) for row in entry.rows]
+        return [projected_row(sql, row, document_reads) for row in entry.rows]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         entry = self._scopes[-1].take(Write, sql)
@@ -556,6 +566,12 @@ class ScriptedAdapter:
         if entry.raises is not None:
             raise entry.raises
         return entry.affected
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return [
+            self.execute(statement.sql, statement.binds, statement.document_reads)
+            for statement in statements
+        ]
 
     def transaction[T](
         self,
@@ -589,11 +605,12 @@ class ScriptedAdapter:
         return outcome
 
 
-_CAPTURE_CELL: Final = re.compile(r"(?:select |, )(\w+)\.\"?(\w+)\"? (parallax_seek_\d+)")
-
-
-def projected_row(sql: str, row: Mapping[str, object]) -> Row:
-    """``row`` as a fresh dict, carrying the coordinate cells ``sql`` selected.
+def projected_row(
+    sql: str,
+    row: Mapping[str, object],
+    document_reads: Sequence[DocumentReadOrdinals] = (),
+) -> Row:
+    """``row`` in projection order, carrying the coordinate cells ``sql`` selected.
 
     A paging read projects one hidden cell per Continuation Order term, so a
     stand-in database owes them exactly as a real one does. They are derived
@@ -606,13 +623,7 @@ def projected_row(sql: str, row: Mapping[str, object]) -> Row:
     orders by a document-resident member has to be answered by a double that
     knows the extraction, and is refused rather than silently under-projected.
     """
-    materialized = dict(row)
-    cells = _CAPTURE_CELL.findall(sql)
-    if len(cells) != sql.count(" parallax_seek_"):
-        raise AssertionError(f"a scripted read cannot derive every coordinate cell of {sql!r}")
-    for _alias, column, cell in cells:
-        materialized[cell] = materialized[column]
-    return materialized
+    return fold_mapping_rows((row,), document_reads, sql)[0]
 
 
 class RefusingAdapter:
@@ -655,6 +666,10 @@ class RefusingAdapter:
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         del sql, binds
         raise AssertionError("no write expected — this port refuses the database")
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        del statements
+        raise AssertionError("no pipeline expected — this port refuses the database")
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: IsolationLevel | None = None

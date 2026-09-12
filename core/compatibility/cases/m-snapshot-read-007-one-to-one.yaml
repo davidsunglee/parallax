@@ -28,8 +28,8 @@ then:
     - sql:
         postgres: select t0.id, t0.name from person t0
     - sql:
-        postgres: select t0.id, t0.person_id, t0.number from passport t0 where t0.person_id in (?, ?, ?)
-      binds: [1, 2, 3]
+        postgres: select t0.id, t0.person_id, t0.number from passport t0 where t0.person_id = any(?)
+      binds: [[1, 2, 3]]
   referenceSql: select id, name from person
   graph:
     Person:

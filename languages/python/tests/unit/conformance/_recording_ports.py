@@ -23,6 +23,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    MappingRow,
     Row,
     TransactionOutcome,
 )
@@ -38,7 +39,7 @@ class FakeDbPort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, rows: list[Row]) -> None:
+    def __init__(self, rows: list[MappingRow]) -> None:
         self.rows = rows
         self.executed: list[tuple[str, list[object]]] = []
 
@@ -49,7 +50,7 @@ class FakeDbPort(ConnectsAsItself):
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
-        return fold_mapping_rows(self.rows, document_reads)
+        return fold_mapping_rows(self.rows, document_reads, sql)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -80,11 +81,11 @@ class FakeWritePort(ConnectsAsItself):
 
     def __init__(
         self,
-        find_rows: list[Row] | None = None,
+        find_rows: list[MappingRow] | None = None,
         *,
         zero_affected_for: tuple[str, ...] = (),
         parameterized_write_failure: DatabaseError | None = None,
-        read_script: Sequence[list[Row]] | None = None,
+        read_script: Sequence[list[MappingRow]] | None = None,
     ) -> None:
         self.find_rows = find_rows if find_rows is not None else []
         self.writes: list[tuple[str, list[object]]] = []
@@ -103,8 +104,12 @@ class FakeWritePort(ConnectsAsItself):
     ) -> list[Row]:
         self.reads.append((sql, list(binds)))
         if self._read_script is not None:
-            return self._read_script.pop(0) if self._read_script else []
-        return fold_mapping_rows(self.find_rows, document_reads)
+            return (
+                fold_mapping_rows(self._read_script.pop(0), document_reads, sql)
+                if self._read_script
+                else []
+            )
+        return fold_mapping_rows(self.find_rows, document_reads, sql)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.writes.append((sql, list(binds)))
@@ -133,7 +138,7 @@ class QueueDbPort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, responses: Sequence[list[Row]]) -> None:
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         self._responses = list(responses)
 
     def execute(
@@ -142,7 +147,7 @@ class QueueDbPort(ConnectsAsItself):
         binds: Sequence[object],
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
-        return [projected_row(sql, row) for row in self._responses.pop(0)]
+        return [projected_row(sql, row, document_reads) for row in self._responses.pop(0)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         return 1
