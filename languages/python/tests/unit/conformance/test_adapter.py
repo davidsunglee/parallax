@@ -24,9 +24,9 @@ from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.profile import Profile, profile_for
 from parallax.conformance.provision import Provisioner
 from parallax.core import inheritance
-from parallax.core.base import PresentDocument
+from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DatabaseConnection, Row, TransactionOutcome
+from parallax.core.db_port import DatabaseConnection, MappingRow, Row, TransactionOutcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.object_query import AsOfRange, object_query, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
@@ -332,10 +332,20 @@ class _FakePort(ConnectsAsItself):
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return [{"id": 1, "name": "Ada"}]
+        if "from balance" in sql:
+            return [
+                (
+                    1,
+                    "A",
+                    Decimal("5.00"),
+                    dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    INFINITY,
+                )
+            ]
+        return [projected_row(sql, {"id": 1, "name": "Ada"}, document_reads)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
-        raise NotImplementedError
+        raise engine.EngineError("the fake port refuses writes")
 
     def transaction[T](
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
@@ -502,7 +512,13 @@ class _WritePort(ConnectsAsItself):
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return [{"id": 7}]
+        return [
+            projected_row(
+                sql,
+                {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1},
+                document_reads,
+            )
+        ]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         return 1
@@ -520,7 +536,7 @@ class _AccountWritePort(_WritePort):
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
+        return [(2, "Linus", decimal.Decimal("250.00"), 1)]
 
 
 def test_run_case_conflict_reports_affected_rows_and_table_state() -> None:
@@ -551,7 +567,12 @@ def test_run_case_scenario_reports_round_trips_and_the_rows_its_read_step_publis
     assert envelope["status"] == "ok"
     assert envelope["observations"] == {
         "roundTrips": 2,
-        "stepRows": [{"at": "/scenario/1", "rows": [{"id": 7}]}],
+        "stepRows": [
+            {
+                "at": "/scenario/1",
+                "rows": [{"id": 7, "owner": "Newton", "balance": "5.00", "version": 1}],
+            }
+        ],
     }
     assert [e["casePointer"] for e in envelope["emissions"]] == [
         "/scenario/0/write",
@@ -610,14 +631,14 @@ class _ManagedPort(ConnectsAsItself):
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
         return [
-            {
-                "id": 1,
-                "f32": 1.5,
-                "f64": 2.25,
-                "local_time": dt.time(12, 34, 56),
-                "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
-                "payload": b"\x01\x02\x03\x04",
-            }
+            (
+                1,
+                1.5,
+                2.25,
+                "01020304",
+                dt.time(12, 34, 56),
+                uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
+            )
         ]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -643,7 +664,7 @@ def test_run_observations_are_wire_rendered_and_json_serializable() -> None:
         "f64": 2.25,
         "local_time": "12:34:56",
         "external_id": "123e4567-e89b-12d3-a456-426614174000",
-        "payload": "01020304",
+        "payload_hex": "01020304",
     }
     # The whole envelope now round-trips through the wire (json.dumps).
     assert json.loads(json.dumps(envelope)) == envelope
@@ -687,15 +708,15 @@ class _PositionPort(ConnectsAsItself):
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
         return [
-            {
-                "pos_id": 1,
-                "acct_num": "A",
-                "val": decimal.Decimal("90.00"),
-                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "thru_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-            }
+            (
+                1,
+                "A",
+                decimal.Decimal("90.00"),
+                dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
+                dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+            )
         ]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -753,13 +774,13 @@ class _BalancePort(ConnectsAsItself):
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
         return [
-            {
-                "bal_id": 1,
-                "acct_num": "A",
-                "val": decimal.Decimal("100.00"),
-                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                "out_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
-            }
+            (
+                1,
+                "A",
+                decimal.Decimal("100.00"),
+                dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+            )
         ]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
@@ -1078,13 +1099,13 @@ class _QueuePort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, responses: Sequence[list[Row]]) -> None:
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         self._responses = list(responses)
 
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return [projected_row(sql, row) for row in self._responses.pop(0)]
+        return [projected_row(sql, row, document_reads) for row in self._responses.pop(0)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         # A read case's own `given.corrupt` writes through this port before the
@@ -1302,7 +1323,7 @@ class _WriteAndReadBackPort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, affected: Sequence[int] = (), rows: Sequence[Row] = ()) -> None:
+    def __init__(self, affected: Sequence[int] = (), rows: Sequence[MappingRow] = ()) -> None:
         self.writes = 0
         self._affected = list(affected)
         self._rows = list(rows)
@@ -1310,7 +1331,7 @@ class _WriteAndReadBackPort(ConnectsAsItself):
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return list(self._rows)
+        return [projected_row(sql, row, document_reads) for row in self._rows]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         self.writes += 1
@@ -1380,7 +1401,7 @@ class _AccountPort(ConnectsAsItself):
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+        return [(3, "Grace", Decimal("10.00"), 1)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -1507,7 +1528,7 @@ class _OrderWithItemsPort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
     def __init__(self) -> None:
-        self._responses: list[list[Row]] = [
+        self._responses: list[list[MappingRow]] = [
             [
                 {
                     "id": 1,
@@ -1534,7 +1555,7 @@ class _OrderWithItemsPort(ConnectsAsItself):
     def execute(
         self, sql: str, binds: Sequence[object], document_reads: Sequence[tuple[int, int]] = ()
     ) -> list[Row]:
-        return [projected_row(sql, row) for row in self._responses.pop(0)]
+        return [projected_row(sql, row, document_reads) for row in self._responses.pop(0)]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError

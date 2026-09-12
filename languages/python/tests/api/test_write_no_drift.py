@@ -39,7 +39,14 @@ from parallax.conformance.vo_models import (
     Shipment,
 )
 from parallax.core.base import INFINITY, TemporalBound
-from parallax.core.db_port import Bind, Committed, DatabaseConnection, Row, TransactionOutcome
+from parallax.core.db_port import (
+    Bind,
+    Committed,
+    DatabaseConnection,
+    MappingRow,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import DomainModel
 from parallax.core.entity._model import model_of
@@ -78,12 +85,12 @@ _INFINITY: Final[TemporalBound] = INFINITY
 # not just Account's). Id 2 (Linus, balance 250.00) joins ids 1/3 here for
 # `m-opt-lock-002` (the versioned, locking-mode keyed update) — the SAME triple
 # `core/compatibility/fixtures/account.yaml` seeds.
-_ACCOUNT_SEED_ROWS: Final[list[Row]] = [
+_ACCOUNT_SEED_ROWS: Final[list[MappingRow]] = [
     {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
     {"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1},
     {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
 ]
-_BALANCE_SEED_ROWS: Final[list[Row]] = [
+_BALANCE_SEED_ROWS: Final[list[MappingRow]] = [
     {
         "bal_id": 1,
         "acct_num": "A",
@@ -92,7 +99,7 @@ _BALANCE_SEED_ROWS: Final[list[Row]] = [
         "out_z": _INFINITY,
     }
 ]
-_POSITION_SEED_ROWS: Final[list[Row]] = [
+_POSITION_SEED_ROWS: Final[list[MappingRow]] = [
     {
         "pos_id": 1,
         "acct_num": "A",
@@ -109,7 +116,7 @@ _SUPPLIER_D1_ADDRESS: Final[dict[str, Any]] = {
     "geo": {"country": "NO"},
     "phones": [{"type": "home", "number": "555-0100"}],
 }
-_SUPPLIER_SEED_ROWS: Final[list[Row]] = [
+_SUPPLIER_SEED_ROWS: Final[list[MappingRow]] = [
     {
         "sup_id": 1,
         "name": "Nordic Foods",
@@ -124,7 +131,7 @@ _BRANCH_D1_ADDRESS: Final[dict[str, Any]] = {
     "geo": {"country": "FI"},
     "phones": [{"type": "main", "number": "555-1000"}],
 }
-_BRANCH_SEED_ROWS: Final[list[Row]] = [
+_BRANCH_SEED_ROWS: Final[list[MappingRow]] = [
     {
         "br_id": 1,
         "name": "Central Branch",
@@ -135,7 +142,7 @@ _BRANCH_SEED_ROWS: Final[list[Row]] = [
         "address": _BRANCH_D1_ADDRESS,
     }
 ]
-_SEED_ROWS_BY_MODEL: Final[dict[str, list[Row]]] = {
+_SEED_ROWS_BY_MODEL: Final[dict[str, list[MappingRow]]] = {
     "account": _ACCOUNT_SEED_ROWS,
     "balance": _BALANCE_SEED_ROWS,
     "position": _POSITION_SEED_ROWS,
@@ -150,7 +157,7 @@ _SEED_ROWS_BY_MODEL: Final[dict[str, list[Row]]] = {
 # own find actually needs) — a per-CASE override, since the shared per-MODEL
 # `_BALANCE_SEED_ROWS` above instead represents "immediately after this OTHER
 # story's own fresh insert" (100.00 at 2024-01-01).
-_SEED_ROWS_BY_CASE: Final[dict[str, list[Row]]] = {
+_SEED_ROWS_BY_CASE: Final[dict[str, list[MappingRow]]] = {
     "m-txtime-write-005": [
         {
             "bal_id": 1,
@@ -204,7 +211,7 @@ _SEED_ROWS_BY_CASE: Final[dict[str, list[Row]]] = {
 # coordinate is what distinguishes the two answers, and resolving one needs a
 # temporal query engine this double is deliberately not. A story whose reads
 # differ only by coordinate therefore states its own answers here, in order.
-_READ_ROWS_BY_CASE: Final[dict[str, list[list[Row]]]] = {
+_READ_ROWS_BY_CASE: Final[dict[str, list[list[MappingRow]]]] = {
     # `m-unit-work-015`: Position id 1 holds two rectangles current on
     # Transaction Time. The story's first find pins Valid Time 2024-03-01 and
     # observes the split HEAD; its second pins 2024-09-01 and observes the
@@ -236,7 +243,7 @@ _READ_ROWS_BY_CASE: Final[dict[str, list[list[Row]]]] = {
 }
 
 
-def _seed_rows_for(story: WriteStory) -> list[Row]:
+def _seed_rows_for(story: WriteStory) -> list[MappingRow]:
     if story.case_id in _SEED_ROWS_BY_CASE:
         return _SEED_ROWS_BY_CASE[story.case_id]
     return _SEED_ROWS_BY_MODEL.get(story.model, [])
@@ -282,7 +289,9 @@ class _KeyedSeedPort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, *, rows: Sequence[Row] = (), reads: Sequence[Sequence[Row]] = ()) -> None:
+    def __init__(
+        self, *, rows: Sequence[MappingRow] = (), reads: Sequence[Sequence[MappingRow]] = ()
+    ) -> None:
         self.calls: list[PortCall] = []
         self._rows = [dict(row) for row in rows]
         self._scripted = [[dict(row) for row in answer] for answer in reads]

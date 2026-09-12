@@ -6,11 +6,12 @@ each after the root. This module resolves the paths into hops, executes each hop
 once keyed by the parent keys the previous level gathered, and buckets the rows it
 returned by parent so the assembly can fan them back out in memory.
 
-The contract it proves is N+1 elimination, and it proves it against derivations of
-its own rather than against the database's answer: a level's authored binds are
-the gathered parent keys, then the effective set's table-per-hierarchy tag values,
-then the propagated as-of coordinates, and a declared relationship ordering is
-graded on the rows the golden returned. A level whose parents gathered no keys
+    The contract it proves is N+1 elimination, and it proves it against derivations of
+    its own rather than against the database's answer: a level's authored binds start
+    with the gathered parent keys as one PostgreSQL array or as MariaDB's expanded
+    list, then carry the effective set's table-per-hierarchy tag values and propagated
+    as-of coordinates. A declared relationship ordering is graded on the rows the
+    golden returned. A level whose parents gathered no keys
 issues no SQL at all, so the statement a case lists for it is dead SQL the case is
 refused for.
 """
@@ -581,20 +582,28 @@ def execute_fetch_levels(
                 f"keys {parent_keys!r}."
             )
 
-        # Bind layout per child level: the IN-list of gathered parent keys, then the
-        # polymorphic hop's tag binds (table-per-hierarchy `kind = ?` / `in (?, …)`
-        # over the effective set, alphabetical order), then the propagated as-of binds.
+        # Bind layout per child level: the gathered parent keys as one PostgreSQL
+        # array or MariaDB's expanded list, then the polymorphic hop's tag binds
+        # (table-per-hierarchy `kind = ?` / `in (?, …)` over the effective set,
+        # alphabetical order), then the propagated as-of binds.
         level_sql, raw_authored = levels[statement_index]
-        in_slice = raw_authored[: len(parent_keys)]
-        rest = list(raw_authored[len(parent_keys) :])
+        key_bind_count = 1 if dialect == "postgres" else len(parent_keys)
+        key_slice = raw_authored[:key_bind_count]
+        rest = list(raw_authored[key_bind_count:])
         tag_slice = rest[: len(step.tag_binds)]
         asof_suffix = rest[len(step.tag_binds) :]
-        if sorted(coerce_identity_key(bind) for bind in in_slice) != parent_keys:
+        authored_keys = key_slice[0] if dialect == "postgres" and len(key_slice) == 1 else key_slice
+        keys_match = (
+            isinstance(authored_keys, list)
+            and sorted(coerce_identity_key(bind) for bind in authored_keys) == parent_keys
+        )
+        expected_key_binds: list[Any] = [parent_keys] if dialect == "postgres" else parent_keys
+        if not keys_match:
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) level {statement_index + 1} "
-                f"({step.view_key}) IN-list binds {in_slice!r} != gathered parent "
-                f"keys {parent_keys!r}. The child level MUST be keyed by exactly "
-                f"the parents from the previous level (the N+1-eliminating IN list)."
+                f"({step.view_key}) key-set binds {key_slice!r} != gathered parent "
+                f"keys {expected_key_binds!r}. The child level MUST be keyed by "
+                f"exactly the parents from the previous level."
             )
         if list(tag_slice) != list(step.tag_binds):
             raise CaseFailure(
@@ -635,7 +644,7 @@ def execute_fetch_levels(
             case,
             reader,
             level_sql,
-            list(parent_keys) + list(step.tag_binds) + expected_suffix,
+            key_slice + list(step.tag_binds) + expected_suffix,
         )
         # The level is materialized WHOLE by the seam that owns its kind of
         # position, which it states its own facts to: the raw tag column a

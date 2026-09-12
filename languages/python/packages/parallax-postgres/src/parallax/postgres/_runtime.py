@@ -358,11 +358,11 @@ def _check_probe(rows: list[Row]) -> None:
     if len(rows) != 1:
         raise ValueError(f"the startup probe returned {len(rows)} rows rather than one")
     (row,) = rows
-    if row.get("ready") != 1:
+    if row[0] != 1:
         raise ValueError("the startup probe did not read its integer back")
-    if row.get("temporal_bound") is not INFINITY:
+    if row[1] is not INFINITY:
         raise ValueError("the startup probe did not read an unbounded instant back")
-    if row.get("document") != {"ready": True}:
+    if row[2] != {"ready": True}:
         raise ValueError("the startup probe did not read its structured document back")
 
 

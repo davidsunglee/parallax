@@ -35,6 +35,7 @@ from parallax.core.db_port import (
     CommitFailed,
     Committed,
     JsonDocument,
+    PipelineStatement,
     RollbackFailed,
     RolledBack,
     isolation_level,
@@ -191,7 +192,7 @@ class _FakeCursor:
         if self._error is not None:
             raise self._error
 
-    def fetchall(self) -> list[object]:
+    def fetchall(self) -> list[tuple[object, ...]]:
         return []
 
 
@@ -221,6 +222,19 @@ class _FakeTxn:
     def __exit__(self, _exc_type: object, exc: BaseException | None, _tb: object) -> bool:
         if exc is None and self._commit_error is not None:
             raise self._commit_error
+        return False
+
+
+class _FakePipeline:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def __enter__(self) -> _FakePipeline:
+        self._events.append("pipeline-enter")
+        return self
+
+    def __exit__(self, *_: object) -> bool:
+        self._events.append("pipeline-exit")
         return False
 
 
@@ -281,6 +295,7 @@ class _FakeConnection:
         self.closed = False
         self.executed: list[object] = []
         self.begins = 0
+        self.pipeline_events: list[str] = []
 
     def cursor(self, **_: object) -> _FakeCursor:
         return _FakeCursor(self.cursor_error, self.executed)
@@ -288,6 +303,9 @@ class _FakeConnection:
     def transaction(self) -> _FakeTxn:
         self.begins += 1
         return _FakeTxn(begin_error=self.begin_error, commit_error=self.commit_error)
+
+    def pipeline(self) -> _FakePipeline:
+        return _FakePipeline(self.pipeline_events)
 
     def rollback(self) -> None:
         self.rollbacks += 1
@@ -341,10 +359,7 @@ def test_fold_document_reads_distinguishes_sql_null_from_present_json_null() -> 
         ),
         ((1, 2),),
     )
-    assert rows == [
-        {"id": 1, "doc": SQL_NULL},
-        {"id": 2, "doc": PresentDocument(None)},
-    ]
+    assert rows == [(1, SQL_NULL), (2, PresentDocument(None))]
 
 
 def test_json_loader_preserves_only_present_json_null() -> None:
@@ -367,7 +382,7 @@ class _JsonNullCursor(_FakeCursor):
         super().__init__(None, [])
         self.description = (SimpleNamespace(name="id"), SimpleNamespace(name="doc"))
 
-    def fetchall(self) -> list[object]:
+    def fetchall(self) -> list[tuple[object, ...]]:
         return [(1, connection_module._PRESENT_JSON_NULL)]  # pyright: ignore[reportPrivateUsage] - the fake answers the module-private sentinel a real driver row would carry
 
 
@@ -377,7 +392,86 @@ class _JsonNullConnection(_FakeConnection):
 
 
 def test_ordinary_execute_normalizes_present_json_null_to_none() -> None:
-    assert _adapter(_JsonNullConnection()).execute("select 1", []) == [{"id": 1, "doc": None}]
+    assert _adapter(_JsonNullConnection()).execute("select 1", []) == [(1, None)]
+
+
+class _PipelineResultCursor(_FakeCursor):
+    def __init__(
+        self,
+        ordinal: int,
+        rows: list[tuple[object, ...]] | None,
+        events: list[str],
+    ) -> None:
+        super().__init__(None, [])
+        self._ordinal = ordinal
+        self._rows = [] if rows is None else rows
+        self._events = events
+        if rows is None:
+            self.description = None
+        else:
+            width = len(rows[0]) if rows else 1
+            self.description = tuple(SimpleNamespace(name=f"c{index}") for index in range(width))
+
+    def __enter__(self) -> _PipelineResultCursor:
+        self._events.append(f"cursor-{self._ordinal}-enter")
+        return self
+
+    def __exit__(self, *_: object) -> bool:
+        self._events.append(f"cursor-{self._ordinal}-exit")
+        return False
+
+    def execute(self, sql: bytes | Composable, binds: object = None) -> None:
+        self._events.append(f"cursor-{self._ordinal}-execute:{sql!r}:{binds!r}")
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        self._events.append(f"cursor-{self._ordinal}-fetch")
+        return self._rows
+
+
+class _PipelineResultConnection(_FakeConnection):
+    def __init__(self, *responses: list[tuple[object, ...]] | None) -> None:
+        super().__init__()
+        self._responses = list(responses)
+        self.pipeline_cursors: list[_PipelineResultCursor] = []
+
+    def cursor(self, **_: object) -> _PipelineResultCursor:
+        ordinal = len(self.pipeline_cursors)
+        cursor = _PipelineResultCursor(ordinal, self._responses.pop(0), self.pipeline_events)
+        self.pipeline_cursors.append(cursor)
+        return cursor
+
+
+def test_execute_pipeline_owns_one_cursor_per_statement_and_fetches_after_sync() -> None:
+    connection = _PipelineResultConnection(
+        [(1,), (2,)],
+        [(False, None), (True, connection_module._PRESENT_JSON_NULL)],  # pyright: ignore[reportPrivateUsage] - raw stored JSON null is the boundary input
+    )
+    rows = _adapter(connection).execute_pipeline(
+        (
+            PipelineStatement("select unnest(%s::bigint[])", ([1, 2],)),
+            PipelineStatement("select present, document", document_reads=((0, 1),)),
+        )
+    )
+
+    assert rows == [[(1,), (2,)], [(SQL_NULL,), (PresentDocument(None),)]]
+    assert connection.pipeline_events == [
+        "pipeline-enter",
+        "cursor-0-enter",
+        "cursor-0-execute:b'select unnest(%s::bigint[])':[[1, 2]]",
+        "cursor-1-enter",
+        "cursor-1-execute:b'select present, document':[]",
+        "pipeline-exit",
+        "cursor-0-fetch",
+        "cursor-1-fetch",
+        "cursor-1-exit",
+        "cursor-0-exit",
+    ]
+
+
+def test_execute_pipeline_returns_an_empty_result_for_a_statement_without_rows() -> None:
+    assert _adapter(_PipelineResultConnection(None)).execute_pipeline(
+        (PipelineStatement("set local application_name = 'parallax'"),)
+    ) == [[]]
 
 
 def test_execute_reraises_a_driver_error_at_the_boundary() -> None:
@@ -460,6 +554,7 @@ def test_every_failed_port_invocation_reports_its_own_error_instance() -> None:
 
     invocations: tuple[Callable[[], DatabaseError], ...] = (
         lambda: raised(lambda: adapter.execute("select 1", [])),
+        lambda: raised(lambda: adapter.execute_pipeline((PipelineStatement("select 1"),))),
         lambda: raised(lambda: adapter.execute_write("insert into gauge (v) values (%s)", [1])),
         failing_begin,
         failing_commit,

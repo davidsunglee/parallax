@@ -29,7 +29,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core import LATEST, Attr, DomainModel, attr
 from parallax.core.base import DocumentValue, PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import EntityRowCodec, EntityRowError
 from parallax.core.metamodel import Metamodel
@@ -55,8 +55,13 @@ from tests.unit._transact_support import (
 
 _TX_START: Final = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _TX_PIN: Final = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
-_ACCOUNT_ROW: Final[Row] = {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 4}
-_POSITION_ROW: Final[Row] = {
+_ACCOUNT_ROW: Final[MappingRow] = {
+    "id": 1,
+    "owner": "Ada",
+    "balance": Decimal("100.00"),
+    "version": 4,
+}
+_POSITION_ROW: Final[MappingRow] = {
     "id": 1,
     "acct_num": "A",
     "value": Decimal("100.00"),

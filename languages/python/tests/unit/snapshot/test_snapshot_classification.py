@@ -30,7 +30,7 @@ from parallax.conformance import vo_models as vo
 from parallax.conformance.story_models import ORDERS_MODEL, Order
 from parallax.core import LATEST, DomainModel
 from parallax.core.base import INFINITY, PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -335,7 +335,7 @@ def test_a_loaded_to_one_view_carries_attribution_to_its_parent() -> None:
 # The layout twin: one logical model, two descriptors, one verdict.            #
 # --------------------------------------------------------------------------- #
 def _published(
-    model: DomainModel, query: object, rows: Sequence[Sequence[Row]]
+    model: DomainModel, query: object, rows: Sequence[Sequence[MappingRow]]
 ) -> InvalidData[Any]:
     """One twin member's published record for a scripted two-level read."""
     database = connect(ScriptedAdapter(*(Read(rows=result) for result in rows)), model)

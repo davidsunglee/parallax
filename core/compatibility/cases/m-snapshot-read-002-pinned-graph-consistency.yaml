@@ -33,8 +33,8 @@ then:
         postgres: select t0.id, t0.name, t0.in_z, t0.out_z from invoice t0 where t0.in_z <= ? and t0.out_z > ?
       binds: ["2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id in (?) and t0.in_z <= ? and t0.out_z > ?
-      binds: [100, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = any(?) and t0.in_z <= ? and t0.out_z > ?
+      binds: [[100], "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
   referenceSql: "select id, name, in_z, out_z from invoice where in_z <= '2024-02-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz"
   graph:
     Invoice:

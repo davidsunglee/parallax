@@ -30,7 +30,7 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core.base import DocumentValue, InstantError, PresentDocument
-from parallax.core.db_port import JsonDocument, Row
+from parallax.core.db_port import JsonDocument, MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
     EntityGraphWriter,
@@ -354,9 +354,9 @@ def test_one_default_transaction_gates_the_versioned_write_and_locks_the_unversi
         ReadCall(
             POSTGRES.to_driver_sql(
                 "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-                "where t0.consignment_id in (?) for share of t0"
+                "where t0.consignment_id = any(?) for share of t0"
             ),
-            (1,),
+            ([1],),
         ),
         WriteCall(
             POSTGRES.to_driver_sql(
@@ -389,7 +389,7 @@ def test_one_preference_produces_both_behaviors_across_two_entities() -> None:
             ReadCall,
             POSTGRES.to_driver_sql(
                 "select t0.id, t0.consignment_id, t0.carrier from consignment_leg t0 "
-                "where t0.consignment_id in (?) for share of t0"
+                "where t0.consignment_id = any(?) for share of t0"
             ),
         ),
         (
@@ -485,7 +485,7 @@ def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
 # `when.write` cases carry (m-value-object-039..044 / m-inheritance-086..089) #
 # is stated at the producer both keyed ingresses prepare through, in          #
 # `test_write_instructions.py`: no keyed VERB reaches those rows, because the  #
-# Entity Row Codec derives a Typed row from the value's own class and the      #
+# Entity MappingRow Codec derives a Typed row from the value's own class and the      #
 # Entity constructor refuses the value-object payloads outright. What a verb   #
 # does reach is the sparse row below, and that it is one producer is what the  #
 # identity assertion pins.                                                     #
@@ -529,7 +529,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     assert expected in port.calls
 
 
-def _position_row_dt() -> Row:
+def _position_row_dt() -> MappingRow:
     """The KEYED-verb tests' own row fixture: real ``datetime`` values (never
     the bare ISO strings :func:`_position_row` uses) — a KEYED verb's own
     first read runs through the ordinary developer-facing ``tx.find`` (wrap
@@ -1188,7 +1188,7 @@ def test_a_keyed_verb_refuses_an_instance_of_an_undeclared_class() -> None:
 # separate models. Membership is decided by the identity the instance's class
 # declares, so a `_TwinLeft` instance handed to a database connected to
 # `_TwinRight`'s model resolves — and the guarantee the old object-identity guard
-# provided survives in the Entity Row Codec, which refuses the foreign class's
+# provided survives in the Entity MappingRow Codec, which refuses the foreign class's
 # own member by name before an instruction exists at all.
 class _TwinLeft(Entity, table="twin", name="Twin", namespace="parallax.compatibility"):
     id: Attr[int] = attr(primary_key=True)

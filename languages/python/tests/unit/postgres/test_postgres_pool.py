@@ -853,8 +853,7 @@ def test_a_document_read_folds_its_adjacent_cells_on_the_scoped_execution() -> N
     with resource as scoped:
         rows = scoped.execute("select id, doc_present, doc from t", [], [(1, 2)])
     (row,) = rows
-    assert row["id"] == 1
-    assert row["doc"] == PresentDocument({"a": 1})
+    assert row == (1, PresentDocument({"a": 1}))
 
 
 # --------------------------------------------------------------------------- #

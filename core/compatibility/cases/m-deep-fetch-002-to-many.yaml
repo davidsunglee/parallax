@@ -25,8 +25,8 @@ then:
     - sql:
         postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id in (?, ?, ?, ?, ?, ?) order by t0.id desc
-      binds: [1, 2, 3, 4, 5, 42]
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.order_id = any(?) order by t0.id desc
+      binds: [[1, 2, 3, 4, 5, 42]]
   referenceSql: select id, name, sku, qty, price, active, ordered_on from orders
   graph:
     Order:

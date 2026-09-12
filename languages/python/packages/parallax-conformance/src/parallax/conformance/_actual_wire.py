@@ -14,7 +14,7 @@ from typing import cast
 
 from parallax.core import inheritance, storage_layout
 from parallax.core.base import INFINITY_LITERAL, JSON, ManagedValue, NeutralType, TemporalBound
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.dialect import projection_result_key
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -70,7 +70,7 @@ class ActualWireProjection:
             return INFINITY_LITERAL
         return self._typed(member.type, value)
 
-    def published_row(self, query: ObjectQueryNode, row: Mapping[str, object]) -> Row:
+    def published_row(self, query: ObjectQueryNode, row: Mapping[str, object]) -> MappingRow:
         """A row-form query result, resolved from its projected physical columns."""
         attributes, value_objects = self._query_members(query)
         by_column: dict[
@@ -84,7 +84,7 @@ class ActualWireProjection:
                     member.identity
                 ] = member
         selected: dict[str, AttributeMetadata | ValueObjectMetadata] | None = None
-        projected: Row = {}
+        projected: MappingRow = {}
         for name, value in row.items():
             if name == "familyVariant":
                 projected[name] = value
@@ -203,9 +203,9 @@ class ActualWireProjection:
             return canonical
         return self._published_value_object_element(occurrence, canonical)
 
-    def table_row(self, layout: TableLayout, row: Mapping[str, object]) -> Row:
+    def table_row(self, layout: TableLayout, row: Mapping[str, object]) -> MappingRow:
         """One complete physical table row in its compiled slot sequence."""
-        projected: Row = {}
+        projected: MappingRow = {}
         for slot in layout.columns:
             name = slot.column.name
             value = row.get(name)

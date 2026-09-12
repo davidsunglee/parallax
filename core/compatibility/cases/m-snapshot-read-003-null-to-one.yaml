@@ -27,8 +27,8 @@ then:
     - sql:
         postgres: select t0.id, t0.order_id, t0.order_item_id, t0.code from order_status t0
     - sql:
-        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id in (?, ?, ?)
-      binds: [11, 12, 421]
+        postgres: select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0 where t0.id = any(?)
+      binds: [[11, 12, 421]]
   referenceSql: select id, order_id, order_item_id, code from order_status
   graph:
     OrderStatus:

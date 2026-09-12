@@ -71,7 +71,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
     DocumentShape,
@@ -406,7 +406,7 @@ def _occurrence_value(
 
 def _driver_row(
     model: CatalogedModel, compiled: CompiledRead, entity: EntityIdentity, spec: _RowSpec
-) -> Row:
+) -> MappingRow:
     """One stored row as the driver answers it: direct Columns under their own
     result keys, and every document-resident member inside the Structured Column."""
     meta = model.meta
@@ -480,7 +480,7 @@ def driver_rows(
     attach_key: str,
     owners: int = OWNERS,
     first: int = 0,
-) -> list[Row]:
+) -> list[MappingRow]:
     """Every row one level's statement returns for ``owners`` root objects
     beginning at ``first``, keyed by that statement's own result keys.
 
@@ -501,11 +501,13 @@ def rows_per_level(
     reads: Sequence[CompiledRead | None],
     owners: int = OWNERS,
     first: int = 0,
-) -> tuple[tuple[Row, ...], ...]:
+) -> tuple[tuple[MappingRow, ...], ...]:
     """Every level's rows, indexed as :func:`compiled_levels` indexes its reads."""
     root = reads[0]
     assert root is not None
-    rows: list[tuple[Row, ...]] = [tuple(driver_rows(layout, model, root, _ROOT, owners, first))]
+    rows: list[tuple[MappingRow, ...]] = [
+        tuple(driver_rows(layout, model, root, _ROOT, owners, first))
+    ]
     for index, level in enumerate(plan.levels):
         compiled = reads[index + 1]
         rows.append(
@@ -535,7 +537,7 @@ def batch(
     model: CatalogedModel,
     plan: deep_fetch.ObjectQueryPlan,
     prepared: Sequence[PreparedRead[MaterializedReadRow] | None],
-    rows: Sequence[Sequence[Row]],
+    rows: Sequence[Sequence[MappingRow]],
 ) -> SnapshotGraph:
     """One whole graph, built the way ``build_graph`` builds one.
 

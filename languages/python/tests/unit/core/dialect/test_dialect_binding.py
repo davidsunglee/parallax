@@ -18,7 +18,13 @@ import pytest
 
 from parallax.conformance._mechanism.transaction_control import write_connection
 from parallax.conformance.boundary_runner import FaultInjectingPort
-from parallax.core.db_port import DatabaseConnection, DeclaresDialect, DocumentReadOrdinals, Row
+from parallax.core.db_port import (
+    DatabaseConnection,
+    DeclaresDialect,
+    DocumentReadOrdinals,
+    MappingRow,
+    Row,
+)
 from parallax.core.db_port import TransactionOutcome as Outcome
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.postgres import PostgresAdapter
@@ -28,7 +34,7 @@ from tests._support.db_port import ConnectsAsItself, body_outcome
 from tests.unit._second_dialect import BACKTICKED
 from tests.unit._transact_support import ACCOUNT
 
-_ACCOUNT_ROW: Row = {"id": 7, "owner": "Ada", "balance": Decimal("1.00"), "version": 1}
+_ACCOUNT_ROW: MappingRow = {"id": 7, "owner": "Ada", "balance": Decimal("1.00"), "version": 1}
 
 
 class _SpellingPort(ConnectsAsItself):
@@ -46,7 +52,7 @@ class _SpellingPort(ConnectsAsItself):
     ) -> list[Row]:
         del binds, document_reads
         self.statements.append(sql)
-        return [dict(_ACCOUNT_ROW)]
+        return [tuple(_ACCOUNT_ROW.values())]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         del binds

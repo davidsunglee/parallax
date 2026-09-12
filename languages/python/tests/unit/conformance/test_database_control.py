@@ -22,7 +22,7 @@ from __future__ import annotations
 import socket
 import threading
 from collections.abc import Callable, Sequence
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from types import TracebackType
 from typing import Any, cast
 
@@ -37,7 +37,12 @@ from parallax.conformance._postgres_control import (
     PostgresInterleavedExecution,
     initialized_session,
 )
-from parallax.core.db_port import ConnectionAcquisitionError, DatabaseConnection, Row
+from parallax.core.db_port import (
+    ConnectionAcquisitionError,
+    DatabaseConnection,
+    MappingRow,
+    PipelineStatement,
+)
 from parallax.core.dialect import POSTGRES
 from parallax.snapshot.handle import SnapshotConnectionError
 from tests._support.snapshot_models import SNAP_ORDERS_MODEL
@@ -101,13 +106,13 @@ class _FakeConnection:
     def __init__(
         self,
         *,
-        rows: list[Row] | None = None,
+        rows: list[MappingRow] | None = None,
         fd: int | None = None,
         cancel_raises: Exception | None = None,
         close_raises: Exception | None = None,
         parked: Callable[[], None] | None = None,
     ) -> None:
-        self.rows: list[Row] = rows if rows is not None else []
+        self.rows: list[MappingRow] = rows if rows is not None else []
         self.statements: list[tuple[str, tuple[object, ...]]] = []
         self.rollbacks = 0
         self.cancels = 0
@@ -128,6 +133,9 @@ class _FakeConnection:
 
     def transaction(self) -> _FakeTransaction:
         return _FakeTransaction(self)
+
+    def pipeline(self) -> Any:
+        return nullcontext()
 
     def rollback(self) -> None:
         self.rollbacks += 1
@@ -191,11 +199,13 @@ def test_a_control_forwards_every_verb_to_the_shipped_execution_over_its_session
     control = _control(connection)
 
     assert control.dialect is POSTGRES
-    assert control.execute("select 1 as n", []) == [{"n": 1}]
+    assert control.execute("select 1 as n", []) == [(1,)]
+    assert control.execute_pipeline((PipelineStatement("select 1 as n"),)) == [[(1,)]]
     assert control.execute_write("update t set a = 1", [2]) == 1
     control.transaction(lambda port: port.execute("select 1 as n", []))
 
     assert connection.statements == [
+        ("select 1 as n", ()),
         ("select 1 as n", ()),
         ("update t set a = 1", (2,)),
         ("select 1 as n", ()),

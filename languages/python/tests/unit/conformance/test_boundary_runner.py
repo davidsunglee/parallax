@@ -36,6 +36,8 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     Invalidated,
+    MappingRow,
+    PipelineStatement,
     Returned,
     Row,
     TransactionOutcome,
@@ -192,7 +194,7 @@ def test_translated_isolation_setup_failure_classifies_to_no_category() -> None:
 class _FakePort(ConnectsAsItself):
     dialect: Dialect = POSTGRES
 
-    def __init__(self, *, rows: list[Row]) -> None:
+    def __init__(self, *, rows: list[MappingRow]) -> None:
         self.rows = rows
         self.writes: list[tuple[str, tuple[object, ...]]] = []
         self.ops: list[str] = []
@@ -209,7 +211,7 @@ class _FakePort(ConnectsAsItself):
     ) -> list[Row]:
         del sql, binds, document_reads
         self.ops.append("read")
-        return [dict(row) for row in self.rows]
+        return [tuple(row.values()) for row in self.rows]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.writes.append((sql, tuple(binds)))
@@ -446,7 +448,8 @@ def test_a_setup_failure_surfaces_terminally_after_one_attempt() -> None:
 def test_fault_injecting_port_no_fault_passes_reads_and_writes_through() -> None:
     inner = _FakePort(rows=[{"id": 1}])
     port = FaultInjectingPort(inner, fault=None, persistent=False)
-    assert port.execute("select 1", []) == [{"id": 1}]
+    assert port.execute("select 1", []) == [(1,)]
+    assert port.execute_pipeline((PipelineStatement("select 1"),)) == [[(1,)]]
     assert port.execute_write("update x set y = 1", []) == 1
 
 

@@ -21,7 +21,7 @@ from parallax.conformance import case_format, engine, models, vo_models, write_v
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.core.base import SQL_NULL, PresentDocument
-from parallax.core.db_port import DatabaseAdapter, Row
+from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect, prepare_model
 from parallax.snapshot.handle import Database, Transaction
@@ -39,7 +39,7 @@ from tests.unit._transact_support import FIXED
 _CASES = write_value_runner.reachable_write_value_cases()
 _CASE_IDS = [case.case_id for case in _CASES]
 
-_TARGET_ROW: Row = {
+_TARGET_ROW: MappingRow = {
     "id": write_value_runner.TARGET_ID,
     "owner": "Linus",
     "balance": Decimal("250.00"),

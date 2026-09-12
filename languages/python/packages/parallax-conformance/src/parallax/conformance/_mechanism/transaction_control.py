@@ -31,6 +31,7 @@ from parallax.core.db_port import (
     DatabaseConnection,
     DocumentReadOrdinals,
     IsolationLevel,
+    PipelineStatement,
     RollbackFailed,
     RolledBack,
     Row,
@@ -131,6 +132,9 @@ class _AbortingPort:
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         return self._inner.execute(sql, binds, document_reads)
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return self._inner.execute_pipeline(statements)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         return self._inner.execute_write(sql, binds)

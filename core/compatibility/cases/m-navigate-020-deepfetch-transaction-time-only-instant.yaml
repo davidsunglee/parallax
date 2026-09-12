@@ -28,9 +28,9 @@ then:
         mariadb: select t0.id, t0.name, t0.in_z, t0.out_z from invoice t0 where t0.in_z <= ? and t0.out_z > ?
       binds: ["2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id in (?) and t0.in_z <= ? and t0.out_z > ?
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = any(?) and t0.in_z <= ? and t0.out_z > ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id in (?) and t0.in_z <= ? and t0.out_z > ?
-      binds: [100, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
+      binds: { postgres: [[100], "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"], mariadb: [100, "2024-02-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"] }
   graph:
     Invoice:
       - id: 100

@@ -24,7 +24,7 @@ from parallax.core import Attr, Bitemporal, DomainModel, attr
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import (
     DatabaseAdapter,
-    Row,
+    MappingRow,
 )
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import FixedClock, RetainedObservation
@@ -93,7 +93,7 @@ class WherePosition(Bitemporal, table="where_position", namespace="parallax.comp
 WHERE_POSITION_META = DomainModel(WherePosition)
 
 
-NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}
+NEW_ROW: MappingRow = {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}
 
 
 def new_account() -> mm.Account:
@@ -188,7 +188,7 @@ def published_claims(snapshot: Snapshot[WireEntity]) -> tuple[RetainedObservatio
 INFINITY_INSTANT: Final[dt.datetime] = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
 
 
-def balance_row(*, in_z: dt.datetime, out_z: dt.datetime = INFINITY_INSTANT) -> Row:
+def balance_row(*, in_z: dt.datetime, out_z: dt.datetime = INFINITY_INSTANT) -> MappingRow:
     return {
         "bal_id": 1,
         "acct_num": "A-1",

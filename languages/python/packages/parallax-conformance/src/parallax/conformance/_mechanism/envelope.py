@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from parallax.core.db_port import Row
+from parallax.core.db_port import MappingRow
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel import entity_by_name
 from parallax.core.predicate import CanonicalDocumentError, ModelRejectedError
@@ -163,7 +163,7 @@ def emissions(
     ]
 
 
-def graph_root(root: object) -> Row | None:
+def graph_root(root: object) -> MappingRow | None:
     """One published result position as the value `then.graph` grades.
 
     A conforming root IS the graph node. A classified root publishes its record
@@ -173,8 +173,8 @@ def graph_root(root: object) -> Row | None:
     `then.storedDataIssues` rather than rendered as though it were a node.
     """
     if isinstance(root, handle.InvalidData):
-        return cast("Row | None", cast("handle.InvalidData[object]", root).data)
-    return cast("Row", root)
+        return cast("MappingRow | None", cast("handle.InvalidData[object]", root).data)
+    return cast("MappingRow", root)
 
 
 # The wire spelling each pinned as-of axis is emitted under in a milestone-set

@@ -91,10 +91,10 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(profile_run: 
     db.transact(correct, concurrency="optimistic")
 
     closed = profile_run.port.execute(_CLOSED_ROWS, [])
-    assert [row["from_z"] for row in closed] == [_V2]
+    assert [row[0] for row in closed] == [_V2]
 
     current_rows = profile_run.port.execute(_CURRENT_ROWS, [])
-    assert [(row["from_z"], row["valid_end"], row["val"]) for row in current_rows] == [
+    assert current_rows == [
         (_V1, _V2, Decimal("50.00")),
         (_V2, _V3, Decimal("100.00")),
         (_V3, None, Decimal("150.00")),

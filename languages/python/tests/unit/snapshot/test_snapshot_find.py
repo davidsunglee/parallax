@@ -23,7 +23,14 @@ from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObject, attr, deep_fetch
 from parallax.core.base import INFINITY
-from parallax.core.db_port import DatabaseConnection, DocumentReadOrdinals, Row, TransactionOutcome
+from parallax.core.db_port import (
+    DatabaseConnection,
+    DocumentReadOrdinals,
+    MappingRow,
+    PipelineStatement,
+    Row,
+    TransactionOutcome,
+)
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import (
@@ -189,7 +196,7 @@ class QueuePort(ConnectsAsItself):
 
     dialect: Dialect = POSTGRES
 
-    def __init__(self, responses: Sequence[list[Row]]) -> None:
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
         self._responses = list(responses)
         self.executed: list[tuple[str, list[object]]] = []
 
@@ -200,7 +207,7 @@ class QueuePort(ConnectsAsItself):
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         self.executed.append((sql, list(binds)))
-        return fold_mapping_rows(self._responses.pop(0), document_reads)
+        return fold_mapping_rows(self._responses.pop(0), document_reads, sql)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -209,6 +216,17 @@ class QueuePort(ConnectsAsItself):
         self, body: Callable[[DatabaseConnection], T], *, isolation: str | None = None
     ) -> TransactionOutcome[T]:  # pragma: no cover
         raise NotImplementedError
+
+
+class PipelineQueuePort(QueuePort):
+    def __init__(self, responses: Sequence[list[MappingRow]]) -> None:
+        super().__init__(responses)
+        self.pipelines: list[tuple[PipelineStatement, ...]] = []
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        batch = tuple(statements)
+        self.pipelines.append(batch)
+        return super().execute_pipeline(batch)
 
 
 def test_find_issues_one_statement_per_non_empty_level() -> None:
@@ -240,6 +258,37 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
     rows = _rows(result.graph)
     items = _refs(_view(rows, _root(result), "items"))
     assert [_value(rows, ref, "OrderItem", "id") for ref in items] == [11]
+
+
+def test_dependency_ready_sibling_levels_share_one_pipeline_batch() -> None:
+    port = PipelineQueuePort(
+        [
+            [{**_ORDER_ROW, "id": 1}],
+            [{"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}],
+            [{"id": 21, "order_id": 1, "label": "urgent", "priority": 2}],
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [
+                {"segments": [{"rel": "Order.items"}]},
+                {"segments": [{"rel": "Order.tags"}]},
+            ],
+        }
+    )
+
+    result = _find(query, ORDERS, port)
+
+    (pipeline,) = port.pipelines
+    assert len(pipeline) == 2
+    assert [statement.binds for statement in pipeline] == [([1],), ([1],)]
+    assert all(" = any(%s)" in statement.sql for statement in pipeline)
+    rows = _rows(result.graph)
+    root = _root(result)
+    assert len(_refs(_view(rows, root, "items"))) == 1
+    assert len(_refs(_view(rows, root, "tags"))) == 1
 
 
 def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
@@ -344,7 +393,7 @@ def test_find_carries_a_declared_null_placement_into_child_level_sql(
     # level's own ORDER BY. Each pairing renders differently on Postgres because
     # the dialect compensates only where its native placement is wrong: an
     # unauthored placement and `desc`/`first` already hold, so both render plain.
-    root: list[Row] = [
+    root: list[MappingRow] = [
         {
             "id": 1,
             "name": "Ada",
@@ -840,12 +889,31 @@ def test_the_values_lane_publishes_a_clean_row_beside_a_classified_one() -> None
     assert {issue.code for issue in classified.issues} == {"stored-data-attribute-null"}
 
 
-def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> None:
+def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The read and the conversion both succeed; what fails is deriving the node's
     # own milestone edge, because the row carries no Transaction-Time start at
     # all. State attachment and root publication are atomic, so the whole result
     # is refused rather than partly published.
-    port = QueuePort([[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]])
+    def refuse_materialization(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise TemporalReadError("missing Tx start for Balance[id=1]")
+
+    monkeypatch.setattr(_read, "materialize_graph", refuse_materialization)
+    port = QueuePort(
+        [
+            [
+                {
+                    "bal_id": 1,
+                    "acct_num": "A-1",
+                    "val": Decimal("5.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "out_z": INFINITY,
+                }
+            ]
+        ]
+    )
     db = handle.Database.connect(port, read_models.BALANCE_MODEL)
     with raises_contextualized(SnapshotMaterializationError) as refusal:
         db.find(read_models.Balance.where(read_models.Balance.id == 1))

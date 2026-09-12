@@ -97,7 +97,7 @@ from parallax.core.predicate import (
     StringMatch,
     StringOp,
 )
-from parallax.core.predicate._validated import ValidatedPredicate
+from parallax.core.predicate._validated import DeferredKeySet, ValidatedPredicate
 from parallax.core.sql_gen._context import SqlGenError, StatementBuilder
 from parallax.core.sql_gen._context import table_layout as _table_layout
 
@@ -534,6 +534,16 @@ def lower_predicate(product: ValidatedPredicate, scope: ResolutionScope) -> str:
             return _lower_string(product, scope)
         case Membership(op=tag, values=values):
             subject = scope.subject_for(_attribute_member(product))
+            operands = _operands(product)
+            if len(operands) == 1 and isinstance(operands[0], DeferredKeySet):
+                if tag != "in":  # pragma: no cover - generated child reads are positive
+                    raise SqlGenError("a deferred key set supports only positive membership")
+                scope.ctx.bind_framework(operands[0])
+                return (
+                    f"{subject.compared} = any(?)"
+                    if scope.dialect.name == "postgres"
+                    else f"{subject.compared} in (__parallax_deferred_keys__)"
+                )
             holes = ", ".join("?" for _ in values)
             del values
             for index in range(len(_operands(product))):

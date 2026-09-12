@@ -79,8 +79,8 @@ when:
             postgres: select t0.id, t0.name, t0.in_z, t0.out_z from invoice t0 where t0.id = ? and t0.out_z = ?
           binds: [100, infinity]
         - sql:
-            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id in (?) and t0.out_z = ?
-          binds: [100, infinity]
+            postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.invoice_id = any(?) and t0.out_z = ?
+          binds: [[100], infinity]
       expectRows:
         - { id: 100, name: INV-100, in_z: "2024-01-01T00:00:00.000000Z", out_z: infinity }
     - write:

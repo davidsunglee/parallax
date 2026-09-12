@@ -51,6 +51,12 @@ For every supported adapter, the smoke suite covers:
 - a Structured Column read whose SQL presence/value pair becomes one managed
   `DocumentRead`, with the presence cell absent from the returned row and SQL
   `NULL` distinct from JSON null
+- ordinary and Structured Column reads return positional rows in select-list
+  order, without exposing driver column-name mappings
+- two independent reads submitted through `executePipeline` use distinct result
+  handles, return their row batches in statement order, and complete in one
+  pipeline synchronization; array-valued child keys cross the adapter as one
+  bound parameter
 - a transaction callback that commits on success and reports `Committed(value)`
 - distinct `BeginFailed`, callback- and commit-triggered `RolledBack`, and
   callback- and commit-triggered `RollbackFailed` boundary outcomes
@@ -156,6 +162,7 @@ adapters declare. The language spec names where that proof lives.
 Each adapter must also prove the port's failure-instance identity rule
 (`m-db-port`). The rule binds every error the port itself raises, so the proof
 must reach every raise site: a statement failure surfaced by `execute`, one
+surfaced by `executePipeline`, one
 surfaced by `executeWrite`, and each transaction-boundary failure surfaced by
 `transaction` — its begin, its commit, and its rollback. An adapter that wraps
 the whole boundary translates all three, so a proof stopping at commit leaves the

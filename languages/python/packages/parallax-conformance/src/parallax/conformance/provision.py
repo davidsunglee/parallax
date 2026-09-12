@@ -74,6 +74,7 @@ if TYPE_CHECKING:
         DatabaseConnection,
         DocumentReadOrdinals,
         IsolationLevel,
+        PipelineStatement,
         PoolMetricsSource,
         Row,
         TransactionOutcome,
@@ -400,6 +401,9 @@ class ContainerDatabase:  # pragma: no cover - exercised by the Docker-backed la
         document_reads: Sequence[DocumentReadOrdinals] = (),
     ) -> list[Row]:
         return self._session.execute(sql, binds, document_reads)
+
+    def execute_pipeline(self, statements: Sequence[PipelineStatement]) -> list[list[Row]]:
+        return self._session.execute_pipeline(statements)
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         return self._session.execute_write(sql, binds)
