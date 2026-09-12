@@ -6369,11 +6369,15 @@ rows receive the transaction's shared lock.
   its subject, readings and units, declared comparisons, explicit incomplete
   cells and errors, and provenance: commit and dirty state; Budget Contract,
   workload-catalog, and `uv.lock` digests; hardware and OS identity; CPython and
-  PostgreSQL versions; and the sampling protocol. Authority classification is a
-  pure comparison of that provenance with the Budget Contract: only a clean tree
-  at a commit with an exactly matching authority fingerprint, contract digest,
-  and sampling protocol is `authoritative`; every other useful reading is
-  `non-authoritative`.
+  PostgreSQL versions; and the sampling protocol. A declared comparison names
+  its workload and cell, an `at-most` or `at-least` operator, numeric limit,
+  unit, and outcome. Provenance capture reads the commit and dirty state from
+  Git and the server version from the connected PostgreSQL source. Semantic
+  validation requires the commit to resolve to a commit object and recomputes
+  the authority label from the provenance and current Budget Contract. Only a
+  clean tree at a commit with an exactly matching authority fingerprint,
+  contract digest, and sampling protocol is `authoritative`; every other useful
+  reading is `non-authoritative`.
 - **Portfolio and observation posture.** The Snapshot delivery portfolio is one
   atomic report over every required live, provider-free, eager, streamed,
   first-result, memory-scaling, and materialization-stress cell. It withholds an

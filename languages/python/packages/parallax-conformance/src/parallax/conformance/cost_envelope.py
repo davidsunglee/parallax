@@ -8,10 +8,10 @@ import os
 import platform
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, Protocol, cast
 
 from jsonschema import Draft202012Validator
 
@@ -75,7 +75,7 @@ class Provenance:
         contract: BudgetContract,
         *,
         workload_digest: str,
-        postgres: str,
+        postgres: PostgresVersionSource,
     ) -> Provenance:
         repo = case_format.find_repo_root()
         memory = _sysctl("hw.memsize")
@@ -98,7 +98,7 @@ class Provenance:
             ram_gib=ram_gib,
             os=platform.platform(),
             cpython=platform.python_version(),
-            postgres=postgres,
+            postgres=_postgres_version(postgres),
             sampling=contract.sampling,
         )
 
@@ -119,6 +119,40 @@ class Provenance:
             "sampling": dict(self.sampling),
         }
 
+    @classmethod
+    def from_document(cls, document: Mapping[str, object]) -> Provenance:
+        return cls(
+            commit=cast("str", document["commit"]),
+            dirty=cast("bool", document["dirty"]),
+            budget_contract_digest=cast("str", document["budgetContractDigest"]),
+            workload_digest=cast("str", document["workloadDigest"]),
+            lock_digest=cast("str", document["lockDigest"]),
+            machine=cast("str", document["machine"]),
+            cpu=cast("str", document["cpu"]),
+            cores=cast("int", document["cores"]),
+            ram_gib=cast("int", document["ramGiB"]),
+            os=cast("str", document["os"]),
+            cpython=cast("str", document["cpython"]),
+            postgres=cast("str", document["postgres"]),
+            sampling=cast("Mapping[str, object]", document["sampling"]),
+        )
+
+
+class PostgresVersionSource(Protocol):
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[object] = (),
+    ) -> Sequence[Mapping[str, object]]: ...
+
+
+def _postgres_version(source: PostgresVersionSource) -> str:
+    rows = source.execute("show server_version", ())
+    if len(rows) != 1 or not isinstance(rows[0].get("server_version"), str):
+        raise ValueError("PostgreSQL did not report exactly one server_version")
+    return cast("str", rows[0]["server_version"])
+
 
 @dataclass(frozen=True, slots=True)
 class Reading:
@@ -133,7 +167,9 @@ class Reading:
 class Comparison:
     workload: str
     cell: str
-    ceiling: float
+    operator: Literal["at-most", "at-least"]
+    limit: float
+    unit: str
     outcome: ComparisonOutcome
 
 
@@ -194,3 +230,15 @@ def validate(envelope: CostReportEnvelope | Mapping[str, object]) -> None:
     document = envelope.document() if isinstance(envelope, CostReportEnvelope) else dict(envelope)
     validator = cast("Any", Draft202012Validator(schema))
     validator.validate(document)
+    provenance_document = cast("Mapping[str, object]", document["provenance"])
+    provenance = Provenance.from_document(provenance_document)
+    try:
+        _git(repo, "cat-file", "-e", f"{provenance.commit}^{{commit}}")
+    except subprocess.CalledProcessError as error:
+        raise ValueError(f"provenance commit {provenance.commit!r} is not a commit") from error
+    expected = classify_authority(provenance, BudgetContract.load())
+    if document["authority"] != expected:
+        raise ValueError(
+            f"authority {document['authority']!r} disagrees with provenance "
+            f"classification {expected!r}"
+        )
