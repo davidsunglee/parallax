@@ -770,7 +770,7 @@ def _as_read(case: Case, when: Mapping[str, Any], statements: Any, *, row_form: 
     }
     if "tolerance" in case.then:
         then["tolerance"] = case.then["tolerance"]
-    read_when = {**({"uow": case.uow} if case.uow else {}), **when}
+    read_when = {**({"uow": case.uow} if "uow" in case.when else {}), **when}
     return replace(
         case,
         raw=frozen_view(
