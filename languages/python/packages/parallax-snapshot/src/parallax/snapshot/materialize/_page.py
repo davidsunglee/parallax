@@ -378,11 +378,12 @@ class PageBuilder:
         and keeps its diagnosis, so it shares with nothing — not even a second
         read of the identical unreadable row.
 
-        A projection repeating a judgment some earlier projection of its logical
-        node already made carries that projection's own issue record, so one
-        occurrence reached twice retains one frozen rejected value rather than
-        two equal ones. This is the earliest point where sharing is possible: the
-        logical node a row belongs to is not known until its members decode.
+        This is the adapter for rows whose conversion is already complete: it
+        derives identity from the supplied members and records the same tuple as
+        both raw witness and deferred result. Identity-first provider reads call
+        :meth:`add_claim` directly. In both paths a Root View compares every claim
+        for the logical node before invoking a decoder, then shares one Page-owned
+        Entity State among equal witnesses.
         """
         key = (
             None
