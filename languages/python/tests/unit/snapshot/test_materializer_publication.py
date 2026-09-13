@@ -17,6 +17,7 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 from enum import IntEnum
+from itertools import permutations
 from typing import Any, cast
 
 import pytest
@@ -38,7 +39,13 @@ from parallax.core import (
 )
 from parallax.core.entity import GraphConstructionError, RelationshipPath
 from parallax.core.entity._model import model_of
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, RelationshipIdentity
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    RelationshipIdentity,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
+)
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ObjectKey
@@ -49,9 +56,11 @@ from parallax.snapshot.materialize import (
     RootView,
     SnapshotConsistencyError,
     StoredDataIssueInput,
+    _convert,
 )
 from parallax.snapshot.materialize._page import ABSENT, PageBuilder, page_rows
 from parallax.snapshot.materialize._publication import publication_issue
+from parallax.snapshot.materialize._root import _member_order  # pyright: ignore[reportPrivateUsage]
 from tests._support import snapshot_models as sm
 from tests.unit.snapshot._snapshot_page_support import PageFixture, invalid_record
 
@@ -150,7 +159,7 @@ def test_loaded_null_and_loaded_empty_are_distinct_from_unloaded() -> None:
 def test_roots_publish_in_the_order_they_were_given() -> None:
     # Every `find` today answers a single-root Page, so root order is a
     # structural consequence there rather than a pinned property; a multi-root
-    # multi-root Page is what states it.
+    # Page is what states it.
     fixture = PageFixture(_ORDERS)
     first = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 1})
     second = fixture.node("SnapOrder", {**_ORDER_ROW, "id": 2, "name": "Linus"})
@@ -308,9 +317,20 @@ def test_each_to_many_view_keeps_its_own_order_through_the_root_view() -> None:
     assert root.items[1] is root.items_by_ship_date[0]
 
 
-def test_unequal_scalar_witnesses_refuse_instead_of_selecting_a_projection() -> None:
+def test_unequal_scalar_witnesses_refuse_before_any_payload_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     items = "parallax.compatibility.Order.items"
     by_ship_date = "parallax.compatibility.Order.itemsByShipDate"
+    calls = 0
+    decode = _convert._decode_row  # pyright: ignore[reportPrivateUsage]
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return decode(*args, **kwargs)
+
+    monkeypatch.setattr(_convert, "_decode_row", counting)
 
     def conflict(*views: str) -> SnapshotConsistencyError:
         fixture = PageFixture(_STORY_ORDERS, *views)
@@ -319,12 +339,15 @@ def test_unequal_scalar_witnesses_refuse_instead_of_selecting_a_projection() -> 
         second = fixture.node("OrderItem", {**_ITEM_ROW, "sku": "y"})
         fixture.attach(order, items, (first,))
         fixture.attach(order, by_ship_date, (second,))
+        page = fixture.page(order)
         with pytest.raises(SnapshotConsistencyError) as raised:
-            fixture.materialize(order)
+            RootView(page)
+        assert page.judged_states == {}
         return raised.value
 
     forward = conflict(items, by_ship_date)
     reverse = conflict(by_ship_date, items)
+    assert calls == 0
     assert forward.code == reverse.code == "snapshot-projection-conflict"
     assert forward.object_key == reverse.object_key
     assert forward.coordinates == reverse.coordinates
@@ -334,6 +357,73 @@ def test_unequal_scalar_witnesses_refuse_instead_of_selecting_a_projection() -> 
         == reverse.members
         == (AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "sku"),)
     )
+
+
+def test_three_unequal_occurrences_report_one_canonical_conflict() -> None:
+    # Three provider occurrences of one child disagree along different member
+    # sets. Every arrival permutation must select the same witness pair, differing
+    # members, and canonical occurrence positions without exposing stored values.
+    items = "parallax.compatibility.Order.items"
+    rows = (
+        _ITEM_ROW,
+        {**_ITEM_ROW, "sku": "y"},
+        {**_ITEM_ROW, "quantity": 9},
+    )
+    conflicts: list[SnapshotConsistencyError] = []
+    for ordered in permutations(rows):
+        fixture = PageFixture(_STORY_ORDERS, items)
+        order = fixture.node("Order", _ORDER_ROW)
+        children = tuple(fixture.node("OrderItem", row) for row in ordered)
+        fixture.attach(order, items, children)
+        with pytest.raises(SnapshotConsistencyError) as raised:
+            RootView(fixture.page(order))
+        conflicts.append(raised.value)
+
+    first, *rest = conflicts
+    assert all(
+        (
+            conflict.object_key,
+            conflict.coordinates,
+            conflict.members,
+            conflict.occurrences,
+        )
+        == (first.object_key, first.coordinates, first.members, first.occurrences)
+        for conflict in rest
+    )
+    assert str(first) == (
+        "parallax.compatibility.OrderItem: projections disagree (snapshot-projection-conflict)"
+    )
+
+
+# Canonical conflict diagnostics order declared Attributes, Value Objects, and
+# nested Value Object Attributes independently of set iteration, so every
+# permutation reports one stable declared-member sequence.
+def test_conflict_member_order_covers_every_declared_member_kind() -> None:
+    entity = EntityIdentity(_NAMESPACE, "Customer")
+    occurrence = ValueObjectIdentity(entity, ("address",))
+    nested = ValueObjectAttributeIdentity(occurrence, "street")
+
+    assert sorted((nested, occurrence, AttributeIdentity(entity, "name")), key=_member_order) == [
+        AttributeIdentity(entity, "name"),
+        occurrence,
+        nested,
+    ]
+
+
+# Two concrete subtypes claiming one family key are a conflict even when arrival
+# selects the later-sorting concrete first; the diagnostic reorders the pair by
+# concrete identity before deriving its Object Key and differing members.
+def test_concrete_disagreement_canonicalizes_the_diagnostic_entity() -> None:
+    fixture = PageFixture(_ANIMAL, "parallax.compatibility.AnimalOwner.animals")
+    owner = fixture.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
+    dog = fixture.node("Dog", _DOG_ROW)
+    cat = fixture.node("Cat", {**_CAT_ROW, "id": 1})
+    fixture.attach(owner, "parallax.compatibility.AnimalOwner.animals", (dog, cat))
+
+    with pytest.raises(SnapshotConsistencyError) as raised:
+        RootView(fixture.page(owner))
+
+    assert raised.value.object_key.entity == EntityIdentity(_NAMESPACE, "Cat")
 
 
 def test_duplicate_projections_of_one_finding_retain_it_once() -> None:

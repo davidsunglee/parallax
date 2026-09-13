@@ -106,7 +106,7 @@ def _required_features(query: ObjectQueryNode) -> frozenset[str]:
 def _includes_over_a_scan(query: ObjectQueryNode) -> bool:
     """Whether ``query`` eager-fetches over a SCANNED temporal dimension.
 
-    A milestone-set read answers one graph per milestone, and combining that
+    A milestone-set read answers one root per milestone, and combining that
     with Includes is the ``snapshot-history-includes`` Feature. Both halves are
     clauses of one flat query, so this is two field reads rather than a walk: an
     Include Path names at least one relationship level by construction, and a

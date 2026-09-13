@@ -5,7 +5,7 @@ The representative workload — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-the shipped loop from ``PreparedRead.materialize`` to ``PageBuilder.finish``.
+the shipped loop from ``PreparedRead.convert_driver`` to ``PageBuilder.finish``.
 The workload itself is ``tests/unit/_snapshot_materialization_support.py``, which
 the gated scaling regression drives through the same functions, so the report and
 its grader measure one workload rather than two.

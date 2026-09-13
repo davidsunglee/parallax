@@ -234,6 +234,21 @@ class RowMaterializer:
                 pass
         return self._value(row, self.stages.result_key(resolved, key))
 
+    def classify_raw_member(
+        self, raw: object, resolved: EntityIdentity, key: str
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        """Classify a member from the carrier retained in a Payload Witness."""
+        shared = self.stages.shared_document
+        if shared is not None:
+            try:
+                return shared.classify_located_member_from(raw, resolved, key)
+            except KeyError:
+                pass
+        direct = self.stages.direct_documents
+        if direct is None:
+            raise KeyError(key)
+        return direct.classify_member_from(raw, resolved, key)
+
     def classify_member_of(
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
     ) -> tuple[object, tuple[DocumentFinding, ...]]:
@@ -477,6 +492,18 @@ class CompiledRead:
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str
     ) -> object:
         return self._materializer.raw_member_of(row, resolved, key)
+
+    def classify_raw_member(
+        self, raw: object, resolved: EntityIdentity, key: str
+    ) -> tuple[object, tuple[DocumentFinding, ...]]:
+        """Classify a member from its Page-retained raw witness carrier."""
+        return self._materializer.classify_raw_member(raw, resolved, key)
+
+    def publication_keys(self, resolved: EntityIdentity, variant: str | None) -> tuple[str, ...]:
+        """The logical flat-row keys left by structural materialization stages."""
+        return self._materializer.stages.publication_keys(
+            self.result_keys, self.coordinate_reads, resolved, variant
+        )
 
     def classify_member_of(
         self, row: Row | Mapping[str, object], resolved: EntityIdentity, key: str

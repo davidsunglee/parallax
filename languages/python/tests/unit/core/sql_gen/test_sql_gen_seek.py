@@ -179,6 +179,7 @@ def test_the_appended_key_still_captures_a_cell_of_its_own() -> None:
         POSTGRES,
     )
     assert compiled.coordinate_reads == ("parallax_seek_0",)
+    assert "parallax_seek_0" not in compiled.publication_keys(compiled.target, None)
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on, "
         "t0.id parallax_seek_0 from orders t0"

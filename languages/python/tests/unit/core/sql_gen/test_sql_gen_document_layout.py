@@ -26,7 +26,6 @@ from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import MISSING
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.sql_gen._compile import CompiledRead
@@ -242,7 +241,9 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
     )
 
-    assert document.raw_member_of({"payload": SQL_NULL}, person, "display_name") is MISSING
+    assert document.raw_member_of({"payload": SQL_NULL}, person, "display_name") is SQL_NULL
+    with pytest.raises(KeyError, match="missing"):
+        document.classify_raw_member(SQL_NULL, marker, "missing")
     with pytest.raises(KeyError, match="missing"):
         document.raw_member_of(_DOCUMENT_ROW, person, "missing")
     with pytest.raises(KeyError, match="missing"):
@@ -251,6 +252,8 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         document.classify_member_of(_DOCUMENT_ROW, marker, "missing")
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
         document.raw_member_of({"payload": _DOCUMENT_VALUE}, person, "display_name")
+    with pytest.raises(SqlGenError, match="not a DocumentRead"):
+        document.classify_member_of({"payload": _DOCUMENT_VALUE}, person, "display_name")
 
     columns = compile_read(
         oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"

@@ -80,7 +80,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from parallax.core import continuation, deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
@@ -110,12 +110,6 @@ from parallax.core.object_query._validated import (
     ValidatedObjectQuery,
     ValidatedTemporalSelection,
 )
-from parallax.core.sql_gen._compile import (
-    CompiledRead,
-    CompiledTemplate,
-    compile_read,
-    compile_template,
-)
 from parallax.core.temporal_read import (
     Edge,
     Pin,
@@ -123,6 +117,11 @@ from parallax.core.temporal_read import (
     validated_query_pin,
 )
 from parallax.core.unit_work import Concurrency, EntityStateRow
+from parallax.core.wire import encode_wire
+
+if TYPE_CHECKING:
+    from parallax.core.base import ManagedValue
+
 from parallax.snapshot._read_result import (
     FindResult,
     HistoryFindResult,
@@ -134,10 +133,15 @@ from parallax.snapshot.handle._materialization import (
     INERT as MATERIALIZATION_INERT,
 )
 from parallax.snapshot.handle._materialization import (
+    CompiledRead,
+    CompiledTemplate,
     EagerPageRead,
     FlatPageRead,
     MaterializationObserver,
     Materializer,
+    RowPublication,
+    compile_read,
+    compile_template,
 )
 from parallax.snapshot.handle._retention import (
     ObservationLedger,
@@ -466,7 +470,7 @@ def find(
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class RootRead:
     """One root statement already executed, together with what the Page built from
     its provider rows must be built under.
@@ -484,6 +488,12 @@ class RootRead:
     coordinates: tuple[ContinuationCoordinate | None, ...]
     temporal: tuple[ValidatedTemporalSelection, ...]
     observer: MaterializationObserver = MATERIALIZATION_INERT
+
+    def take_rows(self) -> tuple[Row, ...]:
+        """Transfer the provider rows to Page assembly and retain none here."""
+        rows = self.rows
+        self.rows = ()
+        return rows
 
 
 def read_roots(
@@ -586,14 +596,16 @@ def build_page(
     observations = ObservedRows()
     correlations = _correlation_table(plan_, meta)
 
+    root_rows = root_read.take_rows()
     root_refs = _convert_rows(
         builder,
         ROOT_LEVEL,
         root_read.prepared,
-        root_read.rows,
+        root_rows,
         observations,
         correlations[ROOT_LEVEL],
     )
+    del root_rows
 
     level_refs: list[tuple[int, ...]] = [()] * len(plan_.levels)
     completed: set[int] = set()
@@ -754,27 +766,6 @@ def _retained(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class RowPublication:
-    """One flat batch and the Page-owned Entity States that judged it.
-
-    Staging carries what contradicted the model rather than deciding about it, so
-    a batch reaching a lane through :func:`judge_rows` has passed no publication
-    gate and one reaching it through :func:`publishable_rows` has.
-
-    ``variants`` and ``documents`` retain header metadata; ``rows`` and ``compiled``
-    retain the positional input and ordinal plan needed only to render a flat result
-    mapping. ``page`` retains raw deferred occurrences and their root positions.
-    """
-
-    variants: tuple[str | None, ...]
-    documents: tuple[object | None, ...]
-    page: Page
-    roots: tuple[int, ...]
-    rows: tuple[Row, ...]
-    compiled: CompiledRead
-
-
 def publishable_rows(
     model: CatalogedModel,
     compiled: CompiledRead,
@@ -784,10 +775,10 @@ def publishable_rows(
 ) -> RowPublication:
     """Materialize and validate one predicate-write batch.
 
-    The refusing peer of :func:`judge_rows`: a predicate write has no in-band
-    channel for a stored-data verdict, so it applies the publication gate before
-    deriving observations or writes. History and row reads use ``judge_rows`` and
-    publish invalid roots in band.
+    A predicate write has no in-band channel for a stored-data verdict, so it
+    applies the publication gate before deriving observations or writes. History
+    and row reads publish invalid roots in band through their own Root View
+    publication.
     """
     materializer = Materializer()
     staged = materializer.read_page(FlatPageRead(model, compiled, read, pin))
@@ -798,32 +789,6 @@ def publishable_rows(
 
     tuple(materializer.roots(staged.page, require))
     return staged
-
-
-def judge_rows(
-    model: CatalogedModel,
-    compiled: CompiledRead,
-    rows: Sequence[Row],
-    *,
-    pin: Pin,
-    observer: MaterializationObserver = MATERIALIZATION_INERT,
-) -> RowPublication:
-    """Materialize one flat row batch into a Page before lane-specific use.
-
-    The prepared read carries the compiled transform's findings, family-tag
-    verdict, and classified-member provenance into conversion, so the Page
-    carries whatever contradicted the model and each lane decides what to
-    do with it.
-    """
-    prepared = bind(model, compiled)
-    schema = ViewSchema.of()
-    builder = PageBuilder(schema, observer)
-    converted = tuple(prepared.convert_driver(row, builder, source=ROOT_LEVEL) for row in rows)
-    roots = tuple(item[0] for item in converted)
-    variants = tuple(item[3] for item in converted)
-    documents = tuple(item[2] for item in converted)
-    page = builder.finish(roots, pin)
-    return RowPublication(variants, documents, page, roots, tuple(rows), compiled)
 
 
 def find_rows(
@@ -888,7 +853,19 @@ def _published_rows(stage: RowPublication, meta: Metamodel) -> tuple[PublishedRo
         node = root.roots[0]
         detached: Mapping[str, object] | None = None
         if node is not None:
-            values, _findings, _classified = stage.compiled.decode_payload(stage.rows[position])
+            values = dict(
+                EntityStateRow.over_members(
+                    root.layout(node), root.member_values(node), absent=ABSENT
+                )
+            )
+            for source, target in stage.publication_renames[position]:
+                if source in values:
+                    values[target] = values.pop(source)
+            for key, neutral_type in stage.publication_encodings[position]:
+                if key in values and values[key] is not None:
+                    values[key] = encode_wire(neutral_type, cast("ManagedValue", values[key]))
+            for key in stage.publication_keys[position]:
+                values.setdefault(key, None)
             if variant is not None:
                 values["familyVariant"] = variant
             detached = MappingProxyType(values)

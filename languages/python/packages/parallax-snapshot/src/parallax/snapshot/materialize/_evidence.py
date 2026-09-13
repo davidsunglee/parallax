@@ -8,10 +8,10 @@ cost a second walk and leave an intermediate frozen form nobody holds.
 
 The product is ordinary immutable Python, with no frozen-dict type of its own,
 and it is the judging row's candidate rather than the copy a diagnosis is
-guaranteed to carry: where two rows judge one occurrence alike, the graph builder
-keeps the copy that arrived first and drops the later equal one, so exactly one
-survives. Every seam above that decision shares the surviving object by reference
-rather than translating or detaching its own.
+guaranteed to carry. Equal Payload Witnesses share one Page-owned Entity State
+and its frozen evidence; witness-distinct states remain separate even under one
+logical key. Every seam above that decision shares the retained object by
+reference rather than translating or detaching its own.
 """
 
 from __future__ import annotations

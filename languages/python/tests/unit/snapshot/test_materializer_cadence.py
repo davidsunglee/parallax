@@ -12,14 +12,15 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.object_query import deserialize
-from parallax.core.sql_gen._compile import compile_read
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._materialization import (
     FlatPageRead,
     MaterializationObserver,
     Materializer,
+    compile_read,
 )
 from parallax.snapshot.handle._preflight import preflight
+from parallax.snapshot.handle._read import _published_rows  # pyright: ignore[reportPrivateUsage]
 from parallax.snapshot.materialize import Page, PageBuilder, RootView
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
@@ -90,7 +91,9 @@ def _publish(page: Page) -> Callable[[RootView, int], Iterator[object]]:
     return publish
 
 
-def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
+def test_read_page_and_roots_expose_only_aggregate_delivery_cadence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     observer = _RecordingObserver()
     materializer = Materializer(observer)
 
@@ -105,8 +108,13 @@ def test_read_page_and_roots_expose_only_aggregate_delivery_cadence() -> None:
     compiled = compile_read(plan.root, meta, POSTGRES, result_form="instance")
     rows = tuple(tuple(_row(1)[key] for key in compiled.result_keys) for _ in range(2))
 
-    page = materializer.read_page(FlatPageRead(model, compiled, lambda: rows, Pin())).page
-    assert list(materializer.roots(page, _publish(page))) == [0, 1]
+    stage = materializer.read_page(FlatPageRead(model, compiled, lambda: rows, Pin()))
+
+    def second_decode(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("flat row publication decoded the provider row twice")
+
+    monkeypatch.setattr(type(compiled), "decode_payload", second_decode)
+    assert len(_published_rows(stage, meta)) == 2
     assert observer.events == [
         ("prepared", 1),
         ("statement_rendered", ROOT_LEVEL),

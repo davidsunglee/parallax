@@ -1,4 +1,4 @@
-# m-snapshot-read — Snapshot Graph Materialization
+# m-snapshot-read — Snapshot Materialization
 
 `m-snapshot-read` specifies the **snapshot graph**: the typed plain value graph
 a snapshot read returns — identity-resolved within the graph, connected by hard
@@ -554,18 +554,14 @@ that is not is the stored `NULL` in a non-nullable leading **Column** named abov
 which the hoisted leading range may exclude. A coordinate missing after execution is a
 violation of the `m-sql` / `m-db-port` contract rather than a stream state.
 
-The two deliver the same roots at the same pins whatever the query — save the one
-root the stated exception above lets a continuing page's hoisted range exclude, which
-a whole-result read has no seek to exclude with — and they deliver them in the same
-sequence wherever their two orders agree. Over **one**
-key's own history they always do: the Continuation Order there is the edge rank,
-which is what the whole-result read groups by. Across several keys they generally
-do not, and that is true of a read declaring no `orderBy` as much as of one that
-authors a Sort Key — the whole-result read ranks by milestone across every key and
-puts every root of one milestone together, while the stream ranks by the leading
-term, the primary key or an authored member, before it reaches the edge. A key
-whose milestones interleave with another key's is therefore delivered in one
-sequence eagerly and another streamed.
+The two deliver the same roots at the same pins and in the same Continuation
+Order whatever the query, save the one root the stated exception above lets a
+continuing page's hoisted range exclude, which a whole-result read has no seek to
+exclude with. A milestone-set whole result is the finite form of the same flat
+delivery: it ranks the leading authored term or primary key before the milestone
+edge and never regroups roots by milestone. Across several keys, milestones may
+therefore interleave exactly as the Continuation Order places them in both eager
+and streamed results.
 
 ### Ending a delivery at a tie
 
