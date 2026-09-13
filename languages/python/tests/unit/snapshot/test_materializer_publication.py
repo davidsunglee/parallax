@@ -513,12 +513,11 @@ def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
     assert first.object_key.entity.name == "ConflictAlpha"
 
 
+# Two sibling levels can project one invalid row twice. Page accumulation assigns
+# both projections one logical identity; Root View judgment compares their raw
+# witnesses before decoding and reuses one Page-owned Entity State when they are
+# equal, so the published node lists the shared rejected value exactly once.
 def test_duplicate_projections_of_one_finding_retain_it_once() -> None:
-    # Two sibling levels can project one invalid row twice, and each row is
-    # judged and frozen before anything can know the two are one node. The
-    # duplicate carries the first projection's issue record itself, so the node
-    # holds one rejected value rather than an equal second for the Page's life,
-    # and the Root View lists it once.
     fixture = PageFixture(
         _STORY_ORDERS,
         "parallax.compatibility.Order.items",

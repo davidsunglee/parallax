@@ -350,14 +350,13 @@ def wire_roots(
     Classification runs first and exactly once, so this materializer publishes
     the same verdicts the typed one does: a conforming root answers as itself, a
     hydratable one as its record carrying the unwound value, and a non-hydrating
-    one as its record carrying nothing. ``ordinal_offset`` is where this graph's
-    roots start in the ordered result, nonzero only for a milestone-set read.
+    one as its record carrying nothing. ``ordinal_offset`` is where this Root
+    View's roots start in the ordered result, including a later streamed Page.
 
     ``sources`` is the Source Hint the read retained per allocation index, which
     each published Entity node carries privately — the same evidence the typed
     materializer attaches to the node of the same row, so the two representations
-    license exactly the same writes. ``ordinal_offset`` is nonzero when this Root
-    View begins after earlier result positions, including later streamed Pages.
+    license exactly the same writes.
     """
     classification = classify_roots(root_view, model, ordinal_offset=ordinal_offset)
     unwind = _Unwind(root_view, model, sources)
