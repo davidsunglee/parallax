@@ -386,7 +386,7 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode(
     assert forward.code == reverse.code == "snapshot-projection-conflict"
     assert forward.object_key == reverse.object_key
     assert forward.coordinates == reverse.coordinates
-    assert forward.occurrences == reverse.occurrences
+    assert forward.occurrences == reverse.occurrences == ((0, 1), (0, 2))
     assert (
         forward.members
         == reverse.members
@@ -394,10 +394,11 @@ def test_unequal_scalar_witnesses_refuse_before_any_payload_decode(
     )
 
 
+# Three provider occurrences of one child disagree along different member sets.
+# Every arrival permutation selects the same witness pair and differing members,
+# while the reported positions truthfully follow those witnesses through the
+# physical source order without exposing stored values.
 def test_three_unequal_occurrences_report_one_canonical_conflict() -> None:
-    # Three provider occurrences of one child disagree along different member
-    # sets. Every arrival permutation must select the same witness pair, differing
-    # members, and canonical occurrence positions without exposing stored values.
     items = "parallax.compatibility.Order.items"
     rows = (
         _ITEM_ROW,
@@ -412,6 +413,14 @@ def test_three_unequal_occurrences_report_one_canonical_conflict() -> None:
         fixture.attach(order, items, children)
         with pytest.raises(SnapshotConsistencyError) as raised:
             RootView(fixture.page(order))
+        assert raised.value.occurrences == tuple(
+            sorted(
+                (
+                    (0, ordered.index(rows[0]) + 1),
+                    (0, ordered.index(rows[2]) + 1),
+                )
+            )
+        )
         conflicts.append(raised.value)
 
     first, *rest = conflicts
@@ -420,11 +429,11 @@ def test_three_unequal_occurrences_report_one_canonical_conflict() -> None:
             conflict.object_key,
             conflict.coordinates,
             conflict.members,
-            conflict.occurrences,
         )
-        == (first.object_key, first.coordinates, first.members, first.occurrences)
+        == (first.object_key, first.coordinates, first.members)
         for conflict in rest
     )
+    assert len({conflict.occurrences for conflict in conflicts}) > 1
     assert str(first) == (
         "parallax.compatibility.OrderItem: projections disagree (snapshot-projection-conflict)"
     )
@@ -463,8 +472,8 @@ def test_concrete_disagreement_canonicalizes_the_diagnostic_entity() -> None:
 
 # Three supported concrete siblings carry value-identical positional witnesses
 # under one family key. Reordering their source occurrences must still select the
-# same concrete pair, Object Key Entity, differing-member sequence, and occurrence
-# positions; otherwise source/include order leaks into the public conflict.
+# same concrete pair, Object Key Entity, and differing-member sequence, while the
+# occurrence positions continue to identify the physical Alpha and Beta rows.
 def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
     relationship = "parallax.compatibility.ConflictAnimalOwner.animals"
     occurrences = (
@@ -480,6 +489,14 @@ def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
         fixture.attach(owner, relationship, children)
         with pytest.raises(SnapshotConsistencyError) as raised:
             RootView(fixture.page(owner))
+        assert raised.value.occurrences == tuple(
+            sorted(
+                (
+                    (0, ordered.index(occurrences[0]) + 1),
+                    (0, ordered.index(occurrences[1]) + 1),
+                )
+            )
+        )
         conflicts.append(raised.value)
 
     first, *rest = conflicts
@@ -488,11 +505,11 @@ def test_three_concrete_disagreements_select_one_canonical_pair() -> None:
             conflict.object_key,
             conflict.coordinates,
             conflict.members,
-            conflict.occurrences,
         )
-        == (first.object_key, first.coordinates, first.members, first.occurrences)
+        == (first.object_key, first.coordinates, first.members)
         for conflict in rest
     )
+    assert len({conflict.occurrences for conflict in conflicts}) > 1
     assert first.object_key.entity.name == "ConflictAlpha"
 
 
