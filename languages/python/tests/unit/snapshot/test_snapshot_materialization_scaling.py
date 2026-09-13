@@ -67,7 +67,7 @@ neither rows, Pages, nor executions once full and is outside this size claim.
 An ALLOCATOR total remains a report rather than this gate: its byte level is
 machine- and interpreter-relative, while this class requires exact equality and
 admits no tolerance. The ``tracemalloc`` totals therefore live in the non-gating
-``just python-report-snapshot-materialization``. What is gated here instead is
+the Snapshot member of ``just python-report-cost``. What is gated here instead is
 what the heap's own objects report through :func:`sys.getsizeof`, which two
 points of one process answer exactly. The neighbouring 64-Page item asserts
 allocator bytes because it grades a bounded maximum rather than equality between

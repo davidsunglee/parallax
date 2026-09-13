@@ -9,11 +9,10 @@ per-cell carrier graph with sealed, index-addressed compact rows. COR-108 asks
 for "at least 60% lower retained carrier bytes per projection than the frozen
 baseline". This is the reading that answers it.
 
-Nothing here gates. `just python-report-snapshot-graph-overhead` is a `report`:
-it passes no verdict and belongs to no aggregate, because a total in bytes is
-machine- and interpreter-relative — `tracemalloc` figures move with CPython, and
-every CI job runs the floating `ubuntu-latest` label, so a tight ratio can flip
-on an interpreter bump that changed nothing. At the time, the *shape* of what a
+Nothing here gates. This is dated evidence for the Snapshot member of `just
+python-report-cost`; current authority and every active ceiling live only in
+`spec/budget-contract.yaml`. The report displays outcomes but never turns an
+outside-budget observation into its exit status. At the time, the *shape* of what a
 graph retained was gated in the since-retired
 `tests/unit/test_snapshot_graph_retention.py`: that suite fit an affine function of members,
 declared view slots, and recorded edges over a crossed grid and requires exact
@@ -132,8 +131,8 @@ is stated beside them.
 | Build (convert, write, seal), 448 projections | 33.56 ms | 22.13 ms | −34% |
 | Merge, 448 projections | 5.17 ms | 0.57 ms | −89% |
 
-COR-108's ≥60% criterion implies a ceiling of **1,888.7 retained bytes per
-projection**. The reading is 1,079.0, which clears it with 43% to spare. The
+COR-108's historical ≥60% criterion corresponds to **1,888.7 retained bytes per
+projection** in this recording. The reading is 1,079.0, 43% below it. The
 reduction is above 60% at every point of the size grid below, not only at the one
 the headline is taken at.
 
@@ -175,7 +174,7 @@ than of an interpreter.
 | Machine | Apple M5, 10 cores, 32 GiB, darwin/arm64 |
 | OS | macOS 26.5.2 (build 25F84) |
 | Interpreter | CPython 3.12.13 (main, Mar 10 2026) [Clang 21.1.4] |
-| Command (after) | `just python-report-snapshot-graph-overhead` |
+| Current report | Snapshot member of `just python-report-cost` |
 | Source (before) | base commit `31c5c67e`, in a throwaway worktree |
 | Warm-up | 200 unsampled runs before every window |
 | Timing samples | mean of 50 build-and-merge repetitions, the builder constructed outside the clock on both sides |
@@ -301,7 +300,7 @@ why it is the headline and why the gated suite is stated in bytes.
 
 ## The workload
 
-Bespoke, declared inline in `tools/snapshot_graph_overhead.py`, because no model
+Bespoke, declared inline in the retired standalone graph report, because no model
 in the tree carries all six traits COR-108's representative graph names at the
 width it names them: the compatibility corpus tops out at eight applicable
 Attributes on one Entity, and no document there combines wide scalars with nested
@@ -387,12 +386,11 @@ place where a careless post-cutover workload could charge itself for storage the
 ## Rerunning it
 
 ```sh
-just python-report-snapshot-graph-overhead
+just python-report-cost
 ```
 
-It takes about ninety seconds and prints the grid, the headline against the
-recorded pre-cutover figure, the wall clock, the survivor census, and the
-payload-leaf control. Comparing against the tables above needs the same
+The current command writes the complete report portfolio and its Snapshot
+delivery envelope. Comparing against the historical tables above needs the same
 conditions — the same machine class, the same interpreter, no competing load —
 because the absolute numbers are machine-relative even where the ratios are not.
 A reading taken on a different CPython is a reading of that CPython as much as of

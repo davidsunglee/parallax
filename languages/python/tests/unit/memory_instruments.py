@@ -110,7 +110,7 @@ beside anything else, and whose hashing is pinned, which is what leaves it
 comparable with the same reading taken again.
 
 Three ``tests/unit`` cost suites read these, which is what puts them here beside
-them; ``tools/snapshot_graph_overhead.py`` reads them too, and names this
+them; ``tools/snapshot_delivery_reading.py`` reads them too, and names this
 directory to do it. Nothing here imports anything but the standard library, so
 the subject of a measurement stays the caller's to supply. Never imported by
 production code.

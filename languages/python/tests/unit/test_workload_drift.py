@@ -6,6 +6,7 @@ from pathlib import Path
 from parallax.conformance import case_format
 from parallax.conformance.budget import BudgetContract
 from parallax.conformance.workloads import catalog
+from snapshot_delivery_overhead import expanded_cells
 
 
 def _delivery_fixtures() -> set[Path]:
@@ -28,3 +29,11 @@ def test_catalog_contract_and_delivery_fixtures_are_one_exact_set() -> None:
     assert {
         workload.fixture_path.resolve() for workload in workloads.values()
     } == _delivery_fixtures()
+
+
+def test_report_expansion_is_exactly_the_budget_contract_cell_set() -> None:
+    contract = BudgetContract.load()
+    expected = tuple(
+        cell for workload in contract.workload_ids for cell in contract.cells(workload)
+    )
+    assert expanded_cells(contract) == expected

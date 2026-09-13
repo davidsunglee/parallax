@@ -112,7 +112,7 @@ Parallax's own storage is, and not a proof that no memory anywhere grows.
 Every reading reads a whole interpreter, so each runs in one of its own behind
 ``in_a_child_interpreter`` and the class is CI's rather than the merge gate's.
 The machine-relative figures — what a page and a root cost in bytes on one
-machine — are `tools/stream_overhead.py`'s and are recorded in
+machine — are `tools/snapshot_delivery_overhead.py`'s and are recorded in
 `docs/stream-baseline.md`; nothing here reads a byte total as a verdict.
 """
 

@@ -101,8 +101,8 @@ Four of those serve the cost suites and split by subject:
 `_lifecycle_cost_support.py` is what the two lifecycle suites drive their seam
 with, and `_instance_state_support.py` and
 `_snapshot_materialization_support.py` are the two a `report` also drives: the
-baseline or scaling regression and `just python-report-instance-state` or
-`just python-report-snapshot-materialization` measure one workload through one
+baseline or scaling regression and `just python-report-instance-state` or the
+Snapshot member of `just python-report-cost` measure one workload through one
 set of functions. The `report` tools under `tools/` reach them as
 `tests.unit.memory_instruments`, `tests.unit._instance_state_support`, and
 `tests.unit._snapshot_materialization_support` by putting the workspace root on
@@ -236,6 +236,7 @@ that verdict; no local aggregate reaches it.
 | `ci` / `python-check-dbfree` | CPython 3.13 / 3.14 | 3.14 runs `just python-check-dbfree`, checked out at `fetch-depth: 0` because `python-coverage-diff` compares against `origin/main`; 3.13 runs `just python-test-dbfree` with coverage disabled to prove runtime compatibility without repeating the coverage verdict on the slower C tracer |
 | `ci` / `python-check-db` | — | `just python-check-db` on CPython 3.14 against Testcontainers Postgres, with `PARALLAX_REQUIRE_DB=1` so a provider skip fails the job |
 | `ci` / `python-check-cost` | shards `1/6` to `6/6` | `just python-check-cost I/6` on CPython 3.14, one cell per shard of the class `just check` omits so the local gate stays fast; `test_scheduling_partition.py` proves the matrix expands to those six cells alone, that each runs ungated, and that their selections partition the class |
+| `ci` / `python-report-cost` | — | Non-required observation on CPython 3.14; PRs collect merge-base and head on one runner, main collects head, and both upload commit-keyed report artifacts |
 | `ci` / `python-test-pydantic-floor` | — | `just python-test-pydantic-floor` on CPython 3.14, resolving the parity corpus against the minimum Pydantic release `parallax-core` declares instead of the locked one, so the seam a published value's serialization is built over is graded at both ends of the supported range |
 | `python-deps-refresh` / `refresh` (monthly) | — | `uv lock --upgrade` on CPython 3.14, opening a pull request the four jobs above still gate |
 

@@ -329,12 +329,12 @@ def fixture_statements(
         if view is None:
             continue  # a rowless abstract position owns no fixture rows
         rows = fixtures.get(entity.identity.canonical, fixtures.get(entity.identity.name))
-        if not isinstance(rows, list):
+        if not isinstance(rows, Sequence) or isinstance(rows, str | bytes):
             continue
         shape = entity_shape(*_document_members(model, view.layout, entity.identity))
         statements.extend(
             _fixture_insert(model, view, shape, cast("Mapping[str, object]", row), dialect)
-            for row in cast("list[object]", rows)
+            for row in cast("Sequence[object]", rows)
             if isinstance(row, Mapping)
         )
     return statements
@@ -554,6 +554,11 @@ class Provisioner:  # pragma: no cover - exercised by the Docker provider / conf
     def port(self) -> CaseDatabase:
         """This container as the two halves a case runs against."""
         return self._database
+
+    @property
+    def connection_info(self) -> str:
+        """The running container's libpq connection string for isolated report children."""
+        return self._conninfo
 
     def control(self, *, autocommit: bool = True) -> DriverControl:
         """A separately owned second session to the same container (provider `peer`).

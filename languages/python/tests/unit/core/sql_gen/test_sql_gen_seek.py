@@ -307,6 +307,30 @@ def test_a_single_term_continuation_order_hoists_its_direct_range() -> None:
     assert statement.binds == (1, 1, 2, 2, 2)
 
 
+def test_a_null_tail_wrapper_preserves_structured_document_presence() -> None:
+    # Compatibility case: a continuing Document-layout read wraps two NULL-tail
+    # arms; the outer projection must reproduce the presence boolean immediately
+    # before the document so adapter folding observes the first page's ordinals
+    # and payload, rather than mistaking the document itself for its presence flag.
+    plan = _planned(DOCUMENT_LAYOUT, "Charter")
+    node = plan.after(ContinuationCoordinate((1,)), limit=2)
+    compiled = compile_entity_query(
+        deep_fetch.plan(
+            node,
+            DOCUMENT_LAYOUT,
+            projection=deep_fetch.ReadProjectionRequest("all", True),
+        ).root,
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        result_form="instance",
+    )
+
+    assert "select u.id, u.from_z, u.thru_z, u.in_z, u.out_z, not u.payload is null, u.payload" in (
+        compiled.statement.sql
+    )
+    assert compiled.document_reads == ((5, 6),)
+
+
 def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() -> None:
     # A participating ordinary stream that reaches page two keeps one SQL statement
     # and one pessimistic authority boundary: neither union arm carries an illegal

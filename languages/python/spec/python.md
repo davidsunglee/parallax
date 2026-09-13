@@ -3583,7 +3583,7 @@ of shared edition identity.
   readings run against answers each page from a counter and holds nothing a driver
   would.
   What is not asserted anywhere is a byte total: `just
-  python-report-stream-overhead` prints one, reading
+  python-report-snapshot-delivery` records those cells, with the dated evidence in
   `languages/python/docs/stream-baseline.md`, and belongs to no aggregate for the
   reason every other `report` here does.
 
@@ -6394,9 +6394,11 @@ locking unions retain the core refusal.
 - **Report-only measurement evidence.** Retained-memory and timing evidence for
   published instance state is a `report` — `just python-report-instance-state`,
   reading `languages/python/docs/instance-state-baseline.md` — and belongs to no
-  aggregate and to no CI job. Its siblings are the same: the streamed delivery's
-  working set is `just python-report-stream-overhead`, reading
-  `languages/python/docs/stream-baseline.md`. There is deliberately **no timing gate anywhere in
+  aggregate. The Snapshot delivery portfolio is `just
+  python-report-snapshot-delivery`; `languages/python/docs/stream-baseline.md`,
+  `languages/python/docs/snapshot-graph-baseline.md`, and
+  `languages/python/docs/snapshot-materialization-baseline.md` are its dated
+  historical evidence. There is deliberately **no timing gate anywhere in
   this target**: a total in bytes and an elapsed time are machine- and
   interpreter-relative, and every CI job runs a floating runner label, so a
   threshold over either would fail for reasons unrelated to the change under it.

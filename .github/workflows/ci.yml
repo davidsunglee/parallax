@@ -233,6 +233,67 @@ jobs:
       - name: just python-check-cost (shard ${{ matrix.shard }})
         run: just python-check-cost ${{ matrix.shard }}
 
+  # Advisory only: quantitative reports never gate merge eligibility. Pull
+  # requests measure merge-base and head on this same runner; main measures head.
+  python-report-cost:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      - name: Identify observation commits
+        shell: bash
+        run: |
+          echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "BASE_SHA=$(git merge-base HEAD origin/${{ github.base_ref }})" >> "$GITHUB_ENV"
+          fi
+      - name: Measure merge-base
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/parallax-base" "$BASE_SHA"
+          if just --working-directory "$RUNNER_TEMP/parallax-base" --summary | tr ' ' '\n' | grep -qx python-report-cost; then
+            (cd "$RUNNER_TEMP/parallax-base" && uv sync --project languages/python --frozen)
+            just --working-directory "$RUNNER_TEMP/parallax-base" python-report-cost
+          else
+            mkdir -p "$RUNNER_TEMP/parallax-base/languages/python/reports"
+            python -c 'import json,os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"parallax-base/languages/python/reports"; d={"schemaVersion":1,"members":[],"failures":[{"recipe":"python-report-cost","required":True,"message":"merge-base predates the cost portfolio"}]}; (p/"portfolio.json").write_text(json.dumps(d,indent=2)+"\n"); (p/"summary.md").write_text("# Python cost report\n\nMerge-base predates the cost portfolio.\n")'
+          fi
+      - name: Upload merge-base reports
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: python-cost-${{ env.BASE_SHA }}
+          path: ${{ runner.temp }}/parallax-base/languages/python/reports/
+      - name: Measure head
+        shell: bash
+        run: |
+          uv sync --project languages/python --frozen
+          just python-report-cost
+      - name: Upload head reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: python-cost-${{ env.HEAD_SHA }}
+          path: languages/python/reports/
+      - name: Render combined summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            uv run --project languages/python python languages/python/tools/cost_report.py --compare "$RUNNER_TEMP/parallax-base/languages/python/reports/portfolio.json" languages/python/reports/portfolio.json >> "$GITHUB_STEP_SUMMARY"
+          else
+            cat languages/python/reports/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   # The Pydantic parity corpus resolved against the minimum Pydantic release
   # parallax-core declares, rather than against the locked one
   # `python-check-dbfree` already grades it on. A published value presents its

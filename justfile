@@ -353,29 +353,10 @@ python-test-pydantic-floor:
 python-report-lifecycle-overhead:
     cd {{python}} && uv run python tools/lifecycle_overhead.py
 
-# Its neighbour above belongs to no aggregate because a wall clock cannot judge;
-# this one because a total in bytes is machine- and interpreter-relative, so the
-# ratio it prints against the recorded pre-cutover reading is evidence rather
-# than a verdict. The SHAPE of what a graph retains is gated instead, in
-# `tests/unit/snapshot/test_snapshot_graph_retention.py`, which `python-test-dbfree` owns.
-# What has been read off this, and under what conditions, is
-# `languages/python/docs/snapshot-graph-baseline.md`.
 [metadata("runtime:medium")]
-[doc("Retained Snapshot graph overhead per projection, and what building one costs.")]
-python-report-snapshot-graph-overhead:
-    cd {{python}} && uv run python tools/snapshot_graph_overhead.py
-
-# The same reason again, over the streamed read's working set: what a running
-# delivery holds is a total in bytes, so this prints it as evidence and judges
-# nothing. The SHAPE of the bound — a survivor census with no term in the result
-# size and none in how far the delivery has got, and both exclusions demonstrated
-# — is gated in `tests/unit/snapshot/test_snapshot_stream_retention.py`, which the `cost`
-# class owns and CI runs on every change. What has been read off this, and under
-# what conditions, is `languages/python/docs/stream-baseline.md`.
-[metadata("runtime:medium")]
-[doc("Working set of a running streamed delivery per page size, against what retaining a root costs.")]
-python-report-stream-overhead:
-    cd {{python}} && uv run python tools/stream_overhead.py
+[doc("Complete Snapshot delivery Budget Contract portfolio as one Cost Report Envelope.")]
+python-report-snapshot-delivery:
+    cd {{python}} && uv run python tools/snapshot_delivery_overhead.py
 
 # A `report` for the same reason as its neighbour above: a total in bytes is
 # machine- and interpreter-relative, so what it prints is evidence rather than a
@@ -396,20 +377,10 @@ python-report-stream-overhead:
 python-report-instance-state:
     cd {{python}} && uv run python tools/instance_state_overhead.py
 
-# The same posture over the production read's own row-to-graph path: elapsed time
-# is a property of the machine that ran it and a total in bytes moves with the
-# interpreter, so this prints both as evidence and decides nothing on either. It
-# runs one child per (supported minor, storage layout) and exits non-zero only for
-# a usage error or a matrix cell it has no reading for. What is gated is the SHAPE
-# of the claim — that prepared state is fixed by the model's exact Entity layouts
-# and by the compiled reads rather than by rows, graphs, or executions — in
-# `tests/unit/snapshot/test_snapshot_materialization_scaling.py`, which the `cost` class
-# owns and CI runs on every change. What has been read off this, and under what
-# conditions, is `languages/python/docs/snapshot-materialization-baseline.md`.
 [metadata("runtime:medium")]
-[doc("Production Snapshot materialization throughput and memory per storage layout, on every supported minor.")]
-python-report-snapshot-materialization:
-    cd {{python}} && uv run python tools/snapshot_materialization_overhead.py
+[doc("Fail-late collection of every quantitative Python cost report.")]
+python-report-cost:
+    cd {{python}} && uv run python tools/cost_report.py --out reports/
 
 # Both prerequisites are soundness conditions, not merely file dependencies.
 # diff-cover derives its line inventory from git, so an untracked production

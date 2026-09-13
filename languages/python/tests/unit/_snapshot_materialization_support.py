@@ -16,8 +16,8 @@ follows it therefore happen once, outside the batch, against the keys this
 module's own fixture is built from; the gather still runs inside it, because
 production pays for it per batch.
 
-A fourth workload model rather than a reuse: ``tools/snapshot_graph_overhead.py``
-is ``Columns``-only and declares four Neutral Types, ``_document_layout_support``
+A fourth workload model rather than a reuse: the older Snapshot graph baseline
+workload was ``Columns``-only and declared four Neutral Types, ``_document_layout_support``
 is a layout twin at the accepted-Metamodel level with no ``DomainModel`` for
 ``prepare_model`` to prepare, and the earlier retention workload predates the
 Page contract. Members are declared once in a factory over the layout, while both

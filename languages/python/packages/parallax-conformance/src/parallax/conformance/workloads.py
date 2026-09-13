@@ -408,9 +408,9 @@ def _bitemporal_current(roots: int) -> ScriptedRows:
             "id": index,
             "route": f"route-{index}",
             "terms": {"clause": "standard"},
-            "validStart": "2026-01-01T00:00:00+00:00",
+            "validStart": "2026-01-01T00:00:00.000000Z",
             "validEnd": "infinity",
-            "txStart": "2026-01-01T00:00:00+00:00",
+            "txStart": "2026-01-01T00:00:00.000000Z",
             "txEnd": "infinity",
         }
         for index in range(1, roots + 1)
@@ -426,7 +426,7 @@ def _document_milestones(roots: int) -> ScriptedRows:
             "title": f"voyage-{index}",
             "crew": 4,
             "manifest": {"cargo": "timber"},
-            "txStart": "2026-01-01T00:00:00+00:00",
+            "txStart": "2026-01-01T00:00:00.000000Z",
             "txEnd": "infinity",
         }
         for index in range(1, roots + 1)
