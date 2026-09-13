@@ -26,6 +26,7 @@ from reference_harness.case_assertions import CaseFailure
 from reference_harness.case_preflight import preflight_case_literals
 from reference_harness.object_query_oracle import assert_case_read
 from reference_harness.object_query_oracle import stream as stream_oracle
+from reference_harness.unit_work_scenario.observations import ScenarioRowObservations
 
 from .conftest import ScriptedReads
 
@@ -575,17 +576,18 @@ def test_an_encoded_locking_continuation_grades_join_binds_after_both_arms(
 def test_a_default_unversioned_continuation_uses_the_locking_wrapper_oracle(
     damaged_case: CaseLoader,
 ) -> None:
-    # Removing Account's version facet makes the default Optimistic preference fall
-    # back to the effective Locking strategy. Both pages retain their shared lock, the
-    # continuing wrapper is graded against physical identity, and its unlocked arms
-    # are compared with page one's shape only after that outer lock suffix is removed.
-    case = _locking_stream_step(damaged_case(_LOCKING_CONTINUATION))
+    # A schema-valid empty UOW block declares the default Optimistic preference.
+    # Removing Account's version facet therefore selects the mandatory Locking
+    # fallback. The original Scenario reaches its production step-to-read adapter,
+    # which must preserve that empty participation marker so both pages retain their
+    # shared lock and the continuing wrapper is graded against physical identity.
+    case = damaged_case(_LOCKING_CONTINUATION)
     case.model.entity_defs[0]["attributes"][3].pop("optimisticLocking")
     case.raw["when"]["uow"] = {}
     rows = _rows(_ACCOUNTS, 1, 2, 3)
     reads = ScriptedReads(results=[rows, _rows(_ACCOUNTS, 3), rows])
 
-    assert_case_read(case, reads)
+    ScenarioRowObservations(case).assert_step(0, reads)
 
 
 def test_a_nulls_first_sort_key_seeks_a_null_coordinate_through_a_negated_null_test(

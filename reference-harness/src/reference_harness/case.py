@@ -740,9 +740,11 @@ class Case:
 
         A preference is not a strategy: the target Entity's Optimistic Lock Facet
         decides whether it yields Optimistic or the mandatory Locking fallback
-        (`m-unit-work` strategy selection). The gate assertions that read this
-        value all concern versioned or temporal targets, whose facet supplies a
-        version source, so for them the two coincide.
+        (`m-unit-work` strategy selection). Gate assertions read the declared
+        preference where a versioned or temporal target makes it coincide with the
+        strategy. Effective-strategy consumers combine this value with the target
+        facet, so the default preference yields Locking for an unversioned,
+        non-temporal target.
 
         Named ``concurrency_mode`` to avoid clashing with :attr:`concurrency`
         (the two-connection choreography of an error case).
