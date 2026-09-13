@@ -271,9 +271,11 @@ root reachability:
   root conflicts. A conflicting Root View refuses
   with the logical Object Key and lowered coordinates, the member identities at
   every differing witness position, and the two occurrence positions (level and
-  ordinal), but with no raw stored value. The selected pair and differing-member
+  ordinal) where those witnesses physically occurred, but with no raw stored
+  value. The selected witness pair, Object Key Entity, and differing-member
   sequence are canonical, so reversing row arrival or Include Path order cannot
-  change the refusal.
+  change those facts. The physical occurrence positions may change when provider
+  rows are reordered.
 - A concrete-Entity disagreement is a witness disagreement even where all
   member cells compare equal. It is reported with the same conflict family and
   an empty differing-member sequence where no shared member position names it.

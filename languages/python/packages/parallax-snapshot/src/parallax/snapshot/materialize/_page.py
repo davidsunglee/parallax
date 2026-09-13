@@ -170,6 +170,10 @@ class PageRows:
     so a reader translating one into a Root View row asks the schema for the
     translation rather than carrying a key beside every value.
 
+    ``sources`` and ``source_ordinals`` retain each projection's physical
+    provider position. Canonical witness selection may reorder projections for
+    comparison, but it never rewrites the provenance a conflict reports.
+
     Reached only through :func:`page_rows`, which is what makes
     :class:`Page` opaque to the result holders that carry one.
     """
@@ -482,9 +486,7 @@ class PageBuilder:
         claims: list[list[int]] = [[] for _ in self._first]
         for projection, logical in enumerate(self._logical_ids):
             claims[logical].append(projection)
-        occurrence_positions = _canonical_occurrence_positions(
-            self._sources, self._layouts, self._witnesses
-        )
+        occurrence_positions = _physical_occurrence_positions(self._sources)
         rows = PageRows(
             layouts=tuple(self._layouts),
             member_rows=tuple(self._member_rows),
@@ -599,26 +601,15 @@ def _require_index(value: object, count: int, holder: str) -> None:
         )
 
 
-def _canonical_occurrence_positions(
+def _physical_occurrence_positions(
     sources: Sequence[SourceLevel],
-    layouts: Sequence[EntityLayout],
-    witnesses: Sequence[object],
 ) -> tuple[tuple[SourceLevel, int], ...]:
-    positions: list[tuple[SourceLevel, int]] = [(0, 0)] * len(sources)
-    by_source: dict[SourceLevel, list[int]] = {}
-    for projection, source in enumerate(sources):
-        by_source.setdefault(source, []).append(projection)
-    for source, projections in by_source.items():
-        ordered = sorted(
-            projections,
-            key=lambda projection: (
-                layout_order_key(layouts[projection]),
-                stored_order_key(witnesses[projection]),
-                projection,
-            ),
-        )
-        for ordinal, projection in enumerate(ordered):
-            positions[projection] = (source, ordinal)
+    ordinals: dict[SourceLevel, int] = {}
+    positions: list[tuple[SourceLevel, int]] = []
+    for source in sources:
+        ordinal = ordinals.get(source, 0)
+        positions.append((source, ordinal))
+        ordinals[source] = ordinal + 1
     return tuple(positions)
 
 
