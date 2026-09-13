@@ -505,16 +505,16 @@ def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
                 {
                     "id": 1000,
                     "invoice_id": 100,
-                    "amount": decimal.Decimal("75.00"),
-                    "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
-                    "out_z": INFINITY,
+                    "amount": decimal.Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
                 },
                 {
                     "id": 1000,
                     "invoice_id": 100,
-                    "amount": decimal.Decimal("50.00"),
-                    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-                    "out_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                    "amount": decimal.Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                    "out_z": INFINITY,
                 },
             ]
         ]

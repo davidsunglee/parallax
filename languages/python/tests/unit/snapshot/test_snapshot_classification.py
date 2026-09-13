@@ -51,10 +51,9 @@ from parallax.snapshot.materialize import (
     ConformingRoot,
     GraphClassification,
     RootClassification,
+    RootView,
     classify_roots,
-    merge_graph_input,
 )
-from parallax.snapshot.materialize._graph import graph_rows
 from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,
@@ -96,7 +95,7 @@ def _classified(root: RootClassification) -> ClassifiedRoot:
 def _classify(fixture: GraphFixture, *roots: object, offset: int = 0) -> GraphClassification:
     graph = fixture.graph(*cast("Any", roots))
     return classify_roots(
-        merge_graph_input(graph),
+        RootView(graph),
         model_of(ORDERS_MODEL),
         ordinal_offset=offset,
     )
@@ -526,7 +525,8 @@ def test_classification_shares_the_one_frozen_evidence_rather_than_copying_it() 
     # equal values no `is` can tell apart.
     fixture = GraphFixture(vo.CUSTOMER_MODEL)
     node = fixture.node("Customer", {"id": 1, "name": "Ada", "address": {"city": "Berlin"}})
-    (converted,) = graph_rows(fixture.graph(node)).issues[node]
+    root = RootView(fixture.graph(node))
+    (converted,) = root.issues(0)
     record = invalid_record(fixture.materialize(node)[0])
     (published,) = record.issues
     assert published.stored_value is converted.stored_value

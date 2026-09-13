@@ -1,17 +1,15 @@
-"""``parallax.snapshot.materialize`` enforcement scope (the row-to-graph half of
-m-snapshot-read).
+"""Shared Snapshot page state and root-local publication (m-snapshot-read).
 
 The two-layer read seam below the developer surface: a sealed, index-addressed
-**Snapshot Graph** of compact positional rows, and the per-row conversion and
-projection merge that produce and consume it.
+**Page** of compact positional rows, and the per-row conversion and Root View
+that produce and consume it.
 
-- :mod:`~parallax.snapshot.materialize._graph` fixes the compact positional row,
-  the absent/null/empty spellings, graph-local identity, the index-addressed
-  edges a graph boundary refuses anything else at, and the sealing that turns a
-  builder's arrays into one opaque graph.
+- :mod:`~parallax.snapshot.materialize._page` fixes the compact positional row,
+  the absent/null/empty spellings, page-local Entity State, index-addressed
+  edges, and the finishing step that transfers a builder's arrays into one Page.
 - :mod:`~parallax.snapshot.materialize._views` fixes the relationship view slots
   a projection can receive, per source level and resolved concrete Entity, for
-  one whole execution — and the merged union each logical node's row is laid out
+  one whole execution — and the Root View union each logical node's row is laid out
   by, with the translation from a source row into it.
 - :mod:`~parallax.snapshot.materialize._convert` turns one SQL-materialized
   row's transformed values plus its level context and classified provenance into
@@ -21,17 +19,15 @@ projection merge that produce and consume it.
   storage key, or a Document Path becomes a member identity.
 - :mod:`~parallax.snapshot.materialize._prepared` binds one compiled read to one
   cataloged model and is what every read lane uses: it derives each level that
-  read can resolve once, and materializes, converts, and observes a row against
+  read can resolve once, and materializes and converts a row against
   the one its own resolved Entity names. It is reached by module rather than
   through this interface, as conversion is — a lane composes it exactly where it
   compiles, and nothing outside this package composes one at all.
-- :mod:`~parallax.snapshot.materialize._merge` collapses duplicate projections
-  into one deterministic allocation order and answers each consumer by index,
-  holding integers and references only; classified issues ride each winning
-  logical node, and a judgment two projections made lists once because both
-  carry the same record object.
+- :mod:`~parallax.snapshot.materialize._root` compares duplicate Payload
+  Witnesses, borrows shared Entity State, and builds one root-local deterministic
+  allocation order and relationship-view union.
 - :mod:`~parallax.snapshot.materialize._classify` attributes those issues to the
-  result roots whose requested include trees reach them, and settles the
+  result root whose requested include tree reaches them, and settles the
   construction scope that attribution implies.
 - :mod:`~parallax.snapshot.materialize._invalid` holds the public record a
   classified root publishes in place of itself, and the missing-value sentinel
@@ -39,20 +35,14 @@ projection merge that produce and consume it.
 - :mod:`~parallax.snapshot.materialize._evidence` translates and freezes a
   judging row's rejected stored value in one walk, on its way from the seam that
   judged it into that record.
-- :mod:`~parallax.snapshot.materialize._wire` turns one merge into a finite tree
+- :mod:`~parallax.snapshot.materialize._wire` turns one Root View into a finite tree
   of frozen plain values keyed by declared member name — the second public
   materializer, a peer of the typed one rather than a wrapper of it. It consumes
   the same root classification, so both publish the same verdicts.
 
-Nothing here constructs an Entity: this scope is granted the exact-model member
-layouts (``parallax.core.entity._layout``) and the construction-input sentinels
-(``parallax.core.entity._construction_input``) and nothing else of the Entity
-frontend, so the layering between a materialized row and graph construction is
-structurally enforced rather than asserted. A row reaches this scope already
-laid out and leaves it as one, and of the sentinel scope this one takes the
-absence sentinel alone. Its consumers —
-``parallax.snapshot.handle._materializer`` and the wire materializer above —
-each compose it with what their own result form needs.
+The Page and Root View stay representation-neutral. The sibling typed and Wire
+publishers compose a Root View with Entity Graph Construction or the frozen Wire
+tree respectively, so both consume the same judged state and classification.
 
 It never imports ``m-sql`` / ``m-dialect``: `familyVariant` materialization and
 each row's resolved concrete Entity are `m-sql`-owned, and a compiled read
@@ -78,14 +68,6 @@ from parallax.snapshot.materialize._classify import (
 from parallax.snapshot.materialize._convert import (
     SNAPSHOT_DECODING_FAILED,
     SnapshotDecodingError,
-    observable_columns,
-)
-from parallax.snapshot.materialize._graph import (
-    InvalidRootInput,
-    RelationshipViewKey,
-    SnapshotGraph,
-    StoredDataIssueCode,
-    StoredDataIssueInput,
 )
 from parallax.snapshot.materialize._invalid import (
     MISSING_STORED_VALUE,
@@ -93,12 +75,24 @@ from parallax.snapshot.materialize._invalid import (
     InvalidDataError,
     StoredDataIssue,
 )
-from parallax.snapshot.materialize._merge import (
-    GraphMerge,
-    merge_graph_input,
+from parallax.snapshot.materialize._page import (
+    InvalidRootInput,
+    Page,
+    PageBuilder,
+    PageRows,
+    RelationshipViewKey,
+    StoredDataIssueCode,
+    StoredDataIssueInput,
+    page_edges,
+    page_rows,
 )
 from parallax.snapshot.materialize._publication import (
     require_publishable,
+)
+from parallax.snapshot.materialize._root import (
+    SNAPSHOT_PROJECTION_CONFLICT,
+    RootView,
+    SnapshotConsistencyError,
 )
 from parallax.snapshot.materialize._wire import (
     EMPTY_UNWIND,
@@ -117,17 +111,21 @@ __all__ = [
     "FAMILY_VARIANT_KEY",
     "MISSING_STORED_VALUE",
     "SNAPSHOT_DECODING_FAILED",
+    "SNAPSHOT_PROJECTION_CONFLICT",
     "ClassifiedRoot",
     "ConformingRoot",
     "GraphClassification",
-    "GraphMerge",
     "InvalidData",
     "InvalidDataError",
     "InvalidRootInput",
+    "Page",
+    "PageBuilder",
+    "PageRows",
     "RelationshipViewKey",
     "RootClassification",
+    "RootView",
+    "SnapshotConsistencyError",
     "SnapshotDecodingError",
-    "SnapshotGraph",
     "StoredDataIssue",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
@@ -136,9 +134,9 @@ __all__ = [
     "WireValue",
     "classify_roots",
     "hydrates",
-    "merge_graph_input",
-    "observable_columns",
     "opened_wire_entity",
+    "page_edges",
+    "page_rows",
     "require_publishable",
     "source_hint_of",
     "unwind_tree",

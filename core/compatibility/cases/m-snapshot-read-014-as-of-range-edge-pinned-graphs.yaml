@@ -1,14 +1,12 @@
-# asOfRange returns an independently edge-pinned snapshot graph per OVERLAPPING
-# milestone (m-snapshot-read, resolved Q5a): each graph is pinned to its own
-# milestone's from-instant, never to the window bounds.
+# asOfRange returns one Continuation-ordered root sequence over the overlapping
+# milestones; the compatibility projection remains edge-keyed.
 #
 # InvoiceLine 1000 has two Transaction-Time milestones: 50.00 [2024-01-01, 2024-04-01) and
 # 75.00 [2024-04-01, infinity) (models/invoice.yaml). The window [2024-02-01,
 # 2024-05-01) OVERLAPS both (overlap predicate `in_z < to and out_z > from`), so the
-# range returns both — but each materializes as a SEPARATE graph edge-pinned to its
-# OWN from-instant (2024-01-01 and 2024-04-01), NOT to the shared window bounds,
-# asserted from `then.graphs`. One round trip; the harness partitions the milestone
-# rows by edge pin and grades each independently pinned graph.
+# range returns both in key/start order. Each root remains edge-pinned to its own
+# from-instant, never to the shared window bounds, and the adapter groups the flat
+# engine result into `then.graphs` for compatibility grading.
 model: models/invoice.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-temporal-read, temporal, as-of-range, edge-pinned, graph, audit-only, slice-snapshot-1]
 shape: read
@@ -27,9 +25,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.id = ? and t0.in_z < ? and t0.out_z > ?
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.id = ? and t0.in_z < ? and t0.out_z > ? order by t0.id asc, t0.in_z asc
       binds: [1000, "2024-05-01T00:00:00.000000Z", "2024-02-01T00:00:00.000000Z"]
-  referenceSql: "select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000 and in_z < '2024-05-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz"
+  referenceSql: "select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000 and in_z < '2024-05-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz order by id asc, in_z asc"
   graphs:
     - pin: { transaction-time: "2024-01-01T00:00:00.000000Z" }
       graph:

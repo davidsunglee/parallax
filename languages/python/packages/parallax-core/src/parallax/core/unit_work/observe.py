@@ -11,18 +11,172 @@ settled, in **both** concurrency modes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
+from typing import Protocol, cast
 
-from parallax.core.base import detach_json_container
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    NestedValueObjectMetadata,
+    ValueObjectMetadata,
+)
 
 __all__ = [
+    "EntityStateRow",
     "PredecessorRow",
     "TemporalObservation",
     "VersionObservation",
     "WriteObservation",
 ]
+
+
+type _Occurrence = ValueObjectMetadata | NestedValueObjectMetadata
+
+
+class _Layout(Protocol):
+    @property
+    def attributes(self) -> tuple[AttributeMetadata, ...]: ...
+
+    @property
+    def occurrences(self) -> tuple[ValueObjectMetadata, ...]: ...
+
+
+class _State(Protocol):
+    @property
+    def member_row(self) -> tuple[object, ...]: ...
+
+
+class EntityStateRow(Mapping[str, object]):
+    """A read-only view of one already-decoded Entity State.
+
+    The view retains either its source mapping or one positional member row by
+    reference. It exists so observation and publication can share one state
+    without rebuilding or detaching every member into another row-sized
+    dictionary. Nested Value Objects are exposed through mapping views over the
+    same positional state.
+    """
+
+    __slots__ = ("_absent", "_declared", "_keys", "_members", "_values")
+
+    _declared: tuple[_Occurrence | None, ...]
+    _members: Mapping[str, object] | None
+
+    def __init__(self, members: Mapping[str, object]) -> None:
+        self._members = members
+        self._keys: tuple[str, ...] = ()
+        self._values: tuple[object, ...] = ()
+        self._declared = ()
+        self._absent: object | None = None
+
+    @classmethod
+    def over_state(cls, layout: _Layout, state: _State, *, absent: object) -> EntityStateRow:
+        return cls.over_members(layout, state.member_row, absent=absent)
+
+    @classmethod
+    def over_members(
+        cls, layout: _Layout, values: tuple[object, ...], *, absent: object
+    ) -> EntityStateRow:
+        """View one positional member row through its physical storage keys."""
+        attributes = layout.attributes
+        occurrences = layout.occurrences
+        keys = tuple(member.storage.name for member in (*attributes, *occurrences))
+        if len(keys) != len(values):
+            raise ValueError("an Entity State row layout must align with its member state")
+        row = object.__new__(cls)
+        row._members = None
+        row._keys = keys
+        row._values = values
+        row._declared = (*((None,) * len(attributes)), *occurrences)
+        row._absent = absent
+        return row
+
+    def __getitem__(self, key: str) -> object:
+        if self._members is not None:
+            return self._members[key]
+        try:
+            position = self._keys.index(key)
+        except ValueError:
+            raise KeyError(key) from None
+        value = self._values[position]
+        declared = self._declared[position]
+        return value if declared is None else _occurrence_value(value, declared, self._absent)
+
+    def __iter__(self) -> Iterator[str]:
+        if self._members is not None:
+            return iter(self._members)
+        return (
+            key
+            for key, value in zip(self._keys, self._values, strict=True)
+            if value is not self._absent
+        )
+
+    def __len__(self) -> int:
+        return sum(1 for _key in self)
+
+
+class _EntityDocumentRow(Mapping[str, object]):
+    """A mapping view over one positional Value Object member row."""
+
+    __slots__ = ("_absent", "_declared", "_keys", "_values")
+
+    _declared: tuple[_Occurrence | None, ...]
+    _keys: tuple[str, ...]
+
+    def __init__(
+        self, values: tuple[object, ...], declared: _Occurrence, absent: object | None
+    ) -> None:
+        attributes = declared.attributes
+        occurrences = declared.value_objects
+        self._values = values
+        self._declared = (
+            *((None,) * len(attributes)),
+            *occurrences,
+        )
+        self._keys = (
+            *(member.identity.name for member in attributes),
+            *(member.identity.path[-1] for member in occurrences),
+        )
+        self._absent = absent
+
+    def __getitem__(self, key: str) -> object:
+        try:
+            position = self._keys.index(key)
+        except ValueError:
+            raise KeyError(key) from None
+        value = self._values[position]
+        if value is self._absent:
+            raise KeyError(key)
+        declared = self._declared[position]
+        return value if declared is None else _occurrence_value(value, declared, self._absent)
+
+    def __iter__(self) -> Iterator[str]:
+        return (
+            key
+            for key, value in zip(self._keys, self._values, strict=True)
+            if value is not self._absent
+        )
+
+    def __len__(self) -> int:
+        return sum(1 for _key in self)
+
+
+def _occurrence_value(value: object, declared: _Occurrence, absent: object | None) -> object:
+    if value is None or value is absent:
+        return value
+    if declared.multiplicity.name == "MANY":
+        if not isinstance(value, tuple):  # pragma: no cover - accepted Page state is positional
+            raise TypeError("a Many Value Object Entity State is positional")
+        rows = cast("tuple[object, ...]", value)
+        if any(  # pragma: no cover - accepted Page state is positional
+            not isinstance(item, tuple) for item in rows
+        ):
+            raise TypeError("a Many Value Object Entity State is positional")
+        return tuple(
+            _EntityDocumentRow(cast("tuple[object, ...]", item), declared, absent) for item in rows
+        )
+    if not isinstance(value, tuple):  # pragma: no cover - accepted Page state is positional
+        raise TypeError("a Value Object Entity State is positional")
+    return _EntityDocumentRow(cast("tuple[object, ...]", value), declared, absent)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +211,13 @@ class PredecessorRow:
     a result field or an Entity member.
     """
 
-    members: Mapping[str, object]
+    members: EntityStateRow | Mapping[str, object]
     document: object | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "members", MappingProxyType(dict(self.members)))
-        object.__setattr__(self, "document", detach_json_container(self.document))
+        members = self.members
+        if not isinstance(members, EntityStateRow):
+            object.__setattr__(self, "members", EntityStateRow(dict(members)))
         if not self.members:
             raise ValueError("a Predecessor Row carries the observed row's complete state")
 

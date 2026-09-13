@@ -271,8 +271,8 @@ def test_support_scope_parity_fails_on_a_scope_only_the_spec_declares() -> None:
 
 def test_support_scope_parity_fails_on_a_scope_only_the_tool_declares() -> None:
     declared, prose = _spec_declarations()
-    del declared["parallax.snapshot.handle._materializer"]
-    del prose["parallax.snapshot.handle._materializer"]
+    del declared["parallax.snapshot.handle._materialization"]
+    del prose["parallax.snapshot.handle._materialization"]
     with pytest.raises(ValueError, match="declared only in the tool"):
         dag.check_support_scope_parity(declared, prose)
 
@@ -443,10 +443,10 @@ def test_a_tampered_prose_row_alone_fails_generation(
     tampered = tmp_path / "python.md"
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
-        "| `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`,",
-        "| `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-sql`, `m-metamodel`,",
+        "| `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, "
+        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, ",
+        "| `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, "
+        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-auto-retry`, `m-metamodel`, ",
         1,
     )
     assert edited != original
@@ -457,7 +457,7 @@ def test_a_tampered_prose_row_alone_fails_generation(
     # so only the new prose arm can reject this edit.
     assert dag.parse_support_scope_graph(edited) == dict(dag.SUPPORT_SCOPE_DEPS)
     with pytest.raises(
-        ValueError, match=r"'parallax\.snapshot\.handle\._materializer' has drifted"
+        ValueError, match=r"'parallax\.snapshot\.handle\._materialization' has drifted"
     ):
         dag.generate()
 
@@ -472,7 +472,7 @@ def test_a_prose_row_deleted_alone_fails_generation(
     edited = "\n".join(
         line
         for line in original.splitlines()
-        if not line.startswith("| Snapshot graph materialization (support")
+        if not line.startswith("| Snapshot delivery materialization (support")
     )
     assert edited != original
     tampered.write_text(edited)
@@ -491,9 +491,9 @@ def test_fence_and_tool_edited_consistently_still_fail_a_stale_prose_row(
     tampered = tmp_path / "python.md"
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
-        "parallax.snapshot.handle._materializer --> parallax.core.metamodel\n",
-        "parallax.snapshot.handle._materializer --> parallax.core.metamodel\n"
-        "parallax.snapshot.handle._materializer --> parallax.core.sql_gen\n",
+        "parallax.snapshot.handle._materialization --> parallax.core.metamodel\n",
+        "parallax.snapshot.handle._materialization --> parallax.core.metamodel\n"
+        "parallax.snapshot.handle._materialization --> parallax.core.auto_retry\n",
         1,
     )
     assert edited != original
@@ -504,15 +504,15 @@ def test_fence_and_tool_edited_consistently_still_fail_a_stale_prose_row(
         "SUPPORT_SCOPE_DEPS",
         {
             **dag.SUPPORT_SCOPE_DEPS,
-            "parallax.snapshot.handle._materializer": dag.SUPPORT_SCOPE_DEPS[
-                "parallax.snapshot.handle._materializer"
+            "parallax.snapshot.handle._materialization": dag.SUPPORT_SCOPE_DEPS[
+                "parallax.snapshot.handle._materialization"
             ]
-            | {"parallax.core.sql_gen"},
+            | {"parallax.core.auto_retry"},
         },
     )
 
     with pytest.raises(
-        ValueError, match=r"'parallax\.snapshot\.handle\._materializer' has drifted"
+        ValueError, match=r"'parallax\.snapshot\.handle\._materialization' has drifted"
     ):
         dag.generate()
 
@@ -532,10 +532,10 @@ def test_a_tampered_prose_row_alone_exits_one_at_the_command(tmp_path: Path) -> 
     shutil.copy(dag.MODULES_MD, tmp_path / "core" / "spec" / dag.MODULES_MD.name)
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
-        "| `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`,",
-        "| `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, "
-        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-sql`, `m-metamodel`,",
+        "| `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, "
+        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, ",
+        "| `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, "
+        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-auto-retry`, `m-metamodel`, ",
         1,
     )
     assert edited != original
@@ -549,7 +549,7 @@ def test_a_tampered_prose_row_alone_exits_one_at_the_command(tmp_path: Path) -> 
     )
 
     assert result.returncode == 1, result.stdout
-    assert "parallax.snapshot.handle._materializer" in result.stderr
+    assert "parallax.snapshot.handle._materialization" in result.stderr
     assert "prose table" in result.stderr
 
 
@@ -716,7 +716,7 @@ def test_check_child_scopes_rejects_an_isolated_scope_that_is_not_a_child(
 def test_scope_siblings_are_the_other_children_of_one_parent() -> None:
     assert dag.scope_siblings("parallax.snapshot.handle._errors") == frozenset(
         {
-            "parallax.snapshot.handle._materializer",
+            "parallax.snapshot.handle._materialization",
             "parallax.snapshot.handle._preflight",
             "parallax.snapshot.handle._read_scope",
             "parallax.snapshot.handle._keyed_writes",
@@ -749,8 +749,8 @@ def test_only_a_zero_grant_row_takes_its_siblings_as_targets() -> None:
 def test_a_child_row_omits_its_own_ancestors() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert "parallax.snapshot.handle" not in forbidden["parallax.snapshot.handle._materializer"]
-    assert dag.scope_ancestors("parallax.snapshot.handle._materializer") == frozenset(
+    assert "parallax.snapshot.handle" not in forbidden["parallax.snapshot.handle._materialization"]
+    assert dag.scope_ancestors("parallax.snapshot.handle._materialization") == frozenset(
         {"parallax.snapshot.handle"}
     )
     assert dag.scope_ancestors("parallax.snapshot.handle") == frozenset()
@@ -766,16 +766,13 @@ def test_handle_child_rows_are_narrower_than_the_parent_row() -> None:
         if declared_parent != "parallax.snapshot.handle":
             continue
         assert parent < set(forbidden[child]), child
-    # `_materializer` may not reach SQL generation, the read lock, or the
-    # write-policy modules; the lowering cluster may not reach the read side.
-    # Neither restriction exists on the parent. SQL generation survives the
-    # `m-snapshot-read --> m-execution-lifecycle` edge only because that edge
-    # belongs to `parallax.snapshot._read_result` and not to the `parallax.snapshot
-    # .materialize` grant this child holds: a closure complement has no way to
-    # grant a scope and withhold what that scope reaches.
-    assert "parallax.core.sql_gen" in forbidden["parallax.snapshot.handle._materializer"]
-    assert "parallax.core.read_lock" in forbidden["parallax.snapshot.handle._materializer"]
-    assert "parallax.core.batch_write" in forbidden["parallax.snapshot.handle._materializer"]
+    # `_materialization` owns read preparation and may reach SQL generation, but
+    # it still cannot reach read locking or write-policy modules. The lowering
+    # cluster may not reach the read side, and none of these restrictions exists
+    # on the parent.
+    assert "parallax.core.sql_gen" not in forbidden["parallax.snapshot.handle._materialization"]
+    assert "parallax.core.read_lock" in forbidden["parallax.snapshot.handle._materialization"]
+    assert "parallax.core.batch_write" in forbidden["parallax.snapshot.handle._materialization"]
     assert "parallax.snapshot.materialize" in forbidden["parallax.snapshot.handle._keyed_sql"]
 
 
@@ -783,7 +780,7 @@ def test_scope_descendants_inverts_the_child_chain() -> None:
     assert dag.scope_descendants("parallax.descriptor") == frozenset({"parallax.descriptor._hub"})
     assert dag.scope_descendants("parallax.snapshot.handle") == frozenset(
         {
-            "parallax.snapshot.handle._materializer",
+            "parallax.snapshot.handle._materialization",
             "parallax.snapshot.handle._preflight",
             "parallax.snapshot.handle._read_scope",
             "parallax.snapshot.handle._keyed_writes",
@@ -1088,16 +1085,16 @@ def test_the_expression_scope_is_narrower_than_the_frontend_it_sits_in() -> None
 # Canary 3: a child contract blocks what the parent contract permits.
 # --------------------------------------------------------------------------
 def test_child_scope_contract_blocks_an_import_the_parent_permits(linted_copy: Path) -> None:
-    # `m-sql` IS in the parent handle grant row, so the broad contract permits
-    # this import; only the `_materializer` child contract can reject it.
-    assert "parallax.core.sql_gen" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    # `m-batch-write` IS in the parent handle grant row, so the broad contract
+    # permits this import; only the `_materialization` child contract can reject it.
+    assert "parallax.core.batch_write" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
     reported = broken_by(
         linted_copy,
-        "parallax.snapshot.handle._materializer",
-        "import parallax.core.sql_gen  # deliberate child-scope violation",
+        "parallax.snapshot.handle._materialization",
+        "import parallax.core.batch_write  # deliberate child-scope violation",
     )
 
-    assert "parallax.snapshot.handle._materializer -> parallax.core.sql_gen" in reported
+    assert "parallax.snapshot.handle._materialization -> parallax.core.batch_write" in reported
 
 
 # --------------------------------------------------------------------------

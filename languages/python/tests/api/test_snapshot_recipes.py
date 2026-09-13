@@ -94,7 +94,10 @@ def test_a_to_one_relationship_takes_its_three_declared_runtime_states(
     # 1..1 over a non-nullable foreign key: an instance on every status.
     assert by_id[101].order is not None
     assert by_id[201].order is not None
-    assert by_id[101].order is by_id[201].order  # one logical row, one node
+    # Each result root opens a distinct Root View: equal Entity State is published
+    # through root-local nodes rather than leaking object identity between roots.
+    assert by_id[101].order is not by_id[201].order
+    assert by_id[101].order == by_id[201].order
     # 0..1 over a nullable foreign key: an instance where the key is set, and a
     # LOADED null where it is not — `is_view_loaded` is `True` for both.
     assert by_id[201].order_item is not None

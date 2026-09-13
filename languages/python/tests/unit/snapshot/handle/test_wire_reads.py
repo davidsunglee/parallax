@@ -59,12 +59,13 @@ from parallax.snapshot import InvalidData, WireEntity, connect, handle
 from parallax.snapshot.handle._read_scope import wire_query_node
 from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.materialize import (
-    merge_graph_input,
+    PageBuilder,
+    RootView,
     source_hint_of,
     wire_roots,
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.db_port import (
     ConnectsAsItself,
@@ -276,14 +277,14 @@ def test_an_absent_many_publishes_empty_through_the_unclassified_decode_too() ->
     # occurrence reduction has to answer exactly as the row transform's does, or
     # one stored state publishes two nodes depending on which door it came in by.
     identity = identity_of(CUSTOMER_META, "Customer")
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     ref = convert_row(
         {"id": 3, "name": "Grace", "address": {"street": "9 Beacon St"}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         builder,
         source=ROOT_LEVEL,
     )
-    (published,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), CUSTOMER_META)
+    (published,) = wire_roots(RootView(builder.finish((ref,), Pin())), CUSTOMER_META)
     assert _mapping(_entity(published)["address"]) == {"street": "9 Beacon St", "phones": []}
 
 
@@ -294,14 +295,14 @@ def test_the_absent_sentinel_reaches_no_published_position_at_any_depth() -> Non
     # member the value does not have — the marker itself is unreachable, at every
     # depth a document can nest to.
     identity = identity_of(CUSTOMER_META, "Customer")
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     ref = convert_row(
         {"id": 3, "address": {"street": "9 Beacon St", "geo": {"country": "NO"}}},
         LevelContext(layout_of(CUSTOMER_META, identity), documents_of(CUSTOMER_META, identity)),
         builder,
         source=ROOT_LEVEL,
     )
-    (published,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), CUSTOMER_META)
+    (published,) = wire_roots(RootView(builder.finish((ref,), Pin())), CUSTOMER_META)
     node = _entity(published)
     assert "name" not in node
     assert "city" not in _mapping(node["address"])
@@ -772,16 +773,16 @@ def _history_port() -> QueuePort:
                 {
                     "id": 1000,
                     "invoice_id": 100,
-                    "amount": Decimal("75.00"),
-                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
-                    "out_z": INFINITY,
+                    "amount": Decimal("50.00"),
+                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
+                    "out_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
                 },
                 {
                     "id": 1000,
                     "invoice_id": 100,
-                    "amount": Decimal("50.00"),
-                    "in_z": dt.datetime(2024, 1, 1, tzinfo=_UTC),
-                    "out_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "amount": Decimal("75.00"),
+                    "in_z": dt.datetime(2024, 4, 1, tzinfo=_UTC),
+                    "out_z": INFINITY,
                 },
             ]
         ]
@@ -864,7 +865,7 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
             "archive_profile": PresentDocument({"label": "archive"}),
         }
     )
-    builder = GraphBuilder(ViewSchema.of())
+    builder = PageBuilder(ViewSchema.of())
     ref = convert_row(
         materialized.values,
         LevelContext(
@@ -874,7 +875,7 @@ def test_a_value_object_column_spelled_like_the_variant_key_still_publishes_both
         builder,
         source=ROOT_LEVEL,
     )
-    (root,) = wire_roots(merge_graph_input(builder.seal((ref,), Pin())), _VARIANT_MODEL)
+    (root,) = wire_roots(RootView(builder.finish((ref,), Pin())), _VARIANT_MODEL)
     assert root == {
         "id": 1,
         "familyVariant": "SharedVariant",

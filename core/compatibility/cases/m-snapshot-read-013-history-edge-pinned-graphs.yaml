@@ -1,14 +1,12 @@
-# History returns one edge-pinned snapshot graph per milestone (m-snapshot-read,
-# resolved Q5a): each graph is pinned to that milestone's own from-instant.
+# History returns one Continuation-ordered root sequence whose compatibility
+# projection remains one edge-pinned graph per milestone (m-snapshot-read).
 #
 # InvoiceLine 1000 has a Transaction-Time-milestone history of two rows: the superseded
 # 50.00 milestone [2024-01-01, 2024-04-01) and the current 75.00 milestone
 # [2024-04-01, infinity) (models/invoice.yaml). `history` returns the FULL milestone
-# set in one query (no as-of predicate), and each milestone materializes as a SEPARATE
-# graph, edge-pinned to its OWN from-instant — 2024-01-01 for the 50.00 view,
-# 2024-04-01 for the 75.00 view — asserted from `then.graphs` (not a flat `then.rows`
-# nor a single shared-pin `then.graph`). One round trip; the harness partitions the
-# milestone rows by edge pin and grades each independently pinned graph.
+# set in one query (no as-of predicate), ordered by logical key and then the
+# scanned axis start. The engine publishes that flat sequence; the compatibility
+# adapter groups it into `then.graphs` by each root's own edge pin.
 model: models/invoice.yaml
 tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-temporal-read, temporal, history, edge-pinned, graph, audit-only, slice-snapshot-1]
 shape: read
@@ -25,9 +23,9 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.id = ?
+        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z from invoice_line t0 where t0.id = ? order by t0.id asc, t0.in_z asc
       binds: [1000]
-  referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000
+  referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where id = 1000 order by id asc, in_z asc
   graphs:
     - pin: { transaction-time: "2024-01-01T00:00:00.000000Z" }
       graph:

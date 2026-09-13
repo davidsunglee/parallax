@@ -1,8 +1,8 @@
-"""Root classification: one verdict per result root, downstream of the merge.
+"""Root classification: one verdict per result root, downstream of its Root View.
 
 Detection is local and layout-neutral; attribution is not. Whether a root is
 invalid depends on the whole include tree reachable from it, which only the
-merged graph knows — so classification runs here, once, after merging and before
+Root View knows — so classification runs here, once, after the view forms and before
 construction, and neither materializer re-judges anything it answers.
 
 The rule is root-granular by contract: an issue anywhere in a root's requested
@@ -19,8 +19,8 @@ scope is closed under reachability by construction — a root that reaches a
 non-hydrating node is itself non-hydrating — so no constructed node ever points
 at one left out.
 
-A conforming graph pays nothing: :func:`classify_roots` answers from
-:attr:`~parallax.snapshot.materialize.GraphMerge.has_issues` alone, walking
+A conforming Root View pays nothing: :func:`classify_roots` answers from
+:attr:`~parallax.snapshot.materialize.RootView.has_issues` alone, walking
 nothing and wrapping nothing.
 """
 
@@ -41,14 +41,14 @@ from parallax.core.metamodel import (
 )
 from parallax.core.temporal_read import Edge, TemporalReadError, milestone_edge_of
 from parallax.core.unit_work import ObjectKey
-from parallax.snapshot.materialize._graph import (
+from parallax.snapshot.materialize._invalid import InvalidData, StoredDataIssue
+from parallax.snapshot.materialize._page import (
     ABSENT,
     InvalidRootInput,
     StoredDataIssueCode,
     StoredDataIssueInput,
 )
-from parallax.snapshot.materialize._invalid import InvalidData, StoredDataIssue
-from parallax.snapshot.materialize._merge import GraphMerge
+from parallax.snapshot.materialize._root import RootView
 
 __all__ = [
     "ClassifiedRoot",
@@ -138,7 +138,7 @@ type RootClassification = ConformingRoot | ClassifiedRoot
 
 @dataclass(frozen=True, slots=True)
 class GraphClassification:
-    """One merged graph's verdicts and the construction scope they imply.
+    """One Root View's verdicts and the construction scope they imply.
 
     ``excluded`` names the allocation indices construction leaves out. ``roots``
     is one verdict per result position, in result order, including the
@@ -151,13 +151,12 @@ class GraphClassification:
 
 
 def classify_roots(
-    merge: GraphMerge, model: Metamodel, *, ordinal_offset: int = 0
+    merge: RootView, model: Metamodel, *, ordinal_offset: int = 0
 ) -> GraphClassification:
     """``merge``'s per-root verdicts, attributed over each root's reachable tree.
 
-    ``ordinal_offset`` is where this graph's roots start in the ordered result a
-    Snapshot publishes, which is nonzero only for a milestone-set read whose
-    results span several graphs.
+    ``ordinal_offset`` is where this Page's roots start in the ordered result a
+    Snapshot publishes.
     """
     if not merge.has_issues:
         return GraphClassification(
@@ -241,7 +240,7 @@ def _diagnosis(issue: StoredDataIssueInput, key: ObjectKey | None) -> StoredData
     )
 
 
-def _children(merge: GraphMerge, node: int) -> tuple[int, ...]:
+def _children(merge: RootView, node: int) -> tuple[int, ...]:
     """The allocation indices ``node``'s loaded relationship views reach.
 
     Every populated slot, broad and narrowed alike: the include tree a root
@@ -261,7 +260,7 @@ def _children(merge: GraphMerge, node: int) -> tuple[int, ...]:
 def _reachable(children: tuple[tuple[int, ...], ...], root: int) -> frozenset[int]:
     """Every allocation index reachable from ``root``, including itself.
 
-    The merged graph is the requested include tree already realized: a view
+    The Root View is the requested include tree already realized: a view
     exists exactly where a level loaded one, so following views is following the
     includes. Cycles terminate on the visited set rather than on a depth bound.
     """
@@ -275,7 +274,7 @@ def _reachable(children: tuple[tuple[int, ...], ...], root: int) -> frozenset[in
     return frozenset(seen)
 
 
-def _object_key(model: Metamodel, merge: GraphMerge, node: int) -> ObjectKey | None:
+def _object_key(model: Metamodel, merge: RootView, node: int) -> ObjectKey | None:
     """``node``'s object identity, or absence where nothing trustworthy decoded.
 
     Derived exactly as a keyed write derives its own: the row's OWN resolved
@@ -305,7 +304,7 @@ def _object_key(model: Metamodel, merge: GraphMerge, node: int) -> ObjectKey | N
     )
 
 
-def _version(declaring: EntityMetadata | None, merge: GraphMerge, node: int) -> int | None:
+def _version(declaring: EntityMetadata | None, merge: RootView, node: int) -> int | None:
     """``node``'s observed explicit version, or absence for every other shape.
 
     A temporal family derives its concurrency coordinate from its own axis rather
@@ -324,7 +323,7 @@ def _version(declaring: EntityMetadata | None, merge: GraphMerge, node: int) -> 
     return value if isinstance(value, int) else None
 
 
-def _edge(declaring: EntityMetadata | None, merge: GraphMerge, node: int) -> Edge | None:
+def _edge(declaring: EntityMetadata | None, merge: RootView, node: int) -> Edge | None:
     """``node``'s observed milestone, or absence where no temporal edge decoded."""
     if declaring is None or not declaring.declared_as_of_axes:
         return None
@@ -348,7 +347,7 @@ def _member(layout: EntityLayout, values: tuple[object, ...], member: AttributeI
     return None if value is ABSENT else value
 
 
-def _values(merge: GraphMerge, node: int) -> dict[AttributeIdentity, object]:
+def _values(merge: RootView, node: int) -> dict[AttributeIdentity, object]:
     """``node``'s carried Attribute values by identity, for the temporal
     primitives that read a whole row rather than a named position."""
     layout = merge.layout(node)

@@ -33,7 +33,7 @@ predicate write also runs
 extraction a resolved row's Predecessor Row shares with a real find's),
 and :mod:`parallax.snapshot.handle._read` for both
 :func:`~parallax.snapshot.handle._read.execute_read` and
-:func:`~parallax.snapshot.handle._read.stage_publishable_rows` — the resolving
+:func:`~parallax.snapshot.handle._read.publishable_rows` — the resolving
 read brackets its Database Call through the package's one read-call seam, then
 passes its materialized rows through the shared publication gate before this
 lane derives observations or writes.
@@ -79,6 +79,7 @@ from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
     SELECTION_INTENT,
     ChunkedColumnBuilder,
+    EntityStateRow,
     MaterializedWriteGroup,
     ObjectKey,
     ObservedStateKey,
@@ -118,13 +119,14 @@ from parallax.snapshot.handle._family import (
     version_attribute,
 )
 from parallax.snapshot.handle._read import (
-    StagedRows,
+    RowPublication,
     entity_read_lock,
     execute_read,
-    stage_publishable_rows,
+    publishable_rows,
 )
 from parallax.snapshot.handle._retention import row_payload
 from parallax.snapshot.handle._write_inputs import reject_temporal_delete, validate_window
+from parallax.snapshot.materialize._page import ABSENT
 
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
@@ -538,7 +540,7 @@ def _materialize_predicate_write(
     # target's Predecessor Row retains it (`m-unit-work`) — which is what lets a
     # successor be patched from the document the row actually held — without a
     # second extraction that could disagree with the first.
-    def resolve() -> tuple[CompiledRead, StagedRows]:
+    def resolve() -> tuple[CompiledRead, RowPublication]:
         with attempt.read(entity.identity, "rows") as read:
             query = deep_fetch.plan_mutation_read(
                 instruction,
@@ -557,14 +559,24 @@ def _materialize_predicate_write(
                 lock=lock,
             )
             driver_rows = execute_read(conn, compiled, read)
-            return compiled, stage_publishable_rows(model, compiled, driver_rows, pin=Pin())
+            return compiled, publishable_rows(model, compiled, driver_rows, pin=Pin())
 
     compiled, stage = uow.read(resolve)
     structured_column = compiled.structured_column
     resolved = stage.rows
     if not resolved:
         return
-    rows = [stage.prepared.observable_columns(materialized) for materialized in resolved]
+    rows = [
+        EntityStateRow.over_members(
+            stage.root.layout(root), stage.root.member_values(root), absent=ABSENT
+        )
+        for root in stage.root.roots
+        if root is not None
+    ]
+    if len(rows) != len(
+        resolved
+    ):  # pragma: no cover - publishable staging has one valid root per row
+        raise ValueError("predicate-write staging requires one Entity State per resolved row")
     pk_attrs = family_primary_key(meta, entity)
     key_attributes = tuple(attr.identity.name for attr in pk_attrs)
     key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)

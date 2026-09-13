@@ -120,7 +120,7 @@ def test_evolution_wheel_ships_both_of_its_scopes(wheelhouse: Wheelhouse) -> Non
 def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     # The checks above see `parallax/snapshot` only at the top-package prefix, so
     # they cannot tell a handle.py from a handle/ directory. This is the complete
-    # package — the twenty-four private modules plus the re-exporting interface — and
+    # package — the private modules plus the re-exporting interface — and
     # the set is compared whole so it stays that claim: a module shipped here
     # that nobody named fails as loudly as a missing one. The absent old path is
     # the half no set over the directory reaches: `handle.py` sits beside the
@@ -136,8 +136,8 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
         "parallax/snapshot/handle/_features.py",
         "parallax/snapshot/handle/_keyed_sql.py",
         "parallax/snapshot/handle/_keyed_writes.py",
-        "parallax/snapshot/handle/_materializer.py",
-        "parallax/snapshot/handle/_page.py",
+        "parallax/snapshot/handle/_materialization.py",
+        "parallax/snapshot/handle/_paging.py",
         "parallax/snapshot/handle/_planning.py",
         "parallax/snapshot/handle/_predicate_writes.py",
         "parallax/snapshot/handle/_preflight.py",
@@ -163,8 +163,10 @@ def test_snapshot_wheel_ships_the_materialize_package(wheelhouse: Wheelhouse) ->
     names = _names(wheelhouse, "parallax-snapshot")
     assert "parallax/snapshot/materialize/__init__.py" in names
     assert "parallax/snapshot/materialize/_convert.py" in names
-    assert "parallax/snapshot/materialize/_graph.py" in names
-    assert "parallax/snapshot/materialize/_merge.py" in names
+    assert "parallax/snapshot/materialize/_identity.py" in names
+    assert "parallax/snapshot/materialize/_page.py" in names
+    assert "parallax/snapshot/materialize/_root.py" in names
+    assert "parallax/snapshot/materialize/_typed.py" in names
     assert "parallax/snapshot/materialize.py" not in names
 
 

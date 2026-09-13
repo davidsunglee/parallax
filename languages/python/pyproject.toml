@@ -1882,21 +1882,17 @@ type = "forbidden"
 source_modules = ["parallax.snapshot._read_result"]
 forbidden_modules = [
     "parallax.conformance",
-    "parallax.core._formation_profile",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
     "parallax.core.continuation",
     "parallax.core.execution_lifecycle.testing",
-    "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
     "parallax.core.txtime_write",
-    "parallax.core.value_object",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
     "parallax.evolution.schema_delta",
     "parallax.postgres",
-    "parallax.snapshot._inspection",
     "parallax.snapshot.handle",
 ]
 
@@ -1961,7 +1957,7 @@ forbidden_modules = [
     "parallax.snapshot.handle._family",
     "parallax.snapshot.handle._keyed_sql",
     "parallax.snapshot.handle._keyed_writes",
-    "parallax.snapshot.handle._materializer",
+    "parallax.snapshot.handle._materialization",
     "parallax.snapshot.handle._preflight",
     "parallax.snapshot.handle._publication",
     "parallax.snapshot.handle._read_scope",
@@ -2042,9 +2038,9 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "parallax.snapshot.handle._materializer may import only its permitted dependencies"
+name = "parallax.snapshot.handle._materialization may import only its permitted dependencies"
 type = "forbidden"
-source_modules = ["parallax.snapshot.handle._materializer"]
+source_modules = ["parallax.snapshot.handle._materialization"]
 forbidden_modules = [
     "parallax.conformance",
     "parallax.core.auto_retry",
@@ -2056,7 +2052,6 @@ forbidden_modules = [
     "parallax.core.execution_lifecycle.testing",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
-    "parallax.core.sql_gen",
     "parallax.core.txtime_write",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
@@ -2206,7 +2201,6 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.materialize"]
 forbidden_modules = [
     "parallax.conformance",
-    "parallax.core._formation_profile",
     "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
@@ -2214,18 +2208,14 @@ forbidden_modules = [
     "parallax.core.db_error",
     "parallax.core.execution_lifecycle",
     "parallax.core.execution_lifecycle.testing",
-    "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
     "parallax.core.sql_gen",
-    "parallax.core.storage_layout",
     "parallax.core.txtime_write",
-    "parallax.core.value_object",
     "parallax.descriptor",
     "parallax.evolution.model_evolution",
     "parallax.evolution.schema_delta",
     "parallax.postgres",
-    "parallax.snapshot._inspection",
     "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
 ]

@@ -195,6 +195,30 @@ Wire interface; no method touches the database, and it retains no record of the
 execution that produced it.
 _Avoid_: result set, lazy list, query result proxy, domain snapshot
 
+**Page**:
+The private aligned-array representation one `Materializer.read_page` call
+builds. It owns raw occurrence witnesses, root ordinals, root-local view rows,
+paging verdict state, and the Entity States judged during publication. No public
+Snapshot value retains it.
+_Avoid_: Snapshot container, public batch, provider result set
+
+**Entity State**:
+The page-owned judged member tuple and findings for one logical key. Typed and
+Wire publication read the same state; equal duplicate projections do not decode
+again.
+_Avoid_: Entity instance, Wire Entity Mapping, source hint, row dictionary
+
+**Root View**:
+The private one-root view over a Page that compares Payload Witnesses, obtains
+shared Entity State, attributes findings, constructs root-local nodes, and
+retains eligible write evidence.
+_Avoid_: Checked Snapshot, root wrapper, copied graph
+
+**Payload Witness**:
+One occurrence's resolved concrete Entity and exact positional provider payload,
+compared before decoding against every occurrence claiming the same logical key.
+_Avoid_: canonical Wire value, Entity State, observation row
+
 **Checked Snapshot**:
 The read-only `CheckedSnapshot[T]` view returned by `Snapshot.checked()`. It
 shares the Snapshot's result storage and Pin while its ordinary

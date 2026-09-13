@@ -267,7 +267,7 @@ class CatalogPort:
         selected = self._orders[self._delivered : self._delivered + taken]
         self._page = tuple(cast("int", row["id"]) for row in selected)
         self._delivered += taken - 1 if taken == size else taken
-        return [(*tuple(_order_row(row).values()), row["id"]) for row in selected]
+        return [tuple(_order_row(row).values()) for row in selected]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         raise NotImplementedError

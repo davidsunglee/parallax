@@ -1,18 +1,18 @@
-"""What one materialized Snapshot graph retains, and what it costs to build.
+"""What one materialized Snapshot Page retains, and what it costs to build.
 
-The representative graph the recorded baseline is stated over — about twenty
+The representative Page the recorded baseline is stated over — about twenty
 scalar members, nested One and Many Value Objects, polymorphic projections, three
 view slots, duplicate logical nodes, and relationship fan-out — driven through
-the production converter, builder, and merge with no database anywhere. It is a
-`report`: it passes no verdict and joins no aggregate. The SHAPE of what a graph
-retains is gated instead, in
-``tests/unit/snapshot/test_snapshot_graph_retention.py``, because references and positions
-give a definite answer where a total in bytes is machine- and interpreter-
-relative. What has been read off this, and under what conditions, is
+the production converter, Page builder, and Root View with no database anywhere.
+It is a `report`: it passes no verdict and joins no aggregate. The Page-era shape
+is gated by the materialization, evidence-retention, and stream-retention Budget
+Contract portfolio, because references and positions give a definite answer where
+a total in bytes is machine- and interpreter-relative. The historical reading and
+its conditions remain in
 ``docs/snapshot-graph-baseline.md``.
 
 **What is measured.** Bytes reachable at the seam's innermost point, while the
-sealed graph and its ``GraphMerge`` are both held, that were not reachable before
+sealed Page and its ``RootView`` are both held, that were not reachable before
 the window opened. The builder is deliberately not held: it is transient in
 production, dying with the frame that sealed it, so a reading that kept one would
 measure something no read retains.
@@ -62,9 +62,9 @@ from parallax.core.entity._layout import CatalogedModel
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity, entity_by_name
 from parallax.core.temporal_read import Pin
-from parallax.snapshot.materialize import GraphMerge, SnapshotGraph, merge_graph_input
+from parallax.snapshot.materialize import Page, PageBuilder, RootView
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
-from parallax.snapshot.materialize._graph import GraphBuilder, graph_rows
+from parallax.snapshot.materialize._page import page_rows
 from parallax.snapshot.materialize._views import ChildSlot, RelationshipViewKey, ViewSchema
 
 WORKSPACE: Final = Path(__file__).resolve().parents[1]
@@ -392,7 +392,7 @@ def fattened(count: int) -> tuple[Cell, ...]:
 # --------------------------------------------------------------------------- #
 
 
-def sealed(builder: GraphBuilder, plan: tuple[Cell, ...]) -> SnapshotGraph:
+def sealed(builder: PageBuilder, plan: tuple[Cell, ...]) -> Page:
     """Convert every projection into ``builder``, write every view, and seal —
     the shape a read's own level loop has, with the builder dying in this frame.
 
@@ -416,31 +416,30 @@ def sealed(builder: GraphBuilder, plan: tuple[Cell, ...]) -> SnapshotGraph:
         for duplicate in duplicates:
             builder.write_view(duplicate, VIEW_OWNER, owner)
         roots.append(owner)
-    return builder.seal(tuple(roots), PIN)
+    return builder.finish(tuple(roots), PIN)
 
 
-def build(plan: tuple[Cell, ...]) -> SnapshotGraph:
+def build(plan: tuple[Cell, ...]) -> Page:
     """One execution's whole graph: a schema of its own, and every row under it."""
-    return sealed(GraphBuilder(ViewSchema(SLOT_TABLE)), plan)
+    return sealed(PageBuilder(ViewSchema(SLOT_TABLE)), plan)
 
 
-def compose(plan: tuple[Cell, ...]) -> tuple[SnapshotGraph, GraphMerge]:
-    """One whole materialization: what a ``FindResult`` and its merge hold."""
-    graph = build(plan)
-    return graph, merge_graph_input(graph)
+def compose(plan: tuple[Cell, ...]) -> tuple[Page, RootView]:
+    """One whole materialization: what a ``FindResult`` and Root View hold."""
+    page = build(plan)
+    return page, RootView(page)
 
 
-def seam_over(plan: tuple[Cell, ...], *, merged: bool = True) -> Seam:
-    """The whole pipeline held at the sample point. With ``merged`` false the
-    merge is dropped before sampling, so the difference between the two readings
-    is what ``GraphMerge`` itself retains."""
+def seam_over(plan: tuple[Cell, ...], *, with_root_view: bool = True) -> Seam:
+    """The whole pipeline held at the sample point. Without the Root View it is
+    dropped before sampling, so the difference is what ``RootView`` retains."""
 
     def run(sample: Callable[[], None]) -> None:
-        graph, merge = compose(plan)
-        if not merged:
-            del merge
+        page, root = compose(plan)
+        if not with_root_view:
+            del root
         sample()
-        assert graph is not None
+        assert page is not None
 
     return run
 
@@ -461,12 +460,12 @@ def timings(plan: tuple[Cell, ...]) -> tuple[float, float]:
     merging = 0.0
     with untraced():
         for _ in range(REPEATS):
-            builder = GraphBuilder(ViewSchema(SLOT_TABLE))
+            builder = PageBuilder(ViewSchema(SLOT_TABLE))
             start = perf_counter()
             graph = sealed(builder, plan)
             building += perf_counter() - start
             start = perf_counter()
-            merged = merge_graph_input(graph)
+            merged = RootView(graph)
             merging += perf_counter() - start
             assert merged is not None
     return building / REPEATS, merging / REPEATS
@@ -497,7 +496,7 @@ def _verified(plan: tuple[Cell, ...]) -> None:
     path the baseline's absolute claims are stated over.
     """
     graph, merge = compose(plan)
-    rows = graph_rows(graph)
+    rows = page_rows(graph)
     assert len(rows.layouts) == REPRESENTATIVE * PROJECTIONS_PER_CELL, len(rows.layouts)
     assert len(rows.roots) == REPRESENTATIVE, len(rows.roots)
     assert len(merge.order) == REPRESENTATIVE * LOGICAL_PER_CELL, len(merge.order)
@@ -541,7 +540,7 @@ def _grid_lines(bytes_at: dict[int, int], live: dict[int, LiveGraph]) -> list[st
     return lines
 
 
-def _headline_lines(total: int, graph_only: int, survivors: int) -> list[str]:
+def _headline_lines(total: int, page_only: int, survivors: int) -> list[str]:
     projections = REPRESENTATIVE * PROJECTIONS_PER_CELL
     per_projection = total / projections
     return [
@@ -549,9 +548,9 @@ def _headline_lines(total: int, graph_only: int, survivors: int) -> list[str]:
         f"  retained bytes                = {total:,}",
         f"  retained bytes per projection = {per_projection:.1f}",
         f"  retained survivors            = {survivors:,} ({survivors / projections:.2f}/proj)",
-        f"  sealed graph alone            = {graph_only:,} ({graph_only / projections:.1f} B/proj)",
-        f"  the merge's own share         = {total - graph_only:,} "
-        f"({(total - graph_only) / projections:.1f} B/proj)",
+        f"  sealed Page alone             = {page_only:,} ({page_only / projections:.1f} B/proj)",
+        f"  Root View's own share         = {total - page_only:,} "
+        f"({(total - page_only) / projections:.1f} B/proj)",
         "",
         "against the recorded pre-cutover reading of the identical workload",
         f"  pre-cutover                   = {PRE_CUTOVER_BYTES:.1f} B/proj, "
@@ -591,7 +590,7 @@ def main(argv: list[str]) -> int:
     tracemalloc.start()
     try:
         bytes_at = {count: retained(seam_over(plans[count])) for count in GRID}
-        graph_only = retained(seam_over(plans[REPRESENTATIVE], merged=False))
+        page_only = retained(seam_over(plans[REPRESENTATIVE], with_root_view=False))
         lean = retained(seam_over(plans[GRID[0]]))
         fat = retained(seam_over(fattened(GRID[0])))
     finally:
@@ -600,17 +599,17 @@ def main(argv: list[str]) -> int:
     build_s, merge_s = timings(plans[REPRESENTATIVE])
     projections = REPRESENTATIVE * PROJECTIONS_PER_CELL
 
-    lines = ["parallax snapshot graph retained overhead", ""]
+    lines = ["parallax snapshot Page retained overhead", ""]
     lines += [f"  {name:<10}{value}" for name, value in _conditions()]
     lines += ["", *_grid_lines(bytes_at, live), ""]
     lines += _headline_lines(
-        bytes_at[REPRESENTATIVE], graph_only, len(live[REPRESENTATIVE].survivors)
+        bytes_at[REPRESENTATIVE], page_only, len(live[REPRESENTATIVE].survivors)
     )
     lines += ["", f"wall clock (mean of {REPEATS}, {projections} projections)"]
     lines += [
         f"  build (convert, write, seal)  = {build_s * 1e3:.2f} ms "
         f"({build_s / projections * 1e6:.2f} us/projection)",
-        f"  merge                         = {merge_s * 1e3:.2f} ms "
+        f"  Root View                     = {merge_s * 1e3:.2f} ms "
         f"({merge_s / projections * 1e6:.2f} us/projection)",
     ]
     lines += ["", *_census_lines(census(plans[REPRESENTATIVE]), census(plans[GRID[0]]))]

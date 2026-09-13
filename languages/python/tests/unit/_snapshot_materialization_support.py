@@ -4,7 +4,7 @@ One representative graph shape — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Entity Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-the SHIPPED read loop from ``PreparedRead.materialize`` to ``GraphBuilder.seal``,
+the SHIPPED read loop from ``PreparedRead.materialize`` to ``PageBuilder.finish``,
 with no database anywhere.
 
 The loop is the driver's own: :func:`batch` calls ``handle/_read.py``'s private
@@ -20,7 +20,7 @@ A fourth workload model rather than a reuse: ``tools/snapshot_graph_overhead.py`
 is ``Columns``-only and declares four Neutral Types, ``_document_layout_support``
 is a layout twin at the accepted-Metamodel level with no ``DomainModel`` for
 ``prepare_model`` to prepare, and ``test_snapshot_graph_retention.py``'s workload
-is the frozen cost item. The members are declared once in a factory over the
+was the Graph-era frozen cost item. The members are declared once in a factory over the
 layout, while both layouts retain the descriptor's one canonical namespace.
 
 Rows are projected from the catalog fixture itself through the compiled read:
@@ -97,8 +97,8 @@ from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle import _read
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._retention import ObservedRows
-from parallax.snapshot.materialize import SnapshotGraph
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder, graph_rows
+from parallax.snapshot.materialize import Page, PageBuilder
+from parallax.snapshot.materialize._page import ABSENT, page_rows
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 
@@ -538,7 +538,7 @@ def batch(
     plan: deep_fetch.ObjectQueryPlan,
     prepared: Sequence[PreparedRead[MaterializedReadRow] | None],
     rows: Sequence[Sequence[MappingRow]],
-) -> SnapshotGraph:
+) -> Page:
     """One whole graph, built the way ``build_graph`` builds one.
 
     The root statement's rows are materialized WHOLE before the loop opens and
@@ -556,7 +556,7 @@ def batch(
     root = prepared[0]
     assert root is not None
     root_rows = tuple(map(root.materialize, rows[0]))
-    builder = GraphBuilder(ViewSchema(_slot_table(plan)))
+    builder = PageBuilder(ViewSchema(_slot_table(plan)))
     observations = ObservedRows()
     root_refs = _convert_rows(builder, ROOT_LEVEL, root, root_rows, observations)
     level_refs: list[tuple[int, ...]] = []
@@ -584,7 +584,7 @@ def batch(
         )
         _attach_children(builder, meta, level, parents, child_refs)
         level_refs.append(child_refs)
-    return builder.seal(root_refs, _PIN)
+    return builder.finish(root_refs, _PIN)
 
 
 # --------------------------------------------------------------------------- #
@@ -651,9 +651,9 @@ DECLARABLE_TYPES: Final = frozenset(
 absent: no Python annotation denotes it, so a class-backed model declares none."""
 
 
-def verify(model: CatalogedModel, plan: deep_fetch.ObjectQueryPlan, graph: SnapshotGraph) -> None:
+def verify(model: CatalogedModel, plan: deep_fetch.ObjectQueryPlan, page: Page) -> None:
     """That the fixture-authored batch has the stated shape and no data issues."""
-    rows = graph_rows(graph)
+    rows = page_rows(page)
     assert len(rows.layouts) == PROJECTIONS_PER_BATCH, len(rows.layouts)
     assert len(rows.roots) == OWNERS, len(rows.roots)
     assert len(plan.levels) == 4, len(plan.levels)

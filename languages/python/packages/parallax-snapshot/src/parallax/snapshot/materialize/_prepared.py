@@ -45,8 +45,7 @@ from parallax.snapshot.materialize._convert import (
     LevelContext,
     convert_row,
 )
-from parallax.snapshot.materialize._convert import observable_columns as observed_columns
-from parallax.snapshot.materialize._graph import GraphBuilder
+from parallax.snapshot.materialize._page import PageBuilder
 from parallax.snapshot.materialize._views import SourceLevel
 
 __all__ = ["PreparedRead", "bind"]
@@ -101,7 +100,7 @@ class PreparedRead[RowT: _MaterializedRow]:
     second place the pairing of a row with its own level could go wrong.
 
     Both halves it is built from are private for that reason: the level table is
-    reachable only through the three methods, so nothing outside can read a level,
+    reachable only through the two methods, so nothing outside can read a level,
     replace one, or hold the compiled read apart from the levels bound with it.
     """
 
@@ -118,7 +117,7 @@ class PreparedRead[RowT: _MaterializedRow]:
         """
         return self._compiled.materialize_row(row)
 
-    def convert(self, row: RowT, builder: GraphBuilder, *, source: SourceLevel) -> int:
+    def convert(self, row: RowT, builder: PageBuilder, *, source: SourceLevel) -> int:
         """Convert one materialized row into ``builder``'s next projection at
         ``source``, answering the projection index the builder assigned."""
         return convert_row(
@@ -129,12 +128,6 @@ class PreparedRead[RowT: _MaterializedRow]:
             findings=row.findings,
             unknown_family_tag=row.unknown_family_tag,
             classified_members=row.classified_members,
-        )
-
-    def observable_columns(self, row: RowT) -> dict[str, object]:
-        """One materialized row's observable state, keyed by physical column."""
-        return observed_columns(
-            row.values, self._level(row), classified_members=row.classified_members
         )
 
     def _level(self, row: RowT) -> LevelContext:
