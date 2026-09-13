@@ -3668,18 +3668,19 @@ of shared edition identity.
   inheriting a field-tuple hash that would refuse the value or disagree with
   equality. `stored_value` is excluded from the record's `repr`, and evidence
   reaches no exception message, lifecycle event, SQL emission, log line, or
-  automatic formatter. Exactly one frozen copy of it is retained: conversion
-  freezes it where it translates the detecting seam's finding, and shares it by
+  automatic formatter. Exactly one frozen copy of it is retained per decoded
+  Entity State: conversion freezes it where the selected canonical projection's
+  deferred decoder translates the detecting seam's finding, then shares it by
   reference to the public issue and to `InvalidDataError` — graded in the `cost`
   class (§10) as a retained-bytes difference over the rejected value's own size,
-  against one frozen copy of it. Repeated reach shares that one copy too: a
-  second projection of a logical node is a second row, judged and frozen apart,
-  and Root View judgment answers each duplicate issue with the equal record
-  the Page-owned state already retains, so the second row's frozen value is discarded with
-  the conversion that made it rather than retained beside the first. Sharing is
-  settled per rejected occurrence, so two projections that agree about one
-  occurrence and disagree about another retain one copy of the first and both of
-  the second.
+  against one frozen copy of it. A Root View compares duplicate projections'
+  exact Payload Witnesses before invoking any payload decoder. Equal duplicates
+  invoke one canonical decoder and share its Page-owned Entity State, so no
+  second issue or frozen value is created; another Root View may borrow the same
+  state. Unequal duplicates reached within one root raise
+  `SnapshotConsistencyError` before either payload is decoded, while unequal
+  witnesses reached only by separate roots may each decode into and retain their
+  own Page-owned state.
 - **Default and checked views.** `Snapshot`'s accessors are the default view:
   each performs its existing arity check FIRST and then raises `InvalidDataError`
   when the roots it narrowed to carry invalid data. `result()` and
