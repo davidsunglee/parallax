@@ -202,7 +202,7 @@ def test_an_authored_key_naming_the_primary_key_keeps_the_authors_direction() ->
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_ID, direction="desc"),))
     node = plan.after(ContinuationCoordinate((5,)), limit=3)
     assert node.authored.order_by == (OrderKey(attr=_ORDER_ID, direction="desc"),)
-    assert _where(_lowered(ORDERS, node).sql) == "t0.id < ?"
+    assert _where(_lowered(ORDERS, node).sql) == "t0.id <= ? and t0.id < ?"
 
 
 def test_a_subtype_position_pages_by_its_family_roots_key() -> None:
@@ -268,8 +268,8 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(),
         coordinate=(7,),
         order=(_APPENDED,),
-        where="(t0.id > ? or t0.id is null)",
-        binds=(7,),
+        where="t0.id >= ? and (t0.id > ? or t0.id is null)",
+        binds=(7, 7),
     ),
     _SeekCase(
         id="ascending-non-nullable",
@@ -314,8 +314,11 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_SKU),),
         coordinate=("A-100", 1),
         order=(OrderKey(attr=_ORDER_SKU), _APPENDED),
-        where="(t0.sku > ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null)))",
-        binds=("A-100", "A-100", 1),
+        where=(
+            "t0.sku >= ? and (t0.sku > ? or t0.sku is null "
+            "or (t0.sku = ? and (t0.id > ? or t0.id is null)))"
+        ),
+        binds=("A-100", "A-100", "A-100", 1),
     ),
     _SeekCase(
         id="nullable-last-null-coordinate",
@@ -330,8 +333,8 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_SKU, nulls="first"),),
         coordinate=("A-100", 1),
         order=(OrderKey(attr=_ORDER_SKU, nulls="first"), _APPENDED),
-        where="(t0.sku > ? or (t0.sku = ? and (t0.id > ? or t0.id is null)))",
-        binds=("A-100", "A-100", 1),
+        where="t0.sku >= ? and (t0.sku > ? or (t0.sku = ? and (t0.id > ? or t0.id is null)))",
+        binds=("A-100", "A-100", "A-100", 1),
     ),
     _SeekCase(
         id="nullable-first-null-coordinate",
@@ -346,8 +349,11 @@ _SEEK_MATRIX: tuple[_SeekCase, ...] = (
         order_by=(OrderKey(attr=_ORDER_SKU, direction="desc"),),
         coordinate=("B-200", 2),
         order=(OrderKey(attr=_ORDER_SKU, direction="desc"), _APPENDED),
-        where="(t0.sku < ? or t0.sku is null or (t0.sku = ? and (t0.id > ? or t0.id is null)))",
-        binds=("B-200", "B-200", 2),
+        where=(
+            "t0.sku <= ? and (t0.sku < ? or t0.sku is null "
+            "or (t0.sku = ? and (t0.id > ? or t0.id is null)))"
+        ),
+        binds=("B-200", "B-200", "B-200", 2),
     ),
     _SeekCase(
         id="nullable-term-BELOW-the-leading-one",
@@ -390,8 +396,28 @@ def _lowered(model: Metamodel, node: ValidatedObjectQuery) -> LoweredStatement:
     ).statement
 
 
-def _where(sql: str) -> str:
+def _arms(statement: LoweredStatement) -> tuple[tuple[str, tuple[object, ...]], ...]:
+    """Each independently limited SELECT and the binds it owns."""
+    sql = statement.sql
+    marker = " from (("
+    if marker not in sql:
+        return ((sql, statement.binds),)
+    start = sql.index(marker) + len(marker)
+    separator = ") union all ("
+    split = sql.index(separator, start)
+    end = sql.rindex(")) u order by ")
+    texts = (sql[start:split], sql[split + len(separator) : end])
+    first_count = texts[0].count("?")
+    second_count = texts[1].count("?")
+    return (
+        (texts[0], statement.binds[:first_count]),
+        (texts[1], statement.binds[first_count : first_count + second_count]),
+    )
+
+
+def _where(statement: LoweredStatement | str) -> str:
     """A lowered page statement's `where` clause, or "" where it carries none."""
+    sql = statement if isinstance(statement, str) else _arms(statement)[0][0]
     if " where " not in sql:
         return ""
     return sql.split(" where ", 1)[1].split(" order by ", 1)[0]
@@ -403,8 +429,9 @@ def _seek_binds(statement: LoweredStatement) -> tuple[object, ...]:
     Binds are positional, so what precedes the clause is skipped by counting the
     holes ahead of it rather than by assuming the projection contributed none.
     """
-    ahead = statement.sql.split(" where ", 1)[0].count("?")
-    return statement.binds[ahead:]
+    sql, binds = _arms(statement)[0]
+    ahead = sql.split(" where ", 1)[0].count("?")
+    return binds[ahead:]
 
 
 @pytest.mark.parametrize("case", _SEEK_MATRIX, ids=[case.id for case in _SEEK_MATRIX])
@@ -420,7 +447,7 @@ def test_the_seek_matrix(case: _SeekCase) -> None:
     assert node.authored.order_by == case.order
     assert node.limit == 3
     statement = _lowered(ORDERS, node)
-    assert _where(statement.sql) == case.where
+    assert _where(statement) == case.where
     assert _seek_binds(statement) == (*case.binds, 3)
 
 
@@ -478,20 +505,20 @@ def test_null_placement_over_a_non_nullable_key_changes_no_seek() -> None:
     assert seeks["first"] == _SEEK_MATRIX[1].where
 
 
-def test_a_nullable_leading_term_carries_no_hoisted_range() -> None:
-    # The negative half of the hoist rule. With the nulls placed after a non-null
-    # coordinate "after" is two disjoint ranges of the index, so there is no
-    # single comparison to hoist and the seek is the branch tree alone.
+def test_a_nullable_leading_term_uses_a_hoisted_range_and_a_disjoint_null_tail() -> None:
+    # Declared nullability does not prevent a non-null coordinate from giving
+    # the first arm an index range; the second arm retains the trailing NULLs.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
-    seek = _where(_lowered(ORDERS, plan.after(ContinuationCoordinate(("A-100", 1)), limit=2)).sql)
-    assert seek.startswith("(")
+    statement = _lowered(ORDERS, plan.after(ContinuationCoordinate(("A-100", 1)), limit=2))
+    assert _where(statement).startswith("t0.sku >= ? and (")
+    assert _where(_arms(statement)[1][0]) == "t0.sku is null"
     hoisted = _where(
         _lowered(
             ORDERS,
             _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME),)).after(
                 ContinuationCoordinate(("Ada", 1)), limit=2
             ),
-        ).sql
+        )
     )
     assert hoisted.startswith("t0.name >= ? and (")
 
@@ -508,7 +535,7 @@ def test_a_nullable_terms_own_two_way_branch_stays_inside_the_ties_above_it() ->
         ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_NAME), OrderKey(attr=_ORDER_SKU))
     )
     node = plan.after(ContinuationCoordinate(("Ada", "A-100", 1)), limit=2)
-    assert _lowered(ORDERS, node).sql.endswith(
+    assert _arms(_lowered(ORDERS, node))[0][0].endswith(
         "where t0.name >= ? and (t0.name > ? or t0.name is null "
         "or (t0.name = ? and (t0.sku > ? or t0.sku is null)) "
         "or (t0.name = ? and t0.sku = ? and (t0.id > ? or t0.id is null))) "
@@ -548,8 +575,8 @@ def test_the_seek_is_a_top_level_conjunct_and_the_callers_terms_bind_first() -> 
     # caller-first exactly as an injected as-of term leaves it.
     plan = _planned(ORDERS, "Order", predicate=_active(ORDERS, "Order"))
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((4,)), limit=3))
-    assert _where(statement.sql) == "t0.name = ? and (t0.id > ? or t0.id is null)"
-    assert _seek_binds(statement) == ("A", 4, 3)
+    assert _where(statement) == "t0.name = ? and t0.id >= ? and (t0.id > ? or t0.id is null)"
+    assert _seek_binds(statement) == ("A", 4, 4, 3)
 
 
 def test_a_multi_term_seek_conjoins_both_of_its_parts_beside_the_caller() -> None:
@@ -563,7 +590,7 @@ def test_a_multi_term_seek_conjoins_both_of_its_parts_beside_the_caller() -> Non
         order_by=(OrderKey(attr=_ORDER_NAME),),
     )
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate(("Ada", 1)), limit=3))
-    assert _where(statement.sql) == (
+    assert _where(statement) == (
         "t0.name = ? and t0.name >= ? and (t0.name > ? or t0.name is null "
         "or (t0.name = ? and (t0.id > ? or t0.id is null)))"
     )
@@ -577,7 +604,9 @@ def test_a_callers_disjunction_is_grouped_before_the_seek_is_conjoined_to_it() -
     right = Comparison(op="eq", attr=_ORDER_QTY, value=1)
     plan = _planned(ORDERS, "Order", predicate=Or(operands=(left, right)))
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((1,)), limit=3))
-    assert _where(statement.sql) == "(t0.name = ? or t0.qty = ?) and (t0.id > ? or t0.id is null)"
+    assert _where(statement) == (
+        "(t0.name = ? or t0.qty = ?) and t0.id >= ? and (t0.id > ? or t0.id is null)"
+    )
 
 
 def test_a_later_page_of_an_unfiltered_query_carries_the_seek_alone() -> None:
@@ -586,7 +615,7 @@ def test_a_later_page_of_an_unfiltered_query_carries_the_seek_alone() -> None:
     # which would lower to a dangling `and`.
     plan = _planned(ORDERS, "Order")
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((2,)), limit=3))
-    assert _where(statement.sql) == "(t0.id > ? or t0.id is null)"
+    assert _where(statement) == "t0.id >= ? and (t0.id > ? or t0.id is null)"
 
 
 def test_a_coordinate_of_the_wrong_width_is_refused_by_name() -> None:
@@ -605,7 +634,7 @@ def test_a_page_seeks_past_a_null_carrier_rather_than_refusing_it() -> None:
     # whether a member decoded.
     plan = _planned(ORDERS, "Order", order_by=(OrderKey(attr=_ORDER_SKU),))
     statement = _lowered(ORDERS, plan.after(ContinuationCoordinate((None, 4)), limit=3))
-    assert _where(statement.sql) == "(t0.sku is null and (t0.id > ? or t0.id is null))"
+    assert _where(statement) == "(t0.sku is null and (t0.id > ? or t0.id is null))"
 
 
 def test_a_coordinates_snapshot_is_an_inert_copy_rather_than_a_second_cursor() -> None:
@@ -711,7 +740,7 @@ def test_a_milestone_page_seeks_past_the_edge_the_database_evaluated() -> None:
     statement = _lowered(
         POSITION, plan.after(ContinuationCoordinate((1, valid_start, tx_start)), limit=2)
     )
-    assert _where(statement.sql) == (
+    assert _where(statement) == (
         "t0.thru_z = ? and t0.pos_id >= ? and (t0.pos_id > ? or t0.pos_id is null "
         "or (t0.pos_id = ? and (t0.from_z > ? or t0.from_z is null)) "
         "or (t0.pos_id = ? and t0.from_z = ? and (t0.in_z > ? or t0.in_z is null)))"
@@ -808,12 +837,15 @@ def _admits(
     Binds are positional, so the holes ahead of the clause are skipped rather
     than assumed absent.
     """
-    where = _where(statement.sql)
-    if not where:
-        return True
-    ahead = statement.sql.split(" where ", 1)[0].count("?")
-    reader = _Clause(where, statement.binds[ahead:], columns, row)
-    return reader.disjunction()
+    for sql, binds in _arms(statement):
+        where = _where(sql)
+        if not where:
+            return True
+        ahead = sql.split(" where ", 1)[0].count("?")
+        reader = _Clause(where, binds[ahead:], columns, row)
+        if reader.disjunction():
+            return True
+    return False
 
 
 class _Clause:

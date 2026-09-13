@@ -49,13 +49,13 @@ then:
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? order by t0.id asc, t0.in_z asc limit ?
       binds: [100, 2]
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or t0.id is null or (t0.id = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.id asc, t0.in_z asc limit ?
+        postgres: select u.id, u.invoice_id, u.amount, u.in_z, u.out_z, u.parallax_seek_0, u.parallax_seek_1 from ((select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or t0.id is null or (t0.id = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.id asc, t0.in_z asc limit ?) union all (select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id is null order by t0.id asc, t0.in_z asc limit ?)) u order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
-      binds: [100, 1000, 1000, 1000, "2024-01-01T00:00:00.000000Z", 2]
+      binds: { postgres: [100, 1000, 1000, 1000, "2024-01-01T00:00:00.000000Z", 2, 100, 2, 2], mariadb: [100, 1000, 1000, 1000, "2024-01-01T00:00:00.000000Z", 2] }
     - sql:
-        postgres: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or t0.id is null or (t0.id = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.id asc, t0.in_z asc limit ?
+        postgres: select u.id, u.invoice_id, u.amount, u.in_z, u.out_z, u.parallax_seek_0, u.parallax_seek_1 from ((select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or t0.id is null or (t0.id = ? and (t0.in_z > ? or t0.in_z is null))) order by t0.id asc, t0.in_z asc limit ?) union all (select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id is null order by t0.id asc, t0.in_z asc limit ?)) u order by u.parallax_seek_0 asc, u.parallax_seek_1 asc limit ?
         mariadb: select t0.id, t0.invoice_id, t0.amount, t0.in_z, t0.out_z, t0.id parallax_seek_0, t0.in_z parallax_seek_1 from invoice_line t0 where t0.invoice_id = ? and t0.id >= ? and (t0.id > ? or (t0.id = ? and t0.in_z > ?)) order by t0.id asc, t0.in_z asc limit ?
-      binds: [100, 1000, 1000, 1000, "2024-04-01T00:00:00.000000Z", 2]
+      binds: { postgres: [100, 1000, 1000, 1000, "2024-04-01T00:00:00.000000Z", 2, 100, 2, 2], mariadb: [100, 1000, 1000, 1000, "2024-04-01T00:00:00.000000Z", 2] }
   referenceSql: select id, invoice_id, amount, in_z, out_z from invoice_line where invoice_id = 100
   graphs:
     - pin: { transaction-time: "2024-01-01T00:00:00.000000Z" }

@@ -28,6 +28,7 @@ from parallax.core.sql_gen._compile import (
     compile_read,
     compile_template,
 )
+from parallax.core.sql_gen._seek import NullPattern, null_pattern
 from parallax.core.temporal_read import Pin, scans_validated_axis, validated_query_pin
 from parallax.core.unit_work import Concurrency, EntityStateRow
 from parallax.snapshot._read_result import FindResult
@@ -158,6 +159,7 @@ class _RootTemplate:
     plan: deep_fetch.ObjectQueryPlan
     compiled: CompiledRead
     positions: tuple[tuple[int, int], ...]
+    limit_positions: tuple[int, ...]
 
     def render(
         self, coordinate: ContinuationCoordinate, size: int
@@ -165,7 +167,8 @@ class _RootTemplate:
         binds = list(self.compiled.statement.binds)
         for bind_index, carrier in self.positions:
             binds[bind_index] = coordinate.carriers[carrier]
-        binds[-1] = size
+        for bind_index in self.limit_positions:
+            binds[bind_index] = size
         statement = replace(self.compiled.statement, binds=tuple(binds))
         return self.plan, replace(self.compiled, statement=statement)
 
@@ -175,7 +178,7 @@ class DeliveryPlan:
     """Pure paging policy plus delivery-owned compiled statement templates."""
 
     paging: PagePlan
-    root_after: dict[tuple[bool, ...], _RootTemplate] = field(
+    root_after: dict[NullPattern, _RootTemplate] = field(
         default_factory=lambda: {}, compare=False, repr=False
     )
     children: dict[int, CompiledTemplate] = field(
@@ -394,7 +397,7 @@ class Materializer:
                 result_form="instance",
                 lock=entity_read_lock(meta, query.root.identity, preference),
             )
-        pattern = tuple(carrier is None for carrier in coordinate.carriers)
+        pattern = null_pattern(coordinate)
         template = delivery.root_after.get(pattern)
         if template is None:
             markers = tuple(None if missing else object() for missing in pattern)
@@ -406,8 +409,9 @@ class Materializer:
                 meta,
                 projection=deep_fetch.ReadProjectionRequest("all", True),
             )
+            limit_marker = object()
             compiled = compile_read(
-                planned.root,
+                replace(planned.root, limit=cast("int", limit_marker)),
                 meta,
                 port.dialect,
                 result_form="instance",
@@ -422,7 +426,14 @@ class Materializer:
             expected = {index for index, marker in enumerate(markers) if marker is not None}
             if {carrier for _bind, carrier in positions} != expected:
                 raise SqlGenError("compiled continuation lost a non-null coordinate bind")
-            template = _RootTemplate(planned, compiled, positions)
+            limit_positions = tuple(
+                bind_index
+                for bind_index, bind_value in enumerate(compiled.statement.binds)
+                if bind_value is limit_marker
+            )
+            if not limit_positions:  # pragma: no cover - compile_read preserves the query limit
+                raise SqlGenError("compiled continuation lost its page limit bind")
+            template = _RootTemplate(planned, compiled, positions, limit_positions)
             delivery.root_after[pattern] = template
         return template.render(coordinate, request.size)
 

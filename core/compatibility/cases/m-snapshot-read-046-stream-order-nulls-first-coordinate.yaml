@@ -31,9 +31,8 @@
 # leads them and does not. Neither column holds one, so both dialects reach the
 # same two roots.
 #
-# `sku` is nullable, so no continuing page hoists a leading range — under either
-# placement "after" spans two disjoint ranges of the index and no single
-# comparison covers both.
+# This page's leading carrier is NULL, so it has no value from which to hoist a
+# range. The existing Nulls First branch directly admits every non-NULL value.
 model: models/orders.yaml
 tags: [m-snapshot-read, m-object-query, m-dialect, stream, streamed-delivery, orderBy, ordering, nulls, nullable, graph, materialization, slice-snapshot-1]
 shape: read

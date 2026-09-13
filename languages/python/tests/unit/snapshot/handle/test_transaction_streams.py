@@ -459,3 +459,31 @@ def test_a_participating_stream_inherits_the_attempts_edition_and_wraps_no_failu
     assert failed.value is failure
     assert failed.edition == "ledger-a"
     assert serving.current() is b
+
+
+def test_a_retry_redelivers_the_prefix_published_by_the_failed_attempt() -> None:
+    first_failure = deadlock()
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[_account_row(1), _account_row(2)]),
+            Read(raises=first_failure),
+        ),
+        Transact(*paged_reads([_account_row(1), _account_row(2)], size=1)),
+    )
+    attempts: list[list[int]] = []
+    delivered: list[int] = []
+
+    def body(tx: Transaction) -> list[int]:
+        current: list[int] = []
+        try:
+            with tx.stream(_accounts(), batch_size=1) as stream:
+                for account in stream:
+                    current.append(account.id)
+                    delivered.append(account.id)
+        finally:
+            attempts.append(current)
+        return current
+
+    assert account_db(port).transact(body, retries=1) == [1, 2]
+    assert attempts == [[1], [1, 2]]
+    assert delivered == [1, 1, 2]

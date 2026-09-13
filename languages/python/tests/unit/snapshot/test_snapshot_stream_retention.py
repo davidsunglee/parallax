@@ -176,8 +176,10 @@ _FANOUT: Final = _WORKLOAD.fanout // 2
 """Included children per root, so a Page holds relationship fanout rather
 than bare roots and `P_B` is measured over something with depth."""
 
-_PAGE_SIZES: Final = tuple(2**power for power in range(1, _WORKLOAD.fanout - 1))
-"""A logarithmic probe grid derived from the benchmark fixture's fanout."""
+_PAGE_SIZES: Final = tuple(
+    dict.fromkeys((1, *(2**power for power in range(1, _WORKLOAD.fanout - 1)), 32, 128))
+)
+"""A logarithmic probe grid including the delivery contract's 1/32/128 arms."""
 
 _FANOUTS: Final = tuple(range(1, _FANOUT + 2))
 """A centered grid derived from the fixture-owned fanout, so the page and root
@@ -1142,18 +1144,24 @@ def test_a_writing_loops_buffer_grows_with_the_page_and_not_with_the_result() ->
         buffered: dict[int, int] = {}
         for batch_size in _PAGE_SIZES:
             at = 2 * batch_size - 1
-            small = _writing(_LARGE, batch_size=batch_size, at=at, writes=True)
-            large = _writing(_LARGE * _TENFOLD, batch_size=batch_size, at=at, writes=True)
-            unwritten = _writing(_LARGE, batch_size=batch_size, at=at, writes=False)
+            bounded_total = max(_LARGE, at + 1)
+            small = _writing(bounded_total, batch_size=batch_size, at=at, writes=True)
+            large = _writing(bounded_total * _TENFOLD, batch_size=batch_size, at=at, writes=True)
+            unwritten = _writing(bounded_total, batch_size=batch_size, at=at, writes=False)
             held = retained(small)
             assert held == retained(large), batch_size
             buffered[batch_size] = held - retained(unwritten)
-        # Proportional to the page size, which is the bound stated rather than
-        # merely ordered: what one buffered write costs is the same at every page
-        # size, so the buffer is the dial's own multiple and nothing else.
-        each = {size: price / size for size, price in buffered.items()}
-        assert min(each.values()) > 0, buffered
-        assert max(each.values()) / min(each.values()) < 1.1, buffered
+        # Affine in the page size, which is the bound stated rather than merely
+        # ordered: fixed transaction bookkeeping cancels between adjacent arms,
+        # leaving the same marginal cost for each additional buffered write.
+        marginal = [
+            (later_price - earlier_price) / (later_size - earlier_size)
+            for (earlier_size, earlier_price), (later_size, later_price) in pairwise(
+                buffered.items()
+            )
+        ]
+        assert min(marginal) > 0, buffered
+        assert max(marginal) / min(marginal) < 1.1, (buffered, marginal)
     finally:
         tracemalloc.stop()
 

@@ -78,6 +78,7 @@ from parallax.core.sql_gen._seek import LoweredTerm as _LoweredTerm
 from parallax.core.sql_gen._seek import TermSubject as _TermSubject
 from parallax.core.sql_gen._seek import capture_cells as _capture_cells
 from parallax.core.sql_gen._seek import coordinate_reads as _coordinate_reads
+from parallax.core.sql_gen._seek import emits_null_tail as _emits_null_tail
 from parallax.core.sql_gen._seek import lower_seek as _lower_seek
 from parallax.core.sql_gen._seek import lowered_terms as _lowered_terms
 from parallax.core.sql_gen._seek import order_clause as _order_clause
@@ -625,6 +626,64 @@ def compile_read(
     already present on ``query``; ``lock`` is the caller-derived effective read lock.
     """
 
+    compiled = _compile_read_arm(
+        query, model, dialect, result_form=result_form, lock=lock, null_tail=False
+    )
+    seek = None if query.paging is None else query.paging.seek
+    if seek is None or query.limit is None:
+        return compiled
+    storage = _storage_view(model)
+    if not seek.terms:  # pragma: no cover - validated continuations always order by a term
+        return compiled
+    placements = tuple(
+        placement
+        for layout in storage.tables
+        if (placement := layout.placement(seek.terms[0].identity)) is not None
+    )
+    leading_resident = not placements or not all(
+        isinstance(placement, _DirectColumn) for placement in placements
+    )
+    if not _emits_null_tail(seek, dialect, leading_resident=leading_resident):
+        return compiled
+    null_tail = _compile_read_arm(
+        query, model, dialect, result_form=result_form, lock=lock, null_tail=True
+    )
+    terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
+    statement_ctx = StatementBuilder(model, _inheritance_view(model), storage, dialect)
+    statement_ctx.append_fragment(compiled.statement)
+    statement_ctx.append_fragment(null_tail.statement)
+    outer_alias = "u"
+    projection = ", ".join(
+        dialect.qualified(outer_alias, result_key) for result_key in compiled.result_keys
+    )
+    ordering = ", ".join(
+        dialect.null_order(
+            dialect.qualified(outer_alias, term.alias), term.term.direction, term.term.nulls
+        )
+        if term.member.nullable
+        else f"{dialect.qualified(outer_alias, term.alias)} {term.term.direction}"
+        for term in terms
+    )
+    statement_ctx.bind_structural(query.limit)
+    statement = statement_ctx.finish(
+        f"select {projection} from (({compiled.statement.sql}) union all "
+        f"({null_tail.statement.sql})) {outer_alias} "
+        f"order by {ordering} {dialect.limit_clause()}"
+    )
+    return replace(compiled, statement=_normalize(statement))
+
+
+def _compile_read_arm(
+    query: ValidatedEntityQuery,
+    model: Metamodel,
+    dialect: Dialect,
+    *,
+    result_form: _ResultForm,
+    lock: LockMode | None,
+    null_tail: bool,
+) -> CompiledRead:
+    """Compile one ordinary or NULL-tail arm of a read."""
+
     target = query.entity
     facet = _inheritance_view(model)
     storage = _storage_view(model)
@@ -648,6 +707,7 @@ def compile_read(
             dialect,
             result_form,
             lock,
+            null_tail,
         )
         position_documents = _position_documents(facet, storage, plan_position)
         return CompiledRead(
@@ -689,7 +749,7 @@ def compile_read(
     ]
 
     where_sql = _lower_predicate(predicate, scope)
-    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx)
+    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     _append_where(parts, _beside_a_seek(predicate, where_sql, seek_sql), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
 
@@ -776,6 +836,8 @@ def _sought(
     subject: _TermSubject,
     paging: Paging | None,
     ctx: StatementBuilder,
+    *,
+    null_tail: bool = False,
 ) -> str:
     """This read's seek fragment, or nothing where it starts at the beginning.
 
@@ -786,6 +848,10 @@ def _sought(
     """
     if paging is None or paging.seek is None:
         return ""
+    if null_tail:
+        if not terms:  # pragma: no cover - a NULL tail is selected from its leading term
+            raise SqlGenError("a NULL-tail continuation requires an ordering term")
+        return f"{subject(terms[0].member).extraction} is null"
     return _lower_seek(
         paging.seek,
         terms,
@@ -873,6 +939,7 @@ def _compile_inheritance_read(
     dialect: Dialect,
     result_form: _ResultForm,
     lock: LockMode | None,
+    null_tail: bool,
 ) -> tuple[
     LoweredStatement,
     tuple[EntityIdentity, ...],
@@ -920,6 +987,7 @@ def _compile_inheritance_read(
                 storage,
                 dialect,
                 lock,
+                null_tail,
             )
             return statement, plan.position, document_reads, result_keys, stages
         case _TpcsSinglePlan():
@@ -935,11 +1003,22 @@ def _compile_inheritance_read(
                 storage,
                 dialect,
                 lock,
+                null_tail,
             )
             return statement, plan.position, document_reads, result_keys, stages
         case _TpcsUnionPlan():
             statement, document_reads, stages = _compile_tpcs_read(
-                plan, predicate, entity, terms, paging, limit, model, facet, storage, dialect
+                plan,
+                predicate,
+                entity,
+                terms,
+                paging,
+                limit,
+                model,
+                facet,
+                storage,
+                dialect,
+                null_tail,
             )
             return statement, plan.position, document_reads, result_keys, stages
         case _:  # pragma: no cover - exhaustiveness guard
@@ -958,6 +1037,7 @@ def _compile_tph_read(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
+    null_tail: bool,
 ) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
     """Assemble a table-per-hierarchy read: one shared correlated `EXISTS`-free
     single-table SELECT (m-sql "Inheritance — table-per-hierarchy lowering").
@@ -983,7 +1063,7 @@ def _compile_tph_read(
 
     inner = _planned_inner(predicate, plan.inner)
     inner_sql = _lower_predicate(inner, scope)
-    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx)
+    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     where_terms = [_beside_a_seek(inner, inner_sql, seek_sql), seek_sql]
     if plan.tag is not None:
         # Planned, then bound HERE — after the user predicate and the seek above
@@ -1009,6 +1089,7 @@ def _compile_tph_read(
                 storage,
                 dialect,
                 lock,
+                null_tail,
             ),
             plan.stages,
         )
@@ -1028,6 +1109,7 @@ def _compile_tph_partitioned(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
+    null_tail: bool,
 ) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
     """Assemble one tag-disjoint branch per selected TPH document variant."""
     branch_sqls: list[str] = []
@@ -1104,7 +1186,15 @@ def _compile_tph_partitioned(
         for branch in branches:
             statement_ctx.append_fragment(branch)
         _append_where(
-            parts, _sought(terms, outer_scope, outer_scope.subject_for, paging, statement_ctx)
+            parts,
+            _sought(
+                terms,
+                outer_scope,
+                outer_scope.subject_for,
+                paging,
+                statement_ctx,
+                null_tail=null_tail,
+            ),
         )
         _append_result_shape(parts, outer_scope, terms, outer_scope.subject_for, limit, lock)
         return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
@@ -1136,7 +1226,15 @@ def _compile_tph_partitioned(
     for branch in branches:
         statement_ctx.append_fragment(branch)
     _append_where(
-        parts, _sought(terms, outer_scope, outer_scope.subject_for, paging, statement_ctx)
+        parts,
+        _sought(
+            terms,
+            outer_scope,
+            outer_scope.subject_for,
+            paging,
+            statement_ctx,
+            null_tail=null_tail,
+        ),
     )
     _append_result_shape(parts, outer_scope, terms, outer_scope.subject_for, limit, None)
     return _normalize(statement_ctx.finish(" ".join(parts))), document_reads
@@ -1153,6 +1251,7 @@ def _compile_tpcs_read(
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
+    null_tail: bool,
 ) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
     """Assemble a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
     table-per-concrete-subtype lowering").
@@ -1227,7 +1326,17 @@ def _compile_tpcs_read(
         f"select {projection}{_captured(terms, _tpcs_subject(plan, capture_scope), paging)}",
         f"from ({union}) {outer_scope.alias}",
     ]
-    _append_where(outer_parts, _sought(terms, outer_scope, tail_subject, paging, tail_ctx))
+    _append_where(
+        outer_parts,
+        _sought(
+            terms,
+            outer_scope,
+            tail_subject,
+            paging,
+            tail_ctx,
+            null_tail=null_tail,
+        ),
+    )
     _append_result_shape(outer_parts, outer_scope, terms, tail_subject, limit, None)
     statement_ctx = StatementBuilder(model, facet, storage, dialect)
     statement_ctx.append_fragment(capture_ctx.finish(""))
@@ -1303,6 +1412,7 @@ def _compile_tpcs_single(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
+    null_tail: bool,
 ) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowStages]:
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
@@ -1327,7 +1437,7 @@ def _compile_tpcs_single(
     ]
     inner = _planned_inner(predicate, plan.inner)
     where_sql = _lower_predicate(inner, scope)
-    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx)
+    seek_sql = _sought(terms, scope, scope.subject_for, paging, ctx, null_tail=null_tail)
     _append_where(parts, _beside_a_seek(inner, where_sql, seek_sql), seek_sql)
     _append_result_shape(parts, scope, terms, scope.subject_for, limit, lock)
     statement = _normalize(ctx.finish(" ".join(parts)))

@@ -590,25 +590,27 @@ conforming. A coordinate the emitted ordering placed last leaves every branch
 dropped; the seek then admits nothing (`1 = 0`) and the page is an ordinary
 statement returning no root.
 
-**The hoisted leading range is the one exception, and it is a cost decision.**
-Ahead of the branches, for a leading term stored in a **direct Column** that the model
-declares **non-nullable**, over a non-null carrier, the redundant non-strict range
-`col >=|<= ?` is emitted as its own top-level conjunct: the disjunction alone offers a
-planner nothing to push down, so without it every streamed page over a leading key
-scans where it could seek. That conjunct excludes a `NULL` wherever the clause placed
-it, so where such a Column holds a stored `NULL` anyway it re-excludes the very root
-the branch below admits, and the page skips it. `m-snapshot-read` *Streamed delivery*
-names that skip and scopes it.
+**A continuing page over a direct leading Column has two arms where its NULLs come
+last.** For any non-null leading carrier, regardless of the term's declared
+nullability or the number of terms, the first arm hoists the redundant non-strict
+range `col >=|<= ?` as its own top-level conjunct. The disjunction alone offers a
+planner nothing to push down, so the hoist is the range the planner can seek on. It
+also excludes `NULL`; where the emitted placement ranks `NULL` after the coordinate,
+a second disjoint arm applies the caller's predicate with `col is null` and no seek
+ties, so it admits the whole NULL tail. Each arm carries the continuing page's order
+and limit. They join with `union all` under an outer order by the capture aliases and
+an outer limit of the same size. The non-NULL arm therefore keeps the seekable range
+without omitting a root from the ordered result, including a stored `NULL` under a
+dropped `NOT NULL` constraint. Where placement ranks `NULL` first, the range arm alone
+is complete because the NULL region is already behind the coordinate.
 
-Nothing is hoisted in either other case. Where the leading term is nullable, "after"
-is two disjoint ranges of the index and no single comparison covers both. Where it is
-**document-resident**, its extraction evaluates to `NULL` for a missing member, an
-explicit JSON null, or a parent document of the wrong kind — ordinary invalid stored
-data that `m-snapshot-read` guarantees is delivered, not the non-conforming storage
-the Column case is scoped to — while a range over an extraction is no index range to
-trade for it. Member Placement is therefore part of the hoist's own guard, asked of
-the read's resolution scope rather than by resolving the term, since resolving one
-binds an extraction's path segments ahead of text that may not be emitted.
+Nothing is hoisted where the leading term is **document-resident**. Its extraction
+evaluates to `NULL` for a missing member, an explicit JSON null, or a parent document
+of the wrong kind — ordinary invalid stored data that `m-snapshot-read` guarantees is
+delivered — while a range over an extraction is no index range to buy. Member
+Placement is therefore part of the hoist's own guard, asked of the read's resolution
+scope rather than by resolving the term, since resolving one binds an extraction's
+path segments ahead of text that may not be emitted.
 
 **Rebind.** Each comparison binds its carrier in the form its own expression
 compares — a direct Column in the engine's own column type, a document extraction
@@ -638,10 +640,12 @@ Continuation Order names and still author the pages that continue past it
 
 Seek binds append after the caller's authored predicate binds, so bind order stays
 caller-first; the ordering clause's own path binds follow them, and the cap last.
-A capture cell's path binds precede every bind below them in the statement — a
-wrapped `union all`'s branch binds included — because the cell's holes precede
-them in the text. A statement whose fragments are assembled in any other order
-sends one fragment's data to another's placeholder.
+In a two-arm continuing page all binds of the non-NULL range arm precede all binds of
+the NULL-tail arm, and the outer cap follows both; all three cap binds carry the same
+requested page size. A capture cell's path binds precede every bind below them in its
+arm — a wrapped `union all`'s branch binds included — because the cell's holes precede
+them in the text. A statement whose fragments are assembled in any other order sends
+one fragment's data to another's placeholder.
 
 ### Clause order
 

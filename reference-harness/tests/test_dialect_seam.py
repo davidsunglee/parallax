@@ -275,13 +275,13 @@ def test_non_temporal_scalars_pass_through() -> None:
     assert _from_db_value(250) == 250
 
 
-def test_tinyint_one_field_is_boolean() -> None:
+def test_tinyint_field_is_boolean_even_when_a_derived_result_widens_its_length() -> None:
     # `boolean` is the only neutral type mapped to `tinyint(1)`; pymysql reports it
-    # as FIELD_TYPE.TINY with display length 1. A wider integer (int32 -> `int` /
-    # FIELD_TYPE.LONG) or a non-(1) tinyint is not a boolean column.
+    # as FIELD_TYPE.TINY. MariaDB may widen the display length of a derived `union
+    # all` result, while a neutral integer remains FIELD_TYPE.LONG or LONGLONG.
     assert _is_boolean_field(FIELD_TYPE.TINY, 1) is True
     assert _is_boolean_field(FIELD_TYPE.LONG, 11) is False
-    assert _is_boolean_field(FIELD_TYPE.TINY, 4) is False
+    assert _is_boolean_field(FIELD_TYPE.TINY, 4) is True
 
 
 def test_tinyint_one_reads_back_as_bool() -> None:

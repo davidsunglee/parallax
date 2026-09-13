@@ -175,18 +175,22 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
     assert root.execution.kind == "snapshot_stream"
     assert _transitions(root) == [
         "SnapshotStreamStarted",
+        "StreamBatchStarted",
         "AcquisitionStarted",
         "AcquisitionFinished",
-        "StreamBatchStarted",
         "DatabaseCallStarted",
         "DatabaseCallFinished",
-        "StreamBatchFinished",
-        "StreamBatchStarted",
-        "DatabaseCallStarted",
-        "DatabaseCallFinished",
-        "StreamBatchFinished",
         "ReleaseStarted",
         "ReleaseFinished",
+        "StreamBatchFinished",
+        "StreamBatchStarted",
+        "AcquisitionStarted",
+        "AcquisitionFinished",
+        "DatabaseCallStarted",
+        "DatabaseCallFinished",
+        "ReleaseStarted",
+        "ReleaseFinished",
+        "StreamBatchFinished",
         "SnapshotStreamFinished",
     ]
     # The stream is the root activity — its parent is null and no other event's
@@ -194,26 +198,28 @@ def test_a_standalone_stream_is_its_own_root_and_opens_one_batch_per_page() -> N
     # Database Call under a Snapshot Stream directly would mean the batch was not
     # the page-read activity, which is exactly what the batch exists to be.
     #
-    # The connection is the DELIVERY's rather than any page's: the Acquisition
-    # is the stream's own child and stands in front of the first batch, page two
-    # opens no acquisition of its own, and the Release stands after the last
-    # batch and before the stream finishes — released where the delivery
-    # settled, not where the caller left the block.
+    # Each page owns one connection lease: Acquisition and Release are children
+    # of that page's batch, bracketing its Database Call and conversion. The
+    # stream itself owns no resource event.
     assert _envelope(root) == [
         (1, 1, None),
         (2, 2, 1),
-        (3, 2, 1),
-        (4, 3, 1),
-        (5, 4, 3),
-        (6, 4, 3),
-        (7, 3, 1),
-        (8, 5, 1),
-        (9, 6, 5),
-        (10, 6, 5),
-        (11, 5, 1),
-        (12, 7, 1),
-        (13, 7, 1),
-        (14, 1, None),
+        (3, 3, 2),
+        (4, 3, 2),
+        (5, 4, 2),
+        (6, 4, 2),
+        (7, 5, 2),
+        (8, 5, 2),
+        (9, 2, 1),
+        (10, 6, 1),
+        (11, 7, 6),
+        (12, 7, 6),
+        (13, 8, 6),
+        (14, 8, 6),
+        (15, 9, 6),
+        (16, 9, 6),
+        (17, 6, 1),
+        (18, 1, None),
     ]
     (started,) = _of(root, SnapshotStreamStarted)
     assert (started.target, started.interface, started.batch_size) == (
@@ -293,8 +299,8 @@ def test_a_stream_refused_at_the_gate_opens_no_root() -> None:
 
 def test_the_event_count_grows_with_pages_and_not_with_roots() -> None:
     # The reason per-root publication is deliberately NOT an activity: two
-    # deliveries at one page size cost four events per page plus two for the
-    # stream and four for the one connection it holds across every page,
+    # deliveries at one page size cost eight events per page plus two for the
+    # stream, including each page's own acquisition and release,
     # whatever each page delivered. Twelve roots in three pages weigh exactly
     # what three roots in three pages weigh.
     def delivered(count: int, *, size: int) -> int:
@@ -306,7 +312,7 @@ def test_the_event_count_grows_with_pages_and_not_with_roots() -> None:
         (root,) = recorder.roots
         return len(root.events)
 
-    assert delivered(3, size=1) == delivered(12, size=4) == 2 + 4 + 3 * 4
+    assert delivered(3, size=1) == delivered(12, size=4) == 2 + 3 * 8
 
 
 # --------------------------------------------------------------------------- #
@@ -576,7 +582,7 @@ def test_a_handler_quarantined_mid_delivery_stops_its_events_and_not_the_deliver
 
     assert [type(event).__name__ for event in handler.seen] == [
         "SnapshotStreamStarted",
-        "AcquisitionStarted",
+        "StreamBatchStarted",
     ]
     assert [type(op) for op in port.calls] == [ReadCall, ReadCall]
     (reported,) = provider.reported

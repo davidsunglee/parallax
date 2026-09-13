@@ -100,7 +100,7 @@ _JOINED: str = "transactionInvocationStarted:joined"
 _OWNS_CONNECTION: tuple[str, ...] = (
     "readStarted",
     "transactionAttemptStarted",
-    "snapshotStreamStarted",
+    "streamBatchStarted",
 )
 
 _RESOURCE_KINDS: tuple[str, ...] = ("acquisitionStarted", "releaseStarted")
@@ -194,6 +194,7 @@ class _Activity:
     label: str
     started_payload: dict[str, Any]
     started_at: int
+    owns_connection: bool
     open: bool = True
     finished_at: int | None = None
     finished_payload: dict[str, Any] = field(default_factory=dict)
@@ -353,6 +354,7 @@ def _check_started(
         label=where,
         started_payload=payload,
         started_at=position,
+        owns_connection=_is_connection_owner(kind, parent, holder),
     )
     return True
 
@@ -396,23 +398,28 @@ def _check_containment(
         problems.append(
             f"{where} opens {kind} under activity {parent}, which is participating work; a "
             f"connection is held by a STANDALONE Read, a Transaction Attempt, or a STANDALONE "
-            f"Snapshot Stream, and work that inherits one emits neither an Acquisition nor a "
+            f"Stream Batch, and work that inherits one emits neither an Acquisition nor a "
             f"Release"
         )
 
 
 def _owns_connection(activity: _Activity) -> bool:
-    """Whether ``activity`` holds a connection of its own rather than inheriting one.
+    """Whether ``activity`` holds a connection of its own rather than inheriting one."""
+    return activity.owns_connection
 
-    Three activities do, and two of them are distinguished from their
-    participating namesakes by being their root's outermost activity: a
-    standalone Read and a standalone Snapshot Stream own what they take, while a
-    Read or a stream running under an attempt is one more thing running on the
-    attempt's connection.
-    """
-    if activity.started == "transactionAttemptStarted":
+
+def _is_connection_owner(kind: str, parent: int | None, holder: _Activity | None) -> bool:
+    """Resolve ownership while the activity's parent is directly available."""
+    if kind == "transactionAttemptStarted":
         return True
-    return activity.started in ("readStarted", "snapshotStreamStarted") and activity.parent is None
+    if kind == "readStarted":
+        return parent is None
+    return (
+        kind == "streamBatchStarted"
+        and holder is not None
+        and holder.started == "snapshotStreamStarted"
+        and holder.parent is None
+    )
 
 
 def _check_root_activity(
@@ -587,17 +594,17 @@ def _check_resources(activities: dict[int, _Activity], problems: list[str]) -> N
     """The Acquisition and Release an activity that owns a connection may open.
 
     Each claim here is one the correlation rules cannot make. An owner opens AT
-    MOST ONE of each, because one operation holds one connection rather than a
-    series of them. The Acquisition is its owner's FIRST child and the Release
-    its LAST, which is what "held for the operation's own lifetime" means read
+    MOST ONE of each, because one bounded lease holds one connection. The
+    Acquisition is its owner's FIRST child and the Release its LAST, which is
+    what "held for the owner's lifetime" means read
     off a stream. And neither opens a child: they are siblings of the execution
     work rather than a lease around it, so a Database Call under one would
     describe a statement running inside a checkout.
 
     The rest is the relation between the two ends and the operation between
-    them, read in BOTH directions rather than one. An owner opens an Acquisition
-    unless it is a stream closed before its first page, so the pair cannot be
-    omitted by a record that simply declines to mention it. A Release exists
+    them, read in BOTH directions rather than one. Every owner opens an
+    Acquisition, so the pair cannot be omitted by a record that simply declines
+    to mention it. A Release exists
     exactly where the Acquisition granted something and the owner finished, so
     neither a hold that ends without beginning nor one that begins without
     ending validates. Work runs on a connection, so an owner with any child
@@ -670,29 +677,16 @@ def _refused(acquisitions: list[_Activity]) -> _Activity | None:
 def _check_acquired(owner: _Activity, acquisitions: list[_Activity], problems: list[str]) -> None:
     """An owner that reached the point of needing a connection asked for one.
 
-    A standalone Read acquires before its first statement and an attempt before
-    its boundary is asked to begin, so each opens an Acquisition whatever it
-    goes on to report: a begin failure is an attempt that ASKED, refused either
-    the connection or the boundary it opened on, and an empty Read is one that
-    took a connection and ran nothing on it.
-
-    A standalone Snapshot Stream is the one owner that may open none, because it
-    acquires where it reads its FIRST PAGE: a caller who closed the stream
-    before asking for one left it never having reached the connection. Every
-    other outcome did reach it — exhaustion is discovered by reading a page, and
-    a stream fails only over delivery work that starts there.
+    A standalone Read acquires before its first statement, an attempt before its
+    boundary is asked to begin, and a standalone Stream Batch before its first
+    call. Each opens an Acquisition whatever it goes on to report: an empty page
+    still asked the database whether any root existed.
     """
     if acquisitions:
         return
-    if (
-        owner.started == "snapshotStreamStarted"
-        and owner.finished_payload.get("outcome") == "closedEarly"
-    ):
-        return
     problems.append(
         f"{owner.label} opens no Acquisition; an operation reaches the database through a "
-        f"connection of its own, and only a Snapshot Stream closed before its first page "
-        f"finishes without having asked for one"
+        f"connection of its own, so every activity owning database work asks for one"
     )
 
 
@@ -781,7 +775,7 @@ def _check_resource_count(
     if len(opened) > 1:
         problems.append(
             f"{opened[1].label} opens a second {noun} under activity {owner.activity}; one "
-            f"operation holds ONE connection for its own lifetime, so it takes it once and "
+            f"bounded lease holds ONE connection, so it takes it once and "
             f"gives it back once"
         )
 

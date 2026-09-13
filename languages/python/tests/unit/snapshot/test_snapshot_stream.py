@@ -16,13 +16,9 @@ with ``find`` and the cross-root half to diverge from it, in both namespaces.
 And invalid stored data inside the Continuation Order itself ends no checked
 delivery: a delivery advances on the coordinate the database evaluated, so a root
 whose sort key contradicts the model is published and the delivery continues past
-it, from whatever position and page size it lands in — which is what keeps
-``batch_size`` a performance dial over storage the model describes. What the one
-stored value outside that is, ``SnapshotStream``'s own docstring states and this
-suite does not restate; graded here is a single instance of it — a ``NULL`` under
-the primary key a query declaring no ordering leads with — reached on a first
-page, which carries no seek, so the root is published and the delivery exhausts
-past it.
+it, from whatever position and page size it lands in. A direct leading Column's
+NULL tail is retained by a second continuing-page arm, which is what keeps
+``batch_size`` a performance dial even when storage lost a constraint.
 """
 
 from __future__ import annotations
@@ -42,6 +38,7 @@ from parallax.conformance.story_models import (
     OrderStatus,
     Position,
 )
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DatabaseAdapter, MappingRow
 from parallax.core.object_query import TX_TIME, VALID_TIME
 from parallax.core.object_query._fluent import ObjectQuery
@@ -385,6 +382,25 @@ def test_each_nonempty_page_costs_one_plus_l_and_a_short_page_ends_the_stream() 
     assert len(_reads(port)) == 4
 
 
+def test_a_provider_failure_on_a_later_page_preserves_the_published_prefix() -> None:
+    failure = DatabaseError(category=None, native_code=None, message="the later page failed")
+    port = ScriptedAdapter(
+        Read(rows=[_order_row(1), _order_row(2)]),
+        Read(raises=failure),
+    )
+    delivered: list[int] = []
+
+    with (
+        _orders(port).stream(_all_orders(), batch_size=1) as stream,
+        raises_contextualized(DatabaseError) as raised,
+    ):
+        for root in stream:
+            delivered.append(root.id)
+
+    assert delivered == [1]
+    assert raised.value is failure
+
+
 def test_a_delivery_compiles_each_structural_statement_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -480,7 +496,7 @@ def test_a_later_page_seeks_past_the_last_root_of_the_page_before_it() -> None:
     first, second = _reads(port)
     assert "t0.id >" not in first.sql
     assert "t0.id >" in second.sql
-    assert second.binds[-2] == 2
+    assert second.binds[1:3] == (2, 2)
 
 
 # --------------------------------------------------------------------------- #
@@ -492,6 +508,52 @@ def test_the_root_sequence_is_the_same_at_every_page_size(size: int) -> None:
     port = ScriptedAdapter(*paged_reads(rows, size=size))
     with _orders(port).stream(_all_orders(), batch_size=size) as stream:
         assert _ids(iter(stream)) == [1, 2, 3]
+
+
+def _leading_null_rows() -> tuple[MappingRow, ...]:
+    return (
+        {**_order_row(1), "active": False},
+        _order_row(2),
+        {**_order_row(3), "active": None},
+    )
+
+
+def _leading_null_query() -> ObjectQuery[Order, Order]:
+    return Order.where(Order.all).order_by(Order.active.asc())
+
+
+@pytest.mark.parametrize("size", [1, 2, 8], ids=lambda size: f"batch-{size}")
+def test_a_leading_null_root_at_a_page_boundary_is_delivered_at_every_page_size(
+    size: int,
+) -> None:
+    rows = _leading_null_rows()
+    port = ScriptedAdapter(*paged_reads(rows, size=size))
+
+    with _orders(port).stream(_leading_null_query(), batch_size=size) as stream:
+        published = list(stream.checked())
+
+    assert all(isinstance(root, Order) for root in published)
+    typed = cast("list[Order]", published)
+    assert [root.id for root in typed] == [1, 2, 3]
+    assert typed[-1].active is None
+
+
+def test_default_and_checked_views_deliver_the_same_leading_null_sequence() -> None:
+    rows = _leading_null_rows()
+    checked_port = ScriptedAdapter(*paged_reads(rows, size=1))
+    with _orders(checked_port).stream(_leading_null_query(), batch_size=1) as stream:
+        checked = list(stream.checked())
+
+    throwing_port = ScriptedAdapter(*paged_reads(rows, size=1))
+    with _orders(throwing_port).stream(_leading_null_query(), batch_size=1) as stream:
+        delivered = list(stream)
+
+    assert all(isinstance(root, Order) for root in checked)
+    assert (
+        [root.id for root in cast("list[Order]", checked)]
+        == [root.id for root in delivered]
+        == [1, 2, 3]
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -689,31 +751,10 @@ def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() 
     with _positions(port).stream(_all_milestones(), batch_size=1) as stream:
         assert len(list(stream)) == 3
     binds = [op.binds for op in _reads(port)]
-    assert binds == [
-        (1, 2),
-        (
-            1,
-            1,
-            1,
-            1,
-            _JANUARY,
-            1,
-            _JANUARY,
-            _JANUARY,
-            2,
-        ),
-        (
-            1,
-            1,
-            1,
-            1,
-            _JANUARY,
-            1,
-            _JANUARY,
-            _APRIL,
-            2,
-        ),
-    ]
+    assert binds[0] == (1, 2)
+    assert binds[1][:8] == (1, 1, 1, 1, _JANUARY, 1, _JANUARY, _JANUARY)
+    assert binds[2][:8] == (1, 1, 1, 1, _JANUARY, 1, _JANUARY, _APRIL)
+    assert binds[1][-1] == binds[2][-1] == 2
 
 
 def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> None:

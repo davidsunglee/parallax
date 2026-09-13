@@ -55,11 +55,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from parallax.core.db_port import ConnectionContext, DatabaseConnection, DatabaseRuntime
+from parallax.core.db_port import DatabaseConnection, DatabaseRuntime
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.execution_lifecycle import ReadInterface
 from parallax.core.execution_lifecycle._activity import (
-    INERT,
     ActivityTarget,
     DatabaseCallScope,
     InstalledLifecycle,
@@ -245,13 +244,7 @@ class _BegunRead(StreamRead, Protocol):
         ...
 
     def release(self, failure: BaseException | None, /) -> None:
-        """Release what :meth:`acquired` took, once, or do nothing.
-
-        Idempotent and total: a delivery settles where it discovers its own end
-        and its scope closes afterwards, so both call this and only the first
-        does anything. A delivery that never reached a page has nothing to
-        release, and a participating one never had anything of its own.
-        """
+        """Settle lane-owned resources, or do nothing where pages own them."""
         ...
 
     def advance[T](self, body: Callable[[], T], /) -> T:
@@ -391,9 +384,8 @@ class ReadScope:
         A page IS an eager read of a bounded root query, so it threads the same
         connection, Concurrency Preference, and observation ledger an eager graph
         read here does — and takes its model from the read the delivery was begun
-        as, which holds the one selection it was opened under, and the one
-        connection every page of it runs on, rather than asking for a second of
-        either.
+        as, which holds the one selection it was opened under. A standalone page
+        leases its own connection; a participating page uses the attempt's.
         """
         model = read.selected.model
 
@@ -479,23 +471,12 @@ class _StandaloneRead:
     operation adopted, so everything done through it runs under that one
     selection however long a delivery through it takes.
 
-    It is also where a standalone operation's connection lifetime lives. An
-    eager read brackets one around its whole execution and is done with it; a
-    delivery asks for one at its first page and keeps it until it settles, which
-    is why the acquisition is held HERE rather than in either caller: the read
-    is the one object both shapes of standalone operation have exactly one of.
+    It is also where a standalone operation's connection policy lives. An eager
+    read brackets one around its whole execution; each delivery page brackets a
+    lease inside its own Stream Batch.
     """
 
-    __slots__ = (
-        "_connection",
-        "_held_since_ns",
-        "_resource",
-        "_stream",
-        "adopted",
-        "lifecycle",
-        "runtime",
-        "selected",
-    )
+    __slots__ = ("adopted", "lifecycle", "runtime", "selected")
 
     def __init__(
         self,
@@ -508,14 +489,6 @@ class _StandaloneRead:
         self.adopted = adopted
         self.selected = selected
         self.runtime = runtime
-        self._resource: ConnectionContext | None = None
-        self._connection: DatabaseConnection | None = None
-        self._held_since_ns: int | None = None
-        # The delivery's own activity, retained because a stream's connection is
-        # acquired and released under it rather than under whichever page
-        # happened to ask first. An eager read reaches its activity directly and
-        # never touches this.
-        self._stream: SnapshotStreamActivity = INERT
 
     def eager[T](
         self,
@@ -557,73 +530,30 @@ class _StandaloneRead:
     def open_stream(
         self, target: ActivityTarget, interface: ReadInterface, batch_size: int, /
     ) -> SnapshotStreamActivity:
-        stream = open_snapshot_stream_root(
+        return open_snapshot_stream_root(
             self.lifecycle,
             target=target,
             interface=interface,
             batch_size=batch_size,
             edition=self.selected.edition,
         )
-        self._stream = stream
-        return stream
-
-    def _acquired(self) -> DatabaseConnection:
-        """The connection every page of this delivery runs on.
-
-        Acquired the first time a page asks for it and answered unchanged
-        afterwards, which is what makes acquisition happen at the first page
-        rather than at scope entry.
-        """
-        connection = self._connection
-        if connection is not None:
-            return connection
-        resource = self.runtime.connection()
-        # Stored before entry, so a failed entry still leaves the context whose
-        # cleanup facts were consumed reachable — and cleared again, because a
-        # single-use context that failed to open is not one a later page may
-        # retry through.
-        self._resource = resource
-        try:
-            connection, held_since_ns = enter_connection(resource, self._stream)
-        except BaseException:
-            self._resource = None
-            raise
-        self._connection = connection
-        self._held_since_ns = held_since_ns
-        return connection
 
     def release(self, failure: BaseException | None, /) -> None:
-        # Cleared after the release rather than before it, so nothing between
-        # the two can leave this holding a connection it has already stopped
-        # remembering. A second release is still a no-op: the context it forwards
-        # to is total on every exit and reports the facts of the first one.
-        resource = self._resource
-        if resource is None:
-            self._connection = None
-            return
-        try:
-            exit_connection(resource, self._stream, self._held_since_ns, failure)
-        finally:
-            self._resource = None
-            self._connection = None
-            self._held_since_ns = None
+        del failure
 
     def page[T](
         self, batch: StreamBatchActivity, body: Callable[[DatabaseCallScope, ReadInputs], T], /
     ) -> T:
-        # Nothing precedes the batch here — a standalone stream flushes nothing
-        # — so it opens where the page begins. The page is not bracketed on its
-        # own: the batch and the stream above it report the underlying failure,
-        # and the advance that reached this page names the edition once.
-        #
-        # The connection is taken BEFORE the batch opens, because it belongs to
-        # the delivery rather than to the page that happened to be first: the
-        # Acquisition is the stream's own child and stands in front of every
-        # batch, and a first page that could not get a connection ran no page at
-        # all.
-        connection = self._acquired()
         with batch as calls:
-            return body(calls, ReadInputs(connection, None, None))
+            resource = self.runtime.connection()
+            connection, held_since_ns = enter_connection(resource, batch)
+            try:
+                result = body(calls, ReadInputs(connection, None, None))
+            except BaseException as failure:
+                exit_connection(resource, batch, held_since_ns, failure)
+                raise
+            exit_connection(resource, batch, held_since_ns, None)
+            return result
 
     def advance[T](self, body: Callable[[], T], /) -> T:
         return self.adopted.contextualized(body)

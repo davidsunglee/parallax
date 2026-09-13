@@ -882,6 +882,15 @@ def _stream_root(finish: dict[str, Any], *children: dict[str, Any]) -> dict[str,
     return _root("snapshot-stream", events)
 
 
+def _stream_batch(finish: dict[str, Any], *children: dict[str, Any]) -> list[dict[str, Any]]:
+    """One standalone page and the resource children it owns."""
+    return [
+        _event(1, 2, 1, streamBatchStarted={}),
+        *children,
+        _event(1, 2, 1, streamBatchFinished=finish),
+    ]
+
+
 def _acquired_pair(owner: int, acquisition: int, release: int) -> list[dict[str, Any]]:
     return [
         _event(1, acquisition, owner, acquisitionStarted={}),
@@ -909,31 +918,43 @@ def test_an_attempt_that_asked_for_no_connection_at_all_is_flagged() -> None:
     assert any("opens no Acquisition" in problem for problem in problems)
 
 
-def test_a_stream_that_exhausted_without_acquiring_is_flagged() -> None:
-    """Exhaustion is discovered by READING a page, and a page runs on the
-    connection the stream took before opening it."""
-    problems = validate_execution(_retry_case(_stream_root({"outcome": "exhausted"})))
+def test_a_stream_batch_that_exhausted_without_acquiring_is_flagged() -> None:
+    """Exhaustion is discovered by a page that acquired before asking."""
+    problems = validate_execution(
+        _retry_case(
+            _stream_root(
+                {"outcome": "exhausted"},
+                *_stream_batch({"outcome": "completed"}),
+            )
+        )
+    )
     assert any("opens no Acquisition" in problem for problem in problems)
 
 
-def test_a_stream_that_failed_without_acquiring_is_flagged() -> None:
-    """A stream fails over delivery work, which starts at its first page."""
+def test_a_stream_batch_that_failed_without_acquiring_is_flagged() -> None:
+    """A standalone failed page still attempted its own acquisition."""
     problems = validate_execution(
-        _retry_case(_stream_root({"outcome": "failed", "attribution": "direct"}))
+        _retry_case(
+            _stream_root(
+                {"outcome": "failed", "attribution": "caused", "cause": 2},
+                *_stream_batch({"outcome": "failed", "attribution": "direct"}),
+            )
+        )
     )
     assert any("opens no Acquisition" in problem for problem in problems)
 
 
 def test_a_stream_closed_before_its_first_page_opens_neither_end() -> None:
-    """The one owner that may open no Acquisition: a caller who closed the stream
-    before asking for a page left it never having reached a connection."""
+    """A caller who closed before asking for a page opened no connection owner."""
     assert validate_execution(_retry_case(_stream_root({"outcome": "closedEarly"}))) == []
 
 
-def test_a_stream_that_read_a_page_holds_the_connection_it_read_it_on() -> None:
-    """The positive control beside it, and the boundary of the exception: a
-    stream that DID ask closes the pair however early the caller left."""
-    root = _stream_root({"outcome": "closedEarly"}, *_acquired_pair(1, 2, 3))
+def test_a_stream_batch_holds_the_connection_its_page_read_on() -> None:
+    """Each standalone page closes its pair before it finishes."""
+    root = _stream_root(
+        {"outcome": "closedEarly"},
+        *_stream_batch({"outcome": "completed"}, *_acquired_pair(2, 3, 4)),
+    )
     assert validate_execution(_retry_case(root)) == []
 
 

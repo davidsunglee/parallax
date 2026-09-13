@@ -481,12 +481,11 @@ class ConnectionReleaseActivity(Protocol):
 
 
 class ConnectionOwnerActivity(Protocol):
-    """An activity that owns one operation's connection for its own lifetime.
+    """An activity that owns one bounded connection lease.
 
-    The three that do are a standalone Read, a Transaction Attempt, and a
-    standalone Snapshot Stream — the same three that adopt a Model Edition,
-    because a connection and a selection are held for exactly one operation.
-    Participating work receives both and owns neither, so it never appears here.
+    The three kinds that do are a standalone Read, a Transaction Attempt, and a
+    standalone Stream Batch. Participating work receives the attempt's
+    connection and owns no lease of its own.
     """
 
     def acquisition(self) -> ConnectionAcquisitionActivity:
@@ -524,7 +523,7 @@ class ReadActivity(ConnectionOwnerActivity, Protocol):
         ...
 
 
-class StreamBatchActivity(Protocol):
+class StreamBatchActivity(ConnectionOwnerActivity, Protocol):
     """One page's scope: the Database Calls it issues, and nothing else.
 
     A batch is the page-read activity in its own right and never nests a Read.
@@ -555,7 +554,7 @@ class StreamBatchActivity(Protocol):
         ...
 
 
-class SnapshotStreamActivity(ConnectionOwnerActivity, Protocol):
+class SnapshotStreamActivity(Protocol):
     """One stream's scope: its pages, and which of its two non-failure endings
     it reached.
 
@@ -1626,7 +1625,7 @@ class _LiveWriteBatch(_LiveActivity):
         return _LiveEnforcement(self, call._activity_id if isinstance(call, _LiveActivity) else 0)
 
 
-class _LiveStreamBatch(_LiveActivity):
+class _LiveStreamBatch(_LiveConnectionOwner):
     """One observed page: its Database Calls, and its own bracket.
 
     Built where the page loop decides to run a page and OPENED where the page's
@@ -1680,7 +1679,7 @@ class _LiveStreamBatch(_LiveActivity):
         return _LiveDatabaseCall(self._publisher, self, statement, kind, target)
 
 
-class _LiveSnapshotStream(_LiveConnectionOwner):
+class _LiveSnapshotStream(_LiveActivity):
     """One observed stream: its pages, and the one ending it reached.
 
     The ending is delivered by whichever of the two routes reaches it first —

@@ -55,12 +55,15 @@ def fold_mapping_rows(
 ) -> list[Row]:
     """Fold every logical row returned by a structural database-port fake."""
     projection = _projection(sql) if sql is not None else ()
+    nested = _nested_projection(sql) if sql is not None else {}
     presence_ordinals = {presence for presence, _payload in document_reads}
     return [
         tuple(
             fold_mapping_document_reads(
                 {
-                    result_key: _projection_value(row, result_key, source_key)
+                    result_key: _projection_value(
+                        row, result_key, nested.get(source_key, source_key)
+                    )
                     for ordinal, (result_key, source_key) in enumerate(projection)
                     if ordinal not in presence_ordinals
                 }
@@ -124,6 +127,14 @@ def _projection(sql: str) -> tuple[tuple[str, str | None], ...]:
         source = expression.rsplit(".", 1)[-1].strip('`"')
         projection.append((result_key, source if _IDENTIFIER.fullmatch(source) else None))
     return tuple(projection)
+
+
+def _nested_projection(sql: str) -> dict[str | None, str | None]:
+    """Aliases an outer wrapper reads, resolved through its first inner SELECT."""
+    start = sql.find("(select ")
+    if start < 0:
+        return {}
+    return dict(_projection(sql[start + 1 :]))
 
 
 def _projection_value(row: Mapping[str, object], result_key: str, source_key: str | None) -> object:

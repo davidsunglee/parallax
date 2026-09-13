@@ -1,13 +1,13 @@
 """``parallax.snapshot.handle._connection_lifecycle`` — the two ends of one
 operation's connection, written once.
 
-Three owners bracket a connection: an eager read around its whole execution, a
-transaction attempt around its boundary, and a standalone stream from its first
-page to its settlement. What each of them does at the two ends is identical, and
+Three owner kinds bracket a connection: an eager read around its whole execution,
+a transaction attempt around its boundary, and each standalone stream page around
+its batch. What each of them does at the two ends is identical, and
 getting either end subtly wrong in one of the three is exactly the bug that
 leaks a connection under one operation shape and not the others. So the ends
 live here as two plain functions, and each owner keeps its own bracket — the
-shape of a read, an attempt, and a delivery are genuinely different and no
+shape of a read, an attempt, and a page are genuinely different and no
 shared context manager could hold all three.
 
 Neither function raises for a resource problem of its own. Acquisition failure

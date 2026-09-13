@@ -205,6 +205,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
     carried_binds: list[Any] = []
     first_root_sql = ""
     seek_shapes: dict[tuple[bool, ...], str] = {}
+    null_tail_shapes: dict[tuple[bool, ...], str] = {}
     cursor: tuple[Any, ...] = ()
     index = 0
     page = 0
@@ -232,8 +233,19 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
             expected_bind_types: list[str | None] = [None] * len(expected_binds)
         else:
             composed = seek.composed_seek(terms, cursor)
-            spliced_at, _spliced_to = seek.seek_splice(first_root_sql, root_sql)
-            seek_bind_position = root_sql[:spliced_at].count("?")
+            arms = seek.continuing_arms(root_sql)
+            wants_null_tail = seek.emits_null_tail(terms, cursor)
+            expected_arm_count = 2 if wants_null_tail else 1
+            if len(arms) != expected_arm_count:
+                raise CaseFailure(
+                    f"{case.path.name}: {source} ({dialect}) page {page + 1} carries "
+                    f"{len(arms)} continuing arm(s), not {expected_arm_count}. A non-null "
+                    f"direct leading coordinate whose emitted placement trails NULLs uses "
+                    f"one range arm and one disjoint NULL-tail arm."
+                )
+            range_arm = arms[0]
+            spliced_at, _spliced_to = seek.seek_splice(first_root_sql, range_arm)
+            seek_bind_position = range_arm[:spliced_at].count("?")
             expected_binds = [
                 *carried_binds[:seek_bind_position],
                 *composed.binds,
@@ -245,6 +257,9 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
                 *composed.neutral_types,
                 *([None] * (len(carried_binds) - seek_bind_position + 1)),
             ]
+            if wants_null_tail:
+                expected_binds.extend([*carried_binds, requested, requested])
+                expected_bind_types.extend([None] * (len(carried_binds) + 2))
         if not _binds_equal(authored, expected_binds, expected_bind_types):
             raise CaseFailure(
                 f"{case.path.name}: {source} ({dialect}) page {page + 1} root binds "
@@ -254,12 +269,20 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
                 f"where the two statements diverge, then the size it is asking for."
             )
         if composed is not None:
+            arms = seek.continuing_arms(root_sql)
             seek.refuse_a_drifting_page(
-                seek.PageText(case, dialect, source, page, first_root_sql, root_sql),
+                seek.PageText(case, dialect, source, page, first_root_sql, arms[0]),
                 composed,
                 cursor,
                 seek_shapes,
             )
+            if len(arms) == 2:
+                seek.refuse_a_drifting_page(
+                    seek.PageText(case, dialect, source, page, first_root_sql, arms[1]),
+                    seek.null_tail_seek(terms),
+                    (None,),
+                    null_tail_shapes,
+                )
 
         executed = _stream_page(
             case,

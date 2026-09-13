@@ -29,6 +29,7 @@ from parallax.core.base import INFINITY_LITERAL, TemporalBound
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import AttributeMetadata
 from parallax.core.object_query._validated import (
+    ContinuationCoordinate,
     ContinuationTerm,
     ValidatedOrderTerm,
     ValidatedSeek,
@@ -38,16 +39,22 @@ from parallax.core.sql_gen._predicate import MemberSubject
 
 __all__ = [
     "LoweredTerm",
+    "NullPattern",
     "TermSubject",
     "capture_cells",
     "coordinate_reads",
+    "emits_null_tail",
     "lower_seek",
     "lowered_terms",
+    "null_pattern",
     "order_clause",
 ]
 
 type TermSubject = Callable[[AttributeMetadata], MemberSubject]
 """How one read shape resolves an ordering term's member to what it compares."""
+
+type NullPattern = tuple[bool, ...]
+"""Which carriers of one continuation coordinate are NULL, in term order."""
 
 _EXHAUSTED: Final = "1 = 0"
 """The seek past a coordinate the database placed last in its own ordering."""
@@ -109,6 +116,22 @@ def coordinate_reads(terms: Sequence[LoweredTerm]) -> tuple[str, ...]:
     return tuple(term.alias for term in terms)
 
 
+def null_pattern(coordinate: ContinuationCoordinate) -> NullPattern:
+    """The reusable statement-template shape of one coordinate."""
+    return tuple(carrier is None for carrier in coordinate.carriers)
+
+
+def emits_null_tail(seek: ValidatedSeek, dialect: Dialect, *, leading_resident: bool) -> bool:
+    """Whether this continuing page needs a second arm for the leading NULL tail."""
+    return (
+        bool(seek.terms)
+        and bool(seek.coordinate.carriers)
+        and seek.coordinate.carriers[0] is not None
+        and not leading_resident
+        and _placement(seek.terms[0], dialect) == "last"
+    )
+
+
 def capture_cells(terms: Sequence[LoweredTerm], subject: TermSubject) -> str:
     """The hidden select-list cells that capture one coordinate per term.
 
@@ -156,10 +179,9 @@ def lower_seek(
     admits them.
 
     Ahead of the branches, :func:`_hoists_a_leading_range` may add a redundant
-    non-strict range for the planner. That conjunct is the ONE place this
-    fragment admits fewer roots than the ordering places after the coordinate,
-    and the one place declared nullability still decides anything; its own
-    docstring carries the trade and the specification that fixes it.
+    non-strict range for the planner. Where that range excludes a NULL region
+    ordered after the coordinate, the statement assembler emits the disjoint
+    NULL-tail arm described by :func:`emits_null_tail`.
     ``leading_resident`` is the caller's Member Placement answer for the leading
     term, which that decision needs and no resolution here may ask for: resolving
     a subject binds an extraction's path segments, so a probe would push binds no
@@ -283,33 +305,18 @@ def _hoists_a_leading_range(
 ) -> bool:
     """Whether to emit the redundant leading range a planner can seek on.
 
-    THE ONE DELIBERATE EXCEPTION in this module, and the only question here that
-    is not :func:`_placement`'s. This asks what the MODEL declares, not where the
-    emitted clause put a NULL: `col >=|<= ?` excludes a NULL wherever it was
-    placed, so over a leading term declared non-nullable whose expression
-    evaluates to NULL anyway, this conjunct re-excludes the very root the branch
-    below it admits and the delivery skips it.
+    Over a DIRECT Column the non-strict comparison is the range a planner can
+    seek on. It is useful for one or many terms and for nullable and non-nullable
+    declarations alike, so only a non-null carrier and direct placement guard it.
+    When it excludes NULLs ordered after the coordinate, the compiler preserves
+    completeness with a separate NULL-tail arm instead of widening this range.
 
-    That skip is bought rather than overlooked, and the price is bounded by what
-    can make the expression NULL. Over a DIRECT Column only a stored NULL under a
-    dropped `NOT NULL` constraint can — storage the declared model does not
-    describe — and the range is what a planner seeks on, so `m-snapshot-read`
-    *Streamed delivery* names that one skip as the accepted price. A
-    DOCUMENT-RESIDENT term is the other case and takes the opposite answer:
-    its extraction goes NULL for a missing member, an explicit JSON null, or a
-    wrong-kind parent document — ordinary invalid stored data the same
-    specification guarantees is still delivered — while a `>=` over an
-    extraction offers a planner no index range to buy the skip with. So nothing
-    is hoisted there, and the branch tree's own placement answer admits the root.
-
-    Widening the conjunct to `(col >=|<= ? or col is null)` would admit the root
-    on either side and lose the same range, which is why the direct case chooses
-    between them rather than keeping both. This guard is therefore a specified
-    cost decision, not a placement answer: removing it changes what every
-    streamed page over a Column costs, and amending it to admit that Column's
-    NULL means amending that specification first.
+    A DOCUMENT-RESIDENT term takes the opposite answer: its extraction goes NULL
+    for ordinary invalid stored data, while a range over an extraction offers no
+    index range to buy. The branch tree's own placement answer therefore admits
+    those roots without a hoist or a second arm.
     """
-    return len(terms) > 1 and not terms[0].nullable and not resident and carriers[0] is not None
+    return bool(terms) and not resident and carriers[0] is not None
 
 
 def _after(
