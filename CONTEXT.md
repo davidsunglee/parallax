@@ -641,6 +641,32 @@ _Avoid_: array, result array
 A typed plain value graph returned by a snapshot read: identity-resolved within the graph (one node per row), connected by hard pointers, pinned whole-graph at one set of as-of coordinates, and closed-world — it never issues further database work.
 _Avoid_: domain snapshot, JSON output, serialization form, lazy collection
 
+**Page**:
+The bounded, delivery-owned occurrence table produced by one eager Snapshot read
+or one Snapshot Stream batch. It establishes logical identity before payload
+judgment, owns the Entity States shared by its Root Views, and is retained by no
+published value. A stream releases one Page before reading the next.
+_Avoid_: Snapshot Graph, public page, result batch, cursor buffer
+
+**Entity State**:
+One judged positional member row for a logical Entity key at one lowered as-of
+coordinate. Equal Payload Witnesses in one Page share one Entity State and one
+decode; relationship loadedness is outside it and belongs to a Root View.
+_Avoid_: entity node, merged graph, provider row, relationship state
+
+**Root View**:
+One result root's borrowed reachability and relationship-view union over a Page.
+It publishes a root-local node graph from page-shared Entity State and ends when
+that root is published.
+_Avoid_: root graph, copied page, result wrapper, identity map
+
+**Payload Witness**:
+The exact provider-normalized positional payload claimed for one logical Entity
+occurrence, together with its resolved concrete Entity. Equal witnesses share
+one judgment; unequal witnesses for one logical key are a Snapshot Projection
+Conflict.
+_Avoid_: decoded Entity State, raw row result, optimistic-lock evidence
+
 **Snapshot Stream**:
 A scope-bound, single-pass delivery of roots in one Continuation Order: each
 bounded batch of root positions is materialized as one page, and that page's

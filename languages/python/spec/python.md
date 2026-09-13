@@ -2356,24 +2356,23 @@ of shared edition identity.
   The result retains no execution-lifecycle record. Deliberately
   absent: iteration/len/truthiness/indexing on the container, refresh or
   write methods, and any lazy behavior. Accessors are pure in-memory reads.
-- **Graph-local identity.** Within one materialized graph, one node per
+- **Root-local identity over page-shared state.** Within one Root View, one node per
   `(entity family, primary key, lowered as-of coordinates)` key: diamond paths
   share the same node object, cycles/back-references are hard pointers
   (constructed via an implementation-private setattr backdoor during
   materialization), and projections targeting the same key merge into one
   node. Value objects have no identity (fresh values per owner). Identity
-  never escapes one graph: nodes from different `find` calls never coalesce.
-- **Duplicate projections are value-identical.** Two projections of one logical
-  node carry the same values by construction: they resolve the same stored row
-  at the same pin, and each covers the full Attribute and Value Object set the
-  concrete it resolved to declares — an abstract-position read projects that
-  position's superset and keeps exactly the members of the resolved concrete, so
-  no projection is a partial one. Merging therefore takes the **first**
-  projection's entry for every scalar, Value Object occurrence, and resolved
-  concrete Entity and compares nothing; it neither detects nor refuses a
-  disagreement, because a read cannot produce one. Relationship Views are the
-  only slot two projections legitimately differ on — a path loaded on one and
-  not the other — and those are **unioned** rather than won.
+  never escapes one root: distinct result roots never coalesce their nodes, even
+  inside one eager result. Their Page may nevertheless share the one Entity State
+  from which both nodes are populated.
+- **Duplicate projections must prove value identity.** Every row occurrence
+  first contributes its concrete Entity, logical key, and exact positional
+  Payload Witness. Claims are grouped page-wide before payload judgment. Equal
+  witnesses decode once into one page-owned Entity State; every Root View borrows
+  that state while unioning only the relationship Views its own root reaches.
+  Unequal witnesses refuse through `SnapshotConsistencyError` before the
+  affected root is published. Comparison and error selection are deterministic
+  under reversed row and Include Path order.
 - **Declared-type enforcement on a read is the writer's.** Materialization enters
   no Pydantic constructor for an Entity or a Value Object — a published node's
   whole state is assembled and attached once — so a declared member's type is
@@ -2420,16 +2419,17 @@ of shared edition identity.
   document omitting one is not invalid, and materialization populates the field
   as `()` for it under the read contract above. The same rules apply recursively
   at every nesting depth.
-- **The sealed Snapshot graph.** A materializing read builds its whole graph
-  through one private first-party builder and publishes it by sealing: the
-  builder's accumulation arrays transfer into an opaque `SnapshotGraph` and the
-  builder is invalidated in the same step, so nothing observes a half-published
-  graph and nothing writes to a published one. Projection merging accepts a
-  sealed graph only. A result holder carrying one reads no row, layout, edge,
-  identity, or issue off it and holds nothing to read one with; the whole-graph
-  pin is the one fact it publishes, because a Snapshot publishes that pin.
+- **One page-owned representation.** `Materializer.read_page` reads one eager
+  result or one streamed batch into aligned occurrence arrays. A Page carries
+  level, concrete, logical key, raw positional witness, identity findings,
+  relationship-view row, root ordinal, paging verdict, and the Entity States
+  judged so far. `Materializer.roots` yields Root Views in result order. A Root
+  View owns reachability, view union, classification, and representation-specific
+  publication for exactly one root; it borrows its Page and retains nothing after
+  publication. A published value retains no Page, raw provider tuple, unused
+  witness, or neighbouring root's Views.
 
-  A graph carries, per projection: a reference to the exact-model member layout
+  A Page carries, per occurrence: a reference to the exact-model member layout
   its row is read against, one positional `member_values` tuple, one positional
   relationship view row and the source level that sized it, one dense graph-local
   logical-node ID, and its classified stored-data issues where it has any. Nothing wraps a cell: a position holds the decoded
@@ -2453,10 +2453,10 @@ of shared edition identity.
   public value: a consumer of a row either skips an absent position or is refused
   before publication.
 
-  Edges and roots are exact nonnegative built-in `int` projection indexes. A
-  `bool`, a non-`int`, a negative index, and an index past the graph's own
-  projections are each refused where the edge or root is recorded, so a graph
-  that exists is a graph whose references resolve and no whole-graph validation
+  Edges and roots are exact nonnegative built-in `int` occurrence indexes. A
+  `bool`, a non-`int`, a negative index, and an index past the Page's own
+  occurrences are each refused where the edge or root is recorded, so a Page
+  that exists is one whose references resolve and no whole-page validation
   pass stands between building one and merging it. Two entries for one member or
   one view within a projection are unrepresentable rather than rejected: each has
   exactly one position. `roots` order and the tuple
@@ -2469,9 +2469,10 @@ of shared edition identity.
   classified issues survive, but it contributes no logical identity and is never
   hydrated.
 
-  Milestone processing imports immutable projection rows out of a sealed staging
-  graph into a new builder, keeping each row's layout, member row, and issues by
-  reference. It reconstructs no second graph and decodes nothing twice.
+  A milestone-set read is one database-ordered Page and one flat root tuple. It
+  does not partition or import rows before publication. An undecodable temporal
+  edge is ordinary in-band invalid data with `edge=None` at the row's arrival
+  ordinal, in both eager and streamed checked views.
 
   Entity Graph Construction takes the same positional rows. Its build callback
   returns exactly `tuple[NodeHandle, ...]`; `EntityGraphWriter.populate(...)`
@@ -2562,7 +2563,7 @@ of shared edition identity.
   descendants therefore publish nothing on those lanes; unrequested projections
   do not affect the verdict.
 - **Root classification and the construction scope.** Classification runs once
-  over the merged graph, after merging and before construction, and no seam below
+  over each Root View, after state judgment and before construction, and no seam below
   it re-judges what it answers. A root is invalid when any node its requested
   include tree reaches carries an issue; node-level unions and pruning are
   forbidden, one shared invalid node repeats its diagnosis in every affected
@@ -2574,12 +2575,11 @@ of shared edition identity.
   atomic publication means everything constructible publishes together. A graph
   carrying no issue is answered without a reachability walk and constructs
   unfiltered and unwrapped.
-- **Single graph.** Projection merging is a read-only INDEXED interface over one
-  sealed graph, and every consumer — classification, the typed materializer, and
-  the wire materializer — reads it directly. It answers by reference into
-  something it or its graph already holds: a logical node's member row IS the
-  winning projection's row, and a second call for one node answers the identical
-  object rather than an equal composition of it.
+- **Shared Entity State, root-local Views.** Every consumer reads the same
+  page-owned judged Entity State. A logical node's member row is that state's own
+  row by reference; a second Root View reaching it receives the identical state
+  object but constructs a distinct node and unions only the Views reachable from
+  its own root.
 
   It MAY retain the logical-node-to-allocation mapping, the projection-to-
   allocation mapping, the allocation order, the winning projection per logical
@@ -2924,6 +2924,15 @@ of shared edition identity.
   resolution, deferred features, transaction ownership, adapter and database
   errors, SQL generation, and the `SnapshotDecodingError` publication refusal
   raised before graph construction begins.
+- **Projection conflict.** `SnapshotConsistencyError(RuntimeError)` is exported
+  from `parallax.snapshot`. Its sole stable code is
+  `snapshot-projection-conflict`. It carries `object_key`, the logical key's
+  lowered `coordinates`, `members` as the deterministically ordered tuple of
+  differing Member Identities, and `occurrences` as the canonical pair of
+  `(level, ordinal)` positions. It carries no raw value, witness, provider row,
+  cause, or mutable details mapping. The whole eager Snapshot is withheld when
+  any root conflicts; a stream preserves roots published before the conflicting
+  root and publishes none of that root.
 - **Eager include execution.** One query per non-empty relationship level
   (semi-join against the parent level's keys); an empty level short-circuits
   its subtree; declared descriptor `orderBy` governs child ordering; narrowed
@@ -5706,8 +5715,8 @@ contradiction to reject, not a later reading to keep — fails the sync check.
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.core.continuation`, `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-wire`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-lifecycle`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Execution lifecycle recorder (support, isolated child of `parallax.core.execution_lifecycle`) | `parallax.core.execution_lifecycle.testing` | `parallax.core.execution_lifecycle.testing` | `m-execution-lifecycle` | generated forbidden contracts + `tools/check_scope_ownership.py` |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot row-to-graph conversion and the sealed graph (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
+| Snapshot delivery materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materialization` | `parallax.snapshot.handle._materialization` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read`, `m-db-port`, `m-sql` | generated forbidden contracts |
+| Snapshot Page, Root View, and representation publication (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity`, `parallax.core.entity._construction_input`, `parallax.core.entity._layout`, `parallax.snapshot._inspection`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-wire` | generated forbidden contracts + cross-package contract |
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot read composition (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._read_scope` | `parallax.snapshot.handle._read_scope` | `parallax.core.entity`, `parallax.core.continuation`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `m-object-query`, `m-temporal-read`, `m-db-port`, `m-unit-work`, `m-read-lock`, `m-opt-lock`, `m-execution-lifecycle` | generated forbidden contracts |
@@ -5840,12 +5849,16 @@ parallax.snapshot.materialize --> parallax.core.inheritance
 parallax.snapshot.materialize --> parallax.core.relationship
 parallax.snapshot.materialize --> parallax.core.temporal_read
 parallax.snapshot.materialize --> parallax.core.wire
-parallax.snapshot.handle._materializer --> parallax.snapshot.materialize
-parallax.snapshot.handle._materializer --> parallax.snapshot._inspection
-parallax.snapshot.handle._materializer --> parallax.core.entity
-parallax.snapshot.handle._materializer --> parallax.core.metamodel
-parallax.snapshot.handle._materializer --> parallax.core.inheritance
-parallax.snapshot.handle._materializer --> parallax.core.temporal_read
+parallax.snapshot.materialize --> parallax.core.entity
+parallax.snapshot.materialize --> parallax.snapshot._inspection
+parallax.snapshot.handle._materialization --> parallax.snapshot.materialize
+parallax.snapshot.handle._materialization --> parallax.snapshot._inspection
+parallax.snapshot.handle._materialization --> parallax.core.entity
+parallax.snapshot.handle._materialization --> parallax.core.metamodel
+parallax.snapshot.handle._materialization --> parallax.core.inheritance
+parallax.snapshot.handle._materialization --> parallax.core.temporal_read
+parallax.snapshot.handle._materialization --> parallax.core.db_port
+parallax.snapshot.handle._materialization --> parallax.core.sql_gen
 parallax.snapshot.handle._preflight --> parallax.core.metamodel
 parallax.snapshot.handle._preflight --> parallax.core.predicate
 parallax.snapshot.handle._preflight --> parallax.core.object_query
@@ -5961,7 +5974,7 @@ parallax.postgres --> parallax.core.dialect
   a new topology decision, not an incidental use of an existing scope grant.
 
   ```carrier-neutral-private-reaches
-  parallax.core.sql_gen._compile | CompiledRead, MaterializedReadRow, compile_read | parallax.snapshot.handle._read
+  parallax.core.sql_gen._compile | CompiledRead, CompiledTemplate, compile_read, compile_template | parallax.snapshot.handle._materialization
   parallax.core.sql_gen._compile | CompiledRead, compile_read | parallax.snapshot.handle._predicate_writes; parallax.conformance._lanes.scenario; parallax.conformance._lanes.reads
   parallax.core.sql_gen._compile | compile_read | parallax.conformance._lanes.snapshot
   parallax.core.sql_gen._write | compile_write_step | parallax.snapshot.handle._write_lowering; parallax.conformance._lanes.scenario

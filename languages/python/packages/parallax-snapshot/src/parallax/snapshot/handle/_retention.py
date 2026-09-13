@@ -47,7 +47,7 @@ underscores.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
@@ -55,6 +55,7 @@ from typing import Protocol, cast
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import (
+    EntityStateRow,
     ObjectKey,
     ObservedStateKey,
     ParticipationToken,
@@ -83,6 +84,7 @@ __all__ = [
     "ObservationLedger",
     "ObservedRows",
     "ReadSources",
+    "deferred_evidence",
     "retain_evidence",
     "row_payload",
 ]
@@ -92,12 +94,11 @@ __all__ = [
 class _ObservedRow:
     """One materialized row's observable state, keyed by PHYSICAL column.
 
-    ``node`` is the graph projection this row converted into, which is how
+    ``node`` is the Page occurrence this row converted into, which is how
     the evidence built from it reaches the value that projection becomes.
-    ``entity`` is the row's own resolved concrete Entity. ``columns`` is every
-    value the row materialized — the primary key, the version column, the axis
-    bounds, and every other applicable member — which is what makes a
-    Predecessor Row complete. ``document`` is the raw Structured Column under
+    ``entity`` is the row's own resolved concrete Entity. ``columns`` is absent
+    until the Page judges that occurrence, then becomes a physical-key view over
+    its shared Entity State. ``document`` is the raw Structured Column under
     Relational Document Layout.
 
     It holds neither a raw driver row nor a materialized node, so an observation
@@ -106,26 +107,28 @@ class _ObservedRow:
 
     node: int
     entity: EntityIdentity
-    columns: Mapping[str, object]
+    columns: EntityStateRow | None
     document: object | None
+
+
+type _PendingObservation = int | _ObservedRow
 
 
 class ObservedRows:
     """What one :func:`~parallax.snapshot.handle.find` collects for the write
     side while its rows are still live.
 
-    Physical, column-keyed snapshots of materialized rows: :meth:`observe_row` is
-    the only way in and iteration the only way out, so what a row is recorded AS
-    stays unnameable outside this module. :func:`retain_evidence` is the only
-    consumer. Every graph-form read collects: a value's write evidence belongs to
-    the value, so a standalone read produces sources exactly as a participating
-    one does and differs only in the participation it can stamp.
+    Occurrence references paired with their row provenance: graph-form reads use
+    :meth:`observe_occurrence` and receive their columns only from the judged,
+    Page-owned Entity State, while direct unit-work fixtures may supply an
+    :class:`EntityStateRow` through :meth:`observe_row`. Iteration is the only way
+    out and :func:`retain_evidence` is the only consumer.
     """
 
     __slots__ = ("_rows",)
 
     def __init__(self) -> None:
-        self._rows: list[_ObservedRow] = []
+        self._rows: list[_PendingObservation] = []
 
     def observe_row(
         self,
@@ -136,19 +139,29 @@ class ObservedRows:
     ) -> None:
         """Snapshot one materialized row's observable state. ``columns`` stays the
         caller's, so a later edit to it cannot reach the recorded observation."""
-        self._rows.append(_ObservedRow(node, entity, dict(columns), document))
+        state = columns if isinstance(columns, EntityStateRow) else EntityStateRow(dict(columns))
+        self._rows.append(_ObservedRow(node, entity, state, document))
+
+    def observe_occurrence(
+        self,
+        node: int,
+        entity: EntityIdentity,
+        document: object | None,
+    ) -> None:
+        """Record a projection whose columns will come from its judged Entity State."""
+        self._rows.append(node if document is None else _ObservedRow(node, entity, None, document))
 
     def __iter__(self) -> Iterator[_ObservedRow]:
         """Every row observed so far, in the order the executor materialized them
         (root first, then each level in plan order). Nothing outside this module
         can name what is yielded, and nothing addresses a hint by that order:
         :func:`retain_evidence` keys its answer by each row's own projection."""
-        return iter(self._rows)
+        return (observed for observed in self._rows if isinstance(observed, _ObservedRow))
 
 
 type ReadSources = Mapping[int, SourceHint]
 """The Source Hint each observed projection's value carries, keyed by that
-projection's own index in the read's sealed graph.
+projection's own index in the read's sealed Page.
 
 Only the executor can build this pairing: it alone holds the row and the
 projection it converted into at the same time, and by the time a materializer
@@ -168,6 +181,88 @@ class ObservationLedger(Protocol):
     def participation(self) -> ParticipationToken: ...
 
     def retain(self, observation: RetainedObservation, /) -> RetainedObservation: ...
+
+
+class _DeferredReadSources(Mapping[int, SourceHint]):
+    """Evidence retained only after its page-owned Entity State is judged valid."""
+
+    __slots__ = (
+        "_admitted",
+        "_entity",
+        "_ledger",
+        "_meta",
+        "_observations",
+        "_pin",
+        "_resolved",
+    )
+
+    def __init__(
+        self,
+        meta: Metamodel,
+        observations: ObservedRows,
+        admitted: Callable[[int], EntityStateRow | None],
+        entity: Callable[[int], EntityIdentity],
+        *,
+        ledger: ObservationLedger | None,
+        pin: Pin,
+    ) -> None:
+        self._meta = meta
+        self._observations = tuple(observations._rows)  # pyright: ignore[reportPrivateUsage] - same-module transfer
+        self._admitted = admitted
+        self._entity = entity
+        self._ledger = ledger
+        self._pin = pin
+        self._resolved: dict[int, SourceHint] = {}
+
+    def __getitem__(self, key: int) -> SourceHint:
+        if key not in self._resolved:
+            self._refresh_one(key)
+        return self._resolved[key]
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self._resolved)
+
+    def __len__(self) -> int:
+        return len(self._resolved)
+
+    def _refresh_one(self, key: int) -> None:
+        try:
+            pending = self._observations[key]
+        except IndexError:  # pragma: no cover - Root Views request Page occurrence indices only
+            raise KeyError(key) from None
+        state = self._admitted(key)
+        if state is None:
+            return
+        fresh = ObservedRows()
+        fresh._rows.append(  # pyright: ignore[reportPrivateUsage] - same-module transfer over shared state
+            _ObservedRow(
+                key,
+                self._entity(key) if isinstance(pending, int) else pending.entity,
+                state,
+                None if isinstance(pending, int) else pending.document,
+            )
+        )
+        self._resolved.update(
+            retain_evidence(
+                self._meta,
+                fresh,
+                ledger=self._ledger,
+                pin=self._pin,
+            )
+        )
+
+
+def deferred_evidence(
+    meta: Metamodel,
+    observations: ObservedRows,
+    admitted: Callable[[int], EntityStateRow | None],
+    entity: Callable[[int], EntityIdentity],
+    *,
+    ledger: ObservationLedger | None,
+    pin: Pin,
+) -> ReadSources:
+    """A mapping that retains evidence as valid judged states become reachable."""
+    return _DeferredReadSources(meta, observations, admitted, entity, ledger=ledger, pin=pin)
 
 
 def retain_evidence(
@@ -270,6 +365,8 @@ def _observed_object(
     a hint names the object whether or not a state stands behind it.
     """
     observed_fields = observed.columns
+    if observed_fields is None:  # pragma: no cover - deferred retention supplies judged state
+        return None
     entity = meta.entity(observed.entity)
     if entity is None:  # pragma: no cover - a materialized row resolved within this model
         return None
@@ -334,8 +431,8 @@ def _temporal_observation(
     whole").
 
     ``fields`` is a plain column-keyed mapping — one materialized row's own
-    observable columns, documents decoded (a real ``Transaction.find`` reads them
-    through :meth:`parallax.snapshot.materialize._prepared.PreparedRead.observable_columns`)
+    observable columns, documents decoded (a real ``Transaction.find`` views them
+    through :class:`parallax.core.unit_work.EntityStateRow` over Page-owned state)
     — and :func:`row_payload` is the extraction a materializing predicate-write
     resolve applies to its OWN rows, so both sides share the SAME rule rather than
     duplicating it. Extraction renders nothing of its own: every value passes
@@ -354,7 +451,9 @@ def _temporal_observation(
     absent under `Columns` layout, where the row has no such column.
     """
     return TemporalObservation(
-        predecessor=PredecessorRow(row_payload(member_columns, fields), document=document)
+        predecessor=PredecessorRow(
+            EntityStateRow(row_payload(member_columns, fields)), document=document
+        )
     )
 
 

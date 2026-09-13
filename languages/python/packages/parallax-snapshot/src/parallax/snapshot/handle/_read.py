@@ -8,23 +8,23 @@ composed HERE, exactly like `_write_lowering` composes
 the write-side `m-unit-work` x `m-sql` edge — one executor, production-owned:
 `db.find` and `tx.find` both call the SAME :func:`find` / :func:`find_history`
 and build the SAME
-:class:`~parallax.snapshot.materialize.SnapshotGraph`, so the per-level
+:class:`~parallax.snapshot.materialize.Page`, so the per-level
 loop exists exactly once on the developer-facing path.
 
-Included graph levels materialize and convert rows one at a time: a converted
+Included Page levels materialize and convert rows one at a time: a converted
 node names its correlation members, so the next level gathers keys from the
-converted parent rather than a retained row. A graph read's own ROOTS instead
-stage as one tuple across :func:`read_roots` / :func:`build_graph`, the one joint
+converted parent rather than a retained row. A graph-form read's own ROOTS instead
+stage as one tuple across :func:`read_roots` / :func:`build_page`, the one joint
 a whole-result read has. Flat-row, history, and predicate-write lanes
-instead stage one tuple of SQL-materialized rows and merge them once, before any
+instead stage one tuple of SQL-materialized rows into one Page, before any
 consumer-specific derivation, so each lane classifies or refuses that one staging
-graph rather than judging rows as it walks them. The port's raw
+Page rather than judging rows as it walks them. The port's raw
 `list[Row]` remains one statement's own lifetime, and neither raw nor
-SQL-materialized rows survive into a sealed graph, a Snapshot, or a lifecycle
+SQL-materialized rows survive into a sealed Page, a Snapshot, or a lifecycle
 event.
 
 The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`) are
-`m-snapshot-read`'s own carriers — the sealed graph and the private Source Hints
+`m-snapshot-read`'s own carriers — the sealed Page and the private Source Hints
 a materializer needs, and nothing about the execution that produced them — so
 they are defined in
 :mod:`~parallax.snapshot._read_result` and re-exported here beside the
@@ -32,7 +32,7 @@ executor that builds them, together with the developer-facing :class:`Snapshot`
 surface they convert into and the pin helpers that carry a query's or a
 milestone's as-of coordinates across that conversion.
 
-A graph-form read also retains the write evidence its rows observed, onto the
+A graph-form read also retains the write evidence its Page-owned states observed, onto the
 values it publishes: this module drives
 :mod:`parallax.snapshot.handle._retention` while each row is still live, and
 hands the resulting Source Hints to whichever materializer runs. The dependency
@@ -40,10 +40,10 @@ goes this way and only this way — the retention module names nothing here.
 
 One executor, two materializers. The two :class:`ResultPublication` values are
 PEERS over the same
-:class:`~parallax.snapshot.materialize.GraphMerge`: which one runs is chosen
+:class:`~parallax.snapshot.materialize.RootView`: which one runs is chosen
 after execution has already finished and neither calls the other. Each publishes
-one sealed graph at a time, so an eager find, a milestone-set find, and a
-streamed read differ in WHICH graphs they hand over rather than in how a graph
+one Page at a time, so an eager find, a milestone-set find, and a
+streamed read differ in WHICH Pages they hand over rather than in how a Page
 becomes a result.
 :func:`find_rows` is the values lane's own degenerate case — the transformed row
 IS the representation, so it publishes rows directly and shares with :func:`find`
@@ -76,17 +76,16 @@ failed-call rules.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
-from parallax.core import deep_fetch, inheritance, opt_lock, read_lock
+from parallax.core import continuation, deep_fetch, inheritance, opt_lock, read_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import (
     DatabaseConnection,
-    MappingRow,
     PipelineStatement,
     Row,
 )
@@ -100,7 +99,6 @@ from parallax.core.execution_lifecycle._activity import (
     DatabaseCallScope,
     ReadActivity,
 )
-from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -120,11 +118,10 @@ from parallax.core.sql_gen._compile import (
 from parallax.core.temporal_read import (
     Edge,
     Pin,
-    milestone_edge,
     scans_validated_axis,
     validated_query_pin,
 )
-from parallax.core.unit_work import Concurrency
+from parallax.core.unit_work import Concurrency, EntityStateRow
 from parallax.snapshot._read_result import (
     FindResult,
     HistoryFindResult,
@@ -132,31 +129,40 @@ from parallax.snapshot._read_result import (
     RowsResult,
 )
 from parallax.snapshot.handle._errors import SnapshotMaterializationError
-from parallax.snapshot.handle._materializer import materialize_graph
+from parallax.snapshot.handle._materialization import (
+    INERT as MATERIALIZATION_INERT,
+)
+from parallax.snapshot.handle._materialization import (
+    MaterializationObserver,
+    Materializer,
+)
 from parallax.snapshot.handle._retention import (
     ObservationLedger,
     ObservedRows,
     ReadSources,
-    retain_evidence,
+    deferred_evidence,
 )
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
     ClassifiedRoot,
-    GraphMerge,
     InvalidData,
     InvalidDataError,
+    Page,
+    PageBuilder,
     RelationshipViewKey,
-    SnapshotGraph,
+    RootView,
     UnwindTree,
     classify_roots,
     hydrates,
-    merge_graph_input,
+    page_edges,
+    page_rows,
     require_publishable,
     unwind_tree,
     wire_roots,
 )
-from parallax.snapshot.materialize._graph import ABSENT, GraphBuilder
+from parallax.snapshot.materialize._page import ABSENT
 from parallax.snapshot.materialize._prepared import PreparedRead, bind
+from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import (
     ROOT_LEVEL,
     ChildSlot,
@@ -171,15 +177,15 @@ __all__ = [
     "NoResultFound",
     "PublishedRow",
     "ResultPublication",
+    "RowPublication",
     "RowsResult",
     "Snapshot",
-    "StagedRows",
     "TooManyResultsFound",
     "entity_read_lock",
     "find",
     "find_history",
     "find_rows",
-    "stage_publishable_rows",
+    "publishable_rows",
     "typed_publication",
     "wire_publication",
 ]
@@ -399,20 +405,6 @@ def entity_read_lock(
     )
 
 
-def _new_roots() -> list[int]:
-    return []
-
-
-@dataclass(slots=True)
-class _Milestone:
-    """One milestone-set partition under construction: its own graph builder, the
-    chronological rank of the row that opened it, and its imported roots."""
-
-    builder: GraphBuilder
-    rank: tuple[object, ...]
-    roots: list[int] = field(default_factory=_new_roots)
-
-
 def find(
     query: ValidatedObjectQuery,
     model: CatalogedModel,
@@ -421,6 +413,7 @@ def find(
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
     calls: DatabaseCallScope = INERT,
+    observer: MaterializationObserver = MATERIALIZATION_INERT,
 ) -> FindResult:
     """The whole-result read: every root ``query`` matches, and the graph below them.
 
@@ -466,13 +459,22 @@ def find(
     runs the same code and emits nothing, and is what the default path, a
     declined root, and one page of a streamed read do.
     """
-    return build_graph(
-        read_roots(query, model, port, preference=preference, calls=calls),
-        model,
-        port,
-        preference=preference,
-        ledger=ledger,
-        calls=calls,
+    return Materializer(observer).read_page(
+        lambda cadence: build_page(
+            read_roots(
+                query,
+                model,
+                port,
+                preference=preference,
+                calls=calls,
+                observer=cadence,
+            ),
+            model,
+            port,
+            preference=preference,
+            ledger=ledger,
+            calls=calls,
+        )
     )
 
 
@@ -493,6 +495,7 @@ class RootRead:
     prepared: PreparedRead[MaterializedReadRow]
     rows: tuple[MaterializedReadRow, ...]
     temporal: tuple[ValidatedTemporalSelection, ...]
+    observer: MaterializationObserver = MATERIALIZATION_INERT
 
 
 def read_roots(
@@ -502,6 +505,7 @@ def read_roots(
     *,
     preference: Concurrency | None = None,
     calls: DatabaseCallScope = INERT,
+    observer: MaterializationObserver = MATERIALIZATION_INERT,
 ) -> RootRead:
     """Plan ``query``, issue its ROOT statement, and materialize the rows it returned.
 
@@ -524,15 +528,20 @@ def read_roots(
         lock=entity_read_lock(meta, query.root.identity, preference),
     )
     prepared = bind(model, compiled)
+    observer.prepared(len(plan_.levels) + 1)
+    observer.statement_rendered(ROOT_LEVEL)
+    driver_rows = execute_read(port, compiled, calls)
+    observer.statement_executed(ROOT_LEVEL, len(driver_rows))
     return RootRead(
         plan=plan_,
         prepared=prepared,
-        rows=tuple(map(prepared.materialize, execute_read(port, compiled, calls))),
+        rows=tuple(map(prepared.materialize, driver_rows)),
         temporal=query.temporal,
+        observer=observer,
     )
 
 
-def build_graph(
+def build_page(
     root_read: RootRead,
     model: CatalogedModel,
     port: DatabaseConnection,
@@ -550,8 +559,8 @@ def build_graph(
     key and receives no attachment, so its view stays unset); gathers the distinct
     non-null parent keys; an empty gathered
     set attaches the empty/null relationship result and issues no child SQL; a
-    back-reference level issues no SQL either (resolved through the merge scope's
-    own graph-local identity map); otherwise compiles and executes ONE child query
+    back-reference level issues no SQL either (resolved through the Page's own
+    identity map); otherwise compiles and executes ONE child query
     (carrying the level's declared relationship ordering), applies
     `familyVariant` materialization (`m-sql`) to its rows, and converts them.
     Every level is the same three steps — compile, execute, convert — with
@@ -566,7 +575,7 @@ def build_graph(
     level's rows be converted one at a time: no column-to-member
     inversion happens here, and no row outlives its own level.
 
-    Returns the whole sealed Snapshot graph — every projection, the root
+    Returns the whole sealed Page — every occurrence, the root
     indexes in result order, and the query's own lowered pin — plus the
     Source Hint each observed projection's value will carry.
 
@@ -576,7 +585,7 @@ def build_graph(
     """
     meta = model.meta
     plan_ = root_read.plan
-    builder = GraphBuilder(ViewSchema(_slot_table(plan_)))
+    builder = PageBuilder(ViewSchema(_slot_table(plan_)), root_read.observer)
     observations = ObservedRows()
 
     root_refs = _convert_rows(builder, ROOT_LEVEL, root_read.prepared, root_read.rows, observations)
@@ -613,12 +622,20 @@ def build_graph(
                 result_form="instance",
                 lock=entity_read_lock(meta, child_query.target, preference),
             )
+            root_read.observer.statement_rendered(index + 1)
             pending.append((index, level, parents, template.render(keys)))
 
         if len(pending) == 1:
             for index, level, parents, compiled in pending:
                 child_refs = _convert_level(
-                    builder, index + 1, model, port, compiled, calls, observations
+                    builder,
+                    index + 1,
+                    model,
+                    port,
+                    compiled,
+                    calls,
+                    observations,
+                    root_read.observer,
                 )
                 _attach_children(builder, meta, level, parents, child_refs)
                 level_refs[index] = child_refs
@@ -643,6 +660,7 @@ def build_graph(
                 for call, rows in zip(call_contexts, batches, strict=True):
                     call.read_completed(rows)
             for (index, level, parents, compiled), rows in zip(pending, batches, strict=True):
+                root_read.observer.statement_executed(index + 1, len(rows))
                 child_refs = _convert_level_rows(
                     builder, index + 1, model, compiled, rows, observations
                 )
@@ -651,10 +669,18 @@ def build_graph(
                 completed.add(index)
 
     pin = validated_query_pin(root_read.temporal)
+    page = builder.finish(root_refs, pin)
     return FindResult(
-        graph=builder.seal(root_refs, pin),
+        page=page,
         includes=_include_tree(plan_.levels),
-        sources=_retained(meta, root_read.temporal, observations, ledger=ledger, pin=pin),
+        sources=_retained(
+            meta,
+            root_read.temporal,
+            observations,
+            page=page,
+            ledger=ledger,
+            pin=pin,
+        ),
     )
 
 
@@ -663,6 +689,7 @@ def _retained(
     temporal: tuple[ValidatedTemporalSelection, ...],
     observations: ObservedRows,
     *,
+    page: Page,
     ledger: ObservationLedger | None,
     pin: Pin,
 ) -> ReadSources:
@@ -679,80 +706,94 @@ def _retained(
     """
     if scans_validated_axis(temporal):
         return MappingProxyType({})
-    return retain_evidence(meta, observations, ledger=ledger, pin=pin)
+    rows = page_rows(page)
+    state_rows: dict[object, EntityStateRow] = {}
+
+    def admitted(node: int) -> EntityStateRow | None:
+        key = rows.keys[node]
+        state = None if key is None else rows.judged_states.get(key)
+        if key is None or state is None or not hydrates(state.findings):
+            return None
+        held = state_rows.get(key)
+        if held is None:
+            held = EntityStateRow.over_state(rows.layouts[node], state, absent=ABSENT)
+            state_rows[key] = held
+        return held
+
+    return deferred_evidence(
+        meta,
+        observations,
+        admitted,
+        lambda node: rows.layouts[node].concrete,
+        ledger=ledger,
+        pin=pin,
+    )
 
 
 @dataclass(frozen=True, slots=True)
-class StagedRows:
-    """One flat batch after SQL row materialization, before any lane has judged it.
+class RowPublication:
+    """One flat batch and the Page-owned Entity States that judged it.
 
     Staging carries what contradicted the model rather than deciding about it, so
-    a batch reaching a lane through :func:`stage_rows` has passed no publication
-    gate and one reaching it through :func:`stage_publishable_rows` has.
+    a batch reaching a lane through :func:`judge_rows` has passed no publication
+    gate and one reaching it through :func:`publishable_rows` has.
 
-    ``rows`` and the ``prepared`` read they materialized through remain available
-    for the lane-specific work that follows — a lane observing them reaches each
-    row's own level through it rather than pairing rows with contexts of its own.
-    ``graph`` and ``roots`` retain the converted projections for the history
-    lane, which repartitions clean rows by milestone without converting them a
-    second time. ``merge`` is the merge over that same staging
-    graph, which the lane either classifies or refuses; each row occupies the
-    root position of the same ordinal, so a verdict lands on the row it judged.
-    ``schema`` is the view schema this batch was laid out against — a flat batch
-    plans no levels, so it carries no slot — and it travels with the batch so a
-    lane building further graphs out of these rows shares the one schema of its
-    execution rather than deriving a second.
+    ``rows`` retains statement metadata such as history coordinates. ``page`` and
+    ``roots`` retain the converted occurrences, while ``root`` exposes their
+    judged Entity States to history, row publication, and predicate-write
+    staging without another payload decode or reconstructed member dictionary.
     """
 
     rows: tuple[MaterializedReadRow, ...]
-    prepared: PreparedRead[MaterializedReadRow]
-    graph: SnapshotGraph
+    page: Page
     roots: tuple[int, ...]
-    merge: GraphMerge
-    schema: ViewSchema
+    root: RootView
 
 
-def stage_publishable_rows(
+def publishable_rows(
     model: CatalogedModel,
     compiled: CompiledRead,
     rows: Sequence[Row],
     *,
     pin: Pin,
-) -> StagedRows:
+) -> RowPublication:
     """Materialize and validate one flat row batch before lane-specific use.
 
-    The refusing peer of :func:`stage_rows`, for the two lanes with nowhere to
+    The refusing peer of :func:`judge_rows`, for lanes with nowhere to
     publish a verdict: a milestone-set read must decode a temporal edge before it
     can partition its rows at all, and a predicate write has no in-band channel
-    for one. Both apply the publication gate to the staging graph before deriving
+    for one. Both apply the publication gate to the Page before deriving
     milestones, observations, or writes.
     """
-    staged = stage_rows(model, compiled, rows, pin=pin)
-    require_publishable(staged.merge)
+    staged = Materializer().read_page(
+        lambda observer: judge_rows(model, compiled, rows, pin=pin, observer=observer)
+    )
+    require_publishable(staged.root)
     return staged
 
 
-def stage_rows(
+def judge_rows(
     model: CatalogedModel,
     compiled: CompiledRead,
     rows: Sequence[Row],
     *,
     pin: Pin,
-) -> StagedRows:
-    """Materialize and merge one flat row batch before lane-specific use.
+    observer: MaterializationObserver = MATERIALIZATION_INERT,
+) -> RowPublication:
+    """Materialize one flat row batch into a Page before lane-specific use.
 
     The prepared read carries the compiled transform's findings, family-tag
-    verdict, and classified-member provenance into conversion, so the staging
-    graph carries whatever contradicted the model and each lane decides what to
+    verdict, and classified-member provenance into conversion, so the Page
+    carries whatever contradicted the model and each lane decides what to
     do with it.
     """
     prepared = bind(model, compiled)
     materialized = tuple(map(prepared.materialize, rows))
     schema = ViewSchema.of()
-    builder = GraphBuilder(schema)
+    builder = PageBuilder(schema, observer)
     roots = tuple(prepared.convert(row, builder, source=ROOT_LEVEL) for row in materialized)
-    graph = builder.seal(roots, pin)
-    return StagedRows(materialized, prepared, graph, roots, merge_graph_input(graph), schema)
+    page = builder.finish(roots, pin)
+    return RowPublication(materialized, page, roots, RootView(page))
 
 
 def find_rows(
@@ -763,11 +804,12 @@ def find_rows(
     edition: str,
     preference: Concurrency | None = None,
     read: ReadActivity = INERT,
+    observer: MaterializationObserver = MATERIALIZATION_INERT,
 ) -> RowsResult:
-    """The row-form read: one statement, its rows transformed, no graph.
+    """The row-form read: one statement and one Page of transformed roots.
 
     The transformed row is the returned representation, so the values lane builds
-    no result graph. It does build a staging graph, which is what classification
+    no typed object graph. It does build a Page, which is what classification
     runs over: a row whose own stored state contradicted the model publishes its
     :class:`~parallax.snapshot.materialize.InvalidData` record in place of itself,
     carrying the row when the collapse produced one and nothing when no value
@@ -795,27 +837,32 @@ def find_rows(
         result_form="row",
         lock=entity_read_lock(meta, root_entity.identity, preference),
     )
-    stage = stage_rows(
-        model,
-        compiled,
-        execute_read(port, compiled, read),
-        pin=validated_query_pin(query.temporal),
-    )
+
+    def read_page(cadence: MaterializationObserver) -> RowPublication:
+        cadence.prepared(1)
+        cadence.statement_rendered(ROOT_LEVEL)
+        driver_rows = execute_read(port, compiled, read)
+        cadence.statement_executed(ROOT_LEVEL, len(driver_rows))
+        return judge_rows(
+            model, compiled, driver_rows, pin=validated_query_pin(query.temporal), observer=cadence
+        )
+
+    stage = Materializer(observer).read_page(read_page)
     for item in stage.rows:
         if item.family_variant is not None:
             item.values["familyVariant"] = item.family_variant
     return RowsResult(rows=_published_rows(stage, meta), edition=edition)
 
 
-def _published_rows(stage: StagedRows, meta: Metamodel) -> tuple[PublishedRow, ...]:
+def _published_rows(stage: RowPublication, meta: Metamodel) -> tuple[PublishedRow, ...]:
     """One published element per staged row, in result order.
 
-    The staging graph gives each row the root position of its own ordinal, so a
+    The Page gives each row the root position of its own ordinal, so a
     verdict and the row it judged are paired by position rather than by a second
     identity this lane would have to derive.
     """
     published: list[PublishedRow] = []
-    for item, verdict in zip(stage.rows, classify_roots(stage.merge, meta).roots, strict=True):
+    for item, verdict in zip(stage.rows, classify_roots(stage.root, meta).roots, strict=True):
         detached = MappingProxyType(dict(item.values))
         if isinstance(verdict, ClassifiedRoot):
             published.append(
@@ -835,32 +882,26 @@ def find_history(
     port: DatabaseConnection,
     *,
     read: ReadActivity = INERT,
+    observer: MaterializationObserver = MATERIALIZATION_INERT,
 ) -> HistoryFindResult:
     """The milestone-set snapshot read (m-snapshot-read "The whole-graph pin";
-    m-case-format "Milestone-set graphs"): `history` / `asOfRange` return the
-    full matching milestone SET in one statement, partitioned here by each
-    row's own edge (`~parallax.core.temporal_read.milestone_edge`) into one
-    root-only graph per milestone, each with its OWN merge scope — graph-local
-    identity never promises reuse across milestones.
+    m-case-format "Milestone-set graphs").
 
-    The flat batch first passes the same staged publication gate a predicate
-    write's resolving read does — the row-form lane classifies in band instead.
-    Clean projections are then imported out of the SEALED staging graph into
-    milestone-local builders, keeping each row's layout, member row, and issues
-    by reference rather than decoding any of them a second time. The
-    graphs come out in chronological edge order (Valid Time
-    first, matching the corpus's own authored `then.graphs` order) rather than in
-    the database's unspecified natural row order, and rows within one milestone
-    keep that natural order.
+    ``history`` and ``asOfRange`` return the full matching milestone set in one
+    statement and one Page. Continuation order is authored onto the canonical
+    graph-form read before SQL compilation, so the Page's flat root sequence is
+    already logical key followed by canonical axis starts. Each root's edge is
+    retained as its publication pin; Page identity remains shared while every
+    published result root receives a root-local object graph.
 
-    Every milestone graph is laid out against the staging batch's OWN view
-    schema, so one milestone-set read has exactly one — a milestone-set query
-    carries no includes, and a schema is a fact about the plan rather than about
-    a partition of its rows.
+    The flat Page first passes the same publication gate as a predicate-write
+    resolving read. A milestone-set query carries no includes, so the one Page
+    schema is root-only.
     """
     meta = model.meta
     metadata = query.root
-    plan_ = deep_fetch.plan(query, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
+    ordered = continuation.ordered(query, meta)
+    plan_ = deep_fetch.plan(ordered, meta, projection=deep_fetch.ReadProjectionRequest("all", True))
     if plan_.levels:
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
@@ -872,38 +913,28 @@ def find_history(
     # own (possibly locally-empty) axes.
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root, meta, port.dialect, result_form="instance")
-    stage = stage_publishable_rows(
-        model,
-        compiled,
-        execute_read(port, compiled, read),
-        pin=Pin(),
-    )
 
-    milestones: dict[Edge, _Milestone] = {}
-    for row, staged_ref in zip(stage.rows, stage.roots, strict=True):
-        edge = milestone_edge(entity, row.values)
-        milestone = milestones.get(edge)
-        if milestone is None:
-            milestone = _Milestone(GraphBuilder(stage.schema), _edge_sort_key(entity, row.values))
-            milestones[edge] = milestone
-        milestone.roots.append(
-            milestone.builder.import_projection(ROOT_LEVEL, stage.graph, staged_ref)
-        )
-    graphs = tuple(
-        milestone.builder.seal(tuple(milestone.roots), edge_pin(edge))
-        for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
-    )
-    return HistoryFindResult(graphs=graphs)
+    def read_page(cadence: MaterializationObserver) -> RowPublication:
+        cadence.prepared(1)
+        cadence.statement_rendered(ROOT_LEVEL)
+        driver_rows = execute_read(port, compiled, read)
+        cadence.statement_executed(ROOT_LEVEL, len(driver_rows))
+        return judge_rows(model, compiled, driver_rows, pin=Pin(), observer=cadence)
+
+    stage = Materializer(observer).read_page(read_page)
+
+    return HistoryFindResult(page=stage.page, milestones=entity)
 
 
 def _convert_level(
-    builder: GraphBuilder,
+    builder: PageBuilder,
     source: SourceLevel,
     model: CatalogedModel,
     port: DatabaseConnection,
     compiled: CompiledRead,
     calls: DatabaseCallScope,
     observations: ObservedRows,
+    observer: MaterializationObserver,
 ) -> tuple[int, ...]:
     """Bind one level's compiled read, execute it, and convert each of its rows
     as that row materializes.
@@ -920,11 +951,12 @@ def _convert_level(
     execute answers by contract, and only the per-row materialization is lazy.
     """
     rows = execute_read(port, compiled, calls)
+    observer.statement_executed(source, len(rows))
     return _convert_level_rows(builder, source, model, compiled, rows, observations)
 
 
 def _convert_level_rows(
-    builder: GraphBuilder,
+    builder: PageBuilder,
     source: SourceLevel,
     model: CatalogedModel,
     compiled: CompiledRead,
@@ -936,7 +968,7 @@ def _convert_level_rows(
 
 
 def _convert_rows(
-    builder: GraphBuilder,
+    builder: PageBuilder,
     source: SourceLevel,
     prepared: PreparedRead[MaterializedReadRow],
     rows: Iterable[MaterializedReadRow],
@@ -953,13 +985,10 @@ def _convert_rows(
     projection's view row: the levels attaching BELOW this one are what its rows
     can receive.
 
-    The observation is taken from the SAME row the conversion reads, while that
-    row is still live, and paired with the projection that row converted into —
-    the pairing that lets the value built from that projection carry the evidence
-    later. It is deliberately physical: a Predecessor Row is column-keyed by
-    contract, so the write side is served by its own explicitly physical
-    extraction rather than by a converted node carrying columns it has no other
-    use for.
+    The observation records the SAME row's raw document and pairs it with the
+    occurrence conversion produced. Once a Root View judges that occurrence,
+    evidence reads the Page-owned Entity State through its physical-key mapping
+    view; no second member row is decoded or reconstructed.
 
     Each row is observed under its OWN resolved concrete Entity — the level the
     conversion resolved for it — rather than under the level-wide position the
@@ -977,12 +1006,9 @@ def _convert_rows(
     for row in rows:
         ref = prepared.convert(row, builder, source=source)
         refs.append(ref)
-        if not hydrates(builder.issues_of(ref)):
-            continue
-        observations.observe_row(
+        observations.observe_occurrence(
             ref,
             row.resolved_entity,
-            prepared.observable_columns(row),
             row.document,
         )
     return tuple(refs)
@@ -1045,7 +1071,7 @@ def _slot_table(plan: deep_fetch.ObjectQueryPlan) -> tuple[tuple[ChildSlot, ...]
 
 
 def _attach_children(
-    builder: GraphBuilder,
+    builder: PageBuilder,
     meta: Metamodel,
     level: deep_fetch.FetchLevel,
     parents: tuple[int, ...],
@@ -1070,7 +1096,7 @@ def _attach_children(
 
 
 def _attach_empty(
-    builder: GraphBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
+    builder: PageBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
 ) -> None:
     """Attach the empty/null relationship result to every admitted parent.
 
@@ -1085,7 +1111,7 @@ def _attach_empty(
 
 
 def _attach_back_reference(
-    builder: GraphBuilder,
+    builder: PageBuilder,
     meta: Metamodel,
     level: deep_fetch.FetchLevel,
     parents: tuple[int, ...],
@@ -1185,7 +1211,7 @@ def _parent_refs(
 
 
 def _guarded_parents(
-    builder: GraphBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
+    builder: PageBuilder, level: deep_fetch.FetchLevel, parents: tuple[int, ...]
 ) -> tuple[int, ...]:
     """The parent nodes a path-root guard admits into ``level``
     (m-deep-fetch "Path-root guards").
@@ -1205,7 +1231,7 @@ def _guarded_parents(
 
 
 def _gather_keys(
-    builder: GraphBuilder, parents: tuple[int, ...], member: AttributeIdentity
+    builder: PageBuilder, parents: tuple[int, ...], member: AttributeIdentity
 ) -> list[predicate_algebra.Scalar]:
     """The values of ``member`` across ``parents`` that name something.
 
@@ -1251,23 +1277,6 @@ def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetada
     return root
 
 
-def _start_column(entity: EntityMetadata, axis: AcceptedAsOfAxis) -> str:
-    declared = entity.attribute(axis.start_attribute.name)
-    if declared is None:  # pragma: no cover - an accepted axis names a declared Attribute
-        raise ValueError(f"{entity.identity.canonical}: {axis.start_attribute.name} is undeclared")
-    return declared.storage.name
-
-
-def _edge_sort_key(entity: EntityMetadata, row: MappingRow) -> tuple[object, ...]:
-    """Valid Time first, then Transaction Time (m-sql's bind-order convention),
-    each dimension's start-column value — used only to chronologically order a
-    milestone-set read's per-milestone graphs, never to select or filter rows. A
-    Temporal Dimension's member value IS that canonical rank, so the row that
-    opens a milestone carries the rank of every row that joins it."""
-    ordered = sorted(entity.declared_as_of_axes, key=lambda axis: axis.dimension.value)
-    return tuple(row[_start_column(entity, axis)] for axis in ordered)
-
-
 def edge_pin(edge: Edge) -> Pin:
     """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
     milestone-set root is edge-pinned at its own milestone's from-instant).
@@ -1279,12 +1288,12 @@ def edge_pin(edge: Edge) -> Pin:
 
 
 class RootsOf(Protocol):
-    """One materializer's publication of the roots ONE sealed graph carries.
+    """One materializer's publication of the roots one sealed Page carries.
 
-    The whole conversion, in one call: merge the graph, classify its roots, and
+    The whole conversion, in one call: form each Root View, classify its root, and
     publish the ones that hydrate. ``includes`` is the requested Include Path
     tree, which the Wire unwind bounds its walk by and the typed construction
-    does not consult. ``ordinal_offset`` is where this graph's roots start in
+    does not consult. ``ordinal_offset`` is where this Page's roots start in
     the ordered result being published, which is nonzero wherever one result
     spans several graphs. ``sources`` is the Source Hint the executor retained
     per PROJECTION, which each published node carries so a later keyed write
@@ -1293,13 +1302,14 @@ class RootsOf(Protocol):
 
     def __call__(
         self,
-        graph: SnapshotGraph,
+        page: Page,
         includes: UnwindTree = EMPTY_UNWIND,
         /,
         *,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
-    ) -> tuple[object, ...]: ...
+        milestones: EntityMetadata | None = None,
+    ) -> Iterator[object]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1315,11 +1325,11 @@ class ResultPublication:
     equivalence the Typed and Wire interfaces promise is structural rather than
     maintained by inspection.
 
-    :attr:`roots_of` is deliberately per-GRAPH rather than per-result. An eager
-    find publishes one graph, a milestone-set find concatenates one per
-    milestone, and a streamed read publishes one root-scoped graph at a time —
-    three orchestrations over one conversion, which is what keeps result scope a
-    property of the graph a materializer is handed rather than a mode it is told
+    :attr:`roots_of` is deliberately per-Page rather than per-result. An eager
+    find and a milestone-set find each publish one Page, while a streamed read
+    publishes one bounded Page at a time. Every root receives a transient Root
+    View, which keeps result scope a property of the root being published rather
+    than a mode the materializer is told
     about. :meth:`from_find` and :meth:`from_history` are the two eager
     compositions over it, so neither is an independent conversion that could
     drift from the streamed one.
@@ -1338,28 +1348,25 @@ class ResultPublication:
     edition: str
 
     def from_find(self, result: FindResult) -> Snapshot[Any]:
-        """``result``'s one graph as a Snapshot at that read's own pin."""
+        """``result``'s Page as a Snapshot at that read's own pin."""
         return Snapshot(
-            self.roots_of(result.graph, result.includes, sources=result.sources),
-            result.graph.pin,
+            tuple(self.roots_of(result.page, result.includes, sources=result.sources)),
+            result.page.pin,
             self.edition,
         )
 
     def from_history(self, result: HistoryFindResult) -> Snapshot[Any]:
         """Every milestone's roots as ONE ordered result.
 
-        Each milestone graph is classified on its own — graph-local identity
-        never promises reuse across milestones — while a classified root's
-        ordinal names its position in the published result rather than in the
-        graph it came from, so the offset advances by what each graph
-        contributed. A milestone-set read carries no Include Path
-        (`m-case-format`), so every graph publishes root-only, and the outer pin
+        Each milestone root is classified through its own Root View while a
+        classified root's ordinal names its position in the flat published
+        result. A milestone-set read carries no Include Path (`m-case-format`),
+        so every root publishes root-only, and the outer pin
         is empty because a scan is not a pin.
         """
-        roots: list[object] = []
-        for graph in result.graphs:
-            roots.extend(self.roots_of(graph, ordinal_offset=len(roots)))
-        return Snapshot(tuple(roots), Pin(), self.edition)
+        return Snapshot(
+            tuple(self.roots_of(result.page, milestones=result.milestones)), Pin(), self.edition
+        )
 
 
 def typed_publication(
@@ -1368,17 +1375,36 @@ def typed_publication(
     """Publish through the typed materializer: frozen Entity instances."""
 
     def roots_of(
-        graph: SnapshotGraph,
+        page: Page,
         includes: UnwindTree = EMPTY_UNWIND,
         /,
         *,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
-    ) -> tuple[object, ...]:
-        del includes  # the typed construction walks the merge, never the include tree
-        return _materialize_result_graph(
-            graph, meta, construction, ordinal_offset=ordinal_offset, sources=sources
+        milestones: EntityMetadata | None = None,
+    ) -> Iterator[object]:
+        del includes
+
+        def publish() -> Iterator[object]:
+            for position, edge in enumerate(page_edges(page, milestones)):
+                root = RootView(page, position, pin=None if edge is None else edge_pin(edge))
+                published = tuple(
+                    _materialize_result_page(
+                        root,
+                        meta,
+                        construction,
+                        ordinal_offset=ordinal_offset + position,
+                        sources=sources,
+                    )
+                )
+                del root
+                yield from published
+
+        cadence = cast(
+            "MaterializationObserver",
+            page.observer if page.observer is not None else MATERIALIZATION_INERT,
         )
+        yield from Materializer(cadence).roots(page, publish, ordinal_offset=ordinal_offset)
 
     return ResultPublication("typed", roots_of, edition)
 
@@ -1387,27 +1413,40 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
     """Publish through the wire materializer: frozen declared-name value trees."""
 
     def roots_of(
-        graph: SnapshotGraph,
+        page: Page,
         includes: UnwindTree = EMPTY_UNWIND,
         /,
         *,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
-    ) -> tuple[object, ...]:
-        merge = merge_graph_input(graph)
-        return wire_roots(
-            merge,
-            meta,
-            includes,
-            ordinal_offset=ordinal_offset,
-            sources=merge.by_allocation(sources),
+        milestones: EntityMetadata | None = None,
+    ) -> Iterator[object]:
+        def publish() -> Iterator[object]:
+            for position, edge in enumerate(page_edges(page, milestones)):
+                root = RootView(page, position, pin=None if edge is None else edge_pin(edge))
+                published = tuple(
+                    wire_roots(
+                        root,
+                        meta,
+                        includes,
+                        ordinal_offset=ordinal_offset + position,
+                        sources=root.by_allocation(sources),
+                    )
+                )
+                del root
+                yield from published
+
+        cadence = cast(
+            "MaterializationObserver",
+            page.observer if page.observer is not None else MATERIALIZATION_INERT,
         )
+        yield from Materializer(cadence).roots(page, publish, ordinal_offset=ordinal_offset)
 
     return ResultPublication("wire", roots_of, edition)
 
 
-def _materialize_result_graph(
-    graph: SnapshotGraph,
+def _materialize_result_page(
+    root: RootView,
     meta: Metamodel,
     construction: EntityGraphConstruction,
     *,
@@ -1421,9 +1460,7 @@ def _materialize_result_graph(
     wrapper is only a defect in building the Entity graph a valid row describes.
     """
     try:
-        return materialize_graph(
-            graph, meta, construction, ordinal_offset=ordinal_offset, sources=sources
-        )
+        return typed_root(root, meta, construction, ordinal_offset=ordinal_offset, sources=sources)
     except Exception as exc:
         raise SnapshotMaterializationError(
             "the read succeeded but its Entity graph could not be built "

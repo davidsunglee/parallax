@@ -51,8 +51,8 @@ from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._publication import read_projection
 from parallax.snapshot.materialize import (
-    SnapshotGraph,
-    merge_graph_input,
+    Page,
+    RootView,
     require_publishable,
 )
 
@@ -114,7 +114,7 @@ class AnotherSource:
             )
         validated = preflight(node, model=self._model.meta, form="graph")
         result = execute_read(validated, self._model, self._port)
-        return cast("tuple[S, ...]", self._materialize(result.graph))
+        return cast("tuple[S, ...]", self._materialize(result.page))
 
     def produced(self, value: object) -> bool:
         """Whether THIS source materialized ``value``.
@@ -126,8 +126,8 @@ class AnotherSource:
         state = lifecycle_state_of(value)
         return isinstance(state, _AnotherSourceState) and state.source is self
 
-    def _materialize(self, graph: SnapshotGraph) -> tuple[object, ...]:
-        """``graph``'s roots as instances carrying this source's own state.
+    def _materialize(self, page: Page) -> tuple[object, ...]:
+        """``page``'s roots as instances carrying this source's own state.
 
         Every relationship position carries the unloaded sentinel: a level-free
         read carries no merged view to install, which :meth:`find` guarantees by
@@ -140,19 +140,24 @@ class AnotherSource:
         layout the writer reads it against, so this source hands a row over the
         one way the common runtime hands one over.
         """
-        merge = merge_graph_input(graph)
-        require_publishable(merge)
+        published: list[object] = []
+        for position in range(page.root_count):
+            root = RootView(page, position)
+            require_publishable(root)
 
-        def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-            handles = [writer.allocate(identity) for identity in merge.order]
-            for index, handle in enumerate(handles):
-                writer.populate(
-                    handle,
-                    merge.member_values(index),
-                    (UNLOADED,) * len(merge.layout(index).relationships),
+            def build(writer: EntityGraphWriter, root: RootView = root) -> tuple[NodeHandle, ...]:
+                handles = [writer.allocate(identity) for identity in root.order]
+                for index, handle in enumerate(handles):
+                    writer.populate(
+                        handle,
+                        root.member_values(index),
+                        (UNLOADED,) * len(root.layout(index).relationships),
+                    )
+                return tuple(handles[index] for index in root.roots if index is not None)
+
+            published.extend(
+                self._construction.construct(
+                    build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
                 )
-            return tuple(handles[index] for index in merge.roots if index is not None)
-
-        return self._construction.construct(
-            build, state_factory=lambda _view, _handle: _AnotherSourceState(self)
-        )
+            )
+        return tuple(published)

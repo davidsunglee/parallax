@@ -415,7 +415,7 @@ class Database:
 
         Nothing executes until the returned stream's scope is entered, and the
         whole result is never materialized: each page of ``batch_size`` root
-        positions is deep-fetched into one sealed graph and published one root
+        positions is deep-fetched into one sealed Page and published one root
         at a time, so what Parallax holds is one page plus one root rather than
         the result.
 

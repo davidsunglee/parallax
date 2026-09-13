@@ -1,4 +1,4 @@
-"""``parallax.snapshot.handle._page`` — one page of a streamed read (m-snapshot-read).
+"""Pure paging policy and the current delivery-page adapter.
 
 The one deep operation a stream's loop is written against: it is told where the
 delivery stands and answers the page that continues it. Everything paging is
@@ -17,12 +17,12 @@ made of — :meth:`PagePlan.page_request` and :func:`page_decision` — is
 computation over counts and coordinates with no port and no SQL under it, which
 is what lets the lookahead discard, the tie, and the maximal strict prefix be
 exercised directly. It stays an internal seam of this module either way:
-:func:`read_stream_page`'s own interface never exposes it, and the stream's
+:func:`read_delivery_page`'s own interface never exposes it, and the stream's
 surface above is what the behavior is graded through.
 
-:class:`StreamPage` never surfaces publicly. Cursor state is not a thing a
+:class:`DeliveryPage` never surfaces publicly. Cursor state is not a thing a
 caller of a Snapshot Stream holds, so neither the eager
-:class:`~parallax.snapshot.materialize.SnapshotGraph` nor
+:class:`~parallax.snapshot.materialize.Page` nor
 :class:`~parallax.snapshot._read_result.FindResult` grows a field for it.
 """
 
@@ -39,19 +39,19 @@ from parallax.core.metamodel import AttributeIdentity
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.sql_gen import SqlGenError
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot.handle._read import RootRead, build_graph, read_roots
+from parallax.snapshot.handle._read import RootRead, build_page, read_roots
 from parallax.snapshot.handle._retention import ObservationLedger, ReadSources
-from parallax.snapshot.materialize import SnapshotGraph, UnwindTree
+from parallax.snapshot.materialize import Page, UnwindTree
 
 __all__ = [
     "At",
+    "DeliveryPage",
     "PagePlan",
     "PageRequest",
     "PageVerdict",
-    "StreamPage",
     "TieFound",
     "page_decision",
-    "read_stream_page",
+    "read_delivery_page",
 ]
 
 
@@ -155,24 +155,24 @@ class At:
 
 
 @dataclass(frozen=True, slots=True)
-class StreamPage:
-    """One page's sealed graph, what it stands at, and whether more follow.
+class DeliveryPage:
+    """One sealed delivery Page, what it stands at, and whether more follow.
 
-    ``graph``, ``includes``, and ``sources`` are exactly what an eager
+    ``page``, ``includes``, and ``sources`` are exactly what an eager
     :class:`~parallax.snapshot._read_result.FindResult` carries, because a page
     IS an eager read of a bounded root query — the publication seam above is the
-    same one, and only which graphs it is handed differs.
+    same one, and only which Pages it is handed differs.
 
     ``coordinates`` is one per root this page KEEPS, so a root the page read and
     discarded — the lookahead, or one at a tie — is absent from it exactly as it
-    is absent from the graph.
+    is absent from the Page.
 
     ``tie`` is present where the delivery can go no further because two adjacent
     roots stood at one coordinate. The page reports it rather than raising: this
     page's kept roots are published first, and the refusal follows them.
     """
 
-    graph: SnapshotGraph
+    page: Page
     includes: UnwindTree
     sources: ReadSources
     coordinates: tuple[ContinuationCoordinate, ...]
@@ -199,7 +199,7 @@ class StreamPage:
         return len(self.coordinates)
 
 
-def read_stream_page(
+def read_delivery_page(
     page_plan: PagePlan,
     at: At,
     model: CatalogedModel,
@@ -208,7 +208,7 @@ def read_stream_page(
     preference: Concurrency | None = None,
     ledger: ObservationLedger | None = None,
     calls: DatabaseCallScope = INERT,
-) -> StreamPage:
+) -> DeliveryPage:
     """Read and seal the page of ``page_plan`` that follows ``at``.
 
     The node is this plan's own — the caller's query under the Continuation
@@ -236,9 +236,9 @@ def read_stream_page(
     terms = tuple(term.member.identity for term in query.order_by)
     verdict = page_decision(request, terms, coordinates)
     kept = replace(root_read, rows=root_read.rows[: verdict.keep])
-    result = build_graph(kept, model, port, preference=preference, ledger=ledger, calls=calls)
-    return StreamPage(
-        graph=result.graph,
+    result = build_page(kept, model, port, preference=preference, ledger=ledger, calls=calls)
+    return DeliveryPage(
+        page=result.page,
         includes=result.includes,
         sources=result.sources,
         coordinates=coordinates[: verdict.keep],

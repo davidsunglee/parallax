@@ -10,8 +10,8 @@ from parallax.core.metamodel import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
-from parallax.snapshot.materialize._graph import StoredDataIssueInput
-from parallax.snapshot.materialize._merge import GraphMerge
+from parallax.snapshot.materialize._page import StoredDataIssueInput
+from parallax.snapshot.materialize._root import RootView
 
 SNAPSHOT_DECODING_FAILED: Final[str] = "snapshot-decoding-failed"
 """The stable code used when classified stored data reaches publication."""
@@ -35,7 +35,7 @@ class SnapshotDecodingError(ValueError):
         self.member = member
 
 
-def publication_issue(merge: GraphMerge) -> StoredDataIssueInput | None:
+def publication_issue(merge: RootView) -> StoredDataIssueInput | None:
     """The first issue reachable from a requested root, in deterministic graph order."""
     if merge.invalid_roots:
         return merge.invalid_roots[0].issues[0]
@@ -48,7 +48,7 @@ def publication_issue(merge: GraphMerge) -> StoredDataIssueInput | None:
     raise AssertionError("an issue-bearing graph merge has no reachable issue")  # pragma: no cover
 
 
-def require_publishable(merge: GraphMerge) -> None:
+def require_publishable(merge: RootView) -> None:
     """Refuse an issue-bearing reachable graph before identity or object derivation."""
     issue = publication_issue(merge)
     if issue is not None:

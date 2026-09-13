@@ -16,7 +16,6 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import functools
-import json
 from collections.abc import Mapping, Sequence, Sized
 from collections.abc import Set as AbstractSet
 from decimal import Decimal
@@ -214,23 +213,17 @@ def _predecessor_columns(
 
 
 def test_predecessor_columns_retain_the_raw_document_against_later_mutation() -> None:
-    # The raw Structured Column is retained beside the decoded members rather than
-    # among them, and it is snapshotted for the same reason they are: a row's
-    # Predecessor Row is built on demand, once per access, and must answer with the
-    # state the read observed however long the caller holds it. A row view answers
-    # with a document of its OWN — a portable JSON value, which is what a
-    # structured-document bind can carry — so neither a later edit of the mapping
-    # the column was built from nor an edit of one view's answer reaches another.
+    # A mutable raw document is frozen once when predecessor columns take ownership;
+    # later row views retain that same immutable tree instead of reconstructing it,
+    # and successor lowering is the boundary that detaches a writable bind value.
     stored: dict[str, object] = {"title": "Ada", "manifest": {"cargo": "timber"}}
     predecessors = _predecessor_columns([{"id": 1}], documents=[stored])
-    retained = cast("dict[str, object]", predecessors.row(0).document)
+    retained = predecessors.row(0).document
 
     cast("dict[str, object]", stored["manifest"])["cargo"] = "ore"
-    retained["title"] = "Bo"
-    cast("dict[str, object]", retained["manifest"])["cargo"] = "ore"
 
-    assert predecessors.row(0).document == {"title": "Ada", "manifest": {"cargo": "timber"}}
-    assert json.dumps(predecessors.row(0).document)
+    assert retained == {"title": "Ada", "manifest": {"cargo": "timber"}}
+    assert predecessors.row(0).document is retained
 
 
 def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> None:

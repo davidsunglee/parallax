@@ -199,6 +199,7 @@ from parallax.snapshot.handle._write_lowering import stream_lowered
 from parallax.snapshot.materialize import (
     InvalidData,
     InvalidDataError,
+    SnapshotConsistencyError,
     StoredDataIssue,
     WireEntity,
     WireValue,
@@ -226,6 +227,7 @@ __all__ = [
     "ServingModel",
     "Snapshot",
     "SnapshotConnectionError",
+    "SnapshotConsistencyError",
     "SnapshotMaterializationError",
     "SnapshotStream",
     "SnapshotStreamContinuationError",

@@ -10,6 +10,14 @@ inputs a compiled read already fixed removed; and the "after" column adds the
 canonical-decoding slice the middle column's own profile called for, which the
 codec section below states in full.
 
+## Phase 3 delivery addendum
+
+The tables below remain the recorded COR-137 historical baseline. The current delivery boundary is no longer a sealed graph plus a later merge. One statement delivery now finishes a `Page` that owns occurrence arrays, identity claims, exact Payload Witnesses, and lazily judged Entity States. A `RootView` borrows that Page, compares every witness for a reached logical key before payload judgment, and reuses one decoded Entity State per key within the Page. Separate result roots receive separate published node objects even when they borrow the same Page state.
+
+The report command now times `PreparedRead.materialize` through `PageBuilder.finish`: row transformation, identity claim formation, exact witness capture, view fan-back, and Page finishing. Root View construction, lazy payload judgment, classification, and Typed or Wire publication remain outside that timing window and are graded by the cost portfolio instead. The profiled contributor formerly occupied by the duplicate physical observation extraction is now `claim_identity`; read evidence and predicate-write staging view the same positional Entity State through `EntityStateRow` rather than decoding or rebuilding a second member dictionary.
+
+The Page-era Budget Contract is executable in `tests/unit/snapshot/test_snapshot_materialization_scaling.py`, `tests/unit/snapshot/test_snapshot_evidence_retention.py`, and `tests/unit/snapshot/test_snapshot_stream_retention.py`. It grades fixed prepared state, one Page plus one published root at suspension, no accumulation of prior Pages, independence from total result size and equivalent cross-page position, peak dependence on the currently published root rather than unrelated Page roots, and immutable predecessor evidence shared until successor lowering detaches a writable document. Whole-interpreter readings remain confined to `in_a_child_interpreter`; `just python-check-cost` is the one local focused gate for this portfolio.
+
 Nothing here gates. `just python-report-snapshot-materialization` is a `report`:
 it passes no verdict and belongs to no aggregate, because elapsed time is a
 property of the machine that ran it — every CI job runs the floating

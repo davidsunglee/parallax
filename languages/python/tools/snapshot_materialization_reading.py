@@ -116,11 +116,11 @@ def peak(seam: Seam) -> int:
     ``memory_instruments.allocation``'s transient half cannot answer this for
     this seam, and its own contract says why: it reads the current total as soon
     as the run RETURNS, which is the floor again only for a seam that leaves
-    nothing behind. A batch leaves a sealed graph, so the total still holds it and
+    nothing behind. A batch leaves a sealed Page, so the total still holds it and
     whatever else is waiting for the collector — and subtracting that from the
     high-water mark answers neither what the run reached nor what it freed again.
     The floor is therefore taken and collected for BEFORE the run, and what the
-    graph keeps is subtracted from the answer rather than from the sample
+    Page keeps is subtracted from the answer rather than from the sample
     (:attr:`~snapshot_materialization_overhead.Reading.transient_bytes`).
     """
     with untraced():
@@ -159,9 +159,9 @@ class _Prepared:
 
     def seam(self) -> Seam:
         def run(sample: Callable[[], None]) -> None:
-            graph = batch(self.model, self.plan, self.bound, self.rows)
+            page = batch(self.model, self.plan, self.bound, self.rows)
             sample()
-            assert graph is not None
+            assert page is not None
 
         return run
 
@@ -263,14 +263,14 @@ def measure(layout: Layout) -> Reading:
 
     tracemalloc.start()
     try:
-        retained_graph = retained(prepared.seam())
+        retained_page = retained(prepared.seam())
         peak_bytes = peak(prepared.seam())
         prepared_bytes = retained(_compiled_seam(prepared))
         catalog_bytes = retained(_catalog_seam(prepared))
     finally:
         tracemalloc.stop()
     catalog_layouts, tracked, references = _catalog_census(prepared)
-    secondary_build, secondary_merge = snapshot_graph_overhead.timings(
+    secondary_build, secondary_root_view = snapshot_graph_overhead.timings(
         snapshot_graph_overhead.cells(snapshot_graph_overhead.REPRESENTATIVE)
     )
     return Reading(
@@ -283,7 +283,7 @@ def measure(layout: Layout) -> Reading:
         compile_ns=compile_ns,
         compile_decode_ns=bind_ns,
         batch_ns=batch_ns,
-        retained_graph_bytes=retained_graph,
+        retained_page_bytes=retained_page,
         peak_bytes=peak_bytes,
         prepared_bytes=prepared_bytes,
         prepared_reads=sum(1 for read in prepared.reads if read is not None),
@@ -294,7 +294,7 @@ def measure(layout: Layout) -> Reading:
         catalog_references=references,
         counts=_counts(prepared),
         secondary_build_s=secondary_build,
-        secondary_merge_s=secondary_merge,
+        secondary_root_view_s=secondary_root_view,
         secondary_projections=(
             snapshot_graph_overhead.REPRESENTATIVE * snapshot_graph_overhead.PROJECTIONS_PER_CELL
         ),
