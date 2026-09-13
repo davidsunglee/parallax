@@ -29,7 +29,7 @@ from .sql_canonical import NonCanonicalError, sqlglot_dialect
 # its union as, and the clauses that wrap may carry outward.
 _WRAP_ALIAS = "u"
 _WRAP_TAIL = ("order", "limit")
-_WRAP_FORBIDDEN = ("joins", "where", "group", "having", "distinct", "locks", "offset")
+_WRAP_FORBIDDEN = ("where", "group", "having", "distinct", "offset")
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,13 +71,98 @@ class WrapFacts:
     cap bind is compared with the row count the query asked for. ``binds`` is the whole
     statement's bind list in order; the tail's own binds are its trailing entries,
     because a wrap's binds follow every branch's (m-sql). ``None`` where the caller has
-    no bind list to grade against.
+    no bind list to grade against. ``lock_table`` and ``physical_identity`` are
+    present together for PostgreSQL's locking continuation: each identity pair is
+    the derived result alias and base Column, in the Table Layout's physical-key
+    order.
     """
 
     document_aliases: frozenset[str]
     order_keys: tuple[WrapOrderKey, ...]
     limit: int | None = None
     binds: tuple[object, ...] | None = None
+    lock_table: str | None = None
+    physical_identity: tuple[tuple[str, str], ...] = ()
+
+
+def _conjuncts(expression: Expr | None) -> list[Expr]:
+    if isinstance(expression, exp.And):
+        return [*_conjuncts(expression.this), *_conjuncts(expression.expression)]
+    return [] if expression is None else [expression]
+
+
+def _identity_equality(expression: Expr) -> tuple[str, str] | None:
+    if not isinstance(expression, exp.EQ):
+        return None
+    left, right = expression.this, expression.expression
+    for derived, base in ((left, right), (right, left)):
+        if not isinstance(derived, exp.Column) or derived.table != _WRAP_ALIAS:
+            continue
+        if isinstance(base, exp.Column) and base.table == "t0" and derived.name == base.name:
+            return derived.name, base.name
+        if (
+            isinstance(base, exp.Encode)
+            and isinstance(base.this, exp.Column)
+            and base.this.table == "t0"
+            and isinstance(base.args.get("charset"), exp.Placeholder)
+            and derived.name == f"{base.this.name}_hex"
+        ):
+            return derived.name, base.this.name
+    return None
+
+
+def _assert_locking_identity_join(
+    select: exp.Select, dialect: str, facts: WrapFacts | None
+) -> bool:
+    """Validate the PostgreSQL continuation wrap's one outer base-row lock join."""
+    joins = select.args.get("joins") or []
+    locks = select.args.get("locks") or []
+    expected = facts is not None and facts.lock_table is not None
+    if not joins and not locks:
+        if expected:
+            raise NonCanonicalError(
+                "wrapped `union all`: the locking read omits its outer physical-identity join"
+            )
+        return False
+    if dialect != "postgres" or len(joins) != 1 or len(locks) != 1:
+        raise NonCanonicalError(
+            "wrapped `union all`: only PostgreSQL's one outer identity join and lock "
+            "may accompany the result-shape tail"
+        )
+    join = joins[0]
+    table = join.this
+    if not isinstance(table, exp.Table) or table.alias != "t0":
+        raise NonCanonicalError(
+            "wrapped `union all`: the locking identity join must name its base Table as t0"
+        )
+    lock = locks[0]
+    lock_targets = lock.args.get("expressions") or []
+    if (
+        bool(lock.args.get("update"))
+        or len(lock_targets) != 1
+        or not isinstance(lock_targets[0], exp.Table)
+        or lock_targets[0].name != "t0"
+    ):
+        raise NonCanonicalError(
+            "wrapped `union all`: PostgreSQL must apply `for share of t0` to the outer base alias"
+        )
+    equalities = [_identity_equality(term) for term in _conjuncts(join.args.get("on"))]
+    if not equalities or any(equality is None for equality in equalities):
+        raise NonCanonicalError(
+            "wrapped `union all`: the outer join must equate derived and base "
+            "physical-identity columns"
+        )
+    identity = tuple(equality for equality in equalities if equality is not None)
+    if (
+        facts is not None
+        and facts.lock_table is not None
+        and (table.name != facts.lock_table or identity != facts.physical_identity)
+    ):
+        raise NonCanonicalError(
+            f"wrapped `union all`: locking join {(table.name, identity)!r} does not "
+            f"match physical identity {(facts.lock_table, facts.physical_identity)!r}"
+        )
+    return True
 
 
 def _wrap_column(node: Expr | None) -> str | None:
@@ -607,6 +692,7 @@ def wrapped_union_source(
             f"a derived `union all` is the wrap m-sql names {_WRAP_ALIAS!r}, got "
             f"{inner.alias or None!r}"
         )
+    locked = _assert_locking_identity_join(select, dialect, facts)
     forbidden = [clause for clause in _WRAP_FORBIDDEN if select.args.get(clause)]
     if forbidden:
         raise NonCanonicalError(
@@ -618,6 +704,11 @@ def wrapped_union_source(
             "wrapped `union all`: the result-shape tail is the only reason to wrap, so a "
             "wrap carrying no `order by` / `limit` is a second spelling of the bare union "
             "(m-sql)"
+        )
+    if not locked and (select.args.get("joins") or select.args.get("locks")):
+        raise NonCanonicalError(
+            "wrapped `union all`: joins and locks belong only to the PostgreSQL "
+            "physical-identity locking form"
         )
     _assert_wrap_projection(select, union, facts)
     _assert_wrap_tail(select, union, dialect, facts)

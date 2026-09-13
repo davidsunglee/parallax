@@ -256,6 +256,34 @@ def test_the_locking_preference_locks_every_level_of_a_streamed_page() -> None:
     assert _sql(port, 2).endswith("for share of t0")
 
 
+def test_a_locking_delivery_keeps_its_second_page_and_outer_row_authority() -> None:
+    # A participating locking stream with a real continuation reaches both pages:
+    # page two remains one statement, its range and NULL-tail arms are unlocked,
+    # and one outer join identifies and locks exactly the base rows they selected.
+    # The repeated predicate, seek, arm caps, and outer cap stay in textual order.
+    port = ScriptedAdapter(
+        Transact(
+            Read(rows=[_account_row(1), _account_row(2)]),
+            Read(rows=[_account_row(2)]),
+        )
+    )
+
+    def fn(tx: Transaction) -> list[int]:
+        with tx.stream(_accounts(), batch_size=1) as stream:
+            return [account.id for account in stream]
+
+    assert account_db(port).transact(fn, concurrency="locking") == [1, 2]
+    assert _kinds(port) == [BeginCall, ReadCall, ReadCall, CommitCall]
+    page_two = port.calls[2]
+    assert isinstance(page_two, ReadCall)
+    assert page_two.sql.count("for share") == 1
+    assert (
+        ")) u join account t0 on u.id = t0.id order by u.parallax_seek_0 asc "
+        "limit %s for share of t0"
+    ) in page_two.sql
+    assert page_two.binds == (1, 1, 1, 2, 1, 2, 2)
+
+
 # --------------------------------------------------------------------------- #
 # Evidence belongs to the streamed root, not to the page it arrived in.        #
 # --------------------------------------------------------------------------- #

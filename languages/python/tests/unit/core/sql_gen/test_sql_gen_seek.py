@@ -17,7 +17,7 @@ import pytest
 
 from parallax.core import continuation, deep_fetch
 from parallax.core.base import INFINITY, INFINITY_LITERAL, PresentDocument
-from parallax.core.dialect import POSTGRES
+from parallax.core.dialect import POSTGRES, LockMode
 from parallax.core.metamodel import Metamodel
 from parallax.core.metamodel import TemporalDimension as AxisKind
 from parallax.core.object_query import AsOf, OrderKey, object_query, validate_object_query
@@ -41,6 +41,7 @@ from tests.unit._corpus_model_support import target as entity_of
 
 DOCUMENT_LAYOUT = accepted_model("document-layout")
 ORDERS = accepted_model("orders")
+PAYMENT = accepted_model("payment")
 POSITIONS = accepted_model("position")
 
 _TRAVELER_JOINED = "parallax.compatibility.Traveler.joinedOn"
@@ -68,9 +69,14 @@ def _planned(model: Metamodel, target: str, *keys: OrderKey) -> continuation.Con
     return continuation.plan(validate_object_query(entity, query, model), model)
 
 
-def _lowered(model: Metamodel, node: ValidatedObjectQuery) -> LoweredStatement:
+def _lowered(
+    model: Metamodel, node: ValidatedObjectQuery, *, lock: LockMode | None = None
+) -> LoweredStatement:
     return compile_entity_query(
-        deep_fetch.plan(node, model, projection=_PROJECTION).root, model, POSTGRES
+        deep_fetch.plan(node, model, projection=_PROJECTION).root,
+        model,
+        POSTGRES,
+        lock=lock,
     ).statement
 
 
@@ -301,6 +307,74 @@ def test_a_single_term_continuation_order_hoists_its_direct_range() -> None:
     assert statement.binds == (1, 1, 2, 2, 2)
 
 
+def test_a_postgres_locking_continuation_joins_the_ordinary_physical_identity() -> None:
+    # A participating ordinary stream that reaches page two keeps one SQL statement
+    # and one pessimistic authority boundary: neither union arm carries an illegal
+    # lock, while the outer query joins the complete one-column physical identity
+    # back to the base row, orders and caps the derived payload, then locks that row.
+    statement = _lowered(
+        ORDERS,
+        _planned(ORDERS, "Order").after(ContinuationCoordinate((1,)), limit=2),
+        lock="locking",
+    )
+
+    assert statement.sql.count("for share") == 1
+    assert (
+        ")) u join orders t0 on u.id = t0.id order by u.parallax_seek_0 asc limit ? for share of t0"
+    ) in statement.sql
+    assert statement.binds == (1, 1, 2, 2, 2)
+
+
+def test_a_postgres_locking_continuation_joins_the_inheritance_physical_identity() -> None:
+    # A concrete TPH stream repeats its tag bind inside each disjoint continuation
+    # arm, then joins the shared table by its family-owned physical key before the
+    # outer cap and lock; this distinguishes inheritance predicate binds from both
+    # seek binds and the cap while preserving their textual order.
+    statement = _lowered(
+        PAYMENT,
+        _planned(PAYMENT, "CardPayment").after(ContinuationCoordinate((1,)), limit=2),
+        lock="locking",
+    )
+
+    assert statement.sql.count("for share") == 1
+    assert ")) u join payment t0 on u.id = t0.id order by u.parallax_seek_0 asc" in statement.sql
+    assert statement.binds == (1, 1, "card", 2, "card", 2, 2)
+
+
+def test_a_postgres_locking_history_joins_every_temporal_identity_column() -> None:
+    # A history stream's physical row identity is wider than its logical key:
+    # both temporal upper edges participate in the primary key, so the outer join
+    # names all three components and cannot multiply milestones or lock a sibling
+    # milestone while the arm and outer cap binds retain their established order.
+    statement = _lowered(
+        POSITIONS,
+        _planned(POSITIONS, "Position", OrderKey(attr=_POSITION_VALID_END)).after(
+            ContinuationCoordinate((INFINITY, 1)), limit=2
+        ),
+        lock="locking",
+    )
+
+    assert statement.sql.count("for share") == 1
+    assert (
+        ")) u join position t0 on u.pos_id = t0.pos_id and u.thru_z = t0.thru_z "
+        "and u.out_z = t0.out_z order by u.parallax_seek_0 asc, "
+        "u.parallax_seek_1 asc limit ? for share of t0"
+    ) in statement.sql
+    assert statement.binds == (
+        INFINITY_LITERAL,
+        INFINITY_LITERAL,
+        INFINITY,
+        INFINITY,
+        INFINITY,
+        1,
+        2,
+        INFINITY_LITERAL,
+        INFINITY_LITERAL,
+        2,
+        2,
+    )
+
+
 def test_a_nullable_direct_leading_term_uses_the_same_seekable_two_arm_shape() -> None:
     statement = _lowered(
         ORDERS,
@@ -344,6 +418,18 @@ _SEEK_SPELLED_MEMBER: Final = _records.Metamodel(
     )
 )
 
+_ENCODED_KEY: Final = _records.Metamodel(
+    entities=(
+        _records.Entity(
+            name="EncodedKey",
+            table="encoded_key",
+            attributes=(
+                _records.Attribute(name="id", type="bytes", column="id", primary_key=True),
+            ),
+        ),
+    )
+)
+
 
 def test_a_document_resident_leading_term_hoists_no_range() -> None:
     # `rank` is declared non-nullable and lives at a Document Path, so its
@@ -366,6 +452,26 @@ def test_a_document_resident_leading_term_hoists_no_range() -> None:
         "or (cast(jsonb_extract_path_text(t0.payload, ?) as bigint) = ? "
         "and (t0.id > ? or t0.id is null)))"
     )
+
+
+def test_an_encoded_physical_identity_joins_in_its_lossless_result_form() -> None:
+    # A bytes primary key reaches the derived relation as id_hex while the base
+    # table still stores bytea. The outer join renders the same encoding expression
+    # on t0, places that expression's structural bind after both arms and before
+    # the outer cap, and locks the base alias without changing result ordinals.
+    model = formed(_ENCODED_KEY)
+    key = b"\x01"
+    statement = _lowered(
+        model,
+        _planned(model, "EncodedKey").after(ContinuationCoordinate((key,)), limit=2),
+        lock="locking",
+    )
+
+    assert (
+        ")) u join encoded_key t0 on u.id_hex = encode(t0.id, ?) "
+        "order by u.parallax_seek_0 asc limit ? for share of t0"
+    ) in statement.sql
+    assert statement.binds == ("hex", key, key, 2, "hex", 2, "hex", 2)
 
 
 def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -> None:

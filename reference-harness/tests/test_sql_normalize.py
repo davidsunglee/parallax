@@ -334,9 +334,16 @@ def _facts(
     order_keys: tuple[WrapOrderKey, ...] = (),
     limit: int | None = None,
     binds: tuple[object, ...] | None = None,
+    lock_table: str | None = None,
+    physical_identity: tuple[tuple[str, str], ...] = (),
 ) -> WrapFacts:
     return WrapFacts(
-        document_aliases=document_aliases, order_keys=order_keys, limit=limit, binds=binds
+        document_aliases=document_aliases,
+        order_keys=order_keys,
+        limit=limit,
+        binds=binds,
+        lock_table=lock_table,
+        physical_identity=physical_identity,
     )
 
 
@@ -348,6 +355,89 @@ _DOCUMENT_WRAP = (
 )
 
 _ID_KEY = (WrapOrderKey(alias="id", descending=False, nulls_first=False, nullable=False),)
+
+_LOCKED_WRAP = (
+    "select u.id, u.out_z, u.parallax_seek_0 from (("
+    "select t0.id, t0.out_z, t0.id parallax_seek_0 from history t0 "
+    "where t0.id > ? order by t0.id asc limit ?) union all ("
+    "select t0.id, t0.out_z, t0.id parallax_seek_0 from history t0 "
+    "where t0.id is null order by t0.id asc limit ?)) u "
+    "join history t0 on u.id = t0.id and u.out_z = t0.out_z "
+    "order by u.parallax_seek_0 asc limit ? for share of t0"
+)
+
+_ENCODED_LOCKED_WRAP = (
+    "select u.id_hex, u.parallax_seek_0 from (("
+    "select encode(t0.id, ?) id_hex, t0.id parallax_seek_0 from encoded_key t0 "
+    "where t0.id > ? order by t0.id asc limit ?) union all ("
+    "select encode(t0.id, ?) id_hex, t0.id parallax_seek_0 from encoded_key t0 "
+    "where t0.id is null order by t0.id asc limit ?)) u "
+    "join encoded_key t0 on u.id_hex = encode(t0.id, ?) "
+    "order by u.parallax_seek_0 asc limit ? for share of t0"
+)
+
+
+def test_a_locking_wrap_requires_the_complete_outer_physical_identity() -> None:
+    # PostgreSQL's two-arm continuation locks only through one outer base-table
+    # join: both physical key components must pair the derived aliases with t0,
+    # the shared lock must target t0, and the result order/cap remain on the wrap.
+    facts = _facts(
+        order_keys=(
+            WrapOrderKey(
+                alias="parallax_seek_0",
+                descending=False,
+                nulls_first=False,
+                nullable=False,
+            ),
+        ),
+        limit=2,
+        binds=(1, 2, 2, 2),
+        lock_table="history",
+        physical_identity=(("id", "id"), ("out_z", "out_z")),
+    )
+    tree = sqlglot.parse_one(_LOCKED_WRAP, read="postgres")
+
+    assert is_canonical(_LOCKED_WRAP, "postgres")
+    assert wrapped_union_source(tree, "postgres", facts) is not None
+    with pytest.raises(NonCanonicalError):
+        wrapped_union_source(
+            sqlglot.parse_one(
+                _LOCKED_WRAP.replace(" and u.out_z = t0.out_z", "", 1), read="postgres"
+            ),
+            "postgres",
+            facts,
+        )
+    assert not is_canonical(_LOCKED_WRAP.replace("for share of t0", "for share of u", 1))
+
+
+def test_a_locking_wrap_admits_an_encoded_physical_identity_projection() -> None:
+    # An encoded key's derived alias is deliberately not the base Column spelling:
+    # the join must compare it to PostgreSQL's canonical encode(t0.key, ?) form,
+    # retaining a lossless equality while making the extra bind explicit.
+    facts = _facts(
+        order_keys=(
+            WrapOrderKey(
+                alias="parallax_seek_0",
+                descending=False,
+                nulls_first=False,
+                nullable=False,
+            ),
+        ),
+        limit=2,
+        binds=("hex", b"1", 2, "hex", 2, "hex", 2),
+        lock_table="encoded_key",
+        physical_identity=(("id_hex", "id"),),
+    )
+
+    assert is_canonical(_ENCODED_LOCKED_WRAP, "postgres")
+    assert (
+        wrapped_union_source(
+            sqlglot.parse_one(_ENCODED_LOCKED_WRAP, read="postgres"),
+            "postgres",
+            facts,
+        )
+        is not None
+    )
 
 
 def test_a_presence_pair_is_admitted_only_over_a_named_document_alias() -> None:

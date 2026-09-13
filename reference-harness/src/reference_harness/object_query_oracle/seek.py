@@ -31,7 +31,7 @@ from ..case_assertions import CaseFailure
 from ..inheritance import Family, query_position
 from ..sql_canonical import NonCanonicalError, sqlglot_dialect
 from ..sql_wrapped_union import WrapFacts, WrapOrderKey, wrapped_union_source
-from ..storage_layout import DocumentMember, MemberAddress, member_address
+from ..storage_layout import AttributeContributor, DocumentMember, MemberAddress, member_address
 from . import execute, materialize
 
 # --- the order ---------------------------------------------------------------
@@ -734,7 +734,14 @@ def continuing_arms(sql: str) -> tuple[str, ...]:
     start = sql.index(marker) + len(marker)
     separator = ") union all ("
     split = sql.index(separator, start)
-    end = sql.rindex(")) u order by ")
+    endings = [
+        position
+        for suffix in (")) u order by ", ")) u join ")
+        if (position := sql.rfind(suffix, split)) >= 0
+    ]
+    if not endings:
+        return (sql,)
+    end = min(endings)
     return (sql[start:split], sql[split + len(separator) : end])
 
 
@@ -752,6 +759,29 @@ def refuse_a_malformed_continuing_wrapper(
     requested: int,
 ) -> None:
     """Grade a two-arm continuation's complete wrapper against its read facts."""
+    lock_table: str | None = None
+    physical_identity: tuple[tuple[str, str], ...] = ()
+    if dialect == "postgres" and case.concurrency_mode == "locking":
+        resolved = _read_resolved_entities(case, query, root)
+        view = (
+            None if not resolved else case.model.storage_layout.entity(resolved[0].canonical_name)
+        )
+        if view is None:
+            raise CaseFailure(
+                f"{case.path.name}: a locking continuation resolves no physical Table"
+            )
+        lock_table = view.layout.table
+        pairs: list[tuple[str, str]] = []
+        for slot in view.layout.physical_primary_key:
+            contributor = slot.contributor
+            if not isinstance(contributor, AttributeContributor):
+                raise CaseFailure(
+                    f"{case.path.name}: physical key column {slot.column!r} is not Attribute-owned"
+                )
+            attribute = case.model.entity(contributor.owner).attribute_by_name(contributor.name)
+            result_alias = f"{slot.column}_hex" if attribute["type"] == "bytes" else slot.column
+            pairs.append((result_alias, slot.column))
+        physical_identity = tuple(pairs)
     document_aliases = frozenset(
         column
         for entity in _read_resolved_entities(case, query, root)
@@ -771,6 +801,8 @@ def refuse_a_malformed_continuing_wrapper(
         ),
         limit=requested,
         binds=tuple(binds),
+        lock_table=lock_table,
+        physical_identity=physical_identity,
     )
     try:
         tree = sqlglot.parse_one(sql, read=sqlglot_dialect(dialect))

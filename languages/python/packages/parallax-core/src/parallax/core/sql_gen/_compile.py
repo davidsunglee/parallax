@@ -645,8 +645,18 @@ def compile_read(
     )
     if not _emits_null_tail(seek, dialect, leading_resident=leading_resident):
         return compiled
+    outer_lock = lock == "locking" and dialect.name == "postgres"
+    if outer_lock:
+        compiled = _compile_read_arm(
+            query, model, dialect, result_form=result_form, lock=None, null_tail=False
+        )
     null_tail = _compile_read_arm(
-        query, model, dialect, result_form=result_form, lock=lock, null_tail=True
+        query,
+        model,
+        dialect,
+        result_form=result_form,
+        lock=None if outer_lock else lock,
+        null_tail=True,
     )
     terms = _lowered_terms(query.order_by, _reserved_result_keys(model, storage))
     statement_ctx = StatementBuilder(model, _inheritance_view(model), storage, dialect)
@@ -664,11 +674,43 @@ def compile_read(
         else f"{dialect.qualified(outer_alias, term.alias)} {term.term.direction}"
         for term in terms
     )
+    source = f"(({compiled.statement.sql}) union all ({null_tail.statement.sql})) {outer_alias}"
+    lock_suffix = ""
+    if outer_lock:
+        layout = _table_layout(storage, _inheritance_view(model), query.entity.identity)
+        contracts = {
+            contract.attribute.identity: contract
+            for identity in compiled.resolvable
+            for contract in compiled.attribute_reads(identity)
+        }
+        base_alias = "t0"
+        join_terms: list[str] = []
+        for slot in layout.physical_primary_key:
+            if not isinstance(slot.contributor, AttributeIdentity):  # pragma: no cover
+                raise SqlGenError("a physical primary-key column must be Attribute-owned")
+            contract = contracts.get(slot.contributor)
+            if contract is None:  # pragma: no cover - every physical key is projected
+                raise SqlGenError(
+                    f"physical key column {slot.column.name!r} is absent from the read projection"
+                )
+            base_expression, base_binds = dialect.project(
+                base_alias,
+                slot.column.name,
+                contract.attribute.type,
+                result_key=contract.result_key,
+            )
+            if contract.encoded:
+                base_expression = base_expression.removesuffix(f" {contract.result_key}")
+            statement_ctx.bind_structural_all(base_binds)
+            join_terms.append(
+                f"{dialect.qualified(outer_alias, contract.result_key)} = {base_expression}"
+            )
+        source += f" join {layout.table.name} {base_alias} on " + " and ".join(join_terms)
+        lock_suffix = f" {dialect.read_lock_suffix(base_alias)}"
     statement_ctx.bind_structural(query.limit)
     statement = statement_ctx.finish(
-        f"select {projection} from (({compiled.statement.sql}) union all "
-        f"({null_tail.statement.sql})) {outer_alias} "
-        f"order by {ordering} {dialect.limit_clause()}"
+        f"select {projection} from {source} order by {ordering} "
+        f"{dialect.limit_clause()}{lock_suffix}"
     )
     return replace(compiled, statement=_normalize(statement))
 

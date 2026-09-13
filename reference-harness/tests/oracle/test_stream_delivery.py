@@ -42,6 +42,7 @@ _DOCUMENT_RESIDENT = "m-snapshot-read-035-stream-order-document-resident.yaml"
 _HISTORY_BOUNDARY = "m-snapshot-read-036-stream-history-page-boundary.yaml"
 _MILESTONE_EDGE_PINS = "m-snapshot-read-037-stream-milestone-edge-pins.yaml"
 _TABLELESS_POSITION = "m-inheritance-136-tpcs-union-vo-projection.yaml"
+_LOCKING_CONTINUATION = "m-read-lock-016-locking-stream-two-arm-continuation.yaml"
 
 _TYPED_COORDINATES = (
     (
@@ -153,6 +154,12 @@ _ORDERS: dict[int, dict[str, Any]] = {
     },
 }
 
+_ACCOUNTS: dict[int, dict[str, Any]] = {
+    1: {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
+    2: {"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1},
+    3: {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
+}
+
 _ITEMS: dict[int, dict[str, Any]] = {
     11: {"id": 11, "order_id": 1, "sku": "A-100", "quantity": 2, "shipped_on": None},
     12: {"id": 12, "order_id": 1, "sku": "B-200", "quantity": 1, "shipped_on": "2024-02-15"},
@@ -243,6 +250,23 @@ def _rows(source: dict[int, dict[str, Any]], *keys: int) -> list[dict[str, Any]]
 
 def _statements(case: Case) -> list[dict[str, Any]]:
     return case.then["statements"]
+
+
+def _locking_stream_step(case: Case) -> Case:
+    step = case.when["scenario"][0]
+    case.raw["shape"] = "read"
+    case.raw["when"] = {
+        "uow": case.when["uow"],
+        "objectQuery": step["objectQuery"],
+        "stream": step["stream"],
+    }
+    case.raw["then"] = {
+        "statements": step["statements"],
+        "referenceSql": step["referenceSql"],
+        "graph": {"Account": step["expectRows"]},
+        "roundTrips": step["roundTrips"],
+    }
+    return case
 
 
 # --- the deliveries a shipped case authors -----------------------------------
@@ -465,6 +489,40 @@ def test_a_nullable_sort_key_ends_its_delivery_on_the_null_root_it_places_last(
 
     assert len(reads.calls) == 4
     assert reads.calls[2][1] == ("B-200", "B-200", "B-200", 2, 3, 3, 3)
+
+
+@pytest.mark.parametrize("dialect", ["postgres", "mariadb"])
+def test_a_locking_continuation_grades_the_postgres_outer_identity_join(
+    corpus_case: CaseLoader, dialect: str
+) -> None:
+    # The corpus delivery reaches page two on both dialects. PostgreSQL's oracle
+    # additionally checks that its two-arm wrapper joins the complete model-derived
+    # physical key and locks t0, while MariaDB retains its one-arm native shape.
+    case = _locking_stream_step(copy.deepcopy(corpus_case(_LOCKING_CONTINUATION)))
+    rows = _rows(_ACCOUNTS, 1, 2, 3)
+    reads = ScriptedReads(dialect, results=[rows, _rows(_ACCOUNTS, 3), rows])
+
+    assert_case_read(case, reads)
+
+    assert len(reads.calls) == 3
+
+
+def test_a_locking_continuation_omitting_a_physical_key_component_is_refused(
+    damaged_case: CaseLoader,
+) -> None:
+    # The physical-key list is a model fact rather than an inference from the join
+    # text, so removing the sole account key cannot redefine a smaller authority
+    # scope; the malformed wrapper is rejected before its plausible rows are used.
+    case = _locking_stream_step(damaged_case(_LOCKING_CONTINUATION))
+    statement = _statements(case)[1]["sql"]["postgres"]
+    _statements(case)[1]["sql"]["postgres"] = statement.replace(
+        "join account t0 on u.id = t0.id", "join account t0 on 1 = 1"
+    )
+    rows = _rows(_ACCOUNTS, 1, 2, 3)
+    reads = ScriptedReads(results=[rows, _rows(_ACCOUNTS, 3), rows])
+
+    with pytest.raises(CaseFailure, match="malformed continuing wrapper"):
+        assert_case_read(case, reads)
 
 
 def test_a_nulls_first_sort_key_seeks_a_null_coordinate_through_a_negated_null_test(
