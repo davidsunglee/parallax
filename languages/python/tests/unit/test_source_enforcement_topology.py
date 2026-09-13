@@ -167,7 +167,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.snapshot.handle._database", "_model"): frozenset({"class_index", "model_of"}),
     ("parallax.snapshot.handle._keyed_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._materialization", "_layout"): frozenset({"CatalogedModel"}),
-    ("parallax.snapshot.handle._paging", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._predicate_writes", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._publication", "_layout"): frozenset({"CatalogedModel"}),
     ("parallax.snapshot.handle._read", "_layout"): frozenset({"CatalogedModel"}),

@@ -1,11 +1,11 @@
 """The sealed Snapshot Page: compact positional rows, and the builder that seals them.
 
-One projection is a reference to its exact Entity's member layout plus one
-``member_values`` tuple read against it — Attributes in the layout's order first,
-then top-level Value Object occurrences — plus one relationship view row, the
-source level that produced it, one dense Page-local logical-node ID, and, only
-where stored data contradicted the model, its issues. Nothing wraps a cell: what
-a row holds at a position is the decoded value itself.
+One projection is a reference to its exact Entity's member layout plus one raw
+positional Payload Witness, a deferred decoder, the managed correlation values
+needed by later levels, one relationship view row, the source level that produced
+it, one dense Page-local logical-node ID, and its identity findings. A Root View
+creates the decoded Entity State and remaining findings only when it reaches the
+projection. Nothing wraps a cell.
 
 The view row is positional too, against the
 :class:`~parallax.snapshot.materialize._views.ViewSchema` the execution planned:
@@ -368,11 +368,11 @@ class PageBuilder:
         fixed-width row of ``ABSENT`` slots, each one a level below ``source``
         will write.
 
-        The logical-node ID is assigned here, through the layout's own key rule,
-        so identity is computed once for the life of the Page. Duplicates of one
-        row within one Entity family share an ID; a projection whose key did not
-        decode takes an ID of its own and keeps its diagnosis, so it merges with
-        nothing — not even a second read of the identical unreadable row.
+        The logical-node ID is assigned here from the already decoded identity
+        positions and the layout's key rule. Duplicates within one Entity family
+        share an ID; a projection whose key did not decode takes an ID of its own
+        and keeps its diagnosis, so it shares with nothing — not even a second
+        read of the identical unreadable row.
 
         A projection repeating a judgment some earlier projection of its logical
         node already made carries that projection's own issue record, so one
@@ -465,15 +465,15 @@ class PageBuilder:
         """Publish this builder's arrays as one sealed Page, roots in result order.
 
         The builder is invalidated in the same step, and every array it
-        accumulated into is dropped with it — the key map it assigned identity
-        through and the pool it interned issue records against included: what a
-        sealed Page carries is what a Root View reads, nothing observes a
+        accumulated into is dropped with it, including the key map it assigned
+        identity through: what a sealed Page carries is what a Root View reads,
+        and nothing observes a
         half-published Page or writes to a published one, and a caller holding
         the sealed builder holds none of what it published.
 
-        A root whose own key did not decode becomes an :class:`InvalidRootInput`
-        carrying its result ordinal and its issues, which is how a result
-        position survives a projection nothing can be constructed from.
+        A root whose own key did not decode remains at its result ordinal; the
+        Root View later publishes the corresponding :class:`InvalidRootInput`,
+        which is how a position survives a projection nothing can construct from.
         """
         self._require_open()
         count = len(self._layouts)
@@ -482,7 +482,9 @@ class PageBuilder:
         claims: list[list[int]] = [[] for _ in self._first]
         for projection, logical in enumerate(self._logical_ids):
             claims[logical].append(projection)
-        occurrence_positions = _canonical_occurrence_positions(self._sources, self._witnesses)
+        occurrence_positions = _canonical_occurrence_positions(
+            self._sources, self._layouts, self._witnesses
+        )
         rows = PageRows(
             layouts=tuple(self._layouts),
             member_rows=tuple(self._member_rows),
@@ -598,7 +600,9 @@ def _require_index(value: object, count: int, holder: str) -> None:
 
 
 def _canonical_occurrence_positions(
-    sources: Sequence[SourceLevel], witnesses: Sequence[object]
+    sources: Sequence[SourceLevel],
+    layouts: Sequence[EntityLayout],
+    witnesses: Sequence[object],
 ) -> tuple[tuple[SourceLevel, int], ...]:
     positions: list[tuple[SourceLevel, int]] = [(0, 0)] * len(sources)
     by_source: dict[SourceLevel, list[int]] = {}
@@ -607,11 +611,22 @@ def _canonical_occurrence_positions(
     for source, projections in by_source.items():
         ordered = sorted(
             projections,
-            key=lambda projection: (stored_order_key(witnesses[projection]), projection),
+            key=lambda projection: (
+                layout_order_key(layouts[projection]),
+                stored_order_key(witnesses[projection]),
+                projection,
+            ),
         )
         for ordinal, projection in enumerate(ordered):
             positions[projection] = (source, ordinal)
     return tuple(positions)
+
+
+def layout_order_key(
+    layout: EntityLayout,
+) -> tuple[tuple[str, str], tuple[str, ...]]:
+    """The concrete and exact member layout that interpret a Payload Witness."""
+    return layout.concrete.sort_key, tuple(stored_order_key(member) for member in layout.members)
 
 
 def stored_order_key(value: object) -> str:

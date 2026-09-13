@@ -1330,7 +1330,7 @@ def _slot_table(model: Metamodel, document: dict[str, object]) -> tuple[tuple[Ch
     entity = entity_by_name(model, cast("str", document["target"]))
     assert entity is not None
     validated = preflight(query, model=model, form="graph")
-    return _read._slot_table(  # pyright: ignore[reportPrivateUsage] - the seam under test
+    return _read.slot_table(
         deep_fetch.plan(validated, model, projection=deep_fetch.ReadProjectionRequest("all", True))
     )
 
