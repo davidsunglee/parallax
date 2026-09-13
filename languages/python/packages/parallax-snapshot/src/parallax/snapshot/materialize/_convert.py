@@ -25,7 +25,7 @@ mapping view, so conversion builds no second payload for the write side.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Final, Protocol, cast
 
@@ -50,6 +50,7 @@ from parallax.core.document_codec import (
 )
 from parallax.core.entity._layout import EntityLayout
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     Multiplicity,
@@ -79,6 +80,7 @@ __all__ = [
     "AttributeReadContract",
     "LevelContext",
     "SnapshotDecodingError",
+    "convert_deferred",
     "convert_row",
 ]
 
@@ -172,6 +174,56 @@ class _RowDecoder:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _DeferredRowDecoder:
+    witness: tuple[object, ...]
+    level: LevelContext
+    identity_values: tuple[object, ...]
+    load: Callable[[], tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]]
+    unknown_family_tag: UnknownFamilyTag | None
+
+    def __call__(self) -> tuple[tuple[object, ...], tuple[StoredDataIssueInput, ...]]:
+        values, findings, classified = self.load()
+        return _decode_row(
+            values,
+            self.level,
+            identity_values=self.identity_values,
+            findings=findings,
+            unknown_family_tag=self.unknown_family_tag,
+            classified_members=classified,
+        )
+
+
+def convert_deferred(
+    witness: tuple[object, ...],
+    level: LevelContext,
+    builder: PageBuilder,
+    *,
+    source: SourceLevel,
+    load: Callable[[], tuple[tuple[object, ...], tuple[DocumentFinding, ...], frozenset[str]]],
+    unknown_family_tag: UnknownFamilyTag | None = None,
+    correlation_members: tuple[AttributeIdentity, ...] = (),
+) -> int:
+    """Register identity and an exact witness while deferring payload stages."""
+    claim = claim_identity(
+        {},
+        level,
+        unknown_family_tag=unknown_family_tag,
+        witness_values=witness,
+        raw_member_values=witness,
+        correlation_members=correlation_members,
+    )
+    return builder.add_claim(
+        source,
+        level.layout,
+        claim.key,
+        claim.witness.values,
+        claim.routing_values,
+        claim.findings,
+        _DeferredRowDecoder(witness, level, claim.identity_values, load, unknown_family_tag),
+    )
+
+
 def convert_row(
     row: MappingRow,
     level: LevelContext,
@@ -181,6 +233,8 @@ def convert_row(
     findings: tuple[DocumentFinding, ...] = (),
     unknown_family_tag: UnknownFamilyTag | None = None,
     classified_members: frozenset[str] = frozenset(),
+    witness_values: tuple[object, ...] | None = None,
+    correlation_members: tuple[AttributeIdentity, ...] = (),
 ) -> int:
     """Convert one SQL-materialized row into ``builder``'s next projection.
 
@@ -222,16 +276,18 @@ def convert_row(
         level,
         unknown_family_tag=unknown_family_tag,
         classified_members=classified_members,
+        witness_values=witness_values,
+        correlation_members=correlation_members,
     )
     return builder.add_claim(
         source,
         level.layout,
         claim.key,
         claim.witness.values,
-        claim.witness.values,
+        claim.routing_values,
         claim.findings,
         _RowDecoder(
-            claim.witness.values,
+            claim.payload_values,
             level,
             claim.identity_values,
             findings,
@@ -315,6 +371,9 @@ def _decode_row(
             members.append(ABSENT)
             continue
         raw = raw_values[occurrence_position]
+        if raw is ABSENT:
+            members.append(ABSENT)
+            continue
         value, occurrence_findings = _occurrence(
             raw,
             occurrence,

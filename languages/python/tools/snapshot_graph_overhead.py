@@ -4,7 +4,9 @@ The representative Page the recorded baseline is stated over — about twenty
 scalar members, nested One and Many Value Objects, polymorphic projections, three
 view slots, duplicate logical nodes, and relationship fan-out — driven through
 the production converter, Page builder, and Root View with no database anywhere.
-It is a `report`: it passes no verdict and joins no aggregate. The Page-era shape
+It is a `report`: it passes no verdict and joins no aggregate. The legacy
+module and command names remain so historical baseline invocations stay
+reproducible. The Page-era shape
 is gated by the materialization, evidence-retention, and stream-retention Budget
 Contract portfolio, because references and positions give a definite answer where
 a total in bytes is machine- and interpreter-relative. The historical reading and
@@ -21,7 +23,7 @@ measure something no read retains.
 Every column value and every Value Object document is allocated at import time,
 outside every window, so a row that merely references one of them costs the
 reading the position and not the leaf. The control at the end of the output is
-what demonstrates it rather than asserting it: the identical graph shape with
+what demonstrates it rather than asserting it: the identical Page shape with
 every string leaf an order of magnitude longer must read identically.
 
 **What it is measured with.** ``memory_instruments``, the one definition the
@@ -127,11 +129,11 @@ ceiling it implies so a reader can see the reading against it without this
 judging one."""
 
 REPEATS: Final = 50
-"""Timed repetitions of build and merge. Wall clock is recorded for visibility
-alone, so this buys a stable mean rather than a distribution."""
+"""Timed repetitions of Page building and Root View construction. Wall clock is
+recorded for visibility alone, so this buys a stable mean rather than a distribution."""
 
 GRID: Final = (8, 16, 32, 64)
-"""Graph sizes over an eightfold span, so a fixed cost cannot hide inside a
+"""Page sizes over an eightfold span, so a fixed cost cannot hide inside a
 per-projection one."""
 
 REPRESENTATIVE: Final = 64
@@ -140,7 +142,7 @@ REPRESENTATIVE: Final = 64
 
 # --------------------------------------------------------------------------- #
 # The workload model. Bespoke because no model in the tree carries all six of   #
-# the representative graph's traits at the width it names them: the corpus tops #
+# the representative Page's traits at the width it names them: the corpus tops #
 # out at eight applicable Attributes on one Entity, and no document there       #
 # combines wide scalars with nested Value Objects, an inheritance family, and   #
 # relationship fan-out.                                                         #
@@ -204,7 +206,7 @@ class Special(Node, namespace=NAMESPACE, inheritance=AbstractSubtype):
 
 class Alpha(Special, namespace=NAMESPACE, inheritance=ConcreteSubtype(tag_value="alpha")):
     """One concrete of the family, reached both broadly and through the narrowed
-    view — which is what gives the graph its duplicate projections."""
+    view — which is what gives the Page its duplicate projections."""
 
 
 class Beta(Node, namespace=NAMESPACE, inheritance=ConcreteSubtype(tag_value="beta")):
@@ -361,7 +363,7 @@ def cells(count: int) -> tuple[Cell, ...]:
 
 
 def fattened(count: int) -> tuple[Cell, ...]:
-    """The identical graph SHAPE with every leaf payload an order of magnitude
+    """The identical Page SHAPE with every leaf payload an order of magnitude
     larger. A reading that moves under it is a reading that counts leaves."""
     pad = "x" * 512
 
@@ -420,7 +422,7 @@ def sealed(builder: PageBuilder, plan: tuple[Cell, ...]) -> Page:
 
 
 def build(plan: tuple[Cell, ...]) -> Page:
-    """One execution's whole graph: a schema of its own, and every row under it."""
+    """One execution's whole Page: a schema of its own, and every row under it."""
     return sealed(PageBuilder(ViewSchema(SLOT_TABLE)), plan)
 
 
@@ -445,30 +447,30 @@ def seam_over(plan: tuple[Cell, ...], *, with_root_view: bool = True) -> Seam:
 
 
 def timings(plan: tuple[Cell, ...]) -> tuple[float, float]:
-    """Mean wall-clock seconds to build the sealed graph, and to merge it.
+    """Mean wall-clock seconds to build the sealed Page and then its Root View.
 
     Each repetition gets a builder and a view schema of its own, constructed
     OUTSIDE its own clock: the recorded pre-cutover half timed conversion,
     attachment, and composition with its ``MergeScope`` already constructed, and
     a window that also carried the execution's own setup would compare two
     different spans. Every per-row and per-level cost the schema defers — a
-    source layout built on a level's first reach, a merged layout on a
+    source layout built on a level's first reach, a concrete layout on a
     concrete's — still falls inside the timed span, exactly as the scope's own
     per-row caches did.
     """
     building = 0.0
-    merging = 0.0
+    viewing = 0.0
     with untraced():
         for _ in range(REPEATS):
             builder = PageBuilder(ViewSchema(SLOT_TABLE))
             start = perf_counter()
-            graph = sealed(builder, plan)
+            page = sealed(builder, plan)
             building += perf_counter() - start
             start = perf_counter()
-            merged = RootView(graph)
-            merging += perf_counter() - start
-            assert merged is not None
-    return building / REPEATS, merging / REPEATS
+            root_view = RootView(page)
+            viewing += perf_counter() - start
+            assert root_view is not None
+    return building / REPEATS, viewing / REPEATS
 
 
 def census(plan: tuple[Cell, ...]) -> Counter[str]:
@@ -489,18 +491,18 @@ def fit(points: dict[int, int]) -> tuple[float, float]:
 
 
 def _verified(plan: tuple[Cell, ...]) -> None:
-    """That the graph the readings are taken over is the one described.
+    """That the Page the readings are taken over is the one described.
 
-    Every count the workload claims, read off the sealed graph and its merge
+    Every count the workload claims, read off the sealed Page and its Root View
     before any window opens — including that the path is CONFORMING, which is the
     path the baseline's absolute claims are stated over.
     """
-    graph, merge = compose(plan)
-    rows = page_rows(graph)
+    page, root_view = compose(plan)
+    rows = page_rows(page)
     assert len(rows.layouts) == REPRESENTATIVE * PROJECTIONS_PER_CELL, len(rows.layouts)
     assert len(rows.roots) == REPRESENTATIVE, len(rows.roots)
-    assert len(merge.order) == REPRESENTATIVE * LOGICAL_PER_CELL, len(merge.order)
-    assert not merge.has_issues, "the conforming path carries no stored-data issue"
+    assert len(root_view.order) == REPRESENTATIVE * LOGICAL_PER_CELL, len(root_view.order)
+    assert not root_view.has_issues, "the conforming path carries no stored-data issue"
     assert len(ALPHA_LEVEL.layout.attributes) == 20, "about twenty scalar members"
     assert len(ALPHA_LEVEL.layout.occurrences) == 2, "a top-level One and a top-level Many"
 
@@ -566,7 +568,7 @@ def _headline_lines(total: int, page_only: int, survivors: int) -> list[str]:
 def _census_lines(counts: Counter[str], smallest: Counter[str]) -> list[str]:
     projections = REPRESENTATIVE * PROJECTIONS_PER_CELL
     span = projections - GRID[0] * PROJECTIONS_PER_CELL
-    lines = ["survivor census by type (representative graph, warmed)"]
+    lines = ["survivor census by type (representative Page, warmed)"]
     for name, value in counts.most_common():
         marginal = (value - smallest.get(name, 0)) / span
         lines.append(
@@ -596,7 +598,7 @@ def main(argv: list[str]) -> int:
     finally:
         tracemalloc.stop()
     live = {count: live_graph(warmed(seam_over(plans[count]))) for count in GRID}
-    build_s, merge_s = timings(plans[REPRESENTATIVE])
+    build_s, root_view_s = timings(plans[REPRESENTATIVE])
     projections = REPRESENTATIVE * PROJECTIONS_PER_CELL
 
     lines = ["parallax snapshot Page retained overhead", ""]
@@ -609,8 +611,8 @@ def main(argv: list[str]) -> int:
     lines += [
         f"  build (convert, write, seal)  = {build_s * 1e3:.2f} ms "
         f"({build_s / projections * 1e6:.2f} us/projection)",
-        f"  Root View                     = {merge_s * 1e3:.2f} ms "
-        f"({merge_s / projections * 1e6:.2f} us/projection)",
+        f"  Root View                     = {root_view_s * 1e3:.2f} ms "
+        f"({root_view_s / projections * 1e6:.2f} us/projection)",
     ]
     lines += ["", *_census_lines(census(plans[REPRESENTATIVE]), census(plans[GRID[0]]))]
     lines += [

@@ -1,6 +1,9 @@
 # Snapshot graph retained overhead — recorded baseline
 
-What one materialized Snapshot graph keeps, measured on one machine under stated
+This document is explicitly historical. Graph and GraphMerge terminology below
+names the retired representation that the recorded measurements observed.
+
+What one materialized Snapshot graph kept, measured on one machine under stated
 conditions, on both sides of the representation cutover that replaced the
 per-cell carrier graph with sealed, index-addressed compact rows. COR-108 asks
 for "at least 60% lower retained carrier bytes per projection than the frozen
@@ -10,9 +13,9 @@ Nothing here gates. `just python-report-snapshot-graph-overhead` is a `report`:
 it passes no verdict and belongs to no aggregate, because a total in bytes is
 machine- and interpreter-relative — `tracemalloc` figures move with CPython, and
 every CI job runs the floating `ubuntu-latest` label, so a tight ratio can flip
-on an interpreter bump that changed nothing. The *shape* of what a graph retains
-is gated instead, in `tests/unit/test_snapshot_graph_retention.py`, which `just
-python-test-dbfree` owns: that suite fits an affine function of members,
+on an interpreter bump that changed nothing. At the time, the *shape* of what a
+graph retained was gated in the since-retired
+`tests/unit/test_snapshot_graph_retention.py`: that suite fit an affine function of members,
 declared view slots, and recorded edges over a crossed grid and requires exact
 equality at every point of it, grades seven steps and one exact total — read at
 every point that declares a document and again in every presence state that

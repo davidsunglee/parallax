@@ -147,7 +147,7 @@ def test_the_second_source_refuses_a_deep_fetch_before_reading() -> None:
     # raising port proves the refusal precedes the read.
     another = AnotherSource(_ORDERS, RefusingAdapter())
 
-    with pytest.raises(ValueError, match="flat graphs only"):
+    with pytest.raises(ValueError, match="root-only Pages"):
         another.find(Order.where(Order.id == 1).include(Order.items))
 
 

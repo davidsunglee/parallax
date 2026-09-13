@@ -3,9 +3,9 @@
 Exercises `parallax.snapshot.materialize`'s conversion seam independently of the
 Docker-gated compile/run sweeps: value-object document decoding (declared-shape
 projection, the absence-collapse vocabulary, the refusal shape for stored data
-that contradicts its declared type), scalar provenance, graph-local identity
-(family normalization, projection independence, the table-per-concrete-subtype
-exception, the builder's first-writer registration), and the deliberately
+that contradicts its declared type), scalar provenance, Page identity claims
+(family normalization, projection independence, and the table-per-concrete-subtype
+exception), and the deliberately
 physical observation extraction the write side reads.
 
 A row is POSITIONAL: every applicable member occupies its declared position and
@@ -13,8 +13,8 @@ A row is POSITIONAL: every applicable member occupies its declared position and
 member is what the row holds at that member's own position.
 
 Conversion needs no Entity Class, so the suite drives accepted models straight
-from the corpus descriptors; the merge and construction halves live in
-`test_snapshot_merge.py`.
+from the corpus descriptors; Root View judgment and Entity construction live in
+`test_materializer_publication.py`.
 """
 
 from __future__ import annotations
@@ -70,19 +70,18 @@ from parallax.descriptor._records import (
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.materialize import (
     MISSING_STORED_VALUE,
-    InvalidRootInput,
     PageBuilder,
     RootView,
     StoredDataIssueInput,
 )
-from parallax.snapshot.materialize._convert import LevelContext, convert_row
+from parallax.snapshot.materialize._convert import LevelContext, convert_deferred, convert_row
 from parallax.snapshot.materialize._page import ABSENT, page_rows
 from parallax.snapshot.materialize._typed import typed_root
 from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 from tests.unit._corpus_model_support import formed
 from tests.unit._corpus_model_support import model as corpus_model
-from tests.unit.snapshot._snapshot_graph_support import (
+from tests.unit.snapshot._snapshot_page_support import (
     documents_of,
     identity_of,
     invalid_record,
@@ -144,7 +143,7 @@ class _Projection:
         return ABSENT if position is None else self.values[position]
 
     def logical_key(self) -> tuple[EntityIdentity, object]:
-        """This row's graph-local identity, exactly as the builder derives one."""
+        """This row's Page identity claim, exactly as the builder derives one."""
         return self.layout.family, self.layout.key_of(self.values)
 
 
@@ -665,8 +664,8 @@ def test_a_top_level_many_cardinality_value_object_converts_to_a_record_tuple() 
 
 
 # --------------------------------------------------------------------------- #
-# Graph-local identity: family normalization, projection independence, and the #
-# table-per-concrete-subtype exception.                                        #
+# Page identity claims: family normalization and projection independence.       #
+# Table-per-concrete-subtype remains the family-normalization exception.       #
 # --------------------------------------------------------------------------- #
 def test_a_logical_key_is_family_normalized_for_a_concrete_subtype() -> None:
     node = _converted(ANIMAL, "Dog", {"id": 1, "name": "Rex", "owner_id": 10, "bark_volume": 7})
@@ -725,9 +724,9 @@ def test_a_key_less_entity_never_forms() -> None:
 
 
 def test_the_builder_registers_the_first_projection_of_a_logical_key() -> None:
-    # Graph-local identity resolution names the FIRST projection registered for a
-    # key, which is what a back-reference level resolves against. A single-column
-    # key resolves by its raw scalar, the spelling the layout's own rule gives it.
+    # Page construction registers the FIRST projection carrying a key for
+    # relationship correlation, which is what a back-reference level resolves against.
+    # A single-column key resolves by its raw scalar, the spelling the layout's own rule gives it.
     builder = PageBuilder(ViewSchema.of())
     context = _context(ORDERS, "Order")
     first = convert_row({"id": 1, "name": "Ada"}, context, builder, source=ROOT_LEVEL)
@@ -799,6 +798,24 @@ def test_a_whole_document_stored_in_a_kind_it_cannot_be_read_as_names_the_occurr
     )
 
 
+def test_a_projected_occurrence_with_no_available_raw_carrier_stays_absent() -> None:
+    context = _context(CUSTOMER, "Customer")
+    witness = tuple(
+        1 if attribute.identity.name == "id" else "Ada" for attribute in context.layout.attributes
+    ) + tuple(ABSENT for _occurrence in context.layout.occurrences)
+    builder = PageBuilder(ViewSchema.of())
+    ref = convert_deferred(
+        witness,
+        context,
+        builder,
+        source=ROOT_LEVEL,
+        load=lambda: (witness, (), frozenset()),
+    )
+    page = builder.finish((ref,), Pin())
+    values = RootView(page).member_values(0)
+    assert values[context.layout.attribute_count] is ABSENT
+
+
 def test_a_member_the_read_did_not_carry_is_absent_rather_than_null() -> None:
     # A positional row cannot omit, so the distinction omission used to carry is
     # spelled: the member the read never projected reads ABSENT, and a nullable
@@ -823,12 +840,13 @@ def test_a_member_the_read_did_not_carry_is_absent_rather_than_null() -> None:
 def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], code: str) -> None:
     builder = PageBuilder(ViewSchema.of())
     ref = convert_row(row, _context(CUSTOMER, "Customer"), builder, source=ROOT_LEVEL)
-    graph = builder.finish((ref,), Pin())
-    root = page_rows(graph).roots[0]
-    assert isinstance(root, InvalidRootInput)
-    assert root.issues[0].code == code
+    page = builder.finish((ref,), Pin())
+    assert page_rows(page).roots == (ref,)
+    view = RootView(page, 0)
+    (invalid,) = view.invalid_roots
+    assert invalid.issues[0].code == code
     (root,) = typed_root(
-        RootView(graph),
+        view,
         CUSTOMER,
         graph_construction_for(vo_models.CUSTOMER_MODEL),
     )

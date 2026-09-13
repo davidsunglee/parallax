@@ -48,7 +48,7 @@ from parallax.snapshot.materialize._views import ROOT_LEVEL, ViewSchema
 from tests._support.model_capabilities import graph_construction_for
 
 __all__ = [
-    "GraphFixture",
+    "PageFixture",
     "documents_of",
     "identity_of",
     "invalid_record",
@@ -143,10 +143,10 @@ def _occurrence_row(row: tuple[object, ...], declared: _VoContainer) -> dict[str
     return rendered
 
 
-class GraphFixture:
-    """One graph under construction, plus the materialization over it.
+class PageFixture:
+    """One Page under construction, plus the materialization over it.
 
-    ``views`` are the relationship views this graph attaches, declared up front
+    ``views`` are the relationship views this Page attaches, declared up front
     because a projection's view row is sized when the row is added and a fan-back
     only names a slot the plan already fixed. A broad view is its relationship's
     own spelling; a narrowed one is that spelling paired with the derived view
@@ -155,7 +155,7 @@ class GraphFixture:
     no executor, and no database, at the cost of every projection carrying every
     declared slot rather than only its own level's.
 
-    ``model`` overrides the accepted model conversion and merging read without
+    ``model`` overrides the accepted model conversion and Root View judgment without
     changing the classes construction resolves, which is how a suite exercises a
     model and its classes disagreeing — a member the model calls a Value Object
     while the composed class maps it as a scalar. Only a test can reach that
@@ -173,7 +173,7 @@ class GraphFixture:
         *views: str | tuple[str, str],
         model: Metamodel | None = None,
     ) -> None:
-        assert class_index(domain) is not None, "the graph suites compose class-backed models"
+        assert class_index(domain) is not None, "the Page suites compose class-backed models"
         self._domain = domain
         self._model = model if model is not None else model_of(domain)
         self._layouts = LayoutCatalog(self._model)
@@ -221,29 +221,28 @@ class GraphFixture:
         """Write one relationship view onto an already-converted projection."""
         self._builder.write_view(parent, self.view_key(relationship, narrowed=narrowed), value)
 
-    def graph(self, *roots: int, pin: Pin = _NO_PIN) -> Page:
-        """The whole sealed graph, roots in the order given.
+    def page(self, *roots: int, pin: Pin = _NO_PIN) -> Page:
+        """The sealed Page with roots in the requested order.
 
-        Sealing invalidates the builder, so a fixture seals ONCE and answers the
-        graph it sealed thereafter — which is what lets a test read a merge and
-        then materialize the same graph. A suite wanting a second graph builds a
-        second fixture, the same discipline a read executor keeps.
+        Sealing invalidates the builder, so a fixture seals once and returns that
+        Page thereafter. A suite that needs a second Page builds a second fixture,
+        matching the read-executor lifetime.
         """
         asked = (roots, pin)
         if self._sealed is None:
             self._sealed = (asked, self._builder.finish(roots, pin))
-        assert self._sealed[0] == asked, "one fixture seals one graph; build a second fixture"
+        assert self._sealed[0] == asked, "one fixture seals one Page; build a second fixture"
         return self._sealed[1]
 
     def materialize(
         self, *roots: int, pin: Pin = _NO_PIN
     ) -> tuple[object | InvalidData[object], ...]:
-        """Merge, classify, and publish this graph's roots.
+        """Judge, classify, and publish the Page roots.
 
         A conforming root is its frozen Entity instance; one some stored state
         contradicted is its :class:`InvalidData` record instead.
         """
-        page = self.graph(*roots, pin=pin)
+        page = self.page(*roots, pin=pin)
         construction = graph_construction_for(self._domain)
         return tuple(
             typed_root(

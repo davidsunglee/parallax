@@ -159,7 +159,7 @@ def test_the_reachability_walk_reaches_every_shape_a_plan_could_hide_in(
     assert _reaches_a_write_plan(retaining(plan))
 
 
-def test_the_reachability_walk_answers_no_for_a_graph_holding_none() -> None:
+def test_the_reachability_walk_answers_no_for_a_structure_holding_none() -> None:
     held: list[dict[str, set[object]]] = [{"k": {frozenset[object](), "s", 1}}]
     assert not _reaches_a_write_plan(_Attributed(held))
 
@@ -174,7 +174,7 @@ def test_the_public_surface_offers_no_plan_and_no_flush() -> None:
 
 
 def _reaches_a_write_plan(value: object, seen: set[int] | None = None) -> bool:
-    """Whether ``value``'s retained graph reaches a ``WritePlan`` at all.
+    """Whether ``value``'s retained object structure reaches a ``WritePlan`` at all.
 
     A reachability walk rather than a field check: the claim is that no plan
     SURVIVES the flush that consumed it, which an assertion about the result

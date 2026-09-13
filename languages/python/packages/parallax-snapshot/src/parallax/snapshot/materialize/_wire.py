@@ -325,8 +325,8 @@ class UnwindTree:
 
     Identity-compared on purpose: it is the second half of the unwind's memo key,
     and two positions in one tree are two positions however alike their subtrees
-    look. A node's children are keyed exactly as a merged node keys its views, so
-    following the tree and reading the merge need no translation between them.
+    look. A node's children are keyed exactly as a Root View node keys its views, so
+    following the tree and reading the Root View need no translation between them.
     """
 
     children: Mapping[RelationshipViewKey, UnwindTree]

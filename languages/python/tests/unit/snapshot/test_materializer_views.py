@@ -1,12 +1,12 @@
 """The execution-owned view schema: interning, guard splitting, and translation.
 
 Three claims. **Interning** is what keeps the schema's cost a function of the
-plan rather than of the graph: two concretes no guard splits are answered one
+plan rather than of the Page: two concretes no guard splits are answered one
 layout object, and a guard is the only thing that gives them different ones.
-**The union** is what a merged logical node's row is laid out by — every source
+**The union** is what a root-local logical node's row is laid out by — every source
 layout its concrete has, in the member layout's own canonical order, fixed before
 the node's first projection is walked. **The translation** is how a projection's
-own row reaches that union, once, where the merged row is built.
+own row reaches that union, once, where the Root View row is built.
 
 The schema is stated over the animal corpus model throughout, because it is the
 one that carries a polymorphic family a guard can actually split.
@@ -97,7 +97,7 @@ def test_a_concrete_no_slot_admits_carries_an_empty_row() -> None:
     # laid out for rather than failed on, and what it is laid out is nothing.
     schema = ViewSchema(((ChildSlot(_OWNER, frozenset({_identity("Dog")})),),))
     assert schema.source(ROOT_LEVEL, _layout("Cat")).slots == ()
-    assert schema.merged(_layout("Cat")).slots == ()
+    assert schema.root_view(_layout("Cat")).slots == ()
 
 
 def test_a_schema_lays_out_no_row_for_a_source_level_its_plan_never_had() -> None:
@@ -106,47 +106,47 @@ def test_a_schema_lays_out_no_row_for_a_source_level_its_plan_never_had() -> Non
 
 
 # --------------------------------------------------------------------------- #
-# The merged union and the translation into it.                               #
+# The root_view union and the translation into it.                               #
 # --------------------------------------------------------------------------- #
-def test_a_merged_layout_is_the_union_of_a_concretes_source_layouts() -> None:
+def test_a_root_view_layout_is_the_union_of_a_concretes_source_layouts() -> None:
     # A node projected at one level still carries the slots its concrete can
     # receive at every other, because the width is fixed before the first
     # projection of that node is walked and a second level widens nothing.
     schema = ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS),)))
-    merged = schema.merged(_layout("Person"))
-    assert merged.slots == (_ANIMALS, _PETS)
-    assert dict(merged.index_of) == {_ANIMALS: 0, _PETS: 1}
+    root_view = schema.root_view(_layout("Person"))
+    assert root_view.slots == (_ANIMALS, _PETS)
+    assert dict(root_view.index_of) == {_ANIMALS: 0, _PETS: 1}
 
 
 def test_the_union_is_in_the_member_layouts_canonical_order_not_the_plans() -> None:
     # `animals` is declared before `pets`, so the union states them in that order
-    # whichever level reached which — the same rule the merge walks slots by.
+    # whichever level reached which — the same rule the Root View walks slots by.
     forward = ViewSchema(((ChildSlot(_ANIMALS),), (ChildSlot(_PETS),)))
     backward = ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS),)))
-    assert forward.merged(_layout("Person")).slots == backward.merged(_layout("Person")).slots
+    assert forward.root_view(_layout("Person")).slots == backward.root_view(_layout("Person")).slots
 
 
-def test_to_merged_carries_every_source_slot_to_the_position_its_key_holds() -> None:
+def test_to_root_view_carries_every_source_slot_to_the_position_its_key_holds() -> None:
     schema = ViewSchema(((ChildSlot(_PETS),), (ChildSlot(_ANIMALS),)))
     layout = _layout("Person")
-    merged = schema.merged(layout)
-    for level, translation in enumerate(merged.to_merged):
+    root_view = schema.root_view(layout)
+    for level, translation in enumerate(root_view.to_root_view):
         source = schema.source(level, layout)
-        assert translation == tuple(merged.index_of[view] for view in source.slots)
-        assert tuple(merged.slots[slot] for slot in translation) == source.slots
-    assert merged.to_merged == ((1,), (0,))
+        assert translation == tuple(root_view.index_of[view] for view in source.slots)
+        assert tuple(root_view.slots[slot] for slot in translation) == source.slots
+    assert root_view.to_root_view == ((1,), (0,))
 
 
 def test_a_guarded_concretes_translation_omits_the_slot_it_never_receives() -> None:
     schema = ViewSchema(
         ((ChildSlot(_OWNER), ChildSlot(_OWNER_NARROWED, frozenset({_identity("Dog")}))),)
     )
-    assert schema.merged(_layout("Dog")).to_merged == ((0, 1),)
-    assert schema.merged(_layout("Cat")).to_merged == ((0,),)
+    assert schema.root_view(_layout("Dog")).to_root_view == ((0, 1),)
+    assert schema.root_view(_layout("Cat")).to_root_view == ((0,),)
 
 
-def test_a_merged_layout_is_answered_identically_on_a_second_reach() -> None:
+def test_a_root_view_layout_is_answered_identically_on_a_second_reach() -> None:
     # Every node of one concrete shares the one layout, which is what makes a
-    # merge's per-node view layout a reference rather than a derivation.
+    # Root View's per-node layout a reference rather than a derivation.
     schema = ViewSchema.of(_OWNER)
-    assert schema.merged(_layout("Dog")) is schema.merged(_layout("Dog"))
+    assert schema.root_view(_layout("Dog")) is schema.root_view(_layout("Dog"))

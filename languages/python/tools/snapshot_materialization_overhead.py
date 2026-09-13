@@ -175,7 +175,7 @@ CONTRIBUTORS: Final = (
         "decode_occurrence_classified", "_document.py", "decode_occurrence_classified", False
     ),
     Contributor("occurrence_shape", "_shape.py", "occurrence_shape", False),
-    Contributor("materialize_row", "_compile.py", "materialize_row", False),
+    Contributor("convert_driver", "_prepared.py", "convert_driver", False),
     Contributor("convert_row", "_convert.py", "convert_row", False),
     Contributor("LevelContext (bound per read)", "_convert.py", "__post_init__", False),
     Contributor("attribute_reads (contract scan)", "_compile.py", "attribute_reads", False),

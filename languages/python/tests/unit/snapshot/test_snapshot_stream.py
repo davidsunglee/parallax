@@ -60,7 +60,7 @@ from parallax.snapshot import (
     prepare_model,
 )
 from parallax.snapshot._inspection import snapshot_state_of
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, Transaction, _paging, _read
 from parallax.snapshot.materialize import source_hint_of
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
@@ -391,6 +391,42 @@ def test_each_nonempty_page_costs_one_plus_l_and_a_short_page_ends_the_stream() 
     assert len(_reads(port)) == 4
 
 
+def test_a_delivery_compiles_each_structural_statement_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_compiles = 0
+    child_compiles = 0
+    compile_root = cast("Callable[..., Any]", vars(_paging)["compile_read"])
+    compile_child = cast("Callable[..., Any]", vars(_read)["compile_template"])
+
+    def counting_root(*args: Any, **kwargs: Any) -> Any:
+        nonlocal root_compiles
+        root_compiles += 1
+        return compile_root(*args, **kwargs)
+
+    def counting_child(*args: Any, **kwargs: Any) -> Any:
+        nonlocal child_compiles
+        child_compiles += 1
+        return compile_child(*args, **kwargs)
+
+    monkeypatch.setattr(_paging, "compile_read", counting_root)
+    monkeypatch.setattr(_read, "compile_template", counting_child)
+    port = ScriptedAdapter(
+        Read(rows=[_order_row(1), _order_row(2), _order_row(3)]),
+        Read(rows=[_item_row(10, 1), _item_row(11, 2)]),
+        Read(rows=[_order_row(3), _order_row(4), _order_row(5)]),
+        Read(rows=[_item_row(12, 3), _item_row(13, 4)]),
+        Read(rows=[_order_row(5)]),
+        Read(rows=[_item_row(14, 5)]),
+    )
+
+    with _orders(port).stream(_all_orders().include(Order.items), batch_size=2) as stream:
+        assert _ids(iter(stream)) == [1, 2, 3, 4, 5]
+
+    assert root_compiles == 2
+    assert child_compiles == 1
+
+
 def test_a_result_that_is_an_exact_multiple_of_the_page_costs_no_terminal_statement() -> None:
     # A page reads one root past its batch, so a result that fills its last page
     # exactly comes back SHORT of what that page asked for — exhaustion is proved
@@ -490,7 +526,7 @@ def test_a_within_root_diamond_is_one_node_under_find_and_under_stream() -> None
 
 def test_a_within_root_diamond_publishes_the_same_wire_value_under_both() -> None:
     # The Wire lane bounds its walk by the requested Include Paths rather than
-    # by the identity graph, so two positions of one tree are two positions
+    # by root-local identity, so two positions of one tree are two positions
     # however alike their subtrees look — under `find` exactly as under
     # `stream`. What root scoping may not change is the VALUE either publishes.
     query = _all_orders().include(Order.items, Order.items_by_ship_date)
@@ -509,8 +545,8 @@ def _back_reference_pages() -> ScriptedAdapter:
 
 
 def test_a_back_reference_closes_the_cycle_under_find_and_under_stream() -> None:
-    # A back-reference level issues no SQL and resolves through the merge's own
-    # graph-local identity map, which a root-scoped merge still has.
+    # A back-reference level issues no SQL and resolves through the Root View's
+    # own root-local identity map.
     query = _all_orders().include(Order.items.order)
     eager = _orders(_back_reference_pages()).find(query).results()[0]
     assert eager.items[0].order is eager
@@ -730,7 +766,7 @@ def _milestone_pages(*, size: int) -> ScriptedAdapter:
 def test_a_streamed_milestone_set_publishes_every_milestone_at_its_own_edge_pin(
     size: int,
 ) -> None:
-    # A page graph is shared input and a milestone page is that page plus a pin
+    # A Page is shared input and a milestone page is that page plus a pin
     # per root: each published root stands at its OWN milestone's from-instant on
     # both axes, never at the page's own pin and never at another milestone's —
     # at every page size, because the pin is a property of the root rather than
@@ -795,7 +831,7 @@ def test_a_streamed_milestone_set_seeks_past_the_edge_of_the_root_it_ended_on() 
 
 
 def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> None:
-    # `find_history` groups milestones into one graph each and ranks the graphs
+    # `find_history` returns one flat milestone-root sequence and ranks the roots
     # Valid-Time-first; with no authored `orderBy` the Continuation Order is the
     # key then that same edge, so a single object's streamed history IS the eager
     # edge rank — same roots, same order, same pin on each, and the same absence

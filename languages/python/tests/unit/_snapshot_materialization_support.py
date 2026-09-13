@@ -4,7 +4,7 @@ One representative graph shape — a table-per-hierarchy family with an abstract
 middle, nested One and Many Value Objects at two depths, every declarable Neutral
 Type as an Entity Attribute and again as a document leaf, duplicate logical nodes
 through a narrowed view, three view slots and a back-reference — driven through
-the SHIPPED read loop from ``PreparedRead.materialize`` to ``PageBuilder.finish``,
+the SHIPPED raw-row read loop from ``PreparedRead.convert_driver`` to ``PageBuilder.finish``,
 with no database anywhere.
 
 The loop is the driver's own: :func:`batch` calls ``handle/_read.py``'s private
@@ -19,14 +19,14 @@ production pays for it per batch.
 A fourth workload model rather than a reuse: ``tools/snapshot_graph_overhead.py``
 is ``Columns``-only and declares four Neutral Types, ``_document_layout_support``
 is a layout twin at the accepted-Metamodel level with no ``DomainModel`` for
-``prepare_model`` to prepare, and ``test_snapshot_graph_retention.py``'s workload
-was the Graph-era frozen cost item. The members are declared once in a factory over the
-layout, while both layouts retain the descriptor's one canonical namespace.
+``prepare_model`` to prepare, and the earlier retention workload predates the
+Page contract. Members are declared once in a factory over the layout, while both
+layouts retain the descriptor's one canonical namespace.
 
 Rows are projected from the catalog fixture itself through the compiled read:
 authored values, nulls, omissions, and occurrence cardinalities are preserved,
 then each authored member is placed where ``m-storage-layout`` says it lives.
-:func:`verify` states that the resulting sparse rows form the expected graph
+:func:`verify` states that the resulting sparse rows form the expected Page
 without stored-data findings and that the model still declares every supported
 Neutral Type.
 
@@ -71,7 +71,7 @@ from parallax.core import (
     rel,
 )
 from parallax.core.base import SQL_NULL, DocumentValue, PresentDocument
-from parallax.core.db_port import MappingRow
+from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import (
     DocumentShape,
@@ -90,7 +90,7 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.object_query._validated import ValidatedObjectQuery
-from parallax.core.sql_gen._compile import CompiledRead, MaterializedReadRow, compile_read
+from parallax.core.sql_gen._compile import CompiledRead, compile_read
 from parallax.core.storage_layout import DirectColumn, DocumentPath, TableLayout
 from parallax.core.storage_layout import view as storage_layout_view
 from parallax.core.temporal_read import Pin
@@ -295,7 +295,7 @@ def compiled_levels(
 
 def prepared_levels(
     model: CatalogedModel, reads: Sequence[CompiledRead | None]
-) -> tuple[PreparedRead[MaterializedReadRow] | None, ...]:
+) -> tuple[PreparedRead | None, ...]:
     """One prepared read per compiled one, indexed as :func:`compiled_levels`
     indexes its reads.
 
@@ -406,7 +406,7 @@ def _occurrence_value(
 
 def _driver_row(
     model: CatalogedModel, compiled: CompiledRead, entity: EntityIdentity, spec: _RowSpec
-) -> MappingRow:
+) -> Row:
     """One stored row as the driver answers it: direct Columns under their own
     result keys, and every document-resident member inside the Structured Column."""
     meta = model.meta
@@ -470,7 +470,7 @@ def _driver_row(
     column = compiled.structured_column
     if column is not None:
         row[column] = PresentDocument(document)
-    return row
+    return tuple(row.get(result_key) for result_key in compiled.result_keys)
 
 
 def driver_rows(
@@ -480,7 +480,7 @@ def driver_rows(
     attach_key: str,
     owners: int = OWNERS,
     first: int = 0,
-) -> list[MappingRow]:
+) -> list[Row]:
     """Every row one level's statement returns for ``owners`` root objects
     beginning at ``first``, keyed by that statement's own result keys.
 
@@ -501,13 +501,11 @@ def rows_per_level(
     reads: Sequence[CompiledRead | None],
     owners: int = OWNERS,
     first: int = 0,
-) -> tuple[tuple[MappingRow, ...], ...]:
+) -> tuple[tuple[Row, ...], ...]:
     """Every level's rows, indexed as :func:`compiled_levels` indexes its reads."""
     root = reads[0]
     assert root is not None
-    rows: list[tuple[MappingRow, ...]] = [
-        tuple(driver_rows(layout, model, root, _ROOT, owners, first))
-    ]
+    rows: list[tuple[Row, ...]] = [tuple(driver_rows(layout, model, root, _ROOT, owners, first))]
     for index, level in enumerate(plan.levels):
         compiled = reads[index + 1]
         rows.append(
@@ -536,15 +534,14 @@ _attach_back_reference = _read._attach_back_reference  # pyright: ignore[reportP
 def batch(
     model: CatalogedModel,
     plan: deep_fetch.ObjectQueryPlan,
-    prepared: Sequence[PreparedRead[MaterializedReadRow] | None],
-    rows: Sequence[Sequence[MappingRow]],
+    prepared: Sequence[PreparedRead | None],
+    rows: Sequence[Sequence[Row]],
 ) -> Page:
-    """One whole graph, built the way ``build_graph`` builds one.
+    """One whole Page, built through the shipped raw-row conversion loop.
 
-    The root statement's rows are materialized WHOLE before the loop opens and
-    held until it closes, as ``read_roots`` materializes them and as the read it
-    answers holds them; a level below the root converts straight out of its own
-    lazy materialization and holds one row at a time.
+    The root statement's provider rows are held as one returned batch. A level
+    below the root converts straight out of its own lazy result and holds one row
+    at a time.
 
     Each level's gathered keys decide its branch and stay live across the
     conversion beneath them, which is the compiled child query holding them in
@@ -555,7 +552,7 @@ def batch(
     meta = model.meta
     root = prepared[0]
     assert root is not None
-    root_rows = tuple(map(root.materialize, rows[0]))
+    root_rows = tuple(rows[0])
     builder = PageBuilder(ViewSchema(_slot_table(plan)))
     observations = ObservedRows()
     root_refs = _convert_rows(builder, ROOT_LEVEL, root, root_rows, observations)
@@ -579,7 +576,7 @@ def batch(
             builder,
             index + 1,
             level_read,
-            map(level_read.materialize, rows[index + 1]),
+            rows[index + 1],
             observations,
         )
         _attach_children(builder, meta, level, parents, child_refs)

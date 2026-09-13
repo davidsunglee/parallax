@@ -4,7 +4,7 @@
 its batch, an authored limit caps that lookahead, and two adjacent roots at one
 evaluated coordinate end the delivery after the maximal strictly ordered prefix.
 The arithmetic behind those rules is computation over counts and coordinates with
-no port, no SQL, and no graph under it, which is what lets the lookahead discard,
+no port, no SQL, and no Page, Root View, or publication under it, which lets the lookahead discard,
 the tie, and the ordinal of the first undeliverable root be exercised here with
 hand-built coordinates instead of only through a scripted database.
 
@@ -15,14 +15,23 @@ refactor of the functions below.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
+from typing import Any, cast
+
 import pytest
 
 from parallax.core import continuation
+from parallax.core.entity._layout import CatalogedModel
 from parallax.core.metamodel import Metamodel
 from parallax.core.object_query import object_query, validate_object_query
 from parallax.core.object_query._validated import ContinuationCoordinate
 from parallax.core.predicate import All
+from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._compile import CompiledRead
+from parallax.snapshot.handle import _paging
 from parallax.snapshot.handle._paging import PagePlan, PageRequest, page_decision
+from tests._support.db_port import RefusingAdapter
 from tests.unit._corpus_model_support import model as accepted_model
 from tests.unit._corpus_model_support import target as entity_of
 
@@ -88,6 +97,30 @@ def test_the_smallest_page_still_reads_two_roots() -> None:
     assert _page_plan(batch_size=1).page_request(0) == PageRequest(
         size=2, lookahead=True, emitted=0
     )
+
+
+def test_a_compiled_seek_must_retain_every_non_null_coordinate_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compile_read = cast("Callable[..., CompiledRead]", vars(_paging)["compile_read"])
+
+    def losing_coordinate(*args: Any, **kwargs: Any) -> CompiledRead:
+        compiled = compile_read(*args, **kwargs)
+        statement = replace(compiled.statement, binds=tuple(0 for _ in compiled.statement.binds))
+        return replace(compiled, statement=statement)
+
+    monkeypatch.setattr(_paging, "compile_read", losing_coordinate)
+    compiled_root = cast("Callable[..., object]", vars(_paging)["_compiled_root"])
+    with pytest.raises(SqlGenError, match="lost a non-null coordinate bind"):
+        compiled_root(
+            _page_plan(batch_size=2),
+            object(),
+            ContinuationCoordinate((1,)),
+            PageRequest(size=3, lookahead=True, emitted=2),
+            CatalogedModel(ORDERS),
+            RefusingAdapter(),
+            None,
+        )
 
 
 # --------------------------------------------------------------------------- #

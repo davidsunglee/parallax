@@ -1,7 +1,7 @@
 # Snapshot materialization — recorded baseline
 
-What a production Snapshot read spends turning returned rows into a sealed graph,
-and what that costs in memory, measured on one machine under stated conditions,
+What the pre-Page production Snapshot read spent turning returned rows into a
+sealed graph, and what that cost in memory, measured on one machine under stated conditions,
 under both storage layouts and on both supported CPython minors. COR-137 asks for
 a reviewed baseline before any optimization, and for every later change to be
 measured against it. Three readings are recorded here: the "before" half is the shipped path as it
@@ -294,7 +294,7 @@ Identical on both minors.
 | `reduce_declared_members_classified` | 672 | 672 | 672 | 672 | 672 | 672 |
 | `decode_occurrence_classified` | 112 | 112 | 112 | 112 | 112 | 112 |
 | `occurrence_shape` | 336 | **0** | 0 | 0 | 0 | 0 |
-| `materialize_row` | 64 | 64 | 64 | 64 | 64 | 64 |
+| `convert_driver` | 64 | 64 | 64 | 64 | 64 | 64 |
 | `convert_row` — one `result_keys` dict | 64 | **0 dicts** | 0 dicts | 64 | **0 dicts** | 0 dicts |
 | `LevelContext` — one fresh context per row | 64 | **0** | 0 | 64 | **0** | 0 |
 | `CompiledRead.attribute_reads` — one dict per row | 64 | **0** | 0 | 64 | **0** | 0 |
@@ -464,10 +464,10 @@ work from touching. The ticket names that as a valid completion, and
 
 ## Secondary workload
 
-The direct-converter 64-graph shape, driven through `convert_row` and
-`GraphBuilder` alone. It is layout-independent, so the two cells of one runtime
+The direct-converter 64-Page shape, driven through `convert_row` and
+`PageBuilder` alone. It is layout-independent, so the two cells of one runtime
 measure one workload and the spread between them is this reading's own
-repeatability. It calls no `compile_read` and no `materialize_row`, so what it
+repeatability. It calls no `compile_read` and no `convert_driver`, so what it
 sees of this work is the conversion-side half and the codec — which is why it
 moves at all, and why it moves again in the last column: an unclassified row's
 occurrences are decoded in conversion, and every leaf of them is an admission.
@@ -495,7 +495,7 @@ duration is a contended wall time from a ten-worker session, and between the two
 refreshes the items this work cannot reach moved by −45% to +69%. What carries
 the figure is that it moves with every other item of
 `tests/unit/test_snapshot_graph_retention.py` — the suite whose workload is
-`convert_row` and `GraphBuilder`, which is the path this section measures:
+`convert_row` and `PageBuilder`, which is the path this section measures:
 sixteen of that file's eighteen items over five seconds fell, by a median of
 6.7%, while the rest of the class over five seconds scattered in both directions
 around a median of −2.3%, seven of thirteen down. That file's total falls from
@@ -559,7 +559,7 @@ what the gated regression asserts.
 ## What is measured, and what is excluded
 
 The batch is what one read pays per statement of rows: row materialization
-through the prepared read, conversion into a shared `GraphBuilder`, the
+through the prepared read, conversion into a shared `PageBuilder`, the
 observation every hydrating row takes, the key gather and view fan-back each
 level performs, and `seal`. Binding a compiled read to its levels is preparation
 rather than batch work and is timed as such, inside compiled-read preparation and

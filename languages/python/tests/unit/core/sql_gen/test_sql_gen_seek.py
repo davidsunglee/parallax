@@ -358,16 +358,15 @@ def test_a_capture_alias_a_resident_member_spelling_claims_is_allocated_past() -
         POSTGRES,
     )
     assert compiled.coordinate_reads == ("parallax_seek_1", "parallax_seek_2")
-    row = compiled.materialize_row(
-        {
-            "id": 1,
-            "payload": PresentDocument({"parallax_seek_0": 3}),
-            "parallax_seek_1": 3,
-            "parallax_seek_2": 1,
-        }
-    )
-    assert row.values["parallax_seek_0"] == 3
-    assert row.coordinate == ContinuationCoordinate((3, 1))
+    row = {
+        "id": 1,
+        "payload": PresentDocument({"parallax_seek_0": 3}),
+        "parallax_seek_1": 3,
+        "parallax_seek_2": 1,
+    }
+    values, _findings, _classified = compiled.decode_payload(row)
+    assert values["parallax_seek_0"] == 3
+    assert compiled.row_header(row)[3] == ContinuationCoordinate((3, 1))
 
 
 def test_a_corrupt_text_compared_carrier_still_reports_the_text_it_crossed_as() -> None:

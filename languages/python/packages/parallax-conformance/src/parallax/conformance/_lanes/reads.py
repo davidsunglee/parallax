@@ -382,12 +382,12 @@ def run_streamed_graphs_case(
     port: CaseDatabase,
     lifecycle: LifecycleRun | None = None,
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
-    """Run a streamed milestone-set read and report its per-milestone graphs.
+    """Run one streamed milestone-set read and report its flat roots as authored entries.
 
     :func:`run_stream_case`'s milestone peer, standing to it exactly as
     :func:`run_graphs_case` stands to :func:`run_graph_case`. The delivery is the
     same one — production's streamed read at the case's declared page size — and
-    what differs is the observation it is reported as: a milestone-set delivery
+    what differs is only the authored observation shape: the flat delivery
     publishes one root per milestone, each standing at its own edge pin, so the
     `{pin, graph}` entries are recovered from those pins rather than from a second
     read per milestone.
