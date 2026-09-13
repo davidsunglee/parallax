@@ -317,7 +317,7 @@ RECIPES: Final[list[Recipe]] = [
         graded_by=(
             "`tests/api/test_database_pooling.py` (real Postgres: two handles over "
             "one configuration serving independently, the pool watched from "
-            "composition through a delivery that holds the only slot to the "
+            "composition through a delivery returning its page lease to the "
             "detachment a close causes, the lifespan closing the handle it "
             "yielded, and every event of an offloaded operation delivered on the "
             "worker thread rather than the event loop) and "
@@ -335,15 +335,14 @@ RECIPES: Final[list[Recipe]] = [
             "`observe_pool` answers with is closed when the handle closes; the "
             "exporter behind it is the application's and outlives both. What "
             "crosses into a worker thread is one COMPLETE operation, release "
-            "included: handing a `Snapshot` back to be walked on the event loop "
-            "would move part of the operation onto it and keep the connection for "
-            "as long as the loop took to get there. No web framework is imported "
+            "included: handing a standalone stream back would move its later page "
+            "acquisitions and reads onto the event loop. No web framework is imported "
             "here or needed — a lifespan is an async context manager and the "
             "offload is a worker thread, which is exactly what FastAPI's "
             "`lifespan=` and its own endpoint threadpool are. Sampling runs no "
             "statement and takes no connection, which is why the reading below "
-            "succeeds from inside a streaming loop that is holding the runtime's "
-            "only slot."
+            "succeeds after one root is published, while that page's lease is back "
+            "in the one-slot runtime and before the next page asks for it."
         ),
         snippet=(
             database_pooling_stories.retention_snippet()
@@ -1488,6 +1487,26 @@ _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON: Final[str] = (
     "instruction this case authors. A permanent structural non-fit, not a deferred story"
 )
 
+_INVALID_ROOT_WRITE_VALUE_REASON: Final[str] = (
+    "the invalid-root write-authority witness: the case-driven write-value runners "
+    "(`tests/api/test_write_value_run.py` against real Postgres and "
+    "`tests/unit/conformance/test_write_value_runner.py` Docker-free) arrange its "
+    "`invalidRoot` through an explicitly corrupted Customer read, then drive the real "
+    "`tx.update` verb and prove the diagnostic node is refused before DML. This case "
+    "needs that invalid-root arranger rather than the generic provenance-token mapping "
+    "used by m-unit-work-017 through -020"
+)
+
+_SHARED_STATE_ROOT_AUTHORITY_REASON: Final[str] = (
+    "the root-local authority sibling of the corrupt-storage lane: the run sweep "
+    "grades this case's two-root graph and stored-data diagnosis against the real "
+    "provider, while `tests/unit/snapshot/test_read_origin.py` proves the additional "
+    "authority claim the graph cannot render — two root-local Customer nodes may borrow "
+    "one page-owned Entity State, but only the node reached through the valid root "
+    "carries a Read Origin. m-unit-work-028 separately grades the invalid node's "
+    "write-visible refusal"
+)
+
 _WRITE_VALUE_PROVENANCE_REASON: Final[str] = (
     "a keyed write value-provenance witness (m-unit-work *Write value provenance*, "
     "m-case-format *Keyed write action steps*): graded end-to-end by the case-driven "
@@ -1594,7 +1613,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-020": _WRITE_VALUE_PROVENANCE_REASON,
-    "m-unit-work-028": _WRITE_VALUE_PROVENANCE_REASON,
+    "m-unit-work-028": _INVALID_ROOT_WRITE_VALUE_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     # (the locking-mode advance has an idiomatic story, m-opt-lock-002)        #
@@ -1810,7 +1829,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-snapshot-read-048": _STREAMED_DELIVERY_REASON,
     # -- m-snapshot-read: the corrupt-stored-state lane ---------------------- #
     "m-snapshot-read-049": _CORRUPT_STORED_STATE_REASON,
-    "m-snapshot-read-050": _CORRUPT_STORED_STATE_REASON,
+    "m-snapshot-read-050": _SHARED_STATE_ROOT_AUTHORITY_REASON,
     # -- m-value-object: predicate-read representative siblings ------------- #
     "m-value-object-004": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-005": _VO_PREDICATE_SIBLING_REASON,

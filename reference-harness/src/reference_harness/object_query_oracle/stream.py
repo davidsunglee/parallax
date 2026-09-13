@@ -224,6 +224,7 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
         lookahead = remaining is None or remaining > batch_size
         requested = batch_size + 1 if remaining is None or lookahead else remaining
         composed: seek.ComposedSeek | None = None
+        arms: tuple[str, ...] | None = None
         if page == 0:
             first_root_sql = root_sql
             seek.refuse_an_uncaptured_page(case, dialect, source, root_sql, terms, aliases)
@@ -242,6 +243,20 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
                     f"{len(arms)} continuing arm(s), not {expected_arm_count}. A non-null "
                     f"direct leading coordinate whose emitted placement trails NULLs uses "
                     f"one range arm and one disjoint NULL-tail arm."
+                )
+            if wants_null_tail:
+                seek.refuse_a_malformed_continuing_wrapper(
+                    case,
+                    dialect,
+                    source,
+                    page,
+                    root_sql,
+                    authored,
+                    query,
+                    root_entity,
+                    terms,
+                    aliases,
+                    requested,
                 )
             range_arm = arms[0]
             spliced_at, _spliced_to = seek.seek_splice(first_root_sql, range_arm)
@@ -269,7 +284,8 @@ def deliver_stream(case: Case, reader: ReadExecutor, source: str) -> StreamDeliv
                 f"where the two statements diverge, then the size it is asking for."
             )
         if composed is not None:
-            arms = seek.continuing_arms(root_sql)
+            if arms is None:  # pragma: no cover - a composed seek exists only after page one
+                raise AssertionError("a continuing page has no parsed arms")
             seek.refuse_a_drifting_page(
                 seek.PageText(case, dialect, source, page, first_root_sql, arms[0]),
                 composed,

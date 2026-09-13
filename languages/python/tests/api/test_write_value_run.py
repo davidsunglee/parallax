@@ -24,12 +24,10 @@ from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.conformance.vo_models import Customer
-from parallax.core.base import PresentDocument
-from parallax.core.entity import Entity
 from parallax.snapshot import connect, prepare_model
 from parallax.snapshot.handle import InvalidData, Transaction
 from tests._support.corpus import case_fixtures
-from tests._support.db_port import Read, ScriptedAdapter
+from tests._support.write_values import invalid_customer_root
 
 _CASES = write_value_runner.reachable_write_value_cases()
 _CASE_IDS = [case.case_id for case in _CASES]
@@ -51,38 +49,10 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     )
     steps = write_value_runner.write_value_steps(case)
 
-    def invalid_root() -> Entity:
-        invalid = (
-            connect(
-                ScriptedAdapter(
-                    Read(
-                        rows=[
-                            {
-                                "id": 6,
-                                "name": "Rin",
-                                "address": PresentDocument(
-                                    {
-                                        "street": "6 Kastanien Allee",
-                                        "city": "Berlin",
-                                        "geo": "unknown",
-                                    }
-                                ),
-                            }
-                        ]
-                    )
-                ),
-                model,
-            )
-            .find(Customer.where(Customer.id == 6))
-            .checked()
-            .result()
-        )
-        assert isinstance(invalid, InvalidData)
-        assert invalid.data is not None
-        return invalid.data
-
     def fn(tx: Transaction) -> list[str | None]:
-        return write_value_runner.graded_outcomes(tx, steps, another, invalid_root)
+        return write_value_runner.graded_outcomes(
+            tx, steps, another, lambda: invalid_customer_root(model)
+        )
 
     outcomes = db.transact(fn)
     assert outcomes == [step.expect_error for step in steps]
