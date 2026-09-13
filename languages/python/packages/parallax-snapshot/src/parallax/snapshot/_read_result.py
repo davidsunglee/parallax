@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.unit_work import SourceHint
+from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot.materialize import (
     EMPTY_UNWIND,
     InvalidData,
@@ -52,7 +52,7 @@ class FindResult:
     every view any level loaded onto a node, so a back-reference would revisit
     its target forever. The executor knows the plan, so it hands the tree on.
 
-    ``sources`` is the private Source Hint each observed projection's value will
+    ``sources`` is the private Read Origin each observed projection's value will
     carry, keyed by that projection's own index in the Page. It travels
     with the Page because only the executor holds the row and the
     projection at once: a materializer builds the value, but the row it came from
@@ -61,7 +61,7 @@ class FindResult:
 
     page: Page
     includes: UnwindTree = EMPTY_UNWIND
-    sources: Mapping[int, SourceHint] = MappingProxyType({})
+    sources: Mapping[int, ReadOrigin] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)

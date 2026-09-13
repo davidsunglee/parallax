@@ -84,7 +84,6 @@ from tests.unit._corpus_model_support import model as corpus_model
 from tests.unit.snapshot._snapshot_page_support import (
     documents_of,
     identity_of,
-    invalid_record,
     layout_of,
     rendered_occurrence,
 )
@@ -830,30 +829,25 @@ def test_a_member_the_read_did_not_carry_is_absent_rather_than_null() -> None:
     assert "shippedOn" in stored_null.carried
 
 
-@pytest.mark.parametrize(
-    ("row", "code"),
-    [
-        ({"id": None, "name": "Ada"}, "stored-data-primary-key-null"),
-        ({"id": "not-an-int", "name": "Ada"}, "stored-data-primary-key-undecodable"),
-    ],
-)
-def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], code: str) -> None:
+@pytest.mark.parametrize("key", [None, "not-an-int"], ids=["null", "provider-representation"])
+def test_a_native_requested_root_key_is_not_reclassified(key: object) -> None:
+    # A native key reaches this seam only after its installed SQL type and
+    # constraint have admitted it. The provider-normalized value is therefore an
+    # identity claim, not fresh input to the host's scalar codec.
     builder = PageBuilder(ViewSchema.of())
-    ref = convert_row(row, _context(CUSTOMER, "Customer"), builder, source=ROOT_LEVEL)
+    ref = convert_row(
+        {"id": key, "name": "Ada"}, _context(CUSTOMER, "Customer"), builder, source=ROOT_LEVEL
+    )
     page = builder.finish((ref,), Pin())
     assert page_rows(page).roots == (ref,)
     view = RootView(page, 0)
-    (invalid,) = view.invalid_roots
-    assert invalid.issues[0].code == code
+    assert view.invalid_roots == ()
     (root,) = typed_root(
         view,
         CUSTOMER,
         graph_construction_for(vo_models.CUSTOMER_MODEL),
     )
-    published = invalid_record(root)
-    assert published.data is None
-    assert published.object_key is None
-    assert {issue.code for issue in published.issues} == {code}
+    assert cast("Any", root).id == key
 
 
 @pytest.mark.parametrize(
@@ -884,31 +878,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
 @pytest.mark.parametrize(
     ("row", "provenance", "expected"),
     [
-        (
-            {"id": None, "name": "Ada"},
-            {},
-            ("stored-data-primary-key-null", AttributeIdentity(_CUSTOMER, "id"), (), None),
-        ),
-        (
-            {"id": "seven", "name": "Ada"},
-            {},
-            (
-                "stored-data-primary-key-undecodable",
-                AttributeIdentity(_CUSTOMER, "id"),
-                (),
-                "seven",
-            ),
-        ),
-        (
-            {"id": 1, "name": None},
-            {},
-            ("stored-data-attribute-null", AttributeIdentity(_CUSTOMER, "name"), (), None),
-        ),
-        (
-            {"id": 1, "name": 7},
-            {},
-            ("stored-data-leaf-undecodable", AttributeIdentity(_CUSTOMER, "name"), (), 7),
-        ),
         (
             {"id": 1, "name": "Ada"},
             {"unknown_family_tag": UnknownFamilyTag("Unicorn")},
@@ -982,10 +951,6 @@ _PHONES = ValueObjectIdentity(_CUSTOMER, ("address", "phones"))
         ),
     ],
     ids=[
-        "primary-key-null",
-        "primary-key-undecodable",
-        "attribute-null",
-        "attribute-undecodable",
         "family-tag-unknown",
         "member-absent",
         "member-null",
@@ -1047,13 +1012,17 @@ def test_structured_evidence_is_detached_read_only_and_recursive() -> None:
 
 @pytest.mark.parametrize("view", [False, True], ids=["bytearray", "memoryview"])
 def test_a_mutable_provider_carrier_is_copied_out_of_the_evidence(view: bool) -> None:
-    # A driver may answer a `bytes` column with a buffer it still owns, and
-    # answer it either as the buffer or as a view over one. Retaining either
-    # would leave a public diagnosis describing whatever that buffer later holds,
-    # so a byte-like is copied where every other scalar passes through.
+    # An encoded projection is host-checked. A driver may answer it with a buffer
+    # it still owns, either directly or through a view; retained diagnostic
+    # evidence must therefore be detached from that mutable carrier.
     buffer = bytearray(b"\x0a\x1b")
     carrier: object = memoryview(buffer) if view else buffer
-    (issue,) = _projection(_context(SCALARS, "ScalarThing"), {"payload": carrier}).issues
+    context = LevelContext(
+        layout_of(SCALARS, identity_of(SCALARS, "ScalarThing")),
+        (),
+        _reads(SCALARS, "ScalarThing", encoded={"payload": "payload_hex"}),
+    )
+    (issue,) = _projection(context, {"payload_hex": carrier}).issues
     del carrier
     buffer[0] = 0xFF
     assert issue.stored_value == b"\x0a\x1b"
@@ -1065,11 +1034,11 @@ def _diagnoses(node: _Projection) -> list[tuple[object, ...]]:
     return [(issue.code, issue.member, issue.path, issue.stored_value) for issue in node.issues]
 
 
-def test_the_evidence_a_document_resident_attribute_publishes_is_its_columns() -> None:
-    # Storage Layout may not change a diagnosis. A direct Entity Attribute is
-    # located by its own identity under either layout, so the path it publishes
-    # is empty whether the codec judged it inside an Entity document or
-    # admission judged it in a column of its own.
+def test_document_codec_findings_do_not_imply_native_column_reclassification() -> None:
+    # A document-resident Entity Attribute is judged by the document codec and
+    # retains its diagnosis. A native Column is instead trusted after database
+    # enforcement and provider normalization, so the host does not recreate the
+    # same finding from its raw value.
     document = _converted(
         CUSTOMER,
         "Customer",
@@ -1077,4 +1046,7 @@ def test_the_evidence_a_document_resident_attribute_publishes_is_its_columns() -
         findings=(DocumentFinding("required-member-null", ("name",), None),),
     )
     columns = _converted(CUSTOMER, "Customer", {"id": 1, "name": None})
-    assert _diagnoses(document) == _diagnoses(columns)
+    assert _diagnoses(document) == [
+        ("stored-data-attribute-null", AttributeIdentity(_CUSTOMER, "name"), (), None)
+    ]
+    assert columns.issues == ()

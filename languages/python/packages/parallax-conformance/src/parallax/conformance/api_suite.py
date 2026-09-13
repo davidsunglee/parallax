@@ -1594,6 +1594,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-020": _WRITE_VALUE_PROVENANCE_REASON,
+    "m-unit-work-028": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     # (the locking-mode advance has an idiomatic story, m-opt-lock-002)        #
@@ -1809,6 +1810,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-snapshot-read-048": _STREAMED_DELIVERY_REASON,
     # -- m-snapshot-read: the corrupt-stored-state lane ---------------------- #
     "m-snapshot-read-049": _CORRUPT_STORED_STATE_REASON,
+    "m-snapshot-read-050": _CORRUPT_STORED_STATE_REASON,
     # -- m-value-object: predicate-read representative siblings ------------- #
     "m-value-object-004": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-005": _VO_PREDICATE_SIBLING_REASON,

@@ -35,7 +35,8 @@ two of the three exclusions are demonstrated rather than asserted — a caller
 retaining every root reproduces the `O(N)` growth the bound declines to prevent,
 and a writing loop's buffer grows with the page size and stops there. A wide
 Continuation Order is priced on a grid of its own: the width costs the plan once
-and the page one coordinate per root position whatever it is.
+and the page decision releases its per-root coordinates after retaining the one
+boundary needed to continue.
 
 **The third exclusion has no executable witness here, by construction.** What the
 database and its driver hold for a delivery — server-side cursors, connection
@@ -474,7 +475,7 @@ class _Namespace(NamedTuple):
 _TYPED: Final = _Namespace(
     "typed", _typed_stream, fixed=67, per_page_node=2, per_page_root=1, per_published_node=2
 )
-"""The Typed lane. Two objects per page node — the Source Hint a page retains for
+"""The Typed lane. Two objects per page node — the Read Origin a page retains for
 it and the Object Key that hint is filed under — one per page ROOT rather than
 per node, the coordinate the database evaluated for it, and two per published
 node, the frozen Entity instance and the node state naming what it was read
@@ -927,13 +928,13 @@ def test_neither_the_result_size_nor_the_position_reached_moves_what_is_held() -
 
 
 @in_a_child_interpreter
-def test_a_wide_continuation_order_costs_the_plan_once_and_the_page_per_root() -> None:
+def test_a_wide_continuation_order_costs_the_plan_once_and_retains_fixed_boundaries() -> None:
     # The page term's other dimension, which the grid above holds at its
     # narrowest: how many terms the Continuation Order has. A coordinate holds
-    # its carriers in ONE tuple rather than wrapping each cell, so a page retains
-    # one of them per root POSITION whatever the order's width — the width itself
-    # is a delivery-lifetime cost, paid once by the plan and the page node rather
-    # than once per root.
+    # its carriers in ONE tuple rather than wrapping each cell. The page decision
+    # uses one per root POSITION, releases them before graph assembly, and retains
+    # only fixed delivery boundaries. The width itself is a delivery-lifetime
+    # cost, paid once by the plan rather than once per root.
     #
     # Stated as two differences over a crossed grid, because either alone is
     # satisfiable by the other: the term difference is the same at both page
@@ -950,11 +951,10 @@ def test_a_wide_continuation_order_costs_the_plan_once_and_the_page_per_root() -
     narrow, wide = _TERM_PAGES
     for batch_size in _TERM_PAGES:
         for terms in _TERM_COUNTS:
-            # The Page's own, plus the position the delivery carries between two
-            # Pages and the marker coordinate retained by the delivery's one
-            # compiled seek template. Both fixed terms are one object whatever
-            # the order's width.
-            assert counts[batch_size, terms][1]["ContinuationCoordinate"] == batch_size + 2, (
+            # The position entering the current Page, the boundary leaving it,
+            # and the marker retained by the delivery's one compiled seek
+            # template. All three are fixed whatever the Page size or order width.
+            assert counts[batch_size, terms][1]["ContinuationCoordinate"] == 3, (
                 batch_size,
                 terms,
                 counts,
@@ -998,10 +998,10 @@ def test_nothing_in_the_process_grows_with_the_result_or_the_position() -> None:
     # this makes is about every Python object in the process, which is what all of
     # Parallax's own storage is, and not about the process's resident set.
     #
-    # Three totals, no baseline, and exact equality rather than a tolerance. The
-    # arms differ in exactly one thing each — ten times the roots at one position,
-    # and a later position of one result — and every value the fixture produces is
-    # the same width at every ordinal, so nothing but retention can move a total.
+    # Three totals and no baseline. Result-size arms require exact equality. The
+    # later-position arm may release interpreter scaffolding, but no component may
+    # grow: every value the fixture produces is the same width at every ordinal,
+    # so an increase can only be retention.
     # All three are handed over together because a total prices whoever is holding
     # what, including this measurement: taken one call at a time, each reading
     # would count the ones already bound beside it.
@@ -1017,7 +1017,11 @@ def test_nothing_in_the_process_grows_with_the_result_or_the_position() -> None:
             _paused(namespace, _LARGE, batch_size=_BATCH, fanout=_FANOUT, at=_FURTHER),
         )
         assert near == larger, (namespace.name, near, larger)
-        assert near == further, (namespace.name, near, further)
+        assert all(later <= earlier for earlier, later in zip(near, further, strict=True)), (
+            namespace.name,
+            near,
+            further,
+        )
 
 
 @in_a_child_interpreter

@@ -48,8 +48,6 @@ from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.temporal_read import Edge, Pin
 from parallax.snapshot import (
     DeferredFeatureError,
-    InvalidData,
-    InvalidDataError,
     QueryTargetError,
     ServingModel,
     SnapshotStreamContinuationError,
@@ -61,7 +59,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import Database, Transaction, _materialization
-from parallax.snapshot.materialize import source_hint_of
+from parallax.snapshot.materialize import read_origin_of
 from tests._support.adoption import raises_contextualized
 from tests._support.db_port import (
     Read,
@@ -86,10 +84,6 @@ def _order_row(order_id: int) -> MappingRow:
         "active": True,
         "ordered_on": dt.date(2024, 1, 5),
     }
-
-
-def _keyless_order_row() -> MappingRow:
-    return {**_order_row(0), "id": None}
 
 
 def _item_row(item_id: int, order_id: int) -> MappingRow:
@@ -611,114 +605,6 @@ def test_a_to_one_two_roots_reach_diverges_the_same_way_in_the_wire_namespace() 
 
 
 # --------------------------------------------------------------------------- #
-# Invalid stored data inside the Continuation Order itself.                    #
-# --------------------------------------------------------------------------- #
-def _undecodable_qty_row() -> MappingRow:
-    return {**_order_row(0), "qty": "many"}
-
-
-def _by_qty() -> ObjectQuery[Order, Order]:
-    return _all_orders().order_by(Order.qty.asc())
-
-
-def _corrupt_pages(row: Callable[[], MappingRow], position: int, *, size: int) -> ScriptedAdapter:
-    rows = [_order_row(1), _order_row(2), _order_row(3)]
-    rows[position] = row()
-    return ScriptedAdapter(*paged_reads(rows, size=size))
-
-
-@pytest.mark.parametrize("position", [0, 1, 2], ids=["first", "middle", "last"])
-@pytest.mark.parametrize("size", [2, 3])
-def test_a_checked_delivery_continues_past_an_invalid_sort_key(position: int, size: int) -> None:
-    # Invalid stored data ends no checked delivery, and it ends none at any
-    # position or page size, so `batch_size` stays a performance dial: a root whose
-    # ORDERED-BY member contradicts the model is published as its record and the
-    # delivery carries on, because what the next page seeks past is the value the
-    # database's own `order by` expression evaluated — which exists whatever the
-    # stored value turned out to be.
-    with _orders(_corrupt_pages(_undecodable_qty_row, position, size=size)).stream(
-        _by_qty(), batch_size=size
-    ) as stream:
-        delivered = list(stream.checked())
-    assert len(delivered) == 3
-    assert [isinstance(root, InvalidData) for root in delivered] == [
-        index == position for index in range(3)
-    ]
-
-
-@pytest.mark.parametrize("position", [0, 1, 2], ids=["first", "middle", "last"])
-@pytest.mark.parametrize("size", [2, 3])
-def test_the_default_view_still_stops_at_the_first_invalid_root(position: int, size: int) -> None:
-    # The throwing view stays fail-fast: continuation is what changed, not the
-    # default view's refusal, so the caller gets every root ahead of the corrupt
-    # one and then the refusal.
-    delivered: list[object] = []
-    with (
-        _orders(_corrupt_pages(_undecodable_qty_row, position, size=size)).stream(
-            _by_qty(), batch_size=size
-        ) as stream,
-        raises_contextualized(InvalidDataError),
-    ):
-        for root in stream:
-            delivered.append(root)
-    assert len(delivered) == position
-
-
-def test_a_throwing_delivery_refuses_with_the_record_the_eager_read_refuses_with() -> None:
-    # A page IS an eager read, so the REFUSAL is too: the report a throwing
-    # delivery raises carries the same enriched record — evidence, path, and the
-    # result ordinal the root stands at — as the one the throwing eager read of
-    # the same rows raises. `qty` is outside this query's Continuation Order, so
-    # the eager read reaches every root and the two reports are comparable.
-    rows = [_order_row(1), {**_order_row(2), "qty": "many"}, _order_row(3)]
-    with pytest.raises(InvalidDataError) as eager:
-        _orders(ScriptedAdapter(Read(rows=rows))).find(_all_orders()).results()
-    with (
-        _orders(ScriptedAdapter(*paged_reads(rows, size=2))).stream(
-            _all_orders(), batch_size=2
-        ) as stream,
-        raises_contextualized(InvalidDataError) as streamed,
-    ):
-        list(stream)
-    assert streamed.value.invalid_data == eager.value.invalid_data
-    # Both refusals carry the edition their own read was served under: the
-    # eager one arrives bare from a delayed accessor, the streamed one as the
-    # cause of the delivery's own contextualized failure, under one edition.
-    assert eager.value.edition
-    assert streamed.value.edition == streamed.edition
-    (record,) = streamed.value.invalid_data
-    (issue,) = record.issues
-    assert (record.ordinal, issue.code, issue.path, issue.stored_value) == (
-        1,
-        "stored-data-leaf-undecodable",
-        (),
-        "many",
-    )
-
-
-def test_a_root_whose_primary_key_did_not_decode_is_delivered_and_placed_last() -> None:
-    # A stored NULL where the primary key belongs is a coordinate like any
-    # other, and the ordering itself says where it stands: `order by t0.id asc`
-    # places a NULL last on this dialect, so nothing follows it. The delivery
-    # publishes the record and exhausts on the page that delivered it, rather
-    # than refusing to continue.
-    port = ScriptedAdapter(Read(rows=[_order_row(1), _keyless_order_row()]))
-    with _orders(port).stream(_all_orders(), batch_size=2) as stream:
-        delivered = list(stream.checked())
-    assert [isinstance(root, InvalidData) for root in delivered] == [False, True]
-    assert len(_reads(port)) == 1
-
-
-def test_a_stream_that_failed_answers_nothing_further() -> None:
-    port = _corrupt_pages(_undecodable_qty_row, 0, size=2)
-    with _orders(port).stream(_by_qty(), batch_size=2) as stream:
-        with raises_contextualized(InvalidDataError):
-            list(stream)
-        with pytest.raises(SnapshotStreamStateError, match="single-pass"):
-            iter(stream)
-
-
-# --------------------------------------------------------------------------- #
 # Milestone streaming: the Continuation Order's third component, and the pin   #
 # every published root stands at.                                              #
 # --------------------------------------------------------------------------- #
@@ -848,14 +734,14 @@ def test_a_streamed_milestone_set_delivers_what_the_whole_result_read_does() -> 
 
 
 def _retained(node: object) -> object:
-    """One Typed node's own retained Source Hint, or ``None`` where it kept none."""
+    """One Typed node's own retained Read Origin, or ``None`` where it kept none."""
     state = snapshot_state_of(node)
     return None if state is None else state.source
 
 
 def test_a_wire_streamed_milestone_root_retains_no_more_than_its_typed_peer() -> None:
     # The two namespaces answer one delivery. A Wire node keeps its whole
-    # provenance — the pin included — in its Source Hint rather than in lifecycle
+    # provenance — the pin included — in its Read Origin rather than in lifecycle
     # state, so a hint carrying the QUERY's coordinates would make a Wire-streamed
     # historical root writable where its Typed peer is refused.
     with _positions(_milestone_pages(size=2)).wire.stream(
@@ -863,7 +749,7 @@ def test_a_wire_streamed_milestone_root_retains_no_more_than_its_typed_peer() ->
     ) as stream:
         roots = [_entity(root) for root in stream]
     assert [root["value"] for root in roots] == ["90.00", "100.00", "200.00"]
-    assert [source_hint_of(root) for root in roots] == [None, None, None]
+    assert [read_origin_of(root) for root in roots] == [None, None, None]
 
 
 def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
@@ -878,61 +764,6 @@ def test_a_streamed_history_with_includes_is_refused_before_any_io() -> None:
         Database(RefusingAdapter(), POLICY_MODEL).stream(query, batch_size=2),
     ):
         pass  # pragma: no cover - the gate refuses at scope entry
-
-
-def test_a_milestone_root_whose_edge_did_not_decode_is_published_at_the_pages_pin() -> None:
-    # The behavioural inversion the coordinate buys: a milestone root whose axis
-    # starts did not decode has no edge of its own to be pinned at, so it is
-    # published at the page's own pin — and the delivery continues past it,
-    # seeking on the carriers the ordering expressions evaluated.
-    broken = {**_MILESTONES[0], "in_z": None}
-    port = ScriptedAdapter(Read(rows=[broken, _MILESTONES[1]]))
-    with _positions(port).stream(_all_milestones(), batch_size=2) as stream:
-        delivered = list(stream.checked())
-    assert [isinstance(root, InvalidData) for root in delivered] == [True, False]
-    assert pin_of(delivered[1]) == Pin(valid_time=_JANUARY, tx_time=_APRIL)
-
-
-def test_a_milestone_root_whose_key_did_not_decode_stands_at_no_edge() -> None:
-    # The other half of the same rule, and the one shape that answers no member
-    # at all: a root whose own primary key did not decode stands behind no
-    # projection, so there is nothing to read a milestone off — and nothing about
-    # that stops the delivery either.
-    port = ScriptedAdapter(Read(rows=[{**_MILESTONES[0], "pos_id": None}, _MILESTONES[1]]))
-    with _positions(port).stream(_all_milestones(), batch_size=2) as stream:
-        delivered = list(stream.checked())
-    assert [isinstance(root, InvalidData) for root in delivered] == [True, False]
-
-
-def _diagnoses(root: object) -> frozenset[object] | None:
-    """``root``'s published diagnoses, or absence where it published as itself."""
-    return (
-        frozenset(cast("InvalidData[object]", root).issues)
-        if isinstance(root, InvalidData)
-        else None
-    )
-
-
-def test_an_eager_and_a_streamed_checked_read_publish_one_roots_issues_alike() -> None:
-    # A page IS an eager read, so a diagnosis has to be too — down to the
-    # evidence it carries. `qty` is outside this query's Continuation Order, so
-    # the corrupt root is published and the delivery continues past it, which is
-    # what lets the two readings be compared root for root.
-    rows = [_order_row(1), {**_order_row(2), "qty": "many"}, _order_row(3)]
-    eager = _orders(ScriptedAdapter(Read(rows=rows))).find(_all_orders()).checked().results()
-    with _orders(ScriptedAdapter(*paged_reads(rows, size=2))).stream(
-        _all_orders(), batch_size=2
-    ) as stream:
-        streamed = list(stream.checked())
-    assert [_diagnoses(root) for root in eager] == [_diagnoses(root) for root in streamed]
-    issues = _diagnoses(streamed[1])
-    assert issues is not None
-    (issue,) = cast("frozenset[Any]", issues)
-    assert (issue.code, issue.path, issue.stored_value) == (
-        "stored-data-leaf-undecodable",
-        (),
-        "many",
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -974,31 +805,6 @@ def test_a_tie_ends_the_throwing_view_the_same_way() -> None:
         raises_contextualized(SnapshotStreamContinuationError, match="not total"),
     ):
         assert _ids(iter(stream)) == [1]
-
-
-def test_an_invalid_root_in_the_prefix_refuses_before_the_tie_does() -> None:
-    # Precedence in code order: the prefix is published first, so the throwing
-    # view's refusal of invalid stored data interrupts from inside the loop and
-    # the continuation refusal is never reached.
-    rows = [{**_order_row(1), "qty": "many"}, _order_row(2), _order_row(2)]
-    with (
-        _orders(ScriptedAdapter(Read(rows=rows))).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(InvalidDataError),
-    ):
-        list(stream)
-
-
-def test_the_checked_view_publishes_an_invalid_prefix_root_and_then_refuses() -> None:
-    # The same delivery through the other view: the invalid root is in band, so
-    # the prefix is published in full and the tie refusal follows it.
-    rows = [{**_order_row(1), "qty": "many"}, _order_row(2), _order_row(2)]
-    delivered: list[object] = []
-    with (
-        _orders(ScriptedAdapter(Read(rows=rows))).stream(_all_orders(), batch_size=2) as stream,
-        raises_contextualized(SnapshotStreamContinuationError),
-    ):
-        delivered.extend(stream.checked())
-    assert [isinstance(root, InvalidData) for root in delivered] == [True]
 
 
 def test_a_tie_found_on_a_later_page_keeps_every_root_before_it() -> None:

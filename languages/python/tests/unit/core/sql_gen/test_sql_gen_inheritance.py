@@ -11,9 +11,8 @@ table-per-concrete-subtype `union all` restarts.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -67,92 +66,7 @@ def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_bran
     assert compiled.statement.binds == ()
 
 
-def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
-    compiled = compile_read(
-        oa.All(),
-        DOCUMENT_LAYOUT,
-        POSTGRES,
-        target(DOCUMENT_LAYOUT, "Publication"),
-        result_form="instance",
-    )
-    assert compiled.structured_column == "payload"
-    assert compiled.transform_row(
-        {
-            "id": 10,
-            "payload": PresentDocument({"title": "Systems", "detail": "ISBN-10", "pages": 320}),
-            "family_variant": "Book",
-        }
-    ) == {
-        "id": 10,
-        "title": "Systems",
-        "detail": "ISBN-10",
-        "pages": 320,
-        "familyVariant": "Book",
-    }
-    assert compiled.transform_row(
-        {
-            "id": 20,
-            "payload": PresentDocument({"title": "Frames", "detail": 850, "minutes": 95}),
-            "family_variant": "Film",
-        }
-    ) == {
-        "id": 20,
-        "title": "Frames",
-        "detail": 850,
-        "minutes": 95,
-        "familyVariant": "Film",
-    }
-    row_compiled = compile_read(
-        oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Publication")
-    )
-    assert (
-        row_compiled.transform_row(
-            {
-                "id": 10,
-                "payload": PresentDocument({"title": "Systems", "detail": "ISBN-10", "pages": 320}),
-                "family_variant": "Book",
-            }
-        )["minutes"]
-        is None
-    )
-
-    # A branch that stores no document of its own still pads what its siblings'
-    # documents carry: the stage keeps its entry and answers no shape.
-    materializer = cast("Any", row_compiled)._materializer
-    shared = materializer.stages.shared_document
-    book = target(DOCUMENT_LAYOUT, "Book").identity
-    book_only = replace(
-        shared,
-        per_entity=tuple(
-            (identity, entry)
-            if identity == book
-            else (identity, replace(entry, shape=None, members=()))
-            for identity, entry in shared.per_entity
-        ),
-    )
-    without_sibling_document_members = replace(
-        row_compiled,
-        _materializer=replace(
-            materializer, stages=replace(materializer.stages, shared_document=book_only)
-        ),
-    )
-    assert without_sibling_document_members.transform_row(
-        {
-            "id": 20,
-            "payload": PresentDocument({"title": "Frames"}),
-            "family_variant": "Film",
-        }
-    ) == {
-        "id": 20,
-        "title": None,
-        "detail": None,
-        "pages": None,
-        "minutes": None,
-        "familyVariant": "Film",
-    }
-
-
-def test_tpcs_document_single_branch_projects_and_decodes_its_document() -> None:
+def test_tpcs_document_single_branch_projects_its_document() -> None:
     compiled = compile_read(
         oa.All(),
         DOCUMENT_LAYOUT,
@@ -164,12 +78,6 @@ def test_tpcs_document_single_branch_projects_and_decodes_its_document() -> None
     assert compiled.statement.sql == (
         "select t0.id, not t0.payload is null, t0.payload from publication_book t0"
     )
-    assert compiled.transform_row(
-        {
-            "id": 10,
-            "payload": PresentDocument({"title": "Systems", "detail": "ISBN-10", "pages": 320}),
-        }
-    ) == {"id": 10, "title": "Systems", "detail": "ISBN-10", "pages": 320}
 
 
 def test_tpcs_document_branches_alias_owned_cells_and_type_absent_cells() -> None:
@@ -413,7 +321,7 @@ def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None
     )
 
 
-def test_tph_document_materialization_decodes_only_the_tagged_variant_shape() -> None:
+def test_tph_document_payload_decode_uses_only_the_tagged_variant_shape() -> None:
     compiled = compile_read(
         oa.All(),
         DOCUMENT_LAYOUT,
@@ -422,42 +330,27 @@ def test_tph_document_materialization_decodes_only_the_tagged_variant_shape() ->
         result_form="instance",
     )
 
-    assert compiled.transform_row(
-        {
-            "id": 1,
-            "kind": "card",
-            "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
-        }
-    ) == {
+    card = {
         "id": 1,
-        "detail": "visa-4242",
-        "authorization_code": "AUTH-7",
-        "familyVariant": "CardPayment",
+        "kind": "card",
+        "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
     }
-    assert compiled.transform_row(
-        {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
-    ) == {
-        "id": 2,
-        "detail": Decimal("12.50"),
-        "familyVariant": "CashPayment",
-    }
+    resolved, variant, _unknown, _document = compiled.row_identity(card)
+    values, _findings, _classified = compiled.decode_payload(card)
+    assert resolved == target(DOCUMENT_LAYOUT, "CardPayment").identity
+    assert variant == "CardPayment"
+    assert values == {"id": 1, "detail": "visa-4242", "authorization_code": "AUTH-7"}
+
+    cash = {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
+    resolved, variant, _unknown, _document = compiled.row_identity(cash)
+    values, _findings, _classified = compiled.decode_payload(cash)
+    assert resolved == target(DOCUMENT_LAYOUT, "CashPayment").identity
+    assert variant == "CashPayment"
+    assert values == {"id": 2, "detail": Decimal("12.50")}
     _resolved, _variant, unknown, _document = compiled.row_identity(
         {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})}
     )
     assert unknown is not None
-
-
-def test_tph_document_row_projection_pads_members_outside_the_tagged_variant() -> None:
-    compiled = compile_read(oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Payment"))
-
-    assert compiled.transform_row(
-        {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
-    ) == {
-        "id": 2,
-        "detail": Decimal("12.50"),
-        "authorization_code": None,
-        "familyVariant": "CashPayment",
-    }
 
 
 def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
@@ -465,12 +358,13 @@ def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
         oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "CardPayment")
     )
 
-    assert compiled.transform_row(
+    values, _findings, _classified = compiled.decode_payload(
         {
             "id": 1,
             "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
         }
-    ) == {"id": 1, "detail": "visa-4242", "authorization_code": "AUTH-7"}
+    )
+    assert values == {"id": 1, "detail": "visa-4242", "authorization_code": "AUTH-7"}
 
 
 def test_tph_document_family_with_no_resident_members_projects_no_document() -> None:
@@ -497,10 +391,8 @@ def test_tph_document_family_with_no_resident_members_projects_no_document() -> 
 
     compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "EmptyRoot"))
     assert compiled.statement.sql == "select t0.id, t0.kind from empty_root t0"
-    assert compiled.transform_row({"id": 1, "kind": "leaf"}) == {
-        "id": 1,
-        "familyVariant": "EmptyLeaf",
-    }
+    resolved, variant, unknown, _document = compiled.row_identity({"id": 1, "kind": "leaf"})
+    assert (resolved, variant, unknown) == (target(meta, "EmptyLeaf").identity, "EmptyLeaf", None)
 
 
 def test_user_binds_precede_framework_tag_binds() -> None:
@@ -916,14 +808,16 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     assert compiled.statement.sql == (
         "select t0.id, t0.kind, t0.x, not t0.meta is null, t0.meta from root_tbl t0"
     )
-    assert compiled.transform_row(
-        {
-            "id": 1,
-            "kind": "leaf",
-            "x": 7,
-            "meta": PresentDocument({"note": "tagged"}),
-        }
-    ) == {"id": 1, "x": 7, "meta": {"note": "tagged"}, "familyVariant": "Leaf"}
+    tagged = {
+        "id": 1,
+        "kind": "leaf",
+        "x": 7,
+        "meta": PresentDocument({"note": "tagged"}),
+    }
+    resolved, variant, unknown, _document = compiled.row_identity(tagged)
+    values, _findings, _classified = compiled.decode_payload(tagged)
+    assert (resolved, variant, unknown) == (target(meta, "Leaf").identity, "Leaf", None)
+    assert values == {"id": 1, "x": 7, "meta": {"note": "tagged"}}
     resolved, _variant, unknown, _document = compiled.row_identity(
         {
             "id": 2,
@@ -936,7 +830,7 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     assert resolved.name == "Root"
 
 
-def test_tpcs_literal_transform_classifies_a_direct_value_object_column() -> None:
+def test_tpcs_literal_identity_selects_the_direct_value_object_contract() -> None:
     # A union branch resolves its concrete through the synthetic literal before
     # the direct document wrapper chooses that concrete's occurrence contract.
     from parallax.descriptor._records import (
@@ -975,52 +869,19 @@ def test_tpcs_literal_transform_classifies_a_direct_value_object_column() -> Non
     )
     meta = formed(Metamodel(entities=(root, first, second)))
     compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Root"), result_form="instance")
-    assert compiled.transform_row(
-        {
-            "id": 1,
-            "payload": "00ff",
-            "meta": PresentDocument({"note": "literal"}),
-            "family_variant": "First",
-        }
-    ) == {
+    row = {
         "id": 1,
-        "payload_hex": "00ff",
-        "meta": {"note": "literal"},
-        "familyVariant": "First",
+        "payload": "00ff",
+        "meta": PresentDocument({"note": "literal"}),
+        "family_variant": "First",
     }
+    resolved, variant, unknown, _document = compiled.row_identity(row)
+    values, _findings, _classified = compiled.decode_payload(row)
+    assert (resolved, variant, unknown) == (target(meta, "First").identity, "First", None)
+    assert values == {"id": 1, "payload_hex": "00ff", "meta": {"note": "literal"}}
 
 
-# --------------------------------------------------------------------------- #
-# `familyVariant` row materialization (`CompiledRead.transform_row`) and the    #
-# TPH/TPCS asymmetry behind it. The transform is built at COMPILE time from the #
-# very position that decided the projection, so what a caller materializes can  #
-# never disagree with what was actually projected.                              #
-# --------------------------------------------------------------------------- #
-def test_a_concrete_target_read_transforms_rows_by_identity() -> None:
-    # No tag column and no variant literal is projected, so there is nothing to
-    # materialize — but the row still comes back as a FRESH dict, so the caller
-    # need not care which form it got.
-    row = {"id": 1, "amount": Decimal("100.00"), "card_network": "Visa"}
-    for concrete_model, name in ((PAYMENT, "CardPayment"), (DOCUMENT, "Invoice")):
-        compiled = compile_read(oa.All(), concrete_model, POSTGRES, target(concrete_model, name))
-        transformed = compiled.transform_row(row)
-        assert transformed == row
-        assert transformed is not row
-
-
-def test_tph_abstract_read_transforms_rows_through_the_tag_map() -> None:
-    # The raw tag column is POPPED (it is framework-owned and never reaches the
-    # caller) and its value mapped to the declaring concrete's name.
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
-    assert compiled.transform_row({"id": 1, "amount": Decimal("100.00"), "kind": "card"}) == {
-        "id": 1,
-        "amount": Decimal("100.00"),
-        "familyVariant": "CardPayment",
-    }
-    assert compiled.transform_row({"id": 2, "kind": "cash"})["familyVariant"] == "CashPayment"
-
-
-def test_tph_tag_transform_holds_regardless_of_narrow_cardinality() -> None:
+def test_tph_tag_identity_holds_regardless_of_narrow_cardinality() -> None:
     # m-inheritance-012's own witness: narrowed down to ONE concrete, but the read's
     # OWN queried `target` (Animal) is abstract, so the tag column is still projected
     # and still transformed. The map is the WHOLE family's, not the narrow's
@@ -1031,9 +892,9 @@ def test_tph_tag_transform_holds_regardless_of_narrow_cardinality() -> None:
         POSTGRES,
         target(ANIMAL, "Animal"),
     )
-    assert compiled.transform_row({"id": 1, "kind": "dog"})["familyVariant"] == "Dog"
-    assert compiled.transform_row({"id": 2, "kind": "boar"})["familyVariant"] == "WildBoar"
-    # And the sibling the narrow excluded is named ahead of any row: `resolvable`
+    dog, dog_variant, dog_unknown, _document = compiled.row_identity({"id": 1, "kind": "dog"})
+    assert (dog, dog_variant, dog_unknown) == (target(ANIMAL, "Dog").identity, "Dog", None)
+    # The sibling the narrow excluded is named ahead of any row: `resolvable`
     # is the whole tag map plus the family root, so a consumer preparing one
     # structure per Entity a row can carry prepares WildBoar's before the boar
     # row arrives rather than on reaching it.
@@ -1068,8 +929,14 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     compiled = compile_read(oa.All(), partial, POSTGRES, target(partial, "Beast"))
 
     assert compiled.statement.sql == "select t0.id, t0.kind, t0.howl from beast t0"
-    wolf_row = compiled.transform_row({"id": 1, "kind": "wolf", "howl": "aooo"})
-    assert wolf_row["familyVariant"] == "Wolf"
+    wolf_identity, wolf_variant, wolf_unknown, _document = compiled.row_identity(
+        {"id": 1, "kind": "wolf", "howl": "aooo"}
+    )
+    assert (wolf_identity, wolf_variant, wolf_unknown) == (
+        target(partial, "Wolf").identity,
+        "Wolf",
+        None,
+    )
     resolved, _variant, unknown, _document = compiled.row_identity(
         {"id": 2, "kind": "bear", "howl": None}
     )
@@ -1210,11 +1077,17 @@ def test_a_tpcs_union_lands_its_document_tier_under_one_row_key() -> None:
         assert values[member] == 320
 
 
-def test_tpcs_union_read_renames_the_projected_literal_column() -> None:
+def test_tpcs_union_read_resolves_the_projected_literal_column() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
-    transformed = compiled.transform_row({"id": 1, "title": "A", "family_variant": "Invoice"})
-    assert transformed == {"id": 1, "title": "A", "familyVariant": "Invoice"}
-    assert "family_variant" not in transformed
+    row = {"id": 1, "title": "A", "family_variant": "Invoice"}
+    resolved, variant, unknown, _document = compiled.row_identity(row)
+    values, _findings, _classified = compiled.decode_payload(row)
+    assert (resolved, variant, unknown) == (
+        target(DOCUMENT, "Invoice").identity,
+        "Invoice",
+        None,
+    )
+    assert values == {"id": 1, "title": "A"}
 
 
 def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
@@ -1269,7 +1142,7 @@ def test_tpcs_union_preserves_qualified_duplicate_variant_identities() -> None:
 def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     # The settled asymmetry with table-per-hierarchy (m-sql, explicit): a single
     # resolved concrete has no shared table to discriminate and no sibling branch
-    # to distinguish it from, so it projects — and transforms — nothing.
+    # to distinguish it from, so it projects no variant carrier.
     compiled = compile_read(
         oa.All(),
         DOCUMENT,
@@ -1278,23 +1151,9 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
         narrow_to=_narrow(DOCUMENT, "Invoice"),
     )
     assert "family_variant" not in compiled.statement.sql
-    assert compiled.transform_row({"id": 1, "title": "A"}) == {"id": 1, "title": "A"}
     # Nothing discriminates, so every row of this read names the one concrete and
     # `resolvable` collapses to it — the read's own fallback and its whole set.
     assert compiled.resolvable == (target(DOCUMENT, "Invoice").identity,)
-
-
-def test_transform_row_accepts_any_mapping_and_always_returns_a_fresh_dict() -> None:
-    from types import MappingProxyType
-
-    compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
-    source = MappingProxyType({"id": 1, "kind": "card"})
-    transformed = compiled.transform_row(source)
-    assert isinstance(transformed, dict)
-    assert transformed == {"id": 1, "familyVariant": "CardPayment"}
-    # Mutating the result must not reach back into the caller's own row.
-    transformed["id"] = 99
-    assert source["id"] == 1
 
 
 # --------------------------------------------------------------------------- #

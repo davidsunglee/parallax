@@ -21,16 +21,14 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import CardPayment, Person
 from parallax.conformance.vo_models import (
     CONTACT_MODEL,
-    CUSTOMER_MODEL,
     Contact,
     ContactAddress,
     ContactGeo,
     ContactPoint,
-    Customer,
 )
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr
 from parallax.core.base import DocumentValue, InstantError, PresentDocument
-from parallax.core.db_port import JsonDocument, MappingRow
+from parallax.core.db_port import MappingRow
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
     EntityGraphWriter,
@@ -169,25 +167,19 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     ]
 
 
-def test_a_correction_of_stored_state_current_authoring_refuses_reaches_its_dml() -> None:
+def test_a_correction_authored_from_diagnostic_data_is_not_a_keyed_write_source() -> None:
     # `Contact` requires every member inside its address and the stored document
-    # states no `city`, so the read publishes a hydratable classified record while
-    # assigning that same document is refused (`Contact.address.city: required
-    # attribute is absent (or null)`, pinned at the producer in
-    # `test_write_instructions.py`). The write repairing it is a correction, and a
-    # correction against readable state has to reach the buffer: the verb judges
-    # what its caller authored, and weighs the original for effectiveness rather
-    # than admitting it. Only the corrected member is assigned.
+    # states no `city`, so the read publishes a hydratable classified record.
+    # Hydration makes the diagnostic data readable but does not admit it as valid
+    # stored Entity State. Even a complete replacement document therefore reaches
+    # the NotStored provenance refusal before row derivation or buffering.
     stored: dict[str, DocumentValue] = {
         "street": "Main",
         "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
         "phones": [],
     }
     port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(stored))}]),
-            Write(),
-        )
+        Transact(Read(rows=[{"id": 1, "name": "Ada", "address": PresentDocument(dict(stored))}]))
     )
 
     def fn(tx: Transaction) -> None:
@@ -205,23 +197,10 @@ def test_a_correction_of_stored_state_current_authoring_refuses_reaches_its_dml(
             )
         )
 
-    db_for(CONTACT_MODEL, port).transact(fn)
-    assert [op for op in port.calls if isinstance(op, WriteCall)] == [
-        WriteCall(
-            POSTGRES.to_driver_sql("update contact set address = ? where id = ?"),
-            (
-                JsonDocument(
-                    {
-                        "street": "Main",
-                        "city": "Berlin",
-                        "geo": {"country": "DE", "point": {"lat": 1.0, "lon": 2.0}},
-                        "phones": [],
-                    }
-                ),
-                1,
-            ),
-        )
-    ]
+    with raises_contextualized(KeyedWriteValueError) as refusal:
+        db_for(CONTACT_MODEL, port).transact(fn)
+    assert refusal.value.code == "write-value-not-stored"
+    assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 
 def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> None:
@@ -253,7 +232,7 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
 
 
 def test_delete_of_a_versioned_row_no_read_produced_raises() -> None:
-    # A plainly constructed instance carries no Source Hint at all, so it
+    # A plainly constructed instance carries no Read Origin at all, so it
     # observed no state and the Optimistic strategy has nothing to gate on — the
     # framework never issues an implicit resolving read on behalf of a keyed
     # write, so the delete raises at the verb, before any DML.
@@ -884,7 +863,7 @@ def test_a_temporal_close_of_a_value_no_read_produced_raises_before_any_dml(
     # read-before-write programming error under EITHER strategy: under Locking
     # the observing find's shared lock is the ungated close's ONLY protection,
     # and under Optimistic there is no observed `in_z` to gate on. A plainly
-    # constructed instance carries no Source Hint, so it proves neither.
+    # constructed instance carries no Read Origin, so it proves neither.
     port = ScriptedAdapter(Transact())
     db = db_for(BALANCE, port)
 
@@ -1036,62 +1015,6 @@ def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
     assert close.binds[:3] == (FIXED, 1, "infinity")
     assert Decimal("150.00") in chained.binds
     assert port.calls[-1] == CommitCall()
-
-
-# --------------------------------------------------------------------------- #
-# A same-transaction reread of a row a keyed write just settled against: the   #
-# classification a hydratable root carries is judged fresh from each read's    #
-# own bytes, never served from write-path state — the retained evidence a     #
-# keyed write settles against, or the read-your-own-writes flush the reread    #
-# itself forces.                                                               #
-# --------------------------------------------------------------------------- #
-def test_a_reread_after_settling_a_write_against_a_classified_row_still_classifies_it() -> None:
-    # Customer 6 stores `address.geo` as the scalar "unknown" where a `one`
-    # occurrence is declared — `m-unit-work-028`'s own wrong-kind row. The first
-    # read publishes it as a hydratable `InvalidData`, and a keyed update settles
-    # against the hydrated root and changes only `name`. The script answers the
-    # SAME `geo` bytes to both reads, so a correct reread — forced by the
-    # buffered write's read-your-own-writes flush — answers the identical
-    # diagnosis rather than one the write repaired, suppressed, or worsened.
-    address = {"street": "6 Kastanien Allee", "city": "Berlin", "geo": "unknown"}
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 6, "name": "Rin", "address": PresentDocument(dict(address))}]),
-            Write(),
-            Read(
-                rows=[
-                    {
-                        "id": 6,
-                        "name": "Rin Nakamura",
-                        "address": PresentDocument(dict(address)),
-                    }
-                ]
-            ),
-        )
-    )
-    db = db_for(CUSTOMER_MODEL, port)
-
-    def fn(tx: Transaction) -> InvalidData[Customer]:
-        first = tx.find(Customer.where(Customer.id == 6)).checked().result()
-        assert isinstance(first, InvalidData)
-        current = cast("Customer", first.data)
-        assert current is not None
-        tx.update(current.edit(name="Rin Nakamura"))
-        reread = tx.find(Customer.where(Customer.id == 6)).checked().result()
-        assert isinstance(reread, InvalidData)
-        return reread
-
-    reread = db.transact(fn)
-    assert {issue.code for issue in reread.issues} == {"stored-data-one-wrong-kind"}
-    assert reread.data is not None
-    assert reread.data.name == "Rin Nakamura"
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, WriteCall, ReadCall, CommitCall]
-    write_ops = [op for op in port.calls if isinstance(op, WriteCall)]
-    assert write_ops == [
-        WriteCall(
-            POSTGRES.to_driver_sql("update customer set name = ? where id = ?"), ("Rin Nakamura", 6)
-        )
-    ]
 
 
 # --------------------------------------------------------------------------- #

@@ -33,7 +33,7 @@ against a real database and against a fake port alike.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final, cast
@@ -41,6 +41,7 @@ from typing import Any, Final, cast
 from parallax.conformance import case_format
 from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.story_models import Account
+from parallax.core.entity import Entity
 from parallax.snapshot.handle import KeyedWriteValueError, Transaction
 
 __all__ = [
@@ -173,7 +174,12 @@ def declared_round_trips(case: case_format.Case) -> int:
     return total
 
 
-def value_of(provenance: str, tx: Transaction, another: AnotherSource) -> Account:
+def value_of(
+    provenance: str,
+    tx: Transaction,
+    another: AnotherSource,
+    invalid_root: Callable[[], Entity] | None = None,
+) -> Entity:
     """A value of the stated provenance, arranged through the source that
     produces it (`m-case-format` *Keyed write action steps*).
 
@@ -184,6 +190,9 @@ def value_of(provenance: str, tx: Transaction, another: AnotherSource) -> Accoun
     and its own lifecycle state
     (:mod:`~parallax.conformance.another_source`), because the Snapshot runtime
     is one source and no read of it produces a foreign value (ADR 0010).
+    ``invalidRoot`` is supplied by the conformance adapter after it performs a
+    checked read that exposes hydratable diagnostic data; the runner consumes the
+    resulting value but does not prescribe how the adapter staged invalid storage.
 
     Nothing here decides what any of it means: the production validator does.
     """
@@ -194,10 +203,19 @@ def value_of(provenance: str, tx: Transaction, another: AnotherSource) -> Accoun
     if provenance == "anotherSource":
         (value,) = another.find(Account.where(Account.id == TARGET_ID))
         return value
+    if provenance == "invalidRoot":
+        if invalid_root is None:
+            raise ValueError("invalidRoot provenance requires a diagnostic-data arranger")
+        return invalid_root()
     raise ValueError(f"unrecognized value provenance {provenance!r}")
 
 
-def grade_step(tx: Transaction, step: WriteValueStep, another: AnotherSource) -> str | None:
+def grade_step(
+    tx: Transaction,
+    step: WriteValueStep,
+    another: AnotherSource,
+    invalid_root: Callable[[], Entity] | None = None,
+) -> str | None:
     """Drive ``step``'s verb over a value of its stated provenance and grade what
     the verb answered.
 
@@ -206,7 +224,7 @@ def grade_step(tx: Transaction, step: WriteValueStep, another: AnotherSource) ->
     a declared expectation the verb never raised — is loud, never a silently
     dropped observation.
     """
-    value = value_of(step.provenance, tx, another)
+    value = value_of(step.provenance, tx, another, invalid_root)
     try:
         _apply(tx, step.action, value)
     except KeyedWriteValueError as refusal:
@@ -228,7 +246,7 @@ def grade_step(tx: Transaction, step: WriteValueStep, another: AnotherSource) ->
     return None
 
 
-def _apply(tx: Transaction, action: str, value: Account) -> None:
+def _apply(tx: Transaction, action: str, value: Entity) -> None:
     if action == "insert":
         tx.insert(value)
     else:
@@ -236,8 +254,11 @@ def _apply(tx: Transaction, action: str, value: Account) -> None:
 
 
 def graded_outcomes(
-    tx: Transaction, steps: Sequence[WriteValueStep], another: AnotherSource
+    tx: Transaction,
+    steps: Sequence[WriteValueStep],
+    another: AnotherSource,
+    invalid_root: Callable[[], Entity] | None = None,
 ) -> list[str | None]:
     """Every step's graded outcome, in authored order — the observation a case
     run reports."""
-    return [grade_step(tx, step, another) for step in steps]
+    return [grade_step(tx, step, another, invalid_root) for step in steps]

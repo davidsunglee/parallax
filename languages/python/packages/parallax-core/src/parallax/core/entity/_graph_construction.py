@@ -16,8 +16,8 @@ being granted this collaboration.
 The collaboration owns everything about turning those rows into Entity and Value
 Object instances — concrete class selection, canonical-to-Python member mapping,
 the correspondence between the model's member layout and the class's own,
-recursive Value Object construction, declared-type enforcement in Pydantic
-validation's place, broad relationship-slot filling, the one opaque
+recursive Value Object construction over already-judged member state, broad
+relationship-slot filling, the one opaque
 lifecycle-state slot, and all-or-none lifecycle-state attachment. What it does
 NOT own is how a value physically holds any of that: it hands the instance-state
 Module semantic inputs and the Module attaches one row, so nothing here knows the
@@ -87,7 +87,6 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from parallax.core.base import INFINITY, NeutralType, Timestamp, matches_neutral_type
 from parallax.core.entity._construction_input import ABSENT, UNLOADED, NodeHandle
 from parallax.core.entity._declaration import (
     LIFECYCLE_STATE_SLOT,
@@ -108,7 +107,6 @@ from parallax.core.entity._instance_state import relationship as relationship_st
 from parallax.core.entity._layout import CatalogedModel, EntityLayout, ValueObjectLayout
 from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import (
-    AttributeIdentity,
     EntityIdentity,
     MemberIdentity,
     Multiplicity,
@@ -148,19 +146,17 @@ class _EntityFacts:
     takes, so a position is read off both without a per-member record pairing
     them.
 
-    The three tuples are per-position answers resolved once here rather than per
+    The two tuples are per-position answers resolved once here rather than per
     stored value, each aligned to the run it is stated over: the Python name a
-    navigable direction's slot is installed under, whether an Attribute may
-    carry the open temporal bound, and whether a direction is to-many. The last
-    two read the layout's own identity-keyed facts into the positional order the
-    rows arrive in; the first is held by neither value.
+    navigable direction's slot is installed under and whether a direction is
+    to-many. The latter reads the layout's own identity-keyed facts into the
+    positional order the rows arrive in; the former is held by neither value.
     """
 
     layout: EntityLayout
     cls: type
     plan: PublicationPlan
     relationship_py: tuple[str, ...]
-    open_ended: tuple[bool, ...]
     many: tuple[bool, ...]
 
 
@@ -186,9 +182,6 @@ def _entity_facts(
         plan=plan,
         relationship_py=tuple(
             names.relationship_py[direction.name] for direction in layout.relationships
-        ),
-        open_ended=tuple(
-            attribute.identity in layout.temporal_ends for attribute in layout.attributes
         ),
         many=tuple(direction in layout.to_many for direction in layout.relationships),
     )
@@ -247,7 +240,9 @@ def _require_member_correspondence(
     and so knew which kind that identity was, while a row of the right width says
     only how many positions there are. A model calling position ``i`` a Value
     Object occurrence where the composed class maps it as a scalar therefore
-    reaches here rather than reaching the declared type's own check further down.
+    reaches here rather than letting the container walk reinterpret a scalar as
+    a Value Object row. Scalar admission itself belongs to the producer of the
+    already-judged Entity State and is not repeated here.
     """
     row = tuple(
         (
@@ -283,12 +278,11 @@ def _require_declared_member_correspondence(
     A local name addresses a member only within one ancestry. Two Entities of one
     model may each declare ``payload``, so a class composed under an identity
     whose ancestry runs through one of them and a layout derived where it runs
-    through the other spell one row and mean two — and a position's value is
-    checked against the *layout's* declared type, so the equal-looking row would
-    admit a value the class's own member cannot hold. Comparing the accepted
-    metadata compares the declaring identity, the declared type, and everything
-    else that decides what may be written there, including an occurrence's whole
-    subtree.
+    through the other spell one row and mean two. Comparing the accepted metadata
+    prevents already-judged state for one declaration from being installed under
+    another declaration that happens to have the same local name; it compares the
+    declaring identity, declared type, and occurrence subtree without re-judging
+    the row's values.
 
     Last, because every disagreement the checks above name is a metadata
     disagreement too and each says which one in its own terms; what reaches here
@@ -808,19 +802,10 @@ def _populate(
     )
 
     values: dict[str, object] = {}
-    for position, declared in enumerate(layout.attributes):
+    for position, _declared in enumerate(layout.attributes):
         value = members[position]
         if value is ABSENT:
             continue
-        _check_value(
-            value,
-            declared=declared.type,
-            nullable=declared.nullable,
-            index=index,
-            identity=declared.identity,
-            label=f"{layout.concrete.canonical}.{declared.identity.name}",
-            open_ended=facts.open_ended[position],
-        )
         values[facts.plan.py_names[position]] = value
 
     for position, occurrence in enumerate(layout.occurrences, start=layout.attribute_count):
@@ -876,59 +861,6 @@ def _require_row(
                 f"{identity.canonical} lays out {width} {kind} positions, "
                 f"and this row carries {len(cast('tuple[object, ...]', row))}"
             ),
-            index=index,
-            identity=identity,
-        )
-
-
-def _check_value(
-    value: object,
-    *,
-    declared: NeutralType,
-    nullable: bool,
-    index: int,
-    identity: AttributeIdentity | ValueObjectAttributeIdentity,
-    label: str,
-    open_ended: bool = False,
-    collapsed: bool = False,
-) -> None:
-    """Reject a null where the member forbids one, and a value outside the
-    declared Neutral Type's value space.
-
-    This is where declared-type enforcement on a materialized read lives:
-    construction bypasses Pydantic validation, so the writer's own Neutral Value
-    check is what stands in its place.
-
-    ``open_ended`` names a temporal interval's end Attribute, whose value space
-    additionally admits ``m-core``'s native-infinity sentinel — the open upper
-    bound is a temporal fact distinct from every finite instant and from ``None``,
-    and it is what a current milestone's end attribute actually carries. A start
-    Attribute is a finite instant and admits no sentinel.
-
-    ``collapsed`` names a document-resident position, where ``None`` is the
-    member's own NOT-PRESENT state rather than a stored null: reading a document
-    applies Predicate-algebra absence collapse, so an absent leaf, a stored JSON
-    null, and a wrong-kind occurrence all arrive here as ``None``. Deriving a
-    nullability verdict from that would contradict the collapse the read seam
-    already performed, so only the declared value space is checked.
-    """
-    if value is None:
-        if collapsed:
-            return
-        if not nullable:
-            raise GraphConstructionError(
-                code="entity-graph-invalid-value",
-                message=f"{label} is not nullable and admits no null",
-                index=index,
-                identity=identity,
-            )
-        return
-    if open_ended and value is INFINITY and isinstance(declared, Timestamp):
-        return
-    if not matches_neutral_type(value, declared):
-        raise GraphConstructionError(
-            code="entity-graph-invalid-value",
-            message=f"{label} received {value!r}, outside its declared type's value space",
             index=index,
             identity=identity,
         )
@@ -1082,18 +1014,6 @@ def _build_record(
         value = cells[position]
         if value is ABSENT:
             continue
-        _check_value(
-            value,
-            declared=leaf.type,
-            nullable=leaf.nullable,
-            index=index,
-            identity=leaf.identity,
-            label=(
-                f"{entity.canonical}.{'.'.join(leaf.identity.value_object.path)}"
-                f".{leaf.identity.name}"
-            ),
-            collapsed=True,
-        )
         values[py_name] = value
     for position, occurrence in enumerate(declared.value_objects, start=leaf_count):
         py_name = _member_py(shape, occurrence.identity.path[-1])

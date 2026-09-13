@@ -101,7 +101,7 @@ from parallax.snapshot.materialize._wire import (
     WireEntity,
     WireValue,
     opened_wire_entity,
-    source_hint_of,
+    read_origin_of,
     unwind_tree,
     wire_roots,
 )
@@ -137,8 +137,8 @@ __all__ = [
     "opened_wire_entity",
     "page_edges",
     "page_rows",
+    "read_origin_of",
     "require_publishable",
-    "source_hint_of",
     "unwind_tree",
     "wire_roots",
 ]

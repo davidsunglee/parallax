@@ -86,7 +86,6 @@ def test_a_row_form_read_needing_no_document_member_projects_no_document_at_all(
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"))
     assert compiled.statement.sql == "select t0.id from marker t0"
     assert compiled.structured_column is None
-    assert compiled.transform_row({"id": 1}) == {"id": 1}
 
 
 def _instance_form(target: EntityMetadata) -> CompiledRead:
@@ -133,25 +132,7 @@ def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs
     assert compiled.statement.sql == "select t0.id from marker t0"
 
 
-def test_a_row_form_read_fans_the_document_out_under_the_columns_own_result_keys() -> None:
-    document = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    columns = compile_read(oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"))
-    assert document.transform_row(_DOCUMENT_ROW) == columns.transform_row(
-        {key: value for key, value in _COLUMNS_ROW.items() if key not in ("address", "tags")}
-    )
-
-
-def test_an_instance_form_read_fans_out_the_occurrences_too() -> None:
-    document = compile_read(
-        oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"), result_form="instance"
-    )
-    columns = compile_read(
-        oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"), result_form="instance"
-    )
-    assert document.transform_row(_DOCUMENT_ROW) == columns.transform_row(_COLUMNS_ROW)
-
-
-def test_a_direct_document_carrier_is_classified_before_flat_publication() -> None:
+def test_a_direct_document_carrier_is_classified_during_payload_decode() -> None:
     # Under Columns layout the adapter still folds every adjacent document pair.
     # An occurrence stored with the wrong container kind is classified at the compiled-read
     # seam, retained as provenance for graph publication, and refused by the flat lane.
@@ -165,8 +146,6 @@ def test_a_direct_document_carrier_is_classified_before_flat_publication() -> No
     assert [(finding.code, finding.path) for finding in findings] == [
         ("many-wrong-kind", ("tags",))
     ]
-    with pytest.raises(SqlGenError, match="invalid stored data"):
-        compiled.transform_row(row)
 
 
 @pytest.mark.parametrize(
@@ -188,8 +167,6 @@ def test_a_direct_document_classifies_nested_invalid_state(
     row = {**_COLUMNS_ROW, "address": address}
     _values, findings, _classified = compiled.decode_payload(row)
     assert [(finding.code, finding.path) for finding in findings] == [expected]
-    with pytest.raises(SqlGenError, match="invalid stored data"):
-        compiled.transform_row(row)
 
 
 def test_a_required_direct_document_member_is_classified_before_publication() -> None:
@@ -222,8 +199,6 @@ def test_a_required_direct_document_member_is_classified_before_publication() ->
     assert [(finding.code, finding.path) for finding in findings] == [
         ("required-member-absent", ("address", "city"))
     ]
-    with pytest.raises(SqlGenError, match="invalid stored data"):
-        compiled.transform_row(row)
 
 
 def test_a_direct_document_column_requires_a_folded_document_read() -> None:
@@ -265,27 +240,6 @@ def test_raw_document_access_validates_the_resolved_member_and_folded_carrier() 
         columns.classify_member_of({**_COLUMNS_ROW, "address": {}}, person, "address")
 
 
-def test_the_fan_out_decodes_by_declared_type_rather_than_by_the_json_values_shape() -> None:
-    # A `date` is an ISO-8601 string inside the document and a driver `date` in a
-    # column of its own; the fan-out returns the MANAGED value, so one logical
-    # value is not observably different under the two layouts.
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    assert compiled.transform_row(_DOCUMENT_ROW)["joined_on"] == dt.date(2026, 1, 15)
-
-
-def test_a_missing_and_an_explicitly_null_document_key_both_read_as_one_absence() -> None:
-    # Absence collapse is the consumer's, applied to the codec's answer: a NULL
-    # Column has one not-present state and the document has two, and a result row
-    # must not be able to tell them apart.
-    compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    missing = compiled.transform_row({"id": 1, "payload": PresentDocument({})})
-    explicit = compiled.transform_row(
-        {"id": 1, "payload": PresentDocument({"displayName": None, "score": None})}
-    )
-    assert missing == explicit
-    assert missing["display_name"] is None
-
-
 def test_the_compiled_read_names_the_occurrences_a_row_can_carry_under_either_layout() -> None:
     # A Position Layout answers this from its logical MEMBER sequence, because an
     # occurrence is a member under either layout while it is a Column only under
@@ -313,21 +267,16 @@ def test_row_form_keeps_position_documents_separate_from_selected_occurrences() 
     assert compiled.projected_documents == ()
 
 
-def test_a_flat_transform_refuses_an_invalid_direct_scalar() -> None:
-    compiled = compile_read(oa.All(), COLUMNS, POSTGRES, entity(COLUMNS, "Person"))
-    with pytest.raises(SqlGenError, match="invalid stored data"):
-        compiled.transform_row({"id": None})
-
-
 def test_the_raw_document_is_never_a_result_field() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
-    assert "payload" not in compiled.transform_row(_DOCUMENT_ROW)
+    values, _findings, _classified = compiled.decode_payload(_DOCUMENT_ROW)
+    assert "payload" not in values
 
 
-def test_a_row_transform_refuses_a_raw_document_outside_the_database_port_contract() -> None:
+def test_payload_decode_refuses_a_raw_document_outside_the_database_port_contract() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     with pytest.raises(SqlGenError, match="not a DocumentRead"):
-        compiled.transform_row({"id": 1, "payload": _DOCUMENT_VALUE})
+        compiled.decode_payload({"id": 1, "payload": _DOCUMENT_VALUE})
 
 
 def test_an_sql_null_entity_document_classifies_each_requested_member() -> None:

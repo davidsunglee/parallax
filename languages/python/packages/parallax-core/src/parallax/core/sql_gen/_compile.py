@@ -19,7 +19,6 @@ from parallax.core.base import (
     DocumentReadOrdinals,
     ManagedValue,
     UnknownFamilyTag,
-    admits_stored_scalar,
     inert_scalar,
 )
 from parallax.core.db_port import Row
@@ -87,7 +86,7 @@ from parallax.core.storage_layout import DocumentPath as _DocumentPath
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
-from parallax.core.wire import WireDecodingError, WireValue, decode_canonical_wire, encode_wire
+from parallax.core.wire import encode_wire
 
 __all__ = [
     "AttributeReadContract",
@@ -340,11 +339,10 @@ class CompiledRead:
     under, and the materializer that turns its driver rows into observed ones.
 
     Self-contained by design: everything a caller needs to turn driver rows into
-    observed rows travels WITH the compiled statement. The flat lane publishes a
-    transformed row through :meth:`transform_row`; every materializing consumer —
-    the typed and wire snapshot lanes and the write lanes alike — uses
+    observed rows travels WITH the compiled statement. Every materializing
+    consumer — the typed and wire snapshot lanes and the write lanes alike — uses
     raw ordinal access and deferred conversion through the Page its lane owns.
-    Neither re-derives what the statement projected.
+    None re-derives what the statement projected.
 
     ``narrow_to`` is the read's own query-wide narrowing or ``None`` for a bare read: a
     table-per-concrete-subtype position resolving to exactly one concrete emits
@@ -360,9 +358,8 @@ class CompiledRead:
     or the layout: a default row-form read projects no document column, while the
     explicit materializing-write widening lane projects the documents it needs.
     An occurrence is just as much a member when the layout stores it inside a
-    shared Structured Column rather than in one of its own. Raw ordinal access is the
-    metadata-preserving contract for Page and write consumers; ``transform_row`` is only
-    for clean flat publication and refuses classified invalid state.
+    shared Structured Column rather than in one of its own. Raw ordinal access is
+    the metadata-preserving contract for Page and write consumers.
     ``projected_documents`` is the demand-specific subset the statement actually
     selected; conversion receives that subset so an unrequested occurrence is
     never judged merely because the position could have carried it.
@@ -409,55 +406,6 @@ class CompiledRead:
     @property
     def structured_column(self) -> str | None:
         return self._materializer.stages.structured_column
-
-    def transform_row(self, row: Row | Mapping[str, object]) -> dict[str, object]:
-        """Materialize one metadata-free row, refusing classified invalid state.
-
-        Accepts any ``Mapping`` (a wire-rendered row or a raw driver row alike)
-        and always returns a FRESH ``dict``, including when there is nothing to
-        materialize.
-        """
-        resolved, variant, unknown, _coordinate, _document = self.row_header(row)
-        values, findings, classified = self._materializer.decode_payload(row, resolved)
-        if (
-            findings
-            or unknown is not None
-            or self._has_invalid_direct_scalar(resolved, values, classified)
-        ):
-            raise SqlGenError("a row carrying invalid stored data cannot be flattened")
-        if variant is not None:
-            if "familyVariant" in values:  # pragma: no cover - formation rejects it
-                raise SqlGenError(
-                    "a flat row cannot represent both a declared `familyVariant` field and "
-                    "the polymorphic synthetic key; Model Formation should reject the collision"
-                )
-            values["familyVariant"] = variant
-        return values
-
-    def _has_invalid_direct_scalar(
-        self,
-        resolved: EntityIdentity,
-        values: Mapping[str, object],
-        classified: frozenset[str],
-    ) -> bool:
-        for contract in self.attribute_reads(resolved):
-            if contract.result_key not in values or contract.result_key in classified:
-                continue
-            attribute = contract.attribute
-            value = values[contract.result_key]
-            if contract.encoded and value is not None:
-                try:
-                    value = decode_canonical_wire(attribute.type, cast("WireValue", value))
-                except WireDecodingError:
-                    return True
-            if not admits_stored_scalar(
-                value,
-                attribute.type,
-                nullable=attribute.nullable,
-                temporal_end=contract.temporal_end,
-            ).admitted:
-                return True
-        return False
 
     def attribute_reads(self, entity: EntityIdentity) -> tuple[AttributeReadContract, ...]:
         """The compiled Attribute contracts for one resolved concrete Entity.

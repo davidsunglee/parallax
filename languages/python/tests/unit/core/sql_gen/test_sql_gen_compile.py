@@ -440,22 +440,16 @@ def _unpickle(value: CompiledRead) -> CompiledRead:
     [copy.copy, copy.deepcopy, _unpickle],
     ids=["copy", "deepcopy", "pickle"],
 )
-def test_compiled_read_round_trips_preserving_equality_repr_and_row_behavior(
+def test_compiled_read_round_trips_preserving_equality_and_repr(
     route: Callable[[CompiledRead], CompiledRead],
 ) -> None:
     # Deliberately NOT asserting on pickle BYTES — the ticket excludes them from
     # the contract (private definition paths and `__module__` may move). What
-    # must survive a same-version round trip is the VALUE: equality, repr, and
-    # the row behavior, which is the only reason the transform is stored as
-    # ordinary dataclass state rather than as a bound method or closure.
+    # must survive a same-version round trip is the VALUE: equality and repr.
     compiled = compile_read(oa.All(), PAYMENT, POSTGRES, target(PAYMENT, "Payment"))
     reconstructed = route(compiled)
     assert reconstructed == compiled
     assert repr(reconstructed) == repr(compiled)
-    assert reconstructed.transform_row({"id": 1, "kind": "card"}) == {
-        "id": 1,
-        "familyVariant": "CardPayment",
-    }
 
 
 def test_compiled_predicate_is_a_frozen_value() -> None:
@@ -517,13 +511,6 @@ def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> 
         temporal_end=False,
         encoded=True,
     ) in compiled.attribute_reads(entity.identity)
-    assert compiled.transform_row({"id": 1, "payload_hex": "00ff"}) == {
-        "id": 1,
-        "payload_hex": "00ff",
-    }
-    for invalid in (None, "not-hex"):
-        with pytest.raises(SqlGenError, match="invalid stored data"):
-            compiled.transform_row({"id": 1, "payload_hex": invalid})
 
 
 def _child_template(dialect: Dialect) -> sql_compile.CompiledTemplate:

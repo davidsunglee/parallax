@@ -7,7 +7,7 @@ version, a temporal row's whole predecessor milestone), which rows retain no
 evidence at all, what the retained state is keyed by, and what a hint carries
 when there is no state behind it.
 
-Everything a collector holds is asserted through the Source Hints the retention
+Everything a collector holds is asserted through the Read Origins the retention
 answers, never off its own storage: the accumulator is an internal seam, and a
 proof that crosses it would pin an arrangement no caller can observe.
 
@@ -29,8 +29,8 @@ from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     FixedClock,
     ObservedStateKey,
+    ReadOrigin,
     RetainedObservation,
-    SourceHint,
     TemporalObservation,
     TemporalStateKey,
     TransactionSettings,
@@ -116,12 +116,12 @@ _VOYAGE_DOCUMENT: Mapping[str, object] = {
 }
 
 
-def _standalone(model: AcceptedMetamodel, observations: ObservedRows) -> Mapping[int, SourceHint]:
+def _standalone(model: AcceptedMetamodel, observations: ObservedRows) -> Mapping[int, ReadOrigin]:
     """The hints a STANDALONE read retains — no unit of work behind it."""
     return retain_evidence(model, observations, ledger=None)
 
 
-def _hint(model: AcceptedMetamodel, observations: ObservedRows, node: int = 0) -> SourceHint:
+def _hint(model: AcceptedMetamodel, observations: ObservedRows, node: int = 0) -> ReadOrigin:
     return _standalone(model, observations)[node]
 
 

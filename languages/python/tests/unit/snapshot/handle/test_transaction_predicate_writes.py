@@ -61,7 +61,7 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.write_settlement import assigned_many_path
-from parallax.snapshot import QueryTargetError, SnapshotDecodingError
+from parallax.snapshot import QueryTargetError
 from parallax.snapshot.handle import Database, Transaction, WriteEvidenceError
 from parallax.snapshot.handle._family import comparison_shape
 from parallax.snapshot.handle._predicate_writes import (
@@ -1515,26 +1515,6 @@ def test_materializing_versioned_update_where_gates_a_changed_value_object_row()
         "update where_subscriber set address = ?, version = ? where id = ? and version = ?"
     )
     assert writes[0].binds == (JsonDocument({"city": "Oslo"}), 2, 1, 1)
-
-
-def test_materializing_predicate_write_refuses_an_invalid_direct_version() -> None:
-    port = ScriptedAdapter(
-        Transact(
-            Read(rows=[{"id": 1, "version": "bad", "address": PresentDocument({"city": "Bergen"})}])
-        )
-    )
-
-    def fn(tx: Transaction) -> None:
-        tx.update_where(
-            WhereSubscriber.where(WhereSubscriber.id == 1),
-            WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
-        )
-
-    with raises_contextualized(SnapshotDecodingError):
-        Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
-            fn, concurrency="optimistic"
-        )
-    assert [type(op) for op in port.calls] == [BeginCall, ReadCall, RollbackCall]
 
 
 def test_materializing_versioned_update_where_projects_only_the_assigned_value_object() -> None:

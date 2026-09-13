@@ -61,7 +61,7 @@ from parallax.snapshot.handle._wire import WireDatabaseView
 from parallax.snapshot.materialize import (
     PageBuilder,
     RootView,
-    source_hint_of,
+    read_origin_of,
     wire_roots,
 )
 from parallax.snapshot.materialize._convert import LevelContext, convert_row
@@ -219,7 +219,7 @@ def test_two_stored_occurrences_short_and_null_publish_differently() -> None:
     }
 
 
-def test_only_an_entity_node_can_carry_a_source_hint() -> None:
+def test_only_an_entity_node_can_carry_a_read_origin() -> None:
     # A nested Value Object mapping is structurally identical to an Entity node
     # and answers `isinstance(value, WireEntity)` with false — and it has no slot
     # to put a hint in, which is what makes "only an Entity node carries one"
@@ -246,8 +246,8 @@ def test_only_an_entity_node_can_carry_a_source_hint() -> None:
     root = _entity(handle.Database.connect(port, CUSTOMER).wire.find(query).result())
     address = _mapping(root["address"])
     assert not isinstance(address, WireEntity)
-    assert source_hint_of(cast("Any", address)) is None
-    assert source_hint_of(root) is not None
+    assert read_origin_of(cast("Any", address)) is None
+    assert read_origin_of(root) is not None
 
 
 def test_an_absent_document_occurrence_reads_null_and_an_absent_many_reads_empty() -> None:
@@ -631,11 +631,12 @@ def test_either_model_provenance_publishes_a_hydratable_record(provenance: str) 
 @pytest.mark.parametrize("provenance", list(_CUSTOMER_MODELS))
 def test_either_model_provenance_publishes_a_non_hydrating_record(provenance: str) -> None:
     published = _customer_wire(
-        _CUSTOMER_MODELS[provenance], {"id": None, "name": "Ada", "address": None}
+        _CUSTOMER_MODELS[provenance],
+        {"id": 1, "name": "Ada", "address": {"street": "Storgata 1", "city": 7}},
     )
     assert isinstance(published, InvalidData)
     record = cast("InvalidData[object]", published)
-    assert {issue.code for issue in record.issues} == {"stored-data-primary-key-null"}
+    assert {issue.code for issue in record.issues} == {"stored-data-leaf-undecodable"}
     assert record.data is None
 
 

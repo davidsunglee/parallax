@@ -251,19 +251,36 @@ proceed from a row an earlier read returned is settled by whether the writing un
 of work **observed** that row, which the observation requirements decide on their
 own and independently of which reader produced the value.
 
+A **Read Origin** is the opaque record a managed source attaches when it publishes
+a value from valid Entity State. It records the concrete Entity, Object Key, source
+Pin, read participation, and retained observation when one exists. The Read Origin
+is provenance and an implementation-private selector for evidence; it is not
+itself a Write Observation, a lock, a database gate, or write authority. A source
+recognizes a keyed write value as its own through that record, but must still
+satisfy the Effective Concurrency Strategy's evidence rule.
+
+Publication of diagnostic data is not source admission. When a classified result
+root suppresses its Read Origins under `m-snapshot-read`, a hydratable node exposed
+inside that result is treated as **NotStored** by keyed update verbs: no valid
+managed read source produced it for writing. This applies to every node in the
+classified root's graph, including a node whose page-owned Entity State is also
+reached by a separate valid root. The separate root-local node may carry its own
+Read Origin; the classified root's node may not borrow it.
+
 Provenance has exactly three answers for a given verb, and they **partition** the
-values that verb can be handed: no managed read produced the value, the source
-this verb writes through produced it, or a **different** managed source did. Each
-answer is a refusal for one family of verbs, so a refused value always has exactly
-one code:
+values that verb can be handed: no valid managed read admitted the value as a
+keyed source, the source this verb writes through did, or a **different** managed
+source did. Each answer is a refusal for one family of verbs, so a refused value
+always has exactly one code:
 
 ```text
 WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
 ```
 
 - **NotStored** (`write-value-not-stored`) — an `update` / `updateUntil` verb was
-  handed a value **no** managed read produced. No stored row exists for it to
-  address, so the refusal names the `insert` verb as the one that accepts it —
+  handed a value **no valid** managed read admitted as a keyed source. No source
+  provenance establishes a stored row for it to address, so the refusal names the
+  `insert` verb as the one that accepts it —
   **unless the writing unit of work has itself already buffered an insert of that
   object**, in which case the value is accepted and the pair coalesces in place
   (*Same-transaction write coalescing*).
@@ -280,9 +297,9 @@ WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
 The set is **closed**, and the tags are **neutral**: each names a class of value a
 verb rejects, never a language's exception type. The one fact an implementation
 **MUST** be able to decide about a value it is handed is *which of those three
-answers holds* — no managed read produced it, this verb's own source did, or
+answers holds* — no valid managed read admitted it, this verb's own source did, or
 another managed source did — which any implementation that materializes values
-already knows at the moment it materializes them. How that fact is retained —
+already knows at the moment it publishes them. How that fact is retained —
 carried on the value, held in an identity map, held in an implementation-owned
 registry — is the implementation's own affair, and no conforming behavior depends
 on the choice.

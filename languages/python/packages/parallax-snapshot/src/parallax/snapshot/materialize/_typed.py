@@ -63,7 +63,7 @@ from parallax.core.metamodel import (
     RelationshipIdentity,
 )
 from parallax.core.temporal_read import Edge, milestone_edge_of
-from parallax.core.unit_work import SourceHint
+from parallax.core.unit_work import ReadOrigin
 from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot.materialize._classify import (
     ClassifiedRoot,
@@ -84,7 +84,7 @@ def typed_root(
     construction: EntityGraphConstruction,
     *,
     ordinal_offset: int = 0,
-    sources: Mapping[int, SourceHint] = MappingProxyType({}),
+    sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
 ) -> tuple[object | InvalidData[object], ...]:
     """Classify ``root`` and construct the nodes that hydrate.
 
@@ -94,16 +94,15 @@ def typed_root(
 
     ``ordinal_offset`` is where this Root View's roots start in the ordered result
     the caller publishes, including a later root or streamed Page. ``sources`` is
-    the Source Hint the executor retained per projection,
+    the Read Origin the executor retained per projection,
     which each node's own Snapshot state carries so a later keyed write reads its
     evidence off the value it was handed.
     """
-    return _Materialization(
-        root,
-        model,
-        classify_roots(root, model, ordinal_offset=ordinal_offset),
-        root.by_allocation(sources),
-    ).run(construction)
+    classification = classify_roots(root, model, ordinal_offset=ordinal_offset)
+    retained: Mapping[int, ReadOrigin] = (
+        root.by_allocation(sources) if classification.conforming else MappingProxyType({})
+    )
+    return _Materialization(root, model, classification, retained).run(construction)
 
 
 class _Materialization:
@@ -131,7 +130,7 @@ class _Materialization:
         root: RootView,
         model: Metamodel,
         classification: RootClassifications,
-        sources: Mapping[int, SourceHint],
+        sources: Mapping[int, ReadOrigin],
     ) -> None:
         self._root = root
         self._model = model

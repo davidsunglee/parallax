@@ -24,7 +24,7 @@ provider rows survive into a sealed Page, a Snapshot, or a lifecycle
 event.
 
 The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`) are
-`m-snapshot-read`'s own carriers — the sealed Page and the private Source Hints
+`m-snapshot-read`'s own carriers — the sealed Page and the private Read Origins
 a materializer needs, and nothing about the execution that produced them — so
 they are defined in
 :mod:`~parallax.snapshot._read_result` and re-exported here beside the
@@ -35,7 +35,7 @@ milestone's as-of coordinates across that conversion.
 An object-form read also retains the write evidence its Page-owned states observed, onto the
 values it publishes: this module drives
 :mod:`parallax.snapshot.handle._retention` while each row is still live, and
-hands the resulting Source Hints to whichever materializer runs. The dependency
+hands the resulting Read Origins to whichever materializer runs. The dependency
 goes this way and only this way — the retention module names nothing here.
 
 One executor, two materializers. The two :class:`ResultPublication` values are
@@ -1014,7 +1014,7 @@ class RootsOf(Protocol):
     tree, which the Wire unwind bounds its walk by and the typed construction
     does not consult. ``ordinal_offset`` is where this Page's roots start in
     the ordered result being published, which is nonzero wherever one result
-    spans several Pages. ``sources`` is the Source Hint the executor retained
+    spans several Pages. ``sources`` is the Read Origin the executor retained
     per PROJECTION, which each published node carries so a later keyed write
     reads its evidence off the value it was handed.
     """
@@ -1025,6 +1025,7 @@ class RootsOf(Protocol):
         includes: UnwindTree = EMPTY_UNWIND,
         /,
         *,
+        atomic: bool = False,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
         milestones: EntityMetadata | None = None,
@@ -1069,7 +1070,14 @@ class ResultPublication:
     def from_find(self, result: FindResult) -> Snapshot[Any]:
         """``result``'s Page as a Snapshot at that read's own pin."""
         return Snapshot(
-            tuple(self.roots_of(result.page, result.includes, sources=result.sources)),
+            tuple(
+                self.roots_of(
+                    result.page,
+                    result.includes,
+                    atomic=True,
+                    sources=result.sources,
+                )
+            ),
             result.page.pin,
             self.edition,
         )
@@ -1084,7 +1092,9 @@ class ResultPublication:
         is empty because a scan is not a pin.
         """
         return Snapshot(
-            tuple(self.roots_of(result.page, milestones=result.milestones)), Pin(), self.edition
+            tuple(self.roots_of(result.page, atomic=True, milestones=result.milestones)),
+            Pin(),
+            self.edition,
         )
 
 
@@ -1098,6 +1108,7 @@ def typed_publication(
         includes: UnwindTree = EMPTY_UNWIND,
         /,
         *,
+        atomic: bool = False,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
         milestones: EntityMetadata | None = None,
@@ -1122,7 +1133,7 @@ def typed_publication(
             page.observer if page.observer is not None else MATERIALIZATION_INERT,
         )
         yield from Materializer(cadence).roots(
-            page, publish, ordinal_offset=ordinal_offset, pins=pins
+            page, publish, atomic=atomic, ordinal_offset=ordinal_offset, pins=pins
         )
 
     return ResultPublication("typed", roots_of, edition)
@@ -1136,6 +1147,7 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
         includes: UnwindTree = EMPTY_UNWIND,
         /,
         *,
+        atomic: bool = False,
         ordinal_offset: int = 0,
         sources: ReadSources = MappingProxyType({}),
         milestones: EntityMetadata | None = None,
@@ -1150,7 +1162,7 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
                 meta,
                 includes,
                 ordinal_offset=ordinal_offset + position,
-                sources=root.by_allocation(sources),
+                sources=sources,
             )
 
         cadence = cast(
@@ -1158,7 +1170,7 @@ def wire_publication(meta: Metamodel, edition: str) -> ResultPublication:
             page.observer if page.observer is not None else MATERIALIZATION_INERT,
         )
         yield from Materializer(cadence).roots(
-            page, publish, ordinal_offset=ordinal_offset, pins=pins
+            page, publish, atomic=atomic, ordinal_offset=ordinal_offset, pins=pins
         )
 
     return ResultPublication("wire", roots_of, edition)

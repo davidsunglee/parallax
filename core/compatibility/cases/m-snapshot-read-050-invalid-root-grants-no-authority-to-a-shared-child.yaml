@@ -1,0 +1,97 @@
+# Two root-local graphs may borrow one page-owned Entity State without sharing
+# authority. Location 100 and 101 both reach Customer 1 through `customer`.
+# Corrupting the first Location's required `address.street` leaf leaves that root
+# hydratable, while the second Location remains valid. Both result positions carry
+# a Customer node with the same values, but those nodes are distinct: the invalid
+# root suppresses Read Origins for its complete graph, and only the valid root's
+# Customer node may carry an origin. The m-unit-work-028 sibling proves the
+# observable write refusal for diagnostic data from the invalid graph.
+model: models/customer.yaml
+tags: [m-snapshot-read, m-unit-work, m-value-object, stored-data, read-origin, relationship, to-one, graph, slice-snapshot-1]
+shape: read
+given:
+  corrupt:
+    - entity: parallax.compatibility.Location
+      key: 100
+      member: [address, street]
+      value: null
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Customer IN-list binds are gathered from the two Location roots"
+when:
+  objectQuery:
+    target: parallax.compatibility.Location
+    predicate:
+      in:
+        attr: parallax.compatibility.Location.id
+        values: [100, 101]
+    orderBy:
+      - attr: parallax.compatibility.Location.id
+        direction: asc
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Location.customer
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.id in (?, ?) order by t0.id asc
+        mariadb: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.id in (?, ?) order by t0.id asc
+      binds: [100, 101]
+    - sql:
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = any(?)
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id in (?)
+      binds: { postgres: [[1]], mariadb: [1] }
+  graph:
+    Location:
+      - id: 100
+        customerId: 1
+        label: HQ
+        address:
+          street: null
+          city: Oslo
+          geo:
+            country: "NO"
+            elevation: 12.0
+            point: { lat: 59.91, lon: 10.75 }
+          phones:
+            - { type: work, number: '555-0100' }
+        customer:
+          id: 1
+          name: Ada
+          address:
+            street: 1 Park Ave
+            city: Oslo
+            geo:
+              country: "NO"
+              elevation: 10.5
+              point: { lat: 59.9, lon: 10.7 }
+            phones:
+              - { type: home, number: '555-1234' }
+              - { type: work, number: '555-9999' }
+      - id: 101
+        customerId: 1
+        label: Depot
+        address: null
+        customer:
+          id: 1
+          name: Ada
+          address:
+            street: 1 Park Ave
+            city: Oslo
+            geo:
+              country: "NO"
+              elevation: 10.5
+              point: { lat: 59.9, lon: 10.7 }
+            phones:
+              - { type: home, number: '555-1234' }
+              - { type: work, number: '555-9999' }
+  storedDataIssues:
+    - ordinal: 0
+      hydrated: true
+      issues:
+        - code: stored-data-required-member-null
+          entity: parallax.compatibility.Location
+          member: parallax.compatibility.Location.address.street
+          objectKey: { entity: parallax.compatibility.Location, key: { id: 100 } }
+  roundTrips: 2

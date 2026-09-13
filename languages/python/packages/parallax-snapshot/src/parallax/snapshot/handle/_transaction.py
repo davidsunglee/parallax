@@ -14,7 +14,7 @@ the buffered-insert REFUSAL, and buffer — belongs to
 the Typed Keyed Write Source and Keyed Insert Source: what an Entity value, its
 Change Record, and its lifecycle answer that order, and nothing about the order
 itself. ``tx.wire``'s verbs state those same facts off a published row and a
-Source Hint instead, and every representation's keyed write ends in the one
+Read Origin instead, and every representation's keyed write ends in the one
 buffer and the one buffered-insert ledger this transaction holds.
 
 It also carries the row-form read (:meth:`Transaction.read_rows`), which the
@@ -119,7 +119,7 @@ from parallax.snapshot.handle._write_inputs import (
     BufferedInserts,
     keyed_instruction,
     metadata_of_instance,
-    source_hint_of,
+    read_origin_of,
     source_identity_row,
     source_pin,
     written_object_key,
@@ -131,20 +131,24 @@ def provenance_of(value: EntityBase) -> Provenance:
 
     Read through :func:`~parallax.snapshot._inspection.snapshot_state_of` and the
     un-narrowed :func:`~parallax.core.entity.lifecycle_state_of`, never through a
-    value's private state: the narrowed answer says THIS Snapshot lifecycle
-    produced the value, and the un-narrowed one is what distinguishes another
-    framework-managed source's value from one no managed read produced at all.
+    value's private state: the narrowed answer authenticates THIS Snapshot
+    lifecycle, and its Read Origin says whether that lifecycle published valid
+    stored Entity State. Diagnostic data from an invalid root carries Snapshot
+    state for inspection but no origin, so it is ``none`` rather than a stored
+    value of this source. The un-narrowed answer distinguishes another
+    framework-managed source's value from one no managed source produced at all.
 
     It lives beside the Typed verbs because only a Typed value carries a
-    lifecycle to read: a Wire source answers the same fact from the Source Hint
+    lifecycle to read: a Wire source answers the same fact from the Read Origin
     the door that published it filed, and what the keyed write judges is the
     answer rather than either carrier.
     """
     if lifecycle_state_of(value) is None:
         return "none"
-    if snapshot_state_of(value) is None:
+    state = snapshot_state_of(value)
+    if state is None:
         return "foreign"
-    return "this"
+    return "none" if state.source is None else "this"
 
 
 def prepared_typed_write(
@@ -206,7 +210,7 @@ class TypedKeyedWriteSource:
         return ResolvedKeyedWriteSource(
             entity=entity,
             pin=source_pin(self._value),
-            hint=source_hint_of(self._value),
+            hint=read_origin_of(self._value),
             identity_row=source_identity_row(entity, model, self._value),
             provenance=provenance_of(self._value),
             representation="typed",

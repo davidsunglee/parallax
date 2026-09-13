@@ -205,8 +205,9 @@ _Avoid_: Snapshot container, public batch, provider result set
 **Entity State**:
 The page-owned judged member tuple and findings for one logical key. Typed and
 Wire publication read the same state; equal duplicate projections do not decode
-again.
-_Avoid_: Entity instance, Wire Entity Mapping, source hint, row dictionary
+again. Native scalar Columns retain provider-normalized values; only the level's
+prepared host-checked positions and document occurrences are judged in Python.
+_Avoid_: Entity instance, Wire Entity Mapping, read origin, row dictionary
 
 **Root View**:
 The private one-root view over a Page that compares Payload Witnesses, obtains
@@ -244,18 +245,20 @@ Its Value Object occurrences key exactly the members the read contract carries �
 `core/spec/m-snapshot-read.md` _What a materialized value carries_ — so presence is
 something a consumer reads off the mapping rather than assuming, and the mapping is
 the same document the Typed value of that row serializes to.
-It may retain a core Source Hint privately without changing its mapping value.
-The hint identifies the concrete Entity and original Object Key and optionally
-an exact observed state; an unversioned Non-Temporal source and the node
-`tx.wire.insert` opened a row with have none.
+It may retain a core Read Origin privately without changing its mapping value.
+The origin identifies the concrete Entity and original Object Key and optionally
+an exact observed state; an unversioned Non-Temporal source carries an origin
+without an observation, while the node `tx.wire.insert` opened carries none.
+Every node in an invalid root-local graph carries no origin, including hydratable
+diagnostic data; a distinct node published from a valid root remains eligible.
 The returned mapping and every nested dictionary or list are frozen; ordinary
 mutation raises `TypeError`. They retain ordinary structural equality with
 plain dictionaries and lists and remain unhashable. Only the verb's separate
 changes mapping authors an update. Immutable copy operations may return the same
-hinted value, while `dict(value)`, serialization, and reconstruction produce
+origin-bearing value, while `dict(value)`, serialization, and reconstruction produce
 ordinary data that is not a keyed write source. Standard JSON serialization
-treats the private subclasses as ordinary objects and arrays and sees no Source
-Hint; decoding returns plain dictionaries and lists. A keyed Wire verb accepts
+treats the private subclasses as ordinary objects and arrays and sees no Read
+Origin; decoding returns plain dictionaries and lists. A keyed Wire verb accepts
 only a frozen value Parallax published — a Wire read's result, or the node
 `tx.wire.insert` answered for the row it opened; an ordinary mapping is
 malformed source input and must be reread before writing. Every existing-object
@@ -281,7 +284,7 @@ current transaction, so keyed verbs still validate private provenance and any
 required locking participation or optimistic state evidence at runtime.
 `WireValue` deliberately does not add public frozen mapping/list types merely to
 express deep immutability statically; the runtime contract enforces it. Neither
-type exposes a Source Hint constructor.
+type exposes a Read Origin constructor.
 _Avoid_: Neutral Node, metadata dictionary, physical row, DTO
 
 **Write Evidence Error**:
@@ -364,7 +367,7 @@ _Avoid_: verb support matrix, mutation compatibility, unsupported operation
 **Keyed Write Source**:
 What one calling interface answers the Keyed Write Validation Order about the
 state a keyed write revises, in three phases run once each: capture, resolve, and
-prepare. The answer set is the concrete Entity, the source Pin, the Source Hint,
+prepare. The answer set is the concrete Entity, the source Pin, the Read Origin,
 the canonical identity row, the value's provenance, which interface stated the
 write, and the canonical authored and original value of every named member. A
 source judges only what its own interface can be wrong about — an authored
@@ -377,7 +380,7 @@ _Avoid_: write adapter, ingress strategy, source facade, write context object
 
 **Typed Keyed Write Source**:
 The Keyed Write Source over an Entity Class instance: the concrete Entity from
-the instance's own declared Identity, the Pin and Source Hint its lifecycle
+the instance's own declared Identity, the Pin and Read Origin its lifecycle
 state carries, the identity row read straight off its key members, and the
 authored and original values of every member its Change Record touched. Its
 capture judges nothing, because a Typed value's shape is fixed by its class and
@@ -388,10 +391,10 @@ _Avoid_: instance adapter, typed ingress, entity write facade
 The Keyed Write Source over a frozen value Parallax published — a Wire read's
 result, or the node an insert answered for the row it opened — and an authored
 changes document: the concrete Entity, Pin, and Object Key from the value's own
-private Source Hint, and the authored and published values of every member the
+private Read Origin, and the authored and published values of every member the
 document names. Its capture judges the document's own shape, which needs neither
 a source nor the model. Its provenance answer is always "this store published
-it", because a value carrying no Source Hint is refused as no keyed source at
+it", because a value carrying no Read Origin is refused as no keyed source at
 all before provenance is asked. The two doors differ only in the evidence their
 node carries: a read-published source carries the observation of the state it
 saw, an insert-published one carries none, and the buffered insert licenses the
@@ -402,7 +405,7 @@ _Avoid_: mapping adapter, wire ingress, document write facade
 The narrower seam an insert enters by, never a Keyed Write Source with its
 answers left empty: the same three phases over the facts an opening row has —
 the concrete Entity, the source Pin, the provenance, the stating interface, and
-the prepared Create Payload. There is no Source Hint, no identity row named ahead
+the prepared Create Payload. There is no Read Origin, no identity row named ahead
 of the instruction, and no original to compare against, because an opening row
 revises no state.
 _Avoid_: null source, synthetic keyed source, insert strategy
@@ -425,15 +428,11 @@ and either the hydrated Typed or Wire root or `None` when hydration would
 require invention. Its diagnostic locator is an optional `ObjectKey`, mutually
 exclusive optional version or Edge, and an always-present zero-based result
 ordinal; none grants write authority. Ordinary Snapshot access raises instead
-of returning this value. When `data` is present, callers may write that ordinary
-observed value under ordinary ingress rules. A Typed assignment equal to the
-hydrated collapse remains a no-op; a keyed Wire assignment equal to the frozen
-hydrated source is also a no-op. Python retains no repair-sensitive metadata and
-promises no general remediation API. The wrapper and `data=None` are not write
-sources. Storage-aware administrative repair is outside the interface.
-Neither the wrapper nor its diagnostic locators retains an observation claim.
-When `data=None`, reconstructing an ordinary mapping cannot use that read as a
-keyed write source. Hydrated data nodes retain their ordinary per-node claims.
+of returning this value. When `data` is present it is diagnostic data only:
+every node in its root-local graph lacks a Read Origin and keyed writes refuse it
+as not stored. Python retains no repair-sensitive metadata and promises no
+general remediation API. A distinct node from a valid root may carry an origin
+even when it was populated from the same page-owned Entity State.
 _Avoid_: failed Entity, skipped result, validation error, error side list
 
 **InvalidDataError**:

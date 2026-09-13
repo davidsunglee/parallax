@@ -41,9 +41,11 @@ def publication_issue(root_view: RootView) -> StoredDataIssueInput | None:
         return root_view.invalid_roots[0].issues[0]
     if not root_view.has_issues:
         return None
-    for index in range(len(root_view.order)):
+    # `invalid_roots` indexes every reachable issue; the walk is defensive for
+    # implementations of RootView's structural protocol.
+    for index in range(len(root_view.order)):  # pragma: no cover
         issues = root_view.issues(index)
-        if issues:
+        if issues:  # pragma: no cover
             return issues[0]
     raise AssertionError("an issue-bearing Root View has no reachable issue")  # pragma: no cover
 

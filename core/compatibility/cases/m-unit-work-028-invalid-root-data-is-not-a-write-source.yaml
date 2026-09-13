@@ -1,0 +1,24 @@
+# Diagnostic data published from an invalid root is NotStored, not a keyed write
+# source (m-unit-work over m-snapshot-read). The adapter arranges `invalidRoot` by
+# reading Customer 6 with its stored `address.geo` scalar where a `one` occurrence
+# is declared. The result is hydratable, but classification suppresses every Read
+# Origin in its root-local graph. Handing its Customer node to `update` therefore
+# raises `write-value-not-stored` before row derivation, buffering, or SQL.
+#
+# m-snapshot-read-050 is the shared-state sibling: one invalid and one valid root
+# reach the same page-owned child state, yet only the valid root's distinct child
+# node carries an origin. This case pins the write-visible consequence for the
+# invalid node itself.
+model: models/customer.yaml
+lane: api-conformance
+tags: [m-unit-work, m-snapshot-read, m-value-object, write-value, provenance, invalid-stored-data, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - action: update
+      value: invalidRoot
+      roundTrips: 0
+      expectError: write-value-not-stored
+      note: diagnostic data from a hydratable invalid root was not admitted as a keyed source
+then:
+  roundTrips: 0

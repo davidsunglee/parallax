@@ -34,11 +34,12 @@ from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
 )
-from parallax.snapshot import DeferredFeatureError, InvalidData, QueryTargetError
+from parallax.snapshot import DeferredFeatureError, QueryTargetError
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle import (
     Database,
     FindResult,
+    KeyedWriteValueError,
     Transaction,
     TransactionTimePinReadOnlyError,
 )
@@ -160,26 +161,6 @@ def test_a_participating_find_stamps_its_transactions_own_participation() -> Non
     (hint,) = call.result.sources.values()
     assert call.participation is not None
     assert hint.participation is call.participation
-
-
-def test_a_non_hydrating_find_retains_no_evidence() -> None:
-    # The read publishes its classified root in band, and the row behind that
-    # root licenses no later write: no conforming value exists for it, so it is
-    # observed by nothing and no source stands behind it.
-    calls: list[_RecordedFind] = []
-    port = ScriptedAdapter(
-        Transact(Read(rows=[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]))
-    )
-
-    def fn(tx: Transaction) -> None:
-        root = tx.find(mm.Account.where(mm.Account.id == 1)).checked().result()
-        assert isinstance(root, InvalidData)
-        assert root.data is None
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(read_scope_module, "find", _recording_find(calls))
-        account_db(port).transact(fn)
-    assert [dict(call.result.sources) for call in calls] == [{}]
 
 
 def test_every_attached_level_row_retains_its_own_evidence() -> None:
@@ -641,7 +622,7 @@ def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
 
 def _retained_evidence(node: object) -> object | None:
-    """The Source Hint ``node`` carries, read off its own lifecycle state.
+    """The Read Origin ``node`` carries, read off its own lifecycle state.
 
     Read through the node-inspection surface rather than the keyed verbs' own
     private reader, because the claim is about what the READ left on the value.
@@ -654,7 +635,7 @@ def _retained_evidence(node: object) -> object | None:
 def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> None:
     # The write-side consequence of "a milestone-set read retains no evidence",
     # asserted rather than read off `HistoryFindResult`'s missing sources field.
-    # A pinned participating read of the same row leaves a Source Hint on its
+    # A pinned participating read of the same row leaves a Read Origin on its
     # root; every root of the `.history()` read carries none, and each stands at
     # its own milestone's from-instant — a finite Transaction-Time coordinate the
     # keyed verbs refuse to write through, so no DML is derived at all.
@@ -672,8 +653,9 @@ def test_a_milestone_set_read_publishes_roots_no_keyed_write_can_address() -> No
         assert [_retained_evidence(root) for root in milestones] == [None, None]
         tx.update(milestones[-1].edit(value=Decimal("9.00")))
 
-    with raises_contextualized(TransactionTimePinReadOnlyError):
+    with raises_contextualized(KeyedWriteValueError) as refusal:
         db.transact(fn)
+    assert refusal.value.code == "write-value-not-stored"
     assert not any(isinstance(op, WriteCall) for op in port.calls)
 
 

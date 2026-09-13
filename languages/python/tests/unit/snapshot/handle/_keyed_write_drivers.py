@@ -543,7 +543,7 @@ class Scenario:
     opened_until: bool = False
     """Whether the same-transaction insert stated a bounded Valid-Time window."""
     lost_provenance: bool = False
-    """Whether the Wire source reaches the verb as a copy carrying no Source Hint
+    """Whether the Wire source reaches the verb as a copy carrying no Read Origin
     — the one defect a keyed source can arrive with that no Typed value has a
     spelling for, and the argument the shape of an authored document is judged
     ahead of."""

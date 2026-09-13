@@ -28,7 +28,7 @@ import pytest
 from parallax.conformance import read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.story_models import ORDERS_MODEL, Order
-from parallax.core import LATEST, DomainModel
+from parallax.core import DomainModel
 from parallax.core.base import INFINITY, PresentDocument
 from parallax.core.db_port import MappingRow
 from parallax.core.entity._model import model_of
@@ -54,7 +54,6 @@ from parallax.snapshot.materialize import (
     RootView,
     classify_roots,
 )
-from tests._support import mirrored_models as mm
 from tests._support.db_port import (
     Read,
     ScriptedAdapter,
@@ -271,10 +270,9 @@ def test_a_non_hydrating_root_publishes_no_data() -> None:
 
 
 def _balance(row: dict[str, object]) -> InvalidData[object]:
-    port = ScriptedAdapter(Read(rows=[row]))
-    database = connect(port, read_models.BALANCE_MODEL)
-    query = read_models.Balance.where(read_models.Balance.id == 1).as_of(tx_time=LATEST)
-    return invalid_record(database.find(query).checked().result())
+    fixture = PageFixture(read_models.BALANCE_MODEL)
+    root = fixture.node("Balance", row)
+    return invalid_record(fixture.materialize(root)[0])
 
 
 def test_a_temporal_root_locates_itself_by_the_milestone_it_decoded() -> None:
@@ -306,10 +304,9 @@ def test_a_temporal_root_whose_milestone_did_not_decode_locates_no_edge() -> Non
 
 def test_a_versioned_root_whose_version_did_not_decode_locates_no_version() -> None:
     row: dict[str, object] = {"id": 1, "owner": "Ada", "balance": Decimal("1.00"), "version": "x"}
-    database = connect(ScriptedAdapter(Read(rows=[row])), ACCOUNT)
-    published = invalid_record(
-        database.find(mm.Account.where(mm.Account.id == 1)).checked().result()
-    )
+    fixture = PageFixture(ACCOUNT)
+    root = fixture.node("Account", row)
+    published = invalid_record(fixture.materialize(root)[0])
     assert published.version is None
     assert published.edge is None
 

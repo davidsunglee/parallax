@@ -39,6 +39,9 @@ class _Level(Protocol):
     @property
     def projected_by_position(self) -> tuple[bool, ...]: ...
 
+    @property
+    def host_checked(self) -> tuple[int, ...]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class PayloadWitness:
@@ -87,6 +90,7 @@ def claim_identity(
     decoded: dict[int, object] = {}
     routing = list(raw_values)
     findings: list[StoredDataIssueInput] = []
+    host_checked = frozenset(level.host_checked)
     for position in routing_positions:
         attribute = layout.attributes[position]
         raw = raw_values[position]
@@ -94,6 +98,10 @@ def claim_identity(
             decoded[position] = ABSENT
             continue
         value = _identity_value(raw, position, classified_members, level)
+        if position not in host_checked:
+            decoded[position] = value
+            routing[position] = value
+            continue
         admission = admits_stored_scalar(
             value,
             attribute.type,

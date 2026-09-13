@@ -54,7 +54,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.unit_work import SourceHint
+from parallax.core.unit_work import ReadOrigin
 from parallax.core.wire import encode_wire
 from parallax.snapshot.materialize._classify import ClassifiedRoot, classify_roots
 from parallax.snapshot.materialize._invalid import InvalidData
@@ -68,7 +68,7 @@ __all__ = [
     "WireEntity",
     "WireValue",
     "opened_wire_entity",
-    "source_hint_of",
+    "read_origin_of",
     "unwind_tree",
     "wire_roots",
 ]
@@ -265,7 +265,7 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
     ENTITY node alone: a nested Value Object mapping is structurally identical
     and must answer ``isinstance(value, WireEntity)`` with false, which is what
     lets a caller ask of any mapping in the result whether the read published it
-    as an Entity. It is also the only node that can carry a Source Hint, and the
+    as an Entity. It is also the only node that can carry a Read Origin, and the
     slot is why: a nested Value Object mapping has no slot to put one in.
 
     The hint rides a slot rather than a mapping entry, so it is not a key, not
@@ -276,7 +276,7 @@ class _WireEntityNode(_FrozenMapping, WireEntity):
 
     __slots__ = ("_source",)
 
-    _source: SourceHint | None
+    _source: ReadOrigin | None
 
 
 def _frozen_mapping[T: _FrozenMapping](cls: type[T], entries: Mapping[str, WireValue]) -> T:
@@ -299,8 +299,8 @@ def _frozen_sequence(values: Iterable[WireValue]) -> _FrozenSequence:
     return value
 
 
-def source_hint_of(entity: WireEntity) -> SourceHint | None:
-    """The private Source Hint ``entity`` carries, or ``None`` for a mapping no
+def read_origin_of(entity: WireEntity) -> ReadOrigin | None:
+    """The private Read Origin ``entity`` carries, or ``None`` for a mapping no
     Wire read published.
 
     The one reader of the slot. A hint is never authority of its own — it names
@@ -343,7 +343,7 @@ def wire_roots(
     includes: UnwindTree = EMPTY_UNWIND,
     *,
     ordinal_offset: int = 0,
-    sources: Mapping[int, SourceHint] = MappingProxyType({}),
+    sources: Mapping[int, ReadOrigin] = MappingProxyType({}),
 ) -> tuple[WireEntity | InvalidData[WireEntity], ...]:
     """``root_view``'s roots as Wire values, in result order.
 
@@ -353,13 +353,16 @@ def wire_roots(
     one as its record carrying nothing. ``ordinal_offset`` is where this Root
     View's roots start in the ordered result, including a later streamed Page.
 
-    ``sources`` is the Source Hint the read retained per allocation index, which
+    ``sources`` is the Read Origin the read retained per projection index, which
     each published Entity node carries privately — the same evidence the typed
     materializer attaches to the node of the same row, so the two representations
     license exactly the same writes.
     """
     classification = classify_roots(root_view, model, ordinal_offset=ordinal_offset)
-    unwind = _Unwind(root_view, model, sources)
+    retained: Mapping[int, ReadOrigin] = (
+        root_view.by_allocation(sources) if classification.conforming else MappingProxyType({})
+    )
+    unwind = _Unwind(root_view, model, retained)
     published: list[_WireRoot] = []
     for verdict in classification.roots:
         if not isinstance(verdict, ClassifiedRoot):
@@ -381,7 +384,7 @@ class _Unwind:
 
     __slots__ = ("_cache", "_model", "_root", "_sources")
 
-    def __init__(self, root: RootView, model: Metamodel, sources: Mapping[int, SourceHint]) -> None:
+    def __init__(self, root: RootView, model: Metamodel, sources: Mapping[int, ReadOrigin]) -> None:
         self._root = root
         self._model = model
         self._sources = sources
@@ -574,7 +577,7 @@ def _held_members(record: object, declared: _VoContainer, carrier: _Carrier) -> 
 
 
 def opened_wire_entity(
-    model: Metamodel, entity: EntityIdentity, row: Mapping[str, object], hint: SourceHint
+    model: Metamodel, entity: EntityIdentity, row: Mapping[str, object], hint: ReadOrigin
 ) -> WireEntity:
     """The frozen Wire node for a row a Wire insert has just OPENED.
 
